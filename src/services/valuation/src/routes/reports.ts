@@ -26,6 +26,7 @@ import {
   saveVersion,
   storeRenderedPdf,
   type ReportRow,
+  type ReportVersionRow,
 } from '../repos/reports.js';
 import { buildReportSummary } from '../domain/reportSummary.js';
 import { fillFigures, reportFigures, type ReportFigures } from '../domain/reportFigures.js';
@@ -424,6 +425,25 @@ export async function summaryFor(
   };
 }
 
+/**
+ * The stamp a render of this engagement's report should carry, or null once the
+ * document is the deliverable.
+ *
+ * The report is readable outside ops from `drafted` (`REPORT_VISIBLE_STATES`),
+ * which is several steps before the QA review closes, the signature lands and
+ * the engagement publishes. Until this existed, the PDF a client downloaded at
+ * `drafted` was byte-identical to the signed deliverable — and it does not stay
+ * with the person who downloaded it. It goes to an auditor, into a board pack,
+ * into a data room, and every reader downstream takes an unmarked valuation
+ * report as final.
+ *
+ * Keyed on the same set the "do not re-render a delivered deliverable" guard
+ * uses, so the two cannot drift into disagreeing about what "delivered" means.
+ */
+export function reportWatermarkFor(valuation: Pick<ValuationRow, 'state'>): string | null {
+  return DELIVERED_REPORT_STATES.has(valuation.state) ? null : 'Draft';
+}
+
 async function renderVersionPdf(
   pool: pg.Pool,
   valuation: ValuationRow,
@@ -431,7 +451,9 @@ async function renderVersionPdf(
   version: number,
   content: ReportContent,
   actor: EventActor,
+  opts: { watermark?: string | null; store?: boolean } = {},
 ): Promise<Buffer> {
+  const watermark = opts.watermark ?? null;
   // One instant for both the cover's "Rendered" line and the PDF's own
   // CreationDate, so a reader comparing the two never sees them disagree.
   const renderedAt = new Date();
@@ -481,10 +503,61 @@ async function renderVersionPdf(
     summary,
     branding,
     generated_at: renderedAt,
-    keywords: [valuation.company_name, valuation.kind, 'valuation', `v${version}`],
+    keywords: [
+      valuation.company_name,
+      valuation.kind,
+      'valuation',
+      `v${version}`,
+      // In the keywords as well as on the page: a data room and a document
+      // management system index this dictionary and never look at the cover, so
+      // a draft filed alongside finals is findable as one.
+      ...(watermark ? [watermark.toLowerCase()] : []),
+    ],
+    watermark,
   });
-  await storeRenderedPdf(pool, { report, version, pdf, actor });
+  if (opts.store !== false) await storeRenderedPdf(pool, { report, version, pdf, actor });
   return pdf;
+}
+
+/**
+ * The bytes to serve for a stored version — the deliverable, stamped if the
+ * engagement has not yet delivered it.
+ *
+ * The rule this settles on: *the store holds the deliverable, and the stamp is
+ * a property of the moment the document is served.* `report_versions.pdf` is
+ * the canonical, unstamped render, and every read path decides for itself
+ * whether the reader is being handed a draft.
+ *
+ * The obvious alternative — stamp the render and cache that — was written first
+ * and is wrong, because the cache is not a cache in the ordinary sense. Nothing
+ * re-renders at publication, deliberately: the exhibits are derived at render
+ * time from the latest calculation, so re-rendering a delivered version in
+ * place would put a different concluded value under a version number the client
+ * is already holding, and nobody outside this system could tell. Stored bytes
+ * are therefore *frozen*, and a stamp baked into frozen bytes outlives the
+ * draft it described — a published 409A that says DRAFT forever, which is the
+ * failure this whole change exists to prevent, arrived at from the other side.
+ *
+ * So a draft download renders fresh and stores nothing. It costs a render per
+ * download, which is the right way round: a draft is the version somebody is
+ * still editing, and the delivered one — the version read over and over by
+ * auditors and boards for the next year — is the one that stays cached.
+ */
+export async function deliverablePdf(
+  pool: pg.Pool,
+  valuation: ValuationRow,
+  report: ReportRow,
+  version: Pick<ReportVersionRow, 'version' | 'content' | 'pdf'>,
+  actor: EventActor,
+): Promise<Buffer> {
+  const watermark = reportWatermarkFor(valuation);
+  if (watermark) {
+    return renderVersionPdf(pool, valuation, report, version.version, version.content, actor, {
+      watermark,
+      store: false,
+    });
+  }
+  return version.pdf ?? renderVersionPdf(pool, valuation, report, version.version, version.content, actor);
 }
 
 const NarrativeBody = z
@@ -844,14 +917,11 @@ export function registerReportRoutes(
     const version = report ? await getVersion(deps.pool, report.id, report.current_version) : null;
     if (!report || !version) throw problems.notFound('No report yet');
 
-    // Lazy render: reuse the stored PDF when this version was already rendered.
-    const pdf =
-      version.pdf ??
-      (await renderVersionPdf(deps.pool, valuation, report, version.version, version.content, {
-        actorType: 'system',
-        actorId: principal.id,
-        source: 'report.pdf',
-      }));
+    const pdf = await deliverablePdf(deps.pool, valuation, report, version, {
+      actorType: 'system',
+      actorId: principal.id,
+      source: 'report.pdf',
+    });
 
     const filename = `${valuation.company_name}_${valuation.kind}_v${version.version}.pdf`;
     return reply

@@ -151,6 +151,24 @@ export interface ReportPdfInput {
   generated_at?: Date;
   /** Document keywords. Defaults to the company, the title and 'valuation'. */
   keywords?: string[];
+  /**
+   * Draft marker. When set, every page carries a diagonal stamp of this word and
+   * the cover carries a notice naming it.
+   *
+   * A report is readable by the client from `drafted` onward — before the QA
+   * review closes, before the signature, before publication — and the bytes
+   * that reader downloads were until now indistinguishable from the signed
+   * deliverable. Those bytes do not stay with the person who downloaded them:
+   * a 409A report is forwarded to an auditor, attached to a board pack and
+   * filed in a data room, and each of those readers takes an unmarked document
+   * as final. Marking the draft is the ordinary practice of the profession for
+   * exactly that reason, and the cost of not doing it lands on whoever relied
+   * on a number that later moved.
+   *
+   * Null or absent renders the deliverable unmarked, which is what publication
+   * produces.
+   */
+  watermark?: string | null;
 }
 
 /** Reports shorter than this render without a contents page. */
@@ -907,6 +925,20 @@ const INK = {
 } as const;
 
 // ── body copy metrics ─────────────────────────────────────────────────────────
+
+/**
+ * The draft stamp's colour. A warm red rather than the document greys: it has
+ * to survive a photocopy and read as a status rather than as decoration, and
+ * every other mark on the page is neutral, so anything neutral would blend in.
+ */
+const WATERMARK_INK = '#b03030';
+/**
+ * How much of the ink actually lands. Low enough that a paragraph under the
+ * stamp is still comfortably legible — the report has to be *readable* in
+ * draft, that being the point of circulating one — and high enough that a
+ * glance at any page, or a monochrome print of it, says draft.
+ */
+const WATERMARK_OPACITY = 0.11;
 
 const BODY_FONT_SIZE = 10.5;
 const BODY_LINE_GAP = 2;
@@ -2062,6 +2094,31 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
         .text(`Prepared in partnership with ${input.branding!.partner_name}`, { align: 'center' });
     });
   }
+  /*
+   * The draft notice, in words and in the reading order.
+   *
+   * The diagonal stamp below is drawn as an artifact, like every other piece of
+   * page furniture in this renderer — repeated forty times, it would otherwise
+   * interrupt the analysis once per page for anyone listening to the document.
+   * But "this is a draft" is the one thing on a page of furniture that is not
+   * decoration, and a reader who cannot see the stamp must still be told. So it
+   * is said once, here, as real tagged text on the cover, and the stamp is what
+   * carries it to the eye on every sheet after.
+   */
+  if (input.watermark) {
+    doc.moveDown(0.8);
+    tagged(doc, docStruct, 'P', {}, () => {
+      doc
+        .font(FONTS.bold)
+        .fontSize(11)
+        .fillColor(WATERMARK_INK)
+        .text(`${input.watermark!.toUpperCase()} — subject to revision, not for distribution`, {
+          width: usable,
+          align: 'center',
+        });
+    });
+  }
+
   doc.moveDown(1.6);
   const ruleY = doc.y;
   artifact(doc, () => {
@@ -2307,6 +2364,43 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
           .strokeColor(INK.hair)
           .stroke();
       });
+    }
+
+    /*
+     * The diagonal stamp, drawn last of the furniture so it sits over the body
+     * rather than under it.
+     *
+     * Under the text would be tidier and is wrong: a table with filled header
+     * cells, a chart's plot area and the cover's colour band are all opaque, so
+     * a stamp behind them disappears on exactly the pages a reader is most
+     * likely to photograph and send on. Over the text at eleven percent costs
+     * legibility nothing measurable and cannot be hidden by anything the
+     * document draws.
+     *
+     * `save`/`restore` rather than unwinding the rotation by hand: the graphics
+     * state this leaves behind is inherited by the next page's furniture, and a
+     * mismatched rotate would tip the whole document a degree at a time.
+     */
+    if (input.watermark) {
+      const stamp = input.watermark.toUpperCase();
+      artifact(doc, () => {
+        doc.save();
+        doc.rotate(-38, { origin: [doc.page.width / 2, doc.page.height / 2] });
+        doc
+          .font(FONTS.bold)
+          .fontSize(96)
+          .fillColor(WATERMARK_INK, WATERMARK_OPACITY)
+          .text(stamp, 0, doc.page.height / 2 - 60, {
+            width: doc.page.width,
+            align: 'center',
+            lineBreak: false,
+          });
+        doc.restore();
+      });
+      // `restore` returns the graphics state but not pdfkit's own fill opacity
+      // bookkeeping, which the footer below would otherwise inherit and draw at
+      // eleven percent.
+      doc.fillOpacity(1);
     }
 
     const parts = [runningTitle];

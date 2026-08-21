@@ -18,6 +18,7 @@ import { listSignatures } from '../repos/signatures.js';
 import { listAiJobs } from '../repos/aiJobs.js';
 import { listDecisions } from '../repos/methodologyDecisions.js';
 import { listQaReviews } from '../repos/qaReviews.js';
+import { deliverablePdf } from './reports.js';
 import { listScenarios } from '../repos/scenarios.js';
 import { listComparableItems } from '../repos/comparableItems.js';
 import { impliedMultiples } from '../domain/comparables.js';
@@ -125,7 +126,26 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const latestRendered = versions.find((v) => v.has_pdf);
     if (report && latestRendered) {
       const full = await getVersion(deps.pool, report.id, latestRendered.version);
-      if (full?.pdf) renderedPdf = { name: `report-v${full.version}.pdf`, data: full.pdf };
+      if (full?.pdf) {
+        /*
+         * Through the same decision the two download routes use, rather than
+         * shipping the stored bytes.
+         *
+         * The bundle's reader is an auditor, and an auditor is exactly who a
+         * draft must not reach unmarked — a bundle assembled while the
+         * engagement is still in review carries a report nobody has signed.
+         * The stored bytes are the deliverable and carry no stamp by design
+         * (see `deliverablePdf`), so shipping them straight out is the one
+         * place the mark would have gone missing without anyone downstream
+         * being able to tell.
+         */
+        const data = await deliverablePdf(deps.pool, valuation, report, full, {
+          actorType: 'system',
+          actorId: principal.id,
+          source: 'evidence-bundle',
+        });
+        renderedPdf = { name: `report-v${full.version}.pdf`, data };
+      }
     }
 
     const generatedAt = new Date();

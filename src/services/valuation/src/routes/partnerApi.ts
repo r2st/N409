@@ -48,6 +48,7 @@ import { findPartnerIdentity } from '../repos/branding.js';
 import { findApiTokenById } from '../repos/apiTokens.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { findReportByValuation, getVersion, listVersions } from '../repos/reports.js';
+import { deliverablePdf } from './reports.js';
 import { MAX_DOCUMENT_BYTES, rethrowRejectedUpload, storeDocument } from './documents.js';
 import type { ScanPolicy } from '../documents/virusScan.js';
 import { checkUploadType } from '../documents/fileType.js';
@@ -1106,13 +1107,29 @@ export function registerPartnerApiRoutes(
       if (!report || !rendered) throw problems.notFound('No rendered report yet');
       const full = await getVersion(deps.pool, report.id, rendered.version);
       if (!full?.pdf) throw problems.notFound('No rendered report yet');
+      /*
+       * Through the same render-or-reuse decision the session API uses, rather
+       * than sending `full.pdf` straight out.
+       *
+       * This channel is the one that most needs it. A partner's integration
+       * pulls the deliverable on the `valuation.published` webhook — that is
+       * what the endpoint is for — so the very first read of these bytes is
+       * the read that happens seconds after the stamp stopped being true, and
+       * it lands in the partner's own document store where nothing will ever
+       * revisit it.
+       */
+      const pdf = await deliverablePdf(deps.pool, valuation, report, full, {
+        actorType: 'system',
+        actorId: principal.id,
+        source: 'partner-api-report.pdf',
+      });
       return reply
         .header('content-type', 'application/pdf')
         .header(
           'content-disposition',
           `attachment; filename="report-${valuation.number}-v${full.version}.pdf"`,
         )
-        .send(full.pdf);
+        .send(pdf);
     },
   );
 
