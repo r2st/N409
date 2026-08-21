@@ -43,11 +43,18 @@ function subscribe(key: string, onChange: () => void): () => void {
   }
   set.add(onChange);
   return () => {
-    set.delete(onChange);
+    // Re-read rather than closing over `set`. If this key's entry has already
+    // been dropped and remade — a cleanup and a re-subscribe, which is exactly
+    // what React does on a StrictMode remount — the captured Set is nobody's
+    // any more, and finding it empty would delete the *live* entry that
+    // replaced it along with the version somebody is currently holding.
+    const live = listeners.get(key);
+    if (!live) return;
+    live.delete(onChange);
     // Drop the entry with its last reader. The key is a valuation id, so a long
     // session that visits many engagements would otherwise accumulate one entry
     // per visit — small, but unbounded, and nothing would ever read them again.
-    if (set.size === 0) {
+    if (live.size === 0) {
       listeners.delete(key);
       versions.delete(key);
     }
@@ -69,7 +76,16 @@ export function useRowVersion(key: string): [number | undefined, (version: numbe
   );
   const set = useCallback(
     (next: number | undefined) => {
-      if (versions.get(key) === next && versions.has(key)) return;
+      const current = versions.get(key);
+      if (current === next && versions.has(key)) return;
+      // A row's version only ever goes up, so a *lower* number is not news — it
+      // is a reply that was already stale when it arrived. Panels reload after
+      // they save, and a read issued before somebody else's write can land
+      // after it: without this, WaccPanel's post-save reload could hand the
+      // methodology form the version it held two writes ago, and the next save
+      // would be refused for a change nobody made since. Clearing to
+      // `undefined` stays allowed — that is "no opinion", not an older one.
+      if (typeof current === 'number' && typeof next === 'number' && next < current) return;
       versions.set(key, next);
       for (const listener of listeners.get(key) ?? []) listener();
     },

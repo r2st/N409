@@ -85,6 +85,26 @@ describe('useRowVersion', () => {
     expect(shown('b')).toBe('none');
   });
 
+  /**
+   * A row's version only goes up. A panel that reloads after saving can have
+   * its read answered *after* somebody else's write lands, and the number it
+   * comes back with was already history — adopting it would refuse the next
+   * save for a change nobody made since.
+   */
+  it('ignores a version older than the one it is holding', () => {
+    render(<Reader id="v1" name="a" />);
+    act(() => setters.a!(9));
+    act(() => setters.a!(7));
+    expect(shown('a')).toBe('9');
+  });
+
+  it('still takes a newer version', () => {
+    render(<Reader id="v1" name="a" />);
+    act(() => setters.a!(9));
+    act(() => setters.a!(10));
+    expect(shown('a')).toBe('10');
+  });
+
   it('keeps the version while another reader is still mounted', () => {
     const view = render(
       <>
