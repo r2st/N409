@@ -292,7 +292,14 @@ export async function convertIntakeLink(
     if (patchEntries.length > 0) {
       const sets = patchEntries.map(([key], i) => `${key} = $${i + 1}`);
       await client.query(
-        `UPDATE valuation_params SET ${sets.join(', ')}, updated_at = now()
+        // `version = version + 1` on a row created four statements ago, which
+        // no client can be holding: harmless here, and the point. The columns
+        // this seeds are methodology columns, and a *locked* row's methodology
+        // columns are exactly what the Params form asserts it has not missed
+        // (migration 0158). Whether a given writer is safe to skip the bump is
+        // a fact about its call site, not about its SQL, and call sites move.
+        // Every UPDATE of this table moves the counter, so nobody has to check.
+        `UPDATE valuation_params SET ${sets.join(', ')}, updated_at = now(), version = version + 1
           WHERE valuation_id = $${patchEntries.length + 1}`,
         [...patchEntries.map(([, value]) => value), valuation.id],
       );
