@@ -1196,3 +1196,76 @@
 #            `npm test` runs `vitest run` without `--coverage`, so the floor only
 #            bites when somebody asks for it. This round moved it to 95.07%
 #            without addressing the cause.
+# closed:    the coverage floor recorded above, and the reason it was invisible
+#            was wrong in a way worth naming: CI *does* run `vitest run
+#            --coverage` against each package as its own step, so that step had
+#            been failing, not sleeping. Combined with `npm run format:check`
+#            failing on 131 files — `.prettierrc.json` has said `printWidth:
+#            110` since M0 and never moved, while a great many files were
+#            written wrapped at 100 — the Node CI job was red end to end and had
+#            been for a long time. That is the worst state for a gate: it
+#            reports nothing about the change in front of it, so nobody reads
+#            it, so the next real failure lands in the same red. `startup.ts`
+#            (the boot gate: `awaitDependencies` decides whether the process
+#            comes up, `StartupGate` whether /ready goes green) and
+#            `registerPermissionsPolicy` are now covered, the systemdEnv
+#            parser's reachable branches closed, and `**/scratchpad/**` excluded
+#            after a gitignored `probe.mjs` left inside the package by a session
+#            running from the wrong cwd cost the local figure most of a point
+#            that CI never saw. 99.79 / 96.69 / 100 / 99.79, floor ratcheted to
+#            99.5/96.5/100/99.5 behind it.
+# closed:    "430 routes with zero Fastify JSON-schema validation, hand-validated
+#            via casts only" does not survive measurement. 81 of the valuation
+#            service's 95 route files import zod, 227 `safeParse` call sites in
+#            all, and the only `body as` casts left are the three webhook
+#            endpoints taking a raw Buffer on purpose so a signature can be
+#            verified over the exact bytes. Fastify schemas would be a second
+#            layer, not a first. What the sweep did find is one route on the
+#            wrong side of the line: `capTableSync.ts` read the pull body with
+#            the throwing `PullBody.parse()`. A ZodError is not an `ApiProblem`
+#            and carries no `statusCode`, so `registerProblemHandler` takes the
+#            500 branch — a client that sent `{"apply":"yes"}` is told the
+#            server failed and told by the status to retry a body that can never
+#            be accepted, and the operator gets an `unhandled error` line and a
+#            5xx bump for someone else's typo. Now `safeParse` and a 422.
+#            `zodThrowingParseSweep` closes the class by resolving the receiver
+#            to a zod schema declared in the same file, so `JSON.parse`,
+#            `Number.parseInt` and the domain parsers sharing the name are not
+#            swept up; verified against the unfixed source, it names the file
+#            and the call. Deliberately *not* done: a blanket ZodError branch in
+#            the shared error handler — a ZodError raised while parsing a
+#            provider's response is a genuine upstream fault, and rendering that
+#            as "your request is invalid" would misdiagnose an outage as a
+#            client bug. The 500 is honest there; it was only wrong for a body.
+# closed:    the backups had never been restored. `n409-backup-verify.{service,
+#            timer}` had been in the repo since R84, fully written and
+#            documented, and were never copied to the host — 7 daily and 4
+#            weekly dumps on disk, every one well-formed, not one ever restored.
+#            Installing it surfaced why it would not have worked anyway: the
+#            unit runs as `n409` and resolves DATABASE_URL from /opt/N409/.env,
+#            so it connects as the application role, which has no attributes at
+#            all, CREATEDB included. The first run answered `permission denied
+#            to create database` — which at 04:00 on a Sunday reads like a
+#            broken backup rather than a missing privilege. Granting CREATEDB to
+#            the application role was the one-line fix and the wrong one: that
+#            credential is held by the internet-facing service. Instead a
+#            dedicated `n409_verify` with LOGIN and CREATEDB and nothing else,
+#            its URL in /etc/n409/backup-verify.env (0640 root:n409, outside the
+#            repo because it holds a password), listed *after* /opt/N409/.env so
+#            it wins and without a `-` so a host lacking it fails to start with
+#            the cause named. The unit's `[Install]` section is dropped: the
+#            timer is what gets enabled, and a `WantedBy=` additionally lets
+#            `systemctl enable` on the service schedule a full restore at every
+#            boot. Verified on the host, not assumed — `--quick` passes 11 dumps
+#            (0 failed, 4 predating the manifest) and the full restore reports
+#            VERIFIED: 100 tables, 126 migrations, spine tables read back
+#            non-empty, scratch database dropped. First restore this platform
+#            has ever performed.
+# gap:       the verification credential is provisioned by hand and lives only
+#            on the host. Nothing in the repo or in `deploy.sh` creates the
+#            `n409_verify` role or writes /etc/n409/backup-verify.env, and
+#            `deploy.sh` does not manage systemd units at all — the five service
+#            units on the box are dated 21 Jul, from the original provisioning,
+#            and every unit change since has been a manual `scp`. That is what
+#            let the verify pair sit in the repository for five days without
+#            being installed, and it will do it again to the next unit.
