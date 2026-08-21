@@ -33,6 +33,16 @@ describe('parseEnvironmentFile — the ordinary readings', () => {
     expect(vars("A='a\\tb'")).toEqual({ A: 'a\\tb' });
   });
 
+  it('undoes each C escape systemd honours, and passes an unknown one through', () => {
+    // The set is small and closed: anything not on it is the bare character,
+    // which is how `\$` survives in a password (see the trap below).
+    expect(vars('A="a\\nb"')).toEqual({ A: 'a\nb' });
+    expect(vars('A="a\\rb"')).toEqual({ A: 'a\rb' });
+    expect(vars('A="a\\\\b"')).toEqual({ A: 'a\\b' });
+    expect(vars('A="a\\"b"')).toEqual({ A: 'a"b' });
+    expect(vars('A="a\\zb"')).toEqual({ A: 'azb' });
+  });
+
   it('trims an unquoted value', () => {
     expect(vars('A=  spaced  \n')).toEqual({ A: 'spaced' });
   });
@@ -111,6 +121,13 @@ describe('parseEnvironmentFile — the traps', () => {
     expect(parsed.problems[0]!.message).toContain('not a valid environment variable name');
   });
 
+  it('keeps a line that ends the file on a continuation', () => {
+    // No newline follows the backslash, so the loop exits with the line still
+    // buffered. Dropping it would silently lose the last assignment in a file
+    // an editor did not terminate.
+    expect(vars('A=one\\')).toEqual({ A: 'one' });
+  });
+
   it('reports the physical line a continuation started on', () => {
     const parsed = parseEnvironmentFile('A=1\nB=x\\\ny\nexport C=2\n');
     expect(parsed.problems[0]!.line).toBe(4);
@@ -159,6 +176,49 @@ describe('parseUnitFile', () => {
   it('splits several assignments on one Environment= line, respecting quotes', () => {
     const parsed = parseUnitFile('[Service]\nEnvironment=A=1 B="two words" C=3\n');
     expect(Object.fromEntries(parsed.environment)).toEqual({ A: '1', B: 'two words', C: '3' });
+  });
+});
+
+describe('parseUnitFile — the malformed lines it has to survive', () => {
+  it('skips a [Service] line with no = at all', () => {
+    const parsed = parseUnitFile('[Service]\nExecStart\nEnvironment=A=1\n');
+    expect(Object.fromEntries(parsed.environment)).toEqual({ A: '1' });
+  });
+
+  it('skips a bare token on an Environment= line', () => {
+    // `B` is not an assignment; systemd ignores it rather than setting it empty.
+    const parsed = parseUnitFile('[Service]\nEnvironment=A=1 B C=3\n');
+    expect(Object.fromEntries(parsed.environment)).toEqual({ A: '1', C: '3' });
+  });
+
+  it('skips an Environment= name systemd would not accept', () => {
+    const parsed = parseUnitFile('[Service]\nEnvironment=1BAD=x A-B=y OK=z\n');
+    expect(Object.fromEntries(parsed.environment)).toEqual({ OK: 'z' });
+  });
+
+  it('keeps an escaped quote inside a quoted Environment= value', () => {
+    const parsed = parseUnitFile('[Service]\nEnvironment=A="say \\"hi\\" now" B=2\n');
+    expect(Object.fromEntries(parsed.environment)).toEqual({ A: 'say "hi" now', B: '2' });
+  });
+
+  it('leaves a value too short to be quoted alone', () => {
+    // A single `"` is not an opening and a closing quote, so `unquote` has to
+    // measure before it slices — otherwise it returns the empty string for a
+    // value that is genuinely one character.
+    const parsed = parseUnitFile('[Service]\nEnvironment=A="\n');
+    expect(parsed.environment.get('A')).toBe('"');
+  });
+
+  it('lets an unterminated quote swallow the rest of the line, as systemd does', () => {
+    const parsed = parseUnitFile(['[Service]', "Environment=A=' B=2", ''].join('\n'));
+    expect(Object.fromEntries(parsed.environment)).toEqual({ A: "' B=2" });
+  });
+
+  it('ignores a section header that is not [Service] and keeps reading after it', () => {
+    const parsed = parseUnitFile(
+      '[Service]\nEnvironment=A=1\n[Install]\nEnvironment=B=2\n[Service]\nEnvironment=C=3\n',
+    );
+    expect(Object.fromEntries(parsed.environment)).toEqual({ A: '1', C: '3' });
   });
 });
 
