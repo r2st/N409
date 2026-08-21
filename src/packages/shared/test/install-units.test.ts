@@ -92,190 +92,216 @@ function installed(name: string): string {
   return readFileSync(path.join(dest, name), 'utf8');
 }
 
-describe('bringing the host in step with the checkout', () => {
-  it('installs a unit the host does not have', () => {
-    source('n409-web.service', '[Service]\nExecStart=/usr/bin/node dist/index.js\n');
-    const run = install();
-    expect(run.status).toBe(0);
-    expect(installed('n409-web.service')).toContain('ExecStart=/usr/bin/node');
-    expect(run.stderr).toContain('n409-web.service: not installed');
-  });
+/**
+ * These tests spawn a real bash interpreter, which then spawns several stubbed
+ * binaries per run. In isolation each takes well under a second; run alongside
+ * the other 40-odd files in this package they contend for process slots and can
+ * cross vitest's 5s default, which surfaces as a timeout rather than as a
+ * failure of anything the test is about. The budget is generous on purpose —
+ * it is a ceiling for a hang, not a performance assertion.
+ */
+const SPAWN_TIMEOUT = 30_000;
 
-  it('replaces a unit whose bytes differ', () => {
-    source('n409-web.service', 'new\n');
-    writeFileSync(path.join(dest, 'n409-web.service'), 'old\n');
-    const run = install();
-    expect(installed('n409-web.service')).toBe('new\n');
-    expect(run.stderr).toContain('differs from this checkout');
-  });
-
-  // The regression, stated as itself. This is the byte that was missing from
-  // the production host for four weeks, and the only reason it was missing is
-  // that nothing ever copied the file.
-  it('carries engine-wrapper APP_ENV=production across from the real checkout', () => {
-    const run = install({ SOURCE_DIRS: path.join(repoRoot, 'infra/systemd') });
-    expect(run.status).toBe(0);
-    expect(installed('n409-engine-wrapper.service')).toContain('Environment=APP_ENV=production');
-  });
-
-  it('installs every unit the real checkout carries, services and timers alike', () => {
-    const run = install({
-      SOURCE_DIRS: [path.join(repoRoot, 'infra/systemd'), path.join(repoRoot, 'infra/backup')].join(' '),
+describe(
+  'bringing the host in step with the checkout',
+  () => {
+    it('installs a unit the host does not have', () => {
+      source('n409-web.service', '[Service]\nExecStart=/usr/bin/node dist/index.js\n');
+      const run = install();
+      expect(run.status).toBe(0);
+      expect(installed('n409-web.service')).toContain('ExecStart=/usr/bin/node');
+      expect(run.stderr).toContain('n409-web.service: not installed');
     });
-    expect(run.status).toBe(0);
-    expect(readdirSync(dest).sort()).toEqual([
-      'n409-ai.service',
-      'n409-backup-verify.service',
-      'n409-backup-verify.timer',
-      'n409-backup.service',
-      'n409-backup.timer',
-      'n409-engine-wrapper.service',
-      'n409-report.service',
-      'n409-valuation.service',
-      'n409-web.service',
-    ]);
-  });
 
-  it('leaves a unit that already matches untouched', () => {
-    source('n409-web.service', 'same\n');
-    writeFileSync(path.join(dest, 'n409-web.service'), 'same\n');
-    const run = install();
-    expect(run.stderr).toContain('already match this checkout');
-    expect(run.stderr).not.toContain('replacing');
-  });
+    it('replaces a unit whose bytes differ', () => {
+      source('n409-web.service', 'new\n');
+      writeFileSync(path.join(dest, 'n409-web.service'), 'old\n');
+      const run = install();
+      expect(installed('n409-web.service')).toBe('new\n');
+      expect(run.stderr).toContain('differs from this checkout');
+    });
 
-  // `cp` truncates the destination before writing it, so a failure mid-write
-  // leaves a unit systemd cannot parse. The write goes to a temp path and is
-  // moved into place; nothing should be left behind either way.
-  it('leaves no temp files behind', () => {
-    source('n409-web.service', 'new\n');
-    install();
-    expect(readdirSync(dest)).toEqual(['n409-web.service']);
-  });
-});
+    // The regression, stated as itself. This is the byte that was missing from
+    // the production host for four weeks, and the only reason it was missing is
+    // that nothing ever copied the file.
+    it('carries engine-wrapper APP_ENV=production across from the real checkout', () => {
+      const run = install({ SOURCE_DIRS: path.join(repoRoot, 'infra/systemd') });
+      expect(run.status).toBe(0);
+      expect(installed('n409-engine-wrapper.service')).toContain('Environment=APP_ENV=production');
+    });
 
-describe('telling systemd about it', () => {
-  it('reloads exactly once when anything changed', () => {
-    source('a.service', 'a\n');
-    source('b.service', 'b\n');
-    const run = install();
-    expect(run.systemctl.filter((c) => c === 'daemon-reload')).toHaveLength(1);
-  });
+    it('installs every unit the real checkout carries, services and timers alike', () => {
+      const run = install({
+        SOURCE_DIRS: [path.join(repoRoot, 'infra/systemd'), path.join(repoRoot, 'infra/backup')].join(' '),
+      });
+      expect(run.status).toBe(0);
+      expect(readdirSync(dest).sort()).toEqual([
+        'n409-ai.service',
+        'n409-backup-verify.service',
+        'n409-backup-verify.timer',
+        'n409-backup.service',
+        'n409-backup.timer',
+        'n409-engine-wrapper.service',
+        'n409-report.service',
+        'n409-valuation.service',
+        'n409-web.service',
+      ]);
+    });
 
-  // Not merely wasteful: a reload is the only thing standing between a changed
-  // unit file and a `systemctl restart` that silently runs the previous one, so
-  // it has to be tied to "something changed" rather than to "the script ran".
-  it('does not reload when nothing changed', () => {
-    source('n409-web.service', 'same\n');
-    writeFileSync(path.join(dest, 'n409-web.service'), 'same\n');
-    const run = install();
-    expect(run.systemctl).not.toContain('daemon-reload');
-  });
+    it('leaves a unit that already matches untouched', () => {
+      source('n409-web.service', 'same\n');
+      writeFileSync(path.join(dest, 'n409-web.service'), 'same\n');
+      const run = install();
+      expect(run.stderr).toContain('already match this checkout');
+      expect(run.stderr).not.toContain('replacing');
+    });
 
-  it('reloads before it enables or restarts anything', () => {
-    source('n409-backup.timer', 'timer\n');
-    const run = install();
-    expect(run.systemctl[0]).toBe('daemon-reload');
-  });
+    // `cp` truncates the destination before writing it, so a failure mid-write
+    // leaves a unit systemd cannot parse. The write goes to a temp path and is
+    // moved into place; nothing should be left behind either way.
+    it('leaves no temp files behind', () => {
+      source('n409-web.service', 'new\n');
+      install();
+      expect(readdirSync(dest)).toEqual(['n409-web.service']);
+    });
+  },
+  SPAWN_TIMEOUT,
+);
 
-  // Enable is about the box surviving a reboot, not about the changed set: a
-  // unit can be current on disk and wanted by no target at all.
-  it('enables every unit, changed or not', () => {
-    source('n409-web.service', 'same\n');
-    source('n409-ai.service', 'new\n');
-    writeFileSync(path.join(dest, 'n409-web.service'), 'same\n');
-    const run = install();
-    expect(run.systemctl).toContain('enable n409-web.service');
-    expect(run.systemctl).toContain('enable n409-ai.service');
-  });
+describe(
+  'telling systemd about it',
+  () => {
+    it('reloads exactly once when anything changed', () => {
+      source('a.service', 'a\n');
+      source('b.service', 'b\n');
+      const run = install();
+      expect(run.systemctl.filter((c) => c === 'daemon-reload')).toHaveLength(1);
+    });
 
-  it('survives a unit that cannot be enabled', () => {
-    source('n409-web.service', 'x\n');
-    writeFileSync(
-      path.join(bin, 'systemctl'),
-      [
-        '#!/usr/bin/env bash',
-        `printf 'systemctl %s\\n' "$*" >> "$TRANSCRIPT"`,
-        '[[ "$1" == enable ]] && exit 1',
-        'exit 0',
-      ].join('\n') + '\n',
-      { mode: 0o755 },
-    );
-    const run = install();
-    expect(run.status).toBe(0);
-    expect(run.stderr).toContain('enable failed');
-  });
-});
+    // Not merely wasteful: a reload is the only thing standing between a changed
+    // unit file and a `systemctl restart` that silently runs the previous one, so
+    // it has to be tied to "something changed" rather than to "the script ran".
+    it('does not reload when nothing changed', () => {
+      source('n409-web.service', 'same\n');
+      writeFileSync(path.join(dest, 'n409-web.service'), 'same\n');
+      const run = install();
+      expect(run.systemctl).not.toContain('daemon-reload');
+    });
 
-describe('what gets restarted, and what emphatically does not', () => {
-  // A timer's schedule lives in its unit file, so a changed .timer that is
-  // never restarted keeps firing on the old one — applied in appearance only.
-  it('re-arms a timer whose schedule changed', () => {
-    source('n409-backup.timer', 'OnCalendar=daily\n');
-    writeFileSync(path.join(dest, 'n409-backup.timer'), 'OnCalendar=weekly\n');
-    const run = install();
-    expect(run.systemctl).toContain('restart n409-backup.timer');
-  });
+    it('reloads before it enables or restarts anything', () => {
+      source('n409-backup.timer', 'timer\n');
+      const run = install();
+      expect(run.systemctl[0]).toBe('daemon-reload');
+    });
 
-  it('leaves an unchanged timer alone', () => {
-    source('n409-backup.timer', 'same\n');
-    writeFileSync(path.join(dest, 'n409-backup.timer'), 'same\n');
-    const run = install();
-    expect(run.systemctl.join('\n')).not.toContain('restart');
-  });
+    // Enable is about the box surviving a reboot, not about the changed set: a
+    // unit can be current on disk and wanted by no target at all.
+    it('enables every unit, changed or not', () => {
+      source('n409-web.service', 'same\n');
+      source('n409-ai.service', 'new\n');
+      writeFileSync(path.join(dest, 'n409-web.service'), 'same\n');
+      const run = install();
+      expect(run.systemctl).toContain('enable n409-web.service');
+      expect(run.systemctl).toContain('enable n409-ai.service');
+    });
 
-  // deploy.sh section 6 owns the application restarts, because it owns the
-  // ordering that matters — valuation first, since it runs the migrations.
-  // Restarting them here would restart them in alphabetical order instead.
-  it('does not restart an application service it just replaced', () => {
-    source('n409-valuation.service', 'new\n');
-    writeFileSync(path.join(dest, 'n409-valuation.service'), 'old\n');
-    const run = install();
-    expect(run.systemctl.join('\n')).not.toContain('restart n409-valuation.service');
-  });
+    it('survives a unit that cannot be enabled', () => {
+      source('n409-web.service', 'x\n');
+      writeFileSync(
+        path.join(bin, 'systemctl'),
+        [
+          '#!/usr/bin/env bash',
+          `printf 'systemctl %s\\n' "$*" >> "$TRANSCRIPT"`,
+          '[[ "$1" == enable ]] && exit 1',
+          'exit 0',
+        ].join('\n') + '\n',
+        { mode: 0o755 },
+      );
+      const run = install();
+      expect(run.status).toBe(0);
+      expect(run.stderr).toContain('enable failed');
+    });
+  },
+  SPAWN_TIMEOUT,
+);
 
-  // The sharpest one. These two are Type=oneshot bodies that their timers
-  // trigger; "restarting" n409-backup.service does not apply a change, it takes
-  // a database backup, and n409-backup-verify.service starts a restore
-  // rehearsal against a scratch database. Neither belongs in a deploy.
-  it.each(['n409-backup.service', 'n409-backup-verify.service'])('never restarts %s', (unit) => {
-    source(unit, 'new\n');
-    writeFileSync(path.join(dest, unit), 'old\n');
-    const run = install();
-    expect(installed(unit)).toBe('new\n');
-    expect(run.systemctl.join('\n')).not.toContain(`restart ${unit}`);
-  });
-});
+describe(
+  'what gets restarted, and what emphatically does not',
+  () => {
+    // A timer's schedule lives in its unit file, so a changed .timer that is
+    // never restarted keeps firing on the old one — applied in appearance only.
+    it('re-arms a timer whose schedule changed', () => {
+      source('n409-backup.timer', 'OnCalendar=daily\n');
+      writeFileSync(path.join(dest, 'n409-backup.timer'), 'OnCalendar=weekly\n');
+      const run = install();
+      expect(run.systemctl).toContain('restart n409-backup.timer');
+    });
 
-describe('refusing to guess', () => {
-  it('fails when the destination does not exist', () => {
-    const run = install({ UNIT_DEST: path.join(work, 'nope') });
-    expect(run.status).not.toBe(0);
-    expect(run.stderr).toContain('does not look like a systemd box');
-  });
+    it('leaves an unchanged timer alone', () => {
+      source('n409-backup.timer', 'same\n');
+      writeFileSync(path.join(dest, 'n409-backup.timer'), 'same\n');
+      const run = install();
+      expect(run.systemctl.join('\n')).not.toContain('restart');
+    });
 
-  it('fails when a source directory does not exist', () => {
-    const run = install({ SOURCE_DIRS: path.join(work, 'nope') });
-    expect(run.status).not.toBe(0);
-    expect(run.stderr).toContain('not a directory');
-  });
+    // deploy.sh section 6 owns the application restarts, because it owns the
+    // ordering that matters — valuation first, since it runs the migrations.
+    // Restarting them here would restart them in alphabetical order instead.
+    it('does not restart an application service it just replaced', () => {
+      source('n409-valuation.service', 'new\n');
+      writeFileSync(path.join(dest, 'n409-valuation.service'), 'old\n');
+      const run = install();
+      expect(run.systemctl.join('\n')).not.toContain('restart n409-valuation.service');
+    });
 
-  // A SOURCE_DIRS that resolves to nothing would otherwise be a silent success
-  // that installs no units at all — the same "reported healthy, did nothing"
-  // shape as the drift this script exists to close.
-  it('fails when the source directories hold no units', () => {
-    const run = install();
-    expect(run.status).not.toBe(0);
-    expect(run.stderr).toContain('no .service or .timer files found');
-    expect(existsSync(path.join(dest, 'n409-web.service'))).toBe(false);
-  });
+    // The sharpest one. These two are Type=oneshot bodies that their timers
+    // trigger; "restarting" n409-backup.service does not apply a change, it takes
+    // a database backup, and n409-backup-verify.service starts a restore
+    // rehearsal against a scratch database. Neither belongs in a deploy.
+    it.each(['n409-backup.service', 'n409-backup-verify.service'])('never restarts %s', (unit) => {
+      source(unit, 'new\n');
+      writeFileSync(path.join(dest, unit), 'old\n');
+      const run = install();
+      expect(installed(unit)).toBe('new\n');
+      expect(run.systemctl.join('\n')).not.toContain(`restart ${unit}`);
+    });
+  },
+  SPAWN_TIMEOUT,
+);
 
-  // Collected before anything is written, so a bad directory late in the list
-  // does not leave the estate half-rewritten.
-  it('writes nothing when a later source directory is bad', () => {
-    source('n409-web.service', 'new\n');
-    const run = install({ SOURCE_DIRS: `${src} ${path.join(work, 'nope')}` });
-    expect(run.status).not.toBe(0);
-    expect(readdirSync(dest)).toEqual([]);
-  });
-});
+describe(
+  'refusing to guess',
+  () => {
+    it('fails when the destination does not exist', () => {
+      const run = install({ UNIT_DEST: path.join(work, 'nope') });
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain('does not look like a systemd box');
+    });
+
+    it('fails when a source directory does not exist', () => {
+      const run = install({ SOURCE_DIRS: path.join(work, 'nope') });
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain('not a directory');
+    });
+
+    // A SOURCE_DIRS that resolves to nothing would otherwise be a silent success
+    // that installs no units at all — the same "reported healthy, did nothing"
+    // shape as the drift this script exists to close.
+    it('fails when the source directories hold no units', () => {
+      const run = install();
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain('no .service or .timer files found');
+      expect(existsSync(path.join(dest, 'n409-web.service'))).toBe(false);
+    });
+
+    // Collected before anything is written, so a bad directory late in the list
+    // does not leave the estate half-rewritten.
+    it('writes nothing when a later source directory is bad', () => {
+      source('n409-web.service', 'new\n');
+      const run = install({ SOURCE_DIRS: `${src} ${path.join(work, 'nope')}` });
+      expect(run.status).not.toBe(0);
+      expect(readdirSync(dest)).toEqual([]);
+    });
+  },
+  SPAWN_TIMEOUT,
+);

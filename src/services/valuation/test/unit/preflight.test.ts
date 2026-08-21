@@ -5,6 +5,9 @@
 // read, before anything restarts — the piece whose absence let a
 // STRIPE_SECRET_KEY with no STRIPE_WEBHOOK_SECRET sit in production for 324
 // commits, taking money that no webhook could fulfil, until an outage found it.
+import { readdirSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { KNOWN_UNITS, formatFaults, preflight } from '../../src/preflight.js';
 
@@ -49,6 +52,10 @@ function run(options: RunOptions = {}) {
       return text;
     },
     statFile: () => options.mode ?? 0o100600,
+    // The fixture map *is* the directory. Without this the sweep for units the
+    // checker has no guard for would read a `/units` that does not exist, come
+    // back empty, and pass every test by never looking at anything.
+    readDir: () => Object.keys(units),
   });
 }
 
@@ -472,5 +479,45 @@ describe('the production posture each unit declares', () => {
     const result = run({ units: withoutMarker('n409-ai.service') });
     const posture = result.faults.filter((f) => f.message.includes('not "production"'));
     expect(posture).toHaveLength(1);
+  });
+});
+
+// Everything else in this file iterates KNOWN_UNITS — the checker's own list.
+// A unit file added to `infra/systemd/` and not to that list is installed onto
+// the host by infra/install-units.sh, started by systemd, and validated by
+// nothing, while the CLI goes on reporting every unit as checked. Same vacuity
+// as a unit that forgets to declare production, one level up: a check scoped to
+// a hardcoded list narrows to nothing the moment reality grows past it.
+describe('units on disk the checker has no guard for', () => {
+  it('is a fault, naming what to do about it', () => {
+    const units = { ...UNITS, 'n409-newthing.service': '[Service]\nEnvironment=NODE_ENV=production\n' };
+    const text = messages({ units });
+    expect(text).toContain('n409-newthing.service');
+    expect(text).toContain('has no guard in this checker');
+  });
+
+  // The real directory, which is the only version of this test that can catch
+  // the sixth unit on the day somebody adds it.
+  it('does not fire on the units this repo actually ships', () => {
+    const dir = path.resolve(fileURLToPath(import.meta.url), '../../../../../../infra/systemd');
+    const onDisk = readdirSync(dir).filter((f) => f.endsWith('.service'));
+    expect(onDisk.sort()).toEqual([...KNOWN_UNITS].sort());
+  });
+
+  // Timers have no environment to validate and no guard to write; the backup
+  // pair lives in a different directory for exactly that reason.
+  it('ignores anything that is not a .service', () => {
+    const units = { ...UNITS, 'n409-backup.timer': '[Timer]\nOnCalendar=daily\n' };
+    expect(messages({ units })).toBe('');
+  });
+
+  // A unit that is *missing* is already a fault (see above); it must not also
+  // be reported as unknown, which would be the same absence counted twice.
+  it('does not double-report a unit that is in the list but not on disk', () => {
+    const { 'n409-ai.service': _dropped, ...units } = UNITS;
+    const result = run({ units });
+    const ai = result.faults.filter((f) => f.scope === 'n409-ai.service');
+    expect(ai).toHaveLength(1);
+    expect(ai[0]!.message).toContain('unit file is missing');
   });
 });

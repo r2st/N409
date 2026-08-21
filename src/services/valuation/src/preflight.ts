@@ -29,7 +29,7 @@
  * script restarts valuation first and would have found only the one that still
  * does.
  */
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { flagProblems, listenPort, mergeEnvSources, parseEnvironmentFile, parseUnitFile } from '@n409/shared';
 import { loadConfig } from './config.js';
@@ -183,6 +183,8 @@ export interface PreflightOptions {
   readFile?: (file: string) => string;
   /** File mode of the env file, for the permissions check. */
   statFile?: (file: string) => number | null;
+  /** Lists `unitDir`; injectable so the unit tests need no fixtures on disk. */
+  readDir?: (dir: string) => string[];
   /**
    * Environment the units inherit. Empty by default and deliberately NOT
    * `process.env`: the deploy runs this from a shell whose variables the
@@ -213,6 +215,15 @@ export function preflight(options: PreflightOptions): PreflightResult {
       }
     });
   const resolve = options.resolveEnvFile ?? ((declared: string) => declared);
+  const list =
+    options.readDir ??
+    ((dir: string) => {
+      try {
+        return readdirSync(dir);
+      } catch {
+        return [];
+      }
+    });
   const faults: PreflightFault[] = [];
   const units: string[] = [];
   /** Env files already reported on, so one shared `.env` is not reported five times. */
@@ -313,6 +324,34 @@ export function preflight(options: PreflightOptions): PreflightResult {
         faults.push({ scope: unitName, message });
       }
     }
+  }
+
+  // ── Units on disk that this checker has never heard of ──────────────────
+  //
+  // Everything above iterates KNOWN_UNITS, which is `Object.keys(GUARDS)` — the
+  // checker's own list. So a sixth unit file added to `infra/systemd/` is
+  // installed onto the host by `infra/install-units.sh` like every other one,
+  // started by systemd like every other one, and validated by nothing; and the
+  // CLI goes on printing "5 unit(s) validated, no configuration faults", which
+  // reads like coverage rather than like the gap it is.
+  //
+  // That is the same vacuity as a unit that forgets to declare production, one
+  // level up: a check whose scope is a hardcoded list silently narrows to
+  // nothing the moment reality grows past it. Stated positively here too — the
+  // directory is the estate, and a member of it with no guard is a fault, which
+  // is answered either by giving it one or by not shipping it in this
+  // directory.
+  const known = new Set(KNOWN_UNITS);
+  for (const entry of list(options.unitDir).sort()) {
+    if (!entry.endsWith('.service')) continue;
+    if (known.has(entry)) continue;
+    faults.push({
+      scope: entry,
+      message:
+        `is in ${options.unitDir} and has no guard in this checker — deploy.sh installs every unit in ` +
+        'that directory and restarts it, so this one boots unvalidated while the summary line still ' +
+        'reports every unit as checked. Add it to GUARDS in preflight.ts, or keep it out of this directory.',
+    });
   }
 
   return { faults, units };

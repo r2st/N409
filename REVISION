@@ -1269,3 +1269,98 @@
 #            and every unit change since has been a manual `scp`. That is what
 #            let the verify pair sit in the repository for five days without
 #            being installed, and it will do it again to the next unit.
+# closed:    `deploy.sh` did not manage systemd units, and the cost was live.
+#            `git archive` has carried infra/systemd/ onto the host since the
+#            first deploy and systemd has never read it — it reads
+#            /etc/systemd/system — so the two sets were joined by nothing but a
+#            human with scp. The box ran units dated 21 Jul against a repo that
+#            had moved on 14 Aug, and the line that had not travelled was
+#            engine-wrapper's `Environment=APP_ENV=production`. That is the
+#            switch that makes its INTERNAL_SERVICE_TOKEN guard mandatory rather
+#            than advisory: without it `enforce_token_configured` warns instead
+#            of refusing to boot, and `internal_token_middleware` returns
+#            `await call_next(request)` — unauthenticated — for every non-health
+#            route whenever the secret is unset. Confirmed on the host rather
+#            than inferred: /proc/<pid>/environ for n409-engine-wrapper had no
+#            APP_ENV at all while n409-ai's had it. The secret was set, so
+#            nothing was reachable; the safety net was simply not there, and any
+#            rotation that emptied the variable would have opened port 3003 to
+#            whatever could reach it.
+#            It was invisible from both ends, which is the part worth keeping.
+#            Section 4b validates `$REMOTE_DIR/infra/systemd` — the copy
+#            `git archive` had just unpacked — so preflight read the *correct*
+#            unit, found APP_ENV=production, and printed "5 unit(s) validated,
+#            no configuration faults" while the file systemd actually boots said
+#            otherwise. A checker pointed at a file nothing reads cannot fail.
+#            `infra/install-units.sh` makes the repo the authority: copy what
+#            differs (`cmp`, not mtime — a hand-edited unit and a re-unpacked
+#            one have equally meaningless timestamps), daemon-reload only when
+#            something moved, enable everything, re-arm changed timers. Written
+#            through a temp file and `mv` because `cp` truncates first and a
+#            failure mid-write leaves a unit systemd cannot parse. The five
+#            application services are left to section 6, which owns the ordering
+#            that matters; the two backup `.service` bodies are never restarted
+#            at all, because "restarting" them takes a database backup and
+#            starts a restore rehearsal rather than applying anything. Wired in
+#            after the preflight that validates them and before the restarts
+#            that put them into service, fatal like the build. First run
+#            replaced exactly the two drifted units and the second reported all
+#            nine already matching; APP_ENV=production is now in the live
+#            process environment.
+# closed:    the vacuity that let it hide, which is the more general finding.
+#            Every guard preflight runs is conditional on the unit declaring
+#            production — `requiresInternalToken` returns *no faults at all*
+#            when the marker is absent, and `loadConfig`'s production-only
+#            checks (the Stripe pairing, the known-example JWT secret,
+#            PUBLIC_BASE_URL) are gated the same way. So a unit that loses its
+#            marker does not fail the checker; it silently stops being checked,
+#            and reports clean while running with every production guard off.
+#            `declaresProduction` states it positively instead: deploy.sh
+#            deploys production and only production, so a unit it is about to
+#            install that does not claim to be production is a fault in its own
+#            right. Near-misses are rejected (`APP_ENV=prod` is not production to
+#            `is_production()`, which compares the literal string); case and a
+#            trailing space are accepted, because systemd strips the one and both
+#            services lowercase the other.
+#            Same shape one level up, found by looking for it: the loop iterates
+#            `KNOWN_UNITS`, which is `Object.keys(GUARDS)` — the checker's own
+#            list. A sixth unit added to infra/systemd/ would now be installed by
+#            install-units.sh and started by systemd and validated by nothing,
+#            while the summary line went on reporting every unit as checked. The
+#            directory is the estate now: a `.service` in it with no guard is a
+#            fault, and a test compares the real `infra/systemd` against
+#            KNOWN_UNITS so the day somebody adds one is the day it fails.
+# closed:    the verification credential recorded as a gap in R87. `n409_verify`
+#            and /etc/n409/backup-verify.env were created by hand and existed
+#            nowhere else — not in the repo, not in deploy.sh, not in terraform.
+#            `infra/backup/provision-verify-role.sh` is idempotent, and the
+#            question it asks to decide that is the point: not "does a role by
+#            this name exist" — a role whose password no longer matches the file
+#            passes that and fails on Sunday — but "can the credential in this
+#            file connect *and* CREATE DATABASE". Only the second catches the
+#            state that broke the first rehearsal, where LOGIN succeeds and the
+#            CREATE DATABASE after it does not. A host that answers yes is left
+#            alone, because rotating a working password every run is churn with
+#            a window in it: the unit reads that file, and the ALTER and the
+#            write cannot be simultaneous. It proves what it wrote by connecting
+#            as the new credential rather than reporting that the statements did
+#            not error, and strips every attribute but LOGIN and CREATEDB so an
+#            experiment that left SUPERUSER behind is not silently blessed.
+#            Verified against the live host: it read the hand-provisioned
+#            credential, found it working, and left the file's mtime alone.
+# checked:   the two premises this round was handed, both of which survive
+#            measurement without work. (1) Request validation: the R87 sweep
+#            covers valuation and report; the web BFF imports no zod and reads
+#            no request body at all (it is a proxy and a static server), and the
+#            Python pair validates with pydantic, which answers 422 on its own.
+#            A separate scan for handlers reading `request.body` with no
+#            validation in view returned nine hits and no bugs — six are the
+#            *engine* request body built from already-validated inputs, one is a
+#            signature computed over the raw bytes on purpose, one is SCIM going
+#            through `parseScimUser`, and `adminSso`'s label cast is guarded by
+#            a `typeof` and a `.slice(0, 200)`. (2) 409.ai parity: they advertise
+#            13 report types and this platform renders 15 through
+#            `renderReportPdf` (adding fund, debt and a generic FMV), and every
+#            marketing surface they have — calculator, sample report, guide,
+#            developer docs, the three educational pages, and all seven
+#            competitor comparison pages — is already a prerendered route here.
