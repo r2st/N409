@@ -1667,10 +1667,10 @@
 #            were already fixed, and an hour went into rediscovering that
 #            `dueCandidates` had been paged two rounds ago. Worth knowing
 #            before mining this file for work.
-# commit:    de9dc01
+# commit:    0cbb278
 # subject:   the action every guard was written for, which did not exist
 # previous:  1ca3df9 (the writes a withdrawn engagement accepted).
-# includes:  5 commits — R90, a production-readiness round that started with the
+# includes:  7 commits — R90, a production-readiness round that started with the
 #            three things R89 wrote down and ended by finding that the feature
 #            they all guard had no way to be triggered.
 #
@@ -1763,6 +1763,19 @@
 #              quiet, which from outside is indistinguishable from work still in
 #              progress.
 #
+#            c9a3d82 — two pages answering a question they had not been asked,
+#              the same shape as the load errors swept in rounds 12 and 16. The
+#              workbook kept its active sheet across a reload unconditionally,
+#              and the engine emits one sheet per weighted approach — so a
+#              recalculation that drops an approach left the tab naming a sheet
+#              that no longer existed and spinning forever over data it already
+#              had. The fix is on the *save* path as much as the load: the save
+#              adopts the PATCH response directly and never calls the loader, so
+#              fixing only the loader passes nothing. And the Help Center told a
+#              reader a CMS article did not exist when what had failed was the
+#              fetch — during an outage, which is when the article somebody
+#              wants is often the one about the thing that is broken.
+#
 # method:    the R89 route-table sweep earned its keep three times, and not the
 #            way it was designed to. It is written to catch a *write* that
 #            forgot its guard. What it actually caught this round was three
@@ -1779,6 +1792,15 @@
 #            phrased as "account for every X" catches the additions its author
 #            never imagined, while one phrased as "these known X are fine" only
 #            ever catches regressions.
+#
+# note:      the valuation coverage floors were re-measured and left alone
+#            (0cbb278). The comment beside them recorded statements/lines at
+#            97.51 and named branches the binding constraint; it is now 96.90
+#            and statements/lines is the tightest of the four, 0.9 points off
+#            its floor. Nothing regressed past a gate — but a measurement that
+#            has drifted away from the number written next to it is how a floor
+#            stops meaning anything, so it is written down for whoever ratchets
+#            next.
 #
 # note:      two comments that were true when written became false in the middle
 #            of this round and were fixed rather than left: the domain guard's
