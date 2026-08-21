@@ -2104,7 +2104,7 @@
 # commit:    75f0929
 # subject:   the version column half its own row was reading
 # previous:  c15a875 (a gap list is a hypothesis, and three of seven were closed).
-# includes:  5 commits — R93, on the edits that vanish. The round's finding was
+# includes:  6 commits — R93, on the edits that vanish. The round's finding was
 #            not a missing feature but a column and a set of routes that nobody
 #            had put side by side.
 #
