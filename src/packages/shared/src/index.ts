@@ -103,7 +103,7 @@ export {
   type Scheduler,
 } from './scheduler.js';
 export { listenHost, listenPort, DEFAULT_LISTEN_HOST } from './listen.js';
-export { trustedProxies, DEFAULT_TRUSTED_PROXIES } from './clientIp.js';
+export { trustedProxies, DEFAULT_TRUSTED_PROXIES, CLOUDFLARE_RANGES } from './clientIp.js';
 export { newUlid, isUlid } from './ids.js';
 export { isIsoCalendarDate, isoCalendarDateError } from './dates.js';
 export { E164_MAX_DIGITS, E164_MIN_DIGITS, e164Error, isE164, normalizeE164 } from './phone.js';
