@@ -31,6 +31,7 @@ import {
   type ResearchRegion,
   type ResearchTopic,
 } from '../domain/research.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Web-grounded market research (design §12.3).
@@ -212,6 +213,10 @@ export function registerResearchRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadOps(id, principal);
+    // A retired engagement does not spend the firm's AI budget or engine time.
+    // Placed before the body is parsed so the reason a caller gets back is the
+    // state of the file rather than whatever else was wrong with the request.
+    refuseIfRetired(valuation, 'accepting research runs');
 
     const parsed = RunBody.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -297,6 +302,7 @@ export function registerResearchRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadOps(id, principal);
+    refuseIfRetired(valuation, 'accepting research runs');
 
     const parsed = z.object({ region: z.enum(RESEARCH_REGIONS).default('un') }).safeParse(req.body ?? {});
     if (!parsed.success) throw problems.unprocessable('Invalid region');

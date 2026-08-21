@@ -9,6 +9,7 @@ import { findParams } from '../repos/params.js';
 import { buildCalculationInputs, engineParams } from './calculations.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /** The five levers the engine sensitivity endpoint understands. */
 const ENGINE_PARAMETERS = [
@@ -66,6 +67,7 @@ export function registerSensitivityRoutes(
     if (!isUlid(id)) throw problems.notFound();
     const valuation = await findValuationById(deps.pool, id);
     if (!valuation) throw problems.notFound();
+    refuseIfRetired(valuation, 'accepting sensitivity runs');
 
     const parsed = Body.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid assumptions', { errors: parsed.error.issues });
@@ -118,6 +120,7 @@ export function registerSensitivityRoutes(
     if (!isUlid(id)) throw problems.notFound();
     const valuation = await findValuationById(deps.pool, id);
     if (!valuation) throw problems.notFound();
+    refuseIfRetired(valuation, 'accepting sensitivity runs');
     const paramsRow = await findParams(deps.pool, id);
     if (!paramsRow) throw problems.notFound();
 

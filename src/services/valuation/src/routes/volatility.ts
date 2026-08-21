@@ -31,6 +31,7 @@ import {
   type VolatilityEngineResponse,
   type VolatilitySeries,
 } from '../domain/volatility.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Selected volatility — the derivation behind sigma.
@@ -221,6 +222,7 @@ export function registerVolatilityRoutes(
       const principal = requirePrincipal(req);
       const { id } = req.params as { id: string };
       const valuation = await loadOps(id, principal);
+      refuseIfRetired(valuation, 'accepting volatility estimates');
 
       const parsed = EstimateBody.safeParse(req.body ?? {});
       if (!parsed.success) {

@@ -58,6 +58,7 @@ import {
 } from '../domain/valuationTags.js';
 import { listValuationTags, upsertValuationTags } from '../repos/valuationTags.js';
 import { presentValuationTag } from './valuationTags.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * How long one AI pipeline call may take, end to end.
@@ -406,6 +407,10 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     }
     const typedPipeline = pipeline as AiPipeline;
     const valuation = await loadValuation(id);
+    // A retired engagement does not spend the firm's AI budget. Checked before
+    // the body is parsed, so the answer names the state of the file rather than
+    // whatever else the request got wrong.
+    refuseIfRetired(valuation, 'running AI pipelines');
     const documents = await listDocuments(deps.pool, id);
 
     if (pipeline === 'extract' && documents.length === 0) {
@@ -455,7 +460,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden('AI pipelines are operations-only');
     const { id } = req.params as { id: string };
-    await loadValuation(id);
+    refuseIfRetired(await loadValuation(id), 'applying AI results');
 
     const job = await latestSucceededJob(deps.pool, id, 'extract');
     const extracted = job?.result?.engine_inputs;
@@ -500,6 +505,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       if (!isOps(principal)) throw problems.forbidden('AI pipelines are operations-only');
       const { id } = req.params as { id: string };
       const valuation = await loadValuation(id);
+      refuseIfRetired(valuation, 'applying AI results');
 
       const job = await latestSucceededJob(deps.pool, id, 'comp_selection');
       if (!job) {
@@ -562,7 +568,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       const principal = requirePrincipal(req);
       if (!isOps(principal)) throw problems.forbidden('AI pipelines are operations-only');
       const { id } = req.params as { id: string };
-      await loadValuation(id);
+      refuseIfRetired(await loadValuation(id), 'applying AI results');
 
       const body = ApplyProfileBody.safeParse(req.body ?? {});
       if (!body.success) {

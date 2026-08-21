@@ -16,6 +16,7 @@ import {
   type ProjectionRow,
   type ProjectionYear,
 } from '../repos/projections.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * The financial projection — the build behind the DCF's cash flows.
@@ -322,6 +323,7 @@ export function registerProjectionRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadOps(id, principal);
+    refuseIfRetired(valuation, 'accepting projection runs');
 
     const parsed = ProjectionRunBody.safeParse(req.body ?? {});
     if (!parsed.success) {

@@ -26,6 +26,7 @@ import {
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { RECALC_APPROACHES } from '../domain/approaches.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * UI approach names → engine approach keys (per-subsystem recalculate).
@@ -330,6 +331,10 @@ export function registerCalculationRoutes(
     if (!isOps(principal)) throw problems.forbidden('Calculations are operations-only');
     const { id } = req.params as { id: string };
     const { valuation, paramsRow } = await loadValuationAndParams(id);
+    // A retired engagement does not spend the firm's AI budget or engine time.
+    // Placed before the body is parsed so the reason a caller gets back is the
+    // state of the file rather than whatever else was wrong with the request.
+    refuseIfRetired(valuation, 'accepting calculations');
     if (!paramsRow) throw problems.notFound();
 
     const parsed = ComputeBody.safeParse(req.body ?? {});

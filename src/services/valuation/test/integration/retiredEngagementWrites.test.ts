@@ -31,7 +31,7 @@ const dbUp = await isDbAvailable();
  * two `advance` routes moved a retired file through the pipeline.
  *
  * WHAT IS NOT CLAIMED. 104 mutating valuation-scoped routes are registered and
- * 13 are verified here. The other 91 are listed by name below rather than
+ * 22 are verified here. The other 82 are listed by name below rather than
  * quietly omitted, because "not swept" and "safe" are different facts and the
  * gap between them is exactly where R57's residue lived. The coverage test is
  * what makes the list load-bearing: a route added tomorrow belongs to neither
@@ -91,16 +91,36 @@ const VERIFIED: Spec[] = [
 /**
  * Refused for retirement before the body is even read.
  *
- * These three share `loadForEdit` with the two report routes above and take the
- * guard on the same line, but a valid body for them needs a report that has
- * been drafted and versioned first. They are asserted one-sided on purpose, and
- * the pairing they lack is supplied by `report/draft` and `report/render`
- * sitting beside them in the same file with the same guard.
+ * The guard sits ahead of body parsing in each of these, which turns an
+ * awkward problem into a tractable one. Composing a *valid* body for every
+ * route that spends AI budget or engine time means standing up a drafted
+ * report, a params row, a comparable set with tickers — per route. But a
+ * deliberately empty body gives the same pairing for free: the live engagement
+ * answers 422, which proves the request reached the handler's validation, and
+ * the retired one answers 409, which can only have come from the guard in
+ * front of it.
+ *
+ * So `live` is asserted here too. It is just asserted to be a *refusal for a
+ * different reason* rather than a success — and that is what stops the pair
+ * being vacuous, because a route that 409'd both ways (a state conflict, an
+ * unconfigured agent) would fail it.
  */
 const REFUSED_EARLY: Spec[] = [
+  // Share `loadForEdit` with the two report routes above.
   { method: 'PUT', path: '/api/v1/valuations/:id/report', payload: {} },
   { method: 'POST', path: '/api/v1/valuations/:id/report/revert', payload: {} },
   { method: 'POST', path: '/api/v1/valuations/:id/report/narrative', payload: {} },
+  // A retired engagement does not spend the firm's AI budget or engine time.
+  // Every one of these reached the model or the engine for withdrawn work.
+  { method: 'POST', path: '/api/v1/valuations/:id/ai/comp_selection/apply', payload: {} },
+  { method: 'POST', path: '/api/v1/valuations/:id/calculations', payload: { inputs: 'not-an-object' } },
+  { method: 'POST', path: '/api/v1/valuations/:id/research', payload: {} },
+  { method: 'POST', path: '/api/v1/valuations/:id/research/refresh-all', payload: { region: 'nowhere' } },
+  { method: 'POST', path: '/api/v1/valuations/:id/projection/run', payload: {} },
+  { method: 'POST', path: '/api/v1/valuations/:id/rollforward', payload: {} },
+  { method: 'POST', path: '/api/v1/valuations/:id/sensitivity', payload: {} },
+  { method: 'POST', path: '/api/v1/valuations/:id/sensitivity/model', payload: { inputs: 'not-an-object' } },
+  { method: 'POST', path: '/api/v1/valuations/:id/volatility/estimate', payload: { method: 'nonsense' } },
 ];
 
 /**
@@ -144,7 +164,6 @@ const UNSWEPT: string[] = [
   'POST /api/v1/valuations/:id/accounting/:provider/import',
   'POST /api/v1/valuations/:id/ai/:pipeline',
   'POST /api/v1/valuations/:id/ai/anonymize',
-  'POST /api/v1/valuations/:id/ai/comp_selection/apply',
   'POST /api/v1/valuations/:id/ai/company_profile/apply',
   'POST /api/v1/valuations/:id/ai/extract/apply',
   'POST /api/v1/valuations/:id/ai/tagging/apply',
@@ -153,7 +172,6 @@ const UNSWEPT: string[] = [
   'POST /api/v1/valuations/:id/board',
   'POST /api/v1/valuations/:id/board/members',
   'POST /api/v1/valuations/:id/board/members/:memberId/send',
-  'POST /api/v1/valuations/:id/calculations',
   'POST /api/v1/valuations/:id/calculations/preflight',
   'POST /api/v1/valuations/:id/cap-table/preview',
   'POST /api/v1/valuations/:id/cap-table/sync/:provider/connect',
@@ -178,26 +196,19 @@ const UNSWEPT: string[] = [
   'POST /api/v1/valuations/:id/payments/checkout',
   'POST /api/v1/valuations/:id/pipeline/runs',
   'POST /api/v1/valuations/:id/projection/:projectionId/apply',
-  'POST /api/v1/valuations/:id/projection/run',
   'POST /api/v1/valuations/:id/qa',
   'POST /api/v1/valuations/:id/questionnaire/submit',
-  'POST /api/v1/valuations/:id/research',
-  'POST /api/v1/valuations/:id/research/refresh-all',
   'POST /api/v1/valuations/:id/review/decision',
-  'POST /api/v1/valuations/:id/rollforward',
   'POST /api/v1/valuations/:id/rollforward/:runId/apply',
   'POST /api/v1/valuations/:id/rounds',
   'POST /api/v1/valuations/:id/scenarios',
   'POST /api/v1/valuations/:id/scenarios/preview',
-  'POST /api/v1/valuations/:id/sensitivity',
-  'POST /api/v1/valuations/:id/sensitivity/model',
   'POST /api/v1/valuations/:id/signatures',
   'POST /api/v1/valuations/:id/specialty',
   'POST /api/v1/valuations/:id/tags',
   'POST /api/v1/valuations/:id/tasks',
   'POST /api/v1/valuations/:id/transactions',
   'POST /api/v1/valuations/:id/volatility/:estimateId/apply',
-  'POST /api/v1/valuations/:id/volatility/estimate',
   'POST /api/v1/valuations/:id/wacc/preview',
   'POST /api/v1/valuations/:id/workflow/reassign',
   'POST /api/v1/valuations/:id/workflow/restart',
@@ -262,6 +273,16 @@ describe.skipIf(!dbUp)('a write aimed at a retired engagement', () => {
   });
 
   describe.each(REFUSED_EARLY)('$method $path', (spec) => {
+    // The live half of the pair. It must NOT be a 409, or the retired
+    // assertion below would be satisfied by something that has nothing to do
+    // with retirement — a state conflict, an unconfigured agent, a missing
+    // prerequisite row.
+    it('reaches the handler on a live engagement', async () => {
+      const res = await send(spec, live);
+      expect(res.statusCode).not.toBe(409);
+      expect(res.statusCode).not.toBe(404);
+    });
+
     it('is refused by a retired engagement before its body is read', async () => {
       const res = await send(spec, archived);
       expect(res.statusCode).toBe(409);

@@ -24,6 +24,7 @@ import {
   markRollforwardRunApplied,
   type RollforwardRunRow,
 } from '../repos/rollforwardRuns.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Roll-forward — the bridge from the prior 409A to this one.
@@ -226,6 +227,7 @@ export function registerRollforwardRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadOps(id, principal);
+    refuseIfRetired(valuation, 'accepting roll-forward runs');
 
     const parsed = RunBody.safeParse(req.body ?? {});
     if (!parsed.success) {
