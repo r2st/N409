@@ -63,3 +63,95 @@ export function parseIfMatch(raw: string | string[] | undefined): IfMatch {
   if (!Number.isSafeInteger(version)) return { kind: 'invalid', raw: header };
   return { kind: 'version', version };
 }
+
+/**
+ * What every `version` column in this schema is *for*.
+ *
+ * Round 93 found `PATCH /valuations/:id/params` still last-write-wins on a row
+ * that had carried a version — and had been bumping it on every write — since
+ * migration 0158. The column was there, the sibling editor was using it, and
+ * the larger of the two forms simply never read the header. Nothing failed,
+ * because nothing was looking: a guard is invisible when it is missing, and a
+ * half-applied one is invisible twice over.
+ *
+ * So the roster is asserted against the database rather than maintained by
+ * hand. `optimisticLockCensus.test.ts` reads `information_schema` for every
+ * column named `version` and requires an entry here for each: a `lock` names
+ * the routes that must honour it, and anything else has to say why it is not a
+ * lock. Adding a version column without deciding which of the two it is now
+ * fails a test instead of waiting for two analysts to notice.
+ *
+ * The entry is keyed by table because that is what the schema knows. A lock
+ * whose counter does not live in a column called `version` — the report editor
+ * anchors on `reports.current_version` — is listed too, under `extraLocks`,
+ * since the census cannot find those on its own.
+ */
+export type VersionColumn =
+  | {
+      kind: 'lock';
+      /** The migration that introduced it, for the archaeology. */
+      migration: string;
+      /**
+       * Every route that writes this row through a form a person edits.
+       *
+       * Each is probed for real: sent a malformed `If-Match` and required to
+       * refuse it by name. A route that has quietly stopped parsing the header
+       * answers something else, which is precisely the state `PATCH /params`
+       * was in for eight migrations.
+       */
+      guardedRoutes: readonly string[];
+    }
+  | {
+      kind: 'not-a-lock';
+      /** What the number means instead, and why no write has to check it. */
+      reason: string;
+    };
+
+export const VERSION_COLUMNS: Readonly<Record<string, VersionColumn>> = {
+  valuations: {
+    kind: 'lock',
+    migration: '0137',
+    guardedRoutes: ['PATCH /api/v1/valuations/:id'],
+  },
+  valuation_params: {
+    kind: 'lock',
+    migration: '0158',
+    // Two doors onto one row, which is the whole reason the counter is on the
+    // row rather than on either form.
+    guardedRoutes: ['PATCH /api/v1/valuations/:id/params', 'PATCH /api/v1/valuations/:id/engine-inputs'],
+  },
+  cap_tables: {
+    kind: 'lock',
+    migration: '0162',
+    guardedRoutes: ['PUT /api/v1/valuations/:id/cap-table'],
+  },
+  company_profiles: {
+    kind: 'lock',
+    migration: '0166',
+    guardedRoutes: ['PATCH /api/v1/valuations/:id/company-profile'],
+  },
+  report_versions: {
+    kind: 'not-a-lock',
+    reason:
+      'the append-only history of a report body — `version` is the sequence number of a row that is ' +
+      'never updated. The editor’s lost-update guard is on `reports.current_version`; see extraLocks.',
+  },
+  report_templates: {
+    kind: 'not-a-lock',
+    reason:
+      'the revision number of a published skeleton, half of the (name, version) key. A template is ' +
+      'superseded by inserting the next version, not by updating this row in place.',
+  },
+  ai_prompt_versions: {
+    kind: 'not-a-lock',
+    reason: 'the history of an edited agent prompt — one row per revision, never updated after insert.',
+  },
+};
+
+/**
+ * Locks whose counter is not a column called `version`, so the schema sweep
+ * cannot find them. Listed here so they are probed with the rest.
+ */
+export const EXTRA_LOCKS: readonly { anchor: string; guardedRoutes: readonly string[] }[] = [
+  { anchor: 'reports.current_version', guardedRoutes: ['PUT /api/v1/valuations/:id/report'] },
+];
