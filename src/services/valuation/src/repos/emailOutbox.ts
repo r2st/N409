@@ -225,6 +225,23 @@ export async function claimRetryableEmails(
           -- case the ladder exists for.
           AND (bounce_kind IS NULL OR bounce_kind = 'soft')
           AND channel = ANY($2::comm_channel[])
+          -- The engagement the message is about must still exist. R89 stopped
+          -- POST /remind-documents from sending "we still need your cap
+          -- table" about withdrawn work, and this is the same message arriving
+          -- by the other door: a reminder queued the day before the firm
+          -- withdrew, whose first send failed, is delivered by the ladder
+          -- afterwards. Mail cannot be un-sent, which is what made this class
+          -- the worst of R56.
+          --
+          -- Skipped, not settled: retirement is reversible (R90), and a row
+          -- marked failed here could not be un-failed by a restore. It simply
+          -- stops being claimable until the engagement comes back — and rows
+          -- with no valuation (password resets, verification) are untouched,
+          -- because they are about a person and not about a piece of work.
+          AND NOT EXISTS (
+            SELECT 1 FROM valuations v
+             WHERE v.id = email_outbox.valuation_id AND v.archived_at IS NOT NULL
+          )
           AND (status = 'queued' OR next_attempt_at IS NULL OR next_attempt_at <= now())
           AND (claimed_at IS NULL OR claimed_at < now() - ($3 || ' seconds')::interval)
         -- Oldest first: a backlog larger than the batch must not leave the

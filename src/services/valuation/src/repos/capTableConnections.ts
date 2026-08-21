@@ -146,13 +146,32 @@ export async function revokeConnection(
   return (rowCount ?? 0) > 0;
 }
 
-/** Connections whose scheduled sync is due (background scheduler). */
+/**
+ * Connections whose next scheduled sync is due (background scheduler).
+ *
+ * WHY THE JOIN. Three of this service's timers wrote to a valuation without
+ * ever asking whether the engagement still existed. R89 put a refusal on all
+ * 86 mutating routes and the route beside this one has one; the *timer* that
+ * performs the same write on a schedule went through no route at all. So a
+ * firm could withdraw an engagement and a scheduled sync would go on pulling
+ * the client's cap table from Carta and applying it — hours after every button
+ * in the product had stopped accepting changes.
+ *
+ * Filtered here rather than checked at the apply, deliberately. Checking later
+ * would still have called the provider, which means still telling a third
+ * party we are working a file the firm has withdrawn; and a sweep that fetches
+ * and then discards is a sweep whose cost is invisible.
+ *
+ * A retirement is reversible (R90), so the connection is skipped rather than
+ * disabled: restore the engagement and the schedule picks up where it was.
+ */
 export async function findDueConnections(pool: pg.Pool, limit = 25): Promise<CapTableConnectionRow[]> {
   const { rows } = await pool.query<CapTableConnectionRow>(
-    `SELECT * FROM cap_table_connections
-     WHERE status = 'connected' AND sync_frequency <> 'manual'
-       AND next_sync_at IS NOT NULL AND next_sync_at <= now()
-     ORDER BY next_sync_at ASC
+    `SELECT c.* FROM cap_table_connections c
+       JOIN valuations v ON v.id = c.valuation_id AND v.archived_at IS NULL
+     WHERE c.status = 'connected' AND c.sync_frequency <> 'manual'
+       AND c.next_sync_at IS NOT NULL AND c.next_sync_at <= now()
+     ORDER BY c.next_sync_at ASC
      LIMIT $1`,
     [limit],
   );

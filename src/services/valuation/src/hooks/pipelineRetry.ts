@@ -50,6 +50,32 @@ export async function retryFailedPipelineRuns(deps: {
       // deleting a valuation that had a failed run.
       continue;
     }
+    if (valuation.archived_at !== null) {
+      // THE HOLE THIS CLOSES. `POST /valuations/:id/pipeline/runs` refuses a
+      // retired engagement and the upload that would start one is refused
+      // before the file lands — but a run that failed *before* the firm
+      // withdrew the work sat in the ladder with a `next_attempt_at`, and this
+      // sweep would resume it afterwards. Resuming means auto-applying an AI
+      // extraction and recording a calculation against an engagement every
+      // button in the product has stopped accepting changes to. A guard on the
+      // route is not a guard on the timer that performs the same write.
+      //
+      // Settled for the same reason as the opt-out below: the claim has
+      // already moved this run to an active status, and an active run holds
+      // the one-per-valuation index. `permanent`, because retirement is a
+      // decision rather than an outage — and if it is reversed, the restore
+      // gives back an engagement that takes a fresh run, not this stale one.
+      await setPipelineRunStatus(deps.pool, run, 'failed', {
+        error: 'the engagement was retired before the retry ran',
+        actor,
+        failure: { kind: 'permanent', reason: 'valuation.retired', retryable: false },
+      });
+      deps.autoPipeline.log.info(
+        { runId: run.id, valuationId: valuation.id },
+        'auto-pipeline retry skipped — the engagement has been retired since it failed',
+      );
+      continue;
+    }
     if (!valuation.auto_pipeline) {
       // Somebody turned the orchestration off for this valuation while the run
       // was waiting. Honour that: re-running now would be the switch being
