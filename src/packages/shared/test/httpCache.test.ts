@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
-import { conditionalJson, etagFor, matchesIfNoneMatch } from '../src/httpCache.js';
+import { conditionalJson, etagFor, matchesIfNoneMatch, registerNoStoreDefault } from '../src/httpCache.js';
 
 /**
  * Conditional GET support. `TtlCache` keeps repeated reads off Postgres; this
@@ -119,6 +119,75 @@ describe('conditionalJson', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ hello: 'world' });
+    await app.close();
+  });
+});
+
+/**
+ * The default that makes the absence of a directive impossible.
+ *
+ * An API that sends no `Cache-Control` has not said "do not cache" — it has
+ * said nothing, and both parties downstream fill that silence with a default of
+ * their own. The browser writes an `inline` PDF to disk; Cloudflare decides
+ * partly from the file extension, and `.pdf`, `.csv` and `.xlsx` are all on its
+ * list. This closes the silence without taking away a route's ability to ask
+ * for something else.
+ */
+describe('registerNoStoreDefault', () => {
+  const appWith = async (route: (app: ReturnType<typeof Fastify>) => void) => {
+    const app = Fastify();
+    registerNoStoreDefault(app);
+    route(app);
+    await app.ready();
+    return app;
+  };
+
+  it('marks a response that said nothing', async () => {
+    const app = await appWith((a) => a.get('/x', async () => ({ ok: true })));
+    const res = await app.inject({ method: 'GET', url: '/x' });
+    expect(res.headers['cache-control']).toBe('no-store');
+    await app.close();
+  });
+
+  it('leaves a response that asked for something else alone', async () => {
+    const app = await appWith((a) =>
+      a.get('/x', async (_req, reply) => {
+        void reply.header('cache-control', 'public, max-age=3600');
+        return { ok: true };
+      }),
+    );
+    const res = await app.inject({ method: 'GET', url: '/x' });
+    expect(res.headers['cache-control']).toBe('public, max-age=3600');
+    await app.close();
+  });
+
+  it('marks a failure too', async () => {
+    // A 404 is as storable as a 200 to anything in the path, and "no such
+    // engagement" outlives the moment it was true.
+    const app = await appWith((a) =>
+      a.get('/x', async () => {
+        throw Object.assign(new Error('nope'), { statusCode: 404 });
+      }),
+    );
+    const res = await app.inject({ method: 'GET', url: '/x' });
+    expect(res.statusCode).toBe(404);
+    expect(res.headers['cache-control']).toBe('no-store');
+    await app.close();
+  });
+
+  it('does not overwrite a directive set from a hook registered later', async () => {
+    // Hook order is the trap: `onSend` hooks run in registration order, so a
+    // route or plugin registered after this one still gets the last word only
+    // if the default checks rather than assigns.
+    const app = Fastify();
+    registerNoStoreDefault(app);
+    app.addHook('onSend', async (_req, reply) => {
+      void reply.header('cache-control', 'private, no-cache');
+    });
+    app.get('/x', async () => ({ ok: true }));
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: '/x' });
+    expect(res.headers['cache-control']).toBe('private, no-cache');
     await app.close();
   });
 });

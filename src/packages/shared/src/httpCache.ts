@@ -96,3 +96,42 @@ export function conditionalJson<T>(
   }
   return payload;
 }
+
+/**
+ * `Cache-Control: no-store` on every response that has not asked for something
+ * else.
+ *
+ * The API sent no `Cache-Control` at all. That is not the same as "do not
+ * cache" to anything downstream of it, and this deployment has two things
+ * downstream that matter.
+ *
+ * The near one is the browser. A 409A report is served `content-disposition:
+ * inline`, so it opens in a tab and lands in the disk cache — a company's most
+ * sensitive document, left on the machine of whoever last looked at it, which
+ * on a shared or corporate laptop is not necessarily the person entitled to it.
+ * The same goes for the workbook, the CSV exports and the evidence bundle.
+ *
+ * The far one is the edge. `n409.aiknol.com` is Cloudflare-proxied (see
+ * infra/caddy), and Cloudflare decides what to cache partly from the *file
+ * extension* — `.pdf`, `.csv` and `.xlsx` are all on its default list. What
+ * saves a response from that today is the absence of a directive telling the
+ * edge it may store it, which is a much thinner guarantee than a directive
+ * telling it not to; and it is one Cloudflare setting away from not being true.
+ * `no-store` is the answer that does not depend on either party's defaults.
+ *
+ * Applied as a default rather than at the download routes, because "the routes
+ * that serve something sensitive" is a list somebody has to keep, and this
+ * codebase has been bitten by exactly that shape of list before. Safe by
+ * default, and a route that genuinely wants to be cached — the public sample
+ * report, the blog, anything through `conditionalJson` — says so itself and is
+ * left alone.
+ */
+export function registerNoStoreDefault(app: {
+  addHook(name: 'onSend', fn: (req: FastifyRequest, reply: FastifyReply) => Promise<void>): unknown;
+}): void {
+  app.addHook('onSend', async (_req, reply) => {
+    if (reply.getHeader('cache-control') === undefined) {
+      void reply.header('cache-control', 'no-store');
+    }
+  });
+}

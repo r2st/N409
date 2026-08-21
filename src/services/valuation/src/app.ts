@@ -13,6 +13,7 @@ import {
   registerHttpMetrics,
   registerMetricsEndpoint,
   registerProcessMetrics,
+  registerNoStoreDefault,
   registerPermissionsPolicy,
   registerProblemHandler,
   registerRequestDrain,
@@ -363,6 +364,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // The one header helmet does not set (round 74). Nothing granted: a JSON API
   // response has no business being a document that can open a camera.
   registerPermissionsPolicy(app, API_PERMISSIONS_POLICY);
+  // The other one it does not set. Every response this service produces is
+  // either a private JSON payload or somebody's valuation deliverable, and the
+  // browser disk cache and the Cloudflare edge both decide from headers this
+  // API was not sending. See `registerNoStoreDefault` — routes that want to be
+  // cached (the sample report, the blog, anything through `conditionalJson`)
+  // set their own header and are left alone.
+  registerNoStoreDefault(app);
 
   registerProblemHandler(app);
   // Records every route as it registers so the assertion at the end of this

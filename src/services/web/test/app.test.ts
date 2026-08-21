@@ -69,6 +69,16 @@ describe('web service', () => {
         sawRequestId: req.headers['x-request-id'] ?? null,
         sawForwardedFor: req.headers['x-forwarded-for'] ?? null,
       }));
+      // The valuation service marks every private response `no-store`
+      // (`registerNoStoreDefault`). That directive only does anything if this
+      // hop passes it on — the browser and the Cloudflare edge are both on the
+      // far side of this proxy, and the static handler beside it sets cache
+      // headers of its own, which is exactly the kind of neighbour that ends up
+      // deciding for everybody.
+      upstream.get('/api/v1/private-thing', async (_req, reply) => {
+        void reply.header('cache-control', 'no-store');
+        return { ok: true };
+      });
       await upstream.listen({ port: 0, host: '127.0.0.1' });
       const addr = upstream.server.address();
       if (typeof addr === 'object' && addr) upstreamUrl = `http://127.0.0.1:${addr.port}`;
@@ -87,6 +97,14 @@ describe('web service', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toMatchObject({ password: true, sawAuth: 'Bearer abc' });
+      await app.close();
+    });
+
+    it("passes the upstream's cache directive through to the browser", async () => {
+      const app = buildApp({ staticRoot: '/nonexistent', valuationUrl: upstreamUrl });
+      const res = await app.inject({ method: 'GET', url: '/api/v1/private-thing' });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['cache-control']).toBe('no-store');
       await app.close();
     });
 

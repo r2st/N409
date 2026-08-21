@@ -125,7 +125,13 @@ export {
   type ParsedUnit,
 } from './systemdEnv.js';
 export { TtlCache } from './cache.js';
-export { conditionalJson, etagFor, matchesIfNoneMatch, type ConditionalOptions } from './httpCache.js';
+export {
+  conditionalJson,
+  etagFor,
+  matchesIfNoneMatch,
+  registerNoStoreDefault,
+  type ConditionalOptions,
+} from './httpCache.js';
 export {
   backoffDelayMs,
   classifyFailure,
