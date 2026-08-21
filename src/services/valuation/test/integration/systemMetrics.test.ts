@@ -32,7 +32,11 @@ describe.skipIf(!dbUp)('the system metrics endpoint', () => {
     });
 
   beforeAll(async () => {
-    ctx = await setupTestApp();
+    // One optional subsystem deliberately on and one deliberately off, so the
+    // capability roster below is asserted against a config that says both
+    // things. With everything off, "reports it as off" would pass against a
+    // roster that had stopped reading the config at all.
+    ctx = await setupTestApp({ DOCUMENTS_ENCRYPTION_KEY: 'a'.repeat(64) });
     app = ctx.app;
     opsToken = (await seedUser(ctx, { roles: ['reviewer'] })).token;
     clientToken = (await seedUser(ctx, { roles: ['client'] })).token;
@@ -56,7 +60,38 @@ describe.skipIf(!dbUp)('the system metrics endpoint', () => {
     expect(body).toHaveProperty('throughput');
     expect(body).toHaveProperty('webhooks');
     expect(body).toHaveProperty('circuits');
+    expect(body).toHaveProperty('capabilities');
     expect(body.service).toBe('valuation');
+  });
+
+  it('names the subsystems that are deliberately off', async () => {
+    // `circuits` above answers "is what we depend on failing". This answers the
+    // question nothing on this platform could be asked: is there something we
+    // are simply not doing. In the test environment that is virus scanning —
+    // no CLAMAV_HOST — and the point of the row is the sentence beside it,
+    // because "virus_scanning: false" does not tell an operator that the file
+    // was nonetheless stored and will be served back.
+    const caps = (await metrics(opsToken)).json().capabilities as Array<{
+      key: string;
+      configured: boolean;
+      severity: string;
+      fallback: string;
+      env: string[];
+    }>;
+    expect(Array.isArray(caps)).toBe(true);
+
+    const scanning = caps.find((c) => c.key === 'virus_scanning')!;
+    expect(scanning.configured).toBe(false);
+    expect(scanning.severity).toBe('silent');
+    expect(scanning.env).toEqual(['CLAMAV_HOST']);
+    expect(scanning.fallback).toMatch(/without being scanned/i);
+
+    // The vacuity guard: the roster must not be a list of everything-off. The
+    // test app configures document encryption, so that row proves `configured`
+    // can come out true through the real config rather than only in the unit
+    // test's hand-built object.
+    const encryption = caps.find((c) => c.key === 'document_encryption')!;
+    expect(encryption.configured).toBe(true);
   });
 
   it('counts the requests it has served, including its own', async () => {

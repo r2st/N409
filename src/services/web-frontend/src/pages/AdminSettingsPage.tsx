@@ -4,6 +4,7 @@ import { email as emailRule, numberRange, optional, useFormValidation } from '..
 import { formatDateTime } from '../lib/format';
 import type { SystemSettings, SystemSettingsResponse } from '../lib/types';
 import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+import { CapabilityRoster } from '../components/CapabilityRoster';
 
 /**
  * Runtime system configuration. Readable by any ops user, editable only by
@@ -222,6 +223,18 @@ export function AdminSettingsPage() {
               />
             </Field>
           </div>
+        </section>
+
+        {/* Read-only, and outside the save: these are environment variables, so
+            nothing here is a control. It sits under the knobs because the
+            sentence above them — "secrets and service URLs stay in the
+            environment" — is exactly the reason nobody could see this. */}
+        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+          <h2 className="overline mb-1 text-ink-400">Optional integrations</h2>
+          <p className="mb-4 text-xs text-ink-400">
+            Set in the environment and read at boot. Changing one needs a redeploy.
+          </p>
+          <CapabilityRoster />
         </section>
 
         {editable && (

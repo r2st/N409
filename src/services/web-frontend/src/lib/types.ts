@@ -52,6 +52,20 @@ export interface SystemSettingsResponse {
   editable: boolean;
 }
 
+/**
+ * A subsystem that is allowed to be off, and what the platform does instead.
+ * `GET /admin/capabilities` (valuation service, domain/optionalCapabilities.ts).
+ */
+export interface OptionalCapability {
+  key: string;
+  label: string;
+  configured: boolean;
+  env: string[];
+  fallback: string;
+  /** `silent` — nothing downstream says it is off. `visible` — something does. */
+  severity: 'silent' | 'visible';
+}
+
 export const VALUATION_KINDS = [
   '409a',
   'fmv',

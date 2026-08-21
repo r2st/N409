@@ -127,6 +127,7 @@ import { registerStreamRoutes } from './routes/stream.js';
 import { ValuationHub } from './realtime/hub.js';
 import { registerPartnerApiRoutes } from './routes/partnerApi.js';
 import { setWebhookTargetPolicy } from './domain/partnerWebhooks.js';
+import { silentlyDegraded } from './domain/optionalCapabilities.js';
 import { registerSpecialtyRoutes } from './routes/specialty.js';
 import { registerResearchRoutes } from './routes/research.js';
 import { registerDataRemediationRoutes } from './routes/dataRemediation.js';
@@ -477,6 +478,17 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // once here so the session route and the partner API cannot end up scanning
   // to different policies.
   const scan = resolveScanPolicy(config, app.log);
+  // One line for everything that is deliberately off and says nothing about it
+  // downstream — see domain/optionalCapabilities.ts. `warn` deployed and `info`
+  // otherwise: a local checkout has all of these off by design and a warning
+  // that is always there is a warning nobody reads, while on a deployed box
+  // each of these is a decision somebody should be able to point at.
+  const quiet = silentlyDegraded(config);
+  if (quiet.length > 0) {
+    const line = `running without ${quiet.map((c) => c.label.toLowerCase()).join(', ')} — see GET /api/v1/admin/system/metrics`;
+    if (config.NODE_ENV === 'production') app.log.warn({ capabilities: quiet.map((c) => c.key) }, line);
+    else app.log.info({ capabilities: quiet.map((c) => c.key) }, line);
+  }
   registerDocumentRoutes(app, { pool, documentsDir: config.DOCUMENTS_DIR, autoPipeline, scan });
   registerPipelineRoutes(app, { pool, autoPipeline });
   registerParamsRoutes(app, { pool });
@@ -625,6 +637,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     queryStats: deps.queryStats,
     poolHealth: deps.poolHealth,
     errorRates,
+    capabilityConfig: config,
   });
   // M4 — operations polish
   registerWorkflowRoutes(app, { pool, transport });

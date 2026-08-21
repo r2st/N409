@@ -30,6 +30,7 @@ import {
 } from '../repos/partnerWebhooks.js';
 import { retryDueDeliveries } from '../hooks/partnerWebhooks.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { optionalCapabilities, type CapabilityConfig } from '../domain/optionalCapabilities.js';
 
 const DateOnly = z
   .string()
@@ -92,6 +93,12 @@ export function registerOperationsRoutes(
     queryStats?: QueryStats;
     poolHealth?: PoolHealth;
     errorRates?: ErrorRates;
+    /**
+     * The config, for the optional-subsystem roster below. Optional so a test
+     * that is not asking about it need not build one; absent reads as "not
+     * measured" rather than as "everything is on".
+     */
+    capabilityConfig?: CapabilityConfig;
   },
 ): void {
   const countsCache = new TtlCache<Record<StateGroup | 'all', number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
@@ -413,7 +420,33 @@ export function registerOperationsRoutes(
       // /ready as pass/fail; here as the breaker's own view, which says whether
       // it is failing now or has been failing.
       circuits: circuits.snapshots(),
+      // The subsystems that are allowed to be off. `circuits` above answers
+      // "is the thing we depend on failing"; this answers the question nothing
+      // could be asked before — "is there something we are simply not doing".
+      // Null rather than an empty list when the config was not wired, because
+      // an empty list here would read as "nothing is off".
+      capabilities: deps.capabilityConfig ? optionalCapabilities(deps.capabilityConfig) : null,
     };
+  });
+
+  /**
+   * The optional-subsystem roster on its own, without the incident view around
+   * it.
+   *
+   * Split from `/admin/system/metrics` because the two are read at different
+   * moments by different people. The metrics endpoint is deliberately uncached
+   * and runs four aggregates; this one touches no table at all, which is what
+   * lets the settings page draw it on every load. A settings screen that cost
+   * a dashboard query would simply not have it.
+   *
+   * Ops-only, like everything else here: it names the variables that turn each
+   * subsystem on, which is a map of what to set and therefore of what is not.
+   */
+  app.get('/api/v1/admin/capabilities', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden();
+    if (!deps.capabilityConfig) throw problems.serviceUnavailable('Capability roster is not wired');
+    return { capabilities: optionalCapabilities(deps.capabilityConfig) };
   });
 
   app.get('/api/v1/admin/db/pool', { preHandler: app.authenticate }, async (req) => {
