@@ -1957,3 +1957,147 @@
 #            this round started, on three errors in the shared package's tests
 #            that `npm test` never runs. Both were found by running the gate
 #            rather than the file.
+# commit:    3437703
+# subject:   the document that did not say it was a draft, and the header that said nothing at all
+# previous:  451f8b0 (the guard on the route was not the guard on the timer).
+# includes:  4 commits — R92, a production-readiness round about what leaves this
+#            system and where it goes afterwards. The performance audit it began
+#            as found nothing, which is its own result and is recorded below.
+#
+#            d3ff05b — the N+1 hunt, and it came back empty. `batchedReads.test.ts`
+#              pins the three request paths whose N+1 was found and batched in an
+#              earlier round; that is a regression guard for three known bugs and
+#              says nothing about the fortieth list endpoint. So all 47
+#              collection endpoints were driven with four rows behind them and
+#              again with sixteen, counting statements at the pool. Every one is
+#              flat. Two fall — `/valuations/counts` and `/stats/dashboard` warm
+#              a TTL cache on the first call — which is why the assertion is `<=`
+#              rather than `==`: a drop is never the bug being looked for.
+#
+#              Kept as the population guard rather than thrown away with the
+#              finding it did not make. The measurement is a ratio, not a count:
+#              endpoints legitimately differ in what one page costs, and pinning
+#              absolute numbers would fail every honest refactor while still
+#              missing the loop that runs once per row. Two vacuity guards, both
+#              of shapes this codebase has been bitten by — a 4xx throws rather
+#              than counting zero statements, and every endpoint must issue at
+#              least one statement at the small size. Verified it bites by
+#              putting a per-row read back into the valuations list.
+#
+#              Also measured and deliberately not acted on: 89 of the 172
+#              foreign keys have no covering index. That is the classic finding
+#              and here it is a non-finding — the cost of an unindexed FK is
+#              paid when the *parent* is deleted, and this schema deletes
+#              almost nothing. `valuations` and `users` are never hard-deleted
+#              at all; retirement is `archived_at`. Adding 89 indexes would buy
+#              nothing and cost every insert. Written down so the next round
+#              does not re-derive it.
+#
+#            6fc55ef — the finding of the round. `REPORT_VISIBLE_STATES` lets a
+#              client read the deliverable from `drafted` — several steps before
+#              the QA review closes, the signature lands and the engagement
+#              publishes — and the bytes they downloaded were byte-identical to
+#              the signed report. Those bytes do not stay with the person who
+#              downloaded them. A 409A goes to an auditor, into a board pack,
+#              into a data room, and every reader downstream takes an unmarked
+#              valuation report as final. Marking the draft is the ordinary
+#              practice of the profession for exactly that reason.
+#
+#              The design took two attempts and the first one is worth
+#              recording, because it looked obviously right. Stamp the render,
+#              cache the stamped bytes: this breaks a compliance property the
+#              repository already had a test for. Nothing re-renders a stored
+#              version at publication, deliberately — the exhibits are derived
+#              at render time from the latest calculation, so re-rendering a
+#              delivered version in place would put a different concluded value
+#              under a version number the client already holds. Stored bytes are
+#              therefore frozen, and a stamp baked into frozen bytes outlives
+#              the draft it described: a published 409A that says DRAFT forever,
+#              which is the failure the change exists to prevent, arrived at
+#              from the other side.
+#
+#              The rule it settled on: *the store holds the deliverable, and the
+#              stamp is a property of the moment the document is served.* A
+#              draft download renders fresh and caches nothing, which is the
+#              right way round — the delivered version is the one read for the
+#              next year, and the draft is the one still being edited.
+#
+#              Three doors read those bytes and grep found two: the session
+#              download, the partner API — whose integration pulls on the
+#              published webhook, seconds after the stamp stopped being true,
+#              into a store nothing revisits — and the evidence bundle, whose
+#              reader is an auditor, which is precisely who a draft must not
+#              reach unmarked. `reportPdfDoorCensus.test.ts` is the census:
+#              `getVersion` is the only route to a stored PDF, so a file that
+#              calls it must be recorded as either serving the pdf or reading
+#              only the content. Verified both ways — by unwiring evidence.ts,
+#              and by adding a route that reads `.pdf` and nothing else.
+#
+#              Drawing detail worth keeping: the stamp goes *over* the body, not
+#              under it. A table's filled header cells, a chart's plot area and
+#              the cover's colour band are opaque, so a stamp behind them
+#              disappears on exactly the pages a reader is most likely to
+#              photograph and send on. Eleven percent costs legibility nothing
+#              measurable. And pdfkit tracks fill opacity outside the graphics
+#              state `save`/`restore` covers, so the reset back to 1 is
+#              load-bearing — without it every page footer in the report fades
+#              to eleven percent, legible in a viewer and invisible to a test
+#              that only reads text back. That one has its own assertion.
+#
+#            8cc2b33 — the other half of the same fact. The page the client
+#              downloads from said nothing: the only status on screen was
+#              `report.status`, which tracks the editorial round trip and is not
+#              what decides the stamp. Keyed on `valuation.state` instead, with
+#              a test for the distinction, because the two agree often enough
+#              that the wrong one would look right. Ops excluded — telling the
+#              author of a draft that it is a draft is noise on every visit.
+#
+#            3437703 — `Cache-Control`, which this API had never sent.
+#
+#              That is not the same thing as "do not cache", and this deployment
+#              has two parties downstream that fill the silence with a default of
+#              their own. The near one is the browser: a 409A is served
+#              `content-disposition: inline`, so it opens in a tab and lands in
+#              the disk cache, on whatever machine last looked at it. The far one
+#              is the edge — `n409.aiknol.com` is Cloudflare-proxied, and what
+#              may be stored there is decided partly from the *file extension*.
+#              `.pdf`, `.csv` and `.xlsx` are all on Cloudflare's default list,
+#              and this service serves all three under a bearer token. What saves
+#              those responses today is the absence of a directive permitting
+#              storage, which is a much thinner guarantee than a directive
+#              forbidding it, and one setting away from not being true.
+#
+#              Applied as a default rather than at the download routes, because
+#              "the routes that serve something sensitive" is a list somebody has
+#              to keep, and this codebase has been bitten by that shape of list
+#              before. A route that genuinely wants to be cached says so and is
+#              left alone: the public sample report, and the three
+#              `conditionalJson` routes whose `private, no-cache` is what makes a
+#              browser send `If-None-Match` at all — `no-store` there would have
+#              silently disabled the 304s. The opt-out set is itself a census.
+#
+#              Pinned at the far end too: the header only does anything if the
+#              web BFF passes it on, and the static handler beside that proxy
+#              sets cache headers of its own, which is exactly the kind of
+#              neighbour that ends up deciding for everybody.
+#
+# method:    a gap list is a hypothesis, and three of this round's seven were
+#            already closed. The partner API was said to have "3 DELETE routes on
+#            archived valuations": it has one DELETE, on `/webhooks/{id}`, which
+#            is partner-scoped and correctly unguarded — and all four of its
+#            valuation-scoped mutations already call `refuseIfRetired`. "No
+#            full-text search across valuations" — `/api/v1/search` covers
+#            company name, number, exact id and the requesting user, trigram-
+#            indexed since 0149. "Report completeness vs 409.ai" — the 409A
+#            skeleton is 29 chapters and the renderer already emits PDF
+#            bookmarks, a real-page-number contents, running heads and a tagged
+#            structure tree. Checking each cost minutes; building against any of
+#            them would have cost the round.
+#
+# note:      what the empty performance audit is worth. It cost about a fifth of
+#            the round and produced no fix, and that is the correct outcome to
+#            record rather than to bury: the read paths are batched, and the one
+#            classic index finding does not apply to a schema that soft-deletes.
+#            The round's actual finding came from asking a different question —
+#            not "is this slow" but "what does this document say about itself
+#            once it is somewhere we cannot reach it".
