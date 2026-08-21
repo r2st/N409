@@ -168,6 +168,42 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
     expect(updated?.entries.find((e) => e.security_class === 'Series A')?.shares).toBe(2_500_000);
   });
 
+  it('answers 422, not 500, when the pull body is the wrong shape', async () => {
+    // `apply` is the only field, and a client that sends a string for it has
+    // written a bad request — not tripped a server fault. The route parsed this
+    // body with a throwing `.parse()`, so the ZodError reached the error handler
+    // as an ordinary exception and rendered `urn:n409:problem:internal` with a
+    // 500: the one status a client is told to retry, for a request that can
+    // never succeed.
+    payload = CARTA_V1;
+    const v = await seedValuation();
+    await connect(v.id);
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/cap-table/sync/carta/pull`,
+      headers: authHeader(ops.token),
+      payload: { apply: 'yes' },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().type).toBe('urn:n409:problem:validation');
+    expect(res.json().errors[0].path).toEqual(['apply']);
+  });
+
+  it('defaults apply to false when the body is absent entirely', async () => {
+    payload = CARTA_V1;
+    const v = await seedValuation();
+    await connect(v.id);
+    // Nothing on file yet, so the sync applies regardless of `apply` — what is
+    // being pinned is that a missing body parses at all rather than 400ing.
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/cap-table/sync/carta/pull`,
+      headers: authHeader(ops.token),
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
   it('runs a due scheduled sync and applies automatically', async () => {
     payload = CARTA_V1;
     const v = await seedValuation();

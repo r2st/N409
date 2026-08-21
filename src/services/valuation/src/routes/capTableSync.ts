@@ -296,7 +296,16 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       const { id, provider: rawProvider } = req.params as { id: string; provider: string };
       const provider = parseProvider(rawProvider);
       const valuation = await loadAuthorized(principal, id);
-      const body = PullBody.parse(req.body ?? {});
+      // `safeParse`, not `parse`: a ZodError thrown out of a handler is not an
+      // `ApiProblem` and carries no `statusCode`, so `registerProblemHandler`
+      // renders it as `urn:n409:problem:internal` with a 500 — telling a client
+      // to retry a body that can never be accepted. Every other body on this
+      // service is read this way; this one was the exception.
+      const parsedBody = PullBody.safeParse(req.body ?? {});
+      if (!parsedBody.success) {
+        throw problems.unprocessable('Invalid pull body', { errors: parsedBody.error.issues });
+      }
+      const body = parsedBody.data;
 
       const connection = await findConnection(deps.pool, valuation.id, provider);
       if (!connection || connection.status === 'revoked') {
