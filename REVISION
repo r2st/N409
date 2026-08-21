@@ -1153,3 +1153,46 @@
 #            table has since been rewritten stays stale, so its trigger fires
 #            correctly and overstates the delta by whatever the old summary
 #            never counted.
+# closed:    SIGTERM cut a background sweep in half. `index.ts` cleared eleven
+#            intervals at shutdown, which stops the next tick and not the one
+#            running, on the premise that `pool.end()` waits for whatever still
+#            uses the pool. Measured against a real Postgres, a sweep paused
+#            between two queries: `end()` resolved in 1ms and the sweep's next
+#            query threw `Cannot use a pool after calling end on the pool` —
+#            `end()` waits for checked-out *clients*, and a sweep between
+#            queries holds none. The email retry sweep is what made that
+#            client-visible: cut between `transport.send` and
+#            `settleClaimedEmail`, the message has left SMTP unrecorded and the
+#            next sweep sends it again, on every deploy that lands mid-sweep.
+#            `Scheduler.whenIdle()` and `quiesce()` close it; shutdown now
+#            waits for the tick in flight concurrently with the request drain,
+#            then ends the pool.
+# closed:    `pg_advisory_lock` in the migration runner blocked unbounded and
+#            silently, before `app.listen` — so a runner that could not take it
+#            bound no port, answered no health check and died on systemd's
+#            start timeout, reading as a hung deploy. Now a polled
+#            `pg_try_advisory_lock` under a 60s deadline that logs while it
+#            waits and names the holding pid. A pending migration file with no
+#            statements is also refused before it is applied: forward-only plus
+#            checksums makes an empty file recorded as applied unrepairable.
+# closed:    nothing could scrape this platform. RED was recorded into the OTel
+#            API, which without OTEL_EXPORTER_OTLP_ENDPOINT (unset on the box)
+#            is a no-op provider; `ErrorRates` is a sliding window behind an ops
+#            session and cannot be rated or alerted on. `GET /metrics` now
+#            serves the Prometheus text format on all three Fastify services —
+#            request/error counters, a duration histogram, pool saturation,
+#            queue depths, sweep skips, build info — with its own cumulative
+#            tally, because a counter derived from a sliding window goes
+#            backwards every minute. Cardinality is capped per metric (the route
+#            label falls back to the raw url exactly when nothing matched, so a
+#            scanner would mint unbounded series); past the cap everything folds
+#            into one `__other__` series and totals stay exact. Gated on
+#            METRICS_TOKEN, falling back to INTERNAL_SERVICE_TOKEN, and
+#            unregistered entirely in production with neither — the web service
+#            is proxied straight through Caddy, so every path on it is public.
+# gap:       the shared package's coverage floor (99/99/100/96) has been failing
+#            on a clean checkout since `startup.ts` landed with no shared-level
+#            tests — 94.19% lines, `startup.ts` at 8.13%. It is invisible because
+#            `npm test` runs `vitest run` without `--coverage`, so the floor only
+#            bites when somebody asks for it. This round moved it to 95.07%
+#            without addressing the cause.
