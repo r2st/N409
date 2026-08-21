@@ -455,7 +455,11 @@ export function GrantsTab() {
                     cancelled
                   </span>
                 )}
-                <span className="ml-auto flex items-center gap-3">
+                {/* A div rather than a span: the cancel control below is wrapped
+                    in a `fieldset`, which is flow content and cannot live
+                    inside phrasing. The flex classes are unchanged, so nothing
+                    moves. */}
+                <div className="ml-auto flex items-center gap-3">
                   <button
                     className="cursor-pointer text-xs font-semibold text-bond-600 hover:underline"
                     onClick={() => setExpanded((e) => (e === g.id ? null : g.id))}
@@ -473,7 +477,7 @@ export function GrantsTab() {
                       </button>
                     )}
                   </WriteGate>
-                </span>
+                </div>
               </div>
               {expanded === g.id && (
                 <div className="mt-4">

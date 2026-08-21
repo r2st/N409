@@ -989,6 +989,12 @@ export function Toast({
  * What this does NOT close, and what still needs its own check beside it:
  * anchors and `Link`s, and anything hung off an `onClick` on a non-form
  * element. A `fieldset` has no opinion about those.
+ *
+ * WHERE IT MAY GO. It is flow content, so it goes wherever a `div` would and
+ * nowhere a `div` would not: inside a `td`, never between `tr` and `td`;
+ * inside a `div`, never inside a `span`. `display: contents` makes both of the
+ * wrong ones *look* right, which is the reason to say so here — the layout is
+ * the last thing that would tell you.
  */
 export function WriteGate({
   closed,

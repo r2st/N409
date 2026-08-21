@@ -511,9 +511,13 @@ export function ComparablesTab() {
                       </span>
                     )}
                   </td>
-                  <WriteGate closed={retired}>
-                    {data.can_edit && (
-                      <td className="px-5 py-3 text-right whitespace-nowrap">
+                  {data.can_edit && (
+                    <td className="px-5 py-3 text-right whitespace-nowrap">
+                      {/* Inside the cell rather than around it: a `fieldset`
+                          between `tr` and `td` is not a thing the HTML parser
+                          will keep, and `display: contents` only hides that
+                          from the layout. */}
+                      <WriteGate closed={retired}>
                         {row.included ? (
                           <Button variant="ghost" onClick={() => setExcluding(row.id)} disabled={busy}>
                             Exclude
@@ -530,9 +534,9 @@ export function ComparablesTab() {
                             Remove
                           </Button>
                         )}
-                      </td>
-                    )}
-                  </WriteGate>
+                      </WriteGate>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
