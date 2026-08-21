@@ -39,7 +39,14 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 function darkModeSteps(): Set<string> {
   const css = readFileSync(path.join(here, '../src/index.css'), 'utf8');
   const dark = css.slice(css.indexOf(":root[data-theme='dark']"));
-  return new Set([...dark.matchAll(/--color-([a-z]+-\d{2,3})\s*:/g)].map((m) => m[1]));
+  // `.filter(Boolean)` with a predicate rather than a cast: a capture group
+  // that stopped matching should shrink this set and fail the tests below,
+  // not be asserted away into a `string` that is really undefined.
+  return new Set(
+    [...dark.matchAll(/--color-([a-z]+-\d{2,3})\s*:/g)]
+      .map((m) => m[1])
+      .filter((s): s is string => s !== undefined),
+  );
 }
 
 const VERBS = ['GET', 'POST', 'PUT', 'DELETE'] as const;
@@ -106,7 +113,7 @@ describe('the verb chip', () => {
     const escapes: string[] = [];
     for (const verb of VERBS) {
       for (const [, step] of chip(verb).className.matchAll(/\b(?:bg|text)-([a-z]+-\d{2,3})\b/g)) {
-        if (!dark.has(step)) escapes.push(`${verb}: ${step}`);
+        if (step !== undefined && !dark.has(step)) escapes.push(`${verb}: ${step}`);
       }
     }
     expect(escapes).toEqual([]);
