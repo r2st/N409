@@ -181,19 +181,25 @@ const PARTNER_API: string[] = [
 ];
 
 /**
- * The one write that a retired engagement must *accept*.
+ * The two routes that are *about* retirement rather than subject to it.
  *
- * `POST /api/v1/admin/retention/valuations/:id/restore` matches the pattern
- * this sweep enumerates on — it has `/valuations/:id` in it — and guarding it
- * would be exactly backwards: it is the route that un-retires. It is the first
- * thing to land here that is not a delete and not the partner API, and it is
- * worth what it cost to notice, because the sweep noticing it *is* the design.
- * A route added to this surface either refuses a retired engagement or is
- * written down here as a decision somebody made.
+ * Both match the pattern this sweep enumerates on — they have `/valuations/:id`
+ * in them — and both would be nonsense to guard. `restore` un-retires, so a
+ * guard would make it unreachable. `retire` does refuse a retired engagement
+ * ("already retired") and would pass the first half of the sweep on its own,
+ * but it must not be *driven* by it: the live half sends the same request to
+ * the live engagement, and it would succeed — retiring the fixture out from
+ * under every route the loop had not reached yet.
  *
- * `retentionRestore.test.ts` owns its behaviour.
+ * They are the first entries here that are neither a delete nor the partner
+ * API, and noticing them was the sweep doing its job: a route added to this
+ * surface either refuses a retired engagement or is written down here as a
+ * decision somebody made. `retentionRestore.test.ts` owns both behaviours.
  */
-const RESTORES: string[] = ['POST /api/v1/admin/retention/valuations/:id/restore'];
+const RETIREMENT_CONTROLS: string[] = [
+  'POST /api/v1/admin/retention/valuations/:id/restore',
+  'POST /api/v1/admin/retention/valuations/:id/retire',
+];
 
 describe.skipIf(!dbUp)('a write aimed at a retired engagement', () => {
   let ctx: TestApp;
@@ -324,7 +330,7 @@ describe.skipIf(!dbUp)('every registered write route', () => {
         !r.startsWith('DELETE ') &&
         !r.startsWith('POST /api/partner') &&
         !r.startsWith('PUT /api/partner') &&
-        !RESTORES.includes(r),
+        !RETIREMENT_CONTROLS.includes(r),
     );
   }, 120_000);
   afterAll(async () => ctx?.teardown());
@@ -388,7 +394,7 @@ describe.skipIf(!dbUp)('the coverage of that sweep', () => {
   // rather than silently widening what a retired engagement accepts.
   it('accounts for every mutating valuation-scoped route', () => {
     const registered = mutatingValuationRoutes(ctx.app);
-    const exempt = new Set([...UNGUARDED_DELETES, ...PARTNER_API, ...RESTORES]);
+    const exempt = new Set([...UNGUARDED_DELETES, ...PARTNER_API, ...RETIREMENT_CONTROLS]);
     const swept = registered.filter((r) => !exempt.has(r));
     expect(swept.length + exempt.size).toBe(registered.length);
     expect(registered.filter((r) => r.startsWith('DELETE ') && !exempt.has(r))).toEqual([]);
@@ -398,7 +404,9 @@ describe.skipIf(!dbUp)('the coverage of that sweep', () => {
   // one of the exemption lists, which would quietly shrink what is swept.
   it('names no exemption that is not registered', () => {
     const registered = new Set(mutatingValuationRoutes(ctx.app));
-    expect([...UNGUARDED_DELETES, ...PARTNER_API, ...RESTORES].filter((r) => !registered.has(r))).toEqual([]);
+    expect(
+      [...UNGUARDED_DELETES, ...PARTNER_API, ...RETIREMENT_CONTROLS].filter((r) => !registered.has(r)),
+    ).toEqual([]);
   });
 
   it('found the routes at all', () => {

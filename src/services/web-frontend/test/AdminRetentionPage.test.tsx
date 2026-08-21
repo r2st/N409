@@ -664,3 +664,107 @@ describe('AdminRetentionPage — restoring an archived valuation', () => {
     await screen.findByText('database unavailable');
   });
 });
+
+/**
+ * Withdrawing an engagement from this screen.
+ *
+ * The whole retirement guard family — 86 session writes, the partner API's
+ * three, the auditor portal's refusal to re-share, the board flow's refusal to
+ * re-mint — was reachable only by waiting out a retention policy until R90:
+ * `retireValuations` existed and its only caller was the sample seeder. This
+ * form is the action all of that was written for.
+ *
+ * By id and not from a list, deliberately: no screen offers a live engagement
+ * for retirement, and adding one would be adding a delete button to the
+ * valuations table.
+ */
+describe('AdminRetentionPage — withdrawing an engagement', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  const idField = () => screen.getByPlaceholderText('valuation id');
+  const retireButton = () => screen.getByRole('button', { name: /^Retire$/i });
+
+  it('will not fire without an id', async () => {
+    mockApi();
+    renderPage();
+    await loaded();
+    expect(retireButton()).toBeDisabled();
+    // Whitespace is not an id.
+    await userEvent.type(idField(), '   ');
+    expect(retireButton()).toBeDisabled();
+    await userEvent.type(idField(), '01JVAL777');
+    expect(retireButton()).toBeEnabled();
+  });
+
+  it('asks first, naming the company rename nobody expects', async () => {
+    const writes: unknown[] = [];
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockApi((_path, init) => {
+      writes.push(JSON.parse(String(init.body)));
+      return jsonResponse({ retired: true, valuation: { company_name: 'Acme, Inc. [retired]' } });
+    });
+    renderPage();
+    await loaded();
+
+    await userEvent.type(idField(), '01JVAL777');
+    await userEvent.type(screen.getByPlaceholderText(/client withdrew/), '  duplicate file  ');
+    await userEvent.click(retireButton());
+
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(confirm.mock.calls[0]![0]).toMatch(/\[retired\]/);
+    expect(confirm.mock.calls[0]![0]).toMatch(/restore it/i);
+    expect(writes[0]).toEqual({ reason: 'duplicate file' });
+    // The new name is reported back, not left for the admin to discover.
+    await screen.findByText(/Acme, Inc. \[retired\]/);
+    await waitFor(() => expect(idField()).toHaveValue(''));
+  });
+
+  it('sends no reason at all rather than an empty one', async () => {
+    const writes: unknown[] = [];
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockApi((_path, init) => {
+      writes.push(JSON.parse(String(init.body)));
+      return jsonResponse({ retired: true, valuation: { company_name: 'X [retired]' } });
+    });
+    renderPage();
+    await loaded();
+
+    await userEvent.type(idField(), '01JVAL777');
+    await userEvent.click(retireButton());
+    // The route rejects a blank reason with a 422, so a form that always sent
+    // the field would make "no reason" unusable.
+    await waitFor(() => expect(writes).toEqual([{}]));
+  });
+
+  it('sends nothing when the confirmation is declined', async () => {
+    const writes: unknown[] = [];
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    mockApi((_path, init) => {
+      writes.push(JSON.parse(String(init.body)));
+      return jsonResponse({ retired: true, valuation: { company_name: 'X [retired]' } });
+    });
+    renderPage();
+    await loaded();
+
+    await userEvent.type(idField(), '01JVAL777');
+    await userEvent.click(retireButton());
+    await waitFor(() => expect(retireButton()).toBeEnabled());
+    expect(writes).toEqual([]);
+    // Declining is not a failure and must not leave a banner behind.
+    expect(screen.queryByText(/Could not retire/)).not.toBeInTheDocument();
+  });
+
+  it('surfaces a refusal instead of reading as a retirement that happened', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockApi(() => problem(409, 'This engagement is already retired.'));
+    renderPage();
+    await loaded();
+
+    await userEvent.type(idField(), '01JVAL777');
+    await userEvent.click(retireButton());
+    await screen.findByText('This engagement is already retired.');
+    // The id stays in the field: the admin is more likely to be fixing a typo
+    // than starting over, and clearing it on failure loses what they typed.
+    expect(idField()).toHaveValue('01JVAL777');
+  });
+});

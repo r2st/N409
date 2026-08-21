@@ -266,3 +266,167 @@ describe.skipIf(!dbUp)('restoring an archived valuation', () => {
     expect((await restore(id)).statusCode).toBe(409);
   });
 });
+
+/**
+ * Withdrawing an engagement, which had no implementation at all.
+ *
+ * Four rounds of comments say `archived_at` is stamped "by the retention sweep
+ * when a policy period runs out, and by `retireValuations` when a firm
+ * withdraws a piece of work". The first half was true. The second described a
+ * function whose only caller was the sample seeder — so the 86 guarded writes,
+ * the partner API's three, the auditor portal's refusal to re-share and the
+ * board flow's refusal to re-mint were all reachable only by waiting out a
+ * retention policy, and an admin who needed to withdraw a live engagement today
+ * could not.
+ */
+describe.skipIf(!dbUp)('retiring an engagement on purpose', () => {
+  let ctx: TestApp;
+  let admin: Awaited<ReturnType<typeof seedUser>>;
+  let plainUser: Awaited<ReturnType<typeof seedUser>>;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp();
+    admin = await seedUser(ctx, { roles: ['admin'] });
+    plainUser = await seedUser(ctx, { roles: ['valuation_user'] });
+  }, 60_000);
+  afterAll(async () => ctx?.teardown());
+
+  const make = async (company: string) =>
+    (
+      await createValuation(
+        ctx.pool,
+        { kind: '409a', companyName: company, userId: admin.id },
+        { ...actor, actorId: admin.id },
+      )
+    ).id;
+
+  const retire = (id: string, body: unknown = {}, token = admin.token) =>
+    ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/retention/valuations/${id}/retire`,
+      headers: authHeader(token),
+      payload: body,
+    });
+
+  it('stamps the flag, renames the company, and closes the writes', async () => {
+    const id = await make('Walked Away Co');
+    // The live half of the pair: this same request succeeds before the retire.
+    const before = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${id}`,
+      headers: authHeader(admin.token),
+      payload: { company_name: 'Walked Away Co' },
+    });
+    expect(before.statusCode).toBeLessThan(300);
+
+    const res = await retire(id, { reason: 'client withdrew the engagement' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().retired).toBe(true);
+    expect(res.json().valuation.archived_at).not.toBeNull();
+    // Named in the response because an admin who did not expect the company
+    // name to change should learn it from the answer, not a support ticket.
+    expect(res.json().valuation.company_name).toBe('Walked Away Co [retired]');
+
+    const after = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${id}`,
+      headers: authHeader(admin.token),
+      payload: { company_name: 'Anything' },
+    });
+    expect(after.statusCode).toBe(409);
+    expect(JSON.stringify(after.json())).toMatch(/retired/i);
+  });
+
+  /**
+   * The round trip, which is the point of the pair existing.
+   *
+   * `retireValuations` was written for the seeder and its rename was never
+   * meant to survive; `restoreValuations` takes the suffix back off. A retire
+   * followed by a restore has to leave the row exactly as it was found, or the
+   * undo is not one.
+   */
+  it('round-trips through restore, name and all', async () => {
+    const id = await make('There And Back Co');
+    expect((await retire(id)).statusCode).toBe(200);
+    const restored = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/retention/valuations/${id}/restore`,
+      headers: authHeader(admin.token),
+      payload: {},
+    });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json().valuation.company_name).toBe('There And Back Co');
+    expect(restored.json().valuation.archived_at).toBeNull();
+  });
+
+  /**
+   * Logged as `archived` rather than under a name of its own, so the restore
+   * control offers itself against a manual retirement without knowing there is
+   * such a thing. `manual` and `reason` are what separate the two for a reader.
+   */
+  it('records an archival the log and the restore control both understand', async () => {
+    const id = await make('Logged Withdrawal Co');
+    expect((await retire(id, { reason: 'duplicate engagement' })).statusCode).toBe(200);
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/retention/actions',
+      headers: authHeader(admin.token),
+    });
+    const entry = (
+      res.json().actions as Array<{ action: string; reference_id: string; detail: Record<string, unknown> }>
+    ).find((a) => a.reference_id === id)!;
+    expect(entry.action).toBe('archived');
+    expect(entry.detail).toMatchObject({
+      manual: true,
+      retired_by: admin.id,
+      reason: 'duplicate engagement',
+    });
+  });
+
+  it('drops it out of the lists it was in', async () => {
+    const id = await make('Gone From The List Co');
+    const listIds = async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/valuations?per_page=100',
+        headers: authHeader(admin.token),
+      });
+      return (res.json().valuations as Array<{ id: string }>).map((v) => v.id);
+    };
+    expect(await listIds()).toContain(id);
+    expect((await retire(id)).statusCode).toBe(200);
+    expect(await listIds()).not.toContain(id);
+  });
+
+  it('refuses a second retirement instead of double-suffixing the name', async () => {
+    const id = await make('Only Once Co');
+    expect((await retire(id)).statusCode).toBe(200);
+    const again = await retire(id);
+    expect(again.statusCode).toBe(409);
+    expect(again.json().detail).toMatch(/already retired/i);
+    const row = (await findValuationById(ctx.pool, id))!;
+    expect(row.company_name).toBe('Only Once Co [retired]');
+  });
+
+  it('takes a reason or no reason, and refuses an empty one', async () => {
+    const id = await make('Blank Reason Co');
+    // An empty string is a client that built the body wrong, not an omission —
+    // omitting the field is how you say "no reason given".
+    const blank = await retire(id, { reason: '   ' });
+    expect(blank.statusCode).toBe(422);
+    expect((await findValuationById(ctx.pool, id))!.archived_at).toBeNull();
+    expect((await retire(id)).statusCode).toBe(200);
+  });
+
+  it('404s an unknown or malformed id', async () => {
+    expect((await retire('01ARZ3NDEKTSV4RRFFQ69G5FAV')).statusCode).toBe(404);
+    expect((await retire('not-an-id')).statusCode).toBe(404);
+  });
+
+  it('is refused to a non-admin, and really does nothing', async () => {
+    const id = await make('Not Your Call Co');
+    expect((await retire(id, {}, plainUser.token)).statusCode).toBe(403);
+    expect((await findValuationById(ctx.pool, id))!.archived_at).toBeNull();
+  });
+});

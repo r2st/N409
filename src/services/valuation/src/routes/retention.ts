@@ -7,7 +7,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findUserById } from '../repos/users.js';
 import { isDueForArchival, RETENTION_DATA_TYPES } from '../domain/retention.js';
-import { restoreValuations } from '../repos/valuationPurge.js';
+import { restoreValuations, retireValuations } from '../repos/valuationPurge.js';
 import {
   findArchivableValuations,
   HOLD_PAGE_LIMIT,
@@ -193,6 +193,65 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
   app.get('/api/v1/admin/retention/actions', { preHandler: app.authenticate }, async (req) => {
     requireAdmin(req);
     return { actions: await listActions(deps.pool) };
+  });
+
+  /**
+   * Withdraw an engagement from the product.
+   *
+   * THE GAP THIS CLOSES IS AN ODD ONE: the whole retirement guard family was
+   * built for an action that did not exist. Four rounds of comments say
+   * `archived_at` is stamped "by the retention sweep when a policy period runs
+   * out, and by `retireValuations` when a firm withdraws a piece of work" —
+   * and `retireValuations` had exactly one caller, the sample seeder. So the
+   * 86 guarded writes, the partner API's three, the auditor portal's refusal to
+   * re-share and the board flow's refusal to re-mint were all reachable only by
+   * waiting out a retention policy. An admin who needed to withdraw a live
+   * engagement today had no way to do it at all.
+   *
+   * IT RECORDS `archived`, not a new action name. That is the same thing the
+   * sweep does to the same column, and keeping one name means the restore
+   * control offers itself against a manual retirement without knowing there is
+   * such a thing. `manual: true` in the detail is what separates them for
+   * anyone reading the log, and `reason` is what the sweep can never supply.
+   *
+   * THE RENAME COMES WITH IT. `retireValuations` appends ` [retired]` so the
+   * company name is free for a re-run, and this route shares that path rather
+   * than forking it: the suffix reads as what the row is, `restoreValuations`
+   * takes it off again, and a second retirement cannot double it. Named in the
+   * response because an admin who did not expect the company name to change
+   * should find out from the answer and not from a support ticket.
+   */
+  const RetireBody = z.object({ reason: z.string().trim().min(1).max(1000).optional() });
+
+  app.post('/api/v1/admin/retention/valuations/:id/retire', { preHandler: app.authenticate }, async (req) => {
+    const principal = requireAdmin(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const parsed = RetireBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw problems.unprocessable('Invalid body', { errors: parsed.error.issues });
+
+    const valuation = await findValuationById(deps.pool, id);
+    if (!valuation) throw problems.notFound();
+    if (valuation.archived_at !== null) {
+      throw problems.conflict('This engagement is already retired.');
+    }
+
+    const result = await retireValuations(deps.pool, [id]);
+    // Empty means a concurrent retire won the UPDATE. The engagement is
+    // withdrawn either way, which is what the caller asked for, so this
+    // reports rather than raises — and does not log an archival it did not do.
+    const retired = result.retired.includes(id);
+    if (retired) {
+      await recordActions(deps.pool, [
+        {
+          dataType: 'valuation',
+          action: 'archived',
+          referenceId: id,
+          detail: { manual: true, retired_by: principal.id, reason: parsed.data.reason ?? null },
+        },
+      ]);
+    }
+    return { retired, valuation: await findValuationById(deps.pool, id) };
   });
 
   /**

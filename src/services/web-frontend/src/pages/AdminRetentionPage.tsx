@@ -44,6 +44,7 @@ export function AdminRetentionPage() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [holdForm, setHoldForm] = useState({ scope: 'valuation', reference_id: '', reason: '' });
+  const [retireForm, setRetireForm] = useState({ id: '', reason: '' });
   /**
    * Which control is mid-write, as `sweep` / `hold` / `policy:<type>` /
    * `release:<id>`, or null.
@@ -187,6 +188,46 @@ export function AdminRetentionPage() {
         await load();
       } catch (err) {
         setError(err instanceof ApiError ? err.message : 'Could not restore that valuation.');
+      }
+    });
+
+  /**
+   * Withdraw an engagement by id.
+   *
+   * By id and not from a list, deliberately: there is no screen that offers a
+   * live engagement for retirement, and building one would be building a
+   * "delete" button into the valuations table. An admin who is retiring a piece
+   * of work has the id in front of them, from the ticket that asked for it —
+   * the same way the legal-hold form above takes one.
+   *
+   * The confirmation spells out the company name change because that is the
+   * part nobody expects: `retireValuations` appends " [retired]" so the name is
+   * free again, and an admin who finds out afterwards raises a support ticket
+   * about it.
+   */
+  const retireValuation = () =>
+    run('retire', async () => {
+      setNote(null);
+      setError(null);
+      const id = retireForm.id.trim();
+      if (
+        !window.confirm(
+          `Retire ${id}? It leaves every list, refuses every change, and its company name gains ` +
+            '" [retired]". An administrator can restore it from this screen afterwards.',
+        )
+      ) {
+        return;
+      }
+      try {
+        const { valuation } = await api<{ valuation: { company_name: string } }>(
+          `/admin/retention/valuations/${id}/retire`,
+          { method: 'POST', body: retireForm.reason.trim() ? { reason: retireForm.reason.trim() } : {} },
+        );
+        setNote(`Retired ${id} — now "${valuation.company_name}". It appears in the log below as archived.`);
+        setRetireForm({ id: '', reason: '' });
+        await load();
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Could not retire that valuation.');
       }
     });
 
@@ -396,6 +437,40 @@ export function AdminRetentionPage() {
             </tbody>
           </table>
         )}
+      </section>
+
+      <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+        <h2 className="overline mb-1 text-ink-400">Withdraw an engagement</h2>
+        <p className="mb-4 max-w-2xl text-sm text-ink-500">
+          Retires a valuation immediately, without waiting for a retention policy: it leaves every list,
+          dashboard and campaign, refuses every change, and stops the auditor and board links it had issued.
+          Reading it stays open. It can be restored from the log below.
+        </p>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-sm">
+            <span className="overline mb-1 block text-ink-400">Valuation ID</span>
+            <TextInput
+              value={retireForm.id}
+              onChange={(e) => setRetireForm((f) => ({ ...f, id: e.target.value }))}
+              placeholder="valuation id"
+            />
+          </label>
+          <label className="text-sm flex-1">
+            <span className="overline mb-1 block text-ink-400">Reason</span>
+            <TextInput
+              value={retireForm.reason}
+              onChange={(e) => setRetireForm((f) => ({ ...f, reason: e.target.value }))}
+              placeholder="e.g. client withdrew the engagement (optional)"
+            />
+          </label>
+          <Button
+            variant="secondary"
+            disabled={!retireForm.id.trim() || busy !== null}
+            onClick={retireValuation}
+          >
+            {busy === 'retire' ? 'Retiring…' : 'Retire'}
+          </Button>
+        </div>
       </section>
 
       <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">

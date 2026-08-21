@@ -124,7 +124,7 @@ describe('app data tables stay within a 375px viewport', () => {
     // Legal holds — scope · reason · state · release. Re-measured after the
     // action column gained an in-flight label: "Releasing…" is three glyphs
     // wider than "Release", which is the widest this cell now gets.
-    ['pages/AdminRetentionPage.tsx:373', 297],
+    ['pages/AdminRetentionPage.tsx:414', 297],
   ]);
 
   it('gives every table of four or more columns somewhere to scroll', () => {
