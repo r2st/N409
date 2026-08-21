@@ -11,7 +11,11 @@ import {
   REQUEST_ID_HEADER,
   createLogger,
   probeReady,
+  MetricsRegistry,
   registerHealth,
+  registerHttpMetrics,
+  registerMetricsEndpoint,
+  registerProcessMetrics,
   registerPermissionsPolicy,
   registerProblemHandler,
   registerRequestDrain,
@@ -115,7 +119,11 @@ export function inlineScriptHashes(staticRoot: string): string[] {
       // Absent type and `module` are JavaScript; anything else is a data block
       // unless it names a JavaScript MIME type.
       if (type && type !== 'module' && !/^(text|application)\/(java|ecma)script$/i.test(type)) continue;
-      hashes.add(`'sha256-${createHash('sha256').update(match[2] ?? '', 'utf8').digest('base64')}'`);
+      hashes.add(
+        `'sha256-${createHash('sha256')
+          .update(match[2] ?? '', 'utf8')
+          .digest('base64')}'`,
+      );
     }
   }
   // Sorted so the header is byte-stable across boots — it is compared in tests
@@ -356,7 +364,26 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
   // restart here is one a person is watching. Registered before the proxy so it
   // counts the proxied /api round trips too, and discounted when the proxied
   // response closes rather than when it was forwarded.
-  registerRequestDrain(app);
+  const requestDrain = registerRequestDrain(app);
+
+  /**
+   * Scrape endpoint (shared/prometheus.ts).
+   *
+   * This is the origin the public actually reaches — Caddy proxies every path
+   * on port 3000 straight through — so the gate is the whole story here. With
+   * no `METRICS_TOKEN` (or `INTERNAL_SERVICE_TOKEN`) set in production the
+   * route is not registered at all, because this body names every route the
+   * platform has and how often each one fails.
+   */
+  const metricsRegistry = new MetricsRegistry();
+  registerHttpMetrics(app, metricsRegistry);
+  registerProcessMetrics(metricsRegistry, 'web');
+  metricsRegistry.gauge(
+    'http_requests_in_flight',
+    'Requests currently being served',
+    () => requestDrain.inFlight,
+  );
+  registerMetricsEndpoint(app, { registry: metricsRegistry, service: 'web' });
 
   void app.register(httpProxy, {
     upstream: valuationUrl,

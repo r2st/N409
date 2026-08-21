@@ -311,6 +311,70 @@ describe('registerInternalAuth in production', () => {
   });
 });
 
+/**
+ * The one caller of `gatedElsewhere` is `/metrics`, which carries its own
+ * `METRICS_TOKEN` gate. Without the exemption the two would stack on the report
+ * service and nowhere else, so a scraper holding only the metrics secret would
+ * collect from two of the three Fastify services and silently fail on the third.
+ */
+describe('registerInternalAuth gatedElsewhere', () => {
+  const build = (gatedElsewhere?: readonly string[]) => {
+    const app = Fastify({ logger: false });
+    registerInternalAuth(app, {
+      service: 'stub',
+      env: { INTERNAL_SERVICE_TOKEN: 'estate-secret' },
+      log: { warn: () => {} },
+      gatedElsewhere,
+    });
+    app.get('/metrics', async () => 'metrics');
+    app.get('/render', async () => 'render');
+    return app;
+  };
+
+  it('lets an exempt path past without the internal token', async () => {
+    const app = build(['/metrics']);
+    expect((await app.inject({ method: 'GET', url: '/metrics' })).statusCode).toBe(200);
+    // Query strings do not smuggle a path past the comparison, or around it.
+    expect((await app.inject({ method: 'GET', url: '/metrics?x=1' })).statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('still guards every path not named', async () => {
+    const app = build(['/metrics']);
+    expect((await app.inject({ method: 'GET', url: '/render' })).statusCode).toBe(401);
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/render',
+          headers: { 'x-internal-token': 'estate-secret' },
+        })
+      ).statusCode,
+    ).toBe(200);
+    await app.close();
+  });
+
+  it('guards everything when nothing is exempted', async () => {
+    const app = build();
+    expect((await app.inject({ method: 'GET', url: '/metrics' })).statusCode).toBe(401);
+    await app.close();
+  });
+
+  // An exemption is by exact path, so a prefix cannot open the routes under it.
+  it('does not exempt a path that merely starts with an exempt one', async () => {
+    const app = Fastify({ logger: false });
+    registerInternalAuth(app, {
+      service: 'stub',
+      env: { INTERNAL_SERVICE_TOKEN: 'estate-secret' },
+      log: { warn: () => {} },
+      gatedElsewhere: ['/metrics'],
+    });
+    app.get('/metrics/secrets', async () => 'nope');
+    expect((await app.inject({ method: 'GET', url: '/metrics/secrets' })).statusCode).toBe(401);
+    await app.close();
+  });
+});
+
 describe('isProductionEnv', () => {
   it('matches only the exact word the unit files set', () => {
     expect(isProductionEnv({ NODE_ENV: 'production' })).toBe(true);

@@ -5,8 +5,12 @@ import {
   API_PERMISSIONS_POLICY,
   createLogger,
   problems,
+  MetricsRegistry,
   registerHealth,
+  registerHttpMetrics,
   registerInternalAuth,
+  registerMetricsEndpoint,
+  registerProcessMetrics,
   registerPermissionsPolicy,
   registerProblemHandler,
   registerRequestDrain,
@@ -141,7 +145,10 @@ export function buildApp(): FastifyInstance {
   // Shared secret, same contract as the AI and engine services. Registered
   // before the render route so an unauthenticated caller is refused before the
   // 8 MB body is read, let alone rendered.
-  registerInternalAuth(app, { service: 'report' });
+  // `/metrics` is exempted because `registerMetricsEndpoint` gates it on its own
+  // secret — see `gatedElsewhere`. Without that, this one service would demand
+  // INTERNAL_SERVICE_TOKEN for a scrape while the other two accept METRICS_TOKEN.
+  registerInternalAuth(app, { service: 'report', gatedElsewhere: ['/metrics'] });
   // This service registered no checks at all, which made /ready a 200 it was
   // structurally incapable of ever withholding — the same lie the web service's
   // /ready used to tell, and deploy.sh probes this unit too. It renders PDFs and
@@ -154,7 +161,20 @@ export function buildApp(): FastifyInstance {
   // realistic reason this service is slow to close, and until the drain existed
   // it was not slow at all: the caller got a connection reset instead of a PDF
   // it had already waited seconds for.
-  registerRequestDrain(app);
+  const requestDrain = registerRequestDrain(app);
+
+  // Scrape endpoint (shared/prometheus.ts). This service's latency is the
+  // number worth watching here — a 409A PDF render is the slowest thing the
+  // platform does, and `/health` cannot say it got slower.
+  const metricsRegistry = new MetricsRegistry();
+  registerHttpMetrics(app, metricsRegistry);
+  registerProcessMetrics(metricsRegistry, 'report');
+  metricsRegistry.gauge(
+    'http_requests_in_flight',
+    'Requests currently being served — concurrent PDF renders, in practice',
+    () => requestDrain.inFlight,
+  );
+  registerMetricsEndpoint(app, { registry: metricsRegistry, service: 'report' });
 
   app.post('/render/v1/pdf', async (req, reply) => {
     const parsed = RenderBody.safeParse(req.body);

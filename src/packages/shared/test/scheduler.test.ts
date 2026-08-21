@@ -137,3 +137,93 @@ describe('nonOverlapping', () => {
     expect(s.running).toBe(false);
   });
 });
+
+describe('Scheduler.whenIdle', () => {
+  it('resolves immediately when no tick is in flight', async () => {
+    const s = nonOverlapping(
+      async () => {},
+      () => {},
+    );
+    let settled = false;
+    void s.whenIdle().then(() => {
+      settled = true;
+    });
+    await flush();
+    expect(settled).toBe(true);
+  });
+
+  it('waits for the in-flight tick and resolves only once it finishes', async () => {
+    const gate = deferred();
+    const s = nonOverlapping(
+      () => gate.promise,
+      () => {},
+    );
+    s.run();
+
+    let settled = false;
+    void s.whenIdle().then(() => {
+      settled = true;
+    });
+    await flush();
+    expect(settled).toBe(false);
+    expect(s.running).toBe(true);
+
+    gate.resolve();
+    await flush();
+    expect(settled).toBe(true);
+    expect(s.running).toBe(false);
+  });
+
+  // A failed tick is finished business: onError has already run by the time the
+  // waiter wakes, so a shutdown must not hang on it.
+  it('resolves when the in-flight tick rejects', async () => {
+    const gate = deferred();
+    const onError = vi.fn();
+    const s = nonOverlapping(() => gate.promise, onError);
+    s.run();
+
+    const idle = s.whenIdle();
+    gate.reject(new Error('scan failed'));
+    await idle;
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(s.running).toBe(false);
+  });
+
+  // The synchronous-throw path resets the flag on its own line rather than
+  // through the `.finally()` chain, and used to do it without waking anybody.
+  it('resolves when the tick throws synchronously', async () => {
+    const onError = vi.fn();
+    const s = nonOverlapping(() => {
+      throw new Error('sync');
+    }, onError);
+
+    s.run();
+    let settled = false;
+    void s.whenIdle().then(() => {
+      settled = true;
+    });
+    await flush();
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(s.running).toBe(false);
+    expect(settled).toBe(true);
+  });
+
+  it('wakes every waiter registered against one tick', async () => {
+    const gate = deferred();
+    const s = nonOverlapping(
+      () => gate.promise,
+      () => {},
+    );
+    s.run();
+    const settled: number[] = [];
+    void s.whenIdle().then(() => settled.push(1));
+    void s.whenIdle().then(() => settled.push(2));
+    void s.whenIdle().then(() => settled.push(3));
+
+    gate.resolve();
+    await flush();
+    expect(settled.sort()).toEqual([1, 2, 3]);
+  });
+});

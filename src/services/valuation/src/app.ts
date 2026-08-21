@@ -8,7 +8,11 @@ import {
   bindRequestId,
   createLogger,
   ErrorRates,
+  MetricsRegistry,
   registerHealth,
+  registerHttpMetrics,
+  registerMetricsEndpoint,
+  registerProcessMetrics,
   registerPermissionsPolicy,
   registerProblemHandler,
   registerRequestDrain,
@@ -20,6 +24,9 @@ declare module 'fastify' {
   interface FastifyInstance {
     /** Holds `/ready` shut until the boot sequence completes (shared/startup.ts). */
     startupGate: StartupGate;
+    /** What `GET /metrics` serves (shared/prometheus.ts). Decorated so
+     *  `index.ts` can add the gauges only the composition root can see. */
+    metrics: MetricsRegistry;
   }
 }
 import { verifyFontAssets } from '@n409/report/pdf';
@@ -64,7 +71,7 @@ import { registerTaskRoutes } from './routes/tasks.js';
 import { registerDocumentRoutes, MAX_DOCUMENT_BYTES } from './routes/documents.js';
 import { UPLOAD_FIELD_LIMITS } from './routes/uploadLimits.js';
 import { registerPipelineRoutes } from './routes/pipeline.js';
-import type { AutoPipelineDeps } from './pipeline/autoPipeline.js';
+import { autoPipelineConcurrency, type AutoPipelineDeps } from './pipeline/autoPipeline.js';
 import { registerParamsRoutes } from './routes/params.js';
 import { registerEngineInputsRoutes } from './routes/engineInputs.js';
 import { registerAiRoutes } from './routes/ai.js';
@@ -555,12 +562,58 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // every restart, and then report abandoned requests that were only
   // heartbeats. Placed after `registerStreamRoutes` so `app.realtimeHub` — the
   // decoration it reads — already exists.
-  registerRequestDrain(app, {
+  const requestDrain = registerRequestDrain(app, {
     onDrainStart: () => {
       const closed = hub.closeAll();
       if (closed > 0) app.log.info({ streams: closed }, 'closed realtime streams for shutdown');
     },
   });
+
+  /**
+   * `GET /metrics`, in the Prometheus text format (shared/prometheus.ts).
+   *
+   * Registered here rather than in `index.ts` for the same reason the drain is:
+   * it is a property of the app, so the integration suite exercises the real
+   * endpoint rather than a second wiring of it. The gauges that need the
+   * composition root — the pg pool's own counters, which `buildApp` is handed
+   * but which only `index.ts` knows the tuning of — are added there, onto the
+   * registry decorated below.
+   *
+   * Everything sampled here is an in-memory read. Nothing on a scrape path
+   * queries the database: a monitoring poll that costs a query adds load to the
+   * thing being monitored, hardest exactly when the database is the problem.
+   */
+  const metricsRegistry = new MetricsRegistry();
+  app.decorate('metrics', metricsRegistry);
+  registerHttpMetrics(app, metricsRegistry);
+  registerProcessMetrics(metricsRegistry, 'valuation');
+  metricsRegistry.gauge(
+    'http_requests_in_flight',
+    'Requests currently being served',
+    () => requestDrain.inFlight,
+  );
+  // Queue depth, as this process sees it: orchestrations running and waiting on
+  // the auto-pipeline semaphore. The DB-backed backlogs (outbox, webhook
+  // deliveries, jobs) are deliberately absent — they are a count query each,
+  // and the job-alert sweep already watches them on its own schedule.
+  metricsRegistry.gauge(
+    'auto_pipeline_runs_active',
+    'In-flight auto-pipeline orchestrations',
+    () => autoPipelineConcurrency().active,
+  );
+  metricsRegistry.gauge(
+    'auto_pipeline_runs_pending',
+    'Auto-pipeline orchestrations queued behind the concurrency limit',
+    () => autoPipelineConcurrency().pending,
+  );
+  // Realtime streams are capped per-user/per-room/per-process (realtime/hub.ts);
+  // this is the number those ceilings are measured against.
+  metricsRegistry.gauge(
+    'realtime_streams_open',
+    'Open per-valuation SSE connections',
+    () => hub.stats().total,
+  );
+  registerMetricsEndpoint(app, { registry: metricsRegistry, service: 'valuation' });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });
   registerInboxRoutes(app, { pool });

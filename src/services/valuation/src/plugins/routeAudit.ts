@@ -30,6 +30,12 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
   { method: 'GET', url: '/', reason: 'service banner naming the health endpoints' },
   { method: 'GET', url: '/health', reason: 'liveness probe' },
   { method: 'GET', url: '/ready', reason: 'readiness probe' },
+  {
+    method: 'GET',
+    url: '/metrics',
+    reason:
+      'Prometheus scrape; gated on METRICS_TOKEN/INTERNAL_SERVICE_TOKEN, and unregistered in production without one',
+  },
 
   // Sign-in and account recovery: the routes that mint a session cannot
   // require one. Each is rate-limited and validates its own credential.

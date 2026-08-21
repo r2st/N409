@@ -109,6 +109,17 @@ function used(): Map<string, string[]> {
     for (const m of text.matchAll(/^[A-Z][A-Z0-9_]*_VAR\s*=\s*["']([A-Z][A-Z0-9_]{2,})["']/gm)) {
       note(m[1]!, rel);
     }
+    // The same idiom with the `_ENV` suffix this codebase actually prefers:
+    // `export const METRICS_TOKEN_ENV = 'METRICS_TOKEN'`, read later as
+    // `env[METRICS_TOKEN_ENV]`. Only `_VAR` was matched, so a variable named
+    // this way was invisible in both directions — which is precisely the
+    // silent-misconfiguration failure this file exists to prevent, and
+    // `METRICS_TOKEN` shipped straight into it: unset everywhere, so the
+    // scrape endpoint would simply not be registered in production and the
+    // only evidence would be one warn line at boot.
+    for (const m of text.matchAll(/^export const [A-Z][A-Z0-9_]*_ENV\s*=\s*["']([A-Z][A-Z0-9_]{2,})["']/gm)) {
+      note(m[1]!, rel);
+    }
     // A lookup table from provider name to key name (websearch.py PROVIDER_KEYS).
     if (file.endsWith('websearch.py')) {
       for (const m of text.matchAll(/^\s+["'][a-z]+["']:\s*["']([A-Z][A-Z0-9_]{2,})["'],/gm)) {
@@ -187,6 +198,7 @@ describe('.env.example is the deployment contract', () => {
     expect(names.has('SEARXNG_URL')).toBe(true); // name held in a _VAR constant
     expect(names.has('TAVILY_API_KEY')).toBe(true); // provider lookup table
     expect(names.has('CALENDLY_URL')).toBe(true); // Vite clientEnv list
+    expect(names.has('METRICS_TOKEN')).toBe(true); // name held in an _ENV constant
     expect(names.size).toBeGreaterThan(50);
   });
 

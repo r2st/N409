@@ -105,7 +105,26 @@ export class MissingInternalTokenError extends Error {
  */
 export function registerInternalAuth(
   app: FastifyInstance,
-  opts: { service: string; log?: InternalAuthLogger; env?: NodeJS.ProcessEnv } = {
+  opts: {
+    service: string;
+    log?: InternalAuthLogger;
+    env?: NodeJS.ProcessEnv;
+    /**
+     * Paths this hook lets past because they carry a gate of their own.
+     *
+     * Exactly one caller: `/metrics`, which `registerMetricsEndpoint` gates on
+     * `METRICS_TOKEN` — a credential that deliberately rotates separately from
+     * the estate's service token, because a Prometheus configuration file is a
+     * wider blast radius than a systemd unit. Without this the two gates stack
+     * on this one service and nowhere else, so a scraper configured with
+     * `METRICS_TOKEN` would collect from the web and valuation services and
+     * silently fail against the report service alone.
+     *
+     * Not a general escape hatch: a path named here is unauthenticated *by this
+     * hook*, so it must have an equivalent gate or it has none at all.
+     */
+    gatedElsewhere?: readonly string[];
+  } = {
     service: 'internal',
   },
 ): void {
@@ -119,11 +138,14 @@ export function registerInternalAuth(
     );
   }
 
+  const gatedElsewhere = new Set(opts.gatedElsewhere ?? []);
+
   app.addHook('onRequest', async (req: FastifyRequest) => {
     // Re-read per request: the check above is about start-up configuration,
     // this one is about the secret in force right now.
     const expected = internalToken(env);
     if (isInternalPublicPath(req.url)) return;
+    if (gatedElsewhere.has(req.url.split('?')[0] ?? '')) return;
     if (expected === null) {
       // Unreachable at boot in production, but the secret is deliberately
       // re-read so it can rotate without a restart — and a rotation that

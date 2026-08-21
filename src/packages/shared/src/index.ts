@@ -9,6 +9,28 @@ export {
 export { startTelemetry, type TelemetryHandle } from './otel.js';
 export { createHttpMetrics, registerGauge, routeLabel, statusClass, type HttpMetrics } from './metrics.js';
 export {
+  Counter,
+  DEFAULT_DURATION_BUCKETS,
+  Histogram,
+  MAX_SERIES_PER_METRIC,
+  METRICS_TOKEN_ENV,
+  MetricsRegistry,
+  OVERFLOW_LABEL,
+  PROMETHEUS_CONTENT_TYPE,
+  escapeHelp,
+  escapeLabelValue,
+  formatValue,
+  metricsCallerAuthorized,
+  metricsToken,
+  registerHttpMetrics,
+  registerMetricsEndpoint,
+  registerProcessMetrics,
+  type GaugeReading,
+  type Labels,
+  type MetricsEndpointLogger,
+  type MetricsEndpointOptions,
+} from './prometheus.js';
+export {
   ErrorRates,
   BUCKET_COUNT,
   BUCKET_MS,
@@ -70,7 +92,16 @@ export {
   type DrainOptions,
   type DrainResult,
 } from './drain.js';
-export { nonOverlapping, type Scheduler } from './scheduler.js';
+export {
+  DEFAULT_QUIESCE_TIMEOUT_MS,
+  nonOverlapping,
+  quiesce,
+  quiesceAndLog,
+  type NamedScheduler,
+  type QuiesceLogger,
+  type QuiesceResult,
+  type Scheduler,
+} from './scheduler.js';
 export { listenHost, listenPort, DEFAULT_LISTEN_HOST } from './listen.js';
 export { trustedProxies, DEFAULT_TRUSTED_PROXIES } from './clientIp.js';
 export { newUlid, isUlid } from './ids.js';

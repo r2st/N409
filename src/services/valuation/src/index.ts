@@ -7,6 +7,8 @@ import {
   installShutdownHandlers,
   listenHost,
   nonOverlapping,
+  quiesceAndLog,
+  type NamedScheduler,
   flagOverrides,
   flagSnapshot,
 } from '@n409/shared';
@@ -138,6 +140,41 @@ registerGauge(
 );
 
 /**
+ * The same pool and query facts, on the scrape endpoint (`GET /metrics`).
+ *
+ * Every `registerGauge` above records into the OpenTelemetry API, which without
+ * `OTEL_EXPORTER_OTLP_ENDPOINT` — unset on the deployed box — is a no-op
+ * provider. `app.metrics` is the registry `buildApp` decorates, and it is read
+ * by a scraper with no collector in the way. These four are here rather than in
+ * `buildApp` because they are the composition root's: it owns the pool object
+ * and the tuning the saturation is measured against.
+ */
+app.metrics.gauge('db_pool_connections_total', 'pg pool clients (in use + idle)', () => pool.totalCount);
+app.metrics.gauge('db_pool_connections_idle', 'Idle pg pool clients', () => pool.idleCount);
+app.metrics.gauge(
+  'db_pool_connections_waiting',
+  'Callers queued for a pg client — nonzero means the pool is saturated',
+  () => pool.waitingCount,
+);
+// A checkout held far longer than any statement should take is a leak, and a
+// leak never recovers on its own (db/poolHealth.ts). `peek()` rather than
+// `sample()`: a scrape must not consume the once-only report the interval below
+// exists to log, or a Prometheus poll would silence an operator's alert.
+app.metrics.gauge(
+  'db_pool_checkouts_leaked_total',
+  'Connections checked out and never returned, cumulative',
+  () => poolHealth.peek().leaksDetected,
+);
+app.metrics.gauge(
+  'db_pool_checkout_oldest_seconds',
+  'Age of the longest-held checked-out connection',
+  () => poolHealth.peek().oldestCheckoutMs / 1000,
+);
+app.metrics.gauge('db_slow_queries_total', 'Statements over the slow-query threshold since boot', () =>
+  queryStats.top(Number.MAX_SAFE_INTEGER).reduce((n, st) => n + st.slowCount, 0),
+);
+
+/**
  * Prove the dependencies are there before binding the port.
  *
  * Postgres was already an implicit startup check — `migrate` is the next line
@@ -221,23 +258,66 @@ app.log.info({ port: config.PORT }, 'valuation service listening');
 
 const emailTransports = buildEmailTransports(config, app.log);
 
+/**
+ * Every background sweep this process runs, so shutdown can wait for the one
+ * that is mid-flight.
+ *
+ * `clearInterval` only stops the next tick; see the note in shared/scheduler.ts
+ * for what the *current* one costs when the pool is ended out from under it —
+ * measured, it is a claimed outbox row whose message has already left SMTP and
+ * whose completion never landed, which the next sweep sends again.
+ *
+ * Registered at construction rather than collected at shutdown so a sweep added
+ * later cannot be forgotten: the `track` call is on the same line as the
+ * `setInterval` it belongs to.
+ */
+const sweeps: NamedScheduler[] = [];
+const skipCounters: Array<{ name: string; skipped: () => number }> = [];
+const track = <T extends { running: boolean; whenIdle(): Promise<void>; skipped: number }>(
+  name: string,
+  scheduler: T,
+): T => {
+  sweeps.push({ name, scheduler });
+  skipCounters.push({ name, skipped: () => scheduler.skipped });
+  return scheduler;
+};
+
+// A scheduler that is routinely skipping ticks is one whose interval is too
+// short for its work — `nonOverlapping` counts them precisely so that is
+// visible from outside, and until now nothing read the count.
+app.metrics.gauge(
+  'background_sweep_skipped_total',
+  'Background ticks dropped because the previous one was still running',
+  () => skipCounters.map((s) => ({ value: s.skipped(), labels: { sweep: s.name } })),
+  ['sweep'],
+);
+app.metrics.gauge(
+  'background_sweep_running',
+  'Background sweeps with a tick in flight right now',
+  () => sweeps.map((s) => ({ value: s.scheduler.running ? 1 : 0, labels: { sweep: s.name } })),
+  ['sweep'],
+);
+
 // Drip campaign scan (§15.6). `nonOverlapping` keeps a slow scan from stacking
 // ticks on this instance; overlap with the ops-triggered run and with other
 // instances is the advisory lock's job, inside runDueAutoEmails. A failed scan
 // logs and waits for the next tick.
 let autoEmailTimer: NodeJS.Timeout | undefined;
 if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
-  const scan = nonOverlapping(
-    async () => {
-      const r = await runDueAutoEmails({
-        pool,
-        ...emailTransports,
-        publicBaseUrl: config.PUBLIC_BASE_URL,
-        log: app.log,
-      });
-      if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');
-    },
-    (err) => app.log.error({ err }, 'auto email scan failed'),
+  const scan = track(
+    'auto-email',
+    nonOverlapping(
+      async () => {
+        const r = await runDueAutoEmails({
+          pool,
+          ...emailTransports,
+          publicBaseUrl: config.PUBLIC_BASE_URL,
+          log: app.log,
+        });
+        if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');
+      },
+      (err) => app.log.error({ err }, 'auto email scan failed'),
+    ),
   );
   autoEmailTimer = setInterval(() => scan.run(), config.AUTO_EMAIL_SCAN_MINUTES * 60_000);
 }
@@ -246,17 +326,20 @@ if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
 // 'failed' forever with nothing else revisiting them (see hooks/emailRetry.ts).
 let emailRetryTimer: NodeJS.Timeout | undefined;
 if (config.EMAIL_RETRY_SCAN_MINUTES > 0) {
-  const sweep = nonOverlapping(
-    async () => {
-      const r = await retryFailedEmails({
-        pool,
-        ...emailTransports,
-        log: app.log,
-        maxAttempts: config.EMAIL_RETRY_MAX_ATTEMPTS,
-      });
-      if (r.attempted > 0) app.log.info(r, 'email retry sweep');
-    },
-    (err) => app.log.error({ err }, 'email retry sweep failed'),
+  const sweep = track(
+    'email-retry',
+    nonOverlapping(
+      async () => {
+        const r = await retryFailedEmails({
+          pool,
+          ...emailTransports,
+          log: app.log,
+          maxAttempts: config.EMAIL_RETRY_MAX_ATTEMPTS,
+        });
+        if (r.attempted > 0) app.log.info(r, 'email retry sweep');
+      },
+      (err) => app.log.error({ err }, 'email retry sweep failed'),
+    ),
   );
   emailRetryTimer = setInterval(() => sweep.run(), config.EMAIL_RETRY_SCAN_MINUTES * 60_000);
 }
@@ -265,14 +348,17 @@ if (config.EMAIL_RETRY_SCAN_MINUTES > 0) {
 // 'pending' with a backoff stamped on it; this is what comes back for it.
 let webhookRetryTimer: NodeJS.Timeout | undefined;
 if (config.WEBHOOK_RETRY_SCAN_MINUTES > 0) {
-  const sweep = nonOverlapping(
-    async () => {
-      const r = await retryDueDeliveries({ pool, log: app.log });
-      // `reaped` too, not just `attempted`: a pass that settled abandoned
-      // deliveries and delivered nothing did the work this line reports on.
-      if (r.attempted > 0 || r.reaped > 0) app.log.info(r, 'webhook retry sweep');
-    },
-    (err) => app.log.error({ err }, 'webhook retry sweep failed'),
+  const sweep = track(
+    'webhook-retry',
+    nonOverlapping(
+      async () => {
+        const r = await retryDueDeliveries({ pool, log: app.log });
+        // `reaped` too, not just `attempted`: a pass that settled abandoned
+        // deliveries and delivered nothing did the work this line reports on.
+        if (r.attempted > 0 || r.reaped > 0) app.log.info(r, 'webhook retry sweep');
+      },
+      (err) => app.log.error({ err }, 'webhook retry sweep failed'),
+    ),
   );
   webhookRetryTimer = setInterval(() => sweep.run(), config.WEBHOOK_RETRY_SCAN_MINUTES * 60_000);
 }
@@ -288,14 +374,20 @@ if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
   // when runs are wedged, which is the one time it runs at all. It used to be
   // the only scheduler here without the non-overlap guard, despite a comment
   // claiming it followed its siblings.
-  const sweep = nonOverlapping(
-    async () => {
-      const reaped = await reapStalePipelineRuns(pool, { olderThanMs, actor: reaperActor });
-      if (reaped.length > 0) {
-        app.log.warn({ count: reaped.length, runIds: reaped.map((r) => r.id) }, 'reaped stale pipeline runs');
-      }
-    },
-    (err) => app.log.error({ err }, 'pipeline reaper failed'),
+  const sweep = track(
+    'pipeline-reaper',
+    nonOverlapping(
+      async () => {
+        const reaped = await reapStalePipelineRuns(pool, { olderThanMs, actor: reaperActor });
+        if (reaped.length > 0) {
+          app.log.warn(
+            { count: reaped.length, runIds: reaped.map((r) => r.id) },
+            'reaped stale pipeline runs',
+          );
+        }
+      },
+      (err) => app.log.error({ err }, 'pipeline reaper failed'),
+    ),
   );
   sweep.run();
   reaperTimer = setInterval(() => sweep.run(), Math.min(olderThanMs, 5 * 60_000));
@@ -306,12 +398,15 @@ if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
 // errors are recorded on the row and don't stop the scan.
 let capTableSyncTimer: NodeJS.Timeout | undefined;
 {
-  const tick = nonOverlapping(
-    async () => {
-      const n = await runDueCapTableSyncs({ pool, log: app.log });
-      if (n > 0) app.log.info({ processed: n }, 'cap-table sync scan');
-    },
-    (err) => app.log.error({ err }, 'cap-table sync scan failed'),
+  const tick = track(
+    'cap-table-sync',
+    nonOverlapping(
+      async () => {
+        const n = await runDueCapTableSyncs({ pool, log: app.log });
+        if (n > 0) app.log.info({ processed: n }, 'cap-table sync scan');
+      },
+      (err) => app.log.error({ err }, 'cap-table sync scan failed'),
+    ),
   );
   capTableSyncTimer = setInterval(() => tick.run(), 15 * 60_000);
 }
@@ -319,12 +414,15 @@ let capTableSyncTimer: NodeJS.Timeout | undefined;
 // HRIS/payroll sync scheduler (feature 11): pull due roster/grant connections.
 let hrisSyncTimer: NodeJS.Timeout | undefined;
 {
-  const tick = nonOverlapping(
-    async () => {
-      const n = await runDueHrisSyncs({ pool, log: app.log });
-      if (n > 0) app.log.info({ processed: n }, 'HRIS sync scan');
-    },
-    (err) => app.log.error({ err }, 'HRIS sync scan failed'),
+  const tick = track(
+    'hris-sync',
+    nonOverlapping(
+      async () => {
+        const n = await runDueHrisSyncs({ pool, log: app.log });
+        if (n > 0) app.log.info({ processed: n }, 'HRIS sync scan');
+      },
+      (err) => app.log.error({ err }, 'HRIS sync scan failed'),
+    ),
   );
   hrisSyncTimer = setInterval(() => tick.run(), 15 * 60_000);
 }
@@ -335,14 +433,17 @@ let hrisSyncTimer: NodeJS.Timeout | undefined;
 // exactly the case worth catching immediately — then every five minutes.
 let jobAlertTimer: NodeJS.Timeout | undefined;
 if (config.JOB_ALERT_SCAN_MINUTES > 0) {
-  const sweep = nonOverlapping(
-    async () => {
-      const r = await runJobAlertScan({ pool, log: app.log });
-      if (r.opened.length > 0 || r.resolved.length > 0) {
-        app.log.info({ opened: r.opened.length, resolved: r.resolved.length }, 'job alert sweep');
-      }
-    },
-    (err) => app.log.error({ err }, 'job alert sweep failed'),
+  const sweep = track(
+    'job-alerts',
+    nonOverlapping(
+      async () => {
+        const r = await runJobAlertScan({ pool, log: app.log });
+        if (r.opened.length > 0 || r.resolved.length > 0) {
+          app.log.info({ opened: r.opened.length, resolved: r.resolved.length }, 'job alert sweep');
+        }
+      },
+      (err) => app.log.error({ err }, 'job alert sweep failed'),
+    ),
   );
   sweep.run();
   jobAlertTimer = setInterval(() => sweep.run(), config.JOB_ALERT_SCAN_MINUTES * 60_000);
@@ -352,12 +453,15 @@ if (config.JOB_ALERT_SCAN_MINUTES > 0) {
 // unless a legal hold freezes them. Runs at boot, then every 6 hours.
 let retentionTimer: NodeJS.Timeout | undefined;
 {
-  const sweep = nonOverlapping(
-    async () => {
-      const r = await runRetentionSweep(pool);
-      if (r.archived > 0 || r.skipped_hold > 0) app.log.info(r, 'retention sweep');
-    },
-    (err) => app.log.error({ err }, 'retention sweep failed'),
+  const sweep = track(
+    'retention',
+    nonOverlapping(
+      async () => {
+        const r = await runRetentionSweep(pool);
+        if (r.archived > 0 || r.skipped_hold > 0) app.log.info(r, 'retention sweep');
+      },
+      (err) => app.log.error({ err }, 'retention sweep failed'),
+    ),
   );
   sweep.run();
   retentionTimer = setInterval(() => sweep.run(), 6 * 60 * 60_000);
@@ -393,12 +497,15 @@ if (config.PIPELINE_RETRY_SCAN_MINUTES > 0) {
     enabled: config.AUTO_PIPELINE === 'on',
     log: app.log,
   };
-  const sweep = nonOverlapping(
-    async () => {
-      const r = await retryFailedPipelineRuns({ pool, autoPipeline: autoPipelineDeps });
-      if (r.claimed > 0) app.log.info(r, 'auto-pipeline retry sweep');
-    },
-    (err) => app.log.error({ err }, 'auto-pipeline retry sweep failed'),
+  const sweep = track(
+    'pipeline-retry',
+    nonOverlapping(
+      async () => {
+        const r = await retryFailedPipelineRuns({ pool, autoPipeline: autoPipelineDeps });
+        if (r.claimed > 0) app.log.info(r, 'auto-pipeline retry sweep');
+      },
+      (err) => app.log.error({ err }, 'auto-pipeline retry sweep failed'),
+    ),
   );
   sweep.run();
   pipelineRetryTimer = setInterval(() => sweep.run(), config.PIPELINE_RETRY_SCAN_MINUTES * 60_000);
@@ -411,22 +518,37 @@ if (config.PIPELINE_RETRY_SCAN_MINUTES > 0) {
 // nothing) and a deploy is when the database is least free to spend on it.
 let housekeepingTimer: NodeJS.Timeout | undefined;
 {
-  const sweep = nonOverlapping(
-    async () => {
-      const r = await runHousekeepingSweep({ pool, log: app.log });
-      if (r.total > 0) app.log.info(r, 'housekeeping sweep');
-    },
-    (err) => app.log.error({ err }, 'housekeeping sweep failed'),
+  const sweep = track(
+    'housekeeping',
+    nonOverlapping(
+      async () => {
+        const r = await runHousekeepingSweep({ pool, log: app.log });
+        if (r.total > 0) app.log.info(r, 'housekeeping sweep');
+      },
+      (err) => app.log.error({ err }, 'housekeeping sweep failed'),
+    ),
   );
   housekeepingTimer = setInterval(() => sweep.run(), 60 * 60_000);
 }
 
 // This is the service `deploy.sh` restarts and then waits for, and the one with
-// the most that can stall: nine background timers, a Fastify server draining
+// the most that can stall: eleven background timers, a Fastify server draining
 // in-flight requests (drain.ts, at `preClose` inside the `app.close()` below),
 // and a pg pool that will not end until every checked-out connection comes
 // back. Unbounded, one stuck query held the whole deploy until systemd's 90s
 // timeout and a SIGKILL — which is what the graceful path was there to avoid.
+//
+// Three waits, in the order the work depends on them:
+//
+//  1. Clear the intervals. This stops the *next* tick and nothing else.
+//  2. Wait for the tick that is already running, and for the requests already
+//     being served. Concurrently, because they are independent and each has
+//     its own 5s bound — in series the pair could spend the whole 10s grace.
+//  3. Only then end the pool. `pool.end()` is not a backstop for either: a
+//     sweep sitting between two queries holds no client, so `end()` finds an
+//     empty pool, resolves in a millisecond and makes every subsequent query
+//     that sweep issues reject. See shared/scheduler.ts for what that costs
+//     the email retry sweep specifically, which is a duplicate delivery.
 installShutdownHandlers(app.log, {
   service: 'valuation',
   onShutdown: async () => {
@@ -440,9 +562,11 @@ installShutdownHandlers(app.log, {
     if (retentionTimer) clearInterval(retentionTimer);
     if (jobAlertTimer) clearInterval(jobAlertTimer);
     if (housekeepingTimer) clearInterval(housekeepingTimer);
+    // No sweep to wait for: `reportPoolFindings` is a synchronous scan of an
+    // in-memory map, so there is never a tick of it in flight.
     if (poolHealthTimer) clearInterval(poolHealthTimer);
     if (pipelineRetryTimer) clearInterval(pipelineRetryTimer);
-    await app.close();
+    await Promise.all([app.close(), quiesceAndLog(sweeps, app.log)]);
     await pool.end();
     await telemetry.shutdown();
   },
