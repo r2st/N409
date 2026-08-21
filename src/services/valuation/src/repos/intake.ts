@@ -2,6 +2,7 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
+import { diffRecords } from '../domain/auditTrail.js';
 import { INTAKE_EVENT_TYPES, narrowIntakeAnswers } from '../domain/intake.js';
 
 export interface QuestionnaireRow {
@@ -47,6 +48,22 @@ export async function saveQuestionnaire(
 ): Promise<QuestionnaireRow> {
   const clean = sanitizeAnswers(answers, keys);
   return withTransaction(pool, async (client) => {
+    // Read first, so the event can say what the answer *was*. `intake_saved` is
+    // a client-visible event and the answers it records become statements of
+    // fact in the deliverable — "10,000,000 shares outstanding, per the
+    // company". A trail that lists the section's field names on every save can
+    // say the client saved that section eleven times and nothing about which of
+    // the eleven changed the share count.
+    const { rows: locked } = await client.query<QuestionnaireRow>(
+      'SELECT * FROM intake_questionnaires WHERE valuation_id = $1 FOR UPDATE',
+      [valuationId],
+    );
+    const before = (locked[0]?.answers ?? {}) as Record<string, unknown>;
+    // `narrowIntakeAnswers` admits string, number, boolean and null and nothing
+    // else, so `===` is a complete comparison here — no array or object answer
+    // can reach this and compare unequal to itself.
+    const changes = diffRecords(before, clean, Object.keys(clean));
+
     const { rows } = await client.query<QuestionnaireRow>(
       `INSERT INTO intake_questionnaires (id, valuation_id, answers)
        VALUES ($1, $2, $3)
@@ -56,12 +73,20 @@ export async function saveQuestionnaire(
        RETURNING *`,
       [newUlid(), valuationId, JSON.stringify(clean)],
     );
-    await recordEvent(client, {
-      valuationId,
-      type: INTAKE_EVENT_TYPES.saved,
-      actor,
-      payload: { fields: Object.keys(clean) },
-    });
+    // A save that answered nothing new is not an edit. The row is still written
+    // — the wizard's `updated_at` is what its progress display reads — but the
+    // trail is left alone rather than collecting a row an auditor must open to
+    // discover is empty.
+    if (Object.keys(changes).length > 0) {
+      await recordEvent(client, {
+        valuationId,
+        type: INTAKE_EVENT_TYPES.saved,
+        actor,
+        // `fields` beside `changes` because the audit reader understands both
+        // and every event already on a live engagement carries only the former.
+        payload: { changes, fields: Object.keys(changes) },
+      });
+    }
     return rows[0]!;
   });
 }
