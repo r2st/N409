@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
+import { diffRecords } from '../domain/auditTrail.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 
 export interface CompanyProfileRow {
@@ -95,7 +96,26 @@ export interface UpsertProfileOptions {
   expectedVersion?: number;
 }
 
-/** Upsert — the profile row is created lazily on first save; audited. */
+/**
+ * Upsert — the profile row is created lazily on first save; audited.
+ *
+ * The audit event records the fields that *moved*, with their before and after
+ * values, and not the fields the caller sent. Those used to be the same list,
+ * because the Company tab sends all sixteen columns on every save: an analyst
+ * correcting a postcode produced `company_profile_updated` naming legal name,
+ * website, industry, description, SIC, NAICS and ten more, none of which had
+ * changed and none of which carried a value. Every save looked identical, so
+ * the trail could answer "somebody saved the profile" and nothing else — not
+ * which field, not what it had been, and in particular not whether the
+ * description on the page was written by the analyst or drafted by the agent.
+ * That is the one question the audit trail exists to answer about a row three
+ * different parties can write.
+ *
+ * A save that moves nothing therefore writes nothing: no row, no event, no
+ * version. `patchValuation` takes the same line, and here it matters twice
+ * over — a no-op save that burned a version would conflict a colleague's open
+ * form over a click that changed nothing.
+ */
 export async function upsertCompanyProfile(
   pool: pg.Pool,
   valuationId: string,
@@ -106,8 +126,58 @@ export async function upsertCompanyProfile(
   const { expectedVersion } = options;
   const present = PROFILE_FIELDS.filter((f) => f in fields);
   return withTransaction(pool, async (client) => {
+    // Read under the lock, because the diff has to be against the row that is
+    // really there rather than against the one the caller last saw. A stale
+    // snapshot produces a change list describing a transition that did not
+    // happen — the same trap `patchParams` documents at length.
+    const { rows: locked } = await client.query<CompanyProfileRow>(
+      `SELECT ${RETURNING} FROM company_profiles WHERE valuation_id = $1 FOR UPDATE`,
+      [valuationId],
+    );
+    const before = locked[0];
+
+    if (expectedVersion !== undefined && before?.version !== expectedVersion) {
+      // No row at all reads as a conflict too, and deliberately: to the caller
+      // holding version 4, "there is no profile" and "the profile is not the
+      // one you read" are the same problem with the same fix. A guarded save is
+      // an UPDATE and never an INSERT — the GET returns `profile: null` and no
+      // ETag until the first save, so a version for a row nobody has written is
+      // not a state an honest client can reach.
+      staleProfileWrite(before?.version, expectedVersion);
+    }
+
+    // A row that does not exist yet is every column at null, not an empty
+    // object. `diffRecords` compares with `===`, so diffing against `{}` reads
+    // `undefined !== null` and reports the blank fields of a first save as
+    // changes — `cap_table_summary: null → null` in the trail, which is not an
+    // edit anybody made.
+    const baseline: Record<string, unknown> =
+      (before as unknown as Record<string, unknown> | undefined) ??
+      Object.fromEntries(PROFILE_FIELDS.map((f) => [f, null]));
+    const changes = diffRecords(baseline, fields as Record<string, unknown>, present);
+    // Nothing to write, so nothing to record and nothing to invalidate.
+    if (before && Object.keys(changes).length === 0) return before;
+
+    // Only the columns that moved. Writing back the unchanged fifteen would be
+    // harmless to the row and misleading in `updated_at`, and it is the habit
+    // that made the event above meaningless in the first place.
+    const moved = present.filter((f) => f in changes);
     let row: CompanyProfileRow | undefined;
-    if (expectedVersion === undefined) {
+    if (before) {
+      const sets = [...moved, 'updated_by'].map((f, i) => `${f} = $${i + 2}`);
+      sets.push('updated_at = now()', 'version = version + 1');
+      const values: unknown[] = [valuationId, ...moved.map((f) => fields[f] ?? null), actor.actorId];
+      const { rows } = await client.query<CompanyProfileRow>(
+        `UPDATE company_profiles SET ${sets.join(', ')}
+         WHERE valuation_id = $1
+         RETURNING ${RETURNING}`,
+        values,
+      );
+      row = rows[0];
+    } else {
+      // First save. `FOR UPDATE` locks no row that does not exist, so a
+      // concurrent first save is still possible and `ON CONFLICT` is what
+      // settles it — the loser updates rather than raising a unique violation.
       const insertCols = ['valuation_id', ...present, 'updated_by'];
       const values: unknown[] = [valuationId, ...present.map((f) => fields[f] ?? null), actor.actorId];
       const placeholders = values.map((_, i) => `$${i + 1}`);
@@ -122,43 +192,16 @@ export async function upsertCompanyProfile(
         values,
       );
       row = rows[0];
-    } else {
-      // A guarded save is an UPDATE and never an INSERT. Holding a version for
-      // a row that does not exist is not a state a client can honestly reach —
-      // the GET returns `profile: null` and no ETag until the first save — so
-      // treating it as "insert at version 1" would invent agreement out of a
-      // claim about a row nobody has ever written.
-      const sets = [...present, 'updated_by'].map((f, i) => `${f} = $${i + 2}`);
-      sets.push('updated_at = now()', 'version = version + 1');
-      const values: unknown[] = [
-        valuationId,
-        ...present.map((f) => fields[f] ?? null),
-        actor.actorId,
-        expectedVersion,
-      ];
-      const { rows } = await client.query<CompanyProfileRow>(
-        `UPDATE company_profiles SET ${sets.join(', ')}
-         WHERE valuation_id = $1 AND version = $${values.length}
-         RETURNING ${RETURNING}`,
-        values,
-      );
-      row = rows[0];
-      if (!row) {
-        const { rows: live } = await client.query<{ version: number }>(
-          'SELECT version FROM company_profiles WHERE valuation_id = $1',
-          [valuationId],
-        );
-        // No row at all reads as a conflict too, and deliberately: to the
-        // caller holding version 4, "there is no profile" and "the profile is
-        // not the one you read" are the same problem with the same fix.
-        staleProfileWrite(live[0]?.version, expectedVersion);
-      }
     }
+
     await recordEvent(client, {
       valuationId,
       type: 'company_profile_updated',
       actor,
-      payload: { fields: present },
+      // `fields` alongside `changes` because the audit reader understands both
+      // and the older events on this engagement carry only the former; keeping
+      // the key means one row's history does not change shape mid-way.
+      payload: { changes, fields: moved.length > 0 ? moved : present },
     });
     return row!;
   });
