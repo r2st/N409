@@ -1519,3 +1519,151 @@
 #            the shape worth keeping — a list that fails when reality grows past
 #            it, which is the opposite of the vacuous checks this round opened
 #            with.
+# commit:    043670c
+# subject:   the writes a withdrawn engagement still accepted, and the config nobody compared
+# previous:  9e8c701 (the partner API parity work).
+# includes:  8 commits — R89, a production-readiness round that began with the
+#            three caveats R88 left and ended somewhere else.
+#
+#            The first caveat was that R88 never got a clean end-to-end suite
+#            run on the SHA it deployed. Running it found exactly one failure,
+#            and it was R88's own: the four-verb method chip shipped DELETE in
+#            a palette family the dark block has never re-pointed, so the one
+#            verb whose whole point is being distinguishable rendered as a
+#            near-white chip on a dark table. `themeTokens.test.ts` had caught
+#            it all along, in a scan that never ran before the deploy. Pinned
+#            now at the point where it means something — four verbs, four
+#            tones, each surviving the theme — rather than only in a scanner
+#            that speaks in palette steps.
+#            A second, smaller lesson came free: that fix passed vitest and
+#            failed the deploy, because web-frontend's build runs `tsc --noEmit`
+#            over the test directory and vitest does not typecheck it. The
+#            deploy refused with the previous release still serving, which is
+#            the preflight working — but `npm test` alone does not cover that
+#            package's tests.
+#
+# closed:    the live Caddyfile, which nothing compared to the repo. `git
+#            archive` has always carried infra/caddy/ onto the host and Caddy
+#            has never read it — it reads /etc/caddy/Caddyfile. That is R88's
+#            systemd failure exactly, one layer out.
+#            It could not be closed the same way. install-units.sh overwrites
+#            its destination; this cannot, because the host's Caddyfile also
+#            serves two unrelated products from the same ports. So the repo
+#            holds the site block and deploy.sh section 4d *reports* — fatally,
+#            before anything restarts. Fatal is the deliberate part: the two
+#            things compared are the two that fail silently, a dropped
+#            trusted-proxy range that re-keys all fourteen per-IP throttles
+#            onto a Cloudflare POP with the site still answering 200s, and a
+#            `/scim/v2/*` handle that stops preceding the catch-all and 404s an
+#            IdP's provisioning job in somebody else's logs. Section 7's
+#            verification can see neither.
+#            The comparison is on what Caddy would do, not on bytes — the
+#            host's copy is indented differently and carries its own comments,
+#            and a `cmp` would have failed on the first honest deploy and been
+#            switched off that afternoon. Verified against the real host: it
+#            ships green, and four injected faults each fail it.
+#
+# closed:    the premise under the origin-exposure item, which was false. The
+#            note said the Cloudflare-only firewall change was gated on
+#            "confirming the other two sites are proxied", and left the
+#            confirming to prose. Confirmed: they are not. `talentping` is
+#            proxied and `ustradingbot` is grey-clouded — its A record *is* the
+#            origin — so the documented ufw recipe would have taken a live
+#            product off the internet, and then done it again sixty days later,
+#            because HTTP-01 validation for a grey-clouded site is dialled at
+#            the origin and the same rule blocks the renewal it also blocked
+#            the traffic for. That second failure arrives looking like an
+#            unrelated certificate expiry.
+#            `infra/check-edge-exposure.mjs` replaces the assertion. It reads
+#            the site names out of the config the host actually serves, takes
+#            the ranges from that same config rather than keeping a third copy
+#            after clientIp.ts and the Caddyfile, and exits 0 only when every
+#            site would survive the lock.
+#            Also measured, because it bounds the severity in the other
+#            direction: the header cannot be forged by an ordinary client. A
+#            request sent straight to the origin carrying `X-Forwarded-For:
+#            1.2.3.4` is logged by n409-web with the real client address, because
+#            Caddy overwrites it for any peer outside the ranges. What the lock
+#            would buy is closing Cloudflare-internal callers and stopping the
+#            edge WAF being skippable — on an origin whose address is not a
+#            secret, since the grey-clouded sibling publishes it.
+#            Nothing was applied to the live host.
+#
+# closed:    R57's open question, four rounds after it was named. The lesson
+#            was "a list that stops offering something is not a write that
+#            refuses it", because the page stays reachable by id; R57 fixed one
+#            instance and left the general case. Asked of every mutating
+#            valuation-scoped route, ten more were open — and they were not
+#            equivalent. `POST /remind-documents` **sent mail** to a client
+#            about work the firm had withdrawn, which is the class that made
+#            R56's worst findings worst, because mail cannot be un-sent.
+#            `/report/render` and `/report/draft` produced the deliverable.
+#            The two `advance` routes moved a retired file through the
+#            pipeline. `/clone` started new work seeded from one.
+#            A second batch followed on a shared consequence rather than a
+#            shared file: nine routes that reached the model or the engine for
+#            a withdrawn engagement — the AI pipelines and their apply routes,
+#            calculations, research, projections, roll-forward, sensitivity,
+#            volatility. On this deployment that is metered, so a retired
+#            engagement was not merely being worked on, it was displacing a
+#            live one against a daily ceiling that is routinely exhausted.
+#            The method is the part worth keeping. Each endpoint is driven
+#            twice, against a live engagement and an archived twin, with the
+#            same request — so a live 2xx proves the body is well-formed and
+#            reached the handler, and only then does the archived response mean
+#            anything. A one-sided probe passes on a 422 from body validation:
+#            nine of these returned exactly that to a first, sloppier attempt
+#            and looked safe.
+#            `refuseIfRetired` is in domain rather than copied, because the
+#            three lines were never the risk — the two sites that had written
+#            this check by hand disagreed about both the status and the
+#            message. It is applied per-write and deliberately not inside
+#            `loadForEdit` or workbook's `authorize`, which are each shared
+#            with GETs: reads stay open, consistently with the auditor portal
+#            and the board flow. A firm that withdrew work must still be able
+#            to look at it.
+#            All 86 POST/PUT/PATCH routes under a valuation id are now guarded,
+#            and the test drives the route table rather than a list, so one
+#            added tomorrow is swept the day it is registered. The fifteen
+#            DELETEs are exempt by a decision the board flow made before there
+#            was a rule — cleanup is the opposite of continuing the work — and
+#            both exemption lists are checked against the route table in each
+#            direction so neither can quietly grow.
+#            The bulk edit is also where this round nearly introduced a bug:
+#            two guards landed ahead of their route's own null check and one
+#            ahead of an authorization check, which would have told an
+#            unauthorized caller that an engagement exists. The compiler caught
+#            two; an ordering audit over every inserted line caught the third.
+#            One judgement written down rather than assumed: nothing ever
+#            clears `archived_at` — partners and users have a restore path and
+#            valuations do not — so these refusals are permanent. That predates
+#            the change. What it alters is not whether an engagement is
+#            recoverable but whether the platform is honest about it, which is
+#            why the detail page now says so in a banner and stops offering the
+#            controls that would 409.
+#
+# closed:    a recorded gap whose stated reason for staying open was wrong.
+#            `_bisect` asked both bracket questions as a product — `f_lo * f_hi
+#            > 0` and `f_lo * f_mid < 0`. For values around 1e-171 that product
+#            underflows to a signed zero, and `-0.0 < 0.0` is False, so two
+#            opposite-signed values are read as same-signed: bisection discards
+#            the half holding the root and converges on an endpoint. For
+#            `f(x) = (x - 0.3) * 1e-170` on [0, 1] it returned 0.999999999.
+#            No error, nothing in the result that says so.
+#            It had been left on the reasoning that no per-share objective the
+#            platform solves reaches that magnitude and that a fix would be "a
+#            diff with no test that can fail without it". The first half still
+#            holds. The second was the load-bearing half and it was false —
+#            three of the eight tests added fail on the product comparison.
+#            Worth closing for how it fails rather than how often: `_bisect` is
+#            what the OPM backsolve and implied volatility fall back *to*, so
+#            it runs precisely when Newton has already failed, and a root
+#            finder that answers confidently and wrongly is a different risk
+#            from one that raises.
+#
+# note:      REVISION's own `gap:` lines are a history of open questions, not a
+#            list of current ones — they are never edited once a later round
+#            closes them. Four of the ten present at the start of this round
+#            were already fixed, and an hour went into rediscovering that
+#            `dueCandidates` had been paged two rounds ago. Worth knowing
+#            before mining this file for work.
