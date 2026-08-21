@@ -1423,3 +1423,99 @@
 #            that file is shared with two other products, so this repo can own a
 #            block of it but not the whole thing — and the drift it hides is the
 #            one this round spent its afternoon on.
+# closed:    the partner API could start work and could not hand it over. It
+#            creates a valuation and accepts documents against it, and had no
+#            way for the caller to say the client-side information was complete
+#            — so an engagement created through the API sat in `pending`
+#            forever, uploaded to by the API and looked at by nobody.
+#            `POST /valuations/{id}/submit` walks the client-side states to
+#            `user_finished`, one legal edge at a time rather than writing the
+#            last one: `WORKFLOW_TRANSITIONS` is the authority on what is legal,
+#            each edge carries its own audit event and its own hook, and the
+#            dashboards are keyed on the sequence — a file that reaches `review`
+#            without passing `completed` sits in the queue with an ageing figure
+#            computed from a timestamp nothing set. Three writes, once per
+#            engagement. Idempotent, because the request may land and the
+#            response may not come back: at or past the target returns the
+#            valuation unchanged with a 200, and a test asserts the second
+#            submit writes no fourth event. Cancelled, timed out and ignored are
+#            a 409 naming the restart, because reporting success there leaves a
+#            partner waiting for a report nobody is writing — selected by the
+#            shape those three share in the transition table (one outgoing edge,
+#            back to `started`) rather than by a list in the route.
+#            `applyState` moved out of the workflow route closure into
+#            domain/applyState.ts to do it. Copying would have been three lines
+#            and one real risk: the publish gate is checked twice on purpose,
+#            once against the row that was read and once as a precondition of
+#            the write, and a second copy is where one of those halves goes
+#            missing.
+# closed:    `external_id` (migration 0164) — the partner's own handle on an
+#            engagement, unique within their organization and accepted as a
+#            filter. What it adds over `Idempotency-Key` is durability: that key
+#            is a per-request value the partner is told to vary, so it makes the
+#            retry safe without making the *result* findable, and a create whose
+#            response never arrived left an engagement whose only name was in
+#            the response. This one travels in the request. A partial unique
+#            index arbitrates rather than a SELECT-then-INSERT, which is the
+#            same race 0160 closed for idempotency claims; a test asserts
+#            exactly one of two simultaneous creates wins. Trimmed, because a
+#            lookup key where "abc" and "abc " are two engagements is a trap and
+#            the index cannot tell a typo from a namespace.
+# closed:    `GET /me`, which the published documentation had been telling
+#            partners to call for some time. `/developers` renders its endpoint
+#            *table* from the route registry so that half cannot drift, and the
+#            hand-written quickstart beside it opened with `curl .../me` against
+#            an endpoint that did not exist — so the first command in our own
+#            integration guide returned 404 to anyone evaluating us. That is the
+#            worst place to be wrong: the table is correct by construction and
+#            therefore never read suspiciously, and the prose beside it inherits
+#            a credibility it has not earned. The endpoint now reports the
+#            organization and, more usefully, *which key* was presented — the
+#            question that actually arises mid-rotation with several live keys.
+#            A valid key whose organization has been archived 404s rather than
+#            describing a firm that no longer exists; `apiKeyGuard` cannot catch
+#            that, because the token itself resolves fine.
+#            The guard is the durable part: a test extracts every path the
+#            quickstart tells a reader to call and asserts each is registered,
+#            verified against an injected fault rather than assumed, and asserts
+#            the extraction found something so a rewritten page cannot turn the
+#            check into a pass over an empty list.
+# checked:   409.ai's remaining advertised surface, against this one. Their
+#            partner API documents eleven endpoints; this one now covers all of
+#            them but `PUT /valuations/{id}` (replace the submission package
+#            before the report is final) and offers ten it does not — list,
+#            results, delivery history, delivery retry, multiple webhooks, a
+#            live `/docs` and an OpenAPI document. Methodology: OPM, PWERM,
+#            backsolve, DLOM and the waterfall are all present and heavily
+#            tested, the three approaches all appear in the report skeleton, and
+#            the engine additionally exposes WACC, projections, volatility,
+#            market data, rollforward and eight specialty pipelines.
+# closed:    the partner-facing update, in the same round it was named. `PUT
+#            /valuations/{id}` corrects the labels — company name, service name,
+#            currency, countries, external_id — and nothing structural: `kind`
+#            selects the report skeleton, the engine pipeline and the price, so
+#            changing it after documents are attached is a different engagement
+#            rather than an edit, and a `.strict()` body says so instead of
+#            dropping the field silently. Editable up to `review` and not past
+#            it, which is where the deliverable starts being written; beyond
+#            that an analyst is working from these values and a name that
+#            changes underneath them lands in a report nobody re-read. An empty
+#            patch is a 422 rather than a 200, because it is far more likely to
+#            be a client that built the request wrong than a deliberate no-op.
+#            No Idempotency-Key: a PUT that writes the fields it is given is
+#            already safe to repeat, and the scope guard now says that in a
+#            comment rather than by omission.
+#            Teaching the registry PUT exposed a second thing. The public API
+#            reference typed `method` as `'GET' | 'POST'` while the registry had
+#            been serving three DELETE endpoints, so "revoke this webhook"
+#            rendered in the same green as "create a valuation" and TypeScript
+#            could not object — the type was a claim about the server rather
+#            than a reading of it. Four verbs, four tones.
+# note:      the full suite found exactly one real failure across this parity
+#            work, and it was a guard doing its job:
+#            `partnerApiIdempotencyScope` asserts the set of operations
+#            declaring `Idempotency-Key` *exactly*, so the new submit endpoint
+#            had to be added to it deliberately rather than drifting in. That is
+#            the shape worth keeping — a list that fails when reality grows past
+#            it, which is the opposite of the vacuous checks this round opened
+#            with.
