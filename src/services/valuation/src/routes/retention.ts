@@ -16,6 +16,7 @@ import {
   listActions,
   listHolds,
   listPolicies,
+  listRetiredValuations,
   markValuationsArchived,
   placeHold,
   recordActions,
@@ -202,6 +203,34 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
   app.get('/api/v1/admin/retention/actions', { preHandler: app.authenticate }, async (req) => {
     requireAdmin(req);
     return { actions: await listActions(deps.pool) };
+  });
+
+  /**
+   * What is withdrawn right now, as opposed to what the sweep did.
+   *
+   * The restore control was only ever offered against an `archived` row in the
+   * log above, and the log is a history: newest first, and capped. One Sunday
+   * sweep archiving forty engagements pushes last week's withdrawal past the
+   * end of it, and the only route back goes with it — invisibly, because a
+   * truncated list is indistinguishable from a complete one. R90 made
+   * retirement reversible and this is what makes the reversal findable.
+   *
+   * `q` matches the company name or an exact id. The name is the one an admin
+   * has: a support request says "restore the Acme engagement", never a ULID.
+   * `total` is the size of the match before the limit, so the page can say
+   * "showing 50 of 214" instead of quietly showing 50.
+   */
+  const RetiredQuery = z.object({
+    q: z.string().trim().max(200).optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+  });
+
+  app.get('/api/v1/admin/retention/valuations/retired', { preHandler: app.authenticate }, async (req) => {
+    requireAdmin(req);
+    const parsed = RetiredQuery.safeParse(req.query ?? {});
+    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    const { rows, total } = await listRetiredValuations(deps.pool, parsed.data);
+    return { valuations: rows, total, limit: parsed.data.limit ?? 50 };
   });
 
   /**

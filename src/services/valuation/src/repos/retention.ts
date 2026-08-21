@@ -188,6 +188,81 @@ export async function isValuationFrozen(
   return rows[0]?.frozen ?? false;
 }
 
+/**
+ * Every engagement that is currently withdrawn, by name.
+ *
+ * WHY THIS IS NOT THE AUDIT LOG. The restore control lived on the log, offered
+ * against the `archived` entry it undoes, and that is a history: it is ordered
+ * by when things happened and it is capped. A sweep that archives forty rows on
+ * a Sunday pushes an engagement retired the week before off the end of it, and
+ * what disappears with the row is the only route back — silently, because a
+ * truncated list looks exactly like a complete one. R90 made retirement
+ * reversible; a reversal you cannot find is not reversible.
+ *
+ * So the state gets its own read. It answers "what is withdrawn right now",
+ * which is a question about `valuations.archived_at` and not about what the
+ * sweep did, and it carries the company name because nobody knows an
+ * engagement by its ULID.
+ *
+ * `retired_reason` and `retired_manually` come from the matching action row
+ * when there is one. There need not be: the sweep's own archivals predate the
+ * manual route and record no reason, and a NULL there reads correctly as "a
+ * retention policy ran out" rather than as missing data.
+ */
+export interface RetiredValuationRow {
+  id: string;
+  number: number;
+  company_name: string;
+  kind: string;
+  state: string;
+  archived_at: Date;
+  retired_reason: string | null;
+  retired_manually: boolean;
+}
+
+export async function listRetiredValuations(
+  pool: pg.Pool,
+  opts: { q?: string; limit?: number } = {},
+): Promise<{ rows: RetiredValuationRow[]; total: number }> {
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const q = opts.q?.trim() ?? '';
+  // `LIKE`-escaped: a company name is user input and `%` in it would otherwise
+  // widen the search silently rather than fail.
+  const pattern = q === '' ? null : `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+
+  const { rows } = await pool.query<RetiredValuationRow & { total: string }>(
+    `SELECT v.id, v.number, v.company_name, v.kind, v.state, v.archived_at,
+            a.detail ->> 'reason' AS retired_reason,
+            COALESCE((a.detail ->> 'manual')::boolean, false) AS retired_manually,
+            count(*) OVER () AS total
+       FROM valuations v
+       -- The archival that is still the last word on this row. LATERAL rather
+       -- than a join on max(created_at): two archivals of the same id (retired,
+       -- restored, retired again) would otherwise multiply the valuation.
+       LEFT JOIN LATERAL (
+         SELECT ra.detail
+           FROM retention_actions ra
+          WHERE ra.data_type = 'valuation'
+            AND ra.reference_id = v.id
+            AND ra.action = 'archived'
+          ORDER BY ra.created_at DESC
+          LIMIT 1
+       ) a ON true
+      WHERE v.archived_at IS NOT NULL
+        AND ($1::text IS NULL OR v.company_name ILIKE $1 ESCAPE '\\' OR v.id = $2)
+      ORDER BY v.archived_at DESC
+      LIMIT $3`,
+    [pattern, q, limit],
+  );
+
+  return {
+    rows: rows.map(({ total: _total, ...row }) => row),
+    // `count(*) OVER ()` counts the matched set before LIMIT, which is the
+    // number the caller needs to know whether they are looking at all of it.
+    total: rows.length === 0 ? 0 : Number(rows[0]!.total),
+  };
+}
+
 export async function listActions(pool: pg.Pool, limit = 200): Promise<RetentionActionRow[]> {
   const { rows } = await pool.query<RetentionActionRow>(
     'SELECT * FROM retention_actions ORDER BY created_at DESC LIMIT $1',

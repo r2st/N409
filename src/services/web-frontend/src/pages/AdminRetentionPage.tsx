@@ -18,11 +18,33 @@ interface Hold {
   active: boolean;
   placed_at: string;
 }
+/**
+ * How much of the log the page draws. Named rather than inline because the
+ * count below has to agree with it: a list silently cut at fifty reads as a
+ * complete list, which is precisely how the restore control used to vanish.
+ */
+const ACTION_LOG_LIMIT = 50;
+
 /** Chip colours per action; anything unrecognised falls back to the amber one. */
 const ACTION_CHIP: Record<string, string> = {
   archived: 'bg-paper-100 text-ink-700',
   restored: 'bg-bond-50 text-bond-700',
 };
+
+/**
+ * A withdrawn engagement, as state rather than as history.
+ * `GET /admin/retention/valuations/retired`.
+ */
+interface RetiredValuation {
+  id: string;
+  number: number;
+  company_name: string;
+  kind: string;
+  state: string;
+  archived_at: string;
+  retired_reason: string | null;
+  retired_manually: boolean;
+}
 
 interface Action {
   id: string;
@@ -41,6 +63,8 @@ export function AdminRetentionPage() {
   const [policies, setPolicies] = useState<Policy[] | null>(null);
   const [holds, setHolds] = useState<Hold[]>([]);
   const [actions, setActions] = useState<Action[]>([]);
+  const [retired, setRetired] = useState<{ valuations: RetiredValuation[]; total: number } | null>(null);
+  const [retiredQuery, setRetiredQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [holdForm, setHoldForm] = useState({ scope: 'valuation', reference_id: '', reason: '' });
@@ -73,14 +97,16 @@ export function AdminRetentionPage() {
 
   const load = useCallback(async () => {
     try {
-      const [p, h, a] = await Promise.all([
+      const [p, h, a, r] = await Promise.all([
         api<{ policies: Policy[] }>('/admin/retention/policies'),
         api<{ holds: Hold[] }>('/admin/retention/holds'),
         api<{ actions: Action[] }>('/admin/retention/actions'),
+        api<{ valuations: RetiredValuation[]; total: number }>('/admin/retention/valuations/retired'),
       ]);
       setPolicies(p.policies);
       setHolds(h.holds);
       setActions(a.actions);
+      setRetired({ valuations: r.valuations, total: r.total });
     } catch {
       setError('Could not load retention settings.');
     }
@@ -188,6 +214,29 @@ export function AdminRetentionPage() {
         await load();
       } catch (err) {
         setError(err instanceof ApiError ? err.message : 'Could not restore that valuation.');
+      }
+    });
+
+  /**
+   * Search the withdrawn list.
+   *
+   * Separate from `load()` so a search does not re-fetch the policies and the
+   * holds, and so a failed search leaves the previous results on screen with
+   * the error above them rather than emptying the section — an empty list and
+   * a failed search look identical, and only one of them means "nothing
+   * matched".
+   */
+  const searchRetired = () =>
+    run('retired-search', async () => {
+      setError(null);
+      try {
+        const q = retiredQuery.trim();
+        const r = await api<{ valuations: RetiredValuation[]; total: number }>(
+          `/admin/retention/valuations/retired${q === '' ? '' : `?q=${encodeURIComponent(q)}`}`,
+        );
+        setRetired({ valuations: r.valuations, total: r.total });
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Could not search withdrawn engagements.');
       }
     });
 
@@ -473,13 +522,105 @@ export function AdminRetentionPage() {
         </div>
       </section>
 
+      {/* State, not history — see the route's comment. The audit log below is
+          capped and ordered by when things happened, so an engagement withdrawn
+          before the last sweep falls off it and takes the only route back with
+          it. This section is derived from `archived_at`, so nothing ages out
+          of it: a row leaves only when it is restored. */}
       <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
-        <h2 className="overline mb-4 text-ink-400">Retention audit log</h2>
+        <div className="mb-1 flex flex-wrap items-baseline justify-between gap-3">
+          <h2 className="overline text-ink-400">Withdrawn engagements</h2>
+          {retired && (
+            <span className="text-xs text-ink-400">
+              {retired.total === 0
+                ? 'none'
+                : retired.valuations.length < retired.total
+                  ? `showing ${retired.valuations.length} of ${retired.total}`
+                  : `${retired.total} withdrawn`}
+            </span>
+          )}
+        </div>
+        <p className="mb-4 max-w-2xl text-sm text-ink-500">
+          Every engagement currently withdrawn, whether by a retention policy or by hand. Restoring one puts
+          it back in the product, takes the “[retired]” suffix off its name, and lets it accept changes again.
+        </p>
+        <div className="mb-4 flex flex-wrap items-end gap-3">
+          <label className="flex-1 text-sm">
+            <span className="overline mb-1 block text-ink-400">Search</span>
+            <TextInput
+              value={retiredQuery}
+              onChange={(e) => setRetiredQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void searchRetired();
+                }
+              }}
+              placeholder="company name, or an exact valuation id"
+              aria-label="Search withdrawn engagements"
+            />
+          </label>
+          <Button variant="secondary" disabled={busy !== null} onClick={() => void searchRetired()}>
+            {busy === 'retired-search' ? 'Searching…' : 'Search'}
+          </Button>
+        </div>
+        {!retired ? (
+          <Spinner />
+        ) : retired.valuations.length === 0 ? (
+          <p className="text-sm text-ink-400">
+            {retiredQuery.trim() === ''
+              ? 'No engagement is withdrawn.'
+              : 'No withdrawn engagement matches that.'}
+          </p>
+        ) : (
+          <ul className="divide-y divide-paper-200">
+            {retired.valuations.map((v) => (
+              <li key={v.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-sm">
+                <span className="tnum text-xs text-ink-400">#{v.number}</span>
+                <span className="font-semibold text-ink-900">{v.company_name}</span>
+                <span className="text-xs text-ink-400">{v.kind}</span>
+                {/* The reason is what tells an admin whether this is the row
+                    the support ticket is about. A policy archival has none,
+                    and that absence is itself the answer. */}
+                <span className="text-xs text-ink-500">
+                  {v.retired_reason
+                    ? `“${v.retired_reason}”`
+                    : v.retired_manually
+                      ? 'withdrawn by hand, no reason recorded'
+                      : 'retention policy'}
+                </span>
+                <span className="ml-auto text-xs text-ink-400">{formatDateTime(v.archived_at)}</span>
+                <button
+                  onClick={() => restoreValuation(v.id)}
+                  disabled={busy !== null}
+                  className="cursor-pointer text-xs font-semibold text-bond-600 hover:text-bond-700 disabled:cursor-not-allowed disabled:text-ink-300"
+                >
+                  {busy === `restore:${v.id}` ? 'Restoring…' : 'Restore'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+        <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
+          <h2 className="overline text-ink-400">Retention audit log</h2>
+          {actions.length > ACTION_LOG_LIMIT && (
+            // Said rather than left to be inferred: this list is where the
+            // restore control used to live, and a cut list that does not
+            // admit it is a cut list looks like the whole story.
+            <span className="text-xs text-ink-400">
+              showing the {ACTION_LOG_LIMIT} most recent of {actions.length} — older withdrawals are in the
+              section above
+            </span>
+          )}
+        </div>
         {actions.length === 0 ? (
           <p className="text-sm text-ink-400">No retention actions recorded yet.</p>
         ) : (
           <ul className="space-y-1.5 text-sm">
-            {actions.slice(0, 50).map((a) => (
+            {actions.slice(0, ACTION_LOG_LIMIT).map((a) => (
               <li key={a.id} className="flex items-center gap-3">
                 <span
                   className={`rounded px-1.5 py-0.5 text-xs font-semibold ${ACTION_CHIP[a.action] ?? 'bg-amber-50 text-amber-800'}`}

@@ -28,6 +28,13 @@ const HOLDS = [
   },
 ];
 
+/**
+ * The withdrawn list. Default is empty: most of this file is about policies,
+ * holds and the log, and a section that always had a row in it would make
+ * every "Restore" query in those tests ambiguous.
+ */
+const RETIRED: { valuations: unknown[]; total: number } = { valuations: [], total: 0 };
+
 const ACTIONS = [
   {
     id: 'a1',
@@ -54,7 +61,7 @@ const problem = (status: number, detail: string) =>
     headers: { 'content-type': 'application/problem+json' },
   });
 
-/** The three GETs the page loads in parallel; writes go to `onWrite`. */
+/** The four GETs the page loads in parallel; writes go to `onWrite`. */
 function mockApi(onWrite?: (path: string, init: RequestInit) => Response) {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
@@ -64,6 +71,7 @@ function mockApi(onWrite?: (path: string, init: RequestInit) => Response) {
     }
     if (path.includes('/retention/policies')) return jsonResponse({ policies: POLICIES });
     if (path.includes('/retention/holds')) return jsonResponse({ holds: HOLDS });
+    if (path.includes('/retention/valuations/retired')) return jsonResponse(RETIRED);
     if (path.includes('/retention/actions')) return jsonResponse({ actions: ACTIONS });
     throw new Error(`unexpected fetch ${path}`);
   });
@@ -343,6 +351,7 @@ describe('AdminRetentionPage', () => {
       const path = String(url);
       if (path.includes('/retention/policies')) return jsonResponse({ policies: [] });
       if (path.includes('/retention/holds')) return jsonResponse({ holds: [] });
+      if (path.includes('/retention/valuations/retired')) return jsonResponse(RETIRED);
       return jsonResponse({ actions: [] });
     });
     renderPage();
@@ -358,6 +367,7 @@ describe('AdminRetentionPage', () => {
       const path = String(url);
       if (path.includes('/retention/policies')) return jsonResponse({ policies: POLICIES });
       if (path.includes('/retention/holds')) return jsonResponse({ holds: [] });
+      if (path.includes('/retention/valuations/retired')) return jsonResponse(RETIRED);
       return jsonResponse({ actions: [] });
     });
     renderPage();
@@ -376,6 +386,7 @@ describe('AdminRetentionPage', () => {
       const path = String(url);
       if (path.includes('/retention/policies')) return jsonResponse({ policies: POLICIES });
       if (path.includes('/retention/holds')) return jsonResponse({ holds: [] });
+      if (path.includes('/retention/valuations/retired')) return jsonResponse(RETIRED);
       return jsonResponse({ actions: many });
     });
     renderPage();
@@ -414,6 +425,7 @@ describe('AdminRetentionPage', () => {
         }
         if (path.includes('/retention/policies')) return jsonResponse({ policies: POLICIES });
         if (path.includes('/retention/holds')) return jsonResponse({ holds: HOLDS });
+        if (path.includes('/retention/valuations/retired')) return jsonResponse(RETIRED);
         return jsonResponse({ actions: ACTIONS });
       });
       return { release: () => open(), writeCount: () => writes };
@@ -541,6 +553,7 @@ function mockRestoreApi(onWrite?: (path: string, init: RequestInit) => Response)
     }
     if (path.includes('/retention/policies')) return jsonResponse({ policies: POLICIES });
     if (path.includes('/retention/holds')) return jsonResponse({ holds: HOLDS });
+    if (path.includes('/retention/valuations/retired')) return jsonResponse(RETIRED);
     if (path.includes('/retention/actions')) return jsonResponse({ actions: RESTORE_ACTIONS });
     throw new Error(`unexpected fetch ${path}`);
   });
@@ -766,5 +779,153 @@ describe('AdminRetentionPage — withdrawing an engagement', () => {
     // The id stays in the field: the admin is more likely to be fixing a typo
     // than starting over, and clearing it on failure loses what they typed.
     expect(idField()).toHaveValue('01JVAL777');
+  });
+});
+
+/**
+ * The withdrawn list.
+ *
+ * R90 put the restore control on the audit log, which is a history: newest
+ * first, cut at fifty. One sweep archiving forty engagements pushes last
+ * week's withdrawal off the end, and the only route back goes with it —
+ * silently, because a truncated list looks exactly like a complete one. This
+ * section is derived from `archived_at`, so nothing ages out of it.
+ */
+const RETIRED_ROWS = {
+  valuations: [
+    {
+      id: '01JVAL0000000000000000101',
+      number: 4101,
+      company_name: 'Halcyon Systems [retired]',
+      kind: '409a',
+      state: 'review',
+      archived_at: '2026-08-01T09:00:00Z',
+      retired_reason: 'client withdrew the engagement',
+      retired_manually: true,
+    },
+    {
+      id: '01JVAL0000000000000000102',
+      number: 4102,
+      company_name: 'Old Policy Co [retired]',
+      kind: 'fmv',
+      state: 'published',
+      archived_at: '2026-02-01T09:00:00Z',
+      retired_reason: null,
+      retired_manually: false,
+    },
+  ],
+  total: 2,
+};
+
+function mockWithRetired(rows: unknown = RETIRED_ROWS, onGet?: (path: string) => Response | null) {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    const path = String(url);
+    if ((init?.method ?? 'GET') !== 'GET') return jsonResponse({ restored: true });
+    const custom = onGet?.(path);
+    if (custom) return custom;
+    if (path.includes('/retention/policies')) return jsonResponse({ policies: POLICIES });
+    if (path.includes('/retention/holds')) return jsonResponse({ holds: HOLDS });
+    if (path.includes('/retention/valuations/retired')) return jsonResponse(rows);
+    if (path.includes('/retention/actions')) return jsonResponse({ actions: ACTIONS });
+    throw new Error(`unexpected fetch ${path}`);
+  });
+}
+
+const retiredSection = () => screen.getByText('Withdrawn engagements').closest('section')!;
+
+describe('AdminRetentionPage — the withdrawn engagements section', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('names each engagement and why it went, not just its id', async () => {
+    mockWithRetired();
+    renderPage();
+    await loaded();
+    const section = within(retiredSection());
+
+    expect(section.getByText('Halcyon Systems [retired]')).toBeInTheDocument();
+    expect(section.getByText('“client withdrew the engagement”')).toBeInTheDocument();
+    // A policy archival records no reason, and that absence is the answer
+    // rather than missing data.
+    expect(section.getByText('retention policy')).toBeInTheDocument();
+    expect(section.getAllByRole('button', { name: /^Restore$/ })).toHaveLength(2);
+  });
+
+  it('says so plainly when nothing is withdrawn — the vacuity guard', async () => {
+    // Everything above asserts a row is on screen, and all of it would pass
+    // against a section that ignored the response and always drew two.
+    mockWithRetired({ valuations: [], total: 0 });
+    renderPage();
+    await loaded();
+    expect(within(retiredSection()).getByText('No engagement is withdrawn.')).toBeInTheDocument();
+    expect(within(retiredSection()).queryByRole('button', { name: /^Restore$/ })).not.toBeInTheDocument();
+  });
+
+  it('searches by name and asks the API rather than filtering what it has', async () => {
+    const asked: string[] = [];
+    mockWithRetired(RETIRED_ROWS, (path) => {
+      if (!path.includes('/retention/valuations/retired')) return null;
+      asked.push(path);
+      return jsonResponse(
+        asked.length === 1 ? RETIRED_ROWS : { valuations: [RETIRED_ROWS.valuations[0]], total: 1 },
+      );
+    });
+    renderPage();
+    await loaded();
+
+    await userEvent.type(within(retiredSection()).getByLabelText('Search withdrawn engagements'), 'Halcyon');
+    await userEvent.click(within(retiredSection()).getByRole('button', { name: 'Search' }));
+
+    // The list is capped server-side, so filtering the page's own copy would
+    // only ever search the first fifty — which is the bug this section exists
+    // to fix.
+    await waitFor(() => expect(asked.at(-1)).toContain('q=Halcyon'));
+    await waitFor(() =>
+      expect(within(retiredSection()).queryByText('Old Policy Co [retired]')).not.toBeInTheDocument(),
+    );
+  });
+
+  it('says how many matched when it is showing fewer', async () => {
+    mockWithRetired({ valuations: RETIRED_ROWS.valuations, total: 214 });
+    renderPage();
+    await loaded();
+    expect(within(retiredSection()).getByText('showing 2 of 214')).toBeInTheDocument();
+  });
+
+  it('admits the audit log is cut, and points at the section that is not', async () => {
+    const many = Array.from({ length: 80 }, (_, i) => ({
+      id: `b${i}`,
+      data_type: 'valuations',
+      action: 'archived',
+      reference_id: `old-${i}`,
+      created_at: '2026-07-01T10:00:00Z',
+    }));
+    mockWithRetired(RETIRED_ROWS, (path) =>
+      path.includes('/retention/actions') ? jsonResponse({ actions: many }) : null,
+    );
+    renderPage();
+    await loaded();
+    expect(screen.getByText(/showing the 50 most recent of 80/)).toBeInTheDocument();
+  });
+
+  it('restores from the list, not only from the log', async () => {
+    const writes: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const path = String(url);
+      if ((init?.method ?? 'GET') !== 'GET') {
+        writes.push(path);
+        return jsonResponse({ restored: true });
+      }
+      if (path.includes('/retention/policies')) return jsonResponse({ policies: POLICIES });
+      if (path.includes('/retention/holds')) return jsonResponse({ holds: HOLDS });
+      if (path.includes('/retention/valuations/retired')) return jsonResponse(RETIRED_ROWS);
+      if (path.includes('/retention/actions')) return jsonResponse({ actions: ACTIONS });
+      throw new Error(`unexpected fetch ${path}`);
+    });
+    renderPage();
+    await loaded();
+
+    await userEvent.click(within(retiredSection()).getAllByRole('button', { name: /^Restore$/ })[0]!);
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toContain('/retention/valuations/01JVAL0000000000000000101/restore');
   });
 });
