@@ -13,6 +13,32 @@ from .bs import bs_call
 from .errors import EngineInputError
 
 
+def _opposite_signs(a: float, b: float) -> bool:
+    """Do `a` and `b` straddle zero?
+
+    Asked directly rather than as `a * b < 0`, which is how both of this
+    module's bracket decisions used to be written and which is wrong twice over
+    for small values. Two numbers around 1e-171 have a product around 1e-342,
+    below the smallest subnormal double — so it underflows to a signed zero, and
+    `-0.0 < 0.0` is False. The comparison then reports two opposite-signed
+    values as same-signed.
+
+    That is not academic once you look at what it does: bisection told that the
+    root lies in the wrong half discards the half containing it and converges,
+    silently and with no error, on an endpoint. For `f(x) = (x - 0.3) * 1e-170`
+    bracketed on [0, 1] the old code returned 0.9999999990686774.
+
+    Neither caller can pass an exact zero — both check for one first — so
+    `> 0.0` partitions cleanly and there is no third case to think about.
+
+    A NaN now compares same-signed with everything, which makes the bracket
+    check below reject it. That is a change, and the right way round: the old
+    product comparison let a NaN through to produce a number nobody could
+    attribute.
+    """
+    return (a > 0.0) != (b > 0.0)
+
+
 def _bisect(
     f: Callable[[float], float],
     lo: float,
@@ -26,7 +52,7 @@ def _bisect(
         return lo, 0
     if f_hi == 0.0:
         return hi, 0
-    if f_lo * f_hi > 0:
+    if not _opposite_signs(f_lo, f_hi):
         raise EngineInputError("root is not bracketed by the given bounds")
     for i in range(max_iter):
         mid = (lo + hi) / 2.0
@@ -34,7 +60,7 @@ def _bisect(
         # Converge on the interval width, not |f| — f's scale is unknown here.
         if f_mid == 0.0 or (hi - lo) / 2.0 < tol * max(abs(mid), 1.0):
             return mid, i + 1
-        if f_lo * f_mid < 0:
+        if _opposite_signs(f_lo, f_mid):
             hi = mid
         else:
             lo, f_lo = mid, f_mid
