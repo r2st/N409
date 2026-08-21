@@ -41,6 +41,16 @@ export default defineConfig({
       // branches behind that number are a long tail across 326 files rather
       // than a few neglected ones (the worst single file holds 28), so moving
       // it takes new tests spread widely rather than one more suite.
+      //
+      // Re-measured at R90 without touching the floors: statements/lines 96.90,
+      // functions 98.64, branches 91.23. Statements/lines has drifted 0.6 down
+      // from the figure above and is now the *tightest* of the four — 0.9
+      // points, which sounds comfortable and is about 380 statements. Branches,
+      // the metric the note above calls the binding constraint, has meanwhile
+      // gained headroom. Recorded rather than acted on: a floor is meant to
+      // catch a regression, and a measurement that has quietly moved away from
+      // the number in the comment beside it is how a floor stops meaning
+      // anything. Whoever ratchets next should raise statements/lines first.
       thresholds: {
         lines: 96,
         statements: 96,
