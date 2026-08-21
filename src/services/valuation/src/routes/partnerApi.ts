@@ -773,7 +773,16 @@ export function registerPartnerApiRoutes(
           // Either already submitted — every state past `user_finished` — or in
           // one of the three dead ends. The distinction matters: the first is a
           // retry and must succeed, the second is a request nobody can honour.
-          if (WORKFLOW_TRANSITIONS[valuation.state].includes('started')) {
+          // "Its only way forward is a restart" — which is what `cancelled`,
+          // `timeout` and `ignored` have in common and what makes them
+          // unsubmittable. Read off the transition table rather than listed
+          // here, so a state added to the table with the same shape is covered
+          // without this route being edited; `canRestart` is not the same
+          // question, since it is true of almost every state.
+          const restartOnly =
+            WORKFLOW_TRANSITIONS[valuation.state].length === 1 &&
+            WORKFLOW_TRANSITIONS[valuation.state][0] === 'started';
+          if (restartOnly) {
             throw problems.conflict(
               `This valuation is '${valuation.state}' and cannot be submitted — it needs to be restarted first.`,
             );
