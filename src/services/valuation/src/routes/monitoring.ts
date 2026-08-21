@@ -47,6 +47,7 @@ import {
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import { calendarDate } from '../domain/calendarDate.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Real-time valuation monitoring (feature 10). Ops enable monitoring on a
@@ -302,6 +303,7 @@ export function registerMonitoringRoutes(
     requireOps(principal);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(deps.pool, id);
+    refuseIfRetired(valuation, 'accepting monitoring changes');
     const hasCalc = (await latestSucceededCalculation(deps.pool, id)) !== null;
     if (!MONITORABLE_STATES.has(valuation.state) && !hasCalc) {
       throw problems.conflict('Only a completed valuation can be monitored');
@@ -423,6 +425,7 @@ export function registerMonitoringRoutes(
       requireOps(principal);
       const { id } = req.params as { id: string };
       const valuation = await loadValuation(deps.pool, id);
+      refuseIfRetired(valuation, 'accepting monitoring changes');
       const clone = await cloneValuation(
         deps.pool,
         valuation,

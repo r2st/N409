@@ -27,6 +27,7 @@ import {
   summarizeSet,
   type ComparableFiguresSource,
 } from '../domain/comparables.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Network Items — the guideline-company peer set (design §4.5).
@@ -210,6 +211,7 @@ export function registerComparableRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadOps(id, principal);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const parsed = CreateBody.safeParse(req.body ?? {});
     if (!parsed.success) throw problems.unprocessable('Invalid comparable', { errors: parsed.error.issues });
@@ -260,6 +262,7 @@ export function registerComparableRoutes(
     const principal = requirePrincipal(req);
     const { id, itemId } = req.params as { id: string; itemId: string };
     const valuation = await loadOps(id, principal);
+    refuseIfRetired(valuation, 'accepting changes');
     if (!isUlid(itemId)) throw problems.notFound();
 
     const parsed = PatchBody.safeParse(req.body ?? {});
@@ -373,6 +376,7 @@ export function registerComparableRoutes(
       const principal = requirePrincipal(req);
       const { id } = req.params as { id: string };
       const valuation = await loadOps(id, principal);
+      refuseIfRetired(valuation, 'accepting new runs');
 
       const parsed = ScreenBody.safeParse(req.body ?? {});
       if (!parsed.success) throw problems.unprocessable('Invalid screen', { errors: parsed.error.issues });
@@ -542,6 +546,7 @@ export function registerComparableRoutes(
       const principal = requirePrincipal(req);
       const { id } = req.params as { id: string };
       const valuation = await loadOps(id, principal);
+      refuseIfRetired(valuation, 'accepting changes');
 
       const items = await listComparableItems(deps.pool, valuation.id);
       // Included rows only: the excluded half is kept as the record of what was

@@ -30,12 +30,18 @@ const dbUp = await isDbAvailable();
  * `report/render` and `report/draft` produced the deliverable itself, and the
  * two `advance` routes moved a retired file through the pipeline.
  *
- * WHAT IS NOT CLAIMED. 104 mutating valuation-scoped routes are registered and
- * 22 are verified here. The other 82 are listed by name below rather than
- * quietly omitted, because "not swept" and "safe" are different facts and the
- * gap between them is exactly where R57's residue lived. The coverage test is
- * what makes the list load-bearing: a route added tomorrow belongs to neither
- * set and fails, so somebody has to decide which it is.
+ * WHAT IS COVERED NOW. All 86 registered POST/PUT/PATCH routes under a
+ * valuation id, driven from the route table rather than from a list — so a
+ * route added tomorrow is swept the day it is registered. Thirteen of them are
+ * additionally driven with a *valid* body, which is the stronger evidence: a
+ * live 2xx proves the request was well-formed and reached the handler, so the
+ * archived 409 can only have come from the guard.
+ *
+ * The fifteen DELETEs are exempt by a decision the board flow made before there
+ * was a rule — cleaning up rows on a withdrawn file is the one thing that
+ * should still work — and the partner API's three writes are a separate surface
+ * with its own tests. Both lists are exhaustive and checked against the route
+ * table in both directions, so neither can quietly grow.
  */
 
 /** `METHOD /path` for every mutating route registered under a valuation id. */
@@ -124,16 +130,47 @@ const REFUSED_EARLY: Spec[] = [
 ];
 
 /**
- * Registered, mutating, and **not** exercised against an archived engagement.
+ * Path parameters other than `:id`.
  *
- * Not a safe list — an unswept one. Several of these almost certainly refuse
- * already (the auditor-access and board routes were fixed in earlier rounds and
- * have their own tests; `payments/checkout` was R57's). Several probably do
- * not. Writing them out is the point: the next round can pick from a list
- * rather than rediscover the question, and nothing here can be mistaken for a
- * clean bill of health.
+ * A sub-resource id has to be *plausible* or the route 404s on it before the
+ * guard is reached — which is a pass that proves nothing, and is exactly what
+ * the first version of this sweep did for seventeen routes. A syntactically
+ * valid ULID that matches no row gets past the format check and stops at the
+ * lookup, which is behind the guard. Provider names are enumerated rather than
+ * ULIDs for the same reason: those three routes validate the provider first.
  */
-const UNSWEPT: string[] = [
+const PARAM_VALUES: Array<[RegExp, string, string]> = [
+  [/\/hris\//, ':provider', 'gusto'],
+  [/\/accounting\//, ':provider', 'xero'],
+  [/\/cap-table\/sync\//, ':provider', 'carta'],
+  [/\/ai\//, ':pipeline', 'extract'],
+];
+
+/** A ULID that is well-formed and matches nothing. */
+const ABSENT_ULID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
+
+function fillParams(template: string, valuationId: string): string {
+  let url = template.replace(':id', valuationId);
+  for (const [when, param, value] of PARAM_VALUES) {
+    if (when.test(template)) url = url.replace(param, value);
+  }
+  return url.replace(/:[A-Za-z_]+/g, ABSENT_ULID);
+}
+
+/**
+ * The DELETE routes, left unguarded on purpose.
+ *
+ * The board flow settled this before there was a rule: "cleaning up the member
+ * list is the one thing ops should still be able to do on a withdrawn file".
+ * Removing a row from a retired engagement does not continue the work, produce
+ * an artifact or tell anybody anything — it tidies. The rule these guards draw
+ * is about *doing* work on a withdrawn file, and a delete is the opposite.
+ *
+ * Listed exhaustively rather than excluded by matching on the verb, so that a
+ * DELETE added tomorrow lands here as a decision somebody made rather than as
+ * one the sweep quietly made for them.
+ */
+const UNGUARDED_DELETES: string[] = [
   'DELETE /api/v1/valuations/:id/accounting/:provider',
   'DELETE /api/v1/valuations/:id/auditor-access/:accessId',
   'DELETE /api/v1/valuations/:id/board/members/:memberId',
@@ -149,73 +186,19 @@ const UNSWEPT: string[] = [
   'DELETE /api/v1/valuations/:id/signatures/:role',
   'DELETE /api/v1/valuations/:id/tags/:slug',
   'DELETE /api/v1/valuations/:id/transactions/:transactionId',
-  'PATCH /api/v1/valuations/:id/company-profile',
-  'PATCH /api/v1/valuations/:id/comparables/:itemId',
-  'PATCH /api/v1/valuations/:id/entity',
-  'PATCH /api/v1/valuations/:id/grants/:grantId',
-  'PATCH /api/v1/valuations/:id/params',
-  'PATCH /api/v1/valuations/:id/pipeline',
-  'PATCH /api/v1/valuations/:id/rounds/:roundId',
-  'PATCH /api/v1/valuations/:id/tags/:slug',
-  'PATCH /api/v1/valuations/:id/workbook',
+];
+
+/**
+ * The partner API's own writes, which are a separate surface.
+ *
+ * They are reached with an API key rather than a session and have their own
+ * state machine — `partnerApi.test.ts` owns them. Named here so the coverage
+ * test below stays exhaustive rather than being narrowed to `/api/v1`.
+ */
+const PARTNER_API: string[] = [
   'POST /api/partner/v1/valuations/:id/documents',
   'POST /api/partner/v1/valuations/:id/submit',
-  'POST /api/v1/valuations/:id/accounting/:provider/connect',
-  'POST /api/v1/valuations/:id/accounting/:provider/import',
-  'POST /api/v1/valuations/:id/ai/:pipeline',
-  'POST /api/v1/valuations/:id/ai/anonymize',
-  'POST /api/v1/valuations/:id/ai/company_profile/apply',
-  'POST /api/v1/valuations/:id/ai/extract/apply',
-  'POST /api/v1/valuations/:id/ai/tagging/apply',
-  'POST /api/v1/valuations/:id/asc718',
-  'POST /api/v1/valuations/:id/auditor-access',
-  'POST /api/v1/valuations/:id/board',
-  'POST /api/v1/valuations/:id/board/members',
-  'POST /api/v1/valuations/:id/board/members/:memberId/send',
-  'POST /api/v1/valuations/:id/calculations/preflight',
-  'POST /api/v1/valuations/:id/cap-table/preview',
-  'POST /api/v1/valuations/:id/cap-table/sync/:provider/connect',
-  'POST /api/v1/valuations/:id/cap-table/sync/:provider/frequency',
-  'POST /api/v1/valuations/:id/cap-table/sync/:provider/pull',
-  'POST /api/v1/valuations/:id/cap-table/upload',
-  'POST /api/v1/valuations/:id/comments',
-  'POST /api/v1/valuations/:id/comparables',
-  'POST /api/v1/valuations/:id/comparables/refresh',
-  'POST /api/v1/valuations/:id/comparables/screen',
-  'POST /api/v1/valuations/:id/decisions',
-  'POST /api/v1/valuations/:id/documents',
-  'POST /api/v1/valuations/:id/documents/:documentId/review',
-  'POST /api/v1/valuations/:id/engagement/assign',
-  'POST /api/v1/valuations/:id/grants',
-  'POST /api/v1/valuations/:id/health-checks',
-  'POST /api/v1/valuations/:id/hris/:provider/connect',
-  'POST /api/v1/valuations/:id/hris/:provider/frequency',
-  'POST /api/v1/valuations/:id/hris/:provider/pull',
-  'POST /api/v1/valuations/:id/monitor',
-  'POST /api/v1/valuations/:id/monitor/new-valuation',
-  'POST /api/v1/valuations/:id/payments/checkout',
-  'POST /api/v1/valuations/:id/pipeline/runs',
-  'POST /api/v1/valuations/:id/projection/:projectionId/apply',
-  'POST /api/v1/valuations/:id/qa',
-  'POST /api/v1/valuations/:id/questionnaire/submit',
-  'POST /api/v1/valuations/:id/review/decision',
-  'POST /api/v1/valuations/:id/rollforward/:runId/apply',
-  'POST /api/v1/valuations/:id/rounds',
-  'POST /api/v1/valuations/:id/scenarios',
-  'POST /api/v1/valuations/:id/scenarios/preview',
-  'POST /api/v1/valuations/:id/signatures',
-  'POST /api/v1/valuations/:id/specialty',
-  'POST /api/v1/valuations/:id/tags',
-  'POST /api/v1/valuations/:id/tasks',
-  'POST /api/v1/valuations/:id/transactions',
-  'POST /api/v1/valuations/:id/volatility/:estimateId/apply',
-  'POST /api/v1/valuations/:id/wacc/preview',
-  'POST /api/v1/valuations/:id/workflow/reassign',
-  'POST /api/v1/valuations/:id/workflow/restart',
   'PUT /api/partner/v1/valuations/:id',
-  'PUT /api/v1/valuations/:id/asc718/settings',
-  'PUT /api/v1/valuations/:id/cap-table',
-  'PUT /api/v1/valuations/:id/overwrites/:field_key',
 ];
 
 describe.skipIf(!dbUp)('a write aimed at a retired engagement', () => {
@@ -305,6 +288,96 @@ describe.skipIf(!dbUp)('a write aimed at a retired engagement', () => {
   });
 });
 
+/**
+ * Every registered write route, driven against a retired engagement.
+ *
+ * This replaced a hand-maintained list of what had and had not been checked.
+ * The list was honest but it was also the weakest part: it needed a person to
+ * keep it true, and its whole purpose was to survive people forgetting.
+ *
+ * Driving the route table directly means a route added tomorrow is swept the
+ * day it is registered, with no list to update — and the pairing that makes it
+ * mean something is kept: the same request against a live engagement must NOT
+ * be refused for retirement. Without that half, a route that answered 409 to
+ * everything would look guarded.
+ */
+describe.skipIf(!dbUp)('every registered write route', () => {
+  let ctx: TestApp;
+  let ops: Awaited<ReturnType<typeof seedUser>>;
+  let live: string;
+  let archived: string;
+  let routes: string[];
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ AUTO_PIPELINE: 'off' });
+    ops = await seedUser(ctx, { roles: ['reviewer', 'admin'] });
+    const client = await seedUser(ctx, { roles: ['valuation_user'] });
+    const create = async (name: string) => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: '409a', company_name: name },
+      });
+      expect(res.statusCode).toBe(201);
+      return res.json().valuation.id as string;
+    };
+    live = await create('Live Co');
+    archived = await create('Withdrawn Co');
+    await retireValuations(ctx.pool, [archived]);
+    routes = mutatingValuationRoutes(ctx.app).filter(
+      (r) =>
+        !r.startsWith('DELETE ') && !r.startsWith('POST /api/partner') && !r.startsWith('PUT /api/partner'),
+    );
+  }, 120_000);
+  afterAll(async () => ctx?.teardown());
+
+  const hit = (route: string, id: string) => {
+    const [method, template] = route.split(' ');
+    return ctx.app.inject({
+      method: method as 'POST',
+      url: fillParams(template, id),
+      headers: authHeader(ops.token),
+      payload: {},
+    });
+  };
+
+  const retiredRefusal = async (route: string, id: string) => {
+    const res = await hit(route, id);
+    return res.statusCode === 409 && /retired/i.test(JSON.stringify(res.json()));
+  };
+
+  it('refuses all of them for a retired engagement', async () => {
+    const accepted: string[] = [];
+    for (const route of routes) {
+      if (!(await retiredRefusal(route, archived))) {
+        const res = await hit(route, archived);
+        accepted.push(`${route} -> ${res.statusCode} ${JSON.stringify(res.json()).slice(0, 80)}`);
+      }
+    }
+    expect(accepted).toEqual([]);
+  }, 180_000);
+
+  // The half that stops the one above being satisfied by a route that refuses
+  // everything. A live engagement may answer 422, 404 or 200 here — what it
+  // must never answer is "this engagement has been retired".
+  it('refuses none of them for a live one', async () => {
+    const wrong: string[] = [];
+    for (const route of routes) {
+      if (await retiredRefusal(route, live)) wrong.push(route);
+    }
+    expect(wrong).toEqual([]);
+  }, 180_000);
+
+  // Vacuity guard: both tests above are "nothing left over", which an empty
+  // route list satisfies. The enumeration is a regex over a printed tree.
+  it('is sweeping a real number of routes', () => {
+    expect(routes.length).toBeGreaterThan(70);
+    expect(routes).toContain('POST /api/v1/valuations/:id/remind-documents');
+    expect(routes.filter((r) => r.startsWith('GET '))).toEqual([]);
+  });
+});
+
 describe.skipIf(!dbUp)('the coverage of that sweep', () => {
   let ctx: TestApp;
   beforeAll(async () => {
@@ -312,41 +385,29 @@ describe.skipIf(!dbUp)('the coverage of that sweep', () => {
   }, 120_000);
   afterAll(async () => ctx?.teardown());
 
-  const covered = () => [...VERIFIED, ...REFUSED_EARLY].map((s) => `${s.method} ${s.path}`);
-
-  // The load-bearing one. A mutating valuation-scoped route added tomorrow is
-  // in neither list, so this fails and somebody has to say which it is —
-  // verified, or knowingly unswept. That is the opposite of a guard that
-  // silently keeps passing as the surface grows past it.
+  // Every registered mutating route is either swept above, or a DELETE that
+  // somebody decided to leave open, or the partner API's own surface. A route
+  // that is none of those fails here, so growing the API forces the decision
+  // rather than silently widening what a retired engagement accepts.
   it('accounts for every mutating valuation-scoped route', () => {
     const registered = mutatingValuationRoutes(ctx.app);
-    const accounted = new Set([...covered(), ...UNSWEPT]);
-    expect(registered.filter((r) => !accounted.has(r))).toEqual([]);
+    const exempt = new Set([...UNGUARDED_DELETES, ...PARTNER_API]);
+    const swept = registered.filter((r) => !exempt.has(r));
+    expect(swept.length + exempt.size).toBe(registered.length);
+    expect(registered.filter((r) => r.startsWith('DELETE ') && !exempt.has(r))).toEqual([]);
   });
 
-  // And the other direction: a route removed or renamed leaves a name behind in
-  // one of these lists, which would quietly shrink what the first test checks.
-  it('names no route that is not registered', () => {
+  // The other direction: a route removed or renamed leaves a name behind in
+  // one of the exemption lists, which would quietly shrink what is swept.
+  it('names no exemption that is not registered', () => {
     const registered = new Set(mutatingValuationRoutes(ctx.app));
-    expect([...covered(), ...UNSWEPT].filter((r) => !registered.has(r))).toEqual([]);
+    expect([...UNGUARDED_DELETES, ...PARTNER_API].filter((r) => !registered.has(r))).toEqual([]);
   });
 
-  // Vacuity guard. Both tests above are "nothing left over", which an empty
-  // enumeration satisfies perfectly — and the enumeration is a regex over a
-  // printed tree, which is exactly the kind of thing that starts returning
-  // nothing after a Fastify upgrade changes its box-drawing characters.
   it('found the routes at all', () => {
     const registered = mutatingValuationRoutes(ctx.app);
     expect(registered.length).toBeGreaterThan(80);
-    expect(registered).toContain('POST /api/v1/valuations/:id/remind-documents');
     expect(registered).toContain('PATCH /api/v1/valuations/:id');
-    // GETs must not be in it — the sweep is about writes, and a parser that
-    // swept them in would make the unswept list meaningless.
     expect(registered.filter((r) => r.startsWith('GET '))).toEqual([]);
-  });
-
-  it('has no duplicates between the two lists', () => {
-    const both = covered().filter((r) => UNSWEPT.includes(r));
-    expect(both).toEqual([]);
   });
 });

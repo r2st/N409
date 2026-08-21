@@ -8,6 +8,7 @@ import { findCompanyProfile, upsertCompanyProfile } from '../repos/companyProfil
 import { isNaicsCode, isSicCode } from '../domain/companyProfile.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Company profile editor (remaining-gaps §3 #6, 409.ai "modal_ui_data"):
@@ -87,6 +88,7 @@ export function registerCompanyProfileRoutes(app: FastifyInstance, deps: { pool:
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(principal, id);
+    refuseIfRetired(valuation, 'accepting changes');
     if (!isOps(principal) && valuation.user_id !== principal.id) {
       throw problems.forbidden('Only operations or the requesting client can edit the company profile');
     }

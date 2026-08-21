@@ -180,6 +180,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     requireOps(principal);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(deps.pool, id);
+    refuseIfRetired(valuation, 'accepting workflow changes');
 
     if (!canRestart(valuation.state)) {
       throw problems.conflict(`Cannot restart from '${valuation.state}'`);
@@ -192,6 +193,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     requireOps(principal);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(deps.pool, id);
+    refuseIfRetired(valuation, 'accepting workflow changes');
 
     const parsed = ReassignBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid reassign', { errors: parsed.error.issues });

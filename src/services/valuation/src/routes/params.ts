@@ -7,6 +7,7 @@ import { findValuationById } from '../repos/valuations.js';
 import { DLOC_METHODS, DLOM_METHODS, findParams, patchParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Weights are accepted with up to 4 decimal places and must sum to exactly 1
@@ -444,7 +445,7 @@ export function registerParamsRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     // Methodology is set by analysts — ops-only, mirroring OPS_PATCH_FIELDS.
     if (!isOps(principal)) throw problems.forbidden('Valuation params are operations-only');
     const { id } = req.params as { id: string };
-    await loadValuation(principal, id);
+    refuseIfRetired(await loadValuation(principal, id), 'accepting changes');
     const current = await findParams(deps.pool, id);
     if (!current) throw problems.notFound();
 

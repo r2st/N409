@@ -25,6 +25,7 @@ import { EmailAddress } from '../domain/email.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { ValuationHub } from '../realtime/hub.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 const PostBody = z.object({
   kind: z.enum(['chat', 'note']),
@@ -117,6 +118,7 @@ export function registerCommentRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(deps.pool, principal, id);
+    refuseIfRetired(valuation, 'accepting comments');
 
     const parsed = PostBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid comment', { errors: parsed.error.issues });

@@ -30,6 +30,7 @@ import { checkUploadType } from '../documents/fileType.js';
 import { scanUpload, UploadRejected, type ScanPolicy } from '../documents/virusScan.js';
 import { decodeFromStorage, encodeForStorage } from '../storage/documentEncryption.js';
 import { UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 
@@ -193,6 +194,7 @@ export function registerDocumentRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+    refuseIfRetired(valuation, 'accepting documents');
 
     // Field caps repeated here rather than left to the plugin registration:
     // per-call `limits` and plugin `limits` are merged by @fastify/multipart,
@@ -332,6 +334,7 @@ export function registerDocumentRoutes(
       const principal = requirePrincipal(req);
       const { id, documentId } = req.params as { id: string; documentId: string };
       const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+      refuseIfRetired(valuation, 'accepting documents');
       if (!isOps(principal)) throw problems.forbidden('Marking a document reviewed is operations-only');
 
       const parsed = z.object({ reviewed: z.boolean().default(true) }).safeParse(req.body ?? {});

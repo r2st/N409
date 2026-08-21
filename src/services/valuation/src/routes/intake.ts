@@ -133,6 +133,7 @@ export function registerIntakeRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(deps.pool, id, principal);
+    refuseIfRetired(valuation, 'accepting questionnaire answers');
     if (!canEditIntake(principal, valuation)) {
       throw problems.forbidden('Only the client or operations can submit the questionnaire');
     }

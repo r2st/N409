@@ -190,6 +190,7 @@ export function registerBoardApprovalRoutes(
     requireOps(principal);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(deps.pool, id);
+    refuseIfRetired(valuation);
 
     const parsed = GenerateBody.safeParse(req.body ?? {});
     if (!parsed.success) {

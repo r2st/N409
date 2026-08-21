@@ -17,6 +17,7 @@ import { deepMerge, type EngineComputeResponse } from './calculations.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Improvement 3 — client-facing what-if scenario sandbox. Clients clone the
@@ -139,6 +140,7 @@ export function registerScenarioRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(principal, id);
+    refuseIfRetired(valuation, 'accepting new runs');
 
     const parsed = PreviewBody.safeParse(req.body ?? {});
     if (!parsed.success)
@@ -202,6 +204,7 @@ export function registerScenarioRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(principal, id);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const parsed = SaveBody.safeParse(req.body ?? {});
     if (!parsed.success) throw problems.unprocessable('Invalid scenario', { errors: parsed.error.issues });

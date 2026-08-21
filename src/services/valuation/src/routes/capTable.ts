@@ -21,6 +21,7 @@ import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { listRounds } from '../repos/transactions.js';
 import { looksLikeXlsx, readXlsx, XlsxReadError } from '../domain/xlsxRead.js';
 import { UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Cap-table integration (feature 9). Import a CSV (Carta / Pulley / generic)
@@ -144,6 +145,7 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(deps.pool, id, principal);
+    refuseIfRetired(valuation, 'accepting cap table changes');
     if (!canEdit(principal, valuation))
       throw problems.forbidden('Only the client or ops can import a cap table');
 
@@ -213,6 +215,7 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(deps.pool, id, principal);
+    refuseIfRetired(valuation, 'accepting cap table changes');
     if (!canEdit(principal, valuation))
       throw problems.forbidden('Only the client or ops can import a cap table');
     const parsed = ImportBody.safeParse(req.body);
@@ -227,6 +230,7 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(deps.pool, id, principal);
+    refuseIfRetired(valuation, 'accepting cap table changes');
     if (!canEdit(principal, valuation))
       throw problems.forbidden('Only the client or ops can import a cap table');
 

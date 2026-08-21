@@ -10,6 +10,7 @@ import { userExists } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { pageParam } from '../domain/pagination.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 const CreateBody = z.object({
   kind: z.enum(REVIEW_TASK_KINDS),
@@ -74,7 +75,10 @@ export function registerTaskRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    if (!isUlid(id) || !(await findValuationById(deps.pool, id))) throw problems.notFound();
+    if (!isUlid(id)) throw problems.notFound();
+    const valuation = await findValuationById(deps.pool, id);
+    if (!valuation) throw problems.notFound();
+    refuseIfRetired(valuation, 'accepting tasks');
 
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid task', { errors: parsed.error.issues });

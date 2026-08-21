@@ -394,6 +394,7 @@ export function registerRollforwardRoutes(
       const principal = requirePrincipal(req);
       const { id, runId } = req.params as { id: string; runId: string };
       const valuation = await loadOps(id, principal);
+      refuseIfRetired(valuation, 'applying results');
       if (!isUlid(runId)) throw problems.notFound();
 
       const run = await findRollforwardRun(deps.pool, valuation.id, runId);

@@ -33,6 +33,7 @@ import {
   type VestingSchedule,
 } from '../domain/vesting.js';
 import { int4Positive } from '../domain/int4.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Grant management (feature 6). Grants can only be issued once the board has
@@ -157,6 +158,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     requireOps(principal);
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(deps.pool, id, principal);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid grant', { errors: parsed.error.issues });
@@ -244,7 +246,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id, grantId } = req.params as { id: string; grantId: string };
-    await loadReadable(deps.pool, id, principal);
+    refuseIfRetired(await loadReadable(deps.pool, id, principal), 'accepting changes');
     const grant = await findGrantById(deps.pool, grantId);
     if (!grant || grant.valuation_id !== id) throw problems.notFound();
 

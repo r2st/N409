@@ -159,7 +159,7 @@ export function registerEngagementRoutes(
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadValuation(deps.pool, id);
+    refuseIfRetired(await loadValuation(deps.pool, id), 'accepting engagement changes');
     const parsed = AssignBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid analyst', { errors: parsed.error.issues });
     if (parsed.data.analyst_id && !isUlid(parsed.data.analyst_id)) {

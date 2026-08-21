@@ -9,6 +9,7 @@ import { activePipelineRun, latestPipelineRun, setValuationAutoPipeline } from '
 import { isExtractable, startPipelineRun, type AutoPipelineDeps } from '../pipeline/autoPipeline.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 const ToggleBody = z.object({ auto_pipeline: z.boolean() });
 
@@ -53,6 +54,7 @@ export function registerPipelineRoutes(
     if (!isOps(principal)) throw problems.forbidden('Pipeline runs are operations-only');
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(principal, id);
+    refuseIfRetired(valuation, 'accepting changes');
     if (!deps.autoPipeline.enabled) {
       throw problems.unprocessable('The pipeline is disabled on this deployment (AUTO_PIPELINE=off)');
     }
@@ -79,6 +81,7 @@ export function registerPipelineRoutes(
     if (!isOps(principal)) throw problems.forbidden('Pipeline settings are operations-only');
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(principal, id);
+    refuseIfRetired(valuation, 'accepting changes');
     const body = ToggleBody.safeParse(req.body ?? {});
     if (!body.success) throw problems.unprocessable('Invalid body', { errors: body.error.issues });
     const updated = await setValuationAutoPipeline(

@@ -17,6 +17,7 @@ import { resolveExhibitReferences } from '../domain/reportExhibitIndex.js';
 import { calculationPayload, runAiPipeline, type AiPipelineDeps } from './ai.js';
 import { InternalServiceError, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Quality-assurance gate (IMPROVEMENTS_RESEARCH §4.3): deterministic
@@ -61,6 +62,7 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     requireOps(principal);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(id);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const body = RunBody.safeParse(req.body ?? {});
     if (!body.success) throw problems.unprocessable('Invalid options', { errors: body.error.issues });

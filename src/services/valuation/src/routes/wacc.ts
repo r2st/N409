@@ -6,6 +6,7 @@ import { InternalServiceError, postJson, toProblem } from '../clients/internal.j
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * The discount-rate build-up, previewed.
@@ -42,6 +43,9 @@ export function registerWaccRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       throw problems.notFound();
     }
     if (!isOps(principal)) throw problems.forbidden('The discount-rate build-up is operations-only');
+    // After authorization, not before: answering "retired" to a caller who may
+    // not read this engagement would confirm that it exists.
+    refuseIfRetired(valuation, 'accepting new runs');
 
     const paramsRow = await findParams(deps.pool, valuation.id);
     const inputs = paramsRow?.wacc_inputs;

@@ -6,6 +6,7 @@ import { isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { deleteSignature, listSignatures, upsertSignature } from '../repos/signatures.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Signature workflow (remaining-gaps §3 #3): 409.ai gates publish behind
@@ -46,6 +47,7 @@ export function registerSignatureRoutes(app: FastifyInstance, deps: { pool: pg.P
     requireOps(principal);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(deps.pool, id);
+    refuseIfRetired(valuation, 'accepting signatures');
     if (valuation.state === 'published') {
       throw problems.conflict('Cannot re-sign a published valuation');
     }

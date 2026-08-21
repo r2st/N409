@@ -629,6 +629,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     if (!isOps(principal)) throw problems.forbidden('AI pipelines are operations-only');
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(id);
+    refuseIfRetired(valuation, 'applying results');
 
     const job = await latestSucceededJob(deps.pool, id, 'tagging');
     if (!job) {
@@ -721,6 +722,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     if (!isOps(principal)) throw problems.forbidden('AI pipelines are operations-only');
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(id);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const body = AnonymizeBody.safeParse(req.body ?? {});
     if (!body.success) throw problems.unprocessable('Invalid options', { errors: body.error.issues });

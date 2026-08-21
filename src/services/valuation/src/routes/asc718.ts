@@ -25,6 +25,7 @@ import { latestSucceededCalculation } from '../repos/calculations.js';
 import { findAsc718Settings, upsertAsc718Settings } from '../repos/asc718Settings.js';
 import { postJson } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * ASC 718 stock-based-compensation expense (domain/asc718.ts + asc718Public.ts).
@@ -330,7 +331,7 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadValuation(id);
+    refuseIfRetired(await loadValuation(id), 'accepting changes');
     const parsed = SettingsBody.safeParse(req.body);
     if (!parsed.success)
       throw problems.unprocessable('Invalid ASC 718 settings', { errors: parsed.error.issues });
@@ -353,6 +354,7 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
     requireOps(principal);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(id);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const parsed = Body.safeParse(req.body);
     if (!parsed.success)

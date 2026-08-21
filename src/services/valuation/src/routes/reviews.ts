@@ -13,6 +13,7 @@ import { assertPublishGate, assertPublishGateForWrite } from '../domain/publishG
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * P1 #6 — the review workflow's verbs. "Approve" and "request changes" wrap
@@ -63,6 +64,7 @@ export function registerReviewRoutes(
     if (!isUlid(id)) throw problems.notFound();
     const valuation = await findValuationById(deps.pool, id);
     if (!valuation) throw problems.notFound();
+    refuseIfRetired(valuation, 'accepting review decisions');
 
     const parsed = DecisionBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid decision', { errors: parsed.error.issues });

@@ -6,7 +6,7 @@ import { canEditWorkingData, canReadValuation } from '../auth/rbac.js';
 import { computeWorkbook, validateCellRef } from '../domain/workbook.js';
 import { detectFinancialAnomalies } from '../domain/financialAnomalies.js';
 import { buildWorkbookTabs } from '../domain/workbookTabs.js';
-import { findValuationById } from '../repos/valuations.js';
+import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { findCompanyProfile } from '../repos/companyProfiles.js';
 import { findParams } from '../repos/params.js';
 import { findCapTable } from '../repos/capTables.js';
@@ -14,6 +14,7 @@ import { listOverwrites } from '../repos/overwrites.js';
 import { listWorkbookCells, patchWorkbookCells } from '../repos/workbook.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { Principal } from '../auth/rbac.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 const PatchBody = z
   .object({
@@ -34,7 +35,7 @@ const PatchBody = z
   })
   .strict();
 
-async function authorize(pool: pg.Pool, principal: Principal, id: string): Promise<void> {
+async function authorize(pool: pg.Pool, principal: Principal, id: string): Promise<ValuationRow> {
   if (!canEditWorkingData(principal)) throw problems.forbidden();
   if (!isUlid(id)) throw problems.notFound();
   const valuation = await findValuationById(pool, id);
@@ -44,6 +45,10 @@ async function authorize(pool: pg.Pool, principal: Principal, id: string): Promi
   ) {
     throw problems.notFound();
   }
+  // Returned rather than discarded so the PATCH below can ask whether the
+  // engagement is retired. The refusal is not made *here*: this is shared with
+  // two GETs, and a retired engagement stays readable.
+  return valuation;
 }
 
 export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
@@ -105,7 +110,7 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
   app.patch('/api/v1/valuations/:id/workbook', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
-    await authorize(deps.pool, principal, id);
+    refuseIfRetired(await authorize(deps.pool, principal, id), 'accepting workbook edits');
 
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success)

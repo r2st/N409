@@ -8,6 +8,7 @@ import { findParams } from '../repos/params.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { createHealthCheck, listHealthChecks } from '../repos/healthChecks.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Valuation health checks (domain/healthChecks.ts): a categorized readiness
@@ -33,6 +34,7 @@ export function registerHealthCheckRoutes(app: FastifyInstance, deps: { pool: pg
     requireOps(principal);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(id);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const calculation = await latestSucceededCalculation(deps.pool, valuation.id);
     if (!calculation) {

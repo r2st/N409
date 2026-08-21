@@ -397,7 +397,8 @@ export function registerCalculationRoutes(
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden('Calculations are operations-only');
     const { id } = req.params as { id: string };
-    const { paramsRow } = await loadValuationAndParams(id);
+    const { valuation, paramsRow } = await loadValuationAndParams(id);
+    refuseIfRetired(valuation, 'accepting calculations');
     if (!paramsRow) throw problems.notFound();
 
     const parsed = ComputeBody.safeParse(req.body ?? {});

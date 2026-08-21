@@ -11,6 +11,7 @@ import {
 } from '../repos/methodologyDecisions.js';
 import { findValuationById } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Audit-defense methodology decision log (IMPROVEMENTS_RESEARCH §5.3): every
@@ -45,6 +46,7 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: { pool: pg.Po
     requireOps(principal);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(id);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const parsed = DecisionBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid decision', { errors: parsed.error.issues });

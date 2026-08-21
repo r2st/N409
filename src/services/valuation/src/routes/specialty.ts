@@ -21,6 +21,7 @@ import {
   type SpecialtyKind,
 } from '../domain/specialty.js';
 import type { ValuationKind } from '../domain/valuation.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Specialty report-type pipeline (remaining-gaps §report-types): one route
@@ -105,6 +106,7 @@ export function registerSpecialtyRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(id, principal);
+    refuseIfRetired(valuation, 'accepting changes');
     const kind = requireSpecialty(valuation.kind as ValuationKind);
 
     const parsed = RunBody.safeParse(req.body ?? {});

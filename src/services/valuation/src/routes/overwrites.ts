@@ -14,6 +14,7 @@ import { deleteOverwrite, listOverwrites, upsertOverwrite } from '../repos/overw
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { Principal } from '../auth/rbac.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 const PutBody = z
   .object({
@@ -69,6 +70,7 @@ export function registerOverwriteRoutes(app: FastifyInstance, deps: { pool: pg.P
     const principal = requirePrincipal(req);
     const { id, field_key } = req.params as { id: string; field_key: string };
     const valuation = await loadForWorkingData(deps.pool, principal, id);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const def = OVERWRITE_FIELDS_BY_KEY.get(field_key);
     if (!def) throw problems.notFound(`Unknown overwrite field '${field_key}'`);

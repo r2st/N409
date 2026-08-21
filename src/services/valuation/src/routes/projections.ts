@@ -420,6 +420,7 @@ export function registerProjectionRoutes(
       const principal = requirePrincipal(req);
       const { id, projectionId } = req.params as { id: string; projectionId: string };
       const valuation = await loadOps(id, principal);
+      refuseIfRetired(valuation, 'applying results');
       if (!isUlid(projectionId)) throw problems.notFound();
 
       const run = await findProjection(deps.pool, valuation.id, projectionId);

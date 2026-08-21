@@ -21,6 +21,7 @@ import {
 import { findValuationById } from '../repos/valuations.js';
 import { buildEntityTree, consolidate } from '../domain/portfolio.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Multi-entity / fund portfolio (feature 6). An organization (holding company
@@ -206,7 +207,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
   app.patch('/api/v1/valuations/:id/entity', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
-    await loadEditableValuation(principal, id);
+    refuseIfRetired(await loadEditableValuation(principal, id), 'accepting changes');
     const parsed = EntityBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid entity', { errors: parsed.error.issues });
     if (parsed.data.parent_valuation_id) {

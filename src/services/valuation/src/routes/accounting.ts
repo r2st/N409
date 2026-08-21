@@ -27,6 +27,7 @@ import {
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { applyEngineInputs, findParams, patchParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Accounting software integrations (409.ai §23).
@@ -120,6 +121,7 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
       const { id, provider: rawProvider } = req.params as { id: string; provider: string };
       const provider = parseProvider(rawProvider);
       const valuation = await loadAuthorizedValuation(principal, id);
+      refuseIfRetired(valuation, 'accepting integration changes');
 
       const creds = deps.credentials[provider];
       if (!creds) throw providerUnavailable(provider);
@@ -185,6 +187,7 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
       const { id, provider: rawProvider } = req.params as { id: string; provider: string };
       const provider = parseProvider(rawProvider);
       const valuation = await loadAuthorizedValuation(principal, id);
+      refuseIfRetired(valuation, 'accepting integration changes');
 
       if (!IMPORT_SUPPORTED.has(provider)) {
         throw problems.unprocessable(

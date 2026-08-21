@@ -16,6 +16,7 @@ import {
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Transaction & funding-round history (M4, P1 #24). Reads follow valuation
@@ -91,6 +92,7 @@ export function registerTransactionRoutes(app: FastifyInstance, deps: { pool: pg
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
     requireWriteAccess(principal, valuation);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const parsed = RoundBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid round', { errors: parsed.error.issues });
@@ -117,6 +119,7 @@ export function registerTransactionRoutes(app: FastifyInstance, deps: { pool: pg
     const principal = requirePrincipal(req);
     const { id, roundId } = req.params as { id: string; roundId: string };
     const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+    refuseIfRetired(valuation, 'accepting changes');
     requireWriteAccess(principal, valuation);
     if (!isUlid(roundId)) throw problems.notFound();
 
@@ -170,6 +173,7 @@ export function registerTransactionRoutes(app: FastifyInstance, deps: { pool: pg
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+    refuseIfRetired(valuation, 'accepting changes');
     requireWriteAccess(principal, valuation);
 
     const parsed = TransactionBody.safeParse(req.body);

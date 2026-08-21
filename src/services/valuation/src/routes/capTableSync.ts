@@ -33,6 +33,7 @@ import { diffCapTables, type CapTableDiff } from '../domain/capTableSync.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Live cap-table sync (feature 4). Flow mirrors the accounting integration:
@@ -239,6 +240,7 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       const { id, provider: rawProvider } = req.params as { id: string; provider: string };
       const provider = parseProvider(rawProvider);
       const valuation = await loadAuthorized(principal, id);
+      refuseIfRetired(valuation, 'accepting cap table changes');
       const creds = deps.credentials[provider];
       if (!creds) throw providerUnavailable(provider);
       const state = await signCapTableSyncState(
@@ -296,6 +298,7 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       const { id, provider: rawProvider } = req.params as { id: string; provider: string };
       const provider = parseProvider(rawProvider);
       const valuation = await loadAuthorized(principal, id);
+      refuseIfRetired(valuation, 'accepting cap table changes');
       // `safeParse`, not `parse`: a ZodError thrown out of a handler is not an
       // `ApiProblem` and carries no `statusCode`, so `registerProblemHandler`
       // renders it as `urn:n409:problem:internal` with a 500 — telling a client
@@ -334,6 +337,7 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       const { id, provider: rawProvider } = req.params as { id: string; provider: string };
       const provider = parseProvider(rawProvider);
       const valuation = await loadAuthorized(principal, id);
+      refuseIfRetired(valuation, 'accepting cap table changes');
       const parsed = FrequencyBody.safeParse(req.body);
       if (!parsed.success) throw problems.unprocessable('Invalid frequency', { errors: parsed.error.issues });
       const connection = await findConnection(deps.pool, valuation.id, provider);

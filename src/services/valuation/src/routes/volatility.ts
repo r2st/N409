@@ -409,6 +409,7 @@ export function registerVolatilityRoutes(
       const principal = requirePrincipal(req);
       const { id, estimateId } = req.params as { id: string; estimateId: string };
       const valuation = await loadOps(id, principal);
+      refuseIfRetired(valuation, 'applying results');
       if (!isUlid(estimateId)) throw problems.notFound();
 
       const estimate = await findVolatilityEstimate(deps.pool, valuation.id, estimateId);

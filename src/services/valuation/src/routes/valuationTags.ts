@@ -19,6 +19,7 @@ import {
 } from '../domain/valuationTags.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Engagement tags — 409.ai parity gap #23.
@@ -130,6 +131,7 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     requireOps(principal);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(principal, id);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const body = AddBody.safeParse(req.body ?? {});
     if (!body.success) throw problems.unprocessable('Invalid tag', { errors: body.error.issues });
@@ -174,6 +176,7 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     const params = SlugParam.safeParse(req.params);
     if (!params.success) throw problems.notFound();
     const valuation = await loadValuation(principal, id);
+    refuseIfRetired(valuation, 'accepting changes');
 
     const body = DecideBody.safeParse(req.body ?? {});
     if (!body.success) throw problems.unprocessable('Invalid decision', { errors: body.error.issues });

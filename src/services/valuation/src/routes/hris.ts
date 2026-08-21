@@ -32,6 +32,7 @@ import { createGrant } from '../repos/grants.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * HRIS / payroll integration for ASC 718 (feature 11). OAuth2 connect + pull of
@@ -240,6 +241,7 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
     const { id, provider: rawProvider } = req.params as { id: string; provider: string };
     const provider = parseProvider(rawProvider);
     const valuation = await loadAuthorized(principal, id);
+    refuseIfRetired(valuation, 'accepting integration changes');
     const creds = deps.credentials[provider];
     if (!creds) throw providerUnavailable(provider);
     const state = await signHrisState(
@@ -294,6 +296,7 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
     const { id, provider: rawProvider } = req.params as { id: string; provider: string };
     const provider = parseProvider(rawProvider);
     const valuation = await loadAuthorized(principal, id);
+    refuseIfRetired(valuation, 'accepting integration changes');
     const connection = await findConnection(deps.pool, valuation.id, provider);
     if (!connection || connection.status === 'revoked') {
       throw problems.unprocessable(`${HRIS_PROVIDER_LABELS[provider]} is not connected`);
@@ -314,6 +317,7 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
       const { id, provider: rawProvider } = req.params as { id: string; provider: string };
       const provider = parseProvider(rawProvider);
       const valuation = await loadAuthorized(principal, id);
+      refuseIfRetired(valuation, 'accepting integration changes');
       const parsed = FrequencyBody.safeParse(req.body);
       if (!parsed.success) throw problems.unprocessable('Invalid frequency', { errors: parsed.error.issues });
       const connection = await findConnection(deps.pool, valuation.id, provider);
