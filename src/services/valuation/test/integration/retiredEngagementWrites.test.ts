@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { FastifyInstance } from 'fastify';
 import { retireValuations } from '../../src/repos/valuationPurge.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { mutatingValuationRoutes } from '../support/routeTable.js';
 
 const dbUp = await isDbAvailable();
 
@@ -40,34 +40,10 @@ const dbUp = await isDbAvailable();
  * The fifteen DELETEs are exempt by a decision the board flow made before there
  * was a rule — cleaning up rows on a withdrawn file is the one thing that
  * should still work — and the partner API's three writes are a separate surface
- * with its own tests. Both lists are exhaustive and checked against the route
- * table in both directions, so neither can quietly grow.
+ * swept by `partnerApiRetired.test.ts` (they leaked too — R90). Both lists are
+ * exhaustive and checked against the route table in both directions, so
+ * neither can quietly grow.
  */
-
-/** `METHOD /path` for every mutating route registered under a valuation id. */
-export function mutatingValuationRoutes(app: FastifyInstance): string[] {
-  // Parsed out of the printed tree because Fastify does not otherwise expose
-  // its route table. Each line carries its own indentation and the segment is
-  // relative to the last shallower one, so the full path is rebuilt from a
-  // stack rather than read off the line.
-  const stack: Array<{ indent: number; seg: string }> = [];
-  const found = new Set<string>();
-  for (const line of app.printRoutes({ commonPrefix: false }).split('\n')) {
-    const m = /^([\s│├└─]*)(\S[^(]*?)\s*\(([A-Z, ]+)\)\s*$/u.exec(line);
-    if (!m) continue;
-    const indent = m[1].length;
-    while (stack.length > 0 && stack[stack.length - 1].indent >= indent) stack.pop();
-    const full = stack.map((s) => s.seg).join('') + m[2].trim();
-    stack.push({ indent, seg: m[2].trim() });
-    if (!/\/valuations\/:id\b/u.test(full)) continue;
-    for (const method of m[3].split(',').map((x) => x.trim())) {
-      if (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') {
-        found.add(`${method} ${full}`);
-      }
-    }
-  }
-  return [...found].sort();
-}
 
 interface Spec {
   method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -191,9 +167,12 @@ const UNGUARDED_DELETES: string[] = [
 /**
  * The partner API's own writes, which are a separate surface.
  *
- * They are reached with an API key rather than a session and have their own
- * state machine — `partnerApi.test.ts` owns them. Named here so the coverage
- * test below stays exhaustive rather than being narrowed to `/api/v1`.
+ * They are reached with an API key rather than a session, so they cannot ride
+ * this sweep — the injections here all carry `ops.token`. R89 named that and
+ * stopped, which left three writes that a retired engagement accepted;
+ * `partnerApiRetired.test.ts` is the sweep they got in R90, driven off the same
+ * route table by the same pairing. Named here so the coverage test below stays
+ * exhaustive rather than being narrowed to `/api/v1`.
  */
 const PARTNER_API: string[] = [
   'POST /api/partner/v1/valuations/:id/documents',

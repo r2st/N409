@@ -43,6 +43,7 @@ import { isUniqueViolation } from '../db/pgError.js';
 import { applyValuationState } from '../domain/applyState.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { WORKFLOW_TRANSITIONS } from '../domain/workflow.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { findPartnerIdentity } from '../repos/branding.js';
 import { findApiTokenById } from '../repos/apiTokens.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
@@ -253,6 +254,18 @@ function publicValuation(v: ValuationRow) {
     created_at: v.created_at,
     due_date: v.due_date,
     published_at: v.published_at,
+    /**
+     * When the firm withdrew the engagement, or null.
+     *
+     * A retired valuation leaves the list — `buildValuationWhere` filters it —
+     * but stays readable by id, which is the right call (a partner is still
+     * entitled to look at what they created) and, without this field, a silent
+     * one. An integration polling `state` on a withdrawn engagement sees a
+     * state that will never move again and no reason for it, and its next
+     * write gets a 409 out of nowhere. This is that reason, on the response it
+     * was already reading.
+     */
+    retired_at: v.archived_at,
   };
 }
 
@@ -739,7 +752,10 @@ export function registerPartnerApiRoutes(
       path: '/valuations/{id}',
       summary: 'Check the status of a valuation.',
       auth: 'api_key',
-      response: '{ valuation } — id, state, waiting_on_client, due_date, published_at, …',
+      response:
+        '{ valuation } — id, state, waiting_on_client, due_date, published_at, retired_at, …. ' +
+        'A non-null `retired_at` means the firm has withdrawn the engagement: it stays readable, ' +
+        'its state will not change again, and every write to it answers 409.',
     },
     async (req) => {
       const { token } = requireToken(req);
@@ -807,7 +823,8 @@ export function registerPartnerApiRoutes(
       errors: {
         '409':
           'This valuation has reached review — its details are being written into the deliverable and ' +
-          'are no longer editable through the API. Contact your account manager.',
+          'are no longer editable through the API — or the engagement has been retired, in which case ' +
+          'no write to it will ever be accepted again. Contact your account manager.',
         '422': 'No editable field was supplied, or one of them is invalid.',
       },
       response: '{ valuation }',
@@ -816,6 +833,7 @@ export function registerPartnerApiRoutes(
       const { principal, token } = requireToken(req);
       const { id } = req.params as { id: string };
       const valuation = await loadScoped(token, id);
+      refuseIfRetired(valuation, 'accepting edits');
 
       const parsed = UpdateBody.safeParse(req.body ?? {});
       if (!parsed.success) throw problems.unprocessable('Invalid update', { errors: parsed.error.issues });
@@ -873,14 +891,22 @@ export function registerPartnerApiRoutes(
       auth: 'api_key',
       ...idempotencyDoc('advancing the valuation a second time', {
         '409':
-          'This valuation is cancelled, timed out or ignored. Those need a restart rather than a ' +
-          'submission — contact your account manager.',
+          'This valuation is cancelled, timed out or ignored — those need a restart rather than a ' +
+          'submission — or the engagement has been retired, which nothing restarts. Contact your ' +
+          'account manager.',
       }),
       response: '{ valuation }',
     },
     async (req, reply) => {
       const { principal, token } = requireToken(req);
       const { id } = req.params as { id: string };
+      // Ahead of the key claim, for the same reason the upload route puts its
+      // refusals there: a throw inside `run()` leaves the key in flight until
+      // the takeover window expires, so a client retrying a refused submit
+      // under the same key would be told its request is still running rather
+      // than why it was refused. The reload inside is kept — it is what reads
+      // the state after a concurrent claim resolves.
+      refuseIfRetired(await loadScoped(token, id), 'accepting submissions');
       return withIdempotency(req, reply, token, async () => {
         let valuation = await loadScoped(token, id);
         const from = SUBMIT_PATH.indexOf(valuation.state as (typeof SUBMIT_PATH)[number]);
@@ -943,6 +969,7 @@ export function registerPartnerApiRoutes(
         '413':
           'The JSON envelope exceeded the request body limit — base64 inflates the file by about a third, ' +
           `so a file near the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB cap can exceed it. Upload a smaller file.`,
+        '409': 'The engagement has been retired and no longer accepts documents.',
       }),
       response: '201 { document } — includes the stored sha256 fingerprint',
     },
@@ -950,6 +977,7 @@ export function registerPartnerApiRoutes(
       const { principal, token } = requireToken(req);
       const { id } = req.params as { id: string };
       const valuation = await loadScoped(token, id);
+      refuseIfRetired(valuation, 'accepting documents');
       const parsed = UploadBody.safeParse(req.body);
       if (!parsed.success) throw problems.unprocessable('Invalid upload', { errors: parsed.error.issues });
 

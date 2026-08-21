@@ -53,6 +53,11 @@ export const PublicValuationSchema = z
     created_at: Timestamp,
     due_date: Timestamp.nullable(),
     published_at: Timestamp.nullable(),
+    /**
+     * Set once the firm withdraws the engagement. Non-null means every write
+     * to it now answers 409 — see `publicValuation`.
+     */
+    retired_at: Timestamp.nullable(),
   })
   .strict();
 
