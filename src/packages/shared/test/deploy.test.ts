@@ -1124,3 +1124,59 @@ describe('installing the systemd units', () => {
     expect(run.stderr).toContain('install-units.sh');
   });
 });
+
+// The edge config is the one piece of the estate a deploy cannot install:
+// /etc/caddy/Caddyfile is shared with two other products, so ours is a site
+// block and the only safe direction is to report. That makes *when* it runs and
+// *what a failure costs* the whole design — see infra/check-caddy.mjs.
+describe('checking the host’s Caddy config', () => {
+  const step = (run: Run) => run.remote.findIndex((c) => c.includes('check-caddy.mjs'));
+
+  it('compares it against the checkout on every deploy', () => {
+    const run = deploy(['--apply']);
+    expect(run.remote.some((c) => c.includes('cd /opt/N409 && node infra/check-caddy.mjs'))).toBe(true);
+  });
+
+  // Before the restarts, so a drift costs a failed deploy with the previous
+  // release still serving rather than a restart into an edge nobody has read.
+  it('checks before anything restarts', () => {
+    const run = deploy(['--apply']);
+    const restart = run.remote.findIndex((c) => c.includes('systemctl restart'));
+    expect(step(run)).toBeGreaterThan(-1);
+    expect(restart).toBeGreaterThan(step(run));
+  });
+
+  // Fatal, deliberately. The two differences it detects — a dropped
+  // trusted-proxy range and a reordered /scim/v2 handle — both leave the site
+  // answering 200s, so section 7's verification cannot catch either one. A
+  // warning here would be a warning nobody reads.
+  it('restarts nothing when the host has drifted', () => {
+    const run = deploy(['--apply'], {}, ['[[ "$*" == *"check-caddy.mjs"* ]] && exit 1']);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('Caddy config does not match this checkout');
+    expect(run.remote.some((c) => c.includes('systemctl restart'))).toBe(false);
+  });
+
+  // The fix is an in-place edit of one block. Saying so at the point of failure
+  // matters more than in the README: somebody reading this message is holding a
+  // file that also serves two other sites.
+  it('says not to copy the file over the host’s', () => {
+    const run = deploy(['--apply'], {}, ['[[ "$*" == *"check-caddy.mjs"* ]] && exit 1']);
+    expect(run.stderr).toContain('edit the block in place');
+    expect(run.stderr).toContain('shared with other sites');
+  });
+
+  it('can be skipped for one deploy', () => {
+    const run = deploy(['--apply'], { SKIP_CADDY_CHECK: '1' });
+    expect(run.remote.some((c) => c.includes('check-caddy.mjs'))).toBe(false);
+    expect(run.stderr).toContain('SKIP_CADDY_CHECK=1');
+    // Skipping the check must not skip the deploy.
+    expect(run.remote.some((c) => c.includes('systemctl restart'))).toBe(true);
+  });
+
+  it('plans the check in a dry run without running it', () => {
+    const run = deploy([]);
+    expect(run.transcript).toBe('');
+    expect(run.stderr).toContain('check-caddy.mjs');
+  });
+});

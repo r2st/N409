@@ -52,6 +52,28 @@ can reach 204.168.241.124 directly and forge the header. That change is not made
 here because Caddy serves two other products from the same ports. See
 `infra/DEPLOYMENT.md`.
 
+## The deploy checks this file against the host
+
+`infra/deploy.sh` section 4d runs `infra/check-caddy.mjs` on the box before it
+restarts anything, and **a difference fails the deploy**. So if you edit the
+`n409.aiknol.com` block in `/etc/caddy/Caddyfile` by hand, make the same edit
+here — otherwise the next deploy stops, with the previous release still serving.
+
+It cannot install the way `install-units.sh` does, because the host's Caddyfile
+is shared with two other products and copying ours over it would take them down.
+Reporting is the only safe direction. It compares *what Caddy would do* — the
+trusted-proxy set, and the site block's directives in order — not the bytes, so
+the two files are free to be indented differently and to carry their own
+comments. Order is not cosmetic in the site block: `handle` is first-match-wins.
+
+Run it yourself against any config:
+
+```sh
+node infra/check-caddy.mjs --live /etc/caddy/Caddyfile   # 0 match, 1 drift, 2 unreadable
+```
+
+`SKIP_CADDY_CHECK=1` overrides it for one deploy.
+
 ## Verify
 
 ```sh

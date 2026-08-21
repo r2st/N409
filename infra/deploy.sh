@@ -48,6 +48,11 @@
 #                 start-up guards before restarting (see section 4b). Skipping
 #                 it does not make a bad config work — it only moves the
 #                 discovery from a failed deploy to a failed service.
+#   SKIP_CADDY_CHECK
+#                 Set to 1 to skip comparing /etc/caddy/Caddyfile with this
+#                 checkout's site block before restarting (see section 4d).
+#                 The edge config is the one thing a deploy cannot install, so
+#                 this is the one check that can only report.
 #
 # Usage:
 #   infra/deploy.sh                    # dry run — prints the plan, touches nothing
@@ -436,6 +441,35 @@ fi
 # into a set of units nobody can name.
 run_remote "cd $REMOTE_DIR && bash infra/install-units.sh" \
   || die "could not install the systemd units on the host — nothing was restarted, the previous release is still serving"
+
+# ── 4d. Check the edge config, which cannot be installed ─────────────────────
+#
+# `infra/caddy/` is the last copy of 4c's failure still open: shipped onto the
+# host by every deploy and read by nobody, because Caddy reads
+# /etc/caddy/Caddyfile.
+#
+# It cannot be closed the same way. That one Caddyfile also serves two unrelated
+# products from the same ports, so copying ours over it would take them down —
+# which is why the repo holds the n409 *site block* rather than a config, and
+# why this reports rather than installs.
+#
+# Fatal anyway, and that is the deliberate part: a report about an edge config
+# that only warns is a warning nobody reads, and the two things it compares are
+# the two that fail silently in production. A dropped trusted-proxy range leaves
+# the site up and every per-IP throttle keyed on a Cloudflare POP; a `/scim/v2/*`
+# handle that stops preceding the catch-all 404s an IdP's provisioning job in
+# somebody else's logs. Neither shows up in section 7's verification, because
+# both serve 200s.
+#
+# The comparison is on what Caddy would do, not on bytes — the host's copy is
+# indented differently and carries its own comments — so this does not fail on
+# formatting. See infra/check-caddy.mjs.
+if [[ "${SKIP_CADDY_CHECK:-0}" == "1" ]]; then
+  log "SKIP_CADDY_CHECK=1 — not comparing the host's Caddy config with this checkout"
+else
+  run_remote "cd $REMOTE_DIR && node infra/check-caddy.mjs" \
+    || die "the host's Caddy config does not match this checkout — nothing was restarted, the previous release is still serving. Fix /etc/caddy/Caddyfile as printed above (edit the block in place; the file is shared with other sites) and deploy again (SKIP_CADDY_CHECK=1 overrides)"
+fi
 
 # ── 5. Record what was built — after the build, never before ─────────────────
 # The SHA is the local one. See the header: the server's HEAD does not move.
