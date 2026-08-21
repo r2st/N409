@@ -102,14 +102,52 @@ It is not done, and not shipped as an unapplied script either, for one reason:
 **this host's Caddy serves two unrelated products from the same ports**
 (`ustradingbot.aiknol.com`, `talentping.aiknol.com`). Restricting 80/443 to
 Cloudflare would take those down unless they are proxied too, and that is not
-this repo's decision to make. The shape of the change, when somebody does decide:
+this repo's decision to make.
+
+**They are not.** This used to say "confirm the other two sites are proxied" and
+leave the confirming to a human; R89 ran it and the answer was no:
+
+```
+$ node infra/check-edge-exposure.mjs --origin 204.168.241.124 --probe
+  proxied  n409.aiknol.com (104.21.13.34 172.67.197.163)
+  proxied  talentping.aiknol.com (172.67.197.163 104.21.13.34)
+  DIRECT   ustradingbot.aiknol.com → 204.168.241.124
+  NOT safe to restrict 80/443 to Cloudflare.
+```
+
+`ustradingbot.aiknol.com` is grey-clouded — its A record *is* the origin. So the
+recipe below would take a live product off the internet, and the script is now
+the gate rather than the prose. Re-run it before applying anything here; it
+exits 0 only when every site on the box survives the change.
+
+**And read this before you do, even then.** A grey-clouded site loses its
+certificate as well as its traffic, on a delay. Caddy renews from Let's Encrypt,
+and HTTP-01 validation is dialled at the origin address in DNS — which for a
+proxied site is Cloudflare (so the challenge arrives from a permitted range and
+renewal keeps working), and for a grey-clouded one is the box itself (so the
+same rule that took the site down also blocks its renewal). The first failure is
+immediate and obvious; the second lands sixty days later, looking like an
+unrelated certificate expiry.
+
+The shape of the change, when the script says it is safe:
 
 ```sh
 # For each range in CLOUDFLARE_RANGES (src/packages/shared/src/clientIp.ts):
 ufw allow from <range> to any port 80,443 proto tcp comment 'Cloudflare edge'
-# then, and only after confirming the other two sites are proxied:
+# then, and only once check-edge-exposure.mjs exits 0:
 ufw delete allow 80/tcp && ufw delete allow 443/tcp
 ```
+
+What the change does and does not buy, measured on the live origin in R89:
+
+- It does **not** close a header-forging hole for ordinary clients. That is
+  already closed: a request sent straight to `204.168.241.124` carrying
+  `X-Forwarded-For: 1.2.3.4` is logged by `n409-web` with the real client
+  address, because Caddy overwrites the header for any peer outside the ranges.
+- It **does** close two things. Code running inside Cloudflare is a trusted hop
+  today and could name any client it likes; and every edge protection — WAF, bot
+  management, edge rate limiting — is skippable by anyone who dials the origin.
+  The origin's address is not a secret: the grey-clouded sibling publishes it.
 
 Note that this is a narrowing of an already-narrow exposure, not the removal of
 an open door: before R88 the per-IP limits were a single shared bucket that took

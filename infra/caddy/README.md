@@ -49,8 +49,31 @@ the trade it makes.
 **Open item.** Trusting those ranges is only completely safe once the origin
 accepts 80/443 *from* those ranges alone — otherwise code running on Cloudflare
 can reach 204.168.241.124 directly and forge the header. That change is not made
-here because Caddy serves two other products from the same ports. See
+here because Caddy serves two other products from the same ports.
+
+Measured, rather than assumed:
+
+```sh
+node infra/check-edge-exposure.mjs --caddyfile /etc/caddy/Caddyfile \
+  --origin 204.168.241.124 --probe
+```
+
+As of 2026-08-21 it exits 1. `n409` and `talentping` are proxied;
+**`ustradingbot.aiknol.com` is not** — it resolves straight to the origin, so
+the firewall change would take it off the internet, and then again sixty days
+later, because the validation traffic that renews a grey-clouded site's
+certificate arrives from Let's Encrypt rather than from Cloudflare and the same
+rule blocks it. An earlier version of this file asserted that every site on the
+host was proxied; that claim is what the script replaces. See
 `infra/DEPLOYMENT.md`.
+
+Note what is *not* open. The header cannot be forged by an ordinary client:
+Caddy overwrites `X-Forwarded-For` for any peer outside the ranges, verified
+against the live origin — a direct request carrying a forged header is logged
+with the real client address, not the forged one. What remains is code running
+*inside* Cloudflare, and the fact that every edge protection (WAF, bot
+management, edge rate limiting) can be skipped by dialling the origin — whose
+address is public, because the grey-clouded sibling publishes it in DNS.
 
 ## The deploy checks this file against the host
 

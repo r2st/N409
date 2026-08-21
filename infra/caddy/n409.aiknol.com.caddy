@@ -31,9 +31,9 @@
 #
 # Caddy 2.7+ REPLACES an inbound X-Forwarded-For with the immediate peer address
 # unless that peer is listed as trusted — a good default, because otherwise any
-# client could name itself. Every site on this host is fronted by Cloudflare, so
-# the immediate peer is always a Cloudflare edge, and the client's real address
-# was being discarded before any backend saw it. For N409 that made `req.ip` a
+# client could name itself. The n409 record is proxied, so for this site the
+# immediate peer is always a Cloudflare edge, and the client's real address was
+# being discarded before any backend saw it. For N409 that made `req.ip` a
 # Cloudflare datacenter for every request on the internet, and the fourteen
 # per-IP throttles keyed on it — login, register and password reset among them —
 # one bucket shared by everyone routed through that POP.
@@ -42,6 +42,17 @@
 # send, so a backend receives `<client>, <cloudflare edge>`. A request arriving
 # from anywhere else is still overwritten with its own peer address, so this
 # cannot be used to forge an identity from outside Cloudflare.
+#
+# This block is global, so it applies to the other two sites on the host as
+# well, and they are NOT all proxied — `ustradingbot.aiknol.com` resolves
+# straight to the origin. That is harmless here, because a peer outside the
+# ranges still has its header overwritten, which is the correct answer for a
+# client arriving directly. It is not harmless for the firewall change this
+# trust is supposed to eventually allow: restricting 80/443 to these ranges
+# would take that site off the internet. `infra/check-edge-exposure.mjs`
+# measures which sites would survive it, so nobody has to take this comment's
+# word for it — the previous version of this line asserted every site on the
+# host was proxied, and it was wrong.
 #
 # The list must stay identical to CLOUDFLARE_RANGES in
 # src/packages/shared/src/clientIp.ts — the app has to trust the same hops Caddy
