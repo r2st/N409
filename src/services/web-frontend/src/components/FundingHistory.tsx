@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import {
-  all,
-  integer,
-  numberMin,
-  optional,
-  required,
-  useFormValidation,
-} from '../lib/useFormValidation';
+import { all, integer, numberMin, optional, required, useFormValidation } from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
 import { formatDate, formatMoney, formatNumber } from '../lib/format';
 import { TRANSACTION_KINDS } from '../lib/types';

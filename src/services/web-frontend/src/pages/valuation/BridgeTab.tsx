@@ -196,11 +196,7 @@ export function BridgeTab() {
         backsolve. Same tab because they answer the same question — "what does
         last year's valuation say about this one?" — from either end.
       */}
-      <RollforwardPanel
-        valuationId={valuation.id}
-        currency={valuation.currency}
-        candidates={candidates}
-      />
+      <RollforwardPanel valuationId={valuation.id} currency={valuation.currency} candidates={candidates} />
     </div>
   );
 }

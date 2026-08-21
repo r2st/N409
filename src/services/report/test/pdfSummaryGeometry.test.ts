@@ -65,13 +65,17 @@ describe('executive summary supporting figures', () => {
     // The premise of every test below. If this label ever stops wrapping — a
     // wider column, a smaller face — the collision tests would pass without
     // exercising anything, so the wrap is asserted rather than assumed.
-    const page = summaryLines(await render([{ label: 'Discount for lack of marketability', value: '25.0%' }]));
+    const page = summaryLines(
+      await render([{ label: 'Discount for lack of marketability', value: '25.0%' }]),
+    );
     expect(find(page, 'DISCOUNT FOR LACK OF').text).not.toContain('MARKETABILITY');
     expect(find(page, 'MARKETABILITY')).toBeDefined();
   });
 
   it('keeps a wrapped label clear of the value beneath it', async () => {
-    const page = summaryLines(await render([{ label: 'Discount for lack of marketability', value: '25.0%' }]));
+    const page = summaryLines(
+      await render([{ label: 'Discount for lack of marketability', value: '25.0%' }]),
+    );
     const second = find(page, 'MARKETABILITY');
     const value = find(page, '25.0%');
     // The whole defect in one line: the value's ink began above where the

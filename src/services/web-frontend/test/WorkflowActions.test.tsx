@@ -49,10 +49,7 @@ interface Call {
   body: unknown;
 }
 
-function mockApi(
-  calls: Call[],
-  opts: { options?: () => Response; workflow?: () => Response } = {},
-) {
+function mockApi(calls: Call[], opts: { options?: () => Response; workflow?: () => Response } = {}) {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const u = String(url);
     if (u.includes('/users/options')) return (opts.options ?? (() => jsonResponse(OPTIONS)))();
@@ -70,9 +67,7 @@ describe('WorkflowActions', () => {
   it('names the state the server will actually advance to', async () => {
     mockApi([]);
     render(<WorkflowActions valuation={valuation({ state: 'drafted' })} onChanged={vi.fn()} />);
-    expect(
-      await screen.findByRole('button', { name: /Advance → Draft accepted/i }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Advance → Draft accepted/i })).toBeInTheDocument();
   });
 
   it('promises "paid", not "review", on a completed valuation that has been paid for', async () => {
@@ -135,8 +130,7 @@ describe('WorkflowActions', () => {
   it('surfaces a refused transition instead of pretending it landed', async () => {
     const onChanged = vi.fn();
     mockApi([], {
-      workflow: () =>
-        jsonResponse({ title: 'Conflict', detail: 'This valuation has no report yet.' }, 409),
+      workflow: () => jsonResponse({ title: 'Conflict', detail: 'This valuation has no report yet.' }, 409),
     });
     render(<WorkflowActions valuation={valuation()} onChanged={onChanged} />);
 
@@ -163,26 +157,20 @@ describe('WorkflowActions', () => {
 
     it('will not post a reassignment that changes nothing', async () => {
       mockApi([]);
-      render(
-        <WorkflowActions valuation={valuation({ assigned_reviewer_id: 'r1' })} onChanged={vi.fn()} />,
-      );
+      render(<WorkflowActions valuation={valuation({ assigned_reviewer_id: 'r1' })} onChanged={vi.fn()} />);
       expect(await screen.findByRole('button', { name: 'Reassign' })).toBeDisabled();
     });
 
     it('sends the chosen reviewer, and null for unassigned', async () => {
       const calls: Call[] = [];
       mockApi(calls);
-      const { rerender } = render(
-        <WorkflowActions valuation={valuation()} onChanged={vi.fn()} />,
-      );
+      const { rerender } = render(<WorkflowActions valuation={valuation()} onChanged={vi.fn()} />);
 
       await userEvent.selectOptions(await screen.findByLabelText('Assigned reviewer'), 'r1');
       await userEvent.click(screen.getByRole('button', { name: 'Reassign' }));
       await waitFor(() => expect(calls[0]!.body).toEqual({ reviewer_id: 'r1' }));
 
-      rerender(
-        <WorkflowActions valuation={valuation({ assigned_reviewer_id: 'r2' })} onChanged={vi.fn()} />,
-      );
+      rerender(<WorkflowActions valuation={valuation({ assigned_reviewer_id: 'r2' })} onChanged={vi.fn()} />);
       await userEvent.selectOptions(screen.getByLabelText('Assigned reviewer'), '');
       await userEvent.click(screen.getByRole('button', { name: 'Reassign' }));
       await waitFor(() => expect(calls[1]!.body).toEqual({ reviewer_id: null }));

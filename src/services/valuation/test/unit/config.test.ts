@@ -194,9 +194,7 @@ describe('loadConfig JWT_TTL_SECONDS bounds', () => {
   });
 
   it('refuses a session longer than a week', () => {
-    expect(() => loadConfig({ ...base, JWT_TTL_SECONDS: String(30 * 24 * 3600) })).toThrow(
-      /7 days/,
-    );
+    expect(() => loadConfig({ ...base, JWT_TTL_SECONDS: String(30 * 24 * 3600) })).toThrow(/7 days/);
   });
 
   it('accepts the boundaries themselves', () => {

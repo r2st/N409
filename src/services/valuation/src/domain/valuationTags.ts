@@ -385,10 +385,7 @@ export function isTagSlug(value: unknown): value is string {
  * are useful, because they are exactly the judgement the analyst is being asked
  * to make.
  */
-export const EXCLUSIVE_TAG_CATEGORIES: ReadonlySet<TagCategory> = new Set<TagCategory>([
-  'stage',
-  'revenue',
-]);
+export const EXCLUSIVE_TAG_CATEGORIES: ReadonlySet<TagCategory> = new Set<TagCategory>(['stage', 'revenue']);
 
 /**
  * The catalogue as a consumer reads it: grouped, with the definitions.

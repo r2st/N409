@@ -102,52 +102,51 @@ function mockApi(
   } = {},
 ): Call[] {
   const calls: Call[] = [];
-  vi.spyOn(globalThis, 'fetch').mockImplementation(
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      const method = (init?.method ?? 'GET').toUpperCase();
-      calls.push({
-        url,
-        method,
-        body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
-        ifMatch: new Headers(init?.headers).get('if-match'),
-      });
-      if (/\/report\/versions$/.test(url)) {
-        return opts.versions ? opts.versions() : json({ versions: VERSIONS });
-      }
-      if (/\/report\/render$/.test(url)) {
-        return opts.render ? opts.render() : json({ version: 4, size_bytes: 2048 });
-      }
-      if (/\/report\/narrative$/.test(url)) {
-        return opts.narrative
-          ? opts.narrative()
-          : json({ changed: true, version: 4, applied: [{ section_key: 'intro', outcome: 'written' }] });
-      }
-      if (/\/report\/revert$/.test(url)) return opts.revert ? opts.revert() : json({});
-      if (/\/report\.pdf$/.test(url)) {
-        return opts.pdf ? opts.pdf() : new Response('%PDF-1.4', { status: 200 });
-      }
-      if (/\/report$/.test(url) && method === 'PUT') {
-        return opts.save
-          ? opts.save()
-          : json({
-              report: { ...REPORT, current_version: 4 },
-              version: { version: 4, content: CONTENT },
-            });
-      }
-      if (/\/report$/.test(url)) {
-        return opts.report ? opts.report() : json({ report: REPORT, version: { version: 3, content: CONTENT } });
-      }
-      // ExplanationCard: nothing to show, so it renders nothing.
-      if (/\/explanation$/.test(url)) return json({ explanation: null, model: null, generated_at: null });
-      return json({});
-    },
-  );
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const method = (init?.method ?? 'GET').toUpperCase();
+    calls.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+      ifMatch: new Headers(init?.headers).get('if-match'),
+    });
+    if (/\/report\/versions$/.test(url)) {
+      return opts.versions ? opts.versions() : json({ versions: VERSIONS });
+    }
+    if (/\/report\/render$/.test(url)) {
+      return opts.render ? opts.render() : json({ version: 4, size_bytes: 2048 });
+    }
+    if (/\/report\/narrative$/.test(url)) {
+      return opts.narrative
+        ? opts.narrative()
+        : json({ changed: true, version: 4, applied: [{ section_key: 'intro', outcome: 'written' }] });
+    }
+    if (/\/report\/revert$/.test(url)) return opts.revert ? opts.revert() : json({});
+    if (/\/report\.pdf$/.test(url)) {
+      return opts.pdf ? opts.pdf() : new Response('%PDF-1.4', { status: 200 });
+    }
+    if (/\/report$/.test(url) && method === 'PUT') {
+      return opts.save
+        ? opts.save()
+        : json({
+            report: { ...REPORT, current_version: 4 },
+            version: { version: 4, content: CONTENT },
+          });
+    }
+    if (/\/report$/.test(url)) {
+      return opts.report
+        ? opts.report()
+        : json({ report: REPORT, version: { version: 3, content: CONTENT } });
+    }
+    // ExplanationCard: nothing to show, so it renders nothing.
+    if (/\/explanation$/.test(url)) return json({ explanation: null, model: null, generated_at: null });
+    return json({});
+  });
   return calls;
 }
 
-const problem = (status: number, detail: string) => () =>
-  json({ status, title: 'Error', detail }, status);
+const problem = (status: number, detail: string) => () => json({ status, title: 'Error', detail }, status);
 
 function renderTab() {
   return render(
@@ -192,9 +191,7 @@ describe('ReportTab', () => {
     it('reports any other failure', async () => {
       mockApi({ report: problem(503, 'The report service is unavailable.') });
       renderTab();
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'The report service is unavailable.',
-      );
+      expect(await screen.findByRole('alert')).toHaveTextContent('The report service is unavailable.');
     });
   });
 
@@ -349,9 +346,7 @@ describe('ReportTab', () => {
       await user.click(screen.getByRole('button', { name: 'Save (new version)' }));
       expect(await screen.findByText('Saved as version 4.')).toBeInTheDocument();
       const put = calls.find((c) => c.method === 'PUT')!;
-      expect((put.body!.content as { title: string }).title).toBe(
-        'Acme Robotics — 409A Valuation!',
-      );
+      expect((put.body!.content as { title: string }).title).toBe('Acme Robotics — 409A Valuation!');
     });
 
     it('clears the dirty flag once saved', async () => {
@@ -464,9 +459,7 @@ describe('ReportTab', () => {
       await ready();
       await user.type(screen.getByLabelText('Report title'), '!');
       await user.click(screen.getByRole('button', { name: 'Save (new version)' }));
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'The report was changed by someone else.',
-      );
+      expect(await screen.findByRole('alert')).toHaveTextContent('The report was changed by someone else.');
     });
 
     it('names the action when the failure carries no message', async () => {
@@ -494,9 +487,7 @@ describe('ReportTab', () => {
       renderTab();
       await ready();
       await user.click(screen.getByRole('button', { name: 'Render PDF' }));
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'The renderer ran out of memory.',
-      );
+      expect(await screen.findByRole('alert')).toHaveTextContent('The renderer ran out of memory.');
     });
   });
 
@@ -530,7 +521,9 @@ describe('ReportTab', () => {
       await ready();
       await user.click(screen.getByRole('button', { name: 'Draft with AI' }));
       expect(
-        await screen.findByText('Drafted 2 sections as version 5 · 1 you had already written were left alone.'),
+        await screen.findByText(
+          'Drafted 2 sections as version 5 · 1 you had already written were left alone.',
+        ),
       ).toBeInTheDocument();
     });
 
@@ -555,11 +548,11 @@ describe('ReportTab', () => {
         createObjectURL: () => 'blob:x',
         revokeObjectURL: () => {},
       });
-      const click = vi
-        .spyOn(HTMLAnchorElement.prototype, 'click')
-        .mockImplementation(function (this: HTMLAnchorElement) {
-          created.push(this.download);
-        });
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+        this: HTMLAnchorElement,
+      ) {
+        created.push(this.download);
+      });
       const calls = mockApi();
       renderTab();
       await ready();
@@ -644,10 +637,7 @@ describe('ReportTab', () => {
       await ready();
       expect(screen.getByRole('button', { name: 'Include' })).toHaveAttribute('aria-pressed', 'true');
       const intro = screen.getByLabelText('Heading for section 1').closest('section') as HTMLElement;
-      expect(within(intro).getByRole('button', { name: 'Omit' })).toHaveAttribute(
-        'aria-pressed',
-        'false',
-      );
+      expect(within(intro).getByRole('button', { name: 'Omit' })).toHaveAttribute('aria-pressed', 'false');
     });
   });
 });

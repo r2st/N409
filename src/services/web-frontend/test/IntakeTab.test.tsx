@@ -56,7 +56,13 @@ const SECTIONS = [
         required: true,
         rules: { notFuture: true },
       },
-      { key: 'stage', label: 'Stage', type: 'select' as const, required: true, options: ['seed', 'series_a'] },
+      {
+        key: 'stage',
+        label: 'Stage',
+        type: 'select' as const,
+        required: true,
+        options: ['seed', 'series_a'],
+      },
     ],
   },
   {
@@ -125,38 +131,35 @@ function mockApi(
   } = {},
 ): Call[] {
   const calls: Call[] = [];
-  vi.spyOn(globalThis, 'fetch').mockImplementation(
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      const method = (init?.method ?? 'GET').toUpperCase();
-      calls.push({
-        url,
-        method,
-        body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
-      });
-      if (/\/intake\/schema/.test(url)) {
-        return opts.schema ? opts.schema() : json({ sections: SECTIONS, cross_rules: CROSS_RULES });
-      }
-      if (/\/questionnaire\/submit$/.test(url)) return opts.submit ? opts.submit() : json({});
-      if (/\/remind-documents$/.test(url)) {
-        return opts.remind ? opts.remind() : json({ reminded: 'client@example.com' });
-      }
-      if (/\/questionnaire$/.test(url) && method === 'PUT') {
-        return opts.save
-          ? opts.save()
-          : json({ ...QUESTIONNAIRE, completion: { ...COMPLETION, percentComplete: 100 } });
-      }
-      if (/\/questionnaire$/.test(url)) {
-        return opts.questionnaire ? opts.questionnaire() : json(QUESTIONNAIRE);
-      }
-      return json({});
-    },
-  );
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const method = (init?.method ?? 'GET').toUpperCase();
+    calls.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+    });
+    if (/\/intake\/schema/.test(url)) {
+      return opts.schema ? opts.schema() : json({ sections: SECTIONS, cross_rules: CROSS_RULES });
+    }
+    if (/\/questionnaire\/submit$/.test(url)) return opts.submit ? opts.submit() : json({});
+    if (/\/remind-documents$/.test(url)) {
+      return opts.remind ? opts.remind() : json({ reminded: 'client@example.com' });
+    }
+    if (/\/questionnaire$/.test(url) && method === 'PUT') {
+      return opts.save
+        ? opts.save()
+        : json({ ...QUESTIONNAIRE, completion: { ...COMPLETION, percentComplete: 100 } });
+    }
+    if (/\/questionnaire$/.test(url)) {
+      return opts.questionnaire ? opts.questionnaire() : json(QUESTIONNAIRE);
+    }
+    return json({});
+  });
   return calls;
 }
 
-const problem = (status: number, detail: string) => () =>
-  json({ status, title: 'Error', detail }, status);
+const problem = (status: number, detail: string) => () => json({ status, title: 'Error', detail }, status);
 
 /**
  * A questionnaire whose required set is complete, on *both* endpoints.
@@ -455,9 +458,7 @@ describe('IntakeTab', () => {
       // tell whether the field itself was flagged.
       await waitFor(() => expect(revenue).toHaveAttribute('aria-invalid', 'true'));
       const describedBy = revenue.getAttribute('aria-describedby')!;
-      expect(document.getElementById(describedBy)).toHaveTextContent(
-        'Revenue cannot be negative.',
-      );
+      expect(document.getElementById(describedBy)).toHaveTextContent('Revenue cannot be negative.');
     });
 
     it('rolls every check up in the sidebar, including ones sections back', async () => {
@@ -487,9 +488,7 @@ describe('IntakeTab', () => {
       // Shown against the field and in the roll-up, hence getAllByText.
       await waitFor(() => expect(screen.getAllByText(/is this in thousands/).length).toBeGreaterThan(0));
       // A warning is advisory: it must not take the submit away.
-      await waitFor(() =>
-        expect(screen.getByRole('button', { name: 'Submit questionnaire' })).toBeEnabled(),
-      );
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Submit questionnaire' })).toBeEnabled());
     });
   });
 
@@ -540,9 +539,7 @@ describe('IntakeTab', () => {
       await onLastStep(user);
       // Stepping forward saves, and the button is disabled while that is in
       // flight — clicking through it would test nothing.
-      await waitFor(() =>
-        expect(screen.getByRole('button', { name: 'Submit questionnaire' })).toBeEnabled(),
-      );
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Submit questionnaire' })).toBeEnabled());
       await user.click(screen.getByRole('button', { name: 'Submit questionnaire' }));
       await waitFor(() => expect(calls.some((c) => /\/questionnaire\/submit$/.test(c.url))).toBe(true));
       const putAt = calls.findIndex((c) => c.method === 'PUT');
@@ -556,13 +553,9 @@ describe('IntakeTab', () => {
       renderTab();
       await ready();
       await onLastStep(user);
-      await waitFor(() =>
-        expect(screen.getByRole('button', { name: 'Submit questionnaire' })).toBeEnabled(),
-      );
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Submit questionnaire' })).toBeEnabled());
       await user.click(screen.getByRole('button', { name: 'Submit questionnaire' }));
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'Two required answers are still missing.',
-      );
+      expect(await screen.findByRole('alert')).toHaveTextContent('Two required answers are still missing.');
     });
 
     it('says the questionnaire is in, and that it can still be changed', async () => {

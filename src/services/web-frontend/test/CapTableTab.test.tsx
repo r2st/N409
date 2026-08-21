@@ -992,8 +992,7 @@ describe('CapTableTab', () => {
       { id: 'doc-1', filename: 'Acme Cap Table.csv' },
       { id: 'doc-2', filename: 'Board consent.pdf' },
     ];
-    const documents = () =>
-      [/\/documents$/, () => json({ documents: DOCS })] as [RegExp, () => Response];
+    const documents = () => [/\/documents$/, () => json({ documents: DOCS })] as [RegExp, () => Response];
 
     const RESULT = {
       text: '[NAME],Common,2500000',

@@ -109,31 +109,28 @@ function mockApi(
   } = {},
 ): Call[] {
   const calls: Call[] = [];
-  vi.spyOn(globalThis, 'fetch').mockImplementation(
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      const method = (init?.method ?? 'GET').toUpperCase();
-      calls.push({
-        url,
-        method,
-        body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
-      });
-      if (/\/overwrites\/schema$/.test(url)) return opts.schema ? opts.schema() : json(SCHEMA);
-      if (/\/overwrites\/[^/]+$/.test(url) && method === 'PUT') {
-        return opts.save ? opts.save() : json({});
-      }
-      if (/\/overwrites\/[^/]+$/.test(url) && method === 'DELETE') {
-        return opts.remove ? opts.remove() : json({});
-      }
-      if (/\/overwrites$/.test(url)) return opts.list ? opts.list() : json({ overwrites: [] });
-      return json({});
-    },
-  );
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const method = (init?.method ?? 'GET').toUpperCase();
+    calls.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+    });
+    if (/\/overwrites\/schema$/.test(url)) return opts.schema ? opts.schema() : json(SCHEMA);
+    if (/\/overwrites\/[^/]+$/.test(url) && method === 'PUT') {
+      return opts.save ? opts.save() : json({});
+    }
+    if (/\/overwrites\/[^/]+$/.test(url) && method === 'DELETE') {
+      return opts.remove ? opts.remove() : json({});
+    }
+    if (/\/overwrites$/.test(url)) return opts.list ? opts.list() : json({ overwrites: [] });
+    return json({});
+  });
   return calls;
 }
 
-const problem = (status: number, detail: string) => () =>
-  json({ status, title: 'Error', detail }, status);
+const problem = (status: number, detail: string) => () => json({ status, title: 'Error', detail }, status);
 
 function renderTab() {
   return render(
@@ -171,9 +168,7 @@ describe('OverwritesTab', () => {
     it('reports a failed load rather than an empty field list', async () => {
       mockApi({ schema: problem(503, 'The overwrite schema is unavailable.') });
       renderTab();
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'The overwrite schema is unavailable.',
-      );
+      expect(await screen.findByRole('alert')).toHaveTextContent('The overwrite schema is unavailable.');
     });
   });
 
@@ -256,10 +251,7 @@ describe('OverwritesTab', () => {
       mockApi({ list: () => json({ overwrites: [{ ...EXISTING, original_value: null, reason: null }] }) });
       renderTab();
       await ready();
-      expect(within(row('Revenue (TTM)')).getByText('overridden')).toHaveAttribute(
-        'title',
-        'Original: —',
-      );
+      expect(within(row('Revenue (TTM)')).getByText('overridden')).toHaveAttribute('title', 'Original: —');
     });
   });
 
@@ -364,9 +356,7 @@ describe('OverwritesTab', () => {
       await ready();
       await openForm(user, 'State of incorporation');
       await user.click(within(row('State of incorporation')).getByRole('button', { name: 'Apply override' }));
-      expect(within(row('State of incorporation')).getByRole('alert')).toHaveTextContent(
-        'Enter a value.',
-      );
+      expect(within(row('State of incorporation')).getByRole('alert')).toHaveTextContent('Enter a value.');
       expect(calls.some((c) => c.method === 'PUT')).toBe(false);
     });
 
@@ -465,7 +455,9 @@ describe('OverwritesTab', () => {
       await openForm(user, 'Headcount');
       await user.type(within(row('Headcount')).getByLabelText(/^Override value/), '50');
       await user.click(within(row('Headcount')).getByRole('button', { name: 'Apply override' }));
-      await waitFor(() => expect(within(row('Headcount')).queryByLabelText(/^Reason/)).not.toBeInTheDocument());
+      await waitFor(() =>
+        expect(within(row('Headcount')).queryByLabelText(/^Reason/)).not.toBeInTheDocument(),
+      );
       expect(calls.filter((c) => /\/overwrites$/.test(c.url))).toHaveLength(2);
     });
 

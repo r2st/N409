@@ -232,7 +232,11 @@ describe.skipIf(!dbUp)('webhook delivery reliability', () => {
                                 ELSE now() - ($3 || ' seconds')::interval END
         WHERE webhook_id = $1
         RETURNING id`,
-      [webhookId, opts.lastError ?? null, opts.claimedSecondsAgo === null ? null : (opts.claimedSecondsAgo ?? 3600)],
+      [
+        webhookId,
+        opts.lastError ?? null,
+        opts.claimedSecondsAgo === null ? null : (opts.claimedSecondsAgo ?? 3600),
+      ],
     );
     expect(rows).toHaveLength(1);
     return rows[0]!.id;
@@ -249,9 +253,8 @@ describe.skipIf(!dbUp)('webhook delivery reliability', () => {
   };
 
   it('settles a delivery whose final attempt was lost with the process making it', async () => {
-    const { claimRetryableDeliveries, failExhaustedDeliveries, DELIVERY_ABANDONED_ERROR } = await import(
-      '../../src/repos/partnerWebhooks.js'
-    );
+    const { claimRetryableDeliveries, failExhaustedDeliveries, DELIVERY_ABANDONED_ERROR } =
+      await import('../../src/repos/partnerWebhooks.js');
     const webhookId = await registerWebhook();
     receiverStatus = 500;
     await ping(webhookId);
@@ -294,9 +297,8 @@ describe.skipIf(!dbUp)('webhook delivery reliability', () => {
   });
 
   it('keeps the error from the attempt before the one that was lost', async () => {
-    const { failExhaustedDeliveries, DELIVERY_ABANDONED_ERROR } = await import(
-      '../../src/repos/partnerWebhooks.js'
-    );
+    const { failExhaustedDeliveries, DELIVERY_ABANDONED_ERROR } =
+      await import('../../src/repos/partnerWebhooks.js');
     const webhookId = await registerWebhook();
     receiverStatus = 500;
     await ping(webhookId);

@@ -696,7 +696,9 @@ describe('ComparablesTab', () => {
     it('surfaces an apply that had nothing to write', async () => {
       mockApi({}, (path) =>
         path.includes('/apply')
-          ? problem('That comparable-selection run named no company with a ticker — re-run the agent, or add comps by hand')
+          ? problem(
+              'That comparable-selection run named no company with a ticker — re-run the agent, or add comps by hand',
+            )
           : jsonResponse({}),
       );
       renderTab();

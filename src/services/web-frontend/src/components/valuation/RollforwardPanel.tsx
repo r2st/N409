@@ -291,9 +291,7 @@ export function RollforwardPanel({
   // The disagreement the panel exists to surface: a bridge was struck and the
   // engagement is calculating on a different anchor.
   const divergent =
-    latest !== null &&
-    applied !== null &&
-    Math.abs(applied - latest.rolled_equity_value) > ANCHOR_EPSILON;
+    latest !== null && applied !== null && Math.abs(applied - latest.rolled_equity_value) > ANCHOR_EPSILON;
   const datedForRun = data.new_valuation_date !== null;
   const noCandidates = candidates !== null && candidates.length === 0;
 
@@ -363,10 +361,9 @@ export function RollforwardPanel({
 
       {latest?.requires_full_revaluation && (
         <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          {latest.material_change_count} material{' '}
-          {latest.material_change_count === 1 ? 'change' : 'changes'} since the prior valuation. A
-          roll-forward is not a substitute for a full revaluation where the business has moved materially —
-          state the basis if you adopt it anyway.
+          {latest.material_change_count} material {latest.material_change_count === 1 ? 'change' : 'changes'}{' '}
+          since the prior valuation. A roll-forward is not a substitute for a full revaluation where the
+          business has moved materially — state the basis if you adopt it anyway.
         </p>
       )}
 

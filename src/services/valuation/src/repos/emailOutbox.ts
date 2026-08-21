@@ -1,10 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
-import {
-  EMAIL_JITTER_FLOOR,
-  EMAIL_MAX_ATTEMPTS,
-  EMAIL_RETRY_BACKOFF_MINUTES,
-} from '../domain/emailRetry.js';
+import { EMAIL_JITTER_FLOOR, EMAIL_MAX_ATTEMPTS, EMAIL_RETRY_BACKOFF_MINUTES } from '../domain/emailRetry.js';
 import { isSuppressed } from './emailDelivery.js';
 import { SUPPRESSION_EXEMPT_TEMPLATES } from '../domain/emailDelivery.js';
 
@@ -67,9 +63,7 @@ export async function enqueueEmail(
   // what the platform decided to do — an operator asking "why did the client
   // not get this" gets an answer, and the row names the suppression.
   const suppression =
-    input.channel === 'sms' ||
-    input.ignoreSuppression ||
-    SUPPRESSION_EXEMPT_TEMPLATES.has(input.templateKey)
+    input.channel === 'sms' || input.ignoreSuppression || SUPPRESSION_EXEMPT_TEMPLATES.has(input.templateKey)
       ? null
       : await isSuppressed(db, input.toEmail);
 

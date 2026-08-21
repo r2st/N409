@@ -150,9 +150,9 @@ describe('FLAG_RETRY_LADDERS', () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(503, { detail: 'down' }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(
-      postJson(service, 'http://x/y', {}, { retries: 5, backoffMs: 1 }),
-    ).rejects.toBeInstanceOf(InternalServiceError);
+    await expect(postJson(service, 'http://x/y', {}, { retries: 5, backoffMs: 1 })).rejects.toBeInstanceOf(
+      InternalServiceError,
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

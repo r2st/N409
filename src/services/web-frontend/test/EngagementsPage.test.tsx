@@ -71,8 +71,8 @@ const renderPage = () =>
   );
 
 /** The kanban column with the given heading, including its card list. */
-const column = (label: string) => screen.getByRole('heading', { name: label, level: 2 }).closest('div')!
-  .parentElement!;
+const column = (label: string) =>
+  screen.getByRole('heading', { name: label, level: 2 }).closest('div')!.parentElement!;
 
 describe('EngagementsPage', () => {
   beforeEach(() => vi.restoreAllMocks());

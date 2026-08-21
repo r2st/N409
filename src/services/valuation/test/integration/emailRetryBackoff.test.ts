@@ -65,9 +65,10 @@ describe.skipIf(!dbUp)('email outbox retry backoff', () => {
 
   /** Brings a scheduled row's time forward, as waiting out the ladder would. */
   const makeDue = async (id: string): Promise<void> => {
-    await ctx.pool.query(`UPDATE email_outbox SET next_attempt_at = now() - interval '1 second' WHERE id = $1`, [
-      id,
-    ]);
+    await ctx.pool.query(
+      `UPDATE email_outbox SET next_attempt_at = now() - interval '1 second' WHERE id = $1`,
+      [id],
+    );
   };
 
   it('schedules a first failure instead of leaving it claimable', async () => {
@@ -145,7 +146,9 @@ describe.skipIf(!dbUp)('email outbox retry backoff', () => {
     // The whole of the fix: successive failures wait longer, so the attempts
     // are not all spent inside the outage that caused them.
     for (let i = 1; i < waits.length; i += 1) {
-      expect(waits[i], `wait after failure ${i + 1} vs ${i}: ${waits.join(', ')}`).toBeGreaterThan(waits[i - 1]!);
+      expect(waits[i], `wait after failure ${i + 1} vs ${i}: ${waits.join(', ')}`).toBeGreaterThan(
+        waits[i - 1]!,
+      );
     }
   });
 
@@ -199,7 +202,9 @@ describe.skipIf(!dbUp)('email outbox retry backoff', () => {
     // nothing to back off from, and its wait is the lease — the schedule must
     // not be what decides it.
     const id = await seed('stranded@test.example.com');
-    await ctx.pool.query(`UPDATE email_outbox SET created_at = now() - interval '1 hour' WHERE id = $1`, [id]);
+    await ctx.pool.query(`UPDATE email_outbox SET created_at = now() - interval '1 hour' WHERE id = $1`, [
+      id,
+    ]);
     expect((await rowOf(id)).next_attempt_at).toBeNull();
 
     const delivered: string[] = [];

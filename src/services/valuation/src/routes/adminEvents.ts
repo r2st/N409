@@ -14,17 +14,19 @@ import { checkWindowOrder, dateWindowFields } from '../domain/dateWindow.js';
  * (user/partner/prompt/template administration), filterable and paged.
  */
 
-const ListQuery = z.object({
-  scope: z.enum(['valuations', 'admin', 'all']).default('all'),
-  valuation_id: z.string().optional(),
-  actor_id: z.string().optional(),
-  actor_type: z.enum(['human', 'ai', 'engine', 'system']).optional(),
-  type: z.string().max(100).optional(),
-  source: z.string().max(100).optional(),
-  ...dateWindowFields,
-  page: pageParam(),
-  per_page: z.coerce.number().int().min(1).max(100).default(50),
-}).superRefine(checkWindowOrder);
+const ListQuery = z
+  .object({
+    scope: z.enum(['valuations', 'admin', 'all']).default('all'),
+    valuation_id: z.string().optional(),
+    actor_id: z.string().optional(),
+    actor_type: z.enum(['human', 'ai', 'engine', 'system']).optional(),
+    type: z.string().max(100).optional(),
+    source: z.string().max(100).optional(),
+    ...dateWindowFields,
+    page: pageParam(),
+    per_page: z.coerce.number().int().min(1).max(100).default(50),
+  })
+  .superRefine(checkWindowOrder);
 
 export function registerAdminEventRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   app.get('/api/v1/admin/events', { preHandler: app.authenticate }, async (req) => {

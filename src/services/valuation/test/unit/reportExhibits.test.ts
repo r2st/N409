@@ -1844,9 +1844,7 @@ describe('discount exhibit', () => {
 
       // Read off the page, not recomputed: the whole point is that a reader
       // with only the printed figures can close the table.
-      const base = Number(
-        seen.match(/value per common share \$([\d,]+\.\d{4})/)![1]!.replace(/,/g, ''),
-      );
+      const base = Number(seen.match(/value per common share \$([\d,]+\.\d{4})/)![1]!.replace(/,/g, ''));
       const dloc = rate(seen, 'discount for lack of control')!;
       const dlom = rate(seen, 'discount for lack of marketability')!;
       // `toBeCloseTo`, not `toBe`: dividing the parsed percentage back by 100
@@ -2074,7 +2072,10 @@ describe('peer set exhibit', () => {
     ];
     const resultsOn = (basis: string, horizon: string, selected: number) => ({
       ...RESULTS,
-      approaches: { ...RESULTS.approaches, market: { ...RESULTS.approaches.market, basis, horizon, selected_multiple: selected } },
+      approaches: {
+        ...RESULTS.approaches,
+        market: { ...RESULTS.approaches.market, basis, horizon, selected_multiple: selected },
+      },
     });
 
     it('marks the column the valuation was struck on', () => {
@@ -2136,9 +2137,7 @@ describe('peer set exhibit', () => {
     });
 
     it('stays quiet when the set reconciles', () => {
-      expect(plain(peerSetExhibit(peers, RESULTS)!.html)).not.toContain(
-        'median of the set above differs',
-      );
+      expect(plain(peerSetExhibit(peers, RESULTS)!.html)).not.toContain('median of the set above differs');
     });
 
     it('does not cry stale over a difference the printed figures do not show', () => {

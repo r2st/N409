@@ -93,10 +93,7 @@ export async function retryFailedEmails(deps: {
         deps.log?.warn({ err: bookErr, emailId: email.id }, 'could not record bounce');
         return null;
       });
-      deps.log?.warn(
-        { err, emailId: email.id, attempts: email.attempts, bounce },
-        'email retry failed',
-      );
+      deps.log?.warn({ err, emailId: email.id, attempts: email.attempts, bounce }, 'email retry failed');
     }
   }
   return { attempted: claimed.length, sent };

@@ -60,10 +60,7 @@ export async function sendTransactionalEmail(
       deps.log?.warn({ err: bookErr, emailId: email.id }, 'could not record bounce');
       return null;
     });
-    deps.log?.warn(
-      { err, emailId: email.id, bounce },
-      'transactional email delivery failed; left in outbox',
-    );
+    deps.log?.warn({ err, emailId: email.id, bounce }, 'transactional email delivery failed; left in outbox');
   }
 }
 

@@ -223,8 +223,8 @@ export function ProductPage() {
             What changes between pre-seed and pre-IPO
           </h2>
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink-600">
-            The methodology is not the same at every stage. Pick yours to see which approaches carry
-            the weight, what the capital structure does to the number, and what it typically costs.
+            The methodology is not the same at every stage. Pick yours to see which approaches carry the
+            weight, what the capital structure does to the number, and what it typically costs.
           </p>
           <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {FUNDING_STAGES.map((stage) => (

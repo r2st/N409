@@ -65,9 +65,9 @@ describe('FLAG_RETRY_LADDERS off — the partner webhook sweep', () => {
   it('claims nothing, so a pending delivery keeps its backoff', async () => {
     await expect(
       retryDueDeliveries({ pool: hostilePool, log: undefined } as never),
-    // `reaped` is behind the same flag: a row it would settle has no attempts
-    // left either way, so waiting loses nothing, and while the ladders are
-    // paused "still pending" is the honest reading of every unsettled row.
+      // `reaped` is behind the same flag: a row it would settle has no attempts
+      // left either way, so waiting loses nothing, and while the ladders are
+      // paused "still pending" is the honest reading of every unsettled row.
     ).resolves.toEqual({ attempted: 0, delivered: 0, retrying: 0, failed: 0, reaped: 0 });
   });
 });
@@ -78,9 +78,10 @@ describe('FLAG_RETRY_LADDERS off — the pipeline retry sweep', () => {
     // an active run holds the one-per-valuation index — so a claim the flag
     // then declined to act on would block new triggers for that valuation until
     // the stale reaper came round.
-    await expect(
-      retryFailedPipelineRuns({ pool: hostilePool, autoPipeline: {} as never }),
-    ).resolves.toEqual({ claimed: 0, resumed: 0 });
+    await expect(retryFailedPipelineRuns({ pool: hostilePool, autoPipeline: {} as never })).resolves.toEqual({
+      claimed: 0,
+      resumed: 0,
+    });
   });
 });
 
@@ -98,15 +99,15 @@ describe('the default is still to retry', () => {
   });
 
   it('the webhook sweep reaches its claim', async () => {
-    await expect(
-      retryDueDeliveries({ pool: hostilePool, log: undefined } as never),
-    ).rejects.toThrow(/the sweep/);
+    await expect(retryDueDeliveries({ pool: hostilePool, log: undefined } as never)).rejects.toThrow(
+      /the sweep/,
+    );
   });
 
   it('the pipeline sweep reaches its claim', async () => {
-    await expect(
-      retryFailedPipelineRuns({ pool: hostilePool, autoPipeline: {} as never }),
-    ).rejects.toThrow(/the sweep/);
+    await expect(retryFailedPipelineRuns({ pool: hostilePool, autoPipeline: {} as never })).rejects.toThrow(
+      /the sweep/,
+    );
   });
 
   it('an empty value is unset, not off', async () => {

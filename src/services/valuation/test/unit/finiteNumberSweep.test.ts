@@ -140,12 +140,8 @@ describe('engine inputs refuse a quantity too large to add exactly', () => {
   /** The magnitude is bounded in both directions; the sign stays free. */
   it('rejects a hugely negative cash flow but keeps ordinary negative ones', async () => {
     const EngineInputsBody = await load();
-    expect(EngineInputsBody.safeParse({ income: { free_cash_flows: [-1e16] } }).success).toBe(
-      false,
-    );
-    expect(EngineInputsBody.safeParse({ income: { free_cash_flows: [-2_000_000] } }).success).toBe(
-      true,
-    );
+    expect(EngineInputsBody.safeParse({ income: { free_cash_flows: [-1e16] } }).success).toBe(false);
+    expect(EngineInputsBody.safeParse({ income: { free_cash_flows: [-2_000_000] } }).success).toBe(true);
   });
 
   it('accepts a value exactly at the bound', async () => {

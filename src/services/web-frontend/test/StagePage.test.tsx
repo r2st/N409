@@ -68,9 +68,7 @@ describe('stage pages: rendering', () => {
   it.each(SLUGS)('renders %s with its own methodology sections', (slug) => {
     const stage = fundingStageBySlug(slug)!;
     mountStage(slug);
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      `${stage.name} 409A valuations`,
-    );
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(`${stage.name} 409A valuations`);
     for (const section of stage.sections) {
       expect(screen.getByRole('heading', { name: section.title })).toBeInTheDocument();
     }
@@ -124,8 +122,9 @@ describe('stage pricing is derived, not written', () => {
     const stage = fundingStageBySlug('series-b')!;
     mountStage('series-b');
     const { fromCents } = stagePriceRangeCents(stage);
-    expect(screen.getAllByText(new RegExp(formatUsd(fromCents).replace(/\$/g, '\\$'))).length)
-      .toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(new RegExp(formatUsd(fromCents).replace(/\$/g, '\\$'))).length,
+    ).toBeGreaterThan(0);
   });
 
   it('clamps a band index that has fallen out of range', () => {

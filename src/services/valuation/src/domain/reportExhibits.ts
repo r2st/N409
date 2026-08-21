@@ -1501,7 +1501,9 @@ export function peerSetExhibit(
       ? table({
           head: [
             'Guideline company',
-            ...ordered.map((k) => (k === operative ? `${MULTIPLE_LABELS[k]} (selected)` : MULTIPLE_LABELS[k])),
+            ...ordered.map((k) =>
+              k === operative ? `${MULTIPLE_LABELS[k]} (selected)` : MULTIPLE_LABELS[k],
+            ),
             'Screen score',
           ],
           rows: included.map((p) => [

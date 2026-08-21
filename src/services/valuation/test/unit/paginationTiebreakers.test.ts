@@ -115,10 +115,13 @@ describe('paged queries order deterministically', () => {
   it.each([
     ['the default order', undefined],
     ['an explicit sort', [{ column: 'company_name' as const, dir: 'asc' as const }]],
-    ['a multi-term sort', [
-      { column: 'state' as const, dir: 'desc' as const },
-      { column: 'due_date' as const, dir: 'asc' as const },
-    ]],
+    [
+      'a multi-term sort',
+      [
+        { column: 'state' as const, dir: 'desc' as const },
+        { column: 'due_date' as const, dir: 'asc' as const },
+      ],
+    ],
   ] as const)('settles ties on the engagement list for %s', (_label, sort) => {
     const clause = orderBySql(sort).replace(/^ORDER BY\s*/i, '');
     expect(TIEBREAKER.test(clause), `ORDER BY ${clause}`).toBe(true);

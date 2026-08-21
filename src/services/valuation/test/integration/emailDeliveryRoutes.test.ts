@@ -86,9 +86,7 @@ describe.skipIf(!dbUp)('email delivery routes', () => {
       expect(body.totals.total).toBe(2);
       expect(body.totals.sent).toBe(1);
       expect(body.totals.queued).toBe(1);
-      expect(body.by_template).toEqual([
-        expect.objectContaining({ template_key: 'draft_ready', total: 2 }),
-      ]);
+      expect(body.by_template).toEqual([expect.objectContaining({ template_key: 'draft_ready', total: 2 })]);
     });
 
     /**
@@ -282,9 +280,7 @@ describe.skipIf(!dbUp)('email delivery routes', () => {
     it('suppresses the address the outbox row names on a hard bounce', async () => {
       const email = await seed('dead@test.example.com');
       const body = JSON.stringify({
-        events: [
-          { message_id: email.id, kind: 'bounced', event_id: 'evt-b', status: '5.1.1' },
-        ],
+        events: [{ message_id: email.id, kind: 'bounced', event_id: 'evt-b', status: '5.1.1' }],
       });
       const res = await ctx.app.inject({
         method: 'POST',

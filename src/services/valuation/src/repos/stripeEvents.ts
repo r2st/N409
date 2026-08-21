@@ -35,10 +35,10 @@ export type EventVerdict =
 export async function classifyStripeEvent(pool: pg.Pool, key: StripeEventKey): Promise<EventVerdict> {
   if (!key.eventId) return 'fresh';
 
-  const seen = await pool.query(
-    'SELECT 1 FROM stripe_webhook_events WHERE event_id = $1 AND endpoint = $2',
-    [key.eventId, key.endpoint],
-  );
+  const seen = await pool.query('SELECT 1 FROM stripe_webhook_events WHERE event_id = $1 AND endpoint = $2', [
+    key.eventId,
+    key.endpoint,
+  ]);
   if (seen.rowCount) return 'duplicate';
 
   // Ordering only applies where two events about one object are two readings of

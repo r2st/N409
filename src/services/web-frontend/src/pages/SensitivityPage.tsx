@@ -125,7 +125,10 @@ export function SensitivityPage() {
     volatility: numberRange('volatility', 1, 500, 'Volatility'),
     term_years: numberRange('term_years', 0.1, 30, 'Term'),
     risk_free_rate: numberRange('risk_free_rate', 0, 25, 'Risk-free rate'),
-    common_shares: all(numberMin('common_shares', 1, 'Common shares'), integer('common_shares', 'Common shares')),
+    common_shares: all(
+      numberMin('common_shares', 1, 'Common shares'),
+      integer('common_shares', 'Common shares'),
+    ),
     dlom: numberRange('dlom', 0, 95, 'DLOM'),
   });
 

@@ -64,9 +64,7 @@ describe('upstream URL configuration', () => {
     // `new URL` is perfectly happy with these; `@fastify/reply-from` is not, and
     // a `file:` upstream on the public origin is worth refusing by name.
     process.env.VALUATION_URL = 'file:///etc/passwd';
-    expect(() => buildApp({ staticRoot: '/nonexistent' })).toThrow(
-      /VALUATION_URL must be http or https/,
-    );
+    expect(() => buildApp({ staticRoot: '/nonexistent' })).toThrow(/VALUATION_URL must be http or https/);
   });
 
   it('accepts https and a path prefix', () => {

@@ -38,10 +38,7 @@ interface Call {
   body: unknown;
 }
 
-function mockApi(handlers: {
-  resolution?: () => Response;
-  sign?: () => Response;
-}): Call[] {
+function mockApi(handlers: { resolution?: () => Response; sign?: () => Response }): Call[] {
   const calls: Call[] = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
@@ -96,7 +93,8 @@ describe('BoardSignPage', () => {
           ...RESOLUTION,
           resolution: {
             ...RESOLUTION.resolution,
-            body_html: '<p>Adopted.</p><script>window.__pwned = 1</script><img src=x onerror="window.__pwned=2">',
+            body_html:
+              '<p>Adopted.</p><script>window.__pwned = 1</script><img src=x onerror="window.__pwned=2">',
           },
         }),
     });
@@ -154,8 +152,7 @@ describe('BoardSignPage', () => {
 
   it('shows the recorded outcome instead of the form to a member who already signed', async () => {
     mockApi({
-      resolution: () =>
-        jsonResponse({ ...RESOLUTION, member: { ...RESOLUTION.member, status: 'signed' } }),
+      resolution: () => jsonResponse({ ...RESOLUTION, member: { ...RESOLUTION.member, status: 'signed' } }),
     });
     render(<BoardSignPage />);
 
@@ -183,9 +180,7 @@ describe('BoardSignPage', () => {
     const calls = mockApi({});
     render(<BoardSignPage />);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'This signing link is invalid or incomplete.',
-    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('This signing link is invalid or incomplete.');
     expect(calls).toHaveLength(0);
   });
 

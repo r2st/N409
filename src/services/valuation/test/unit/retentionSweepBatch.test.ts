@@ -69,12 +69,7 @@ describe('runRetentionSweep batching', () => {
   });
 
   it('logs a skip for each held candidate and archives only the rest', async () => {
-    const { pool, calls } = fakePool([
-      candidate(1),
-      candidate(2, true),
-      candidate(3),
-      candidate(4, true),
-    ]);
+    const { pool, calls } = fakePool([candidate(1), candidate(2, true), candidate(3), candidate(4, true)]);
 
     const result = await runRetentionSweep(pool);
 

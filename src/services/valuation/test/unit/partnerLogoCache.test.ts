@@ -110,9 +110,7 @@ describe('partner logo cache', () => {
     ) as unknown as LogoFetcher;
 
     // Ten reports rendering at once, none of them yet resolved.
-    const renders = Array.from({ length: 10 }, () =>
-      fetchPartnerLogoCached(URL_A, () => 0, fetchLogo),
-    );
+    const renders = Array.from({ length: 10 }, () => fetchPartnerLogoCached(URL_A, () => 0, fetchLogo));
     expect(fetchLogo).toHaveBeenCalledTimes(1);
 
     release(PNG);

@@ -399,7 +399,9 @@ describe('valuationWorkbookSheets', () => {
         e.security_class === 'Series A Preferred' ? { ...e, invested_amount: null } : e,
       );
       const all = () =>
-        valuationWorkbookSheets(input({ capTable: { entries: PRICED, validation: validateCapTable(PRICED) } }));
+        valuationWorkbookSheets(
+          input({ capTable: { entries: PRICED, validation: validateCapTable(PRICED) } }),
+        );
 
       it('states the same invested capital as the Waterfall sheet', () => {
         const ct = sheet(all(), 'Cap table');
@@ -858,9 +860,7 @@ describe('per-share figures carry the precision the report states them to', () =
   it('leaves aggregate money columns at two decimals', () => {
     const sheets = valuationWorkbookSheets(input({ fmvPerShare: FMV }));
     const ct = sheet(sheets, 'Cap table');
-    expect(ct.columns[ct.columns.findIndex((c) => c.header.startsWith('Invested'))]?.format).toBe(
-      'currency',
-    );
+    expect(ct.columns[ct.columns.findIndex((c) => c.header.startsWith('Invested'))]?.format).toBe('currency');
     const wf = sheet(sheets, 'Waterfall');
     expect(wf.columns[wf.columns.findIndex((c) => c.header.startsWith('Preference'))]?.format).toBe(
       'currency',

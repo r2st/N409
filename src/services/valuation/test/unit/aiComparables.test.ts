@@ -114,10 +114,7 @@ describe('mapAgentComparables', () => {
   });
 
   it('supplies a reason for an excluded comp the agent gave none for', () => {
-    const { rows } = mapAgentComparables(
-      result({ excluded: [{ ticker: 'QQQ', name: 'Quad' }] }),
-      OBSERVED,
-    );
+    const { rows } = mapAgentComparables(result({ excluded: [{ ticker: 'QQQ', name: 'Quad' }] }), OBSERVED);
     expect(rows.find((r) => r.ticker === 'QQQ')?.excludeReason).toBe(
       'not selected by the AI comparable agent',
     );
@@ -193,11 +190,15 @@ describe('mapAgentComparables', () => {
       result({ selected: [comp({ market_cap: 1_200, revenue: 100, ebitda_margin: 0.25 })] }),
       OBSERVED,
     );
-    const multiples = impliedMultiples(rows[0]!.ev === null ? {} : {
-      ev: rows[0]!.ev,
-      revenue_ltm: rows[0]!.revenueLtm,
-      ebitda_ltm: rows[0]!.ebitdaLtm,
-    });
+    const multiples = impliedMultiples(
+      rows[0]!.ev === null
+        ? {}
+        : {
+            ev: rows[0]!.ev,
+            revenue_ltm: rows[0]!.revenueLtm,
+            ebitda_ltm: rows[0]!.ebitdaLtm,
+          },
+    );
     expect(multiples.ev_revenue_ltm).toBe(12);
     expect(multiples.ev_ebitda_ltm).toBe(48);
   });

@@ -2145,8 +2145,7 @@ export const FUNDING_STAGES: FundingStage[] = [
     name: 'Series B',
     searchBlurb:
       '409A valuations for Series B companies: a multi-class preference waterfall, participating preferred, and secondary sales weighed as real evidence.',
-    heroSubhead:
-      'A deeper preference stack, and secondary transactions that start to count as evidence.',
+    heroSubhead: 'A deeper preference stack, and secondary transactions that start to count as evidence.',
     audience: 'Series B companies with several preferred classes',
     bandRange: [3, 3],
     methods: ['OPM backsolve', 'Full breakpoint waterfall', 'Secondary-transaction evidence'],
@@ -2407,8 +2406,7 @@ export const PARTNER_SEGMENTS: PartnerSegment[] = [
     name: 'Accounting, advisory & law firms',
     searchBlurb:
       'Offer 409A, ASC 718 and gift-and-estate valuations under your own firm’s brand, with analyst review and audit support behind them.',
-    heroSubhead:
-      'Your clients ask you first. Answer without subcontracting the relationship away.',
+    heroSubhead: 'Your clients ask you first. Answer without subcontracting the relationship away.',
     problem:
       'A firm that does the tax work, the audit or the equity plan is the first call when a valuation is needed — and referring it out means introducing a client to a provider who now has their own relationship. Doing it in-house means staffing a specialism that only some clients need.',
     bullets: [
@@ -2438,8 +2436,7 @@ export const PARTNER_SEGMENTS: PartnerSegment[] = [
     name: 'VC, PE, fund admins & accelerators',
     searchBlurb:
       'ASC 820 portfolio marks and 409A valuations for every company you back, in one place, with roll-forward from the prior measurement date.',
-    heroSubhead:
-      'One provider for the portfolio marks you report and the 409As your companies need.',
+    heroSubhead: 'One provider for the portfolio marks you report and the 409As your companies need.',
     problem:
       'A fund needs its own marks for LP reporting and its companies need their own valuations, and the two are usually bought from different places on different calendars. Nothing ties the mark on a position to the valuation of the company underneath it, so every quarter is a re-collection exercise.',
     bullets: [

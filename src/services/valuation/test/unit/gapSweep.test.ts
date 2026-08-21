@@ -28,9 +28,7 @@ describe('requester search (gap 7)', () => {
     expect(whereSql).toContain('su.email ILIKE $1');
     // The indexable form, not concat_ws — see `userFullNameSql`. It has to stay
     // character-for-character what migration 0149 built the index on.
-    expect(whereSql).toContain(
-      "(coalesce(su.first_name, '') || ' ' || coalesce(su.last_name, '')) ILIKE $1",
-    );
+    expect(whereSql).toContain("(coalesce(su.first_name, '') || ' ' || coalesce(su.last_name, '')) ILIKE $1");
     expect(whereSql).toContain('su.id = valuations.user_id');
     expect(params).toEqual(['%jane%', 'jane']);
   });

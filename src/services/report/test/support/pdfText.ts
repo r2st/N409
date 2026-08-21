@@ -70,7 +70,9 @@ function objects(pdf: Buffer): Map<string, PdfObject> {
     const bytes = pdf.subarray(dataStart, end);
     let stream: string;
     try {
-      stream = dict.includes('/FlateDecode') ? inflateSync(bytes).toString('latin1') : bytes.toString('latin1');
+      stream = dict.includes('/FlateDecode')
+        ? inflateSync(bytes).toString('latin1')
+        : bytes.toString('latin1');
     } catch {
       // Truncated or not actually deflate — an embedded font subset that the
       // renderer wrote raw, say. Nothing here can read it, and nothing needs to.
@@ -90,7 +92,8 @@ function streamBody(object: PdfObject | undefined): string | null {
 function fromUtf16Hex(hex: string): string {
   const clean = hex.replace(/\s+/g, '');
   let out = '';
-  for (let i = 0; i + 4 <= clean.length; i += 4) out += String.fromCharCode(parseInt(clean.slice(i, i + 4), 16));
+  for (let i = 0; i + 4 <= clean.length; i += 4)
+    out += String.fromCharCode(parseInt(clean.slice(i, i + 4), 16));
   return out;
 }
 
@@ -120,7 +123,7 @@ function parseCMap(cmap: string): Map<number, string> {
     // a low, a high and a scalar destination, so a pattern for the scalar form
     // finds dozens of them inside every array and decodes the file to noise.
     const tokens = Array.from(block[1]!.matchAll(/<([0-9a-fA-F\s]+)>|(\[)|(\])/g));
-    for (let i = 0; i + 2 < tokens.length; ) {
+    for (let i = 0; i + 2 < tokens.length;) {
       const lo = parseInt(tokens[i]![1] ?? '', 16);
       const hi = parseInt(tokens[i + 1]![1] ?? '', 16);
       if (Number.isNaN(lo) || Number.isNaN(hi)) {
@@ -140,7 +143,8 @@ function parseCMap(cmap: string): Map<number, string> {
         // Only the last code unit increments, which is all the spec allows.
         const head = start.slice(0, -1);
         const tail = start.charCodeAt(start.length - 1);
-        for (let code = lo; code <= hi; code += 1) map.set(code, head + String.fromCharCode(tail + (code - lo)));
+        for (let code = lo; code <= hi; code += 1)
+          map.set(code, head + String.fromCharCode(tail + (code - lo)));
       }
     }
   }
@@ -266,7 +270,10 @@ export function readPdf(pdf: Buffer): PdfReader {
   return {
     streams: pageStreams(objs),
     lines,
-    text: (stream) => lines(stream).map((line) => line.text).join(''),
+    text: (stream) =>
+      lines(stream)
+        .map((line) => line.text)
+        .join(''),
     decode: (hex, font) => decodeGlyphs(hex, fonts.get(font)),
   };
 }

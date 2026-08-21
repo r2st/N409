@@ -66,12 +66,7 @@ export function narrativeProfilePayload(
 }
 
 /** The profile columns the `company_profile` agent is allowed to fill. */
-export const AGENT_PROFILE_FIELDS = [
-  'business_description',
-  'industry',
-  'sic_code',
-  'naics_code',
-] as const;
+export const AGENT_PROFILE_FIELDS = ['business_description', 'industry', 'sic_code', 'naics_code'] as const;
 export type AgentProfileField = (typeof AGENT_PROFILE_FIELDS)[number];
 
 export interface ProfileDraft {

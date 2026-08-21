@@ -108,186 +108,185 @@ export const NARRATIVE_SECTION_MAP: Readonly<Record<string, string | null>> = {
  * A kind absent from this table takes the base map unchanged, which is right
  * for the 409A and for nothing else; every other kind is listed.
  */
-const NARRATIVE_SECTION_MAP_BY_KIND: Partial<
-  Record<ValuationKind, Readonly<Record<string, string | null>>>
-> = {
-  // A §1202 memorandum attests to qualification. There is no equity value to
-  // allocate, no approach to weight and no discount to take; the four statutory
-  // tests it does have are keyed the same on both sides.
-  qsbs: {
-    company_overview: null,
-    valuation_methodology: null,
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dlom_analysis: null,
-  },
-  // ASC 805 allocates a purchase price across identified assets. The transaction
-  // overview stands where a company overview would, and each intangible's method
-  // is argued in the intangibles chapter rather than in approach chapters.
-  ppa: {
-    company_overview: null,
-    valuation_methodology: null,
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dlom_analysis: null,
-  },
-  // Goodwill impairment: the whole analysis is the quantitative test, and the
-  // reporting units and qualitative screen have no counterpart in the library.
-  goodwill: {
-    company_overview: null,
-    valuation_methodology: 'quantitative_tests',
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dlom_analysis: null,
-  },
-  // An ESOP report argues the approaches in one chapter and both discounts in
-  // "Level of Value & Discounts", which is where the marketability discussion
-  // belongs — the chain from the approaches to the per-share value runs through
-  // it.
-  esop: {
-    valuation_methodology: 'valuation_approaches',
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dlom_analysis: 'level_of_value',
-  },
-  // An SMB fair-value opinion runs on normalized earnings and a small set of
-  // methods; there is no allocation and no discount chapter.
-  fmv: {
-    valuation_methodology: 'valuation_methods',
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dlom_analysis: null,
-  },
-  // EMI: the restrictions that separate unrestricted from actual market value
-  // are this deliverable's marketability discussion, and HMRC reads that
-  // chapter for exactly that.
-  emi: {
-    valuation_methodology: 'valuation_analysis',
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dlom_analysis: 'umv_amv',
-  },
-  // CSOP is the EMI pack without the UMV/AMV split — the scheme values at
-  // unrestricted market value, so there is no restriction chapter to write into.
-  csop: {
-    valuation_methodology: 'valuation_analysis',
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dlom_analysis: null,
-  },
-  // An IP valuation describes an asset, not a company, and concludes on the
-  // asset; the subject-asset chapter is not a company overview and prose about
-  // the business does not belong in it.
-  ip: {
-    company_overview: null,
-    valuation_methodology: 'valuation_methods',
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dlom_analysis: null,
-  },
-  /*
-   * ASC 718 measures an award. The concluded per-share value the library's
-   * conclusion section is written about is precisely what "Fair Value of the
-   * Underlying Share" states, so that is where it goes — the report has no
-   * conclusion chapter of its own because the compensation-cost schedule is its
-   * conclusion.
-   */
-  '718': {
-    company_overview: null,
-    valuation_methodology: 'model_and_assumptions',
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dlom_analysis: null,
-    conclusion: 'underlying_value',
-  },
-  // ASC 820: the hierarchy classification is the point of the report and the
-  // one the auditor tests first — and it was the section being discarded.
-  '820': {
-    company_overview: null,
-    fair_value_hierarchy: 'hierarchy',
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dlom_analysis: null,
-  },
-  /*
-   * Gift and estate. Two chapters take two drafted sections each: the Rev. Rul.
-   * 59-60 factor walk sits with the valuation of the underlying entity, and
-   * both discounts are argued together under "Interest-Level Discounts" —
-   * which is how the deliverable is laid out and how it is examined.
-   */
-  gifts: {
-    revenue_ruling_factors: 'valuation_analysis',
-    valuation_methodology: 'valuation_analysis',
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dloc: 'discounts',
-    dlom_analysis: 'discounts',
-  },
-  /*
-   * IFRS 2. `measurement_basis` is the skeleton's `measurement_principles`, and
-   * whether a vesting condition lands in the grant-date fair value or in the
-   * attribution is the expense-recognition argument.
-   *
-   * `conclusion` is suppressed rather than routed: the library writes it about
-   * a reconciliation across approaches and a fair market value per common
-   * share, and an IFRS 2 report concludes on neither.
-   */
-  ifrs2: {
-    company_overview: null,
-    measurement_basis: 'measurement_principles',
-    vesting_conditions: 'expense_recognition',
-    valuation_methodology: 'model_and_assumptions',
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dlom_analysis: null,
-    conclusion: null,
-  },
-  /*
-   * Fund NAV. The techniques chapter is the methodology and the NAV chapter is
-   * the conclusion. A marketability discount here is an input to one holding's
-   * measurement, disclosed in the Level 3 table, not a chapter of the report.
-   */
-  fund: {
-    company_overview: null,
-    valuation_methodology: 'measurement_techniques',
-    market_approach: null,
-    income_approach: null,
-    allocation_methodology: null,
-    dlom_analysis: null,
-    conclusion: 'nav_conclusion',
-    // A fund report classifies and discloses the same two things an ASC 820
-    // report does, so the library keys them the same way (0141) — but this
-    // skeleton names the chapters `hierarchy` and `significant_inputs`. Keyed
-    // to the 820 spelling rather than to this one so a firm editing "Fair
-    // Value Hierarchy" for both is editing rows that look alike.
-    fair_value_hierarchy: 'hierarchy',
-    unobservable_inputs: 'significant_inputs',
-  },
-  /*
-   * A debt instrument. The issuer discussion is a credit assessment, and the
-   * library's income-approach guidance — projection assumptions and the
-   * discount-rate build-up — is the discount-rate chapter almost word for word.
-   */
-  debt: {
-    company_overview: 'credit_assessment',
-    market_approach: null,
-    income_approach: 'discount_rate',
-    allocation_methodology: null,
-    dlom_analysis: null,
-  },
-};
+const NARRATIVE_SECTION_MAP_BY_KIND: Partial<Record<ValuationKind, Readonly<Record<string, string | null>>>> =
+  {
+    // A §1202 memorandum attests to qualification. There is no equity value to
+    // allocate, no approach to weight and no discount to take; the four statutory
+    // tests it does have are keyed the same on both sides.
+    qsbs: {
+      company_overview: null,
+      valuation_methodology: null,
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dlom_analysis: null,
+    },
+    // ASC 805 allocates a purchase price across identified assets. The transaction
+    // overview stands where a company overview would, and each intangible's method
+    // is argued in the intangibles chapter rather than in approach chapters.
+    ppa: {
+      company_overview: null,
+      valuation_methodology: null,
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dlom_analysis: null,
+    },
+    // Goodwill impairment: the whole analysis is the quantitative test, and the
+    // reporting units and qualitative screen have no counterpart in the library.
+    goodwill: {
+      company_overview: null,
+      valuation_methodology: 'quantitative_tests',
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dlom_analysis: null,
+    },
+    // An ESOP report argues the approaches in one chapter and both discounts in
+    // "Level of Value & Discounts", which is where the marketability discussion
+    // belongs — the chain from the approaches to the per-share value runs through
+    // it.
+    esop: {
+      valuation_methodology: 'valuation_approaches',
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dlom_analysis: 'level_of_value',
+    },
+    // An SMB fair-value opinion runs on normalized earnings and a small set of
+    // methods; there is no allocation and no discount chapter.
+    fmv: {
+      valuation_methodology: 'valuation_methods',
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dlom_analysis: null,
+    },
+    // EMI: the restrictions that separate unrestricted from actual market value
+    // are this deliverable's marketability discussion, and HMRC reads that
+    // chapter for exactly that.
+    emi: {
+      valuation_methodology: 'valuation_analysis',
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dlom_analysis: 'umv_amv',
+    },
+    // CSOP is the EMI pack without the UMV/AMV split — the scheme values at
+    // unrestricted market value, so there is no restriction chapter to write into.
+    csop: {
+      valuation_methodology: 'valuation_analysis',
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dlom_analysis: null,
+    },
+    // An IP valuation describes an asset, not a company, and concludes on the
+    // asset; the subject-asset chapter is not a company overview and prose about
+    // the business does not belong in it.
+    ip: {
+      company_overview: null,
+      valuation_methodology: 'valuation_methods',
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dlom_analysis: null,
+    },
+    /*
+     * ASC 718 measures an award. The concluded per-share value the library's
+     * conclusion section is written about is precisely what "Fair Value of the
+     * Underlying Share" states, so that is where it goes — the report has no
+     * conclusion chapter of its own because the compensation-cost schedule is its
+     * conclusion.
+     */
+    '718': {
+      company_overview: null,
+      valuation_methodology: 'model_and_assumptions',
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dlom_analysis: null,
+      conclusion: 'underlying_value',
+    },
+    // ASC 820: the hierarchy classification is the point of the report and the
+    // one the auditor tests first — and it was the section being discarded.
+    '820': {
+      company_overview: null,
+      fair_value_hierarchy: 'hierarchy',
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dlom_analysis: null,
+    },
+    /*
+     * Gift and estate. Two chapters take two drafted sections each: the Rev. Rul.
+     * 59-60 factor walk sits with the valuation of the underlying entity, and
+     * both discounts are argued together under "Interest-Level Discounts" —
+     * which is how the deliverable is laid out and how it is examined.
+     */
+    gifts: {
+      revenue_ruling_factors: 'valuation_analysis',
+      valuation_methodology: 'valuation_analysis',
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dloc: 'discounts',
+      dlom_analysis: 'discounts',
+    },
+    /*
+     * IFRS 2. `measurement_basis` is the skeleton's `measurement_principles`, and
+     * whether a vesting condition lands in the grant-date fair value or in the
+     * attribution is the expense-recognition argument.
+     *
+     * `conclusion` is suppressed rather than routed: the library writes it about
+     * a reconciliation across approaches and a fair market value per common
+     * share, and an IFRS 2 report concludes on neither.
+     */
+    ifrs2: {
+      company_overview: null,
+      measurement_basis: 'measurement_principles',
+      vesting_conditions: 'expense_recognition',
+      valuation_methodology: 'model_and_assumptions',
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dlom_analysis: null,
+      conclusion: null,
+    },
+    /*
+     * Fund NAV. The techniques chapter is the methodology and the NAV chapter is
+     * the conclusion. A marketability discount here is an input to one holding's
+     * measurement, disclosed in the Level 3 table, not a chapter of the report.
+     */
+    fund: {
+      company_overview: null,
+      valuation_methodology: 'measurement_techniques',
+      market_approach: null,
+      income_approach: null,
+      allocation_methodology: null,
+      dlom_analysis: null,
+      conclusion: 'nav_conclusion',
+      // A fund report classifies and discloses the same two things an ASC 820
+      // report does, so the library keys them the same way (0141) — but this
+      // skeleton names the chapters `hierarchy` and `significant_inputs`. Keyed
+      // to the 820 spelling rather than to this one so a firm editing "Fair
+      // Value Hierarchy" for both is editing rows that look alike.
+      fair_value_hierarchy: 'hierarchy',
+      unobservable_inputs: 'significant_inputs',
+    },
+    /*
+     * A debt instrument. The issuer discussion is a credit assessment, and the
+     * library's income-approach guidance — projection assumptions and the
+     * discount-rate build-up — is the discount-rate chapter almost word for word.
+     */
+    debt: {
+      company_overview: 'credit_assessment',
+      market_approach: null,
+      income_approach: 'discount_rate',
+      allocation_methodology: null,
+      dlom_analysis: null,
+    },
+  };
 
 /**
  * The map one deliverable is applied through.
@@ -296,9 +295,7 @@ const NARRATIVE_SECTION_MAP_BY_KIND: Partial<
  * call site — gets the 409A's, which is the behaviour that existed before the
  * table above and is right for the kind most reports are.
  */
-export function narrativeSectionMap(
-  kind?: ValuationKind | null,
-): Readonly<Record<string, string | null>> {
+export function narrativeSectionMap(kind?: ValuationKind | null): Readonly<Record<string, string | null>> {
   const overrides = kind ? NARRATIVE_SECTION_MAP_BY_KIND[kind] : undefined;
   return overrides ? { ...NARRATIVE_SECTION_MAP, ...overrides } : NARRATIVE_SECTION_MAP;
 }

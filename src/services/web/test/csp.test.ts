@@ -51,8 +51,7 @@ describe('inlineScriptHashes', () => {
 
   it('ignores application/ld+json — data blocks are never executed', () => {
     const root = rootWith({
-      'index.html':
-        '<!doctype html><script type="application/ld+json">{"@type":"Organization"}</script>',
+      'index.html': '<!doctype html><script type="application/ld+json">{"@type":"Organization"}</script>',
     });
     expect(inlineScriptHashes(root)).toEqual([]);
   });
@@ -62,9 +61,7 @@ describe('inlineScriptHashes', () => {
       'a.html': '<!doctype html><script type="module">export const a = 1;</script>',
       'b.html': '<!doctype html><script type="text/javascript">var b = 2;</script>',
     });
-    expect(inlineScriptHashes(root)).toEqual(
-      [sha256('export const a = 1;'), sha256('var b = 2;')].sort(),
-    );
+    expect(inlineScriptHashes(root)).toEqual([sha256('export const a = 1;'), sha256('var b = 2;')].sort());
   });
 
   it('walks prerendered subdirectories, deduplicating the shared script', () => {
@@ -202,10 +199,7 @@ describe('single-origin posture', () => {
  * synchronous by design, and every prerendered document inherits it.
  */
 describe('the built frontend', () => {
-  const dist = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '../../web-frontend/dist',
-  );
+  const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web-frontend/dist');
   const built = existsSync(path.join(dist, 'index.html'));
 
   it.skipIf(!built)('ships exactly one executable inline script, and CSP admits it', async () => {

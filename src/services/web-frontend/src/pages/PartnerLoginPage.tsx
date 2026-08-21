@@ -127,12 +127,7 @@ export function PartnerLoginPage() {
                   Forgot password?
                 </Link>
               </div>
-              <Button
-                type="submit"
-                disabled={busy}
-                className="w-full"
-                style={{ backgroundColor: accent }}
-              >
+              <Button type="submit" disabled={busy} className="w-full" style={{ backgroundColor: accent }}>
                 {busy ? 'Signing in…' : 'Sign in'}
               </Button>
             </form>

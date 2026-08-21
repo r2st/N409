@@ -356,8 +356,7 @@ describe('OnboardingPage — uploading documents', () => {
 
   const file = (name: string) => new File(['x'], name, { type: 'application/pdf' });
   const picker = () => document.querySelector('input[type="file"]') as HTMLInputElement;
-  const storedUploads = () =>
-    JSON.parse(sessionStorage.getItem('n409.onboarding.draft') ?? '{}').uploaded;
+  const storedUploads = () => JSON.parse(sessionStorage.getItem('n409.onboarding.draft') ?? '{}').uploaded;
 
   it('uploads the chosen files and ticks the checklist', async () => {
     const user = userEvent.setup();
@@ -486,9 +485,7 @@ describe('OnboardingPage — uploading documents', () => {
   it('adds to the ticks a resumed draft already carried', async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
-      String(url).includes('/documents')
-        ? jsonResponse({ document: { id: 'd2' } }, 201)
-        : jsonResponse({}),
+      String(url).includes('/documents') ? jsonResponse({ document: { id: 'd2' } }, 201) : jsonResponse({}),
     );
     resumeAtUploads({ cap_table: ['already.pdf'] });
 
@@ -514,9 +511,7 @@ describe('OnboardingPage — uploading documents', () => {
   it('offers to skip while nothing is uploaded, and to finish once something is', async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
-      String(url).includes('/documents')
-        ? jsonResponse({ document: { id: 'd1' } }, 201)
-        : jsonResponse({}),
+      String(url).includes('/documents') ? jsonResponse({ document: { id: 'd1' } }, 201) : jsonResponse({}),
     );
     resumeAtUploads();
 

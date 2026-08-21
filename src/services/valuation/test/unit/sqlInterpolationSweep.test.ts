@@ -61,7 +61,6 @@ export function templateLiterals(src: string): { index: number; body: string }[]
     const c = src[i]!;
     if (c === '\\') {
       i += 2;
-// eslint-disable-next-line no-continue
       continue;
     }
     if (c === '"' || c === "'") {
@@ -381,17 +380,18 @@ describe('SQL interpolation sweep', () => {
   });
 
   it('is not fooled by a backtick inside a comment or a string', () => {
-    const src = ["// a ` backtick in a comment", `const s = "a \` backtick in a string";`, 'const q = `SELECT 1`;'].join(
-      '\n',
-    );
+    const src = [
+      '// a ` backtick in a comment',
+      `const s = "a \` backtick in a string";`,
+      'const q = `SELECT 1`;',
+    ].join('\n');
     expect(templateLiterals(src).map((t) => t.body)).toEqual(['SELECT 1']);
   });
 
   /** The sweep proper. */
   it('interpolates nothing into SQL text that has not been reviewed', () => {
     const unreviewed = result.interpolations.filter(
-      (i) =>
-        !SAFE_SHAPES.some((shape) => shape.test(i.expr)) && !(REVIEWED[i.file] ?? []).includes(i.expr),
+      (i) => !SAFE_SHAPES.some((shape) => shape.test(i.expr)) && !(REVIEWED[i.file] ?? []).includes(i.expr),
     );
     expect(
       unreviewed.map((i) => `${i.file}:${i.line}  ${i.expr}`),

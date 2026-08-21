@@ -51,7 +51,16 @@ function stubLayout(layout: StripLayout) {
       this.tagName === 'NAV'
         ? { left: 0, width: layout.clientWidth }
         : { left: layout.active?.offset ?? 0, width: layout.active?.width ?? 0 };
-    return { ...box, top: 0, right: box.left + box.width, bottom: 0, height: 0, x: box.left, y: 0, toJSON: () => ({}) } as DOMRect;
+    return {
+      ...box,
+      top: 0,
+      right: box.left + box.width,
+      bottom: 0,
+      height: 0,
+      x: box.left,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
   };
   return {
     scrollBy,

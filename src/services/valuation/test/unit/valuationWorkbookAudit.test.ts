@@ -247,9 +247,7 @@ describe('audit sheets', () => {
     });
 
     it('produces an empty body when the run recorded no inputs', () => {
-      const sheets = valuationWorkbookSheets(
-        baseInput({ calculation: calculation({ inputs: null }) }),
-      );
+      const sheets = valuationWorkbookSheets(baseInput({ calculation: calculation({ inputs: null }) }));
       const s = sheets.find((x) => /assumption/i.test(x.name))!;
       expect(s.rows).toEqual([]);
     });
@@ -257,10 +255,7 @@ describe('audit sheets', () => {
 
   describe('overrides', () => {
     it('records the before and after pair, which is the evidentiary point', () => {
-      const s = sheet(
-        valuationWorkbookSheets(baseInput({ overwrites: [overwrite()] })),
-        'Overrides',
-      );
+      const s = sheet(valuationWorkbookSheets(baseInput({ overwrites: [overwrite()] })), 'Overrides');
       const row = s.rows[0]!;
       expect(row).toContain(0.19);
       expect(row).toContain(0.24);
@@ -273,7 +268,11 @@ describe('audit sheets', () => {
           baseInput({
             overwrites: [
               overwrite({ field_key: 'a', created_by: 'first@example.com', updated_by: null }),
-              overwrite({ field_key: 'b', created_by: 'first@example.com', updated_by: 'second@example.com' }),
+              overwrite({
+                field_key: 'b',
+                created_by: 'first@example.com',
+                updated_by: 'second@example.com',
+              }),
             ],
           }),
         ),
@@ -394,7 +393,13 @@ describe('audit sheets', () => {
           baseInput({
             calculation: calculation({
               diagnostics: [
-                { code: 'C1', field: 'volatility', message: 'Peer set is thin', severity: 'warning', hint: 'Add peers' },
+                {
+                  code: 'C1',
+                  field: 'volatility',
+                  message: 'Peer set is thin',
+                  severity: 'warning',
+                  hint: 'Add peers',
+                },
                 { code: 'C2', field: '', message: 'Rounded to cents', severity: 'info', hint: null },
               ],
             }),

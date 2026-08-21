@@ -564,9 +564,7 @@ function checkUneditedGuidance(
   findings: ReportReviewFinding[],
 ): void {
   if (!template) return;
-  const guidance = new Map(
-    template.sections.filter((s) => s.authored === true).map((s) => [s.key, s.html]),
-  );
+  const guidance = new Map(template.sections.filter((s) => s.authored === true).map((s) => [s.key, s.html]));
 
   for (const section of sections) {
     const original = guidance.get(section.key);

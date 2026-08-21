@@ -78,9 +78,9 @@ describe('attachPoolErrorHandler', () => {
   it('swallows an idle-client error that would otherwise be unhandled', () => {
     const bare = fakePool();
     // Without a listener EventEmitter rethrows — this is the crash being fixed.
-    expect(() => bare.emit('error', Object.assign(new Error('terminating connection'), { code: '57P01' }))).toThrow(
-      /terminating connection/,
-    );
+    expect(() =>
+      bare.emit('error', Object.assign(new Error('terminating connection'), { code: '57P01' })),
+    ).toThrow(/terminating connection/);
 
     const pool = fakePool();
     attachPoolErrorHandler(pool);

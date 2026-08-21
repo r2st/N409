@@ -98,9 +98,7 @@ describe('ResetPasswordPage', () => {
     renderAt('/reset-password', <ResetPasswordPage />);
     await userEvent.type(screen.getByLabelText(/^New password/), 'short');
     await userEvent.tab();
-    expect(
-      await screen.findByText('Password must be at least 10 characters.'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Password must be at least 10 characters.')).toBeInTheDocument();
   });
 
   it('clears the mismatch when the first password is changed to agree', async () => {

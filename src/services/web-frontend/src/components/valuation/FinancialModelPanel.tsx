@@ -303,10 +303,11 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
     setError(null);
     setBusy(true);
     try {
-      const res = await api<{ params?: { version?: number } }>(
-        `/valuations/${valuationId}/engine-inputs`,
-        { method: 'PATCH', body: toBody(form), headers: ifMatch(version) },
-      );
+      const res = await api<{ params?: { version?: number } }>(`/valuations/${valuationId}/engine-inputs`, {
+        method: 'PATCH',
+        body: toBody(form),
+        headers: ifMatch(version),
+      });
       // Take the version the write produced, so a second save from this same
       // form is not refused for a change this user just made themselves.
       setVersion(res.params?.version);

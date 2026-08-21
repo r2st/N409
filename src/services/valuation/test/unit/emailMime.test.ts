@@ -31,12 +31,10 @@ function headersOf(message: string): string {
  * split a value at all. Bare (unencoded) runs are kept verbatim.
  */
 function decodeHeaderWords(value: string): string {
-  return value.replace(
-    /(?:=\?utf-8\?B\?[^?]*\?=)(?:\s+=\?utf-8\?B\?[^?]*\?=)*/gi,
-    (run) =>
-      [...run.matchAll(/=\?utf-8\?B\?([^?]*)\?=/gi)]
-        .map((m) => Buffer.from(m[1]!, 'base64').toString('utf8'))
-        .join(''),
+  return value.replace(/(?:=\?utf-8\?B\?[^?]*\?=)(?:\s+=\?utf-8\?B\?[^?]*\?=)*/gi, (run) =>
+    [...run.matchAll(/=\?utf-8\?B\?([^?]*)\?=/gi)]
+      .map((m) => Buffer.from(m[1]!, 'base64').toString('utf8'))
+      .join(''),
   );
 }
 
@@ -257,9 +255,7 @@ describe('MIME assembly', () => {
   it('keeps the whole address for a non-ASCII recipient and reply-to', () => {
     const to = '"Zoë Müller-Lüdenscheidt (Finanzabteilung)" <zoe@example.test>';
     const replyTo = '"Betreuung für Beteiligungsgesellschaften" <ops@n409.app>';
-    const headers = headersOf(
-      buildMimeMessage({ from: FROM, to, subject: 's', body: '', replyTo }),
-    );
+    const headers = headersOf(buildMimeMessage({ from: FROM, to, subject: 's', body: '', replyTo }));
     expect(decodeHeaderWords(/^To: (.*)$/m.exec(headers)?.[1] ?? '')).toBe(to);
     expect(decodeHeaderWords(/^Reply-To: (.*)$/m.exec(headers)?.[1] ?? '')).toBe(replyTo);
   });

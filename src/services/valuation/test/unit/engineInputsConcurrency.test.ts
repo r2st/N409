@@ -33,7 +33,11 @@ const ACTOR = { actorType: 'human', actorId: 'U1', source: 'api' } as const;
  * A pool whose UPDATE returns `updatedRows` and whose follow-up version read
  * returns `liveVersion`, recording every statement on the way.
  */
-function fakePool(opts: { updatedRows: ValuationParamsRow[]; liveVersion?: number; locked?: ValuationParamsRow }) {
+function fakePool(opts: {
+  updatedRows: ValuationParamsRow[];
+  liveVersion?: number;
+  locked?: ValuationParamsRow;
+}) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     calls.push({ sql, params });
@@ -90,13 +94,9 @@ describe('applyEngineInputs optimistic locking', () => {
   /** The whole point: a save built on a document somebody else has moved on from. */
   it('refuses a write that loses the race, naming both versions', async () => {
     const { pool } = fakePool({ updatedRows: [], liveVersion: 9 });
-    const err = await applyEngineInputs(
-      pool,
-      ROW.valuation_id,
-      { income: { discount_rate: 0.2 } },
-      ACTOR,
-      { expectedVersion: 4 },
-    ).catch((e: unknown) => e);
+    const err = await applyEngineInputs(pool, ROW.valuation_id, { income: { discount_rate: 0.2 } }, ACTOR, {
+      expectedVersion: 4,
+    }).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(ApiProblem);
     expect((err as ApiProblem).status).toBe(409);

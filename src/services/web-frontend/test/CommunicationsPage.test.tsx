@@ -255,7 +255,9 @@ describe('CommunicationsPage', () => {
         templates: [{ ...templates[0]!, unknown_variables: ['invoice_total', 'partner_name'] }],
       });
       renderPage();
-      expect(await screen.findByText(/Unsupplied: \{\{invoice_total\}\}, \{\{partner_name\}\}/)).toBeInTheDocument();
+      expect(
+        await screen.findByText(/Unsupplied: \{\{invoice_total\}\}, \{\{partner_name\}\}/),
+      ).toBeInTheDocument();
     });
 
     it('filters by category, asking the server rather than the browser', async () => {

@@ -181,9 +181,7 @@ describe('AnalyticsTab', () => {
     mockApi({ benchmark: { ...BENCHMARK, count: 0 } });
     renderTab();
 
-    expect(
-      await screen.findByText(/No comparable multiples in the latest calculation/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/No comparable multiples in the latest calculation/)).toBeInTheDocument();
     expect(screen.queryByTestId('benchmark-percentile')).not.toBeInTheDocument();
   });
 

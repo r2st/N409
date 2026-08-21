@@ -29,9 +29,7 @@ const RESPONSE: RollforwardEngineResponse = {
     { step: 'prior_equity_value', value: 33_600_000 },
     { step: 'time_accretion', annual_rate: 0.25, years: 1.0, factor: 1.25, value: 42_000_000 },
   ],
-  material_changes: [
-    { field: 'revenue', material: false, detail: 'revenue moved +4.0%', delta_pct: 0.04 },
-  ],
+  material_changes: [{ field: 'revenue', material: false, detail: 'revenue moved +4.0%', delta_pct: 0.04 }],
   requires_full_revaluation: false,
   pre_populated_inputs: { valuation_date: '2026-06-30', last_round_post_money: 42_000_000 },
 };
@@ -81,9 +79,7 @@ describe('shapeRollforward', () => {
 
   it('refuses a response with no usable prior value', () => {
     for (const bad of [null, undefined, 0, -1, NaN]) {
-      expect(() => shapeRollforward({ ...RESPONSE, prior_equity_value: bad })).toThrow(
-        RollforwardInputError,
-      );
+      expect(() => shapeRollforward({ ...RESPONSE, prior_equity_value: bad })).toThrow(RollforwardInputError);
     }
   });
 
@@ -94,9 +90,7 @@ describe('shapeRollforward', () => {
     expect(() => shapeRollforward({ ...RESPONSE, prior_valuation_date: null })).toThrow(
       RollforwardInputError,
     );
-    expect(() => shapeRollforward({ ...RESPONSE, new_valuation_date: '2024-01-01' })).toThrow(
-      /wrong order/,
-    );
+    expect(() => shapeRollforward({ ...RESPONSE, new_valuation_date: '2024-01-01' })).toThrow(/wrong order/);
   });
 
   it('refuses an accretion at or below -100%', () => {
@@ -104,9 +98,7 @@ describe('shapeRollforward', () => {
     // *complex* number in Python; the engine guards it and this is the same
     // floor, so a response carrying one is not one this service asked for.
     expect(() => shapeRollforward({ ...RESPONSE, annual_accretion: -1 })).toThrow(RollforwardInputError);
-    expect(() => shapeRollforward({ ...RESPONSE, annual_accretion: -1.5 })).toThrow(
-      RollforwardInputError,
-    );
+    expect(() => shapeRollforward({ ...RESPONSE, annual_accretion: -1.5 })).toThrow(RollforwardInputError);
   });
 
   it('refuses a non-finite elapsed time or rate rather than storing NaN', () => {

@@ -84,9 +84,7 @@ describe('bot prompt registry seeds', () => {
     // ever run.
     const vocabulary = new Set<string>(AI_PIPELINES);
     for (const pipeline of seededPrompts().keys()) {
-      expect(vocabulary.has(pipeline), `seeded prompt '${pipeline}' is not in AI_PIPELINES`).toBe(
-        true,
-      );
+      expect(vocabulary.has(pipeline), `seeded prompt '${pipeline}' is not in AI_PIPELINES`).toBe(true);
     }
   });
 

@@ -50,17 +50,50 @@ function declaredTokens(): Set<string> {
  * dark block as proof and let exactly that through.
  */
 const TAILWIND_FAMILIES = [
-  'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald', 'teal', 'cyan', 'sky',
-  'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'rose',
-  'slate', 'gray', 'zinc', 'neutral', 'stone',
+  'red',
+  'orange',
+  'amber',
+  'yellow',
+  'lime',
+  'green',
+  'emerald',
+  'teal',
+  'cyan',
+  'sky',
+  'blue',
+  'indigo',
+  'violet',
+  'purple',
+  'fuchsia',
+  'pink',
+  'rose',
+  'slate',
+  'gray',
+  'zinc',
+  'neutral',
+  'stone',
 ];
 const TAILWIND_STEPS = ['50', '100', '200', '300', '400', '500', '600', '700', '800', '900', '950'];
 const TAILWIND_KEYWORDS = ['black', 'white', 'transparent', 'current', 'inherit'];
 
 /** Every utility prefix that takes a colour. */
 const COLOR_PREFIXES = [
-  'text', 'bg', 'border', 'ring', 'fill', 'stroke', 'divide', 'outline',
-  'decoration', 'accent', 'caret', 'placeholder', 'shadow', 'from', 'via', 'to',
+  'text',
+  'bg',
+  'border',
+  'ring',
+  'fill',
+  'stroke',
+  'divide',
+  'outline',
+  'decoration',
+  'accent',
+  'caret',
+  'placeholder',
+  'shadow',
+  'from',
+  'via',
+  'to',
 ];
 
 /**

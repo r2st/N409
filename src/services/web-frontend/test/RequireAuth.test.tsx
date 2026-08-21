@@ -153,9 +153,7 @@ describe('AuthProvider session lifecycle', () => {
 
   it('clears the cookie server-side on an explicit sign-out', async () => {
     localStorage.setItem('n409.token', '1');
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse({ user: me }));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ user: me }));
     renderProbe();
     await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('authenticated'));
 
@@ -163,10 +161,7 @@ describe('AuthProvider session lifecycle', () => {
 
     expect(screen.getByTestId('status')).toHaveTextContent('anonymous');
     expect(localStorage.getItem('n409.token')).toBeNull();
-    expect(fetchSpy).toHaveBeenCalledWith(
-      '/api/v1/auth/logout',
-      expect.objectContaining({ method: 'POST' }),
-    );
+    expect(fetchSpy).toHaveBeenCalledWith('/api/v1/auth/logout', expect.objectContaining({ method: 'POST' }));
   });
 
   it('does not carry a "normal view" preview across a sign-out', async () => {

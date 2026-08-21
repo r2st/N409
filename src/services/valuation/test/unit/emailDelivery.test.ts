@@ -117,9 +117,7 @@ describe('deliveryStateOf', () => {
   });
 
   it('reports a bounce that followed a delivery', () => {
-    expect(deliveryStateOf({ ...base, delivered_at: t, bounced_at: t, bounce_kind: 'hard' })).toBe(
-      'bounced',
-    );
+    expect(deliveryStateOf({ ...base, delivered_at: t, bounced_at: t, bounce_kind: 'hard' })).toBe('bounced');
   });
 
   it('falls through to the send state when nothing downstream has spoken', () => {

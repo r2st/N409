@@ -118,9 +118,7 @@ describe('developers page: the live reference', () => {
       ),
     );
     mount();
-    expect(
-      await screen.findByText('Create a valuation for your partner organization.'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Create a valuation for your partner organization.')).toBeInTheDocument();
     expect(screen.getByText(`${PARTNER_API.prefix}/valuations`)).toBeInTheDocument();
     vi.restoreAllMocks();
   });

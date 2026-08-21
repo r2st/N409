@@ -158,9 +158,7 @@ describe('LoginPage', () => {
       await userEvent.type(screen.getByLabelText('Email'), 'ada@acme.com');
       await userEvent.type(screen.getByLabelText('Password'), 'hunter2hunter2');
       await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-      expect(
-        await screen.findByRole('heading', { name: 'Two-factor authentication' }),
-      ).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { name: 'Two-factor authentication' })).toBeInTheDocument();
     }
 
     it('asks for a code rather than signing in, and redeems the challenge', async () => {
@@ -237,9 +235,7 @@ describe('LoginPage', () => {
       await userEvent.click(screen.getByRole('button', { name: /use a backup code instead/i }));
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
       // And back again, so the label round-trips.
-      await userEvent.click(
-        screen.getByRole('button', { name: /use your authenticator app instead/i }),
-      );
+      await userEvent.click(screen.getByRole('button', { name: /use your authenticator app instead/i }));
       expect(screen.getByLabelText('Authenticator code')).toBeInTheDocument();
     });
 

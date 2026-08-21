@@ -293,13 +293,8 @@ describe('feature flags in the env file', () => {
 
   it('accepts every spelling the reader accepts', () => {
     expect(
-      run(
-        withFlags(
-          'FLAG_CIRCUIT_BREAKERS=off',
-          'FLAG_RETRY_LADDERS=0',
-          'FLAG_BACKUP_VERIFICATION=DISABLED',
-        ),
-      ).faults,
+      run(withFlags('FLAG_CIRCUIT_BREAKERS=off', 'FLAG_RETRY_LADDERS=0', 'FLAG_BACKUP_VERIFICATION=DISABLED'))
+        .faults,
     ).toEqual([]);
   });
 

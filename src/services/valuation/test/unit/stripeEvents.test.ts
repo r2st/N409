@@ -66,7 +66,11 @@ describe('stripeEventKey', () => {
     // the only event about itself; it has nothing to be ordered against.
     expect(
       stripeEventKey(
-        { id: 'evt_cs', type: 'checkout.session.completed', data: { object: { id: 'cs_1', mode: 'payment' } } },
+        {
+          id: 'evt_cs',
+          type: 'checkout.session.completed',
+          data: { object: { id: 'cs_1', mode: 'payment' } },
+        },
         'payments',
       ).objectId,
     ).toBe(null);

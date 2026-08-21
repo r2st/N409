@@ -2,13 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
-import {
-  canEditWorkingData,
-  canReadValuation,
-  isOps,
-  valuationScope,
-  type Principal,
-} from '../auth/rbac.js';
+import { canEditWorkingData, canReadValuation, isOps, valuationScope, type Principal } from '../auth/rbac.js';
 import {
   exportValuations,
   findValuationById,

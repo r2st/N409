@@ -102,7 +102,7 @@ describe('updateAutoEmail column allow-list', () => {
     const { pool, calls } = capturingPool();
     await updateAutoEmail(pool, 'ae-1', {
       enabled: true,
-      "promotional = true WHERE id IS NOT NULL --": 'x',
+      'promotional = true WHERE id IS NOT NULL --': 'x',
     } as never);
 
     const { sql, params } = calls[0]!;

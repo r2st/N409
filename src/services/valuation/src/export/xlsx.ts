@@ -51,15 +51,7 @@ export interface XlsxStyledValue {
   format: XlsxFormat;
 }
 
-export type XlsxValue =
-  | string
-  | number
-  | boolean
-  | Date
-  | null
-  | undefined
-  | XlsxFormula
-  | XlsxStyledValue;
+export type XlsxValue = string | number | boolean | Date | null | undefined | XlsxFormula | XlsxStyledValue;
 
 export interface XlsxColumn {
   header: string;

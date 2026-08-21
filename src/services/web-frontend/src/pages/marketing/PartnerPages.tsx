@@ -88,8 +88,8 @@ export function PartnersPage() {
             Offer valuations without building a valuation practice
           </h1>
           <p className="mt-5 max-w-2xl text-lg text-chrome-dim">
-            Refer clients, put your own brand on the deliverable, or call the API from inside your
-            product. Analyst-reviewed and dual-signed either way.
+            Refer clients, put your own brand on the deliverable, or call the API from inside your product.
+            Analyst-reviewed and dual-signed either way.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-4">
             <PartnerCta />
@@ -163,9 +163,7 @@ export function PartnersPage() {
       {/* FAQ */}
       <section className="mx-auto max-w-3xl px-5 py-16">
         <div className="overline text-brass-600">FAQ</div>
-        <h2 className="mt-2 mb-8 font-display text-2xl font-semibold text-ink-900">
-          Partner questions
-        </h2>
+        <h2 className="mt-2 mb-8 font-display text-2xl font-semibold text-ink-900">Partner questions</h2>
         <FaqAccordion items={PARTNER_FAQ} />
       </section>
 
@@ -173,8 +171,7 @@ export function PartnersPage() {
         <div className="mx-auto max-w-4xl px-5 py-16 text-center">
           <h2 className="font-display text-3xl font-semibold">Start a partnership</h2>
           <p className="mx-auto mt-4 max-w-xl text-chrome-dim">
-            Tell us which model fits and roughly what volume you expect, and we will come back with
-            terms.
+            Tell us which model fits and roughly what volume you expect, and we will come back with terms.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
             <PartnerCta />
@@ -240,9 +237,7 @@ export function PartnerSegmentPage() {
         <div className="grid gap-10 lg:grid-cols-[1.4fr_1fr]">
           <div>
             <div className="overline text-brass-600">The problem</div>
-            <h2 className="mt-2 font-display text-2xl font-semibold text-ink-900">
-              Why this lands on you
-            </h2>
+            <h2 className="mt-2 font-display text-2xl font-semibold text-ink-900">Why this lands on you</h2>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-ink-600">{segment.problem}</p>
             <ul className="mt-6 space-y-3 text-sm text-ink-700">
               {segment.bullets.map((b) => (
@@ -280,14 +275,11 @@ export function PartnerSegmentPage() {
             The {model.name.toLowerCase()} model
           </h2>
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink-600">
-            Not a rule — partners mix models, and which one fits depends on whose brand the client
-            should see. All three are available to every segment.
+            Not a rule — partners mix models, and which one fits depends on whose brand the client should see.
+            All three are available to every segment.
           </p>
           <div className="mt-8 grid gap-4 lg:grid-cols-3">
-            {[
-              model,
-              ...PARTNER_MODELS.filter((m) => m.key !== model.key),
-            ].map((m) => (
+            {[model, ...PARTNER_MODELS.filter((m) => m.key !== model.key)].map((m) => (
               <ModelCard key={m.key} modelKey={m.key} />
             ))}
           </div>

@@ -242,8 +242,7 @@ describe('PortfolioPage — creating an organization', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       const key = String(url).replace(/^.*\/api\/v1/, '');
       if (key === '/organizations') return jsonResponse({ organizations: [org, beta] });
-      if (key === '/organizations/org2')
-        return jsonResponse({ ...mixedDetail, organization: beta });
+      if (key === '/organizations/org2') return jsonResponse({ ...mixedDetail, organization: beta });
       return jsonResponse(detail);
     });
 

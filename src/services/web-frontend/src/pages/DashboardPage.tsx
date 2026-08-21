@@ -312,10 +312,10 @@ export function DashboardPage() {
                * is comparing against what it said a moment ago.
                */}
               {/*
-                * Above the pivot rather than in place of it: when a range change
-                * fails there are still figures below, and the reader has to be
-                * told they are the previous range's before reading them.
-                */}
+               * Above the pivot rather than in place of it: when a range change
+               * fails there are still figures below, and the reader has to be
+               * told they are the previous range's before reading them.
+               */}
               {analyticsError && !analyticsLoading && (
                 <div className="mt-4">
                   <ErrorNote>

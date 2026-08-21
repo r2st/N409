@@ -229,9 +229,7 @@ function axisValues(inputs: OpmInputs, axis: SensitivityAxis, steps: number[]): 
       // Multiplicative, like the classic grid.
       return distinct(steps.map((s) => round4(inputs.volatility * (1 + s))));
     case 'termYears':
-      return distinct(
-        steps.map((s) => round4(Math.max(termFloor(inputs.termYears), inputs.termYears + s))),
-      );
+      return distinct(steps.map((s) => round4(Math.max(termFloor(inputs.termYears), inputs.termYears + s))));
     case 'riskFreeRate':
       return distinct(steps.map((s) => round4(Math.max(0, inputs.riskFreeRate + s))));
   }

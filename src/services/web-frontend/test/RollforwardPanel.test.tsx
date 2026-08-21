@@ -74,7 +74,12 @@ const run = (over: Partial<Run> = {}): Run => ({
     { step: 'time_accretion', value: 52_500_000, annual_rate: 0.1667, years: 1, factor: 1.1667 },
   ],
   material_changes: [
-    { field: 'revenue', material: false, detail: 'Revenue moved 4%, below the 20% threshold', delta_pct: 0.04 },
+    {
+      field: 'revenue',
+      material: false,
+      detail: 'Revenue moved 4%, below the 20% threshold',
+      delta_pct: 0.04,
+    },
   ],
   requires_full_revaluation: false,
   material_change_count: 0,
@@ -84,8 +89,18 @@ const run = (over: Partial<Run> = {}): Run => ({
 });
 
 const CANDIDATES = [
-  { id: '01JPRIOR0000000000000000001', number: 'V-2025-004', created_at: '2025-07-01T10:00:00Z', fmv_per_share: '1.10' },
-  { id: '01JPRIOR0000000000000000002', number: 'V-2024-002', created_at: '2024-07-01T10:00:00Z', fmv_per_share: null },
+  {
+    id: '01JPRIOR0000000000000000001',
+    number: 'V-2025-004',
+    created_at: '2025-07-01T10:00:00Z',
+    fmv_per_share: '1.10',
+  },
+  {
+    id: '01JPRIOR0000000000000000002',
+    number: 'V-2024-002',
+    created_at: '2024-07-01T10:00:00Z',
+    fmv_per_share: null,
+  },
 ];
 
 interface State {
@@ -217,9 +232,7 @@ describe('RollforwardPanel', () => {
     await pickPrior();
     await userEvent.click(screen.getByRole('button', { name: 'Run rollforward' }));
 
-    await screen.findByText(
-      /\$45,000,000 rolled to \$52,500,000 over 1\.00 years at 16\.7%\./,
-    );
+    await screen.findByText(/\$45,000,000 rolled to \$52,500,000 over 1\.00 years at 16\.7%\./);
   });
 
   it('sends a typed accretion as a fraction, not as the percentage typed', async () => {
@@ -515,9 +528,7 @@ describe('RollforwardPanel', () => {
     // A change with no measured move is a dash, not a zero percent.
     const rows = within(table).getAllByRole('row').slice(1);
     expect(within(rows[1]!).getAllByRole('cell')[2]?.textContent).toBe('—');
-    expect(
-      screen.getByText(/1 material change since the prior valuation/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/1 material change since the prior valuation/)).toBeInTheDocument();
   });
 
   it('pluralises the material-change warning', async () => {

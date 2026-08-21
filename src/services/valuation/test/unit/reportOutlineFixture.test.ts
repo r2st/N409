@@ -177,11 +177,6 @@ describe('the 409A carries every chapter its authority requires', () => {
    * certification page in the middle of the analysis is the shape this catches.
    */
   it('keeps the closing block in the last four positions', () => {
-    expect(keys.slice(-4)).toEqual([
-      'safe_harbor',
-      'certification',
-      'qualifications',
-      'exhibit_index',
-    ]);
+    expect(keys.slice(-4)).toEqual(['safe_harbor', 'certification', 'qualifications', 'exhibit_index']);
   });
 });

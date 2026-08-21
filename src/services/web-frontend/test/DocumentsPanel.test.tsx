@@ -364,9 +364,7 @@ describe('DocumentsPanel list', () => {
     const onReviewed = vi.fn();
     render(<DocumentsPanel valuationId={VAL_ID} canReview onReviewed={onReviewed} />);
 
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Mark cap-table.pdf reviewed' }),
-    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Mark cap-table.pdf reviewed' }));
 
     // Optimistic — the row flips before the round trip returns.
     expect(screen.getByText('reviewed')).toBeInTheDocument();
@@ -389,9 +387,7 @@ describe('DocumentsPanel list', () => {
     mockList([doc('d1', 'cap-table.pdf')], { review: () => problem(403, 'Reviewers only.') });
     render(<DocumentsPanel valuationId={VAL_ID} canReview />);
 
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Mark cap-table.pdf reviewed' }),
-    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Mark cap-table.pdf reviewed' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Reviewers only.');
     // Reloaded from the server, so the row shows what actually landed.

@@ -331,7 +331,11 @@ describe('reviewing the drafted report', () => {
      * these six shipped — fails a test rather than a deliverable.
      */
     it('names every unwritten chapter of a pristine 409A, and only those', () => {
-      expect(guidanceFindings(pristine()).map((f) => f.section_key).sort()).toEqual([
+      expect(
+        guidanceFindings(pristine())
+          .map((f) => f.section_key)
+          .sort(),
+      ).toEqual([
         'company_analysis',
         'company_overview',
         'economic_outlook',

@@ -35,7 +35,8 @@ export function isTerminalBounce(kind: BounceKind): boolean {
  * The SMTP command a reply came back to. Only one of them can indict the
  * recipient, which is the entire reason this is threaded through.
  */
-export type SmtpStage = 'connect' | 'greeting' | 'ehlo' | 'starttls' | 'auth' | 'from' | 'rcpt' | 'data' | 'body';
+export type SmtpStage =
+  'connect' | 'greeting' | 'ehlo' | 'starttls' | 'auth' | 'from' | 'rcpt' | 'data' | 'body';
 
 /**
  * Classify a synchronous SMTP rejection.
@@ -168,14 +169,7 @@ export function classifyDsnStatus(status: string): BounceKind | null {
  * subsystem exists to remove.
  */
 export type DeliveryState =
-  | 'queued'
-  | 'skipped'
-  | 'failed'
-  | 'sent'
-  | 'delivered'
-  | 'opened'
-  | 'bounced'
-  | 'complained';
+  'queued' | 'skipped' | 'failed' | 'sent' | 'delivered' | 'opened' | 'bounced' | 'complained';
 
 export interface DeliveryColumns {
   status: 'queued' | 'sent' | 'failed' | 'skipped';

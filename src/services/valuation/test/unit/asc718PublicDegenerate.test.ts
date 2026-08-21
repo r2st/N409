@@ -162,12 +162,8 @@ describe('ASC 718 public models — degenerate inputs', () => {
     it('clamps the discount to a fraction at both ends', () => {
       // A discount above 100% would make the shares free and then some; a
       // negative one would charge a premium. Neither is a §423 plan.
-      expect(esppFairValue({ ...base, discountPct: 5 })).toEqual(
-        esppFairValue({ ...base, discountPct: 1 }),
-      );
-      expect(esppFairValue({ ...base, discountPct: -1 })).toEqual(
-        esppFairValue({ ...base, discountPct: 0 }),
-      );
+      expect(esppFairValue({ ...base, discountPct: 5 })).toEqual(esppFairValue({ ...base, discountPct: 1 }));
+      expect(esppFairValue({ ...base, discountPct: -1 })).toEqual(esppFairValue({ ...base, discountPct: 0 }));
     });
 
     it('decomposes into three components that sum to the whole', () => {
@@ -191,7 +187,9 @@ describe('ASC 718 public models — degenerate inputs', () => {
   describe('RSU market value', () => {
     it('ignores the dividend discount for a protected award, or a zero yield or term', () => {
       // Three separate reasons to skip the discount, each on its own arm.
-      expect(rsuMarketFairValue(30, { dividendProtected: true, dividendYield: 0.05, vestingYears: 4 })).toBe(30);
+      expect(rsuMarketFairValue(30, { dividendProtected: true, dividendYield: 0.05, vestingYears: 4 })).toBe(
+        30,
+      );
       expect(rsuMarketFairValue(30, { dividendYield: 0, vestingYears: 4 })).toBe(30);
       expect(rsuMarketFairValue(30, { dividendYield: 0.05, vestingYears: 0 })).toBe(30);
       expect(rsuMarketFairValue(30)).toBe(30);

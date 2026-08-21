@@ -126,7 +126,15 @@ const FAST = 400;
 const MESSAGE = { to: 'client@example.com', subject: 'Your 409A is ready', body: 'Sign in to view it.' };
 
 /** The eight-step happy path: greeting, EHLO, MAIL, RCPT, DATA, dot, QUIT. */
-const PLAIN_SCRIPT = ['220 mail.test ESMTP', '250-mail.test\r\n250 SIZE', '250 ok', '250 ok', '354 go', '250 queued', '221 bye'];
+const PLAIN_SCRIPT = [
+  '220 mail.test ESMTP',
+  '250-mail.test\r\n250 SIZE',
+  '250 ok',
+  '250 ok',
+  '354 go',
+  '250 queued',
+  '221 bye',
+];
 
 /**
  * `open.size` settles a tick after the client destroys its end. Waiting for the
@@ -161,7 +169,12 @@ describe('sendSmtp — the conversation', () => {
     // reading `MAIL FROM:<N409 <no-reply@…>>` rejects the whole transaction.
     const server = await fakeServer({ script: PLAIN_SCRIPT });
     await sendSmtp(
-      { host: '127.0.0.1', port: server.port, from: 'N409 Valuations <no-reply@n409.local>', timeoutMs: FAST },
+      {
+        host: '127.0.0.1',
+        port: server.port,
+        from: 'N409 Valuations <no-reply@n409.local>',
+        timeoutMs: FAST,
+      },
       { ...MESSAGE, to: 'Ada Lovelace <ada@example.com>' },
     );
     expect(server.lines[1]).toBe('MAIL FROM:<no-reply@n409.local>');
@@ -207,7 +220,13 @@ describe('sendSmtp — the conversation', () => {
     // AUTH, which would fail delivery that would otherwise have worked.
     const server = await fakeServer({ script: PLAIN_SCRIPT });
     await sendSmtp(
-      { host: '127.0.0.1', port: server.port, user: 'postmaster', from: 'no-reply@n409.local', timeoutMs: FAST },
+      {
+        host: '127.0.0.1',
+        port: server.port,
+        user: 'postmaster',
+        from: 'no-reply@n409.local',
+        timeoutMs: FAST,
+      },
       MESSAGE,
     );
     expect(server.lines).not.toContain('AUTH LOGIN');
@@ -229,7 +248,10 @@ describe('sendSmtp — the conversation', () => {
     script[3] = '251 User not local; will forward to <ada@elsewhere.example>';
     const server = await fakeServer({ script });
     await expect(
-      sendSmtp({ host: '127.0.0.1', port: server.port, from: 'no-reply@n409.local', timeoutMs: FAST }, MESSAGE),
+      sendSmtp(
+        { host: '127.0.0.1', port: server.port, from: 'no-reply@n409.local', timeoutMs: FAST },
+        MESSAGE,
+      ),
     ).resolves.toBeUndefined();
   });
 
@@ -414,7 +436,10 @@ describe('sendSmtp — the socket', () => {
     // throws above its own `try` and the `finally { dialogue.end() }` never runs.
     const server = await fakeServer({ script: ['421 too many connections'] });
     await expect(
-      sendSmtp({ host: '127.0.0.1', port: server.port, from: 'no-reply@n409.local', timeoutMs: FAST }, MESSAGE),
+      sendSmtp(
+        { host: '127.0.0.1', port: server.port, from: 'no-reply@n409.local', timeoutMs: FAST },
+        MESSAGE,
+      ),
     ).rejects.toThrow(/unexpected greeting/);
     expect(await settled(server.leaked, 0)).toBe(0);
   });
@@ -424,7 +449,10 @@ describe('sendSmtp — the socket', () => {
     // from the inactivity timeout rather than from a reply.
     const server = await fakeServer({ script: [], silent: true });
     await expect(
-      sendSmtp({ host: '127.0.0.1', port: server.port, from: 'no-reply@n409.local', timeoutMs: FAST }, MESSAGE),
+      sendSmtp(
+        { host: '127.0.0.1', port: server.port, from: 'no-reply@n409.local', timeoutMs: FAST },
+        MESSAGE,
+      ),
     ).rejects.toThrow(/timeout/i);
     expect(await settled(server.leaked, 0)).toBe(0);
   });
@@ -434,7 +462,10 @@ describe('sendSmtp — the socket', () => {
     script[3] = '550 no such user';
     const server = await fakeServer({ script });
     await expect(
-      sendSmtp({ host: '127.0.0.1', port: server.port, from: 'no-reply@n409.local', timeoutMs: FAST }, MESSAGE),
+      sendSmtp(
+        { host: '127.0.0.1', port: server.port, from: 'no-reply@n409.local', timeoutMs: FAST },
+        MESSAGE,
+      ),
     ).rejects.toThrow(/RCPT failed/);
     expect(await settled(server.leaked, 0)).toBe(0);
   });
@@ -443,7 +474,10 @@ describe('sendSmtp — the socket', () => {
     const server = await fakeServer({ script: ['554 no service here'] });
     for (let i = 0; i < 5; i++) {
       await expect(
-        sendSmtp({ host: '127.0.0.1', port: server.port, from: 'no-reply@n409.local', timeoutMs: FAST }, MESSAGE),
+        sendSmtp(
+          { host: '127.0.0.1', port: server.port, from: 'no-reply@n409.local', timeoutMs: FAST },
+          MESSAGE,
+        ),
       ).rejects.toThrow();
     }
     expect(await settled(server.leaked, 0)).toBe(0);
@@ -501,7 +535,10 @@ describe('the message the server is handed', () => {
     servers.push({ server, open });
     await new Promise<void>((res) => server.listen(0, '127.0.0.1', res));
     const port = (server.address() as net.AddressInfo).port;
-    await sendSmtp({ host: '127.0.0.1', port, from: 'N409 <no-reply@n409.local>', timeoutMs: FAST, ...opts }, email);
+    await sendSmtp(
+      { host: '127.0.0.1', port, from: 'N409 <no-reply@n409.local>', timeoutMs: FAST, ...opts },
+      email,
+    );
     return body;
   }
 
@@ -516,7 +553,11 @@ describe('the message the server is handed', () => {
   it('carries the List-Unsubscribe header when one was built', async () => {
     const body = await captureBody({
       ...MESSAGE,
-      listUnsubscribe: { url: 'https://app.example.com/u/tok', mailto: 'mailto:no-reply@n409.local', oneClick: true },
+      listUnsubscribe: {
+        url: 'https://app.example.com/u/tok',
+        mailto: 'mailto:no-reply@n409.local',
+        oneClick: true,
+      },
     });
     expect(body).toContain('https://app.example.com/u/tok');
     expect(body).toContain('List-Unsubscribe-Post');

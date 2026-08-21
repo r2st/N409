@@ -193,9 +193,7 @@ export function ordinal(n: number): string {
   const i = Math.trunc(n);
   const abs = Math.abs(i);
   const suffix =
-    abs % 100 >= 11 && abs % 100 <= 13
-      ? 'th'
-      : ({ 1: 'st', 2: 'nd', 3: 'rd' }[abs % 10] ?? 'th');
+    abs % 100 >= 11 && abs % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[abs % 10] ?? 'th');
   return `${i}${suffix}`;
 }
 

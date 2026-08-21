@@ -258,7 +258,11 @@ describe('TtlCache tags', () => {
     // The read-through case: the tag is a field of the row, so it cannot be
     // supplied at call time — only derived once the load resolves.
     const cache = new TtlCache<{ id: string }>({ ttlMs: 10_000 });
-    await cache.getOrLoad('subdomain:acme', async () => ({ id: 'A' }), (v) => [`partner:${v.id}`]);
+    await cache.getOrLoad(
+      'subdomain:acme',
+      async () => ({ id: 'A' }),
+      (v) => [`partner:${v.id}`],
+    );
     expect(cache.get('subdomain:acme')).toEqual({ id: 'A' });
     cache.invalidateTag('partner:A');
     expect(cache.get('subdomain:acme')).toBeUndefined();
@@ -315,5 +319,4 @@ describe('TtlCache tags', () => {
     await started;
     expect(cache.get('key:nobody')).toBeNull();
   });
-})
-;
+});

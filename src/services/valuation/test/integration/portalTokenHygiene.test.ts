@@ -149,9 +149,7 @@ describe.skipIf(!dbUp)('portal token hygiene', () => {
         [partnerId],
       );
       expect(rows.length).toBeGreaterThan(0);
-      expect(rows.map((r) => r.token_hash)).toContain(
-        createHash('sha256').update(token).digest('hex'),
-      );
+      expect(rows.map((r) => r.token_hash)).toContain(createHash('sha256').update(token).digest('hex'));
       for (const row of rows) expect(row.token_hash).not.toBe(token);
     });
 

@@ -220,10 +220,7 @@ async function scan(
           // the address (0163). Uses this sweep's own client rather than taking
           // a second one from the pool.
           const bounce = await recordSendFailure(db, email, err).catch(() => null);
-          deps.log?.warn(
-            { err, emailId: email.id, bounce },
-            'auto email delivery failed; left in outbox',
-          );
+          deps.log?.warn({ err, emailId: email.id, bounce }, 'auto email delivery failed; left in outbox');
         }
       }
     }

@@ -57,11 +57,7 @@ export interface RollforwardRunRow {
 
 /** The one nullable `numeric`; the rest are NOT NULL and never arrive as null. */
 type NullableNumeric = 'new_round_post_money';
-type RequiredNumeric =
-  | 'years_elapsed'
-  | 'prior_equity_value'
-  | 'rolled_equity_value'
-  | 'annual_accretion';
+type RequiredNumeric = 'years_elapsed' | 'prior_equity_value' | 'rolled_equity_value' | 'annual_accretion';
 
 /**
  * A row as the pg driver actually hands it back: every `numeric` is a string.
@@ -83,8 +79,7 @@ function hydrate(row: RawRollforwardRunRow): RollforwardRunRow {
     prior_equity_value: Number(row.prior_equity_value),
     rolled_equity_value: Number(row.rolled_equity_value),
     annual_accretion: Number(row.annual_accretion),
-    new_round_post_money:
-      row.new_round_post_money === null ? null : Number(row.new_round_post_money),
+    new_round_post_money: row.new_round_post_money === null ? null : Number(row.new_round_post_money),
   };
 }
 

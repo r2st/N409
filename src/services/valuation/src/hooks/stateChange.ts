@@ -169,10 +169,7 @@ async function deliverTransitionMessages(
   }
 
   const recipients = await resolveRecipients(deps.pool, valuation, [
-    ...new Set<Recipient>([
-      ...emailSpecs.map((s) => s.recipient),
-      ...notifySpecs.map((s) => s.recipient),
-    ]),
+    ...new Set<Recipient>([...emailSpecs.map((s) => s.recipient), ...notifySpecs.map((s) => s.recipient)]),
   ]);
 
   // Per-user channel preferences (P2 #11): the workflow templateKey / notify

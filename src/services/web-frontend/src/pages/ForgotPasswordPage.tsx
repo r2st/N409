@@ -12,10 +12,7 @@ export function ForgotPasswordPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const { errorFor, blurHandler, handleSubmit } = useFormValidation(
-    { email },
-    { email: emailRule('email') },
-  );
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation({ email }, { email: emailRule('email') });
 
   const submit = handleSubmit(async () => {
     setError(null);

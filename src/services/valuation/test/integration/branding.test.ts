@@ -345,9 +345,7 @@ describe.skipIf(!dbUp)('branding caching', () => {
     });
 
     expect((await get('/api/v1/branding', authHeader(mine.token))).json().branding.name).toBe('Mine');
-    expect((await get('/api/v1/branding', authHeader(theirs.token))).json().branding.name).toBe(
-      'Theirs',
-    );
+    expect((await get('/api/v1/branding', authHeader(theirs.token))).json().branding.name).toBe('Theirs');
   });
 
   it('still 404s an unknown slug, and does so from the cached miss', async () => {

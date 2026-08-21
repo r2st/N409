@@ -1,9 +1,4 @@
-import {
-  asConvertedShares,
-  investedAmount,
-  liquidationPreference,
-  type CapTableEntry,
-} from './capTable.js';
+import { asConvertedShares, investedAmount, liquidationPreference, type CapTableEntry } from './capTable.js';
 import type { ComputedSheet } from './workbook.js';
 import { OVERWRITE_FIELDS_BY_KEY } from './overwrites.js';
 

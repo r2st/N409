@@ -145,9 +145,7 @@ describe('roll-forward bridge', () => {
   });
 
   it('drops a run whose calibration trail is empty', () => {
-    expect(
-      rollforwardExhibit({}, { ...CTX, rollforward: run({ calibration_steps: [] }) }),
-    ).toBeNull();
+    expect(rollforwardExhibit({}, { ...CTX, rollforward: run({ calibration_steps: [] }) })).toBeNull();
   });
 
   it('reads a date the driver handed back as a Date or as a string alike', () => {
@@ -161,10 +159,7 @@ describe('roll-forward bridge', () => {
   });
 
   it('omits the prior engagement number when there is none', () => {
-    const html = rollforwardExhibit(
-      {},
-      { ...CTX, rollforward: run({ prior_valuation_number: null }) },
-    )!.html;
+    const html = rollforwardExhibit({}, { ...CTX, rollforward: run({ prior_valuation_number: null }) })!.html;
     expect(html).toContain('valued as of 2025-06-30');
     // No stray separator left where the number would have been.
     expect(html).not.toContain(', valued as of');
@@ -194,9 +189,7 @@ describe('roll-forward bridge', () => {
       {
         ...CTX,
         rollforward: run({
-          calibration_steps: [
-            { step: 'time_accretion', value: 12_500_000, annual_rate: 0.4, years: 2.5 },
-          ],
+          calibration_steps: [{ step: 'time_accretion', value: 12_500_000, annual_rate: 0.4, years: 2.5 }],
         }),
       },
     )!.html;

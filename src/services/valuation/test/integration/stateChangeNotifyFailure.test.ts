@@ -188,10 +188,10 @@ describe.skipIf(!dbUp)('state change notification failures', () => {
     // both specs are skipped for want of a recipient and the injected failure
     // never runs.
     const id = await newValuation();
-    await pool.query(
-      `UPDATE valuations SET state = 'completed', assigned_reviewer_id = $2 WHERE id = $1`,
-      [id, ops.id],
-    );
+    await pool.query(`UPDATE valuations SET state = 'completed', assigned_reviewer_id = $2 WHERE id = $1`, [
+      id,
+      ops.id,
+    ]);
     failWhen = (sql) => sql.includes('INSERT INTO notifications');
 
     const res = await advance(id);
@@ -210,10 +210,10 @@ describe.skipIf(!dbUp)('state change notification failures', () => {
     // The control for the pair above: without it, the assertions there are also
     // satisfied by a hook that never addressed the reviewer at all.
     const id = await newValuation();
-    await pool.query(
-      `UPDATE valuations SET state = 'completed', assigned_reviewer_id = $2 WHERE id = $1`,
-      [id, ops.id],
-    );
+    await pool.query(`UPDATE valuations SET state = 'completed', assigned_reviewer_id = $2 WHERE id = $1`, [
+      id,
+      ops.id,
+    ]);
 
     expect((await advance(id)).statusCode).toBe(200);
     const queued = await outboxFor(id);

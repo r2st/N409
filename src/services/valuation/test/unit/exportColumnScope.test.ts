@@ -78,12 +78,7 @@ describe('export column scope', () => {
 
     it('leaves an ops XLSX projection whole', () => {
       const out = exportColumnsVisibleTo(XLSX_SHAPE, principal(['admin']));
-      expect(out.map((c) => c.key)).toEqual([
-        'number',
-        'company_name',
-        'owner_email',
-        'reviewer_email',
-      ]);
+      expect(out.map((c) => c.key)).toEqual(['number', 'company_name', 'owner_email', 'reviewer_email']);
     });
   });
 });

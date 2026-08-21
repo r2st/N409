@@ -91,5 +91,4 @@ export const boundedPositive = () => finitePositive().max(MAX_QUANTITY, TOO_LARG
  * net-working-capital line can be either way round. The sign stays free; only
  * the magnitude is bounded, and for the same reason as above.
  */
-export const boundedSigned = () =>
-  finite().min(-MAX_QUANTITY, TOO_LARGE).max(MAX_QUANTITY, TOO_LARGE);
+export const boundedSigned = () => finite().min(-MAX_QUANTITY, TOO_LARGE).max(MAX_QUANTITY, TOO_LARGE);

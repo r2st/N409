@@ -29,7 +29,10 @@ vi.mock('../src/lib/auth', () => ({ useAuth: () => ({ user: mockUser }) }));
 /** Every panel becomes a div that prints exactly the props it was given. */
 const stub = (name: string) => ({
   [name]: (props: Record<string, unknown>) => (
-    <div data-testid={name} data-props={JSON.stringify(props, (_k, v) => (typeof v === 'function' ? 'fn' : v))} />
+    <div
+      data-testid={name}
+      data-props={JSON.stringify(props, (_k, v) => (typeof v === 'function' ? 'fn' : v))}
+    />
   ),
 });
 
@@ -43,14 +46,8 @@ vi.mock('../src/components/valuation/AiPanel', () => stub('AiPanel'));
 vi.mock('../src/components/valuation/TasksPanel', () => stub('TasksPanel'));
 vi.mock('../src/components/valuation/CalculationPanel', () => stub('CalculationPanel'));
 
-const {
-  AiTab,
-  CalculationsTab,
-  DocumentsTab,
-  FinancialModelTab,
-  ParamsTab,
-  TasksTab,
-} = await import('../src/pages/valuation/PipelineTabs');
+const { AiTab, CalculationsTab, DocumentsTab, FinancialModelTab, ParamsTab, TasksTab } =
+  await import('../src/pages/valuation/PipelineTabs');
 
 const VALUATION_ID = '01JZZZZZZZZZZZZZZZZZZZZZZZ';
 
@@ -78,7 +75,8 @@ function renderTab(element: React.ReactNode, v: Valuation = valuation()) {
   );
 }
 
-const propsOf = (name: string) => JSON.parse(screen.getByTestId(name).dataset.props!) as Record<string, unknown>;
+const propsOf = (name: string) =>
+  JSON.parse(screen.getByTestId(name).dataset.props!) as Record<string, unknown>;
 
 beforeEach(() => {
   mockUser!.roles = ['admin'];
@@ -129,10 +127,9 @@ describe('PipelineTabs — who may edit', () => {
     mockUser!.roles = ['client'];
     renderTab(<DocumentsTab />);
     // The last render is the one queried; both are mounted, so read the newest.
-    expect(screen.getAllByTestId('DocumentsPanel').map((el) => JSON.parse(el.dataset.props!).canReview)).toEqual([
-      true,
-      false,
-    ]);
+    expect(
+      screen.getAllByTestId('DocumentsPanel').map((el) => JSON.parse(el.dataset.props!).canReview),
+    ).toEqual([true, false]);
   });
 });
 

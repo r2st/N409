@@ -172,10 +172,7 @@ export function ComparablesTab() {
       'Could not include the comparable.',
     );
 
-  const excludeValidation = useFormValidation(
-    { reason },
-    { reason: required('reason', 'A reason') },
-  );
+  const excludeValidation = useFormValidation({ reason }, { reason: required('reason', 'A reason') });
 
   const exclude = excludeValidation.handleSubmit(async () => {
     if (!excluding) return;
@@ -231,30 +228,27 @@ export function ComparablesTab() {
   const discover = async () => {
     setFeedNote(null);
     setAiPhase('finding');
-    await run(
-      async () => {
-        try {
-          await api(`/valuations/${valuation.id}/ai/comp_selection`, { method: 'POST' });
-          setAiPhase('applying');
-          const res = await api<CompSelectionApplied>(
-            `/valuations/${valuation.id}/ai/comp_selection/apply`,
-            { method: 'POST', body: {} },
-          );
-          const { selected, excluded, unusable } = res.applied;
-          setFeedNote(
-            `Applied the AI peer set — ${selected} ${selected === 1 ? 'company' : 'companies'} included, ` +
-              `${excluded} set aside` +
-              (unusable > 0
-                ? `, ${unusable} of those chosen by the agent but carrying no market figures to strike a ` +
-                  `multiple on.`
-                : '.'),
-          );
-        } finally {
-          setAiPhase(null);
-        }
-      },
-      'Could not run the AI comparable agent.',
-    );
+    await run(async () => {
+      try {
+        await api(`/valuations/${valuation.id}/ai/comp_selection`, { method: 'POST' });
+        setAiPhase('applying');
+        const res = await api<CompSelectionApplied>(`/valuations/${valuation.id}/ai/comp_selection/apply`, {
+          method: 'POST',
+          body: {},
+        });
+        const { selected, excluded, unusable } = res.applied;
+        setFeedNote(
+          `Applied the AI peer set — ${selected} ${selected === 1 ? 'company' : 'companies'} included, ` +
+            `${excluded} set aside` +
+            (unusable > 0
+              ? `, ${unusable} of those chosen by the agent but carrying no market figures to strike a ` +
+                `multiple on.`
+              : '.'),
+        );
+      } finally {
+        setAiPhase(null);
+      }
+    }, 'Could not run the AI comparable agent.');
   };
 
   const refresh = async () => {
@@ -445,8 +439,8 @@ export function ComparablesTab() {
       {data.comparables.length === 0 ? (
         <div className="mt-6">
           <EmptyState title="No comparables recorded">
-            Run a screen to pull the guideline set from the reference universe, let the AI agent find peers, or
-            add one by hand. Until then the market approach uses the summarised multiples from the AI
+            Run a screen to pull the guideline set from the reference universe, let the AI agent find peers,
+            or add one by hand. Until then the market approach uses the summarised multiples from the AI
             comp-selection run.
           </EmptyState>
         </div>
@@ -543,10 +537,7 @@ export function ComparablesTab() {
           className="mt-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
           noValidate
         >
-          <Field
-            label="Why is this company not comparable?"
-            error={excludeValidation.errorFor('reason')}
-          >
+          <Field label="Why is this company not comparable?" error={excludeValidation.errorFor('reason')}>
             <TextInput
               required
               autoFocus

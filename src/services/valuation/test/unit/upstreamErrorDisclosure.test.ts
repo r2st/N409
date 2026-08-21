@@ -27,9 +27,7 @@ afterEach(() => {
 
 async function failWith(res: Response): Promise<InternalServiceError> {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(res));
-  const err = await postJson('engine', 'http://engine/compute', {}, { retries: 0 }).catch(
-    (e: unknown) => e,
-  );
+  const err = await postJson('engine', 'http://engine/compute', {}, { retries: 0 }).catch((e: unknown) => e);
   expect(err).toBeInstanceOf(InternalServiceError);
   return err as InternalServiceError;
 }
@@ -86,10 +84,7 @@ describe('upstream error disclosure', () => {
   });
 
   it('withholds a transport failure that names internal topology', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED 10.0.1.4:3003')),
-    );
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED 10.0.1.4:3003')));
     const err = (await postJson('engine', 'http://engine/compute', {}, { retries: 0 }).catch(
       (e: unknown) => e,
     )) as InternalServiceError;
@@ -104,9 +99,12 @@ describe('upstream error disclosure', () => {
     const timeout = new Error('The operation timed out.');
     timeout.name = 'TimeoutError'; // what AbortSignal.timeout rejects with
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(timeout));
-    const err = (await postJson('engine', 'http://engine/compute', {}, { retries: 0, timeoutMs: 5_000 }).catch(
-      (e: unknown) => e,
-    )) as InternalServiceError;
+    const err = (await postJson(
+      'engine',
+      'http://engine/compute',
+      {},
+      { retries: 0, timeoutMs: 5_000 },
+    ).catch((e: unknown) => e)) as InternalServiceError;
 
     expect(err.abandoned).toBe(true);
     expect(err.opaque).toBe(false);

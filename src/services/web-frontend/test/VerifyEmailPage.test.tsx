@@ -120,8 +120,6 @@ describe('VerifyEmailPage', () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('offline'));
     renderPage();
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Something went wrong — please try again.',
-    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong — please try again.');
   });
 });

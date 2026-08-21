@@ -73,21 +73,14 @@ describe.skipIf(!dbUp)('email delivery tracking', () => {
   }
 
   async function reread(id: string): Promise<EmailOutboxRow> {
-    const { rows } = await ctx.pool.query<EmailOutboxRow>(
-      'SELECT * FROM email_outbox WHERE id = $1',
-      [id],
-    );
+    const { rows } = await ctx.pool.query<EmailOutboxRow>('SELECT * FROM email_outbox WHERE id = $1', [id]);
     return rows[0]!;
   }
 
   describe('a permanent rejection of the recipient', () => {
     it('stops the ladder and suppresses the address', async () => {
       const email = await seed({ toEmail: 'gone@test.example.com' });
-      const err = new FakeSmtpError(
-        'SMTP RCPT failed: 550 5.1.1 Recipient address rejected',
-        'rcpt',
-        550,
-      );
+      const err = new FakeSmtpError('SMTP RCPT failed: 550 5.1.1 Recipient address rejected', 'rcpt', 550);
 
       await failAndMakeDue(email.id, err.message);
       const kind = await recordSendFailure(ctx.pool, email, err);

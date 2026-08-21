@@ -131,17 +131,13 @@ export function registerEmailDeliveryRoutes(
     };
   });
 
-  app.get(
-    '/api/v1/admin/email-outbox/:id/delivery-events',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      if (!isOps(principal)) throw problems.forbidden('Delivery events are operations-only');
-      const { id } = req.params as { id: string };
-      if (!isUlid(id)) throw problems.badRequest('Not a message id');
-      return { events: await listDeliveryEvents(deps.pool, id) };
-    },
-  );
+  app.get('/api/v1/admin/email-outbox/:id/delivery-events', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden('Delivery events are operations-only');
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.badRequest('Not a message id');
+    return { events: await listDeliveryEvents(deps.pool, id) };
+  });
 
   /* ---------------------------------------------------------------- *
    * The suppression list
@@ -162,11 +158,9 @@ export function registerEmailDeliveryRoutes(
 
   app.post('/api/v1/admin/email/suppressions', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!canManageUsers(principal))
-      throw problems.forbidden('Only administrators can suppress an address');
+    if (!canManageUsers(principal)) throw problems.forbidden('Only administrators can suppress an address');
     const parsed = SuppressBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid suppression', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid suppression', { errors: parsed.error.issues });
 
     await suppressAddress(deps.pool, {
       address: parsed.data.address,

@@ -177,8 +177,7 @@ async function announce(
           // How long it went on, which is the figure a post-mortem wants and
           // the one nothing else records once the queue drains.
           open_minutes: Math.round(
-            (new Date(row.resolved_at ?? Date.now()).getTime() - new Date(row.opened_at).getTime()) /
-              60_000,
+            (new Date(row.resolved_at ?? Date.now()).getTime() - new Date(row.opened_at).getTime()) / 60_000,
           ),
         },
       });

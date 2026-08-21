@@ -106,9 +106,7 @@ describe('ParamsPanel — field bounds on the methodology form', () => {
     await user.type(screen.getByLabelText('Asset approach weight'), '2');
     await user.click(saveButton());
 
-    expect(messageFor('Asset approach weight')).toHaveTextContent(
-      'Asset approach weight must be at most 1.',
-    );
+    expect(messageFor('Asset approach weight')).toHaveTextContent('Asset approach weight must be at most 1.');
     expect(paramsPatches(patched)).toHaveLength(0);
   });
 
@@ -119,9 +117,7 @@ describe('ParamsPanel — field bounds on the methodology form', () => {
     await user.type(screen.getByLabelText('OPM backsolve weight'), '-1');
     await user.click(saveButton());
 
-    expect(messageFor('OPM backsolve weight')).toHaveTextContent(
-      'OPM backsolve weight must be at least 0.',
-    );
+    expect(messageFor('OPM backsolve weight')).toHaveTextContent('OPM backsolve weight must be at least 0.');
     expect(paramsPatches(patched)).toHaveLength(0);
   });
 
@@ -152,9 +148,7 @@ describe('ParamsPanel — field bounds on the methodology form', () => {
     await user.type(await screen.findByTestId('control-premium'), '20');
     await user.click(saveButton());
 
-    expect(messageFor('Control premium (fraction)')).toHaveTextContent(
-      'Control premium must be at most 10.',
-    );
+    expect(messageFor('Control premium (fraction)')).toHaveTextContent('Control premium must be at most 10.');
     expect(paramsPatches(patched)).toHaveLength(0);
   });
 
@@ -166,9 +160,7 @@ describe('ParamsPanel — field bounds on the methodology form', () => {
     await user.type(screen.getByLabelText('Synergy share (fraction)'), '1');
     await user.click(saveButton());
 
-    expect(messageFor('Synergy share (fraction)')).toHaveTextContent(
-      'Synergy share must be at most 0.99.',
-    );
+    expect(messageFor('Synergy share (fraction)')).toHaveTextContent('Synergy share must be at most 0.99.');
     expect(paramsPatches(patched)).toHaveLength(0);
   });
 
@@ -231,9 +223,7 @@ describe('ParamsPanel — field bounds on the methodology form', () => {
 
     await user.clear(screen.getByLabelText('Runway (months)'));
     await user.type(screen.getByLabelText('Runway (months)'), '24');
-    await waitFor(() =>
-      expect(screen.queryByText('Runway must be at most 600.')).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByText('Runway must be at most 600.')).not.toBeInTheDocument());
   });
 
   it('still saves a methodology whose every figure is in range', async () => {
@@ -334,9 +324,7 @@ describe('ParamsPanel — the boxes the methodology form does not save', () => {
     await user.type(screen.getByLabelText('Scenario 1 years'), '3');
     await user.click(screen.getByRole('button', { name: /save scenarios/i }));
 
-    await waitFor(() =>
-      expect(patched.filter((p) => p.path.includes('/engine-inputs'))).toHaveLength(1),
-    );
+    await waitFor(() => expect(patched.filter((p) => p.path.includes('/engine-inputs'))).toHaveLength(1));
     expect(patched.find((p) => p.path.includes('/engine-inputs'))!.body).toMatchObject({
       hybrid: { opm_weight: 0.5, pwerm_weight: 0.5 },
     });

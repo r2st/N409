@@ -38,7 +38,9 @@ function hydrate(row: RawValuationTagRow): ValuationTagRow {
     confidence: row.confidence === null ? null : Number(row.confidence),
     // jsonb round-trips as whatever was written; a row written before a bound
     // existed, or by hand, must not hand a caller a non-array to map over.
-    evidence: Array.isArray(row.evidence) ? row.evidence.filter((e): e is string => typeof e === 'string') : [],
+    evidence: Array.isArray(row.evidence)
+      ? row.evidence.filter((e): e is string => typeof e === 'string')
+      : [],
   };
 }
 

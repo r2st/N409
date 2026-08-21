@@ -102,9 +102,7 @@ function mockServer(options: ServerOptions = {}) {
 
     if (path.startsWith('/valuations')) return json({ valuations: options.valuations ?? [] });
     if (path === '/partners/mine') {
-      return options.partner === undefined
-        ? problem(404, 'No partner')
-        : json({ partner: options.partner });
+      return options.partner === undefined ? problem(404, 'No partner') : json({ partner: options.partner });
     }
     if (method === 'POST' && path.endsWith('/tokens')) {
       const minted = makeToken({ id: `tok-${tokens.length}`, name: String(body?.name) });
@@ -410,9 +408,7 @@ describe('PartnerPortalPage — API tokens', () => {
     await user.click(screen.getByRole('button', { name: 'Create token' }));
 
     await screen.findByText('boom');
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Create token' })).not.toBeDisabled(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create token' })).not.toBeDisabled());
   });
 
   /** Revoking is destructive and irreversible, so it asks first. */

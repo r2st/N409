@@ -141,9 +141,7 @@ describe('every deliverable’s own vocabulary', () => {
     // The suppressions — a disabled kind row is how a deliverable says "not
     // this section", and reading them as enabled would make the sweep below
     // demand a home for chapters nobody drafts.
-    expect(rows.some((r) => r.kind === 'qsbs' && r.section_key === 'dlom_analysis' && !r.enabled)).toBe(
-      true,
-    );
+    expect(rows.some((r) => r.kind === 'qsbs' && r.section_key === 'dlom_analysis' && !r.enabled)).toBe(true);
   });
 
   /**
@@ -160,8 +158,10 @@ describe('every deliverable’s own vocabulary', () => {
       for (const { key } of resolveNarrativeSections(rows, kind)) {
         const target = Object.hasOwn(map, key) ? map[key] : key;
         if (target === null) continue;
-        expect(chapters.has(target!), `${kind}: drafted “${key}” → “${target}”, which it has no chapter for`)
-          .toBe(true);
+        expect(
+          chapters.has(target!),
+          `${kind}: drafted “${key}” → “${target}”, which it has no chapter for`,
+        ).toBe(true);
       }
     }
   });
@@ -407,9 +407,10 @@ describe('every deliverable’s own vocabulary', () => {
       );
       const written = out.applied.filter((a) => a.outcome === 'written' || a.outcome === 'appended');
       expect(written.length, `${kind} had no chapter drafted into`).toBeGreaterThan(0);
-      expect(out.applied.filter((a) => a.outcome === 'unmatched'), `${kind} discarded a section`).toEqual(
-        [],
-      );
+      expect(
+        out.applied.filter((a) => a.outcome === 'unmatched'),
+        `${kind} discarded a section`,
+      ).toEqual([]);
     }
   });
 });

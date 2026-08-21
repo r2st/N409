@@ -563,7 +563,12 @@ export async function listValuations(
   const listParams = [...params];
   if (cursor) {
     listParams.push(cursor.at, cursor.id);
-    const predicate = keysetAfterSql('created_at', 'id', `$${listParams.length - 1}`, `$${listParams.length}`);
+    const predicate = keysetAfterSql(
+      'created_at',
+      'id',
+      `$${listParams.length - 1}`,
+      `$${listParams.length}`,
+    );
     listWhere = whereSql ? `${whereSql} AND ${predicate}` : `WHERE ${predicate}`;
   }
   if (cursor) {

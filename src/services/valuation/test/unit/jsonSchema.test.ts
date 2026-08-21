@@ -148,7 +148,14 @@ describe('isOptionalSchema', () => {
   });
 
   it('reads through a refinement to the wrapper underneath it', () => {
-    expect(isOptionalSchema(z.string().optional().refine(() => true))).toBe(true);
+    expect(
+      isOptionalSchema(
+        z
+          .string()
+          .optional()
+          .refine(() => true),
+      ),
+    ).toBe(true);
     expect(isOptionalSchema(z.string().refine(() => true))).toBe(false);
   });
 });

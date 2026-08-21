@@ -29,9 +29,7 @@ export function StagePage() {
 
   const { fromCents, toCents } = stagePriceRangeCents(stage);
   const price =
-    fromCents === toCents
-      ? `${formatUsd(fromCents)}`
-      : `${formatUsd(fromCents)} – ${formatUsd(toCents)}`;
+    fromCents === toCents ? `${formatUsd(fromCents)}` : `${formatUsd(fromCents)} – ${formatUsd(toCents)}`;
   const others = FUNDING_STAGES.filter((s) => s.slug !== stage.slug);
 
   return (
@@ -74,8 +72,8 @@ export function StagePage() {
               Start my valuation
             </Link>
             <span className="tnum text-sm text-chrome-dim">
-              typically <span className="font-semibold text-chrome-fg">{price}</span> · first draft in
-              24 hours
+              typically <span className="font-semibold text-chrome-fg">{price}</span> · first draft in 24
+              hours
             </span>
           </div>
           <ul className="mt-10 flex flex-wrap gap-2">
@@ -113,12 +111,10 @@ export function StagePage() {
           <div className="grid gap-10 lg:grid-cols-[1fr_1.2fr]">
             <div>
               <div className="overline text-brass-600">What it costs</div>
-              <h2 className="mt-2 font-display text-2xl font-semibold text-ink-900">
-                {stage.name} pricing
-              </h2>
+              <h2 className="mt-2 font-display text-2xl font-semibold text-ink-900">{stage.name} pricing</h2>
               <p className="mt-3 max-w-md text-sm leading-relaxed text-ink-600">
-                One flat price per report, set by the capital you have raised rather than by a
-                subscription. Express delivery and a QSBS attestation letter are optional add-ons.
+                One flat price per report, set by the capital you have raised rather than by a subscription.
+                Express delivery and a QSBS attestation letter are optional add-ons.
               </p>
               <dl className="mt-6 grid max-w-md grid-cols-2 gap-4 text-sm">
                 <div>
@@ -153,9 +149,7 @@ export function StagePage() {
       {/* FAQ */}
       <section className="mx-auto max-w-3xl px-5 py-16">
         <div className="overline text-brass-600">FAQ</div>
-        <h2 className="mt-2 mb-8 font-display text-2xl font-semibold text-ink-900">
-          {stage.name} questions
-        </h2>
+        <h2 className="mt-2 mb-8 font-display text-2xl font-semibold text-ink-900">{stage.name} questions</h2>
         <FaqAccordion items={stage.faq} />
       </section>
 
@@ -186,9 +180,7 @@ export function StagePage() {
       {/* Bottom CTA */}
       <section className="ledger-grid border-t border-chrome-800 bg-chrome-900 text-chrome-fg">
         <div className="mx-auto max-w-4xl px-5 py-16 text-center">
-          <h2 className="font-display text-3xl font-semibold">
-            Get your {stage.name} 409A started
-          </h2>
+          <h2 className="font-display text-3xl font-semibold">Get your {stage.name} 409A started</h2>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
             <Link
               to="/register"

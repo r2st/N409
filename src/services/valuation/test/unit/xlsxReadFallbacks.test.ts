@@ -158,7 +158,9 @@ describe('number formats', () => {
   </sheetData></worksheet>`;
 
   const read = (styles: string | undefined) =>
-    readXlsx(build({ workbook, rels, styles, sheets: [{ path: 'xl/worksheets/sheet1.xml', data: sheet }] }))[0]!;
+    readXlsx(
+      build({ workbook, rels, styles, sheets: [{ path: 'xl/worksheets/sheet1.xml', data: sheet }] }),
+    )[0]!;
 
   it('treats a custom format containing date tokens as a date', () => {
     const styles = `<?xml version="1.0"?><styleSheet>
@@ -198,7 +200,12 @@ describe('cell contents', () => {
     build({
       workbook: `<?xml version="1.0"?><workbook><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>`,
       rels: `<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`,
-      sheets: [{ path: 'xl/worksheets/sheet1.xml', data: `<?xml version="1.0"?><worksheet><sheetData>${rows}</sheetData></worksheet>` }],
+      sheets: [
+        {
+          path: 'xl/worksheets/sheet1.xml',
+          data: `<?xml version="1.0"?><worksheet><sheetData>${rows}</sheetData></worksheet>`,
+        },
+      ],
     });
 
   it('reads a shared-string index that does not resolve as blank', () => {

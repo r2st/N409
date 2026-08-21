@@ -83,9 +83,7 @@ describe('RegisterPage', () => {
     expect(document.getElementById(box.getAttribute('aria-describedby')!)).toHaveTextContent(
       /at least 10 characters/i,
     );
-    expect(fetchSpy.mock.calls.filter(([u]) => String(u).includes('/auth/register'))).toHaveLength(
-      0,
-    );
+    expect(fetchSpy.mock.calls.filter(([u]) => String(u).includes('/auth/register'))).toHaveLength(0);
   });
 
   it('flags a malformed email on blur, before anything is submitted', async () => {
@@ -115,9 +113,7 @@ describe('RegisterPage', () => {
 
     expect(await screen.findByText('Work email is required.')).toBeInTheDocument();
     expect(screen.getByText('Password is required.')).toBeInTheDocument();
-    expect(fetchSpy.mock.calls.filter(([u]) => String(u).includes('/auth/register'))).toHaveLength(
-      0,
-    );
+    expect(fetchSpy.mock.calls.filter(([u]) => String(u).includes('/auth/register'))).toHaveLength(0);
   });
 
   it('registers, seeds the company hint, and lands in the guided funnel', async () => {

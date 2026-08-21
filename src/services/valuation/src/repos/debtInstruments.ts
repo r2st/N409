@@ -44,8 +44,7 @@ export interface DebtValuationRow {
 }
 
 /** See the note on `DebtValuationRow.valuation_date`. */
-const debtValuation = (row: DebtValuationRow): DebtValuationRow =>
-  calendarDateRow(row, 'valuation_date');
+const debtValuation = (row: DebtValuationRow): DebtValuationRow => calendarDateRow(row, 'valuation_date');
 
 export async function listInstruments(pool: pg.Pool): Promise<DebtInstrumentRow[]> {
   const { rows } = await pool.query<DebtInstrumentRow>(

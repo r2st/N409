@@ -150,9 +150,7 @@ describe.skipIf(!dbUp)('portfolio entity list bounds', () => {
     it('cuts deterministically, so two reads of one cap agree', async () => {
       const first = await listPortfolioEntities(ctx.pool, orgId, { limit: 2 });
       const again = await listPortfolioEntities(ctx.pool, orgId, { limit: 2 });
-      expect(again.entities.map((e) => e.valuation_id)).toEqual(
-        first.entities.map((e) => e.valuation_id),
-      );
+      expect(again.entities.map((e) => e.valuation_id)).toEqual(first.entities.map((e) => e.valuation_id));
     });
   });
 

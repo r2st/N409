@@ -775,11 +775,7 @@ function AutoEmailEditor({
             onBlur={blurHandler('delayHours')}
           />
         </Field>
-        <Field
-          label="Repeat every (hours)"
-          hint="Blank = send once"
-          error={errorFor('repeatHours')}
-        >
+        <Field label="Repeat every (hours)" hint="Blank = send once" error={errorFor('repeatHours')}>
           <TextInput
             type="number"
             min={1}

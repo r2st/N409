@@ -3,10 +3,7 @@ import { newUlid } from '@n409/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 import { decodeCursor } from '../../src/domain/pagination.js';
-import {
-  DELIVERIES_PAGE_MAX,
-  listDeliveries,
-} from '../../src/repos/partnerWebhooks.js';
+import { DELIVERIES_PAGE_MAX, listDeliveries } from '../../src/repos/partnerWebhooks.js';
 import { isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();

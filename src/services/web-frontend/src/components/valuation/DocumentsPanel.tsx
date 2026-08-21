@@ -313,11 +313,7 @@ export function DocumentsPanel({
               >
                 Download
               </Button>
-              <Button
-                variant="danger"
-                aria-label={`Delete ${doc.filename}`}
-                onClick={() => void remove(doc)}
-              >
+              <Button variant="danger" aria-label={`Delete ${doc.filename}`} onClick={() => void remove(doc)}>
                 Delete
               </Button>
             </li>

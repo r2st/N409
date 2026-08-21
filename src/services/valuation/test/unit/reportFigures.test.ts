@@ -305,14 +305,18 @@ describe('the 409A skeleton and the figures it names', () => {
       fillFigures(instantiateTemplate(template, vars), reportFigures(withMix(weight), 'USD'));
 
     it('says controlling where the weight sits on control-basis approaches', () => {
-      const html = body(0.2).sections.map((s) => s.html).join('');
+      const html = body(0.2)
+        .sections.map((s) => s.html)
+        .join('');
       expect(html).toContain('a marketable, controlling value of');
       expect(html).toContain('on a marketable, controlling basis');
       expect(html).toContain('allocated to a marketable, controlling common value of');
     });
 
     it('declines to, where a majority of the weight already produced a minority value', () => {
-      const html = body(0.75).sections.map((s) => s.html).join('');
+      const html = body(0.75)
+        .sections.map((s) => s.html)
+        .join('');
       expect(html).not.toContain('controlling value');
       expect(html).not.toContain('controlling basis');
       expect(html).toContain('a marketable value of');

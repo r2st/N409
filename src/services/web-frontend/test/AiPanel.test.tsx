@@ -47,28 +47,26 @@ interface Call {
   method: string;
 }
 
-function mockApi(
-  opts: { jobs?: () => Response; run?: () => Response; apply?: () => Response } = {},
-): Call[] {
+function mockApi(opts: { jobs?: () => Response; run?: () => Response; apply?: () => Response } = {}): Call[] {
   const calls: Call[] = [];
-  vi.spyOn(globalThis, 'fetch').mockImplementation(
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      const method = (init?.method ?? 'GET').toUpperCase();
-      calls.push({ url, method });
-      if (/\/ai\/extract\/apply$/.test(url)) return opts.apply ? opts.apply() : json({});
-      if (/\/ai\/[a-z_]+$/.test(url) && method === 'POST') return opts.run ? opts.run() : json({});
-      if (/\/ai$/.test(url)) return opts.jobs ? opts.jobs() : json({ jobs: [] });
-      return json({});
-    },
-  );
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const method = (init?.method ?? 'GET').toUpperCase();
+    calls.push({ url, method });
+    if (/\/ai\/extract\/apply$/.test(url)) return opts.apply ? opts.apply() : json({});
+    if (/\/ai\/[a-z_]+$/.test(url) && method === 'POST') return opts.run ? opts.run() : json({});
+    if (/\/ai$/.test(url)) return opts.jobs ? opts.jobs() : json({ jobs: [] });
+    return json({});
+  });
   return calls;
 }
 
-const problem = (status: number, detail: string) => () =>
-  json({ status, title: 'Error', detail }, status);
+const problem = (status: number, detail: string) => () => json({ status, title: 'Error', detail }, status);
 
-const jobsOf = (...jobs: unknown[]) => () => json({ jobs });
+const jobsOf =
+  (...jobs: unknown[]) =>
+  () =>
+    json({ jobs });
 const renderPanel = () => render(<AiPanel valuationId={VALUATION_ID} />);
 
 /**
@@ -80,10 +78,8 @@ const runsReady = async () => {
   await waitFor(() => expect(runList()).not.toBeNull());
 };
 /** The launch card for one pipeline, found by its label. */
-const card = (label: string) =>
-  screen.getAllByText(label)[0]!.closest('div') as HTMLElement;
-const jobItem = (label: string) =>
-  within(runList()).getByText(label).closest('li') as HTMLElement;
+const card = (label: string) => screen.getAllByText(label)[0]!.closest('div') as HTMLElement;
+const jobItem = (label: string) => within(runList()).getByText(label).closest('li') as HTMLElement;
 
 describe('AiPanel', () => {
   beforeEach(() => vi.restoreAllMocks());

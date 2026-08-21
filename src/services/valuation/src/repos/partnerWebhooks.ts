@@ -356,7 +356,10 @@ export async function listDeliveries(
     // from a specific row it has already seen needs that row's cursor, and
     // handing back only the page's last one makes "start again from here"
     // impossible without re-walking.
-    items: page.items.map(({ cursor_at, ...row }) => ({ ...row, cursor: encodeCursor({ at: cursor_at, id: row.id }) })),
+    items: page.items.map(({ cursor_at, ...row }) => ({
+      ...row,
+      cursor: encodeCursor({ at: cursor_at, id: row.id }),
+    })),
     nextCursor: page.nextCursor,
     hasMore: page.hasMore,
   };

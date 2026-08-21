@@ -77,8 +77,7 @@ function mockApi(
   return calls;
 }
 
-const problem = (status: number, detail: string) => () =>
-  json({ status, title: 'Error', detail }, status);
+const problem = (status: number, detail: string) => () => json({ status, title: 'Error', detail }, status);
 
 const renderPage = (entry = '/activity') =>
   render(
@@ -92,8 +91,7 @@ const renderPage = (entry = '/activity') =>
 const ready = () => screen.findByRole('table', { name: 'Activity log' });
 const eventCalls = (calls: Call[]) => calls.filter((c) => /\/admin\/events/.test(c.url));
 /** The query the most recent events request carried. */
-const lastQuery = (calls: Call[]) =>
-  new URLSearchParams(eventCalls(calls).at(-1)!.url.split('?')[1] ?? '');
+const lastQuery = (calls: Call[]) => new URLSearchParams(eventCalls(calls).at(-1)!.url.split('?')[1] ?? '');
 
 describe('ActivityLogPage', () => {
   beforeEach(() => vi.restoreAllMocks());
@@ -119,9 +117,7 @@ describe('ActivityLogPage', () => {
     it('says plainly that the log is operations-only on a 403', async () => {
       mockApi({ events: problem(403, 'Forbidden') });
       renderPage();
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'The activity log is operations-only.',
-      );
+      expect(await screen.findByRole('alert')).toHaveTextContent('The activity log is operations-only.');
     });
 
     it('gives a generic message for any other failure', async () => {

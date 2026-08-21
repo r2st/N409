@@ -49,10 +49,7 @@ describe('seeded blog library links', () => {
   const slugs = seededSlugs(sql);
   const links = internalLinks(sql);
 
-  const known = new Set<string>([
-    ...marketingRoutes().map((r) => r.path),
-    ...slugs.map((s) => `/blog/${s}`),
-  ]);
+  const known = new Set<string>([...marketingRoutes().map((r) => r.path), ...slugs.map((s) => `/blog/${s}`)]);
 
   /** Each row runs from its id to the `\n)` that closes it — both terminators. */
   const rows = (): { slug: string; body: string }[] =>
@@ -90,9 +87,7 @@ describe('seeded blog library links', () => {
   });
 
   it('resolves every internal link to a real route', () => {
-    const broken = links
-      .map((href) => href.split('#')[0]!.split('?')[0]!)
-      .filter((path) => !known.has(path));
+    const broken = links.map((href) => href.split('#')[0]!.split('?')[0]!).filter((path) => !known.has(path));
     expect([...new Set(broken)]).toEqual([]);
   });
 
@@ -101,9 +96,7 @@ describe('seeded blog library links', () => {
     // link to a crawler. It happens when a post is copied to start a new one.
     // Each row runs from its id to the `\n)` that closes it — which is how
     // both row terminators start, `),` mid-list and `) ON CONFLICT` at the end.
-    const bySlug = [
-      ...sql.matchAll(/'[0-9A-HJKMNP-TV-Z]{26}',\s*'([a-z0-9-]+)',([\s\S]*?)(?=\n\))/g),
-    ];
+    const bySlug = [...sql.matchAll(/'[0-9A-HJKMNP-TV-Z]{26}',\s*'([a-z0-9-]+)',([\s\S]*?)(?=\n\))/g)];
     expect(bySlug.length).toBe(slugs.length);
     for (const [, slug, body] of bySlug) {
       expect(body!.includes(`href="/blog/${slug}"`), `${slug} links to itself`).toBe(false);

@@ -17,8 +17,7 @@ import {
  * routes send the resolution row as it stands — including into the auditor
  * portal and the resolution PDF. See domain/calendarDate.ts.
  */
-const resolution = (row: BoardResolutionRow): BoardResolutionRow =>
-  calendarDateRow(row, 'valuation_date');
+const resolution = (row: BoardResolutionRow): BoardResolutionRow => calendarDateRow(row, 'valuation_date');
 
 export interface BoardResolutionRow {
   id: string;

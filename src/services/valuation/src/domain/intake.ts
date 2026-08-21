@@ -335,34 +335,32 @@ export const MAX_INTAKE_ANSWER_KEYS = 400;
  * An object or an array is neither: it is a shape the wizard cannot produce, it
  * cannot reach the column at any size, and it stays the narrow step's business.
  */
-export const IntakeAnswers = z
-  .record(z.string().max(200), z.unknown())
-  .superRefine((answers, ctx) => {
-    const keys = Object.keys(answers);
-    if (keys.length > MAX_INTAKE_ANSWER_KEYS) {
+export const IntakeAnswers = z.record(z.string().max(200), z.unknown()).superRefine((answers, ctx) => {
+  const keys = Object.keys(answers);
+  if (keys.length > MAX_INTAKE_ANSWER_KEYS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `At most ${MAX_INTAKE_ANSWER_KEYS} answers`,
+    });
+    return;
+  }
+  for (const key of keys) {
+    const value = answers[key];
+    if (typeof value === 'string' && value.length > MAX_INTAKE_ANSWER_CHARS) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `At most ${MAX_INTAKE_ANSWER_KEYS} answers`,
+        path: [key],
+        message: `Answer must be at most ${MAX_INTAKE_ANSWER_CHARS} characters`,
       });
-      return;
+    } else if (typeof value === 'number' && !Number.isFinite(value)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: 'Answer must be a finite number',
+      });
     }
-    for (const key of keys) {
-      const value = answers[key];
-      if (typeof value === 'string' && value.length > MAX_INTAKE_ANSWER_CHARS) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [key],
-          message: `Answer must be at most ${MAX_INTAKE_ANSWER_CHARS} characters`,
-        });
-      } else if (typeof value === 'number' && !Number.isFinite(value)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [key],
-          message: 'Answer must be a finite number',
-        });
-      }
-    }
-  });
+  }
+});
 
 /**
  * Answers narrowed to what the questionnaire can actually hold.

@@ -69,10 +69,7 @@ const GUARDS: Record<string, (env: Record<string, string>) => string[]> = {
   },
   // src/services/report/src/app.ts registerInternalAuth → shared/internalAuth.ts
   // MissingInternalTokenError, plus src/services/report/src/index.ts listenPort.
-  'n409-report.service': (env) => [
-    ...requiresInternalToken(env, 'NODE_ENV', 'report'),
-    ...bindsAPort(env),
-  ],
+  'n409-report.service': (env) => [...requiresInternalToken(env, 'NODE_ENV', 'report'), ...bindsAPort(env)],
   // src/services/ai/app/internal_auth.py enforce_token_configured. No port
   // guard: both Python units pass `--port` on the ExecStart line, so PORT in
   // the environment is a variable uvicorn never reads.

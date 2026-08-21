@@ -8,12 +8,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { calendarDate } from '../domain/calendarDate.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
-import {
-  applyEngineInputs,
-  findParams,
-  patchParams,
-  type ValuationParamsRow,
-} from '../repos/params.js';
+import { applyEngineInputs, findParams, patchParams, type ValuationParamsRow } from '../repos/params.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { finite, finitePositive } from '../domain/finite.js';
 import {
@@ -69,9 +64,12 @@ const Adjustment = z
     amount: finite().min(-1e15).max(1e15).nullish(),
   })
   .strict()
-  .refine((a) => a.pct !== null && a.pct !== undefined ? true : a.amount !== null && a.amount !== undefined, {
-    message: 'An adjustment needs a pct or an amount',
-  });
+  .refine(
+    (a) => (a.pct !== null && a.pct !== undefined ? true : a.amount !== null && a.amount !== undefined),
+    {
+      message: 'An adjustment needs a pct or an amount',
+    },
+  );
 
 const RunBody = z
   .object({
@@ -288,8 +286,7 @@ export function registerRollforwardRoutes(
      * engine sees `prior_results` and can read a rate off it, but a request
      * that states the rate records *which* rate was chosen in the run itself.
      */
-    const accretion =
-      body.annual_accretion ?? priorRequiredReturn(priorCalculation.results) ?? undefined;
+    const accretion = body.annual_accretion ?? priorRequiredReturn(priorCalculation.results) ?? undefined;
 
     let response: RollforwardEngineResponse;
     try {

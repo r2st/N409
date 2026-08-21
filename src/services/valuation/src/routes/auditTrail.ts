@@ -29,16 +29,18 @@ import { checkWindowOrder, dateWindowFields } from '../domain/dateWindow.js';
  * never leaks outside ops.
  */
 
-const ListQuery = z.object({
-  category: z.enum(EVENT_CATEGORIES).optional(),
-  severity: z.enum(EVENT_SEVERITIES).optional(),
-  actor_type: z.enum(['human', 'ai', 'engine', 'system']).optional(),
-  type: z.string().max(100).optional(),
-  field: z.string().max(120).optional(),
-  ...dateWindowFields,
-  page: pageParam(),
-  per_page: z.coerce.number().int().min(1).max(200).default(50),
-}).superRefine(checkWindowOrder);
+const ListQuery = z
+  .object({
+    category: z.enum(EVENT_CATEGORIES).optional(),
+    severity: z.enum(EVENT_SEVERITIES).optional(),
+    actor_type: z.enum(['human', 'ai', 'engine', 'system']).optional(),
+    type: z.string().max(100).optional(),
+    field: z.string().max(120).optional(),
+    ...dateWindowFields,
+    page: pageParam(),
+    per_page: z.coerce.number().int().min(1).max(200).default(50),
+  })
+  .superRefine(checkWindowOrder);
 
 const HistoryQuery = z.object({ field: z.string().min(1).max(120) });
 

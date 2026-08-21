@@ -787,8 +787,9 @@ function AnonymizePanel({ valuationId }: { valuationId: string }) {
                       .map(([category, n]) => plural(n, CATEGORY_LABELS[category] ?? [category, category]))
                       .join(', ')}.`}{' '}
                 <span className="text-ink-400">
-                  Matched against {plural(result.known_entities.companies, ['known company', 'known companies'])}{' '}
-                  and {plural(result.known_entities.people, ['known person', 'known people'])}.
+                  Matched against{' '}
+                  {plural(result.known_entities.companies, ['known company', 'known companies'])} and{' '}
+                  {plural(result.known_entities.people, ['known person', 'known people'])}.
                 </span>
               </p>
 

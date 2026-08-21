@@ -103,7 +103,10 @@ describe.skipIf(!dbUp)('financial model under concurrent edits', () => {
     const loser = await save(
       id,
       other.token,
-      { income: { discount_rate: null, terminal_growth: null }, market: { metric: 2_000_000, multiples: [9] } },
+      {
+        income: { discount_rate: null, terminal_growth: null },
+        market: { metric: 2_000_000, multiples: [9] },
+      },
       shared,
     );
     expect(loser.statusCode).toBe(409);

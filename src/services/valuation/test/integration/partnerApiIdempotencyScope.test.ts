@@ -226,8 +226,9 @@ describe.skipIf(!dbUp)('partner API idempotency scope', () => {
 
   it('registers a webhook once when the create is retried, secret and all', async () => {
     const key = freshKey();
-    const before = (await app.inject({ method: 'GET', url: '/api/partner/v1/webhooks', headers: keyHeader() }))
-      .json().webhooks.length as number;
+    const before = (
+      await app.inject({ method: 'GET', url: '/api/partner/v1/webhooks', headers: keyHeader() })
+    ).json().webhooks.length as number;
 
     const first = await registerWebhook(key);
     expect(first.statusCode).toBe(201);
@@ -235,8 +236,9 @@ describe.skipIf(!dbUp)('partner API idempotency scope', () => {
     expect(second.statusCode).toBe(201);
     expect(second.headers['x-idempotent-replay']).toBe('true');
 
-    const after = (await app.inject({ method: 'GET', url: '/api/partner/v1/webhooks', headers: keyHeader() }))
-      .json().webhooks.length as number;
+    const after = (
+      await app.inject({ method: 'GET', url: '/api/partner/v1/webhooks', headers: keyHeader() })
+    ).json().webhooks.length as number;
     expect(after).toBe(before + 1);
     // The one response on this API that cannot be asked for again: a create
     // whose reply was lost leaves an endpoint whose signing secret the partner
@@ -272,9 +274,10 @@ describe.skipIf(!dbUp)('partner API idempotency scope', () => {
   // ── The documentation says all of this ────────────────────────────────────
 
   it('declares Idempotency-Key on every mutation that honours one, and on no other', async () => {
-    const spec = (
-      await app.inject({ method: 'GET', url: '/api/partner/v1/openapi.json' })
-    ).json() as Record<string, Record<string, { parameters?: { name: string; in: string }[] }>>;
+    const spec = (await app.inject({ method: 'GET', url: '/api/partner/v1/openapi.json' })).json() as Record<
+      string,
+      Record<string, { parameters?: { name: string; in: string }[] }>
+    >;
 
     const idempotent = new Set<string>();
     for (const [path, operations] of Object.entries(spec.paths as never as Record<string, never>)) {
@@ -312,7 +315,9 @@ describe.skipIf(!dbUp)('partner API idempotency scope', () => {
   });
 
   it('keeps the ten-webhook 409 in the spec alongside the idempotency one', async () => {
-    const spec = (await app.inject({ method: 'GET', url: '/api/partner/v1/openapi.json' })).json() as never as {
+    const spec = (
+      await app.inject({ method: 'GET', url: '/api/partner/v1/openapi.json' })
+    ).json() as never as {
       paths: Record<string, Record<string, { responses: Record<string, { description: string }> }>>;
     };
     const conflict = spec.paths['/webhooks']!.post!.responses['409']!.description;

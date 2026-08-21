@@ -99,9 +99,7 @@ describe('SensitivityPage assumption validation', () => {
     await user.type(screen.getByLabelText('Common shares (FD)'), '1000.5');
     await user.click(screen.getByRole('button', { name: /Run stress table/ }));
 
-    expect(messageFor('Common shares (FD)')).toHaveTextContent(
-      'Common shares must be a whole number.',
-    );
+    expect(messageFor('Common shares (FD)')).toHaveTextContent('Common shares must be a whole number.');
     expect(sensitivityCalls(fetchSpy)).toHaveLength(0);
   });
 

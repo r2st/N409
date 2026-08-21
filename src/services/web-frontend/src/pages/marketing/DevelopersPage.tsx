@@ -63,8 +63,8 @@ export function DevelopersPage() {
             The partner API
           </h1>
           <p className="mt-5 max-w-2xl text-lg text-chrome-dim">
-            Create valuation engagements from your own product, upload the supporting documents,
-            follow the state, and pull the signed report back. Everything the app does, over REST.
+            Create valuation engagements from your own product, upload the supporting documents, follow the
+            state, and pull the signed report back. Everything the app does, over REST.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-4">
             <Link
@@ -88,14 +88,14 @@ export function DevelopersPage() {
         <div className="overline text-brass-600">Quickstart</div>
         <h2 className="mt-2 font-display text-2xl font-semibold text-ink-900">Your first call</h2>
         <p className="mt-3 text-sm leading-relaxed text-ink-600">
-          Every request carries a bearer key issued to your organisation. Keys are shown once at
-          issue and are stored only as a hash, so a lost key is replaced rather than recovered — and
-          they belong server-side, never in a browser or a mobile binary.
+          Every request carries a bearer key issued to your organisation. Keys are shown once at issue and are
+          stored only as a hash, so a lost key is replaced rather than recovered — and they belong
+          server-side, never in a browser or a mobile binary.
         </p>
         <CodeBlock label="curl">{QUICKSTART}</CodeBlock>
         <p className="mt-4 text-sm leading-relaxed text-ink-600">
-          Session tokens from the web app are rejected on this API: a partner integration
-          authenticates as the organisation, not as a person who might leave it.
+          Session tokens from the web app are rejected on this API: a partner integration authenticates as the
+          organisation, not as a person who might leave it.
         </p>
       </section>
 
@@ -111,27 +111,24 @@ export function DevelopersPage() {
             <article>
               <h3 className="font-display text-lg font-semibold text-ink-900">Idempotency</h3>
               <p className="mt-2 text-sm leading-relaxed text-ink-600">
-                Send an <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
-                  Idempotency-Key
-                </code>{' '}
-                on any POST. A retry with the same key replays the stored first response — flagged
-                with{' '}
+                Send an{' '}
+                <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">Idempotency-Key</code> on
+                any POST. A retry with the same key replays the stored first response — flagged with{' '}
                 <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
                   x-idempotent-replay: true
                 </code>{' '}
-                — instead of creating a second engagement. The same key with a{' '}
-                <em>different</em> body is refused as the client bug it is, rather than quietly
-                returning the earlier result. Keys are scoped to your organisation, so two partners
-                cannot collide, and only successful responses are stored: a validation failure
-                should be corrected and retried under the same key.
+                — instead of creating a second engagement. The same key with a <em>different</em> body is
+                refused as the client bug it is, rather than quietly returning the earlier result. Keys are
+                scoped to your organisation, so two partners cannot collide, and only successful responses are
+                stored: a validation failure should be corrected and retried under the same key.
               </p>
             </article>
 
             <article>
               <h3 className="font-display text-lg font-semibold text-ink-900">Webhooks</h3>
               <p className="mt-2 text-sm leading-relaxed text-ink-600">
-                Register an HTTPS endpoint and we push events to it rather than making you poll.
-                The signing secret (
+                Register an HTTPS endpoint and we push events to it rather than making you poll. The signing
+                secret (
                 <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
                   {PARTNER_API.webhookSecretPrefix}…
                 </code>
@@ -153,9 +150,7 @@ export function DevelopersPage() {
                   {PARTNER_API.signatureHeader}
                 </code>{' '}
                 — an HMAC-SHA256 over the exact bytes of the request body, as{' '}
-                <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
-                  sha256=&lt;hex&gt;
-                </code>{' '}
+                <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">sha256=&lt;hex&gt;</code>{' '}
                 — alongside{' '}
                 <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
                   {PARTNER_API.eventHeader}
@@ -164,21 +159,15 @@ export function DevelopersPage() {
                 <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
                   {PARTNER_API.deliveryHeader}
                 </code>
-                . Compare it in constant time, and against the raw body rather than a re-serialised
-                one.
+                . Compare it in constant time, and against the raw body rather than a re-serialised one.
               </p>
               <CodeBlock label="python">{VERIFY}</CodeBlock>
               <p className="mt-4 text-sm leading-relaxed text-ink-600">
-                A failed delivery is retried on a fixed ladder —{' '}
-                {PARTNER_API.retryLadder.join(', ')} after the first attempt, {
-                  PARTNER_API.retryLadder.length + 1
-                }{' '}
-                attempts in total — with jitter so a receiver coming back up is not hit by every
-                queued delivery at once. A{' '}
-                <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
-                  Retry-After
-                </code>{' '}
-                you send overrides the ladder for that attempt.
+                A failed delivery is retried on a fixed ladder — {PARTNER_API.retryLadder.join(', ')} after
+                the first attempt, {PARTNER_API.retryLadder.length + 1} attempts in total — with jitter so a
+                receiver coming back up is not hit by every queued delivery at once. A{' '}
+                <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">Retry-After</code> you
+                send overrides the ladder for that attempt.
               </p>
             </article>
 
@@ -186,19 +175,14 @@ export function DevelopersPage() {
               <h3 className="font-display text-lg font-semibold text-ink-900">Rate limits</h3>
               <p className="mt-2 text-sm leading-relaxed text-ink-600">
                 Per API key, with the current window returned on every response in{' '}
-                <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
-                  x-ratelimit-limit
-                </code>
-                ,{' '}
+                <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">x-ratelimit-limit</code>,{' '}
                 <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
                   x-ratelimit-remaining
                 </code>{' '}
                 and{' '}
-                <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
-                  x-ratelimit-reset
-                </code>
-                . The live figure is in the reference below. Back off on a 429 rather than
-                retrying immediately — the window is short.
+                <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">x-ratelimit-reset</code>.
+                The live figure is in the reference below. Back off on a 429 rather than retrying immediately
+                — the window is short.
               </p>
             </article>
 
@@ -209,15 +193,13 @@ export function DevelopersPage() {
                 <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
                   application/problem+json
                 </code>
-                ) with a <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
-                  type
-                </code>
-                , a <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">title</code>{' '}
-                and a human-readable{' '}
-                <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">detail</code> —
-                one shape to handle rather than a different error body per endpoint. An id belonging
-                to another organisation is <strong>not found</strong> rather than forbidden: a
-                partner cannot confirm that another partner’s engagement exists.
+                ) with a <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">type</code>, a{' '}
+                <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">title</code> and a
+                human-readable{' '}
+                <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">detail</code> — one shape
+                to handle rather than a different error body per endpoint. An id belonging to another
+                organisation is <strong>not found</strong> rather than forbidden: a partner cannot confirm
+                that another partner’s engagement exists.
               </p>
             </article>
           </div>
@@ -229,8 +211,8 @@ export function DevelopersPage() {
         <div className="overline text-brass-600">Reference</div>
         <h2 className="mt-2 font-display text-2xl font-semibold text-ink-900">Every endpoint</h2>
         <p className="mt-3 mb-2 text-sm leading-relaxed text-ink-600">
-          Rendered from the server’s own route registry, so it describes the API this deployment is
-          actually running.
+          Rendered from the server’s own route registry, so it describes the API this deployment is actually
+          running.
         </p>
         <ApiReference />
       </section>
