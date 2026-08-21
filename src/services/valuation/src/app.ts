@@ -684,6 +684,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerPartnerApiRoutes(app, {
     pool,
     documentsDir: config.DOCUMENTS_DIR,
+    transport,
     limiter: deps.partnerApiLimiter,
     orgLimiter:
       deps.partnerApiOrgLimiter !== undefined

@@ -41,6 +41,8 @@ export const PublicValuationSchema = z
   .object({
     id: z.string(),
     number: DecimalString,
+    /** The partner's own id (migration 0164). Null for anything they did not create with one. */
+    external_id: z.string().nullable(),
     kind: z.enum(VALUATION_KINDS),
     state: z.enum(VALUATION_STATES),
     waiting_on_client: z.boolean(),

@@ -12,8 +12,8 @@ import {
   type ValuationRow,
 } from '../repos/valuations.js';
 import { userExists } from '../repos/users.js';
-import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
-import { assertPublishGate, assertPublishGateForWrite } from '../domain/publishGate.js';
+import type { EmailTransport } from '../hooks/stateChange.js';
+import { applyValuationState } from '../domain/applyState.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 
@@ -151,15 +151,14 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     principal: Principal,
     source: string,
     guardVersion = false,
-  ): Promise<ValuationRow> => {
-    await assertPublishGate(deps.pool, valuation.id, to);
-    const updated = await patchValuation(deps.pool, valuation, { state: to }, actorFor(principal, source), {
-      ...(guardVersion ? { expectedVersion: valuation.version } : {}),
-      preCommit: assertPublishGateForWrite(valuation.id, to),
-    });
-    await onStateChanged({ pool: deps.pool, transport: deps.transport, log: app.log }, updated, to);
-    return updated;
-  };
+  ): Promise<ValuationRow> =>
+    applyValuationState(
+      { pool: deps.pool, transport: deps.transport, log: app.log },
+      valuation,
+      to,
+      actorFor(principal, source),
+      guardVersion,
+    );
 
   app.post('/api/v1/valuations/:id/workflow/advance', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);

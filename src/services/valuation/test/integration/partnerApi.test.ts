@@ -686,3 +686,299 @@ describe.skipIf(!dbUp)('partner API: GET /me', () => {
     expect((spec.json() as { paths: Record<string, unknown> }).paths['/me']).toBeDefined();
   });
 });
+
+// The partner's own identifier for an engagement (migration 0164), which 409.ai
+// documents as a partner-scoped unique `external_id`.
+//
+// What it buys over `Idempotency-Key` is durability. That key is a per-request
+// value the partner is told to vary, so it makes a retry safe without making
+// the *result* findable — a create whose response never arrived leaves an
+// engagement the partner cannot name, because the only name it has is a ULID
+// that was in the response. `external_id` travels in the request, so it is
+// known before the answer exists.
+describe.skipIf(!dbUp)('partner API: external_id', () => {
+  let ctx: TestApp;
+  let app: FastifyInstance;
+  let partnerId: string;
+  let apiKey: string;
+  let otherKey: string;
+
+  const keyHeader = (key: string) => ({ authorization: `Bearer ${key}` });
+
+  const mintKey = async (owner: string): Promise<string> => {
+    const admin = await seedUser(ctx, { roles: ['partner'], partnerId: owner });
+    const minted = await app.inject({
+      method: 'POST',
+      url: `/api/v1/partners/${owner}/tokens`,
+      headers: authHeader(admin.token),
+      payload: { name: 'external-id tests' },
+    });
+    expect(minted.statusCode).toBe(201);
+    return minted.json().secret as string;
+  };
+
+  const create = async (key: string, body: Record<string, unknown>) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/partner/v1/valuations',
+      headers: keyHeader(key),
+      payload: { kind: '409a', company_name: 'Northwind Robotics, Inc.', ...body },
+    });
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({}, { partnerApiLimiter: new FixedWindowRateLimiter(1000, 60_000) });
+    app = ctx.app;
+    partnerId = await seedPartner(ctx, 'External Id Advisors');
+    apiKey = await mintKey(partnerId);
+    otherKey = await mintKey(await seedPartner(ctx, 'Unrelated Advisors'));
+  });
+
+  afterAll(async () => {
+    await ctx?.teardown();
+  });
+
+  it('is echoed back on the create response', async () => {
+    const res = await create(apiKey, { external_id: 'CRM-1001' });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().valuation.external_id).toBe('CRM-1001');
+  });
+
+  it('is null when none was supplied', async () => {
+    const res = await create(apiKey, {});
+    expect(res.statusCode).toBe(201);
+    expect(res.json().valuation.external_id).toBeNull();
+  });
+
+  it('finds the valuation again', async () => {
+    const created = await create(apiKey, { external_id: 'CRM-2002' });
+    const found = await app.inject({
+      method: 'GET',
+      url: '/api/partner/v1/valuations?external_id=CRM-2002',
+      headers: keyHeader(apiKey),
+    });
+    expect(found.statusCode).toBe(200);
+    const body = found.json() as { valuations: { id: string }[]; total: number };
+    expect(body.total).toBe(1);
+    expect(body.valuations[0]!.id).toBe(created.json().valuation.id);
+  });
+
+  it('returns an empty list for one that was never used', async () => {
+    const found = await app.inject({
+      method: 'GET',
+      url: '/api/partner/v1/valuations?external_id=never-issued',
+      headers: keyHeader(apiKey),
+    });
+    expect(found.statusCode).toBe(200);
+    expect((found.json() as { total: number }).total).toBe(0);
+  });
+
+  it('refuses a second valuation carrying the same one', async () => {
+    expect((await create(apiKey, { external_id: 'CRM-3003' })).statusCode).toBe(201);
+    const dup = await create(apiKey, { external_id: 'CRM-3003' });
+    expect(dup.statusCode).toBe(409);
+    expect(dup.json().detail).toContain('already used');
+    // The message has to name the way out, or the partner's only recourse is
+    // to invent a second id for an engagement that already exists.
+    expect(dup.json().detail).toContain('GET /valuations?external_id=');
+  });
+
+  // The namespace is the partner's own. Two firms both calling their first
+  // engagement `1` is not a collision anyone should have to think about.
+  it('is scoped per organization, not globally', async () => {
+    expect((await create(apiKey, { external_id: 'shared-value' })).statusCode).toBe(201);
+    expect((await create(otherKey, { external_id: 'shared-value' })).statusCode).toBe(201);
+  });
+
+  // A lookup key that resolved differently for `"abc"` and `"abc "` would be a
+  // trap: the uniqueness index cannot see the difference between a typo and a
+  // deliberate namespace, so the trim happens before either.
+  it('trims, so a stray space is not a second engagement', async () => {
+    expect((await create(apiKey, { external_id: 'CRM-4004' })).statusCode).toBe(201);
+    expect((await create(apiKey, { external_id: '  CRM-4004  ' })).statusCode).toBe(409);
+  });
+
+  it('refuses an empty or oversized value rather than storing it', async () => {
+    expect((await create(apiKey, { external_id: '' })).statusCode).toBe(422);
+    expect((await create(apiKey, { external_id: '   ' })).statusCode).toBe(422);
+    expect((await create(apiKey, { external_id: 'x'.repeat(201) })).statusCode).toBe(422);
+  });
+
+  // The unique index arbitrates, not a SELECT before the INSERT — two
+  // concurrent creates both see nothing and both proceed, which is the race
+  // `Idempotency-Key` had before 0160 turned its receipt into a claim. Exactly
+  // one of these must win.
+  it('lets exactly one of two concurrent creates through', async () => {
+    const [a, b] = await Promise.all([
+      create(apiKey, { external_id: 'CRM-RACE' }),
+      create(apiKey, { external_id: 'CRM-RACE' }),
+    ]);
+    const codes = [a.statusCode, b.statusCode].sort();
+    expect(codes).toEqual([201, 409]);
+  });
+
+  // Another partner's identifier is not a way to see their work.
+  it('does not reach across organizations', async () => {
+    expect((await create(otherKey, { external_id: 'RIVAL-ONLY' })).statusCode).toBe(201);
+    const found = await app.inject({
+      method: 'GET',
+      url: '/api/partner/v1/valuations?external_id=RIVAL-ONLY',
+      headers: keyHeader(apiKey),
+    });
+    expect((found.json() as { total: number }).total).toBe(0);
+  });
+
+  it('is documented in the OpenAPI spec', async () => {
+    const spec = await app.inject({ method: 'GET', url: '/api/partner/v1/openapi.json' });
+    expect(spec.body).toContain('external_id');
+  });
+});
+
+// `POST /valuations/{id}/submit` — the step that was missing between "the
+// partner API created this" and "somebody looked at it".
+//
+// A valuation created through the web app walks the client-side states as the
+// founder fills the questionnaire in. A partner integration collects the same
+// information in its own product, so without a way to say so the engagement sat
+// in `pending` forever: created by the API, uploaded to by the API, and never
+// handed over. 409.ai's partner API documents the same call.
+describe.skipIf(!dbUp)('partner API: submit', () => {
+  let ctx: TestApp;
+  let app: FastifyInstance;
+  let apiKey: string;
+  let otherKey: string;
+
+  const keyHeader = (key: string) => ({ authorization: `Bearer ${key}` });
+
+  const mintKey = async (owner: string): Promise<string> => {
+    const admin = await seedUser(ctx, { roles: ['partner'], partnerId: owner });
+    const minted = await app.inject({
+      method: 'POST',
+      url: `/api/v1/partners/${owner}/tokens`,
+      headers: authHeader(admin.token),
+      payload: { name: 'submit tests' },
+    });
+    return minted.json().secret as string;
+  };
+
+  /** A fresh valuation, in `pending` as every partner create leaves it. */
+  const created = async (): Promise<string> => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/partner/v1/valuations',
+      headers: keyHeader(apiKey),
+      payload: { kind: '409a', company_name: 'Submit Test Co.' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().valuation.state).toBe('pending');
+    return res.json().valuation.id as string;
+  };
+
+  const submit = async (id: string, key = apiKey) =>
+    app.inject({ method: 'POST', url: `/api/partner/v1/valuations/${id}/submit`, headers: keyHeader(key) });
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({}, { partnerApiLimiter: new FixedWindowRateLimiter(1000, 60_000) });
+    app = ctx.app;
+    apiKey = await mintKey(await seedPartner(ctx, 'Submitting Advisors'));
+    otherKey = await mintKey(await seedPartner(ctx, 'Bystander Advisors'));
+  });
+
+  afterAll(async () => {
+    await ctx?.teardown();
+  });
+
+  it('carries a pending valuation all the way to user_finished', async () => {
+    const res = await submit(await created());
+    expect(res.statusCode).toBe(200);
+    expect(res.json().valuation.state).toBe('user_finished');
+  });
+
+  // Every edge, not one jump. The dashboards and SLA figures are keyed on the
+  // sequence — a file that skips `completed` sits in the review queue with an
+  // ageing figure computed from a timestamp nothing set — and each edge has its
+  // own audit event.
+  it('records every intermediate transition rather than one jump', async () => {
+    const id = await created();
+    await submit(id);
+    const { rows } = await ctx.pool.query<{ payload: { to?: string } }>(
+      `SELECT payload FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'state_changed'
+        ORDER BY seq`,
+      [id],
+    );
+    const states = rows.map((r) => r.payload.to);
+    expect(states).toEqual(['started', 'onboarding_completed', 'user_finished']);
+  });
+
+  // A retry must succeed. The partner's request may have landed and its
+  // response may not have come back, which is the ordinary case this whole API
+  // is built to survive.
+  it('is idempotent — a second submit changes nothing and still answers 200', async () => {
+    const id = await created();
+    expect((await submit(id)).statusCode).toBe(200);
+    const again = await submit(id);
+    expect(again.statusCode).toBe(200);
+    expect(again.json().valuation.state).toBe('user_finished');
+    const { rows } = await ctx.pool.query(
+      `SELECT 1 FROM valuation_events WHERE valuation_id = $1 AND type = 'state_changed'`,
+      [id],
+    );
+    expect(rows).toHaveLength(3);
+  });
+
+  // Past the target is also "already submitted": the partner asked us to take
+  // it, and we have.
+  it('returns a valuation already past the target unchanged', async () => {
+    const id = await created();
+    await submit(id);
+    await ctx.pool.query(`UPDATE valuations SET state = 'review' WHERE id = $1`, [id]);
+    const res = await submit(id);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().valuation.state).toBe('review');
+  });
+
+  // The dead ends are a different answer. A cancelled engagement needs a
+  // restart, and silently reporting success would leave the partner waiting for
+  // a report nobody is writing.
+  it.each(['cancelled', 'timeout', 'ignored'])('refuses to submit a %s valuation', async (state) => {
+    const id = await created();
+    await ctx.pool.query(`UPDATE valuations SET state = $2 WHERE id = $1`, [id, state]);
+    const res = await submit(id);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().detail).toContain('restarted');
+  });
+
+  it('starts from wherever the valuation actually is', async () => {
+    const id = await created();
+    await ctx.pool.query(`UPDATE valuations SET state = 'started' WHERE id = $1`, [id]);
+    const res = await submit(id);
+    expect(res.json().valuation.state).toBe('user_finished');
+    const { rows } = await ctx.pool.query<{ payload: { to?: string } }>(
+      `SELECT payload FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'state_changed' ORDER BY seq`,
+      [id],
+    );
+    expect(rows.map((r) => r.payload.to)).toEqual(['onboarding_completed', 'user_finished']);
+  });
+
+  it('is scoped to the key that owns the valuation', async () => {
+    const id = await created();
+    expect((await submit(id, otherKey)).statusCode).toBe(404);
+  });
+
+  it('404s an id that does not exist', async () => {
+    expect((await submit('01ARZ3NDEKTSV4RRFFQ69G5FAV')).statusCode).toBe(404);
+    expect((await submit('not-a-ulid')).statusCode).toBe(404);
+  });
+
+  it('is listed in the docs endpoint and the OpenAPI spec', async () => {
+    const docs = await app.inject({ method: 'GET', url: '/api/partner/v1/docs' });
+    expect((docs.json() as { endpoints: { path: string }[] }).endpoints).toContainEqual(
+      expect.objectContaining({ method: 'POST', path: '/valuations/{id}/submit' }),
+    );
+    const spec = await app.inject({ method: 'GET', url: '/api/partner/v1/openapi.json' });
+    expect(
+      (spec.json() as { paths: Record<string, unknown> }).paths['/valuations/{id}/submit'],
+    ).toBeDefined();
+  });
+});

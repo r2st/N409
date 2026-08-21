@@ -38,6 +38,12 @@ export interface ValuationRow {
   assigned_reviewer_id: string | null;
   /** Per-valuation auto-pipeline opt-out (migration 0049). */
   auto_pipeline: boolean;
+  /**
+   * The partner's own identifier for this engagement (migration 0164). Unique
+   * per partner, set only by the partner API, NULL for everything created
+   * through the web app.
+   */
+  external_id: string | null;
   /** Optimistic-lock counter, bumped by every write (migration 0137). */
   version: number;
   /**
@@ -63,6 +69,8 @@ export interface CreateValuationInput {
   currency?: string;
   serviceCountries?: string[];
   gclid?: string;
+  /** Partner's own id for this engagement. Unique per partner — see 0164. */
+  externalId?: string | null;
 }
 
 /**
@@ -82,8 +90,9 @@ export async function insertValuation(
   const id = newUlid();
   const { rows } = await client.query<ValuationRow>(
     `INSERT INTO valuations
-       (id, kind, company_name, service_name, user_id, partner_id, source, currency, service_countries, gclid)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (id, kind, company_name, service_name, user_id, partner_id, source, currency, service_countries, gclid,
+        external_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      RETURNING *`,
     [
       id,
@@ -96,6 +105,7 @@ export async function insertValuation(
       input.currency ?? 'USD',
       input.serviceCountries ?? [],
       input.gclid ?? null,
+      input.externalId ?? null,
     ],
   );
   await client.query('INSERT INTO valuation_params (valuation_id) VALUES ($1)', [id]);
@@ -272,6 +282,12 @@ export interface ValuationFilters {
   unreadFor?: 'admin' | 'user';
   reviewerId?: string;
   partnerId?: string;
+  /**
+   * The partner's own id for the engagement (migration 0164). Exact match: it
+   * is a lookup key, not a search term, and the partner API's whole reason for
+   * offering it is that it resolves to at most one row.
+   */
+  externalId?: string;
   userId?: string;
   source?: ValuationSource;
   paidStatus?: 'unpaid' | 'paid' | 'paid_by_partner';
@@ -442,6 +458,7 @@ export function buildValuationWhere(
   } else if (filters.group) add('state = ANY(?::valuation_state[])', [...STATE_GROUPS[filters.group]]);
   if (filters.kind) add('kind = ?', filters.kind);
   if (filters.reviewerId) add('assigned_reviewer_id = ?', filters.reviewerId);
+  if (filters.externalId) add('external_id = ?', filters.externalId);
   if (filters.partnerId) add('partner_id = ?', filters.partnerId);
   if (filters.userId) add('user_id = ?', filters.userId);
   if (filters.source) add('source = ?', filters.source);

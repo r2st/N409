@@ -38,6 +38,10 @@ import {
   type ValuationRow,
 } from '../repos/valuations.js';
 import { listDocuments } from '../repos/documents.js';
+import { isUniqueViolation } from '../db/pgError.js';
+import { applyValuationState } from '../domain/applyState.js';
+import type { EmailTransport } from '../hooks/stateChange.js';
+import { WORKFLOW_TRANSITIONS } from '../domain/workflow.js';
 import { findPartnerIdentity } from '../repos/branding.js';
 import { findApiTokenById } from '../repos/apiTokens.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
@@ -143,10 +147,20 @@ const CreateBody = z.object({
   service_name: z.string().min(1).max(300).optional(),
   currency: CurrencyCode.optional(),
   service_countries: z.array(z.string().length(2)).max(50).optional(),
+  /**
+   * The partner's own id for this engagement (migration 0164). Bounded and
+   * trimmed rather than taken as sent: it is a durable lookup key, so
+   * `"abc"` and `"abc "` resolving to two different engagements would be a
+   * trap rather than a feature, and the uniqueness index cannot see the
+   * difference between a typo and a namespace.
+   */
+  external_id: z.string().trim().min(1).max(200).optional(),
 });
 
 const ListQuery = z.object({
   state: z.enum(VALUATION_STATES).optional(),
+  /** Exact match on the partner's own id — the point of setting one. */
+  external_id: z.string().trim().min(1).max(200).optional(),
   page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(100).default(25),
   cursor: cursorParam(),
@@ -203,6 +217,8 @@ function publicValuation(v: ValuationRow) {
   return {
     id: v.id,
     number: v.number,
+    /** The partner's own id, echoed back so a create response is reconcilable. */
+    external_id: v.external_id,
     kind: v.kind,
     state: v.state,
     waiting_on_client: v.waiting_on_client,
@@ -238,6 +254,12 @@ export function registerPartnerApiRoutes(
   deps: {
     pool: pg.Pool;
     documentsDir: string;
+    /**
+     * Passed through to `applyValuationState` by `POST /valuations/{id}/submit`.
+     * Optional for the same reason it is optional on the workflow routes: the
+     * tests that do not assert on mail do not have to build one.
+     */
+    transport?: EmailTransport;
     limiter?: FixedWindowRateLimiter;
     /** Per-partner ceiling. `null` disables it; undefined takes the default. */
     orgLimiter?: FixedWindowRateLimiter | null;
@@ -580,8 +602,17 @@ export function registerPartnerApiRoutes(
         service_name: 'Optional service label',
         currency: 'ISO-4217 code, defaults to USD',
         service_countries: 'Optional ISO-3166 alpha-2 country list',
+        external_id:
+          'Optional. Your own identifier for this engagement — a deal id, a CRM row. Unique within ' +
+          'your organization, echoed back on every valuation payload, and accepted as a filter on ' +
+          'GET /valuations. Unlike Idempotency-Key it travels in the request and is durable, so an ' +
+          'engagement whose create response you never received is still findable by it.',
       },
-      ...idempotencyDoc('creating a second valuation'),
+      ...idempotencyDoc('creating a second valuation', {
+        '409':
+          'This external_id is already used by another valuation in your organization. Fetch it with ' +
+          'GET /valuations?external_id=… rather than creating a second one.',
+      }),
       response: '201 { valuation }',
     },
     async (req, reply) => {
@@ -600,9 +631,23 @@ export function registerPartnerApiRoutes(
             source: 'partner',
             currency: parsed.data.currency,
             serviceCountries: parsed.data.service_countries,
+            externalId: parsed.data.external_id,
           },
           actorFor(principal),
-        );
+        ).catch((err: unknown) => {
+          // The unique index is what arbitrates, not a SELECT before the
+          // INSERT: two concurrent creates carrying the same external_id both
+          // see nothing and both proceed, which is the same race
+          // `Idempotency-Key` had before 0160 turned its receipt into a claim.
+          // Postgres decides; this only renames the decision.
+          if (isUniqueViolation(err, 'valuations_partner_external_id_idx')) {
+            throw problems.conflict(
+              `external_id "${parsed.data.external_id}" is already used by another valuation in your ` +
+                'organization. Fetch it with GET /valuations?external_id=… rather than creating a second one.',
+            );
+          }
+          throw err;
+        });
         return { status: 201, body: { valuation: publicValuation(valuation) } };
       });
     },
@@ -617,6 +662,9 @@ export function registerPartnerApiRoutes(
       auth: 'api_key',
       query: {
         state: 'Optional state filter',
+        external_id:
+          'Optional. Exact match on your own identifier — returns the one valuation carrying it, or ' +
+          'an empty list.',
         page: 'Page number (default 1). Ignored when `cursor` is supplied.',
         per_page: 'Page size (default 25, max 100)',
         cursor:
@@ -637,7 +685,13 @@ export function registerPartnerApiRoutes(
       const { items, total, nextCursor, hasMore } = await listValuations(
         deps.pool,
         { kind: 'partner', partnerId: token.partnerId },
-        { state: parsed.data.state, page: parsed.data.page, perPage: parsed.data.per_page, cursor },
+        {
+          state: parsed.data.state,
+          externalId: parsed.data.external_id,
+          page: parsed.data.page,
+          perPage: parsed.data.per_page,
+          cursor,
+        },
       );
       return {
         valuations: items.map(publicValuation),
@@ -666,6 +720,81 @@ export function registerPartnerApiRoutes(
       const { token } = requireToken(req);
       const { id } = req.params as { id: string };
       return { valuation: publicValuation(await loadScoped(token, id)) };
+    },
+    { schemas: { response: GetValuationResponse } },
+  );
+
+  /**
+   * The client-side states, in order, and where `submit` stops.
+   *
+   * A valuation created through the web app walks these as the founder fills
+   * the questionnaire in. A partner integration collects the same information
+   * in its own product, so those steps happen somewhere this service cannot
+   * see, and without a way to say so the engagement sits in `pending` forever
+   * — created by the API, uploaded to by the API, and never looked at by
+   * anybody. That was the shape of the gap: the partner API could start work
+   * and could not hand it over.
+   *
+   * Walked one edge at a time rather than written straight to the last one.
+   * `WORKFLOW_TRANSITIONS` is the authority on what is legal, the dashboards
+   * and SLA figures are keyed on the sequence — a file that arrives in `review`
+   * without passing `completed` sits in the review queue with no `completed_at`
+   * and an ageing figure computed from a timestamp nothing set — and each edge
+   * has its own audit event and its own hook. Three steps is the whole distance
+   * from `pending`, so the cost is three writes on a call that happens once per
+   * engagement.
+   */
+  const SUBMIT_PATH = ['pending', 'started', 'onboarding_completed', 'user_finished'] as const;
+  const SUBMIT_TARGET = 'user_finished';
+
+  define(
+    {
+      method: 'POST',
+      path: '/valuations/{id}/submit',
+      summary:
+        'Hand the engagement over for review — the client-side information is complete. Idempotent: ' +
+        'a valuation already at or past this point is returned unchanged.',
+      auth: 'api_key',
+      ...idempotencyDoc('advancing the valuation a second time', {
+        '409':
+          'This valuation is cancelled, timed out or ignored. Those need a restart rather than a ' +
+          'submission — contact your account manager.',
+      }),
+      response: '{ valuation }',
+    },
+    async (req, reply) => {
+      const { principal, token } = requireToken(req);
+      const { id } = req.params as { id: string };
+      return withIdempotency(req, reply, token, async () => {
+        let valuation = await loadScoped(token, id);
+        const from = SUBMIT_PATH.indexOf(valuation.state as (typeof SUBMIT_PATH)[number]);
+
+        if (from === -1) {
+          // Either already submitted — every state past `user_finished` — or in
+          // one of the three dead ends. The distinction matters: the first is a
+          // retry and must succeed, the second is a request nobody can honour.
+          if (WORKFLOW_TRANSITIONS[valuation.state].includes('started')) {
+            throw problems.conflict(
+              `This valuation is '${valuation.state}' and cannot be submitted — it needs to be restarted first.`,
+            );
+          }
+          return { status: 200, body: { valuation: publicValuation(valuation) } };
+        }
+
+        // Already at the target: a repeated submit, which is a retry rather than
+        // an error. Falls out of the loop below doing nothing, and is spelled
+        // out here only because "the loop happens not to run" is a fragile way
+        // to express an idempotency guarantee.
+        for (let i = from; i < SUBMIT_PATH.indexOf(SUBMIT_TARGET); i += 1) {
+          valuation = await applyValuationState(
+            { pool: deps.pool, transport: deps.transport, log: app.log },
+            valuation,
+            SUBMIT_PATH[i + 1]!,
+            actorFor(principal),
+          );
+        }
+        return { status: 200, body: { valuation: publicValuation(valuation) } };
+      });
     },
     { schemas: { response: GetValuationResponse } },
   );
