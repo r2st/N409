@@ -24,8 +24,17 @@ and should be treated as **unused** until a migration is actually planned.
   Docker on the server. `docker-compose.yml` is for **local dev only**.
 - Caddy terminates TLS for `n409.aiknol.com` and reverse-proxies to `:3000`
   (`infra/caddy/`). Only the web service faces the internet.
-- Unit files: `infra/systemd/*.service` — install to `/etc/systemd/system/`,
-  then `systemctl daemon-reload && systemctl enable --now 'n409-*'`.
+- Unit files: `infra/systemd/*.service` and `infra/backup/*.{service,timer}`.
+  **`deploy.sh` installs these** (via `infra/install-units.sh`) on every deploy:
+  it copies any that differ from the checkout into `/etc/systemd/system/`,
+  reloads systemd if any moved, enables all of them, and re-arms changed timers.
+  This repo is the authority — a unit edited on the box is overwritten by the
+  next deploy. It was not always so: for four weeks the host ran units dated
+  21 Jul against a repo that had moved on 14 Aug, and the line that had not
+  travelled was engine-wrapper's `Environment=APP_ENV=production`, which is the
+  switch that makes its `INTERNAL_SERVICE_TOKEN` guard mandatory rather than
+  advisory. First-time bring-up on a bare host is the same command:
+  `bash infra/install-units.sh` as root.
 
 ## Security posture (audit B-1 P0 / I-1)
 
@@ -295,9 +304,12 @@ Automated nightly PostgreSQL backups are live — see **`infra/backup/`**
 - **`pg-backup.sh`** — `pg_dump -Fc` into `/opt/n409-backups/daily`, promotes a
   weekly copy on Sundays, prunes to **7 daily + 4 weekly**.
 - **`n409-backup.timer`** fires **`n409-backup.service`** nightly at **02:00**
-  (`Persistent=true`, runs as `n409`). Install:
-  `cp infra/backup/n409-backup.{service,timer} /etc/systemd/system/ &&
-  systemctl enable --now n409-backup.timer`.
+  (`Persistent=true`, runs as `n409`). Installed and enabled by `deploy.sh`
+  along with every other unit — see the unit-files bullet at the top. A change
+  to the timer's `OnCalendar=` takes effect on the next deploy, because
+  `install-units.sh` restarts a timer whose file moved; the two `.service`
+  bodies are deliberately never restarted, since "restarting" them would take a
+  backup and start a restore rehearsal rather than apply anything.
 - **Restore:** `infra/backup/pg-restore.sh <dump> [target-url]`
   (`pg_restore --clean --if-exists --single-transaction`). Rehearse monthly into
   a scratch DB per the README; the initial rehearsal passed (77 tables restored,

@@ -189,7 +189,16 @@ describe('the environment file itself', () => {
   });
 
   it('tolerates an optional env file that is absent', () => {
-    const units = { ...UNITS, 'n409-web.service': '[Service]\nEnvironmentFile=-/opt/N409/.env.local\n' };
+    // The Environment= lines are kept even though this test is about the
+    // EnvironmentFile: a unit stripped down to nothing is a unit that no longer
+    // declares NODE_ENV=production, which is a fault of its own now, and the
+    // assertion below — "nothing at all is reported against n409-web" — would
+    // fail for a reason that has nothing to do with optional env files.
+    const units = {
+      ...UNITS,
+      'n409-web.service':
+        '[Service]\nEnvironmentFile=-/opt/N409/.env.local\nEnvironment=NODE_ENV=production\nEnvironment=PORT=3000\n',
+    };
     const text = messages({ units });
     expect(text).not.toContain('n409-web.service');
   });
@@ -353,5 +362,115 @@ describe('formatFaults', () => {
     expect(formatFaults({ faults: [{ scope: 'a', message: 'x' }], units: [] })).toContain(
       '1 configuration fault:',
     );
+  });
+});
+
+// Every guard that matters is conditional on the unit calling itself production,
+// so a unit that stops saying so stops being checked — and reports a clean
+// preflight while doing it. That is not a hypothetical: the engine-wrapper unit
+// installed on the production host had no `Environment=APP_ENV=production` for
+// four weeks, because deploy.sh shipped `infra/systemd/` onto the box and never
+// copied it into /etc/systemd/system. Preflight read the repo's copy — the
+// correct one — and passed, while the file systemd actually booted left
+// `internal_token_middleware` willing to serve unauthenticated the moment
+// INTERNAL_SERVICE_TOKEN went missing.
+describe('the production posture each unit declares', () => {
+  /** Drop the marker line from one unit, leaving everything else intact. */
+  function withoutMarker(unit: string): Record<string, string> {
+    return { ...UNITS, [unit]: UNITS[unit]!.replace(/Environment=(NODE|APP)_ENV=production\n/, '') };
+  }
+
+  it('is satisfied by the real unit files', () => {
+    expect(messages()).toBe('');
+  });
+
+  it.each([
+    ['n409-engine-wrapper.service', 'APP_ENV'],
+    ['n409-ai.service', 'APP_ENV'],
+    ['n409-valuation.service', 'NODE_ENV'],
+    ['n409-report.service', 'NODE_ENV'],
+    ['n409-web.service', 'NODE_ENV'],
+  ])('is a fault when %s stops declaring it', (unit, marker) => {
+    const text = messages({ units: withoutMarker(unit) });
+    expect(text).toContain(unit);
+    expect(text).toContain(`${marker} is unset, not "production"`);
+  });
+
+  // The point of the whole check. A missing marker is not caught by the guards
+  // themselves — they are the thing being switched off — so with a perfectly
+  // good .env in place, dropping the line produces exactly one fault, and
+  // without this check it would produce none at all.
+  it('is the only thing that catches it — the guards it gates stay silent', () => {
+    const result = run({ units: withoutMarker('n409-engine-wrapper.service') });
+    const engine = result.faults.filter((f) => f.scope === 'n409-engine-wrapper.service');
+    expect(engine).toHaveLength(1);
+    expect(engine[0]!.message).toContain('makes this check pass by having nothing left to ask');
+  });
+
+  // The live case exactly: the secret *is* configured, so nothing is currently
+  // unauthenticated and `requiresInternalToken` has no complaint to make under
+  // either reading. The fault is the missing declaration itself, because it is
+  // what decides whether the guard fires if the secret ever goes away.
+  it('fires even though INTERNAL_SERVICE_TOKEN is set', () => {
+    const text = messages({ units: withoutMarker('n409-engine-wrapper.service') });
+    expect(GOOD_ENV).toContain('INTERNAL_SERVICE_TOKEN=');
+    expect(text).toContain('n409-engine-wrapper.service');
+  });
+
+  // `is_production()` in both Python services compares against the literal
+  // string, and `loadConfig` does the same. Accepting a near-miss here would
+  // report healthy a box on which every production guard is off.
+  it.each(['prod', 'produktion', 'production=1', 'true', ''])(
+    'does not accept APP_ENV=%j as production',
+    (value) => {
+      const units = {
+        ...UNITS,
+        'n409-engine-wrapper.service': `[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=APP_ENV=${value}\n`,
+      };
+      expect(messages({ units })).toContain('n409-engine-wrapper.service');
+    },
+  );
+
+  // Case is one of the two things that are tolerated, because `is_production()`
+  // lowercases before comparing and so does `declaresProduction`.
+  it('accepts the casing the services accept', () => {
+    const units = {
+      ...UNITS,
+      'n409-engine-wrapper.service':
+        '[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=APP_ENV=PRODUCTION\n',
+    };
+    expect(messages({ units })).toBe('');
+  });
+
+  // The other is a trailing space, and it is tolerated because systemd itself
+  // does not preserve one: `Environment=` splits on whitespace, so the service
+  // boots with "production" whatever the file looks like. Rejecting it here
+  // would fail a deploy over a file that is, to the process that reads it,
+  // identical to the one this checker demands.
+  it('accepts a trailing space, which systemd strips before the service sees it', () => {
+    const units = {
+      ...UNITS,
+      'n409-engine-wrapper.service':
+        '[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=APP_ENV=production \n',
+    };
+    expect(messages({ units })).toBe('');
+  });
+
+  // A marker the EnvironmentFile supplies is as good as one the unit does —
+  // systemd merges both, and the service reads the merge.
+  it('accepts a marker that comes from the EnvironmentFile instead', () => {
+    const text = messages({
+      units: withoutMarker('n409-engine-wrapper.service'),
+      env: `${GOOD_ENV}\nAPP_ENV=production`,
+    });
+    expect(text).toBe('');
+  });
+
+  // The guard loop runs each unit under both precedence readings. A fault that
+  // holds under both must still be reported once.
+  it('reports the missing declaration once, not once per precedence reading', () => {
+    const result = run({ units: withoutMarker('n409-ai.service') });
+    const posture = result.faults.filter((f) => f.message.includes('not "production"'));
+    expect(posture).toHaveLength(1);
   });
 });

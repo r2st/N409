@@ -419,6 +419,24 @@ else
   done
 fi
 
+# ── 4c. Install the systemd units ────────────────────────────────────────────
+#
+# `git archive` has always carried infra/systemd/ and infra/backup/ onto the
+# host, and systemd has never read them: it reads /etc/systemd/system. Nothing
+# connected the two but a human with scp, so the units on the box were four
+# weeks behind the repo and one of the lines that had not travelled was
+# engine-wrapper's `Environment=APP_ENV=production` — the switch that makes its
+# INTERNAL_SERVICE_TOKEN guard mandatory rather than advisory. See
+# infra/install-units.sh for the whole failure.
+#
+# After preflight, because preflight validates the unit files this step is about
+# to install, and before section 6, because that is what restarts the services
+# into them. Fatal, like the build and the preflight above: a host whose units
+# could not be written must keep serving the old release rather than restart
+# into a set of units nobody can name.
+run_remote "cd $REMOTE_DIR && bash infra/install-units.sh" \
+  || die "could not install the systemd units on the host — nothing was restarted, the previous release is still serving"
+
 # ── 5. Record what was built — after the build, never before ─────────────────
 # The SHA is the local one. See the header: the server's HEAD does not move.
 run_remote "printf '%s\n' $SHA > $REMOTE_DIR/BUILD_SHA && chown $SERVICE_USER:$SERVICE_USER $REMOTE_DIR/BUILD_SHA"

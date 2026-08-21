@@ -112,6 +112,61 @@ function requiresInternalToken(env: Record<string, string>, envVar: string, serv
   return [];
 }
 
+/**
+ * The variable each unit reads to decide it is serving production, and which
+ * therefore must say so.
+ *
+ * THE HOLE THIS CLOSES: every guard above that matters is conditional on this
+ * variable. `requiresInternalToken` returns no faults at all unless the merged
+ * environment says production, and `loadConfig`'s production-only checks — the
+ * Stripe pairing, the known-example JWT secret, PUBLIC_BASE_URL — are gated the
+ * same way. So a unit that *loses* its production declaration does not fail
+ * this checker; it silently stops being checked, and reports a clean preflight
+ * while running with every production guard switched off.
+ *
+ * That is not hypothetical. The engine-wrapper unit installed on the host had
+ * no `Environment=APP_ENV=production` for four weeks (see
+ * infra/install-units.sh), which left `internal_token_middleware` willing to
+ * pass unauthenticated requests through the moment the secret went missing.
+ * Preflight said nothing, and could not have: an absent declaration made every
+ * question it asks answer "not applicable".
+ *
+ * Stated positively here instead. deploy.sh deploys production and only
+ * production, so a unit it is about to install that does not claim to be
+ * production is a fault in its own right, whatever the rest of the environment
+ * says.
+ */
+const PRODUCTION_MARKERS: Record<string, string> = {
+  'n409-valuation.service': 'NODE_ENV',
+  'n409-report.service': 'NODE_ENV',
+  'n409-web.service': 'NODE_ENV',
+  'n409-ai.service': 'APP_ENV',
+  'n409-engine-wrapper.service': 'APP_ENV',
+};
+
+/**
+ * Fault the unit unless its own environment declares production.
+ *
+ * Deliberately not tolerant of near-misses. `APP_ENV=prod` is not production to
+ * `is_production()` in either Python service — it compares against the literal
+ * string — so treating it as production here would report healthy a box whose
+ * guards are all off. The value has to be the one the services actually accept.
+ */
+function declaresProduction(env: Record<string, string>, unitName: string): string[] {
+  const marker = PRODUCTION_MARKERS[unitName];
+  if (marker === undefined) return [];
+  const value = env[marker] ?? '';
+  if (value.toLowerCase() === 'production') return [];
+  const seen = value === '' ? 'unset' : `"${value}"`;
+  return [
+    `${marker} is ${seen}, not "production" — this unit is deployed to production, and every ` +
+      `production-only guard it has (INTERNAL_SERVICE_TOKEN, the Stripe pairing, the JWT secret) is ` +
+      `conditional on ${marker}, so leaving it ${seen} does not merely mislabel the service: it turns ` +
+      `those guards off and makes this check pass by having nothing left to ask. Add ` +
+      `Environment=${marker}=production to the unit.`,
+  ];
+}
+
 /** Unit files this checker knows how to validate, in restart order. */
 export const KNOWN_UNITS = Object.keys(GUARDS);
 
@@ -249,7 +304,10 @@ export function preflight(options: PreflightOptions): PreflightResult {
     const guard = GUARDS[unitName]!;
     const seen = new Set<string>();
     for (const env of [merged.unitWins, merged.fileWins]) {
-      for (const message of guard(env)) {
+      // The posture check runs alongside the guard, under the same
+      // both-precedences loop and the same dedupe, because a marker set in one
+      // source and not the other is exactly the ambiguity this loop exists for.
+      for (const message of [...declaresProduction(env, unitName), ...guard(env)]) {
         if (seen.has(message)) continue;
         seen.add(message);
         faults.push({ scope: unitName, message });

@@ -1083,3 +1083,44 @@ describe('the script itself', () => {
     expect(readFileSync(SCRIPT, 'utf8')).toContain('set -euo pipefail');
   });
 });
+
+// `git archive` has always carried infra/systemd/ onto the host and systemd has
+// always read /etc/systemd/system, and nothing joined the two but a human with
+// scp. The production box therefore ran units four weeks older than the repo,
+// missing engine-wrapper's `Environment=APP_ENV=production` — which is what
+// makes its INTERNAL_SERVICE_TOKEN guard mandatory rather than advisory. What
+// is pinned here is only the wiring; infra/install-units.sh has its own tests
+// for what it does once it is called.
+describe('installing the systemd units', () => {
+  const step = (run: Run) => run.remote.findIndex((c) => c.includes('install-units.sh'));
+
+  it('installs them from the checkout on every deploy', () => {
+    const run = deploy(['--apply']);
+    expect(run.remote.some((c) => c.includes('cd /opt/N409 && bash infra/install-units.sh'))).toBe(true);
+  });
+
+  // After preflight, because preflight validates the unit files this step
+  // installs — and a checker that runs against a file the box will never boot
+  // is the failure that hid this one. Before the restarts, because those are
+  // what put the new units into service.
+  it('installs after the config check and before anything restarts', () => {
+    const run = deploy(['--apply']);
+    const check = run.remote.findIndex((c) => c.includes('preflight-cli.js'));
+    const restart = run.remote.findIndex((c) => c.includes('systemctl restart'));
+    expect(step(run)).toBeGreaterThan(check);
+    expect(restart).toBeGreaterThan(step(run));
+  });
+
+  it('restarts nothing when the units could not be installed', () => {
+    const run = deploy(['--apply'], {}, ['[[ "$*" == *"install-units.sh"* ]] && exit 1']);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('could not install the systemd units');
+    expect(run.remote.some((c) => c.includes('systemctl restart'))).toBe(false);
+  });
+
+  it('plans the install in a dry run without running it', () => {
+    const run = deploy([]);
+    expect(run.transcript).toBe('');
+    expect(run.stderr).toContain('install-units.sh');
+  });
+});
