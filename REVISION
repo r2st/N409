@@ -1811,3 +1811,149 @@
 #            failure than saying nothing. Worth watching for generally: a round
 #            that closes a gap tends to falsify the prose that documented it,
 #            and prose does not fail a test.
+# commit:    451f8b0
+# subject:   the guard on the route was not the guard on the timer
+# previous:  0cbb278 (the action every guard was written for, which did not exist).
+# includes:  6 commits — R91, a production-readiness round that began as the
+#            unfinished half of R90's banner and ended one layer further out
+#            than either round had looked.
+#
+#            332abec — the twenty-five tabs. R90 stated the condition on every
+#              one of them and left every control under it alive, so a withdrawn
+#              engagement still offered "Record decision", "Run health checks",
+#              "Save workbook", "Issue grant". The page said the work had
+#              stopped and went on inviting an analyst to add to it, with the
+#              refusal arriving from the server as a 409 after the click. On
+#              Intake that click was a client's.
+#
+#              `WriteGate` is a `fieldset disabled`, and the reason is the
+#              browser's inherited disabled state: every button, input, select
+#              and textarea beneath it is closed, including ones added next year
+#              by somebody who never read the comment. Twenty-five tabs of write
+#              UI cannot be held shut by a policy of remembering to pass a prop,
+#              because a control that forgot is indistinguishable from one
+#              deliberately left open. What stays open is as considered as what
+#              closes: Download PDF, Export auditor workbook, the structure
+#              explorer, "Inspect steps" on a calculation run, and every filter.
+#              A retired engagement is readable, which is the only thing it is
+#              still for.
+#
+#              Three things a fieldset has no opinion about needed hands: the
+#              report editor's contentEditable, Intake's `canEdit` — which every
+#              field and the Next button already consulted, so retirement became
+#              one more reason the answer is no rather than a second condition
+#              each of them had to learn — and e777021, two gates placed where a
+#              fieldset is not allowed to be. `display: contents` is why both
+#              looked correct: React builds the DOM through appendChild so
+#              nothing was reparented, and the layout agreed too. The first
+#              surface that would have disagreed is a browser without
+#              `display: contents` on a fieldset, which is a bad thing to be
+#              relying on silently.
+#
+#            625bd2e — the subsystems that are allowed to be off. `halfConfigured`
+#              refuses to boot production on one configured *half* way, because
+#              half is the state that looks working. Nothing said anything about
+#              one off altogether, and off altogether is the deployed state of
+#              upload virus scanning: the whole record of that decision was a
+#              `log.info` written at boot, weeks ago, on a host nobody tails.
+#              "Are the files our clients upload scanned?" was a question this
+#              platform could not be asked.
+#
+#              The roster describes rather than decides — nothing branches on
+#              it, and every consumer still reads the config at its own point of
+#              use, because a second definition that could disagree with the
+#              first is worse than no answer. It ranks by whether the absence is
+#              *silent*, which is the distinction that matters: payments off is
+#              loud (checkout is unavailable and the client sees that), scanning
+#              off is not (the upload succeeds, the file is stored, the file is
+#              served back). One definition, three surfaces: a consolidated boot
+#              line at `warn` in production, `capabilities` beside `circuits` on
+#              the admin metrics — which answers the neighbouring question, "is
+#              there something we are simply not doing" against "is what we
+#              depend on failing" — and a read-only panel under the settings
+#              line that says secrets live in the environment, which is true and
+#              is exactly why nobody could see this.
+#
+#            853bb57 — R90 made retirement reversible and hung the restore
+#              control off the retention audit log, which is a history: newest
+#              first, cut at two hundred by the API and fifty by the page. One
+#              Sunday sweep archiving forty engagements pushes last week's
+#              withdrawal past the end of it, and the only route back goes with
+#              it — silently, because a truncated list is indistinguishable from
+#              a complete one. A reversal you cannot find is not a reversal. So
+#              the state got its own read, derived from `archived_at` rather
+#              than from what the sweep recorded, carrying the company name
+#              because a support request says "restore the Acme engagement" and
+#              never a ULID, and carrying `total` because "showing 50 of 214"
+#              and "50" look the same to whoever is scrolling.
+#
+#            56edad7 — the finding of the round, and it came out of a coverage
+#              measurement rather than out of looking for it. R89 asked all 86
+#              mutating valuation-scoped *routes* whether the engagement had
+#              been retired; the sweep it wrote to find the ten that had not
+#              drives routes. This process also starts ten timers, and four of
+#              them write to a valuation without going through a route at all.
+#              A firm could withdraw an engagement, watch every button in the
+#              product stop accepting changes — R91 had just closed the last of
+#              those — and have a timer go on working the file. The pipeline
+#              retry ladder resumed a run that failed *before* the withdrawal,
+#              which means auto-applying an AI extraction and recording a
+#              calculation. The cap-table sync pulled the client's cap table
+#              from Carta and applied it, and called Carta at all, which is
+#              telling a third party we are still working a file the firm has
+#              withdrawn. The HRIS sync imported grants. And the email ladder
+#              delivered a reminder queued the day before — the same "we still
+#              need your cap table" R89 stopped `POST /remind-documents` from
+#              sending, arriving by the other door, and mail cannot be un-sent.
+#
+#              Filtered at the source of work rather than at the write: checking
+#              later would still have called the provider, and a sweep that
+#              fetches and discards is a sweep whose cost is invisible. The two
+#              ladders that have already *claimed* a row are the exception, and
+#              they go opposite ways for the same reason — the pipeline retry
+#              settles its run, because a claimed run holds the one-per-valuation
+#              index and abandoning it would block the engagement even after a
+#              restore; the email ladder simply stops claiming, because a row
+#              marked permanently failed could not be un-failed by one.
+#
+# method:    the sweep census (`scheduledSweepRoster.test.ts`) is the artefact
+#            worth keeping. R90 wrote down that a guard phrased "account for
+#            every X" catches the additions its author never imagined, while one
+#            phrased "these known X are fine" only ever catches regressions —
+#            and then R91 found four instances of exactly the thing R89's route
+#            sweep was written to catch, in a population that sweep could not
+#            enumerate. So the census reads the timer names out of `index.ts`
+#            and fails on any it has not been told about; a new timer cannot
+#            ship without somebody writing down whether it can touch a
+#            valuation. Two of its ten entries are decisions *not* to guard, and
+#            both would be bugs if guarded: the webhook ladder delivers R90's
+#            own `valuation.retired` event, and the retention sweep is the
+#            archiver.
+#
+# method:    the tab work was gated twice on purpose. Seventeen tabs are driven
+#            live-and-retired from the same fixture, with only `archived_at`
+#            differing, asserting a named control is enabled and then disabled —
+#            disabled rather than absent, because `queryByText(...) === null`
+#            passes when somebody renames the button, and that is the vacuity
+#            this codebase has already been bitten by. The source sweep beside
+#            it is the population guard, with the two counters R89 taught: it
+#            pins the size of the writing set, and it pins that a known
+#            read-only tab is not in it.
+#
+# note:      how the sweep hole was found. It was not a review. `poolHealth.ts`
+#            — the connection-leak detector — was at 0%, so the coverage table
+#            was read for the next-worst file, which was `pipelineRetry.ts` at
+#            28%. Writing a test for its branches meant asking what
+#            `findValuationById` returns for an archived row, which is
+#            everything, which is the hole. A coverage number is a poor goal and
+#            a good index.
+#
+# note:      four things a full-package run catches that a targeted one does
+#            not, and this round paid for the lesson twice. 451f8b0 is one: the
+#            responsive guard allowlists four-column tables by `file:line`, and
+#            a section inserted above one broke it with a message about column
+#            counts that reads as a layout problem and is bookkeeping. The other
+#            was `npm run lint` — a CI gate — which had been red on main before
+#            this round started, on three errors in the shared package's tests
+#            that `npm test` never runs. Both were found by running the gate
+#            rather than the file.

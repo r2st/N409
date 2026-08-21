@@ -43,18 +43,32 @@ export default defineConfig({
       // it takes new tests spread widely rather than one more suite.
       //
       // Re-measured at R90 without touching the floors: statements/lines 96.90,
-      // functions 98.64, branches 91.23. Statements/lines has drifted 0.6 down
-      // from the figure above and is now the *tightest* of the four — 0.9
-      // points, which sounds comfortable and is about 380 statements. Branches,
-      // the metric the note above calls the binding constraint, has meanwhile
-      // gained headroom. Recorded rather than acted on: a floor is meant to
-      // catch a regression, and a measurement that has quietly moved away from
-      // the number in the comment beside it is how a floor stops meaning
-      // anything. Whoever ratchets next should raise statements/lines first.
+      // functions 98.64, branches 91.23. Statements/lines had drifted 0.6 down
+      // from the figure above and was the *tightest* of the four; recorded
+      // rather than acted on, with a note that whoever ratcheted next should
+      // raise it first.
+      //
+      // R91 did, by covering rather than by lowering the bar to meet. Two files
+      // carried most of the gap: `db/poolHealth.ts` — the connection-leak
+      // detector, the only thing that can answer "why is the pool exhausted"
+      // with a line number — was at 0%, and `hooks/pipelineRetry.ts` at 28%.
+      // Both are now covered, and the second turned up a real hole while being
+      // written (see REVISION R91). Measured after: statements/lines 97.33,
+      // functions 98.69, branches 91.24.
+      //
+      // Statements/lines and functions go up. Branches deliberately does not,
+      // and the reason is worth writing down rather than rediscovering: 91
+      // would leave 0.24 points of headroom, which against ~15,000 branches is
+      // about 36 of them — one new module's worth. A floor that a routine
+      // addition trips is a floor somebody lowers under time pressure, and a
+      // lowered floor is worth less than the one that was never raised. The
+      // ~1,300 uncovered branches behind that number are still a long tail
+      // across 300-odd files rather than a few neglected ones, so moving it
+      // takes tests spread widely rather than one more suite.
       thresholds: {
-        lines: 96,
-        statements: 96,
-        functions: 97,
+        lines: 97,
+        statements: 97,
+        functions: 98,
         branches: 90,
       },
     },
