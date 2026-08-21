@@ -24,7 +24,7 @@ import { jsonSchemaFromZod, type JsonSchema } from './jsonSchema.js';
  */
 
 export interface OpenApiEndpoint {
-  method: 'GET' | 'POST' | 'DELETE';
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   path: string;
   summary: string;
   auth: 'api_key' | 'none';

@@ -294,9 +294,14 @@ describe.skipIf(!dbUp)('partner API idempotency scope', () => {
     // Every POST that writes something, and nothing else. A GET in this set
     // would be a documentation bug; a missing POST is a mutation a client
     // cannot make safely retryable.
+    // `PUT /valuations/{id}` is deliberately absent. A PUT that writes the
+    // fields it is given is already safe to repeat — the second one computes
+    // the same row and `patchValuation` returns early when nothing changed —
+    // so a key would buy it nothing and claim a row per correction.
     expect([...idempotent].sort()).toEqual([
       'POST /valuations',
       'POST /valuations/{id}/documents',
+      'POST /valuations/{id}/submit',
       'POST /webhooks',
       'POST /webhooks/{id}/deliveries/{deliveryId}/retry',
       'POST /webhooks/{id}/test',

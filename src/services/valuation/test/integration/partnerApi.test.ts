@@ -982,3 +982,160 @@ describe.skipIf(!dbUp)('partner API: submit', () => {
     ).toBeDefined();
   });
 });
+
+// `PUT /valuations/{id}` — the last endpoint 409.ai's partner API had and this
+// one did not. Without it a partner who typo'd a company name had no way to
+// correct it: the value would travel through the pipeline into the deliverable.
+describe.skipIf(!dbUp)('partner API: update', () => {
+  let ctx: TestApp;
+  let app: FastifyInstance;
+  let apiKey: string;
+  let otherKey: string;
+
+  const keyHeader = (key: string) => ({ authorization: `Bearer ${key}` });
+
+  const mintKey = async (owner: string): Promise<string> => {
+    const admin = await seedUser(ctx, { roles: ['partner'], partnerId: owner });
+    const minted = await app.inject({
+      method: 'POST',
+      url: `/api/v1/partners/${owner}/tokens`,
+      headers: authHeader(admin.token),
+      payload: { name: 'update tests' },
+    });
+    return minted.json().secret as string;
+  };
+
+  const created = async (body: Record<string, unknown> = {}): Promise<string> => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/partner/v1/valuations',
+      headers: keyHeader(apiKey),
+      payload: { kind: '409a', company_name: 'Typoed Nmae Inc.', ...body },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json().valuation.id as string;
+  };
+
+  const update = async (id: string, payload: unknown, key = apiKey) =>
+    app.inject({
+      method: 'PUT',
+      url: `/api/partner/v1/valuations/${id}`,
+      headers: keyHeader(key),
+      payload,
+    });
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({}, { partnerApiLimiter: new FixedWindowRateLimiter(1000, 60_000) });
+    app = ctx.app;
+    apiKey = await mintKey(await seedPartner(ctx, 'Correcting Advisors'));
+    otherKey = await mintKey(await seedPartner(ctx, 'Uninvolved Advisors'));
+  });
+
+  afterAll(async () => {
+    await ctx?.teardown();
+  });
+
+  it('corrects the company name', async () => {
+    const id = await created();
+    const res = await update(id, { company_name: 'Correct Name Inc.' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().valuation.company_name).toBe('Correct Name Inc.');
+  });
+
+  it('changes only what it was given', async () => {
+    const id = await created({ currency: 'EUR', external_id: 'keep-me' });
+    await update(id, { company_name: 'Renamed Ltd.' });
+    const after = await app.inject({
+      method: 'GET',
+      url: `/api/partner/v1/valuations/${id}`,
+      headers: keyHeader(apiKey),
+    });
+    expect(after.json().valuation.currency).toBe('EUR');
+    expect(after.json().valuation.external_id).toBe('keep-me');
+  });
+
+  it('clears a nullable field when sent null', async () => {
+    const id = await created({ external_id: 'to-be-cleared' });
+    const res = await update(id, { external_id: null });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().valuation.external_id).toBeNull();
+  });
+
+  // An empty body is far more likely to be a client that built the patch wrong
+  // than a deliberate no-op, and a 200 would report a correction that never
+  // landed.
+  it('refuses an empty patch rather than reporting success', async () => {
+    const res = await update(await created(), {});
+    expect(res.statusCode).toBe(422);
+    expect(res.json().detail).toContain('No editable fields');
+  });
+
+  // `kind` selects the report skeleton, the engine pipeline and the price.
+  // Changing it after documents are attached is a different engagement, not an
+  // edit — and a strict body says so instead of dropping it silently.
+  it('refuses to change the kind, and says so', async () => {
+    const res = await update(await created(), { kind: 'asc_718' });
+    expect(res.statusCode).toBe(422);
+  });
+
+  it('validates the fields it does accept', async () => {
+    const id = await created();
+    expect((await update(id, { company_name: '' })).statusCode).toBe(422);
+    expect((await update(id, { currency: 'NOTACURRENCY' })).statusCode).toBe(422);
+    expect((await update(id, { service_countries: ['USA'] })).statusCode).toBe(422);
+  });
+
+  // The line is where the deliverable starts being written: past that an
+  // analyst is working from these values, and a name that changes underneath
+  // them appears in a report nobody re-read.
+  it.each(['review', 'reviewed', 'drafted', 'published'])('refuses once the file is %s', async (state) => {
+    const id = await created();
+    await ctx.pool.query(`UPDATE valuations SET state = $2 WHERE id = $1`, [id, state]);
+    const res = await update(id, { company_name: 'Too Late Inc.' });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().detail).toContain('no longer editable');
+  });
+
+  it.each(['pending', 'user_finished', 'completed', 'paid'])('allows it while %s', async (state) => {
+    const id = await created();
+    await ctx.pool.query(`UPDATE valuations SET state = $2 WHERE id = $1`, [id, state]);
+    expect((await update(id, { company_name: `Renamed in ${state}` })).statusCode).toBe(200);
+  });
+
+  // The same index guards the update path as the create path.
+  it('refuses an external_id another valuation already holds', async () => {
+    await created({ external_id: 'taken-already' });
+    const other = await created();
+    const res = await update(other, { external_id: 'taken-already' });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().detail).toContain('already used');
+  });
+
+  it('is scoped to the key that owns the valuation', async () => {
+    const id = await created();
+    expect((await update(id, { company_name: 'Not Yours' }, otherKey)).statusCode).toBe(404);
+  });
+
+  it('records the correction in the audit trail', async () => {
+    const id = await created();
+    await update(id, { company_name: 'Audited Rename Inc.' });
+    const { rows } = await ctx.pool.query<{ source: string }>(
+      `SELECT source FROM valuation_events WHERE valuation_id = $1 AND type = 'valuation_updated'`,
+      [id],
+    );
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows.map((r) => r.source)).toContain('partner_api');
+  });
+
+  it('is listed in the docs endpoint and the OpenAPI spec', async () => {
+    const docs = await app.inject({ method: 'GET', url: '/api/partner/v1/docs' });
+    expect((docs.json() as { endpoints: { path: string }[] }).endpoints).toContainEqual(
+      expect.objectContaining({ method: 'PUT', path: '/valuations/{id}' }),
+    );
+    const spec = await app.inject({ method: 'GET', url: '/api/partner/v1/openapi.json' });
+    const paths = (spec.json() as { paths: Record<string, Record<string, unknown>> }).paths;
+    expect(paths['/valuations/{id}']!.put).toBeDefined();
+    // The GET on the same path must survive gaining a sibling.
+    expect(paths['/valuations/{id}']!.get).toBeDefined();
+  });
+});

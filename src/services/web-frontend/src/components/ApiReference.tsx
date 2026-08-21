@@ -15,7 +15,7 @@ import { ErrorNote, Spinner } from './ui';
  */
 
 interface EndpointDoc {
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   path: string;
   summary: string;
   auth: 'api_key' | 'none';
@@ -35,8 +35,25 @@ interface ApiDocs {
   openapi_url?: string;
 }
 
+/**
+ * The verb, coloured by what it does to the resource.
+ *
+ * This typed `method` as `'GET' | 'POST'` while the registry had been serving
+ * three DELETE endpoints for some time, so the reference painted "revoke this
+ * webhook" in the same green as "create a valuation" — and TypeScript could not
+ * say so, because the type was a claim about the server rather than a reading
+ * of it. Read-only, creates, replaces and deletes are four different promises
+ * to somebody scanning the page for the one that will remove their data.
+ */
+const METHOD_TONES: Record<EndpointDoc['method'], string> = {
+  GET: 'bg-bond-50 text-bond-700',
+  POST: 'bg-emerald-50 text-emerald-700',
+  PUT: 'bg-amber-50 text-amber-700',
+  DELETE: 'bg-rose-50 text-rose-700',
+};
+
 function MethodChip({ method }: { method: EndpointDoc['method'] }) {
-  const tone = method === 'GET' ? 'bg-bond-50 text-bond-700' : 'bg-emerald-50 text-emerald-700';
+  const tone = METHOD_TONES[method] ?? METHOD_TONES.POST;
   return <span className={`tnum rounded px-1.5 py-0.5 font-mono text-xs font-bold ${tone}`}>{method}</span>;
 }
 

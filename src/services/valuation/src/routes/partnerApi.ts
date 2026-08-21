@@ -35,6 +35,7 @@ import {
   createValuation,
   findValuationById,
   listValuations,
+  patchValuation,
   type ValuationRow,
 } from '../repos/valuations.js';
 import { listDocuments } from '../repos/documents.js';
@@ -156,6 +157,29 @@ const CreateBody = z.object({
    */
   external_id: z.string().trim().min(1).max(200).optional(),
 });
+
+/**
+ * The fields a partner may still correct, and nothing else.
+ *
+ * Not a copy of `CreateBody` with everything optional. `kind` is deliberately
+ * absent: it selects the report skeleton, the engine pipeline and the price, so
+ * changing it after documents have been attached and a questionnaire seeded is
+ * not an edit but a different engagement, and the honest way to do that is to
+ * create one. Everything here is a label or a currency — a correction to what
+ * the deliverable *says*, not to what it *is*.
+ *
+ * `.strict()` because a partner who sends `{ kind: '409a' }` expecting it to
+ * take should be told it did not, rather than have it silently dropped.
+ */
+const UpdateBody = z
+  .object({
+    company_name: z.string().min(1).max(300).optional(),
+    service_name: z.string().min(1).max(300).nullable().optional(),
+    currency: CurrencyCode.optional(),
+    service_countries: z.array(z.string().length(2)).max(50).optional(),
+    external_id: z.string().trim().min(1).max(200).nullable().optional(),
+  })
+  .strict();
 
 const ListQuery = z.object({
   state: z.enum(VALUATION_STATES).optional(),
@@ -357,6 +381,7 @@ export function registerPartnerApiRoutes(
     };
     if (doc.method === 'GET') app.get(url, routeOpts, handler);
     else if (doc.method === 'DELETE') app.delete(url, routeOpts, handler);
+    else if (doc.method === 'PUT') app.put(url, routeOpts, handler);
     else app.post(url, routeOpts, handler);
   };
 
@@ -746,6 +771,97 @@ export function registerPartnerApiRoutes(
    */
   const SUBMIT_PATH = ['pending', 'started', 'onboarding_completed', 'user_finished'] as const;
   const SUBMIT_TARGET = 'user_finished';
+
+  /**
+   * States in which a partner may still correct the engagement's labels.
+   *
+   * The line is drawn where the deliverable starts being written: once a file
+   * is in `review` an analyst is working from these values, and a company name
+   * that changes underneath them appears in a report nobody re-read. Before
+   * that it is still a submission.
+   */
+  const EDITABLE_STATES: ReadonlySet<string> = new Set([
+    'pending',
+    'started',
+    'onboarding_completed',
+    'user_finished',
+    'completed',
+    'paid',
+  ]);
+
+  define(
+    {
+      method: 'PUT',
+      path: '/valuations/{id}',
+      summary:
+        "Correct an engagement's details before review begins — company name, service label, " +
+        'currency, countries, or your own external_id.',
+      auth: 'api_key',
+      body: {
+        company_name: 'Optional. Company being valued.',
+        service_name: 'Optional service label. Send null to clear it.',
+        currency: 'Optional ISO-4217 code.',
+        service_countries: 'Optional ISO-3166 alpha-2 country list.',
+        external_id: 'Optional. Your own identifier. Send null to clear it.',
+      },
+      errors: {
+        '409':
+          'This valuation has reached review — its details are being written into the deliverable and ' +
+          'are no longer editable through the API. Contact your account manager.',
+        '422': 'No editable field was supplied, or one of them is invalid.',
+      },
+      response: '{ valuation }',
+    },
+    async (req) => {
+      const { principal, token } = requireToken(req);
+      const { id } = req.params as { id: string };
+      const valuation = await loadScoped(token, id);
+
+      const parsed = UpdateBody.safeParse(req.body ?? {});
+      if (!parsed.success) throw problems.unprocessable('Invalid update', { errors: parsed.error.issues });
+      if (Object.keys(parsed.data).length === 0) {
+        // An empty body is far more likely to be a client that built the patch
+        // wrong than a deliberate no-op, and answering 200 to it would report
+        // that a correction landed when nothing was written.
+        throw problems.unprocessable('No editable fields supplied');
+      }
+      if (!EDITABLE_STATES.has(valuation.state)) {
+        throw problems.conflict(
+          `This valuation is '${valuation.state}' — its details are being written into the deliverable ` +
+            'and are no longer editable through the API.',
+        );
+      }
+
+      // Mapped explicitly rather than spread: the body's names are the API's and
+      // the row's are the database's, and a spread would make every future
+      // column name part of the public contract by accident.
+      const fields: Record<string, unknown> = {};
+      if (parsed.data.company_name !== undefined) fields.company_name = parsed.data.company_name;
+      if (parsed.data.service_name !== undefined) fields.service_name = parsed.data.service_name;
+      if (parsed.data.currency !== undefined) fields.currency = parsed.data.currency;
+      if (parsed.data.service_countries !== undefined) {
+        fields.service_countries = parsed.data.service_countries;
+      }
+      if (parsed.data.external_id !== undefined) fields.external_id = parsed.data.external_id;
+
+      const updated = await patchValuation(deps.pool, valuation, fields, actorFor(principal)).catch(
+        (err: unknown) => {
+          // Same index, same reason as the create path: two engagements in one
+          // organization cannot share an external_id, and an update is just as
+          // able to collide as a create.
+          if (isUniqueViolation(err, 'valuations_partner_external_id_idx')) {
+            throw problems.conflict(
+              `external_id "${parsed.data.external_id}" is already used by another valuation in your ` +
+                'organization.',
+            );
+          }
+          throw err;
+        },
+      );
+      return { valuation: publicValuation(updated) };
+    },
+    { schemas: { body: UpdateBody, response: GetValuationResponse } },
+  );
 
   define(
     {
