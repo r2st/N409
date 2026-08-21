@@ -42,6 +42,78 @@
  */
 export const DEFAULT_TRUSTED_PROXIES = 'loopback, linklocal, uniquelocal';
 
+/**
+ * Cloudflare's published edge ranges, as the named hop `cloudflare`.
+ *
+ * WHY THIS IS HERE. n409.aiknol.com resolves to Cloudflare, not to the origin:
+ * the A record is proxied (orange cloud), which the infra/caddy README says it
+ * must not be and which nothing has ever checked. So the chain in production is
+ * `client → Cloudflare edge → Caddy → web`, and the edge is a hop this list did
+ * not name. proxy-addr walks in from the socket, finds 127.0.0.1 (trusted),
+ * steps left to the Cloudflare address (not trusted), and stops there — so
+ * `req.ip` is a Cloudflare datacenter for every request on the internet.
+ *
+ * That is exactly the failure the header comment above describes, one hop
+ * further out, and it was live. Measured rather than reasoned: a request from
+ * 49.43.232.92 was logged by n409-web as `remoteAddress: 104.23.175.42`. Every
+ * throttle keyed on `req.ip` was therefore keyed on a Cloudflare POP shared by
+ * everyone routed through it — `login-ip:` and `register-ip:` and
+ * `reset-ip:` included, so one person's failed logins consumed a stranger's
+ * budget, and an attacker moving between POPs got a fresh one each time.
+ *
+ * THE TRADE THIS MAKES, stated plainly because it is a real one. Every other
+ * entry in the default list is unroutable, so nothing on the internet can
+ * occupy one and forge a header. These ranges are routable, and code running on
+ * Cloudflare — a Worker, say — can reach this origin directly by IP and would
+ * then be a trusted hop able to name any client it likes. The complete fix is
+ * to accept 80/443 at the origin only from these same ranges. That is not done
+ * here, and deliberately not shipped as an unapplied script either — this
+ * host's Caddy serves two unrelated products from the same ports, and locking
+ * those to Cloudflare is not this repo's call to make. It is written down as an
+ * open item in infra/DEPLOYMENT.md instead, where it can be decided rather than
+ * accidentally run.
+ *
+ * It is still strictly better than what it replaces. Today the per-IP limits
+ * are one shared bucket and defeating them takes no effort at all; after this
+ * they are per-client, and defeating them takes an attacker who both runs code
+ * inside Cloudflare and knows the origin address.
+ *
+ * REFRESHING. Fetched 2026-08-21 from https://www.cloudflare.com/ips-v4 and
+ * .../ips-v6, which are the authoritative lists. They change rarely; when they
+ * do, a removed range means a Cloudflare POP stops being trusted and its
+ * traffic is attributed to the edge again — the old bug, narrowed to one POP —
+ * so this is worth re-checking at the same time as any other annual review.
+ * `clientIp.test.ts` pins the shapes, not the values, so a refresh does not
+ * fight the test suite.
+ */
+export const CLOUDFLARE_RANGES = [
+  '173.245.48.0/20',
+  '103.21.244.0/22',
+  '103.22.200.0/22',
+  '103.31.4.0/22',
+  '141.101.64.0/18',
+  '108.162.192.0/18',
+  '190.93.240.0/20',
+  '188.114.96.0/20',
+  '197.234.240.0/22',
+  '198.41.128.0/17',
+  '162.158.0.0/15',
+  '104.16.0.0/13',
+  '104.24.0.0/14',
+  '172.64.0.0/13',
+  '131.0.72.0/22',
+  '2400:cb00::/32',
+  '2606:4700::/32',
+  '2803:f800::/32',
+  '2405:b500::/32',
+  '2405:8100::/32',
+  '2a06:98c0::/29',
+  '2c0f:f248::/32',
+];
+
+/** The token that expands to {@link CLOUDFLARE_RANGES}. */
+const CLOUDFLARE_TOKEN = 'cloudflare';
+
 /** Values that ask for "trust whatever the header says". Never valid here. */
 const BLANKET_TRUST = new Set(['true', 'all', '*', 'yes', 'any']);
 
@@ -289,5 +361,16 @@ export function trustedProxies(env: NodeJS.ProcessEnv = process.env): string[] |
       );
     }
   }
-  return hops;
+  // Expanded last, and deliberately after the width check above rather than
+  // before it.
+  //
+  // `2a06:98c0::/29` is wider than MIN_PREFIX allows, and refusing it would be
+  // right if an operator had typed it: that guard exists to catch a human
+  // writing a block wider than they meant. This is not that. It is a vetted
+  // constant, fetched from the vendor that publishes it, and the reason it is a
+  // named token rather than twenty-two CIDRs in an env file is precisely so it
+  // does not have to be retyped — and so the one entry a width rule would
+  // reject cannot be quietly dropped by whoever is retyping it. Anything the
+  // operator writes literally is still measured.
+  return hops.flatMap((hop) => (hop.toLowerCase() === CLOUDFLARE_TOKEN ? CLOUDFLARE_RANGES : [hop]));
 }

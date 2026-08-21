@@ -69,6 +69,53 @@ The single most important production control, and the reason this doc exists:
 5. **Document encryption at rest.** Set `DOCUMENTS_ENCRYPTION_KEY` in
    `/opt/N409/.env` (`openssl rand -hex 32`) to AES-256-GCM the stored blobs.
 
+## Cloudflare sits in front of the origin
+
+`dig +short n409.aiknol.com` returns Cloudflare addresses, not 204.168.241.124:
+the DNS record is **proxied**. So the request chain is
+`client → Cloudflare edge → Caddy → web`, and the app has to be told that the
+edge is a hop, or it attributes every request on the internet to a Cloudflare
+datacenter. It did, until R88 — measured, not inferred: a request from
+49.43.232.92 was logged by `n409-web` as `remoteAddress: 104.23.175.42`. Every
+throttle keyed on `req.ip` was keyed on a shared POP, `login-ip:`,
+`register-ip:` and `reset-ip:` among them.
+
+The host therefore sets:
+
+```
+TRUSTED_PROXIES=loopback, uniquelocal, cloudflare
+```
+
+`cloudflare` expands to Cloudflare's published ranges — see
+`src/packages/shared/src/clientIp.ts` for the list, when it was fetched, and how
+to refresh it.
+
+### Open item: the origin still accepts 80/443 from anywhere
+
+Trusting Cloudflare's ranges is only completely safe once the origin accepts
+those ports *from those ranges alone*. Without that, code running inside
+Cloudflare — a Worker — can reach 204.168.241.124 directly, be treated as a
+trusted hop, and name any client it likes, which puts the per-IP limits back
+within reach of someone willing to do that work.
+
+It is not done, and not shipped as an unapplied script either, for one reason:
+**this host's Caddy serves two unrelated products from the same ports**
+(`ustradingbot.aiknol.com`, `talentping.aiknol.com`). Restricting 80/443 to
+Cloudflare would take those down unless they are proxied too, and that is not
+this repo's decision to make. The shape of the change, when somebody does decide:
+
+```sh
+# For each range in CLOUDFLARE_RANGES (src/packages/shared/src/clientIp.ts):
+ufw allow from <range> to any port 80,443 proto tcp comment 'Cloudflare edge'
+# then, and only after confirming the other two sites are proxied:
+ufw delete allow 80/tcp && ufw delete allow 443/tcp
+```
+
+Note that this is a narrowing of an already-narrow exposure, not the removal of
+an open door: before R88 the per-IP limits were a single shared bucket that took
+no effort at all to defeat. Ranked against that, the residual risk is smaller
+than what it replaced.
+
 ## Required environment (`/opt/N409/.env`, chmod 600)
 
 Beyond the pre-existing vars (DATABASE_URL, JWT_SECRET, JWT_ISSUER,

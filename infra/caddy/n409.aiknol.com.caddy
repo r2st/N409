@@ -1,29 +1,60 @@
-# n409.aiknol.com — reverse proxy to the N409 web service (host port 3000).
+# n409.aiknol.com — the public edge. This is the only N409 surface on the
+# internet; everything behind it binds loopback.
 #
-# Caddy provisions and renews a Let's Encrypt certificate automatically for
-# this hostname (HTTP-01 / TLS-ALPN), so no explicit `tls` block is needed.
-# HTTP on :80 is auto-redirected to HTTPS.
+# WHAT THIS FILE IS. The block below is the `n409.aiknol.com` site block as it
+# is actually deployed, kept here so the routing is reviewable in the repository
+# rather than only readable over ssh. It is NOT a whole Caddyfile and must not
+# be installed as one: 204.168.241.124 runs a single native Caddy
+# (`/etc/caddy/Caddyfile`, systemd unit `caddy`, v2.11) that also serves two
+# unrelated products from the same file. Applying this file wholesale would
+# take those down. Edit the corresponding block in place, or `import` this one.
 #
-# Drop this file into the Caddy container's sites directory (see README.md) or
-# `import` it from the main Caddyfile. Caddy runs in Docker, so the upstream
-# must be reachable from *inside* the container — `host.docker.internal`
-# resolves to the Docker host when the container is started with
-# `--add-host host.docker.internal:host-gateway` (see README for how to verify
-# / pick the right upstream for this box).
+# WHY IT IS WRITTEN DOWN AT ALL. What was in this file before described a
+# deployment that has never existed on this host: a Caddy running in Docker,
+# reached at `host.docker.internal:3000` (there is no Docker on the box at all),
+# and a single upstream for every path. Following it would have produced a site
+# that could not reach its own backend, and — because the SCIM routes are the
+# one public path that does *not* go through the web service — would have
+# silently 404'd every SCIM provisioning request from every configured IdP.
+# Stale infrastructure config is worse than none: it invites someone to apply it.
+#
+# THE ONE RULE THAT IS NOT OBVIOUS. `handle` blocks are evaluated in order and
+# only the first match runs, so the `/scim/v2/*` block must stay above the
+# catch-all. Reordering them routes SCIM to the web service, which has no such
+# routes, and the failure is a 404 from an IdP's provisioning job — visible in
+# somebody else's logs, not in ours.
 
 n409.aiknol.com {
-	encode zstd gzip
-
-	# The web service already forwards /api/v1 to the valuation service, so a
-	# single upstream covers both the SPA and the API. Caddy passes Host and
-	# X-Forwarded-* by default; add X-Real-IP for backends that read it.
-	reverse_proxy host.docker.internal:3000 {
-		header_up X-Real-IP {remote_host}
+	# SCIM 2.0 provisioning lives on the valuation service (3001) and is
+	# deliberately outside the web service's /api/v1 proxy: it is its own
+	# protocol with its own auth (bearer tokens issued by
+	# /api/v1/admin/sso/scim-tokens), not part of the application API. So it is
+	# forwarded here, directly, rather than through 3000.
+	handle /scim/v2/* {
+		reverse_proxy localhost:3001
 	}
 
-	# Keep access logs with the other Caddy logs; adjust path to taste.
-	log {
-		output stderr
-		format console
+	# Everything else — the SPA and the API alike — goes to the web service,
+	# whose own /api/v1 proxy already covers SAML (/api/v1/auth/saml/*) and
+	# admin SSO (/api/v1/admin/sso/*). One upstream, so there is no second place
+	# for a route to be forgotten.
+	handle {
+		reverse_proxy localhost:3000
 	}
 }
+
+# Deliberately absent, each for a reason:
+#
+#   encode — the web service compresses its own responses, and verified so: the
+#   document and its JS assets come back `content-encoding: zstd` and `gzip`
+#   respectively over the live site. A second `encode` here would recompress
+#   what is already compressed.
+#
+#   header_up X-Real-IP — nothing reads it. `clientIp.ts` resolves the caller
+#   from X-Forwarded-For under Fastify's `trustProxy`, which Caddy populates by
+#   default, and adding a second header carrying the same fact is a second thing
+#   to keep honest.
+#
+#   tls — Caddy provisions and renews Let's Encrypt automatically for this
+#   hostname, and :80 is redirected to :443 without being asked. An explicit
+#   block here would only be a way to get it wrong.

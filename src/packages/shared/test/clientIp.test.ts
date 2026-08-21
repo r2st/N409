@@ -11,8 +11,9 @@
 //
 // Neither shows up as an error at runtime. A 429 looks identical whichever way
 // the identity was wrong, so the value is pinned here instead.
+import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
-import { trustedProxies, DEFAULT_TRUSTED_PROXIES } from '../src/clientIp.js';
+import { trustedProxies, DEFAULT_TRUSTED_PROXIES, CLOUDFLARE_RANGES } from '../src/clientIp.js';
 
 describe('trustedProxies', () => {
   it('defaults to the private ranges the deployment actually uses', () => {
@@ -300,5 +301,111 @@ describe('trustedProxies', () => {
       // The unmeasurable entry must not short-circuit the rest of the list.
       expect(() => trustedProxies({ TRUSTED_PROXIES: 'not-an-address, 0.0.0.0/1' })).toThrow(/spans/);
     });
+  });
+});
+
+// The hop that was missing in production.
+//
+// n409.aiknol.com resolves to Cloudflare, not to the origin — the A record is
+// proxied, which infra/caddy/README.md says it must not be and which nothing
+// ever checked. So the real chain is `client → Cloudflare edge → Caddy → web`,
+// proxy-addr stopped at the Cloudflare address because no entry named it, and
+// `req.ip` was a Cloudflare datacenter for every request on the internet.
+// Measured, not reasoned: a request from 49.43.232.92 was logged by n409-web as
+// remoteAddress 104.23.175.42.
+describe('trustedProxies: the cloudflare hop', () => {
+  it('expands to the published ranges rather than reaching proxy-addr as a name', () => {
+    const hops = trustedProxies({ TRUSTED_PROXIES: 'loopback, cloudflare' });
+    expect(hops).toContain('loopback');
+    // proxy-addr knows `loopback`, `linklocal` and `uniquelocal` and nothing
+    // else; left unexpanded, this token would be rejected by it at boot.
+    expect(hops).not.toContain('cloudflare');
+    expect(hops).toEqual(expect.arrayContaining(CLOUDFLARE_RANGES));
+  });
+
+  it('is spelled case-insensitively, like every other value here', () => {
+    for (const spelling of ['Cloudflare', 'CLOUDFLARE', ' cloudflare ']) {
+      expect(trustedProxies({ TRUSTED_PROXIES: spelling })).toEqual(CLOUDFLARE_RANGES);
+    }
+  });
+
+  // Shapes, not values: the list is refreshed from Cloudflare and a refresh
+  // must not have to fight the test suite.
+  it('is a list of CIDR blocks in both families', () => {
+    expect(CLOUDFLARE_RANGES.length).toBeGreaterThan(10);
+    const v4 = CLOUDFLARE_RANGES.filter((r) => /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(r));
+    const v6 = CLOUDFLARE_RANGES.filter((r) => /^[0-9a-f:]+\/\d{1,3}$/.test(r));
+    expect(v4.length + v6.length).toBe(CLOUDFLARE_RANGES.length);
+    expect(v4.length).toBeGreaterThan(0);
+    expect(v6.length).toBeGreaterThan(0);
+  });
+
+  it('holds no duplicates', () => {
+    expect(new Set(CLOUDFLARE_RANGES).size).toBe(CLOUDFLARE_RANGES.length);
+  });
+
+  // The token is exempt from the width guard on purpose — `2a06:98c0::/29` is
+  // wider than MIN_PREFIX allows and is Cloudflare's published block. The
+  // exemption must belong to the token and not leak to what an operator types,
+  // because the guard's whole job is catching a human who wrote a block wider
+  // than they meant.
+  it('does not exempt the same block when it is written out by hand', () => {
+    expect(() => trustedProxies({ TRUSTED_PROXIES: '2a06:98c0::/29' })).toThrow(/spans/);
+  });
+
+  it('still refuses blanket trust alongside it', () => {
+    expect(() => trustedProxies({ TRUSTED_PROXIES: 'cloudflare, true' })).toThrow(/regardless of the other/);
+  });
+
+  // It is not in the default, and must not become so: a deployment not behind
+  // Cloudflare would be trusting routable space it does not run for nothing.
+  it('is opt-in, never a default', () => {
+    expect(DEFAULT_TRUSTED_PROXIES).not.toContain('cloudflare');
+    expect(trustedProxies({})).not.toEqual(expect.arrayContaining(['104.16.0.0/13']));
+  });
+});
+
+// What the list is *for*, exercised through the thing that consumes it. The
+// unit assertions above pin the value; this pins the behaviour that value
+// exists to produce, against the real proxy-addr and a real Fastify request.
+describe('the chain a Cloudflare-fronted request actually presents', () => {
+  const CLIENT = '49.43.232.92';
+  const CF_EDGE = '104.23.175.42';
+
+  /** `req.ip` for a loopback request carrying the given X-Forwarded-For. */
+  async function resolve(trustProxy: string[] | false, xff: string): Promise<string> {
+    const app = Fastify({ trustProxy });
+    app.get('/', async (req) => ({ ip: req.ip }));
+    const res = await app.inject({ method: 'GET', url: '/', headers: { 'x-forwarded-for': xff } });
+    await app.close();
+    return (res.json() as { ip: string }).ip;
+  }
+
+  // Cloudflare sets X-Forwarded-For to the client; Caddy appends the address it
+  // was dialled from, which is the Cloudflare edge.
+  const CHAIN = `${CLIENT}, ${CF_EDGE}`;
+
+  it('attributes the request to Cloudflare without the hop — the live bug', async () => {
+    expect(await resolve(trustedProxies({}), CHAIN)).toBe(CF_EDGE);
+  });
+
+  it('attributes it to the client with the hop', async () => {
+    expect(await resolve(trustedProxies({ TRUSTED_PROXIES: 'loopback, cloudflare' }), CHAIN)).toBe(CLIENT);
+  });
+
+  // The other direction, and the reason this cannot simply be `trustProxy:
+  // true`: trusting Cloudflare must not let the *client* name itself. A header
+  // forged by whoever is really at 49.43.232.92 sits to the left of an address
+  // nothing trusts, so the walk stops before it.
+  it('does not let a client prepend an address of its own choosing', async () => {
+    const forged = `203.0.113.9, ${CLIENT}, ${CF_EDGE}`;
+    expect(await resolve(trustedProxies({ TRUSTED_PROXIES: 'loopback, cloudflare' }), forged)).toBe(CLIENT);
+  });
+
+  // A deployment that drops Cloudflare later keeps working: with no Cloudflare
+  // address in the chain there is nothing for the extra ranges to match, and
+  // the walk stops at the same place it would have anyway.
+  it('is harmless when the request did not come through Cloudflare', async () => {
+    expect(await resolve(trustedProxies({ TRUSTED_PROXIES: 'loopback, cloudflare' }), CLIENT)).toBe(CLIENT);
   });
 });
