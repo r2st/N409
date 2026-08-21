@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, ErrorNote, Select, Spinner } from '../../components/ui';
+import { Button, ErrorNote, Select, Spinner, WriteGate } from '../../components/ui';
 
 /**
  * Engagement lifecycle panel (feature 8). Shows the current stage + SLA, the
@@ -63,7 +63,7 @@ function hours(h: number): string {
 }
 
 export function EngagementTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const [view, setView] = useState<EngagementView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -144,30 +144,32 @@ export function EngagementTab() {
         </ol>
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button
-            onClick={() => void advance()}
-            disabled={busy || view.engagement.current_stage === 'complete'}
-          >
-            Advance to next stage
-          </Button>
-          <div className="flex items-center gap-2">
-            <Select
-              aria-label="Jump to stage"
-              value={target}
-              onChange={(e) => setTarget(e.target.value)}
-              className="w-48"
+          <WriteGate closed={retired}>
+            <Button
+              onClick={() => void advance()}
+              disabled={busy || view.engagement.current_stage === 'complete'}
             >
-              <option value="">Jump to stage…</option>
-              {stages.map((s) => (
-                <option key={s.key} value={s.key}>
-                  {s.label}
-                </option>
-              ))}
-            </Select>
-            <Button variant="secondary" disabled={busy || !target} onClick={() => void advance(target)}>
-              Go
+              Advance to next stage
             </Button>
-          </div>
+            <div className="flex items-center gap-2">
+              <Select
+                aria-label="Jump to stage"
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                className="w-48"
+              >
+                <option value="">Jump to stage…</option>
+                {stages.map((s) => (
+                  <option key={s.key} value={s.key}>
+                    {s.label}
+                  </option>
+                ))}
+              </Select>
+              <Button variant="secondary" disabled={busy || !target} onClick={() => void advance(target)}>
+                Go
+              </Button>
+            </div>
+          </WriteGate>
         </div>
       </section>
 

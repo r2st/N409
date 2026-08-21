@@ -2,7 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, LoadingBlock, Skeleton, SkeletonText } from '../../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  LoadingBlock,
+  Skeleton,
+  SkeletonText,
+  WriteGate,
+} from '../../components/ui';
 
 type Severity = 'ok' | 'info' | 'warning' | 'error';
 type Category = 'methodology' | 'assumptions' | 'completeness' | 'mathematical' | 'temporal';
@@ -70,7 +78,7 @@ function SeverityPill({ severity }: { severity: Severity }) {
  * calculation, so a recalculation invalidates a prior run.
  */
 export function HealthTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const [data, setData] = useState<HealthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -136,9 +144,11 @@ export function HealthTab() {
       </div>
 
       <div>
-        <Button onClick={() => void run()} disabled={running || noCalc}>
-          {running ? 'Running…' : 'Run health checks'}
-        </Button>
+        <WriteGate closed={retired}>
+          <Button onClick={() => void run()} disabled={running || noCalc}>
+            {running ? 'Running…' : 'Run health checks'}
+          </Button>
+        </WriteGate>
       </div>
       {error && <ErrorNote>{error}</ErrorNote>}
 

@@ -970,3 +970,38 @@ export function Toast({
     </div>
   );
 }
+
+/**
+ * Wraps a region of write controls so one condition closes all of them.
+ *
+ * A `fieldset` rather than a `disabled`/`readOnly` prop threaded through every
+ * control inside: `disabled` on a fieldset is inherited natively by every
+ * button, input, select and textarea beneath it — including the ones somebody
+ * adds next year without reading this comment. That is the whole point. The
+ * valuation workspace has twenty-five tabs of write UI, and a policy of
+ * "remember to pass the prop" is a policy that a control which forgot is
+ * indistinguishable from one deliberately left open.
+ *
+ * `display: contents` keeps the fieldset out of layout, so wrapping an
+ * existing region moves nothing on screen. The browser's disabled inheritance
+ * is a DOM relationship, not a layout one, so it survives that.
+ *
+ * What this does NOT close, and what still needs its own check beside it:
+ * anchors and `Link`s, and anything hung off an `onClick` on a non-form
+ * element. A `fieldset` has no opinion about those.
+ */
+export function WriteGate({
+  closed,
+  className = '',
+  children,
+}: {
+  closed: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <fieldset disabled={closed} className={`contents ${className}`.trim()}>
+      {children}
+    </fieldset>
+  );
+}

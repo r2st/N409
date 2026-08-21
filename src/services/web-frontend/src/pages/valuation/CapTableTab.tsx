@@ -17,6 +17,7 @@ import {
   Skeleton,
   SkeletonTable,
   Spinner,
+  WriteGate,
 } from '../../components/ui';
 import { CapTableSyncPanel } from '../../components/valuation/CapTableSyncPanel';
 import { CapTableGraph, type CapTableGraphData } from '../../components/CapTableGraph';
@@ -240,7 +241,7 @@ function EntriesTable({ entries, currency }: { entries: Entry[]; currency: strin
 }
 
 export function CapTableTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const { user } = useAuth();
   const currency = valuation.currency ?? 'USD';
   const [stored, setStored] = useState<CapTable | null>(null);
@@ -411,17 +412,19 @@ export function CapTableTab() {
     <div className="max-w-4xl space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-xl font-semibold text-ink-900">Capitalization table</h2>
-        {canEdit && (
-          <Button
-            variant={importing ? 'secondary' : 'primary'}
-            onClick={() => {
-              if (importing) resetImport();
-              setImporting((s) => !s);
-            }}
-          >
-            {importing ? 'Cancel import' : stored ? 'Re-import' : 'Import cap table'}
-          </Button>
-        )}
+        <WriteGate closed={retired}>
+          {canEdit && (
+            <Button
+              variant={importing ? 'secondary' : 'primary'}
+              onClick={() => {
+                if (importing) resetImport();
+                setImporting((s) => !s);
+              }}
+            >
+              {importing ? 'Cancel import' : stored ? 'Re-import' : 'Import cap table'}
+            </Button>
+          )}
+        </WriteGate>
       </div>
 
       {error && <ErrorNote>{error}</ErrorNote>}
@@ -541,16 +544,18 @@ export function CapTableTab() {
             </div>
           )}
 
-          <div className="flex flex-wrap gap-3">
-            <Button variant="secondary" onClick={() => void runPreview()} disabled={busy || !hasInput}>
-              {busy ? 'Working…' : 'Preview'}
-            </Button>
-            {preview && preview.validation.valid && (
-              <Button onClick={() => void save()} disabled={busy}>
-                Save cap table
+          <WriteGate closed={retired}>
+            <div className="flex flex-wrap gap-3">
+              <Button variant="secondary" onClick={() => void runPreview()} disabled={busy || !hasInput}>
+                {busy ? 'Working…' : 'Preview'}
               </Button>
-            )}
-          </div>
+              {preview && preview.validation.valid && (
+                <Button onClick={() => void save()} disabled={busy}>
+                  Save cap table
+                </Button>
+              )}
+            </div>
+          </WriteGate>
 
           {preview && (
             <div className="space-y-3">
@@ -561,7 +566,9 @@ export function CapTableTab() {
         </section>
       )}
 
-      {canEdit && <CapTableSyncPanel valuationId={valuation.id} onApplied={load} />}
+      <WriteGate closed={retired}>
+        {canEdit && <CapTableSyncPanel valuationId={valuation.id} onApplied={load} />}
+      </WriteGate>
 
       {!stored && !importing ? (
         <EmptyState title="No cap table imported yet">

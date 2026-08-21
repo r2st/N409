@@ -13,6 +13,7 @@ import {
   Select,
   Spinner,
   TextInput,
+  WriteGate,
 } from '../../components/ui';
 import { HelpIcon } from '../../components/HelpIcon';
 
@@ -155,7 +156,7 @@ const emptyRsu = {
 };
 
 export function Asc718Tab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const { user } = useAuth();
   const ops = isOps(user);
   const id = valuation.id;
@@ -310,93 +311,100 @@ export function Asc718Tab() {
         </p>
       </header>
 
-      {/* Company type toggle */}
-      <div className="rounded-lg border border-paper-200 bg-surface p-4">
-        <div className="flex flex-wrap items-end gap-4">
-          <Field label="Company type">
-            <Select value={companyType} onChange={(e) => setCompanyType(e.target.value as CompanyType)}>
-              <option value="private">Private (409A FMV underlying)</option>
-              <option value="public">Public (market-price underlying)</option>
-            </Select>
-          </Field>
-          {companyType === 'public' && (
-            <>
-              <Field label="Ticker">
-                <TextInput
-                  value={ticker}
-                  onChange={(e) => setTicker(e.target.value)}
-                  placeholder="ACME"
-                  className="w-28"
-                />
-              </Field>
-              <Field
-                label="Expected-term method"
-                tooltip="How the option's expected life is estimated. SAB 107 simplified averages the vesting and contractual terms; the binomial lattice models early exercise when the price reaches an exercise multiple of the strike; historical uses your own exercise data."
-              >
-                <Select value={termMethod} onChange={(e) => setTermMethod(e.target.value as TermMethod)}>
-                  <option value="simplified">SAB 107 simplified</option>
-                  <option value="lattice">Lattice (exercise behaviour)</option>
-                  <option value="historical">Historical exercise data</option>
-                </Select>
-              </Field>
-            </>
+      <WriteGate closed={retired}>
+        {/* Company type toggle */}
+        <div className="rounded-lg border border-paper-200 bg-surface p-4">
+          <div className="flex flex-wrap items-end gap-4">
+            <Field label="Company type">
+              <Select value={companyType} onChange={(e) => setCompanyType(e.target.value as CompanyType)}>
+                <option value="private">Private (409A FMV underlying)</option>
+                <option value="public">Public (market-price underlying)</option>
+              </Select>
+            </Field>
+            {companyType === 'public' && (
+              <>
+                <Field label="Ticker">
+                  <TextInput
+                    value={ticker}
+                    onChange={(e) => setTicker(e.target.value)}
+                    placeholder="ACME"
+                    className="w-28"
+                  />
+                </Field>
+                <Field
+                  label="Expected-term method"
+                  tooltip="How the option's expected life is estimated. SAB 107 simplified averages the vesting and contractual terms; the binomial lattice models early exercise when the price reaches an exercise multiple of the strike; historical uses your own exercise data."
+                >
+                  <Select value={termMethod} onChange={(e) => setTermMethod(e.target.value as TermMethod)}>
+                    <option value="simplified">SAB 107 simplified</option>
+                    <option value="lattice">Lattice (exercise behaviour)</option>
+                    <option value="historical">Historical exercise data</option>
+                  </Select>
+                </Field>
+              </>
+            )}
+            <Button variant="secondary" onClick={() => void saveSettings()}>
+              Save settings
+            </Button>
+          </div>
+          {settings && (
+            <p className="mt-2 text-xs text-ink-400">
+              Settings saved. Company type: {settings.company_type}.
+            </p>
           )}
-          <Button variant="secondary" onClick={() => void saveSettings()}>
-            Save settings
-          </Button>
         </div>
-        {settings && (
-          <p className="mt-2 text-xs text-ink-400">Settings saved. Company type: {settings.company_type}.</p>
-        )}
-      </div>
 
-      {/* Defaults */}
-      <div className="rounded-lg border border-paper-200 bg-surface p-4">
-        <h3 className="mb-3 text-sm font-semibold text-ink-700">Default assumptions</h3>
-        <div className="flex flex-wrap gap-4">
-          <Field
-            label={
-              companyType === 'public' ? 'Underlying (blank → market price)' : 'Underlying (blank → 409A FMV)'
-            }
-          >
-            <TextInput
-              value={defaultUnderlying}
-              onChange={(e) => setDefaultUnderlying(e.target.value)}
-              placeholder="e.g. 20"
-              className="w-40"
-            />
-          </Field>
-          <Field
-            label={companyType === 'public' ? 'Volatility (blank → historical)' : 'Volatility'}
-            tooltip={
-              companyType === 'public'
-                ? 'Annualised return volatility used in Black-Scholes. Leave blank to use the historical volatility of the issuer’s own stock, computed from the market feed.'
-                : 'Annualised return volatility used in Black-Scholes, typically derived from a comparable-company peer set (e.g. 0.40 = 40%).'
-            }
-          >
-            <TextInput
-              value={defaultVol}
-              onChange={(e) => setDefaultVol(e.target.value)}
-              placeholder="e.g. 0.4"
-              className="w-40"
-            />
-          </Field>
+        {/* Defaults */}
+        <div className="rounded-lg border border-paper-200 bg-surface p-4">
+          <h3 className="mb-3 text-sm font-semibold text-ink-700">Default assumptions</h3>
+          <div className="flex flex-wrap gap-4">
+            <Field
+              label={
+                companyType === 'public'
+                  ? 'Underlying (blank → market price)'
+                  : 'Underlying (blank → 409A FMV)'
+              }
+            >
+              <TextInput
+                value={defaultUnderlying}
+                onChange={(e) => setDefaultUnderlying(e.target.value)}
+                placeholder="e.g. 20"
+                className="w-40"
+              />
+            </Field>
+            <Field
+              label={companyType === 'public' ? 'Volatility (blank → historical)' : 'Volatility'}
+              tooltip={
+                companyType === 'public'
+                  ? 'Annualised return volatility used in Black-Scholes. Leave blank to use the historical volatility of the issuer’s own stock, computed from the market feed.'
+                  : 'Annualised return volatility used in Black-Scholes, typically derived from a comparable-company peer set (e.g. 0.40 = 40%).'
+              }
+            >
+              <TextInput
+                value={defaultVol}
+                onChange={(e) => setDefaultVol(e.target.value)}
+                placeholder="e.g. 0.4"
+                className="w-40"
+              />
+            </Field>
+          </div>
+          {companyType === 'public' && (
+            <p className="mt-2 text-xs text-ink-400">
+              With a ticker set, the underlying and volatility are fetched from the market feed when left
+              blank.
+            </p>
+          )}
         </div>
-        {companyType === 'public' && (
-          <p className="mt-2 text-xs text-ink-400">
-            With a ticker set, the underlying and volatility are fetched from the market feed when left blank.
-          </p>
-        )}
-      </div>
 
-      <OptionSection options={options} setOptions={setOptions} />
-      <EsppSection espps={espps} setEspps={setEspps} disabled={companyType !== 'public'} />
-      <RsuSection rsus={rsus} setRsus={setRsus} disabled={companyType !== 'public'} />
+        <OptionSection options={options} setOptions={setOptions} />
+        <EsppSection espps={espps} setEspps={setEspps} disabled={companyType !== 'public'} />
+        <RsuSection rsus={rsus} setRsus={setRsus} disabled={companyType !== 'public'} />
 
-      {error && <ErrorNote>{error}</ErrorNote>}
-      <Button onClick={() => void run()} disabled={running}>
-        {running ? 'Computing…' : 'Run ASC 718'}
-      </Button>
+        {error && <ErrorNote>{error}</ErrorNote>}
+        <Button onClick={() => void run()} disabled={running}>
+          {running ? 'Computing…' : 'Run ASC 718'}
+        </Button>
+      </WriteGate>
 
       {result && <Results result={result} currency={currency} />}
     </div>

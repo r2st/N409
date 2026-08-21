@@ -9,7 +9,7 @@ import { eventLabel, formatDate, formatDateTime, STATE_LABELS } from '../lib/for
 import { VALUATION_STATES } from '../lib/types';
 import type { Valuation, ValuationEvent } from '../lib/types';
 import { useWorkspace } from './valuation/ValuationWorkspace';
-import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+import { Button, ErrorNote, Field, Select, Spinner, TextInput, WriteGate } from '../components/ui';
 import { CommentsSection } from '../components/CommentThread';
 import { WorkflowActions } from '../components/WorkflowActions';
 import { FundingHistory } from '../components/FundingHistory';
@@ -201,10 +201,15 @@ export function ValuationDetailPage() {
         <PaymentHistory valuation={valuation} />
 
         {/* Feature 6: assign this entity to an organization / fund */}
-        <OrgAssignmentCard valuationId={valuation.id} />
-
         {/* Feature 8: external auditor share links */}
-        <AuditorAccessPanel valuationId={valuation.id} />
+        {/* Both refuse a retired engagement server-side — `organizations.ts`
+            through `loadEditableValuation`, and `auditor-access` by hand — and
+            minting a *new* auditor link for withdrawn work is the one of the
+            two that would be read as the firm still standing behind it. */}
+        <WriteGate closed={retired}>
+          <OrgAssignmentCard valuationId={valuation.id} />
+          <AuditorAccessPanel valuationId={valuation.id} />
+        </WriteGate>
 
         {/* Facts */}
         <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
@@ -239,9 +244,13 @@ export function ValuationDetailPage() {
 
         {/* M3: clone / roll-forward · evidence bundle (audit defense, ops-only) */}
         {/* Every one of these is refused for a retired engagement, so the row
-            is not rendered at all rather than rendered disabled: a disabled
-            button invites a reader to work out what would re-enable it, and
-            nothing will. */}
+            is not rendered at all rather than rendered disabled. The reason
+            given here used to be that nothing would ever re-enable it, which
+            R90 falsified — an admin can restore from Data retention. The row
+            stays hidden on the weaker reason that survives: these are the
+            actions that *start* something (a clone, a bundle, a new
+            engagement), and offering them greyed out on a withdrawn file reads
+            as a queue of work waiting to happen. */}
         {!retired && (
           <div className="flex flex-wrap justify-end gap-2">
             {ops && (

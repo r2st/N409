@@ -8,7 +8,7 @@ import {
 } from '../../lib/m2';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, ErrorNote, Field, Spinner, TextInput } from '../../components/ui';
+import { Button, ErrorNote, Field, Spinner, TextInput, WriteGate } from '../../components/ui';
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return '—';
@@ -113,7 +113,7 @@ function OverrideForm({
  * reason preserved for audit.
  */
 export function OverwritesTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const [schema, setSchema] = useState<OverwriteSchema | null>(null);
   const [overwrites, setOverwrites] = useState<Overwrite[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -243,26 +243,28 @@ export function OverwritesTab() {
                           <span className="text-ink-400">—</span>
                         )}
                       </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="secondary"
-                          className="!px-2.5 !py-1 !text-xs"
-                          onClick={() => setEditing(isEditing ? null : def.key)}
-                          disabled={busy}
-                        >
-                          {overwrite ? 'Edit' : 'Override'}
-                        </Button>
-                        {overwrite && (
+                      <WriteGate closed={retired}>
+                        <div className="flex gap-2">
                           <Button
-                            variant="danger"
+                            variant="secondary"
                             className="!px-2.5 !py-1 !text-xs"
-                            onClick={() => void revert(def.key)}
+                            onClick={() => setEditing(isEditing ? null : def.key)}
                             disabled={busy}
                           >
-                            Revert
+                            {overwrite ? 'Edit' : 'Override'}
                           </Button>
-                        )}
-                      </div>
+                          {overwrite && (
+                            <Button
+                              variant="danger"
+                              className="!px-2.5 !py-1 !text-xs"
+                              onClick={() => void revert(def.key)}
+                              disabled={busy}
+                            >
+                              Revert
+                            </Button>
+                          )}
+                        </div>
+                      </WriteGate>
                     </div>
                     {overwrite && (overwrite.reason || overwrite.updated_at) && !isEditing && (
                       <p className="mt-1.5 text-xs text-ink-400">

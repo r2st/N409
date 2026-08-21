@@ -7,10 +7,11 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  inputClass,
   LoadingBlock,
   Skeleton,
   SkeletonText,
-  inputClass,
+  WriteGate,
 } from '../../components/ui';
 
 /**
@@ -111,7 +112,7 @@ function ResultPanel({ result }: { result: Record<string, unknown> }) {
 }
 
 export function SpecialtyTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const [data, setData] = useState<SpecialtyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -239,9 +240,11 @@ export function SpecialtyTab() {
         )}
 
         <div className="mt-5 flex flex-wrap gap-2">
-          <Button onClick={() => void run()} disabled={running}>
-            {running ? 'Running…' : `Run ${engine.label}`}
-          </Button>
+          <WriteGate closed={retired}>
+            <Button onClick={() => void run()} disabled={running}>
+              {running ? 'Running…' : `Run ${engine.label}`}
+            </Button>
+          </WriteGate>
           {engine.hmrcForm && (
             <Button variant="secondary" onClick={() => void downloadHmrc()}>
               Download {engine.hmrcForm} pack

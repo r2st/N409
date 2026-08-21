@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { required, useFormValidation } from '../../lib/useFormValidation';
 import { api, ApiError } from '../../lib/api';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput } from '../../components/ui';
+import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput, WriteGate } from '../../components/ui';
 import { VolatilityPanel } from '../../components/valuation/VolatilityPanel';
 
 /**
@@ -125,7 +125,7 @@ function SourceBadge({ source }: { source: string }) {
 }
 
 export function ComparablesTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const [data, setData] = useState<ComparablesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -322,26 +322,28 @@ export function ComparablesTab() {
             were set aside — that record is what the exhibit and the evidence bundle carry.
           </p>
         </div>
-        {data.can_edit && (
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={() => setAdding((v) => !v)} disabled={busy}>
-              {adding ? 'Cancel' : '+ Add peer'}
-            </Button>
-            <Button variant="ghost" onClick={refresh} disabled={busy}>
-              Refresh from market
-            </Button>
-            <Button variant="ghost" onClick={discover} disabled={busy}>
-              {aiPhase === 'finding'
-                ? 'Finding peers…'
-                : aiPhase === 'applying'
-                  ? 'Applying…'
-                  : 'Find peers with AI'}
-            </Button>
-            <Button onClick={screen} disabled={busy}>
-              Re-screen
-            </Button>
-          </div>
-        )}
+        <WriteGate closed={retired}>
+          {data.can_edit && (
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setAdding((v) => !v)} disabled={busy}>
+                {adding ? 'Cancel' : '+ Add peer'}
+              </Button>
+              <Button variant="ghost" onClick={refresh} disabled={busy}>
+                Refresh from market
+              </Button>
+              <Button variant="ghost" onClick={discover} disabled={busy}>
+                {aiPhase === 'finding'
+                  ? 'Finding peers…'
+                  : aiPhase === 'applying'
+                    ? 'Applying…'
+                    : 'Find peers with AI'}
+              </Button>
+              <Button onClick={screen} disabled={busy}>
+                Re-screen
+              </Button>
+            </div>
+          )}
+        </WriteGate>
       </div>
 
       {error && (
@@ -384,57 +386,62 @@ export function ComparablesTab() {
         </div>
       </div>
 
-      {adding && data.can_edit && (
-        <form
-          onSubmit={addPeer}
-          className="mt-6 grid gap-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card sm:grid-cols-3"
-          noValidate
-        >
-          <Field label="Company name" error={errorFor('name')}>
-            <TextInput
-              required
-              value={draft.name}
-              onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-              onBlur={blurHandler('name')}
-            />
-          </Field>
-          <Field label="Ticker">
-            <TextInput
-              value={draft.ticker}
-              onChange={(e) => setDraft((d) => ({ ...d, ticker: e.target.value }))}
-            />
-          </Field>
-          <Field label="SIC">
-            <TextInput value={draft.sic} onChange={(e) => setDraft((d) => ({ ...d, sic: e.target.value }))} />
-          </Field>
-          <Field label="Enterprise value">
-            <TextInput
-              inputMode="decimal"
-              value={draft.ev}
-              onChange={(e) => setDraft((d) => ({ ...d, ev: e.target.value }))}
-            />
-          </Field>
-          <Field label="LTM revenue">
-            <TextInput
-              inputMode="decimal"
-              value={draft.revenue}
-              onChange={(e) => setDraft((d) => ({ ...d, revenue: e.target.value }))}
-            />
-          </Field>
-          <Field label="LTM EBITDA">
-            <TextInput
-              inputMode="decimal"
-              value={draft.ebitda}
-              onChange={(e) => setDraft((d) => ({ ...d, ebitda: e.target.value }))}
-            />
-          </Field>
-          <div className="sm:col-span-3">
-            <Button type="submit" disabled={busy}>
-              Add comparable
-            </Button>
-          </div>
-        </form>
-      )}
+      <WriteGate closed={retired}>
+        {adding && data.can_edit && (
+          <form
+            onSubmit={addPeer}
+            className="mt-6 grid gap-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card sm:grid-cols-3"
+            noValidate
+          >
+            <Field label="Company name" error={errorFor('name')}>
+              <TextInput
+                required
+                value={draft.name}
+                onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                onBlur={blurHandler('name')}
+              />
+            </Field>
+            <Field label="Ticker">
+              <TextInput
+                value={draft.ticker}
+                onChange={(e) => setDraft((d) => ({ ...d, ticker: e.target.value }))}
+              />
+            </Field>
+            <Field label="SIC">
+              <TextInput
+                value={draft.sic}
+                onChange={(e) => setDraft((d) => ({ ...d, sic: e.target.value }))}
+              />
+            </Field>
+            <Field label="Enterprise value">
+              <TextInput
+                inputMode="decimal"
+                value={draft.ev}
+                onChange={(e) => setDraft((d) => ({ ...d, ev: e.target.value }))}
+              />
+            </Field>
+            <Field label="LTM revenue">
+              <TextInput
+                inputMode="decimal"
+                value={draft.revenue}
+                onChange={(e) => setDraft((d) => ({ ...d, revenue: e.target.value }))}
+              />
+            </Field>
+            <Field label="LTM EBITDA">
+              <TextInput
+                inputMode="decimal"
+                value={draft.ebitda}
+                onChange={(e) => setDraft((d) => ({ ...d, ebitda: e.target.value }))}
+              />
+            </Field>
+            <div className="sm:col-span-3">
+              <Button type="submit" disabled={busy}>
+                Add comparable
+              </Button>
+            </div>
+          </form>
+        )}
+      </WriteGate>
 
       {data.comparables.length === 0 ? (
         <div className="mt-6">
@@ -504,26 +511,28 @@ export function ComparablesTab() {
                       </span>
                     )}
                   </td>
-                  {data.can_edit && (
-                    <td className="px-5 py-3 text-right whitespace-nowrap">
-                      {row.included ? (
-                        <Button variant="ghost" onClick={() => setExcluding(row.id)} disabled={busy}>
-                          Exclude
-                        </Button>
-                      ) : (
-                        <Button variant="ghost" onClick={() => include(row)} disabled={busy}>
-                          Include
-                        </Button>
-                      )}
-                      {/* A screened row is excluded, never deleted — the set has to
+                  <WriteGate closed={retired}>
+                    {data.can_edit && (
+                      <td className="px-5 py-3 text-right whitespace-nowrap">
+                        {row.included ? (
+                          <Button variant="ghost" onClick={() => setExcluding(row.id)} disabled={busy}>
+                            Exclude
+                          </Button>
+                        ) : (
+                          <Button variant="ghost" onClick={() => include(row)} disabled={busy}>
+                            Include
+                          </Button>
+                        )}
+                        {/* A screened row is excluded, never deleted — the set has to
                           show what was considered. Only analyst rows offer this. */}
-                      {row.source === 'analyst' && (
-                        <Button variant="ghost" onClick={() => remove(row)} disabled={busy}>
-                          Remove
-                        </Button>
-                      )}
-                    </td>
-                  )}
+                        {row.source === 'analyst' && (
+                          <Button variant="ghost" onClick={() => remove(row)} disabled={busy}>
+                            Remove
+                          </Button>
+                        )}
+                      </td>
+                    )}
+                  </WriteGate>
                 </tr>
               ))}
             </tbody>
@@ -531,44 +540,48 @@ export function ComparablesTab() {
         </div>
       )}
 
-      {excluding && (
-        <form
-          onSubmit={exclude}
-          className="mt-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
-          noValidate
-        >
-          <Field label="Why is this company not comparable?" error={excludeValidation.errorFor('reason')}>
-            <TextInput
-              required
-              autoFocus
-              value={reason}
-              placeholder="e.g. different industry, acquired mid-period, pre-revenue"
-              onChange={(e) => setReason(e.target.value)}
-              onBlur={excludeValidation.blurHandler('reason')}
-            />
-          </Field>
-          <div className="mt-3 flex gap-2">
-            <Button type="submit" disabled={busy}>
-              Exclude
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              onClick={() => {
-                setExcluding(null);
-                setReason('');
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
-      )}
+      <WriteGate closed={retired}>
+        {excluding && (
+          <form
+            onSubmit={exclude}
+            className="mt-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+            noValidate
+          >
+            <Field label="Why is this company not comparable?" error={excludeValidation.errorFor('reason')}>
+              <TextInput
+                required
+                autoFocus
+                value={reason}
+                placeholder="e.g. different industry, acquired mid-period, pre-revenue"
+                onChange={(e) => setReason(e.target.value)}
+                onBlur={excludeValidation.blurHandler('reason')}
+              />
+            </Field>
+            <div className="mt-3 flex gap-2">
+              <Button type="submit" disabled={busy}>
+                Exclude
+              </Button>
+              <Button
+                variant="ghost"
+                type="button"
+                onClick={() => {
+                  setExcluding(null);
+                  setReason('');
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
+      </WriteGate>
 
       {/* On this tab rather than on Params, because the estimate is struck on
           the set above: an analyst changing which peers are included is one
           scroll away from seeing what it did to sigma. */}
-      <VolatilityPanel valuationId={valuation.id} />
+      <WriteGate closed={retired}>
+        <VolatilityPanel valuationId={valuation.id} />
+      </WriteGate>
     </div>
   );
 }

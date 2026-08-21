@@ -26,6 +26,7 @@ import {
   SkeletonCardList,
   Spinner,
   TextInput,
+  WriteGate,
 } from '../../components/ui';
 
 /**
@@ -216,7 +217,7 @@ const emptyForm = {
 };
 
 export function GrantsTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const { user } = useAuth();
   const ops = isOps(user);
   const [grants, setGrants] = useState<Grant[] | null>(null);
@@ -328,93 +329,99 @@ export function GrantsTab() {
             Grants are struck at the board-adopted 409A fair market value.
           </p>
         </div>
-        {ops && (
-          <Button onClick={() => setShowForm((s) => !s)} variant={showForm ? 'secondary' : 'primary'}>
-            {showForm ? 'Cancel' : 'New grant'}
-          </Button>
-        )}
+        <WriteGate closed={retired}>
+          {ops && (
+            <Button onClick={() => setShowForm((s) => !s)} variant={showForm ? 'secondary' : 'primary'}>
+              {showForm ? 'Cancel' : 'New grant'}
+            </Button>
+          )}
+        </WriteGate>
       </div>
 
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      {ops && <HrisSyncPanel valuationId={valuation.id} onImported={load} />}
+      <WriteGate closed={retired}>
+        {ops && <HrisSyncPanel valuationId={valuation.id} onImported={load} />}
+      </WriteGate>
 
-      {ops && showForm && (
-        <form
-          onSubmit={create}
-          className="grid gap-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card sm:grid-cols-2"
-          noValidate
-        >
-          <Field label="Grantee name" error={errorFor('grantee_name')}>
-            <TextInput
-              value={form.grantee_name}
-              onChange={(e) => setForm((f) => ({ ...f, grantee_name: e.target.value }))}
-              onBlur={blurHandler('grantee_name')}
-              required
-              maxLength={200}
-            />
-          </Field>
-          <Field label="Grantee email (optional)" error={errorFor('grantee_email')}>
-            <TextInput
-              type="email"
-              value={form.grantee_email}
-              onChange={(e) => setForm((f) => ({ ...f, grantee_email: e.target.value }))}
-              onBlur={blurHandler('grantee_email')}
-              maxLength={320}
-            />
-          </Field>
-          <Field label="Grant date" error={errorFor('grant_date')}>
-            <TextInput
-              type="date"
-              value={form.grant_date}
-              onChange={(e) => setForm((f) => ({ ...f, grant_date: e.target.value }))}
-              onBlur={blurHandler('grant_date')}
-              required
-            />
-          </Field>
-          <Field label="Number of options" error={errorFor('options_count')}>
-            <TextInput
-              type="number"
-              min={1}
-              value={form.options_count}
-              onChange={(e) => setForm((f) => ({ ...f, options_count: e.target.value }))}
-              onBlur={blurHandler('options_count')}
-              required
-            />
-          </Field>
-          <Field label="Vesting schedule">
-            <Select
-              value={form.vesting_template}
-              onChange={(e) => setForm((f) => ({ ...f, vesting_template: e.target.value }))}
-            >
-              {templates.map((t) => (
-                <option key={t.key} value={t.key}>
-                  {t.label}
-                </option>
-              ))}
-              <option value="custom">Custom…</option>
-            </Select>
-          </Field>
-          <Field label="Vesting start (optional)" hint="Defaults to the grant date.">
-            <TextInput
-              type="date"
-              value={form.vesting_start_date}
-              onChange={(e) => setForm((f) => ({ ...f, vesting_start_date: e.target.value }))}
-            />
-          </Field>
-          {custom && (
-            <p className="text-xs text-ink-400 sm:col-span-2">
-              Custom terms use a 4-year monthly schedule by default; adjust after creating via the API.
-              (Standard templates cover the common cases.)
-            </p>
-          )}
-          <div className="sm:col-span-2">
-            <Button type="submit" disabled={busy}>
-              {busy ? 'Issuing…' : 'Issue grant'}
-            </Button>
-          </div>
-        </form>
-      )}
+      <WriteGate closed={retired}>
+        {ops && showForm && (
+          <form
+            onSubmit={create}
+            className="grid gap-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card sm:grid-cols-2"
+            noValidate
+          >
+            <Field label="Grantee name" error={errorFor('grantee_name')}>
+              <TextInput
+                value={form.grantee_name}
+                onChange={(e) => setForm((f) => ({ ...f, grantee_name: e.target.value }))}
+                onBlur={blurHandler('grantee_name')}
+                required
+                maxLength={200}
+              />
+            </Field>
+            <Field label="Grantee email (optional)" error={errorFor('grantee_email')}>
+              <TextInput
+                type="email"
+                value={form.grantee_email}
+                onChange={(e) => setForm((f) => ({ ...f, grantee_email: e.target.value }))}
+                onBlur={blurHandler('grantee_email')}
+                maxLength={320}
+              />
+            </Field>
+            <Field label="Grant date" error={errorFor('grant_date')}>
+              <TextInput
+                type="date"
+                value={form.grant_date}
+                onChange={(e) => setForm((f) => ({ ...f, grant_date: e.target.value }))}
+                onBlur={blurHandler('grant_date')}
+                required
+              />
+            </Field>
+            <Field label="Number of options" error={errorFor('options_count')}>
+              <TextInput
+                type="number"
+                min={1}
+                value={form.options_count}
+                onChange={(e) => setForm((f) => ({ ...f, options_count: e.target.value }))}
+                onBlur={blurHandler('options_count')}
+                required
+              />
+            </Field>
+            <Field label="Vesting schedule">
+              <Select
+                value={form.vesting_template}
+                onChange={(e) => setForm((f) => ({ ...f, vesting_template: e.target.value }))}
+              >
+                {templates.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.label}
+                  </option>
+                ))}
+                <option value="custom">Custom…</option>
+              </Select>
+            </Field>
+            <Field label="Vesting start (optional)" hint="Defaults to the grant date.">
+              <TextInput
+                type="date"
+                value={form.vesting_start_date}
+                onChange={(e) => setForm((f) => ({ ...f, vesting_start_date: e.target.value }))}
+              />
+            </Field>
+            {custom && (
+              <p className="text-xs text-ink-400 sm:col-span-2">
+                Custom terms use a 4-year monthly schedule by default; adjust after creating via the API.
+                (Standard templates cover the common cases.)
+              </p>
+            )}
+            <div className="sm:col-span-2">
+              <Button type="submit" disabled={busy}>
+                {busy ? 'Issuing…' : 'Issue grant'}
+              </Button>
+            </div>
+          </form>
+        )}
+      </WriteGate>
 
       {grants.length === 0 ? (
         // Silent when the load failed: the error above is the honest answer,
@@ -455,15 +462,17 @@ export function GrantsTab() {
                   >
                     {expanded === g.id ? 'Hide detail' : 'Detail'}
                   </button>
-                  {ops && g.status === 'active' && (
-                    <button
-                      className="cursor-pointer text-xs font-semibold text-red-700 hover:underline"
-                      disabled={busy}
-                      onClick={() => void cancel(g.id)}
-                    >
-                      cancel
-                    </button>
-                  )}
+                  <WriteGate closed={retired}>
+                    {ops && g.status === 'active' && (
+                      <button
+                        className="cursor-pointer text-xs font-semibold text-red-700 hover:underline"
+                        disabled={busy}
+                        onClick={() => void cancel(g.id)}
+                      >
+                        cancel
+                      </button>
+                    )}
+                  </WriteGate>
                 </span>
               </div>
               {expanded === g.id && (

@@ -206,7 +206,7 @@ describe('drift in the routing', () => {
 
   it('reports a dropped /scim/v2 handle', () => {
     const live = LIVE_SHAPE.replace(
-      /    handle \/scim\/v2\/\* \{\n        reverse_proxy localhost:3001\n    \}\n/,
+      / {4}handle \/scim\/v2\/\* \{\n {8}reverse_proxy localhost:3001\n {4}\}\n/,
       '',
     );
     const problems = compareCaddy({ live, repo: REPO });

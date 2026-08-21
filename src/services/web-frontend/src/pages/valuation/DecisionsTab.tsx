@@ -3,7 +3,16 @@ import { api, ApiError } from '../../lib/api';
 import { required, useFormValidation } from '../../lib/useFormValidation';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  Select,
+  Spinner,
+  TextInput,
+  WriteGate,
+} from '../../components/ui';
 
 const CATEGORY_LABELS: Record<string, string> = {
   approach_selection: 'Approach selection',
@@ -41,7 +50,7 @@ interface DecisionsResponse {
  * it, and everything here ships in the evidence bundle as decisions.json.
  */
 export function DecisionsTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const [data, setData] = useState<DecisionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -163,56 +172,62 @@ export function DecisionsTab() {
           className="space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
           noValidate
         >
-          <Field label="Category">
-            <Select value={category} onChange={(e) => setCategory(e.target.value)}>
-              {data.categories.map((c) => (
-                <option key={c} value={c}>
-                  {CATEGORY_LABELS[c] ?? c}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field
-            label="Decision"
-            hint="What was decided, e.g. “DLOM of 30% via Finnerty”."
-            error={errorFor('decision')}
-          >
-            <TextInput
-              value={decision}
-              onChange={(e) => setDecision(e.target.value)}
-              onBlur={blurHandler('decision')}
-              required
-              maxLength={2000}
-            />
-          </Field>
-          <Field label="Rationale" hint="Why — this is what an auditor reads." error={errorFor('rationale')}>
-            <textarea
-              value={rationale}
-              onChange={(e) => setRationale(e.target.value)}
-              onBlur={blurHandler('rationale')}
-              required
-              maxLength={10000}
-              rows={4}
-              className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:border-bond-500 focus:ring-1 focus:ring-bond-500 focus:outline-none"
-              aria-label="Rationale"
-            />
-          </Field>
-          {active.length > 0 && (
-            <Field label="Supersedes (optional)" hint="Pick the earlier decision this one revises.">
-              <Select value={supersedes} onChange={(e) => setSupersedes(e.target.value)}>
-                <option value="">— none —</option>
-                {active.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {(CATEGORY_LABELS[d.category] ?? d.category) + ': ' + d.decision.slice(0, 60)}
+          <WriteGate closed={retired}>
+            <Field label="Category">
+              <Select value={category} onChange={(e) => setCategory(e.target.value)}>
+                {data.categories.map((c) => (
+                  <option key={c} value={c}>
+                    {CATEGORY_LABELS[c] ?? c}
                   </option>
                 ))}
               </Select>
             </Field>
-          )}
-          {error && <ErrorNote>{error}</ErrorNote>}
-          <Button type="submit" disabled={saving}>
-            {saving ? 'Recording…' : 'Record decision'}
-          </Button>
+            <Field
+              label="Decision"
+              hint="What was decided, e.g. “DLOM of 30% via Finnerty”."
+              error={errorFor('decision')}
+            >
+              <TextInput
+                value={decision}
+                onChange={(e) => setDecision(e.target.value)}
+                onBlur={blurHandler('decision')}
+                required
+                maxLength={2000}
+              />
+            </Field>
+            <Field
+              label="Rationale"
+              hint="Why — this is what an auditor reads."
+              error={errorFor('rationale')}
+            >
+              <textarea
+                value={rationale}
+                onChange={(e) => setRationale(e.target.value)}
+                onBlur={blurHandler('rationale')}
+                required
+                maxLength={10000}
+                rows={4}
+                className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:border-bond-500 focus:ring-1 focus:ring-bond-500 focus:outline-none"
+                aria-label="Rationale"
+              />
+            </Field>
+            {active.length > 0 && (
+              <Field label="Supersedes (optional)" hint="Pick the earlier decision this one revises.">
+                <Select value={supersedes} onChange={(e) => setSupersedes(e.target.value)}>
+                  <option value="">— none —</option>
+                  {active.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {(CATEGORY_LABELS[d.category] ?? d.category) + ': ' + d.decision.slice(0, 60)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            )}
+            {error && <ErrorNote>{error}</ErrorNote>}
+            <Button type="submit" disabled={saving}>
+              {saving ? 'Recording…' : 'Record decision'}
+            </Button>
+          </WriteGate>
         </form>
       </aside>
     </div>

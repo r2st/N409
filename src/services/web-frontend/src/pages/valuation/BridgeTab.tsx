@@ -4,7 +4,7 @@ import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { WaterfallChart } from '../../components/charts';
 import { RollforwardPanel } from '../../components/valuation/RollforwardPanel';
-import { EmptyState, ErrorNote, Select, Spinner } from '../../components/ui';
+import { EmptyState, ErrorNote, Select, Spinner, WriteGate } from '../../components/ui';
 
 interface Candidate {
   id: string;
@@ -59,7 +59,7 @@ const driverValue = (key: string, v: number | null): string => {
  * factor attribution as a waterfall and the raw assumption deltas below.
  */
 export function BridgeTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [compareId, setCompareId] = useState('');
   const [data, setData] = useState<BridgeResponse | null>(null);
@@ -196,7 +196,12 @@ export function BridgeTab() {
         backsolve. Same tab because they answer the same question — "what does
         last year's valuation say about this one?" — from either end.
       */}
-      <RollforwardPanel valuationId={valuation.id} currency={valuation.currency} candidates={candidates} />
+      {/* Every control on the panel writes: rolling a prior valuation forward
+          records a run, and adopting one sets the backsolve anchor. The runs
+          already recorded stay legible above them. */}
+      <WriteGate closed={retired}>
+        <RollforwardPanel valuationId={valuation.id} currency={valuation.currency} candidates={candidates} />
+      </WriteGate>
     </div>
   );
 }

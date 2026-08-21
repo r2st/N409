@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Spinner } from '../../components/ui';
+import { Button, EmptyState, ErrorNote, Spinner, WriteGate } from '../../components/ui';
 
 /**
  * Valuation monitoring panel (feature 10). Enable monitoring on a completed
@@ -45,7 +45,7 @@ const STATUS_LABEL: Record<Level, string> = {
 };
 
 export function MonitoringTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const navigate = useNavigate();
   const [data, setData] = useState<MonitorResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -112,14 +112,16 @@ export function MonitoringTab() {
               A valuation can be monitored once it is completed.
             </EmptyState>
           ) : (
-            <Button
-              disabled={busy}
-              onClick={() =>
-                void act(() => api(`/valuations/${valuation.id}/monitor`, { method: 'POST', body: {} }))
-              }
-            >
-              Enable monitoring
-            </Button>
+            <WriteGate closed={retired}>
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  void act(() => api(`/valuations/${valuation.id}/monitor`, { method: 'POST', body: {} }))
+                }
+              >
+                Enable monitoring
+              </Button>
+            </WriteGate>
           )}
         </section>
       ) : (
@@ -163,22 +165,24 @@ export function MonitoringTab() {
               </ul>
             )}
 
-            <div className="mt-5 flex flex-wrap gap-3">
-              {data.status !== 'green' && (
-                <Button disabled={busy} onClick={() => void rollForward()}>
-                  Start new valuation (roll forward)
+            <WriteGate closed={retired}>
+              <div className="mt-5 flex flex-wrap gap-3">
+                {data.status !== 'green' && (
+                  <Button disabled={busy} onClick={() => void rollForward()}>
+                    Start new valuation (roll forward)
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(() => api(`/valuations/${valuation.id}/monitor`, { method: 'DELETE' }))
+                  }
+                >
+                  Disable monitoring
                 </Button>
-              )}
-              <Button
-                variant="secondary"
-                disabled={busy}
-                onClick={() =>
-                  void act(() => api(`/valuations/${valuation.id}/monitor`, { method: 'DELETE' }))
-                }
-              >
-                Disable monitoring
-              </Button>
-            </div>
+              </div>
+            </WriteGate>
           </section>
 
           {data.current && data.monitor && (

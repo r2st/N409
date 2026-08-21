@@ -19,7 +19,7 @@
 // with no sites in it must all fail to produce "safe", because every one of
 // those is a question nobody answered rather than an answer.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -319,7 +319,7 @@ describe('the command', () => {
 
 describe('what the documentation says about it', () => {
   it('DEPLOYMENT.md points at the script rather than asking for a manual check', () => {
-    const doc = require('node:fs').readFileSync(path.join(repoRoot, 'infra/DEPLOYMENT.md'), 'utf8');
+    const doc = readFileSync(path.join(repoRoot, 'infra/DEPLOYMENT.md'), 'utf8');
     expect(doc).toContain('check-edge-exposure.mjs');
   });
 
@@ -328,9 +328,8 @@ describe('what the documentation says about it', () => {
   // a false premise in an infrastructure doc is worse than a missing one,
   // because it is the thing somebody acts on.
   it('no longer claims every site on the host is proxied', () => {
-    const fs = require('node:fs');
     for (const f of ['infra/caddy/README.md', 'infra/caddy/n409.aiknol.com.caddy']) {
-      const text = fs.readFileSync(path.join(repoRoot, f), 'utf8');
+      const text = readFileSync(path.join(repoRoot, f), 'utf8');
       expect(text).not.toMatch(/Every site on this host is fronted by Cloudflare/i);
       expect(text).not.toMatch(/all three sites on this box are fronted by Cloudflare/i);
     }

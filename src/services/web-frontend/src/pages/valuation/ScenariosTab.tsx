@@ -12,6 +12,7 @@ import {
   Spinner,
   StatCard,
   TextInput,
+  WriteGate,
 } from '../../components/ui';
 
 interface Baseline {
@@ -137,7 +138,7 @@ function DeltaBadge({ delta, currency }: { delta: number | null; currency: strin
  * previews never touch the official calculation or the valuation.
  */
 export function ScenariosTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const [boot, setBoot] = useState<BaselineResponse | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [knobs, setKnobs] = useState<Knobs | null>(null);
@@ -317,98 +318,100 @@ export function ScenariosTab() {
       {previewError && <ErrorNote>{previewError}</ErrorNote>}
       {computing && <p className="text-xs text-ink-400">Recomputing…</p>}
 
-      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="overline text-ink-400">Adjust assumptions</h2>
-          <button
-            onClick={reset}
-            className="cursor-pointer text-sm font-semibold text-bond-600 hover:text-bond-700"
-          >
-            Reset to baseline
-          </button>
-        </div>
-        <div className="grid gap-5 sm:grid-cols-2">
-          {showMarket && (
-            <Field label="Revenue" hint={`Trailing revenue used by the market approach (${currency}).`}>
-              <TextInput
-                inputMode="decimal"
-                value={knobs.revenue}
-                onChange={(e) => update({ revenue: e.target.value })}
-                placeholder={defaults.revenue || 'e.g. 5000000'}
-              />
-            </Field>
-          )}
-          {showMarket && (
-            <Field label="Comparable multiples" hint="Comma-separated, e.g. 4.5, 6, 8.">
-              <TextInput
-                value={knobs.multiples}
-                onChange={(e) => update({ multiples: e.target.value })}
-                placeholder={defaults.multiples || 'e.g. 4.5, 6, 8'}
-              />
-            </Field>
-          )}
-          {showIncome && (
-            <Field label="Discount rate (%)" hint="Rate used to discount future cash flows.">
-              <TextInput
-                inputMode="decimal"
-                value={knobs.discount_rate}
-                onChange={(e) => update({ discount_rate: e.target.value })}
-                placeholder={defaults.discount_rate || 'e.g. 25'}
-              />
-            </Field>
-          )}
-          {showIncome && (
-            <Field label="Terminal growth rate (%)" hint="Long-run growth after the projection horizon.">
-              <TextInput
-                inputMode="decimal"
-                value={knobs.growth_rate}
-                onChange={(e) => update({ growth_rate: e.target.value })}
-                placeholder={defaults.growth_rate || 'e.g. 3'}
-              />
-            </Field>
-          )}
-        </div>
-        {!showIncome && !showMarket && (
-          <p className="mt-4 text-sm text-ink-400">
-            This valuation is weighted entirely on approaches without adjustable assumptions.
-          </p>
-        )}
-
-        {/* §5.7 — persist the current knobs as a named bull/base/bear case. */}
-        <div className="mt-6 border-t border-paper-200 pt-5">
-          <h3 className="mb-3 text-sm font-semibold text-ink-900">Save as a scenario</h3>
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="min-w-48 flex-1">
-              <TextInput
-                value={saveName}
-                onChange={(e) => setSaveName(e.target.value)}
-                placeholder="e.g. Bull case — 2027 raise"
-                aria-label="Scenario name"
-              />
-            </div>
-            <Select
-              value={saveLabel}
-              onChange={(e) => setSaveLabel(e.target.value as ScenarioLabel)}
-              aria-label="Scenario label"
-              className="w-32"
+      <WriteGate closed={retired}>
+        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+          <div className="mb-5 flex items-center justify-between">
+            <h2 className="overline text-ink-400">Adjust assumptions</h2>
+            <button
+              onClick={reset}
+              className="cursor-pointer text-sm font-semibold text-bond-600 hover:text-bond-700"
             >
-              {SCENARIO_LABELS.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </Select>
-            <Button onClick={() => void saveScenario()} disabled={saveBusy || saveName.trim() === ''}>
-              {saveBusy ? 'Saving…' : 'Save scenario'}
-            </Button>
+              Reset to baseline
+            </button>
           </div>
-          {saveError && (
-            <p role="alert" className="mt-2 text-sm text-red-600">
-              {saveError}
+          <div className="grid gap-5 sm:grid-cols-2">
+            {showMarket && (
+              <Field label="Revenue" hint={`Trailing revenue used by the market approach (${currency}).`}>
+                <TextInput
+                  inputMode="decimal"
+                  value={knobs.revenue}
+                  onChange={(e) => update({ revenue: e.target.value })}
+                  placeholder={defaults.revenue || 'e.g. 5000000'}
+                />
+              </Field>
+            )}
+            {showMarket && (
+              <Field label="Comparable multiples" hint="Comma-separated, e.g. 4.5, 6, 8.">
+                <TextInput
+                  value={knobs.multiples}
+                  onChange={(e) => update({ multiples: e.target.value })}
+                  placeholder={defaults.multiples || 'e.g. 4.5, 6, 8'}
+                />
+              </Field>
+            )}
+            {showIncome && (
+              <Field label="Discount rate (%)" hint="Rate used to discount future cash flows.">
+                <TextInput
+                  inputMode="decimal"
+                  value={knobs.discount_rate}
+                  onChange={(e) => update({ discount_rate: e.target.value })}
+                  placeholder={defaults.discount_rate || 'e.g. 25'}
+                />
+              </Field>
+            )}
+            {showIncome && (
+              <Field label="Terminal growth rate (%)" hint="Long-run growth after the projection horizon.">
+                <TextInput
+                  inputMode="decimal"
+                  value={knobs.growth_rate}
+                  onChange={(e) => update({ growth_rate: e.target.value })}
+                  placeholder={defaults.growth_rate || 'e.g. 3'}
+                />
+              </Field>
+            )}
+          </div>
+          {!showIncome && !showMarket && (
+            <p className="mt-4 text-sm text-ink-400">
+              This valuation is weighted entirely on approaches without adjustable assumptions.
             </p>
           )}
-        </div>
-      </section>
+
+          {/* §5.7 — persist the current knobs as a named bull/base/bear case. */}
+          <div className="mt-6 border-t border-paper-200 pt-5">
+            <h3 className="mb-3 text-sm font-semibold text-ink-900">Save as a scenario</h3>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-48 flex-1">
+                <TextInput
+                  value={saveName}
+                  onChange={(e) => setSaveName(e.target.value)}
+                  placeholder="e.g. Bull case — 2027 raise"
+                  aria-label="Scenario name"
+                />
+              </div>
+              <Select
+                value={saveLabel}
+                onChange={(e) => setSaveLabel(e.target.value as ScenarioLabel)}
+                aria-label="Scenario label"
+                className="w-32"
+              >
+                {SCENARIO_LABELS.map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </Select>
+              <Button onClick={() => void saveScenario()} disabled={saveBusy || saveName.trim() === ''}>
+                {saveBusy ? 'Saving…' : 'Save scenario'}
+              </Button>
+            </div>
+            {saveError && (
+              <p role="alert" className="mt-2 text-sm text-red-600">
+                {saveError}
+              </p>
+            )}
+          </div>
+        </section>
+      </WriteGate>
 
       {saved && saved.scenarios.length > 0 && (
         <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
@@ -471,13 +474,15 @@ export function ScenariosTab() {
                         {formatDateTime(scenario.created_at)}
                       </td>
                       <td className="py-2.5 text-right">
-                        <button
-                          onClick={() => void deleteScenario(scenario.id)}
-                          className="cursor-pointer text-xs font-semibold text-red-600 hover:text-red-700"
-                          aria-label={`Delete scenario ${scenario.name}`}
-                        >
-                          Delete
-                        </button>
+                        <WriteGate closed={retired}>
+                          <button
+                            onClick={() => void deleteScenario(scenario.id)}
+                            className="cursor-pointer text-xs font-semibold text-red-600 hover:text-red-700"
+                            aria-label={`Delete scenario ${scenario.name}`}
+                          >
+                            Delete
+                          </button>
+                        </WriteGate>
                       </td>
                     </tr>
                   );

@@ -8,7 +8,7 @@ import {
   type EngineIssue,
   type PreflightResult,
 } from '../../lib/pipeline';
-import { Button, EmptyState, ErrorNote, Spinner, StatCard } from '../ui';
+import { Button, EmptyState, ErrorNote, Spinner, StatCard, WriteGate } from '../ui';
 import { CalculationInspector } from './CalculationInspector';
 
 interface ApproachRow {
@@ -79,7 +79,16 @@ export function IssueList({ issues }: { issues: EngineIssue[] }) {
 }
 
 /** Trigger engine computation and show the FMV breakdown. Ops-only. */
-export function CalculationPanel({ valuationId, currency }: { valuationId: string; currency: string }) {
+export function CalculationPanel({
+  valuationId,
+  currency,
+  readOnly = false,
+}: {
+  valuationId: string;
+  currency: string;
+  /** The engagement is retired: the runs stay readable, nothing new starts. */
+  readOnly?: boolean;
+}) {
   const [calculations, setCalculations] = useState<Calculation[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'full' | RecalcApproach | null>(null);
@@ -159,12 +168,14 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
       {error && <ErrorNote>{error}</ErrorNote>}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-        <Button onClick={() => void run()} disabled={busy !== null || checking}>
-          {busy === 'full' ? 'Computing…' : 'Run calculation'}
-        </Button>
-        <Button variant="secondary" onClick={() => void check()} disabled={busy !== null || checking}>
-          {checking ? 'Checking…' : 'Check inputs'}
-        </Button>
+        <WriteGate closed={readOnly}>
+          <Button onClick={() => void run()} disabled={busy !== null || checking}>
+            {busy === 'full' ? 'Computing…' : 'Run calculation'}
+          </Button>
+          <Button variant="secondary" onClick={() => void check()} disabled={busy !== null || checking}>
+            {checking ? 'Checking…' : 'Check inputs'}
+          </Button>
+        </WriteGate>
         <p className="text-sm text-ink-500">Uses saved params + the latest AI extraction and comparables.</p>
       </div>
 
@@ -195,26 +206,28 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
       {latest && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-semibold text-ink-500">Recalculate one approach:</span>
-          {RECALC_OPTIONS.map(({ approach, engineKey, label }) => {
-            const inLatest = Boolean(
-              (latest.results?.approaches as Record<string, unknown> | undefined)?.[engineKey],
-            );
-            return (
-              <button
-                key={approach}
-                disabled={busy !== null || !inLatest}
-                title={
-                  inLatest
-                    ? `Recompute only the ${label} approach; the others reuse the latest run`
-                    : `The ${label} approach has no weight in the latest run`
-                }
-                onClick={() => void run(approach)}
-                className="cursor-pointer rounded-full border border-ink-200 bg-surface px-3 py-1 text-xs font-semibold text-ink-700 transition-colors hover:border-bond-600 hover:text-bond-700 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {busy === approach ? 'Recomputing…' : `↻ ${label}`}
-              </button>
-            );
-          })}
+          <WriteGate closed={readOnly}>
+            {RECALC_OPTIONS.map(({ approach, engineKey, label }) => {
+              const inLatest = Boolean(
+                (latest.results?.approaches as Record<string, unknown> | undefined)?.[engineKey],
+              );
+              return (
+                <button
+                  key={approach}
+                  disabled={busy !== null || !inLatest}
+                  title={
+                    inLatest
+                      ? `Recompute only the ${label} approach; the others reuse the latest run`
+                      : `The ${label} approach has no weight in the latest run`
+                  }
+                  onClick={() => void run(approach)}
+                  className="cursor-pointer rounded-full border border-ink-200 bg-surface px-3 py-1 text-xs font-semibold text-ink-700 transition-colors hover:border-bond-600 hover:text-bond-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {busy === approach ? 'Recomputing…' : `↻ ${label}`}
+                </button>
+              );
+            })}
+          </WriteGate>
         </div>
       )}
 

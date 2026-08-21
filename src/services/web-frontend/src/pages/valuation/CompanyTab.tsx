@@ -3,7 +3,16 @@ import type { FormEvent } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
-import { Button, ErrorNote, Field, Select, Spinner, TextInput, inputClass } from '../../components/ui';
+import {
+  Button,
+  ErrorNote,
+  Field,
+  inputClass,
+  Select,
+  Spinner,
+  TextInput,
+  WriteGate,
+} from '../../components/ui';
 import { useWorkspace } from './ValuationWorkspace';
 
 export interface CompanyProfile {
@@ -132,7 +141,7 @@ function toDraft(profile: CompanyProfile | null): Draft {
 /** Structured company details behind the engagement's company name —
  * editable by ops and the requesting client. */
 export function CompanyTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const { user } = useAuth();
   const ops = isOps(user);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -296,178 +305,184 @@ export function CompanyTab() {
 
   return (
     <form onSubmit={(e) => void submit(e)} className="max-w-3xl space-y-8">
-      <section>
-        <h2 className="overline mb-4 text-ink-400">Company</h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Legal name" hint={`Engagement name: ${valuation.company_name}`}>
-            <TextInput value={draft.legal_name} onChange={(e) => set('legal_name')(e.target.value)} />
-          </Field>
-          <Field label="Website">
-            <TextInput
-              value={draft.website}
-              onChange={(e) => set('website')(e.target.value)}
-              placeholder="https://…"
-            />
-          </Field>
-          <Field label="Industry">
-            <TextInput
-              value={draft.industry}
-              onChange={(e) => set('industry')(e.target.value)}
-              placeholder="e.g. B2B SaaS — logistics"
-            />
-          </Field>
-          <Field label="Founded">
-            <TextInput
-              type="date"
-              value={draft.founded_on}
-              onChange={(e) => set('founded_on')(e.target.value)}
-            />
-          </Field>
-          <Field label="Employees">
-            <TextInput
-              inputMode="numeric"
-              value={draft.employee_count}
-              onChange={(e) => set('employee_count')(e.target.value)}
-              placeholder="e.g. 42"
-            />
-          </Field>
-          <Field label="Revenue range">
-            <Select value={draft.revenue_range} onChange={(e) => set('revenue_range')(e.target.value)}>
-              <option value="">Not set</option>
-              {Object.entries(REVENUE_RANGE_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </div>
-      </section>
+      <WriteGate closed={retired}>
+        <section>
+          <h2 className="overline mb-4 text-ink-400">Company</h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Legal name" hint={`Engagement name: ${valuation.company_name}`}>
+              <TextInput value={draft.legal_name} onChange={(e) => set('legal_name')(e.target.value)} />
+            </Field>
+            <Field label="Website">
+              <TextInput
+                value={draft.website}
+                onChange={(e) => set('website')(e.target.value)}
+                placeholder="https://…"
+              />
+            </Field>
+            <Field label="Industry">
+              <TextInput
+                value={draft.industry}
+                onChange={(e) => set('industry')(e.target.value)}
+                placeholder="e.g. B2B SaaS — logistics"
+              />
+            </Field>
+            <Field label="Founded">
+              <TextInput
+                type="date"
+                value={draft.founded_on}
+                onChange={(e) => set('founded_on')(e.target.value)}
+              />
+            </Field>
+            <Field label="Employees">
+              <TextInput
+                inputMode="numeric"
+                value={draft.employee_count}
+                onChange={(e) => set('employee_count')(e.target.value)}
+                placeholder="e.g. 42"
+              />
+            </Field>
+            <Field label="Revenue range">
+              <Select value={draft.revenue_range} onChange={(e) => set('revenue_range')(e.target.value)}>
+                <option value="">Not set</option>
+                {Object.entries(REVENUE_RANGE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        </section>
 
-      {/* The three fields the report's company section is written from — and,
+        {/* The three fields the report's company section is written from — and,
           until now, the three the API accepted with nowhere on screen to type
           them. The classification sits beside the description because the codes
           are what the description is being classified *as*. */}
-      <section>
-        <h2 className="overline mb-4 text-ink-400">Business and classification</h2>
-        {ops && (
-          <div className="mb-4 rounded-lg border border-bond-200 bg-bond-50 px-4 py-3">
-            <p className="text-sm text-bond-800">
-              Draft these from the engagement's own uploaded documents. The agent never looks the company up
-              and never sees its name — it reads the deck and the financials you have already uploaded, so a
-              reviewer can trace every sentence back to a document in the engagement.
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={agentPhase !== null}
-                onClick={() => void applyAgent()}
-              >
-                {agentPhase === 'drafting'
-                  ? 'Reading documents…'
-                  : agentPhase === 'applying'
-                    ? 'Applying…'
-                    : 'Draft with AI'}
-              </Button>
-              {/* Blanks only by default: an analyst who classified this business
+        <section>
+          <h2 className="overline mb-4 text-ink-400">Business and classification</h2>
+          {ops && (
+            <div className="mb-4 rounded-lg border border-bond-200 bg-bond-50 px-4 py-3">
+              <p className="text-sm text-bond-800">
+                Draft these from the engagement's own uploaded documents. The agent never looks the company up
+                and never sees its name — it reads the deck and the financials you have already uploaded, so a
+                reviewer can trace every sentence back to a document in the engagement.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={agentPhase !== null}
+                  onClick={() => void applyAgent()}
+                >
+                  {agentPhase === 'drafting'
+                    ? 'Reading documents…'
+                    : agentPhase === 'applying'
+                      ? 'Applying…'
+                      : 'Draft with AI'}
+                </Button>
+                {/* Blanks only by default: an analyst who classified this business
                   by hand and then ran the agent did not ask to have that
                   reconsidered. This is the explicit opt-in. */}
-              <label className="flex items-center gap-2 text-sm text-bond-800">
-                <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
-                Replace values already on the profile
-              </label>
+                <label className="flex items-center gap-2 text-sm text-bond-800">
+                  <input
+                    type="checkbox"
+                    checked={overwrite}
+                    onChange={(e) => setOverwrite(e.target.checked)}
+                  />
+                  Replace values already on the profile
+                </label>
+              </div>
+              {agentPhase === 'drafting' && (
+                <p className="mt-2 text-xs text-bond-700">Free-tier models can take up to a minute…</p>
+              )}
+              {agentNote && <p className="mt-2 text-sm font-medium text-bond-800">{agentNote}</p>}
+              {agentError && (
+                <p className="mt-2 text-sm text-red-700" role="alert">
+                  {agentError}
+                </p>
+              )}
             </div>
-            {agentPhase === 'drafting' && (
-              <p className="mt-2 text-xs text-bond-700">Free-tier models can take up to a minute…</p>
-            )}
-            {agentNote && <p className="mt-2 text-sm font-medium text-bond-800">{agentNote}</p>}
-            {agentError && (
-              <p className="mt-2 text-sm text-red-700" role="alert">
-                {agentError}
-              </p>
-            )}
+          )}
+          <div className="space-y-4">
+            <Field
+              label="Business description"
+              hint="What the company does, in the words the report's company section will be drafted from."
+            >
+              <textarea
+                className={`${inputClass} min-h-28`}
+                value={draft.business_description}
+                onChange={(e) => set('business_description')(e.target.value)}
+                maxLength={20000}
+              />
+            </Field>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="SIC code" hint="2–4 digits — the comparable screen ranks the universe on it.">
+                <TextInput
+                  inputMode="numeric"
+                  value={draft.sic_code}
+                  onChange={(e) => set('sic_code')(e.target.value)}
+                  placeholder="e.g. 7372"
+                />
+              </Field>
+              <Field label="NAICS code" hint="2–6 digits.">
+                <TextInput
+                  inputMode="numeric"
+                  value={draft.naics_code}
+                  onChange={(e) => set('naics_code')(e.target.value)}
+                  placeholder="e.g. 511210"
+                />
+              </Field>
+            </div>
           </div>
-        )}
-        <div className="space-y-4">
+        </section>
+
+        <section>
+          <h2 className="overline mb-4 text-ink-400">Registered address</h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Address line 1">
+              <TextInput value={draft.address_line1} onChange={(e) => set('address_line1')(e.target.value)} />
+            </Field>
+            <Field label="Address line 2">
+              <TextInput value={draft.address_line2} onChange={(e) => set('address_line2')(e.target.value)} />
+            </Field>
+            <Field label="City">
+              <TextInput value={draft.city} onChange={(e) => set('city')(e.target.value)} />
+            </Field>
+            <Field label="State / region">
+              <TextInput value={draft.region} onChange={(e) => set('region')(e.target.value)} />
+            </Field>
+            <Field label="Postal code">
+              <TextInput value={draft.postal_code} onChange={(e) => set('postal_code')(e.target.value)} />
+            </Field>
+            <Field label="Country">
+              <TextInput value={draft.country} onChange={(e) => set('country')(e.target.value)} />
+            </Field>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="overline mb-4 text-ink-400">Cap table summary</h2>
           <Field
-            label="Business description"
-            hint="What the company does, in the words the report's company section will be drafted from."
+            label="Summary"
+            hint="Free-form snapshot of share classes and ownership — the detailed cap table lives in Documents."
           >
             <textarea
               className={`${inputClass} min-h-28`}
-              value={draft.business_description}
-              onChange={(e) => set('business_description')(e.target.value)}
+              value={draft.cap_table_summary}
+              onChange={(e) => set('cap_table_summary')(e.target.value)}
               maxLength={20000}
             />
           </Field>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="SIC code" hint="2–4 digits — the comparable screen ranks the universe on it.">
-              <TextInput
-                inputMode="numeric"
-                value={draft.sic_code}
-                onChange={(e) => set('sic_code')(e.target.value)}
-                placeholder="e.g. 7372"
-              />
-            </Field>
-            <Field label="NAICS code" hint="2–6 digits.">
-              <TextInput
-                inputMode="numeric"
-                value={draft.naics_code}
-                onChange={(e) => set('naics_code')(e.target.value)}
-                placeholder="e.g. 511210"
-              />
-            </Field>
-          </div>
+        </section>
+
+        {fieldError && <ErrorNote>{fieldError}</ErrorNote>}
+        <div className="flex items-center gap-3">
+          <Button type="submit" disabled={saving}>
+            {saving ? 'Saving…' : 'Save profile'}
+          </Button>
+          {saved && <span className="text-sm font-medium text-bond-700">Saved.</span>}
         </div>
-      </section>
-
-      <section>
-        <h2 className="overline mb-4 text-ink-400">Registered address</h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Address line 1">
-            <TextInput value={draft.address_line1} onChange={(e) => set('address_line1')(e.target.value)} />
-          </Field>
-          <Field label="Address line 2">
-            <TextInput value={draft.address_line2} onChange={(e) => set('address_line2')(e.target.value)} />
-          </Field>
-          <Field label="City">
-            <TextInput value={draft.city} onChange={(e) => set('city')(e.target.value)} />
-          </Field>
-          <Field label="State / region">
-            <TextInput value={draft.region} onChange={(e) => set('region')(e.target.value)} />
-          </Field>
-          <Field label="Postal code">
-            <TextInput value={draft.postal_code} onChange={(e) => set('postal_code')(e.target.value)} />
-          </Field>
-          <Field label="Country">
-            <TextInput value={draft.country} onChange={(e) => set('country')(e.target.value)} />
-          </Field>
-        </div>
-      </section>
-
-      <section>
-        <h2 className="overline mb-4 text-ink-400">Cap table summary</h2>
-        <Field
-          label="Summary"
-          hint="Free-form snapshot of share classes and ownership — the detailed cap table lives in Documents."
-        >
-          <textarea
-            className={`${inputClass} min-h-28`}
-            value={draft.cap_table_summary}
-            onChange={(e) => set('cap_table_summary')(e.target.value)}
-            maxLength={20000}
-          />
-        </Field>
-      </section>
-
-      {fieldError && <ErrorNote>{fieldError}</ErrorNote>}
-      <div className="flex items-center gap-3">
-        <Button type="submit" disabled={saving}>
-          {saving ? 'Saving…' : 'Save profile'}
-        </Button>
-        {saved && <span className="text-sm font-medium text-bond-700">Saved.</span>}
-      </div>
+      </WriteGate>
     </form>
   );
 }

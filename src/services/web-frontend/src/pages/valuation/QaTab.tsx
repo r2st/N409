@@ -2,7 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, LoadingBlock, Skeleton, SkeletonText } from '../../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  LoadingBlock,
+  Skeleton,
+  SkeletonText,
+  WriteGate,
+} from '../../components/ui';
 
 type QaStatus = 'pass' | 'warn' | 'fail';
 
@@ -60,7 +68,7 @@ function StatusPill({ status }: { status: QaStatus | 'info' }) {
  * calculation.
  */
 export function QaTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const [data, setData] = useState<QaResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState<'checks' | 'ai' | null>(null);
@@ -129,19 +137,21 @@ export function QaTab() {
       </div>
 
       <div className="flex gap-2">
-        <Button
-          onClick={() => void run(false)}
-          disabled={running !== null || data.latest_calculation_id === null}
-        >
-          {running === 'checks' ? 'Running…' : 'Run checks'}
-        </Button>
-        <Button
-          variant="secondary"
-          onClick={() => void run(true)}
-          disabled={running !== null || data.latest_calculation_id === null}
-        >
-          {running === 'ai' ? 'Running…' : 'Run checks + AI review'}
-        </Button>
+        <WriteGate closed={retired}>
+          <Button
+            onClick={() => void run(false)}
+            disabled={running !== null || data.latest_calculation_id === null}
+          >
+            {running === 'checks' ? 'Running…' : 'Run checks'}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => void run(true)}
+            disabled={running !== null || data.latest_calculation_id === null}
+          >
+            {running === 'ai' ? 'Running…' : 'Run checks + AI review'}
+          </Button>
+        </WriteGate>
       </div>
       {error && <ErrorNote>{error}</ErrorNote>}
 

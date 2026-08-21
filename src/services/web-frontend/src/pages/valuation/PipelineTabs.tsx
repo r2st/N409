@@ -10,6 +10,7 @@ import { ProjectionPanel } from '../../components/valuation/ProjectionPanel';
 import { AiPanel } from '../../components/valuation/AiPanel';
 import { TasksPanel } from '../../components/valuation/TasksPanel';
 import { CalculationPanel } from '../../components/valuation/CalculationPanel';
+import { WriteGate } from '../../components/ui';
 
 /**
  * Thin adapters mounting the M1 pipeline panels as workspace tabs.
@@ -42,8 +43,12 @@ export function DocumentsTab() {
         // click.
         canUpload={!retired}
       />
-      {/* §23 — accounting software connect + import */}
-      <AccountingConnect valuationId={valuation.id} />
+      {/* §23 — accounting software connect + import. Connecting a ledger,
+          importing from it and disconnecting are all writes; there is nothing
+          on this panel a reader consults. */}
+      <WriteGate closed={retired}>
+        <AccountingConnect valuationId={valuation.id} />
+      </WriteGate>
     </div>
   );
 }
@@ -81,16 +86,29 @@ export function FinancialModelTab() {
 }
 
 export function AiTab() {
-  const { valuation } = useWorkspace();
-  return <AiPanel valuationId={valuation.id} />;
+  const { valuation, retired } = useWorkspace();
+  return (
+    <WriteGate closed={retired}>
+      <AiPanel valuationId={valuation.id} />
+    </WriteGate>
+  );
 }
 
 export function TasksTab() {
-  const { valuation } = useWorkspace();
-  return <TasksPanel valuationId={valuation.id} />;
+  const { valuation, retired } = useWorkspace();
+  return (
+    <WriteGate closed={retired}>
+      <TasksPanel valuationId={valuation.id} />
+    </WriteGate>
+  );
 }
 
 export function CalculationsTab() {
-  const { valuation } = useWorkspace();
-  return <CalculationPanel valuationId={valuation.id} currency={valuation.currency ?? 'USD'} />;
+  const { valuation, retired } = useWorkspace();
+  // The panel takes the condition rather than being wrapped: the run history
+  // under the buttons has its own control — "Inspect steps" — and that is the
+  // one thing on a withdrawn engagement somebody is most likely to be here for.
+  return (
+    <CalculationPanel valuationId={valuation.id} currency={valuation.currency ?? 'USD'} readOnly={retired} />
+  );
 }

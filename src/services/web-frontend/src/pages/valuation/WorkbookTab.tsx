@@ -8,7 +8,7 @@ import {
   type WorkbookSheet,
 } from '../../lib/m2';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Spinner } from '../../components/ui';
+import { Button, EmptyState, ErrorNote, Spinner, WriteGate } from '../../components/ui';
 
 type CellKey = `${string}|${string}|${string}`;
 const cellKey = (sheet: string, row: string, col: string): CellKey => `${sheet}|${row}|${col}`;
@@ -102,7 +102,7 @@ function AnomalyPanel({
  * truth for formulas is domain/workbook.ts in the valuation service).
  */
 export function WorkbookTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const [sheets, setSheets] = useState<WorkbookSheet[] | null>(null);
   const [anomalies, setAnomalies] = useState<FinancialAnomalyReport | null>(null);
   const [activeSheet, setActiveSheet] = useState<string | null>(null);
@@ -286,9 +286,11 @@ export function WorkbookTab() {
           >
             {exporting ? 'Preparing…' : 'Export auditor workbook'}
           </Button>
-          <Button onClick={() => void save()} disabled={!dirty || busy}>
-            {busy ? 'Saving…' : 'Save workbook'}
-          </Button>
+          <WriteGate closed={retired}>
+            <Button onClick={() => void save()} disabled={!dirty || busy}>
+              {busy ? 'Saving…' : 'Save workbook'}
+            </Button>
+          </WriteGate>
         </div>
       </div>
 
@@ -296,78 +298,81 @@ export function WorkbookTab() {
       {anomalies && <AnomalyPanel report={anomalies} onJump={jumpTo} />}
       <p className="text-sm text-ink-400">{sheet.description}</p>
 
-      <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
-        <table className="w-full min-w-[40rem] border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-paper-300 bg-paper-50">
-              <th className="px-4 py-2.5 text-left text-xs font-semibold tracking-wide text-ink-400 uppercase">
-                Line item
-              </th>
-              {sheet.columns.map((col) => (
-                <th
-                  key={col.key}
-                  className="px-3 py-2.5 text-right text-xs font-semibold tracking-wide text-ink-400 uppercase"
-                >
-                  {col.label}
+      <WriteGate closed={retired}>
+        <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+          <table className="w-full min-w-[40rem] border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-paper-300 bg-paper-50">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold tracking-wide text-ink-400 uppercase">
+                  Line item
                 </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {sheet.rows.map((row) => (
-              <tr
-                key={row.key}
-                className={`border-b border-paper-200 ${row.kind === 'derived' ? 'bg-paper-50' : ''}`}
-              >
-                <td
-                  className={`px-4 py-2 ${row.kind === 'derived' ? 'font-semibold text-ink-700' : 'text-ink-800'}`}
+                {sheet.columns.map((col) => (
+                  <th
+                    key={col.key}
+                    className="px-3 py-2.5 text-right text-xs font-semibold tracking-wide text-ink-400 uppercase"
+                  >
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sheet.rows.map((row) => (
+                <tr
+                  key={row.key}
+                  className={`border-b border-paper-200 ${row.kind === 'derived' ? 'bg-paper-50' : ''}`}
                 >
-                  {row.label}
-                  {row.kind === 'derived' && (
-                    <span className="ml-2 rounded bg-paper-200 px-1.5 py-0.5 text-[0.65rem] font-semibold text-ink-400 uppercase">
-                      calc
-                    </span>
-                  )}
-                </td>
-                {row.cells.map((cell) => {
-                  const key = cellKey(sheet.key, row.key, cell.column_key);
-                  if (row.kind === 'derived') {
+                  <td
+                    className={`px-4 py-2 ${row.kind === 'derived' ? 'font-semibold text-ink-700' : 'text-ink-800'}`}
+                  >
+                    {row.label}
+                    {row.kind === 'derived' && (
+                      <span className="ml-2 rounded bg-paper-200 px-1.5 py-0.5 text-[0.65rem] font-semibold text-ink-400 uppercase">
+                        calc
+                      </span>
+                    )}
+                  </td>
+                  {row.cells.map((cell) => {
+                    const key = cellKey(sheet.key, row.key, cell.column_key);
+                    if (row.kind === 'derived') {
+                      return (
+                        <td
+                          key={cell.column_key}
+                          className="tnum px-3 py-2 text-right font-medium text-ink-700"
+                        >
+                          {formatWorkbookValue(cell.value, row.format)}
+                        </td>
+                      );
+                    }
+                    const draft = drafts.get(key);
+                    const display =
+                      draft !== undefined ? draft : cell.value === null ? '' : String(cell.value);
                     return (
-                      <td
-                        key={cell.column_key}
-                        className="tnum px-3 py-2 text-right font-medium text-ink-700"
-                      >
-                        {formatWorkbookValue(cell.value, row.format)}
+                      <td key={cell.column_key} className="px-1.5 py-1">
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          aria-label={`${row.label} ${cell.column_key}`}
+                          value={display}
+                          onChange={(e) => setDraft(key, e.target.value, cell.value)}
+                          onFocus={() => setHighlight(null)}
+                          className={`tnum w-full rounded border px-2 py-1.5 text-right text-sm focus:border-bond-600 focus:ring-1 focus:ring-bond-600/30 focus:outline-none ${
+                            draft !== undefined
+                              ? 'border-amber-300 bg-amber-50'
+                              : highlight === key
+                                ? 'border-red-400 bg-red-50 ring-1 ring-red-400/30'
+                                : 'border-transparent bg-transparent hover:border-ink-200'
+                          }`}
+                        />
                       </td>
                     );
-                  }
-                  const draft = drafts.get(key);
-                  const display = draft !== undefined ? draft : cell.value === null ? '' : String(cell.value);
-                  return (
-                    <td key={cell.column_key} className="px-1.5 py-1">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        aria-label={`${row.label} ${cell.column_key}`}
-                        value={display}
-                        onChange={(e) => setDraft(key, e.target.value, cell.value)}
-                        onFocus={() => setHighlight(null)}
-                        className={`tnum w-full rounded border px-2 py-1.5 text-right text-sm focus:border-bond-600 focus:ring-1 focus:ring-bond-600/30 focus:outline-none ${
-                          draft !== undefined
-                            ? 'border-amber-300 bg-amber-50'
-                            : highlight === key
-                              ? 'border-red-400 bg-red-50 ring-1 ring-red-400/30'
-                              : 'border-transparent bg-transparent hover:border-ink-200'
-                        }`}
-                      />
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </WriteGate>
       <p className="text-xs text-ink-400">
         Rows marked <span className="font-semibold">calc</span> are derived and recompute on save. Clear a
         cell to remove its value.

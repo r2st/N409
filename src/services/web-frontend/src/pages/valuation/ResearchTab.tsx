@@ -14,6 +14,7 @@ import {
   Skeleton,
   SkeletonText,
   TextInput,
+  WriteGate,
 } from '../../components/ui';
 
 /**
@@ -109,6 +110,7 @@ function TopicCard({
   row,
   regions,
   canRun,
+  retired,
   staleDays,
   onRun,
   running,
@@ -117,6 +119,7 @@ function TopicCard({
   row: ResearchRow | undefined;
   regions: Array<{ key: string; label: string }>;
   canRun: boolean;
+  retired: boolean;
   staleDays: number;
   onRun: (body: Record<string, unknown>) => Promise<void>;
   running: boolean;
@@ -185,46 +188,48 @@ function TopicCard({
       )}
 
       {canRun && (
-        <div className="mt-5 flex flex-wrap items-end gap-3 border-t border-paper-200 pt-4">
-          {topic.regionScoped && (
-            <Field label="Market">
-              <Select value={region} onChange={(e) => setRegion(e.target.value)}>
-                {regions.map((r) => (
-                  <option key={r.key} value={r.key}>
-                    {r.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          )}
-          {topic.acceptsSubject && (
-            <Field
-              label="Guideline company"
-              hint="A public comparable. Never this engagement’s own company — that is confidential."
+        <WriteGate closed={retired}>
+          <div className="mt-5 flex flex-wrap items-end gap-3 border-t border-paper-200 pt-4">
+            {topic.regionScoped && (
+              <Field label="Market">
+                <Select value={region} onChange={(e) => setRegion(e.target.value)}>
+                  {regions.map((r) => (
+                    <option key={r.key} value={r.key}>
+                      {r.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            )}
+            {topic.acceptsSubject && (
+              <Field
+                label="Guideline company"
+                hint="A public comparable. Never this engagement’s own company — that is confidential."
+              >
+                <TextInput
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="ABB Ltd"
+                  maxLength={120}
+                />
+              </Field>
+            )}
+            <Button
+              variant="secondary"
+              onClick={() => void run()}
+              disabled={running || (topic.acceptsSubject && subject.trim().length < 2)}
             >
-              <TextInput
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
-                placeholder="ABB Ltd"
-                maxLength={120}
-              />
-            </Field>
-          )}
-          <Button
-            variant="secondary"
-            onClick={() => void run()}
-            disabled={running || (topic.acceptsSubject && subject.trim().length < 2)}
-          >
-            {running ? 'Researching…' : row ? 'Refresh' : 'Run research'}
-          </Button>
-        </div>
+              {running ? 'Researching…' : row ? 'Refresh' : 'Run research'}
+            </Button>
+          </div>
+        </WriteGate>
       )}
     </section>
   );
 }
 
 export function ResearchTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const { user } = useAuth();
   const ops = isOps(user);
   const [meta, setMeta] = useState<TopicsResponse | null>(null);
@@ -307,9 +312,11 @@ export function ResearchTab() {
           stale.
         </p>
         {data.can_run && topics.length > 0 && (
-          <Button onClick={() => void refreshAll()} disabled={running !== null}>
-            {running === '__all' ? 'Refreshing…' : 'Refresh all'}
-          </Button>
+          <WriteGate closed={retired}>
+            <Button onClick={() => void refreshAll()} disabled={running !== null}>
+              {running === '__all' ? 'Refreshing…' : 'Refresh all'}
+            </Button>
+          </WriteGate>
         )}
       </div>
 
@@ -330,6 +337,7 @@ export function ResearchTab() {
           row={latestFor(topic.topic)}
           regions={meta?.regions ?? []}
           canRun={data.can_run}
+          retired={retired}
           staleDays={data.stale_days}
           onRun={run}
           running={running === topic.topic || running === '__all'}

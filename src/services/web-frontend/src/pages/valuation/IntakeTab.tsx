@@ -3,7 +3,16 @@ import { api, ApiError } from '../../lib/api';
 import { useWorkspace } from './ValuationWorkspace';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  Select,
+  Spinner,
+  TextInput,
+  WriteGate,
+} from '../../components/ui';
 import { FieldWarnings, ValidationSummary } from '../../components/ValidationNotes';
 import { answerFromControl, controlValue } from '../../lib/intakeAnswers';
 import {
@@ -47,7 +56,7 @@ interface QuestionnaireResponse {
 }
 
 export function IntakeTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, retired } = useWorkspace();
   const { user } = useAuth();
   const ops = isOps(user);
   const [schema, setSchema] = useState<IntakeSection[] | null>(null);
@@ -156,7 +165,7 @@ export function IntakeTab() {
   if (error && !data) return <ErrorNote>{error}</ErrorNote>;
   if (!schema || !data) return <Spinner />;
 
-  const canEdit = data.can_edit;
+  const canEdit = data.can_edit && !retired;
   const section = schema[step];
   const completion = data.completion;
   const sectionIssues = section ? issues.filter((i) => section.fields.some((f) => f.key === i.field)) : [];
@@ -362,9 +371,11 @@ export function IntakeTab() {
           )}
           {ops && data.missing_documents.length > 0 && (
             <div className="mt-4">
-              <Button variant="secondary" disabled={busy} onClick={() => void sendReminder()}>
-                Send reminder to client
-              </Button>
+              <WriteGate closed={retired}>
+                <Button variant="secondary" disabled={busy} onClick={() => void sendReminder()}>
+                  Send reminder to client
+                </Button>
+              </WriteGate>
               {reminderNote && <p className="mt-2 text-xs text-ink-500">{reminderNote}</p>}
             </div>
           )}
