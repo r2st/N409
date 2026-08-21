@@ -556,3 +556,133 @@ describe.skipIf(!dbUp)('partner API', () => {
     });
   });
 });
+
+// `GET /me` — the first call an integration makes and the one it makes when a
+// key stops working. 409.ai's partner API documents the same endpoint; this one
+// also answers "which of my keys is this", which is the question that actually
+// comes up mid-rotation.
+describe.skipIf(!dbUp)('partner API: GET /me', () => {
+  let ctx: TestApp;
+  let app: FastifyInstance;
+  let partnerId: string;
+  let apiKey: string;
+  let adminToken: string;
+
+  const keyHeader = (key: string) => ({ authorization: `Bearer ${key}` });
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({}, { partnerApiLimiter: new FixedWindowRateLimiter(1000, 60_000) });
+    app = ctx.app;
+    partnerId = await seedPartner(ctx, 'Meridian Capital Partners');
+    const admin = await seedUser(ctx, { roles: ['partner'], partnerId });
+    adminToken = admin.token;
+    const minted = await app.inject({
+      method: 'POST',
+      url: `/api/v1/partners/${partnerId}/tokens`,
+      headers: authHeader(adminToken),
+      payload: { name: 'production' },
+    });
+    expect(minted.statusCode).toBe(201);
+    apiKey = minted.json().secret as string;
+  });
+
+  afterAll(async () => {
+    await ctx?.teardown();
+  });
+
+  const me = async (key: string) =>
+    app.inject({ method: 'GET', url: '/api/partner/v1/me', headers: keyHeader(key) });
+
+  it('names the organization behind the key', async () => {
+    const res = await me(apiKey);
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { partner: Record<string, unknown> };
+    expect(body.partner.id).toBe(partnerId);
+    expect(body.partner.name).toBe('Meridian Capital Partners');
+    expect(typeof body.partner.key).toBe('string');
+    expect(typeof body.partner.white_label_enabled).toBe('boolean');
+  });
+
+  // Mid-rotation a partner holds several keys and needs to know which one the
+  // caller actually presented. The prefix is the visible half; the secret must
+  // never come back out.
+  it('names which key was used, by prefix, and never the secret', async () => {
+    const res = await me(apiKey);
+    const body = res.json() as { token: { name: string; prefix: string } };
+    expect(body.token.name).toBe('production');
+    expect(apiKey.startsWith(body.token.prefix)).toBe(true);
+    expect(res.body).not.toContain(apiKey);
+  });
+
+  // Two keys for one organization: same partner, different token identity. The
+  // second half is what makes the endpoint useful for anything.
+  it('distinguishes two keys of the same organization', async () => {
+    const second = await app.inject({
+      method: 'POST',
+      url: `/api/v1/partners/${partnerId}/tokens`,
+      headers: authHeader(adminToken),
+      payload: { name: 'staging' },
+    });
+    expect(second.statusCode).toBe(201);
+    const first = (await me(apiKey)).json() as { partner: { id: string }; token: { id: string } };
+    const other = (await me(second.json().secret as string)).json() as {
+      partner: { id: string };
+      token: { id: string };
+    };
+    expect(other.partner.id).toBe(first.partner.id);
+    expect(other.token.id).not.toBe(first.token.id);
+    expect(other.token.name).toBe('staging');
+  });
+
+  it('requires a key', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/partner/v1/me' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  // A session JWT is not an API key, and this endpoint is on the API-key
+  // surface — the same rule every other partner endpoint follows.
+  it('rejects a session bearer', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/partner/v1/me',
+      headers: authHeader(adminToken),
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('carries the rate-limit headers rather than repeating them in the body', async () => {
+    const res = await me(apiKey);
+    expect(res.headers['x-ratelimit-limit']).toBeDefined();
+    expect(res.headers['x-ratelimit-remaining']).toBeDefined();
+    // A second source for a number that moves between the two reads.
+    expect(res.body).not.toContain('rate_limit');
+  });
+
+  // A live key whose organization has been archived. `apiKeyGuard` cannot catch
+  // it — the token resolves fine — so without this the endpoint would invent an
+  // identity for a firm that no longer exists.
+  it('404s when the organization behind a valid key is archived', async () => {
+    const doomedPartner = await seedPartner(ctx, 'Closed Advisors');
+    const doomedAdmin = await seedUser(ctx, { roles: ['partner'], partnerId: doomedPartner });
+    const minted = await app.inject({
+      method: 'POST',
+      url: `/api/v1/partners/${doomedPartner}/tokens`,
+      headers: authHeader(doomedAdmin.token),
+      payload: { name: 'about to close' },
+    });
+    const doomedKey = minted.json().secret as string;
+    expect((await me(doomedKey)).statusCode).toBe(200);
+
+    await ctx.pool.query('UPDATE partners SET archived_at = now() WHERE id = $1', [doomedPartner]);
+    expect((await me(doomedKey)).statusCode).toBe(404);
+  });
+
+  it('is listed in the docs endpoint and the OpenAPI spec', async () => {
+    const docs = await app.inject({ method: 'GET', url: '/api/partner/v1/docs' });
+    const listed = (docs.json() as { endpoints: { method: string; path: string }[] }).endpoints;
+    expect(listed).toContainEqual(expect.objectContaining({ method: 'GET', path: '/me' }));
+
+    const spec = await app.inject({ method: 'GET', url: '/api/partner/v1/openapi.json' });
+    expect((spec.json() as { paths: Record<string, unknown> }).paths['/me']).toBeDefined();
+  });
+});

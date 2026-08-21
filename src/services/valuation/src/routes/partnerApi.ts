@@ -38,6 +38,8 @@ import {
   type ValuationRow,
 } from '../repos/valuations.js';
 import { listDocuments } from '../repos/documents.js';
+import { findPartnerIdentity } from '../repos/branding.js';
+import { findApiTokenById } from '../repos/apiTokens.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { findReportByValuation, getVersion, listVersions } from '../repos/reports.js';
 import { MAX_DOCUMENT_BYTES, rethrowRejectedUpload, storeDocument } from './documents.js';
@@ -56,6 +58,7 @@ import {
   CreateWebhookResponse,
   DeleteWebhookResponse,
   GetValuationResponse,
+  MeResponse,
   ListDeliveriesResponse,
   ListValuationsResponse,
   ListWebhooksResponse,
@@ -504,6 +507,65 @@ export function registerPartnerApiRoutes(
       // file is.
       return reply.header('content-type', 'application/openapi+json; charset=utf-8').send(document);
     },
+  );
+
+  define(
+    {
+      method: 'GET',
+      path: '/me',
+      summary:
+        'Identify the organization and key behind this request — the first call to make when ' +
+        'wiring up an integration, and the one to make when a key stops working.',
+      auth: 'api_key',
+      response:
+        '{ partner: { id, name, key, white_label_enabled, created_at }, token: { id, name, prefix, created_at, last_used_at } }',
+      errors: {
+        '404': 'The key is valid but its organization has been archived — the key identifies nobody.',
+      },
+    },
+    async (req) => {
+      const { token } = requireToken(req);
+      // Both reads are by primary key and this endpoint is cold, so they are
+      // not worth a join: the two rows answer two different questions, and a
+      // join would make the archived-partner case below harder to state than
+      // it is.
+      const [partner, apiToken] = await Promise.all([
+        findPartnerIdentity(deps.pool, token.partnerId),
+        findApiTokenById(deps.pool, token.tokenId),
+      ]);
+      // A live key whose organisation has been archived. `apiKeyGuard` cannot
+      // catch this — it resolves the token, and the token is fine. Answering
+      // 404 rather than inventing an identity is the same rule the branding
+      // reads follow, and it gives the partner the one diagnosis that is
+      // actionable: the key is good, the account is not.
+      if (!partner) throw problems.notFound();
+      return {
+        partner: {
+          id: partner.id,
+          name: partner.name,
+          key: partner.key,
+          white_label_enabled: partner.white_label_enabled,
+          created_at: partner.created_at,
+        },
+        // The prefix, never the secret — it is the visible half of the key and
+        // the only way a partner mid-rotation can tell which of their keys the
+        // caller actually used. `last_used_at` is the other half of that
+        // question: a key that answers here and has never been used anywhere
+        // else is a key wired into the wrong environment.
+        token: apiToken && {
+          id: apiToken.id,
+          name: apiToken.name,
+          prefix: apiToken.token_prefix,
+          created_at: apiToken.created_at,
+          last_used_at: apiToken.last_used_at,
+        },
+        // Deliberately no rate-limit counters here. Every response on this API
+        // already carries them as headers, including this one, and a body that
+        // repeated them would be a second source for a number that changes
+        // between the two being read. `GET /docs` states the limits.
+      };
+    },
+    { schemas: { response: MeResponse } },
   );
 
   define(

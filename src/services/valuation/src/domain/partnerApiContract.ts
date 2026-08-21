@@ -125,6 +125,40 @@ export const CursorPage = {
   has_more: z.boolean(),
 } as const;
 
+/**
+ * `GET /me` — who this key is, and which key it is.
+ *
+ * `token` is nullable, which is not a hedge: `apiKeyGuard` resolves the token
+ * on the way in, so a row that has since been deleted outright leaves a request
+ * authenticated by a key with no record. Reporting the organisation and saying
+ * so about the key is a better answer than a 500, and a partner reading `null`
+ * there learns something true.
+ */
+export const MeResponse = z
+  .object({
+    partner: z
+      .object({
+        id: z.string(),
+        name: z.string(),
+        key: z.string(),
+        white_label_enabled: z.boolean(),
+        created_at: Timestamp,
+      })
+      .strict(),
+    token: z
+      .object({
+        id: z.string(),
+        name: z.string(),
+        /** The visible half of the key — never the secret. */
+        prefix: z.string(),
+        created_at: Timestamp,
+        last_used_at: Timestamp.nullable(),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+
 export const CreateValuationResponse = z.object({ valuation: PublicValuationSchema }).strict();
 
 export const ListValuationsResponse = z

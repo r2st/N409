@@ -13,6 +13,37 @@ import type { BrandingPatch, BrandingSource } from '../domain/branding.js';
 const BRANDING_COLUMNS = `id, name, subdomain, brand_name, brand_tagline, brand_color, accent_color_dark,
                           logo_url, logo_dark_url, favicon_url, support_email, white_label_enabled`;
 
+/** What `GET /api/partner/v1/me` reports about the organisation behind a key. */
+export interface PartnerIdentity {
+  id: string;
+  name: string;
+  key: string;
+  white_label_enabled: boolean;
+  created_at: Date;
+}
+
+/**
+ * The partner behind an API key, for the `/me` endpoint.
+ *
+ * Deliberately not `findBrandingByPartnerId` with extra columns: that read runs
+ * on every page load and its column list is tuned for it, while this one runs
+ * once per integration and wants `key` (which a partner reconciles against
+ * their own records) and `white_label_enabled` (which decides what their
+ * report PDFs look like) and nothing else branding-shaped.
+ *
+ * Archived partners resolve to null, the same rule the branding reads use — a
+ * key belonging to a closed firm should stop identifying it, not go on
+ * describing an organisation that no longer exists.
+ */
+export async function findPartnerIdentity(pool: pg.Pool, id: string): Promise<PartnerIdentity | null> {
+  const { rows } = await pool.query<PartnerIdentity>(
+    `SELECT id, name, key, white_label_enabled, created_at
+     FROM partners WHERE id = $1 AND archived_at IS NULL`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
 export async function findBrandingByPartnerId(
   pool: pg.Pool,
   partnerId: string,
