@@ -95,17 +95,27 @@ restore at every boot.
 
 ### The verification credential
 
-`n409-backup-verify.service` needs a second env file, provisioned by hand because
-it holds a password:
+`n409-backup-verify.service` needs a second env file, kept outside the repository
+because it holds a password. **Run this on the database host:**
 
 ```bash
-sudo -u postgres psql -qtAc \
-  "CREATE ROLE n409_verify LOGIN CREATEDB PASSWORD '<generated>'"
-sudo install -d -m 0750 -o root -g n409 /etc/n409
-sudo install -m 0640 -o root -g n409 /dev/null /etc/n409/backup-verify.env
-# then write one line into it:
-#   DATABASE_URL=postgres://n409_verify:<generated>@localhost:5432/postgres
+sudo infra/backup/provision-verify-role.sh
 ```
+
+It creates the role with a generated password, writes
+`/etc/n409/backup-verify.env` (0640 root:n409), and then *connects as that role*
+to confirm it can `CREATE DATABASE` before reporting success — because "the
+statements did not error" is not the same as "the rehearsal will work on Sunday".
+
+It is idempotent and safe to re-run: a host whose existing credential connects
+and has `CREATEDB` is left alone, and one whose credential is missing, stale, or
+lacking the privilege is re-provisioned. To rotate, delete the env file and run
+it again.
+
+This was done by hand in R87 and recorded nowhere but a shell history, which is
+why it is a script now: a rebuilt host came up with the timer armed, the unit
+refusing to start on a missing `EnvironmentFile`, and nothing anywhere saying
+what belonged in it.
 
 The restore creates a scratch database, which needs `CREATE DATABASE`. The
 application role does not have that privilege and should not gain it — it is the
