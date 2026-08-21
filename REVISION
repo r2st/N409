@@ -1364,3 +1364,62 @@
 #            marketing surface they have — calculator, sample report, guide,
 #            developer docs, the three educational pages, and all seven
 #            competitor comparison pages — is already a prerendered route here.
+# closed:    `req.ip` was a Cloudflare datacenter for every request on the
+#            internet, and had been for as long as the record has been proxied.
+#            `dig +short n409.aiknol.com` returns Cloudflare addresses, not
+#            204.168.241.124 — the A record is orange-cloud, which
+#            infra/caddy/README.md said emphatically it must not be and which
+#            nothing has ever checked. So the real chain is
+#            `client → Cloudflare edge → Caddy → web`, and clientIp.ts named
+#            only the hops we run. Measured, not reasoned: a probe from
+#            49.43.232.92 was logged by n409-web as remoteAddress
+#            104.23.175.42. That is precisely the failure clientIp.ts's own
+#            header comment was written to close, one hop further out, and every
+#            consequence it lists applied — fourteen throttles keyed on a POP
+#            shared by everyone routed through it, `login-ip:`, `register-ip:`,
+#            `reset-ip:` and `verify-email-ip:` among them, so one person's
+#            failed logins spent a stranger's budget and an attacker moving
+#            between POPs collected a fresh one at each.
+#            It needed two fixes in two config languages, and finding that out
+#            was the useful part: the app-side one alone changed nothing
+#            measurable. Caddy 2.7+ *replaces* an inbound X-Forwarded-For with
+#            the immediate peer unless that peer is trusted, and this host had
+#            no `trusted_proxies` at all, so the client address was discarded at
+#            the edge and the app was trusting a chain that had already been
+#            truncated. `cloudflare` is now a named hop in TRUSTED_PROXIES
+#            expanding to the vendor's published ranges, and the same ranges are
+#            in the Caddyfile's global options block. Verified end to end
+#            afterwards: the same probe logs 49.43.232.92 exactly, and over IPv6
+#            the client's real v6 address.
+#            Two things stated rather than assumed. The trade: these ranges are
+#            routable, unlike everything else in the default list, so code
+#            running inside Cloudflare could reach the origin directly and forge
+#            the header. That is narrower than what it replaces — a single
+#            shared bucket takes no effort at all to defeat — and completing it
+#            means accepting 80/443 only from those ranges, which this box
+#            cannot do while its Caddy serves two unrelated products from the
+#            same ports. And the coupling: a range in one file and not the other
+#            silently reinstates the bug for the POPs in it, so a test compares
+#            the two, parsing the directive rather than the prose.
+# closed:    infra/caddy/ described a deployment that has never existed here — a
+#            Caddy in Docker reached at `host.docker.internal:3000`, on a host
+#            with no Docker on it at all, and with no `/scim/v2/*` route. Anyone
+#            following it would have produced a site that could not reach its
+#            own backend and would have silently 404'd every SCIM provisioning
+#            request from every configured IdP. Replaced with what is actually
+#            deployed, and marked as the n409 site block rather than a whole
+#            Caddyfile, since installing it as one would take the other two
+#            products down. Stale infrastructure config is worse than none: it
+#            invites someone to apply it.
+# gap:       the origin still accepts 80/443 from anywhere, which is what would
+#            make the Cloudflare trust above airtight rather than merely much
+#            better. Not done because Caddy serves ustradingbot.aiknol.com and
+#            talentping.aiknol.com from the same ports and locking those to
+#            Cloudflare is not this repo's decision; the shape of the change is
+#            written into infra/DEPLOYMENT.md, deliberately as prose rather than
+#            as a script somebody might run.
+# gap:       nothing checks that the *live* Caddyfile matches the repo, the way
+#            install-units.sh now does for systemd. It cannot be the same fix —
+#            that file is shared with two other products, so this repo can own a
+#            block of it but not the whole thing — and the drift it hides is the
+#            one this round spent its afternoon on.
