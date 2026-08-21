@@ -49,7 +49,14 @@ const METHOD_TONES: Record<EndpointDoc['method'], string> = {
   GET: 'bg-bond-50 text-bond-700',
   POST: 'bg-emerald-50 text-emerald-700',
   PUT: 'bg-amber-50 text-amber-700',
-  DELETE: 'bg-rose-50 text-rose-700',
+  // `red`, and deliberately not the neighbouring family one step around the
+  // wheel. Dark mode here is one block of re-pointed palette steps rather than
+  // a set of `dark:` variants, and that block has never carried that family —
+  // so the lightest step of it stays near-white under a dark theme, which would
+  // have put a glaring chip on a dark table on the one verb that removes a
+  // partner's data. Same substitution the Stripe test-mode warning and the
+  // research badge made, and `themeTokens.test.ts` is what caught it.
+  DELETE: 'bg-red-50 text-red-700',
 };
 
 function MethodChip({ method }: { method: EndpointDoc['method'] }) {
