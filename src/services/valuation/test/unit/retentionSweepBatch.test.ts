@@ -9,6 +9,13 @@ import { runRetentionSweep } from '../../src/routes/retention.js';
  * cost around a thousand sequential round trips to say the same two things.
  * These pin the batched shape: the query count is a function of the pass, not
  * of how many valuations the pass happened to find.
+ *
+ * R90 added a fifth query and this file is what made that a decision rather
+ * than a drift: the sweep now tells a partner their engagement was retired,
+ * and the naive place to put that is inside the loop the batching removed.
+ * `firePartnerWebhooksForRetirement` takes the whole archived batch and looks
+ * the partner-owned rows up once, so the count went from four to five and not
+ * from four to four-plus-N.
  */
 
 interface Recorded {
@@ -41,6 +48,11 @@ function fakePool(candidates: Array<{ id: string; user_id: string; frozen: boole
         return { rows: wanted.map((id) => ({ id })), rowCount: wanted.length };
       }
       if (sql.includes('INSERT INTO retention_actions')) return { rows: [], rowCount: 0 };
+      // The retirement-webhook lookup: which of the archived rows belong to a
+      // partner. None here — the dispatch itself is covered end-to-end in
+      // `partnerRetirementWebhook.test.ts`; what this file pins is that it is
+      // one query for the batch.
+      if (sql.includes('partner_id IS NOT NULL')) return { rows: [], rowCount: 0 };
       throw new Error(`unexpected query: ${sql}`);
     }),
   } as unknown as pg.Pool;
@@ -64,8 +76,12 @@ describe('runRetentionSweep batching', () => {
     expect(result).toEqual({ archived: 250, skipped_hold: 0 });
     expect(of(calls, 'UPDATE valuations')).toHaveLength(1);
     expect(of(calls, 'INSERT INTO retention_actions')).toHaveLength(1);
-    // Two reads and two writes for 250 valuations — the whole point.
-    expect(calls).toHaveLength(4);
+    // And one lookup for the retirement webhooks, over the whole batch rather
+    // than per row — the one place a new feature would have quietly undone the
+    // batching this file exists to protect.
+    expect(of(calls, 'partner_id IS NOT NULL')).toHaveLength(1);
+    // Three reads and two writes for 250 valuations — the whole point.
+    expect(calls).toHaveLength(5);
   });
 
   it('logs a skip for each held candidate and archives only the rest', async () => {
@@ -121,6 +137,8 @@ describe('runRetentionSweep batching', () => {
     // and not in a loop that happens to run zero times.
     expect(of(calls, 'UPDATE valuations')).toHaveLength(0);
     expect(of(calls, 'INSERT INTO retention_actions')).toHaveLength(0);
+    // Nothing was archived, so nobody is owed an event either.
+    expect(of(calls, 'partner_id IS NOT NULL')).toHaveLength(0);
   });
 
   it('stops before any write when the policy is off or unset', async () => {

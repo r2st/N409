@@ -348,6 +348,54 @@ export async function firePartnerWebhooks(
 }
 
 /**
+ * The retirement entry point: fires `valuation.retired` for whichever of these
+ * ids belong to a partner.
+ *
+ * Takes a batch because both callers have one. The manual withdrawal passes a
+ * single id; the retention sweep archives up to five hundred rows in one
+ * statement, and a per-id lookup would put five hundred round trips behind a
+ * job that had just been rewritten down to two.
+ *
+ * The company name is read *after* the retirement, so it carries the
+ * ` [retired]` suffix. That is deliberate — the event describes the row as it
+ * now is, and a partner reconciling on `id` or their own `external_id` is
+ * unaffected. One reconciling on the company name was already going to be
+ * wrong about a renamed company.
+ *
+ * Failures are the same shape as every other dispatch here: logged per
+ * webhook, never raised. A partner whose receiver is down must not be able to
+ * fail somebody's retirement.
+ */
+export async function firePartnerWebhooksForRetirement(
+  deps: WebhookDeps,
+  valuationIds: readonly string[],
+): Promise<void> {
+  const ids = [...new Set(valuationIds)];
+  if (ids.length === 0) return;
+  const { rows } = await deps.pool.query<{
+    id: string;
+    number: string | number | null;
+    kind: string;
+    state: string;
+    company_name: string;
+    partner_id: string;
+  }>(
+    `SELECT id, number, kind, state, company_name, partner_id
+       FROM valuations WHERE id = ANY($1::ulid[]) AND partner_id IS NOT NULL`,
+    [ids],
+  );
+  for (const row of rows) {
+    await firePartnerWebhooks(deps, row.partner_id, 'valuation.retired', {
+      id: row.id,
+      number: row.number,
+      kind: row.kind,
+      state: row.state,
+      company_name: row.company_name,
+    });
+  }
+}
+
+/**
  * The state-change entry point (called from hooks/stateChange.ts): fires
  * `valuation.state_changed` on every transition of a partner engagement, and
  * `valuation.report_ready` alongside it when the transition is one that puts

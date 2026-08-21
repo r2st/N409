@@ -2566,6 +2566,13 @@ export const WEBHOOK_EVENTS: Array<{ name: string; description: string }> = [
     description: 'The transition that first makes the deliverable downloadable.',
   },
   {
+    name: 'valuation.retired',
+    description:
+      'The engagement has been withdrawn — it will not transition again and every write to it is ' +
+      'refused. The only terminal event: without it an integration waiting on a report it will never ' +
+      'receive cannot tell that from work still in progress.',
+  },
+  {
     name: 'webhook.test',
     description: 'A signed ping you can trigger yourself while building the receiver.',
   },

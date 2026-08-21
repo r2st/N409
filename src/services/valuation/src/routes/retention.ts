@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
@@ -8,6 +8,7 @@ import { findValuationById } from '../repos/valuations.js';
 import { findUserById } from '../repos/users.js';
 import { isDueForArchival, RETENTION_DATA_TYPES } from '../domain/retention.js';
 import { restoreValuations, retireValuations } from '../repos/valuationPurge.js';
+import { firePartnerWebhooksForRetirement } from '../hooks/partnerWebhooks.js';
 import {
   findArchivableValuations,
   HOLD_PAGE_LIMIT,
@@ -81,7 +82,10 @@ export interface SweepResult {
  * its archive_after_days, skipping any under legal hold. Every decision is
  * logged to retention_actions. Extend here for additional data types.
  */
-export async function runRetentionSweep(pool: pg.Pool, opts: { limit?: number } = {}): Promise<SweepResult> {
+export async function runRetentionSweep(
+  pool: pg.Pool,
+  opts: { limit?: number; log?: FastifyBaseLogger } = {},
+): Promise<SweepResult> {
   const result: SweepResult = { archived: 0, skipped_hold: 0 };
   const policies = await listPolicies(pool);
   const valPolicy = policies.find((p) => p.data_type === 'valuation');
@@ -116,6 +120,11 @@ export async function runRetentionSweep(pool: pg.Pool, opts: { limit?: number } 
       detail: { archive_after_days: valPolicy.archive_after_days },
     })),
   ]);
+
+  // After the log, and never allowed to fail the sweep: `firePartnerWebhooks`
+  // swallows and logs a dispatch failure per webhook, and the batch shape is
+  // what keeps this to one query rather than one per archived row.
+  await firePartnerWebhooksForRetirement({ pool, log: opts.log }, archived);
 
   result.archived = archived.length;
   result.skipped_hold = frozen.length;
@@ -250,6 +259,10 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
           detail: { manual: true, retired_by: principal.id, reason: parsed.data.reason ?? null },
         },
       ]);
+      // A partner integration otherwise finds out by a 409 on its next write,
+      // or never. `valuation.retired` is the only terminal event on that API
+      // and this is one of the two things that produces it.
+      await firePartnerWebhooksForRetirement({ pool: deps.pool, log: app.log }, [id]);
     }
     return { retired, valuation: await findValuationById(deps.pool, id) };
   });
@@ -347,6 +360,6 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
   // Manual sweep trigger (admins), in addition to the scheduled run.
   app.post('/api/v1/admin/retention/run', { preHandler: app.authenticate }, async (req) => {
     requireAdmin(req);
-    return { result: await runRetentionSweep(deps.pool) };
+    return { result: await runRetentionSweep(deps.pool, { log: app.log }) };
   });
 }

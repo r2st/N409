@@ -12,6 +12,17 @@ export const WEBHOOK_EVENT_TYPES = [
   'valuation.state_changed',
   /** The transition that first makes the deliverable visible to the partner. */
   'valuation.report_ready',
+  /**
+   * The engagement has been withdrawn: it will not transition again, every
+   * write to it now answers 409, and the deliverable stops being shared.
+   *
+   * The only terminal event on this API, and the reason it exists is that
+   * nothing else says so. A retired engagement leaves `GET /valuations`,
+   * stops emitting `valuation.state_changed` (there are no more states), and
+   * simply goes quiet — an integration waiting on a report it will never get
+   * has no way to distinguish that from work still in progress.
+   */
+  'valuation.retired',
   /** Sent by POST /webhooks/{id}/test — a signed ping to verify the receiver. */
   'webhook.test',
 ] as const;

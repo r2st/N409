@@ -457,7 +457,7 @@ let retentionTimer: NodeJS.Timeout | undefined;
     'retention',
     nonOverlapping(
       async () => {
-        const r = await runRetentionSweep(pool);
+        const r = await runRetentionSweep(pool, { log: app.log });
         if (r.archived > 0 || r.skipped_hold > 0) app.log.info(r, 'retention sweep');
       },
       (err) => app.log.error({ err }, 'retention sweep failed'),
