@@ -67,7 +67,13 @@ function renderTab(element: React.ReactNode, v: Valuation = valuation()) {
   return render(
     <MemoryRouter initialEntries={['/v/tab']}>
       <Routes>
-        <Route path="/v" element={<Outlet context={{ valuation: v, reload }} />}>
+        {/* `retired` is derived here exactly as the workspace derives it, so a
+            test that sets `archived_at` and got `retired: false` would be
+            testing the harness rather than the adapter. */}
+        <Route
+          path="/v"
+          element={<Outlet context={{ valuation: v, reload, retired: Boolean(v.archived_at) }} />}
+        >
           <Route path="tab" element={element} />
         </Route>
       </Routes>
@@ -155,5 +161,54 @@ describe('PipelineTabs — the details that are easy to drop', () => {
 
     renderTab(<CalculationsTab />, valuation({ currency: null } as unknown as Partial<Valuation>));
     expect(propsOf('CalculationPanel').currency).toBe('USD');
+  });
+});
+
+/**
+ * A withdrawn engagement closes the same forms the client role does.
+ *
+ * Every write behind these panels answers 409 for a retired engagement, and
+ * until R90 the tabs offered them anyway — R89's banner was on the Overview tab
+ * and nowhere else, so an analyst could retype a whole set of parameters here
+ * with nothing on screen to say the work had been withdrawn. The panels already
+ * knew how to be read-only for a client; what was missing was the second reason
+ * to be, which is why this is one term per panel and not a rewrite.
+ */
+describe('PipelineTabs — a retired engagement', () => {
+  const retired = () => valuation({ archived_at: '2026-08-01T00:00:00Z' } as Partial<Valuation>);
+
+  it('closes the params and WACC forms to operations as well', () => {
+    renderTab(<ParamsTab />, retired());
+    expect(propsOf('ParamsPanel').readOnly).toBe(true);
+    expect(propsOf('WaccPanel').readOnly).toBe(true);
+  });
+
+  it('closes the financial model and its projections', () => {
+    renderTab(<FinancialModelTab />, retired());
+    expect(propsOf('FinancialModelPanel').readOnly).toBe(true);
+    expect(propsOf('ProjectionPanel').readOnly).toBe(true);
+  });
+
+  /**
+   * The upload is the one worth closing in the browser rather than at the
+   * server: the route's 409 arrives after the file has crossed the wire, so an
+   * open uploader costs a client a 25 MB transfer to learn what the banner
+   * above it already says.
+   */
+  it('closes the document uploader while leaving the list readable', () => {
+    renderTab(<DocumentsTab />, retired());
+    expect(propsOf('DocumentsPanel').canUpload).toBe(false);
+    expect(propsOf('DocumentsPanel').valuationId).toBe(VALUATION_ID);
+  });
+
+  // The vacuity guard: all four assertions above are `true`/`false` on props
+  // that a live engagement must set the other way, and the ops-writable test
+  // higher up only covers Params.
+  it('leaves every one of them open on a live engagement', () => {
+    renderTab(<DocumentsTab />);
+    expect(propsOf('DocumentsPanel').canUpload).toBe(true);
+    renderTab(<FinancialModelTab />);
+    expect(propsOf('FinancialModelPanel').readOnly).toBe(false);
+    expect(propsOf('ProjectionPanel').readOnly).toBe(false);
   });
 });

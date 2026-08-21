@@ -42,7 +42,7 @@ const ACTIVITY_LIMIT = 100;
 
 /** Overview tab — engagement facts, role-gated editing, workflow, funding, audit. */
 export function ValuationDetailPage() {
-  const { valuation, reload, commentTick } = useWorkspace();
+  const { valuation, reload, commentTick, retired } = useWorkspace();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [events, setEvents] = useState<ValuationEvent[] | null>(null);
@@ -100,9 +100,10 @@ export function ValuationDetailPage() {
    *
    * Nothing links here for a retired engagement (they are out of every list),
    * so anyone seeing this arrived by bookmark or an old link and has no other
-   * way to learn why their save failed.
+   * way to learn why their save failed. The banner that says so is the
+   * workspace's now rather than this page's — it was only ever on Overview,
+   * and the other twenty-four tabs said nothing at all.
    */
-  const retired = Boolean(valuation.archived_at);
   const canEdit = editable.size > 0 && !retired;
   const ops = isOps(user);
 
@@ -193,25 +194,6 @@ export function ValuationDetailPage() {
   return (
     <div className="grid gap-8 lg:grid-cols-[1fr_20rem]">
       <div className="space-y-8">
-        {retired && (
-          <section
-            // `role="status"` rather than `alert`: this is the standing
-            // condition of the page a reader has just opened, not something
-            // that happened to them, and an assertive live region interrupts
-            // whatever a screen reader was already saying.
-            role="status"
-            className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
-          >
-            <p className="font-semibold">This engagement has been retired.</p>
-            <p className="mt-1">
-              It is kept here for reference and can still be read, but it no longer accepts changes — editing,
-              workflow moves, report generation and reminders are all closed. Nothing on this page will bring
-              it back: an administrator can restore it from Data retention, and until they do, every control
-              that would change it stays closed.
-            </p>
-          </section>
-        )}
-
         {/* P0: Stripe checkout for unpaid engagements */}
         {!retired && <PaymentSection valuation={valuation} />}
 

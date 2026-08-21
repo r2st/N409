@@ -35,12 +35,22 @@ export function DocumentsPanel({
   valuationId,
   canReview = false,
   onReviewed,
+  canUpload = true,
 }: {
   valuationId: string;
   /** Ops only — the review mark is an analyst's own working state (§4.6). */
   canReview?: boolean;
   /** Lets the workspace refresh the header chip the mark just changed. */
   onReviewed?: () => void | Promise<void>;
+  /**
+   * Whether new files may be added. False for a retired engagement, whose
+   * upload route answers 409 — and answers it after the whole file has been
+   * transferred, which is why this one is closed in the browser and not left
+   * to the server. Defaults true so the prop is opt-in for the one caller that
+   * has a reason to close it; the list, the downloads and the review marks are
+   * untouched, because reading what is already there is not writing.
+   */
+  canUpload?: boolean;
 }) {
   const [documents, setDocuments] = useState<ValuationDocument[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -204,74 +214,83 @@ export function DocumentsPanel({
         </ErrorNote>
       )}
 
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="block">
-          <span className="mb-1.5 block text-[0.8rem] font-semibold text-ink-700">Document type</span>
-          <Select
-            value={kind}
-            disabled={busy}
-            onChange={(e) => setKind(e.target.value as DocumentKind)}
-            className="w-56"
-          >
-            {DOCUMENT_KINDS.map((k) => (
-              <option key={k} value={k}>
-                {DOCUMENT_KIND_LABELS[k]}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <Button variant="secondary" disabled={busy} onClick={() => fileInput.current?.click()}>
-          {busy ? 'Uploading…' : 'Choose files'}
-        </Button>
-        <input
-          ref={fileInput}
-          type="file"
-          multiple
-          hidden
-          data-testid="file-input"
-          onChange={(e) => {
-            const picked = e.target.files;
-            // Clearing the input is what lets the same file be picked twice.
-            // A file rejected for its size is exactly the one a user fixes and
-            // re-selects, and without this the second attempt fires no change
-            // event at all — the panel simply ignores the click.
-            e.target.value = '';
-            if (picked) void upload(picked);
-          }}
-        />
-      </div>
+      {canUpload && (
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="block">
+            <span className="mb-1.5 block text-[0.8rem] font-semibold text-ink-700">Document type</span>
+            <Select
+              value={kind}
+              disabled={busy}
+              onChange={(e) => setKind(e.target.value as DocumentKind)}
+              className="w-56"
+            >
+              {DOCUMENT_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {DOCUMENT_KIND_LABELS[k]}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <Button variant="secondary" disabled={busy} onClick={() => fileInput.current?.click()}>
+            {busy ? 'Uploading…' : 'Choose files'}
+          </Button>
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            data-testid="file-input"
+            onChange={(e) => {
+              const picked = e.target.files;
+              // Clearing the input is what lets the same file be picked twice.
+              // A file rejected for its size is exactly the one a user fixes and
+              // re-selects, and without this the second attempt fires no change
+              // event at all — the panel simply ignores the click.
+              e.target.value = '';
+              if (picked) void upload(picked);
+            }}
+          />
+        </div>
+      )}
 
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-        aria-busy={busy}
-        className={`rounded-lg border-2 border-dashed px-6 py-8 text-center text-sm transition-colors ${
-          dragging ? 'border-bond-500 bg-bond-50 text-bond-700' : 'border-ink-200 bg-paper-50 text-ink-400'
-        }`}
-      >
-        {progress ? (
-          // Which file, and how far through — a batch of large files otherwise
-          // shows one unchanging "Uploading…" for minutes and reads as hung.
-          <span role="status">
-            Uploading {progress.done + 1} of {progress.total} —{' '}
-            <span className="font-semibold">{progress.name}</span>
-          </span>
-        ) : (
-          <>
-            Drag &amp; drop files here — they upload as{' '}
-            <span className="font-semibold">{DOCUMENT_KIND_LABELS[kind]}</span> (max{' '}
-            {MAX_DOCUMENT_BYTES / (1024 * 1024)} MB each)
-          </>
-        )}
-      </div>
+      {canUpload && (
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          aria-busy={busy}
+          className={`rounded-lg border-2 border-dashed px-6 py-8 text-center text-sm transition-colors ${
+            dragging ? 'border-bond-500 bg-bond-50 text-bond-700' : 'border-ink-200 bg-paper-50 text-ink-400'
+          }`}
+        >
+          {progress ? (
+            // Which file, and how far through — a batch of large files otherwise
+            // shows one unchanging "Uploading…" for minutes and reads as hung.
+            <span role="status">
+              Uploading {progress.done + 1} of {progress.total} —{' '}
+              <span className="font-semibold">{progress.name}</span>
+            </span>
+          ) : (
+            <>
+              Drag &amp; drop files here — they upload as{' '}
+              <span className="font-semibold">{DOCUMENT_KIND_LABELS[kind]}</span> (max{' '}
+              {MAX_DOCUMENT_BYTES / (1024 * 1024)} MB each)
+            </>
+          )}
+        </div>
+      )}
 
       {documents && documents.length === 0 && (
         <EmptyState title="No documents yet">
-          Upload the cap table, financials and projections to unlock AI extraction.
+          {canUpload
+            ? 'Upload the cap table, financials and projections to unlock AI extraction.'
+            : /* The live copy is an instruction, and instructing someone to
+                 upload to an engagement that refuses uploads is the empty
+                 state lying about what it is. */
+              'Nothing was filed against this engagement before it was retired.'}
         </EmptyState>
       )}
 

@@ -21,7 +21,15 @@ vi.mock('../src/lib/auth', () => ({
 let VALUATION: Valuation;
 const reload = vi.fn(async () => {});
 vi.mock('../src/pages/valuation/ValuationWorkspace', () => ({
-  useWorkspace: () => ({ valuation: VALUATION, reload, commentTick: 0 }),
+  useWorkspace: () => ({
+    valuation: VALUATION,
+    reload,
+    commentTick: 0,
+    // The workspace derives this from `archived_at` and hands it down, so the
+    // mock derives it the same way rather than pinning a constant — a test that
+    // set `archived_at` and got `retired: false` would be testing nothing.
+    retired: Boolean(VALUATION.archived_at),
+  }),
 }));
 
 function valuation(over: Partial<Valuation> = {}): Valuation {
@@ -577,52 +585,38 @@ describe('ValuationDetailPage — a retired engagement', () => {
     stubFetches();
   });
 
-  it('says so, before the reader tries anything', async () => {
-    renderPage();
-    const banner = await screen.findByRole('status');
-    expect(banner).toHaveTextContent(/retired/i);
-    // The two facts a reader cannot work out for themselves: it is readable,
-    // and this is not something they can undo here. The second changed shape in
-    // R90 rather than going away — a restore exists now, it is just an admin
-    // action on the retention screen — and a banner that still said "not
-    // reversible" would be telling a firm their work was gone when it is one
-    // admin click from being back.
-    expect(banner).toHaveTextContent(/still be read/i);
-    expect(banner).toHaveTextContent(/Nothing on this page will bring it back/i);
-    expect(banner).toHaveTextContent(/administrator can restore it/i);
-  });
-
+  // The banner that says *why* moved to the workspace shell in R90 — it was
+  // only ever on this tab, and the other twenty-four said nothing — so it is
+  // `ValuationRetired.test.tsx` that owns it now. What stays here is the half
+  // this page owns: the controls it stops offering.
   it('offers no edit form', async () => {
     renderPage();
-    await screen.findByRole('status');
+    await screen.findByText(/Engagement details/i);
     expect(screen.queryByRole('button', { name: /^Save/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Company name/i)).not.toBeInTheDocument();
   });
 
   // Removed rather than disabled: a disabled control invites the reader to
-  // work out what would re-enable it, and nothing will.
+  // work out what would re-enable it, and only an admin can.
   it('offers none of the actions that would be refused', async () => {
     renderPage();
-    await screen.findByRole('status');
+    await screen.findByText(/Engagement details/i);
     for (const name of [/Clone/i, /Roll forward/i, /Export Evidence Bundle/i]) {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
   });
 
   // Reads stay open, and that is the deliberate half of the rule — the same
-  // one the auditor portal and board flow draw. A banner that hid the facts
-  // would make the page useless for the only thing it is still for.
+  // one the auditor portal and board flow draw. A page that hid the facts
+  // would be useless for the only thing it is still for.
   it('still shows the engagement itself', async () => {
     renderPage();
-    await screen.findByRole('status');
-    // The facts panel, which is this page's actual content — the company name
-    // is rendered by the workspace header above it and is mocked out here.
-    expect(screen.getByText(/Engagement details/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Engagement details/i)).toBeInTheDocument();
     expect(screen.getByText('USD')).toBeInTheDocument();
     expect(screen.getByText(/Delivery SLA/i)).toBeInTheDocument();
   });
 
-  // The vacuity guard for all four above: with the same stubs and a live
+  // The vacuity guard for the three above: with the same stubs and a live
   // engagement, every one of those controls is present. Without this, deleting
   // the buttons outright would pass the whole block.
   it('is not simply a page that never shows those controls', async () => {
@@ -631,6 +625,5 @@ describe('ValuationDetailPage — a retired engagement', () => {
     expect(await screen.findByRole('button', { name: /Clone/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Roll forward/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Export Evidence Bundle/i })).toBeInTheDocument();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

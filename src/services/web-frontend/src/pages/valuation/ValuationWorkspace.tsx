@@ -104,6 +104,50 @@ export interface WorkspaceContext {
   viewers: Viewer[];
   /** Bumps when a comment lands anywhere on this valuation (SSE). */
   commentTick: number;
+  /**
+   * The firm has withdrawn this engagement: readable, and refusing every write.
+   *
+   * `valuation.archived_at` says the same thing and tabs used to have to know
+   * that. Named here because it is a condition of the whole workspace rather
+   * than a column — the banner below states it once for every tab, and a tab
+   * that closes a control reads better asking `retired` than asking about a
+   * timestamp.
+   */
+  retired: boolean;
+}
+
+/**
+ * The standing condition of a withdrawn engagement, stated once for the
+ * workspace.
+ *
+ * R89 put this on the Overview tab, which is where it was noticed and not
+ * where it belongs: the workspace has twenty-five tabs and every one of them
+ * offered its full write UI on a retired engagement, so a client could fill in
+ * a questionnaire on the Intake tab or upload a document with nothing on
+ * screen to say the work had been withdrawn — and find out from a 409 after
+ * the file had already gone up the wire. Rendered in the shell, above the
+ * outlet, so it is on every tab.
+ *
+ * `role="status"` rather than `alert`: this is the condition of the page a
+ * reader has just opened, not something that happened to them, and an
+ * assertive live region interrupts whatever a screen reader was already
+ * saying.
+ */
+export function RetiredBanner() {
+  return (
+    <section
+      role="status"
+      className="mt-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+    >
+      <p className="font-semibold">This engagement has been retired.</p>
+      <p className="mt-1">
+        It is kept here for reference and can still be read, but it no longer accepts changes — editing,
+        workflow moves, report generation and reminders are all closed, on every tab. Nothing in this
+        workspace will bring it back: an administrator can restore it from Data retention, and until they do,
+        every control that would change it stays closed.
+      </p>
+    </section>
+  );
 }
 
 /** Improvement 4 — "X is viewing" presence badges (live via SSE). */
@@ -312,6 +356,7 @@ export function ValuationWorkspace() {
 
   const ops = isOps(user);
   const owner = valuation.user_id === user?.id;
+  const retired = Boolean(valuation.archived_at);
   const showReportTab = ops || REPORT_VISIBLE_STATES.has(valuation.state);
   const base = `/valuations/${valuation.id}`;
 
@@ -348,6 +393,8 @@ export function ValuationWorkspace() {
           cleared, tasks in the review queue — none of which a client has a
           view of or an action on. */}
       {ops && counters && <CounterChips base={base} counters={counters} />}
+
+      {retired && <RetiredBanner />}
 
       <ScrollableTabs label="Valuation workspace" activeKey={activeTab}>
         <Tab to={base} label="Overview" end />
@@ -428,6 +475,7 @@ export function ValuationWorkspace() {
                 reload,
                 viewers: viewers.filter((v) => v.user_id !== user?.id),
                 commentTick,
+                retired,
               } satisfies WorkspaceContext
             }
           />

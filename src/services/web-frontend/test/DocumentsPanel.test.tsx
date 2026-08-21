@@ -402,3 +402,64 @@ describe('DocumentsPanel list', () => {
     expect(screen.queryByText('No documents yet')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * The upload half, closed.
+ *
+ * `POST /valuations/:id/documents` answers 409 for a retired engagement — and
+ * answers it *after* the file has crossed the wire, because the guard runs in
+ * the handler and the body is already buffered by then. Of everything a
+ * withdrawn engagement refuses, this is the one worth closing in the browser
+ * as well: the wasted work is a client's transfer of a 25 MB cap table, not a
+ * click. Reading what was filed before the withdrawal stays open, which is the
+ * same line the API draws.
+ */
+describe('DocumentsPanel on a retired engagement', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('offers no way to add a file', async () => {
+    mockApi();
+    render(<DocumentsPanel valuationId={VAL_ID} canUpload={false} />);
+    await screen.findByText(/Nothing was filed against this engagement/i);
+
+    expect(screen.queryByRole('button', { name: /Choose files/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('file-input')).not.toBeInTheDocument();
+    // The drop target goes with it. Leaving it would accept a drag that then
+    // did nothing, which reads as a broken panel rather than a closed one.
+    expect(screen.queryByText(/Drag & drop files here/i)).not.toBeInTheDocument();
+  });
+
+  it('rewrites the empty state, which was an instruction it can no longer honour', async () => {
+    mockApi();
+    render(<DocumentsPanel valuationId={VAL_ID} canUpload={false} />);
+    expect(await screen.findByText(/Nothing was filed against this engagement/i)).toBeInTheDocument();
+    expect(screen.queryByText(/unlock AI extraction/i)).not.toBeInTheDocument();
+  });
+
+  it('still lists and offers what was filed before the engagement was withdrawn', async () => {
+    const api = mockApi();
+    // One upload against a live panel, then the same list read back closed.
+    const { unmount } = render(<DocumentsPanel valuationId={VAL_ID} />);
+    await screen.findByText('No documents yet');
+    await pick([sizedFile('cap-table.csv', 10)]);
+    await waitFor(() => expect(api.uploaded).toEqual(['cap-table.csv']));
+    unmount();
+
+    render(<DocumentsPanel valuationId={VAL_ID} canUpload={false} />);
+    expect(await screen.findByText('cap-table.csv')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Choose files/i })).not.toBeInTheDocument();
+  });
+
+  // The vacuity guard: every assertion above is that something is absent, and
+  // all of them would pass against a panel that had lost its uploader entirely.
+  it('is not simply a panel with no uploader', async () => {
+    mockApi();
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+    await screen.findByText('No documents yet');
+    expect(screen.getByRole('button', { name: /Choose files/i })).toBeInTheDocument();
+    expect(screen.getByTestId('file-input')).toBeInTheDocument();
+    expect(screen.getByText(/Drag & drop files here/i)).toBeInTheDocument();
+  });
+});
