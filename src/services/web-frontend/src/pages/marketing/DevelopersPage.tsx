@@ -30,16 +30,31 @@ function CodeBlock({ children, label }: { children: string; label?: string }) {
   );
 }
 
-const QUICKSTART = `# 1. Confirm the key works
+const QUICKSTART = `# 1. Confirm the key works — and which key it is
 curl -H "Authorization: Bearer $N409_API_KEY" \\
   https://<your-host>${PARTNER_API.prefix}/me
 
-# 2. Create an engagement (retry-safe)
+# 2. Create an engagement. external_id is your own handle on it, so a
+#    create whose response you never receive is still findable.
 curl -X POST -H "Authorization: Bearer $N409_API_KEY" \\
   -H "Content-Type: application/json" \\
   -H "Idempotency-Key: $(uuidgen)" \\
-  -d '{"kind":"409a","company_name":"Acme, Inc."}' \\
-  https://<your-host>${PARTNER_API.prefix}/valuations`;
+  -d '{"kind":"409a","company_name":"Acme, Inc.","external_id":"deal-4821"}' \\
+  https://<your-host>${PARTNER_API.prefix}/valuations
+
+# 3. Attach the supporting documents
+curl -X POST -H "Authorization: Bearer $N409_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"filename":"cap-table.xlsx","kind":"cap_table","content_base64":"..."}' \\
+  https://<your-host>${PARTNER_API.prefix}/valuations/$ID/documents
+
+# 4. Hand it over. Idempotent — retry freely.
+curl -X POST -H "Authorization: Bearer $N409_API_KEY" \\
+  https://<your-host>${PARTNER_API.prefix}/valuations/$ID/submit
+
+# Lost the id? Look it up by yours.
+curl -H "Authorization: Bearer $N409_API_KEY" \\
+  "https://<your-host>${PARTNER_API.prefix}/valuations?external_id=deal-4821"`;
 
 const VERIFY = `import hmac, hashlib
 
