@@ -17,6 +17,27 @@ Type=oneshot
 User=n409
 Group=n409
 EnvironmentFile=/opt/N409/.env
+# Second, and it must stay second: it overrides the DATABASE_URL the line above
+# sets, and systemd applies these in the order they appear.
+#
+# The restore creates a scratch database, which needs CREATE DATABASE. The
+# application role does not have that privilege and is not going to get it — it
+# is the credential the internet-facing service holds, and widening it so a
+# weekly maintenance job can run is the wrong trade in the wrong direction. So
+# the verification connects as `n409_verify`, which has LOGIN and CREATEDB and
+# nothing else: no ownership of any application object and no grants on the
+# application database. `pg_restore --no-owner --no-acl` means it never needs
+# any. Restoring with a credential that is not the application's is also closer
+# to the situation this job exists to rehearse.
+#
+# Not prefixed with `-`: a host where this file is missing would otherwise fall
+# through to the application's DATABASE_URL and fail every Sunday with
+# `permission denied to create database`, which reads like a broken backup
+# rather than a missing credential. A hard failure to start names the cause.
+#
+# Provisioned by hand, outside the repository, because it holds a password. See
+# infra/backup/README.md.
+EnvironmentFile=/etc/n409/backup-verify.env
 Environment=BACKUP_ROOT=/opt/n409-backups
 ExecStart=/opt/N409/infra/backup/pg-verify.sh
 # A restore of a production-sized dump is not a two-minute job, and a
@@ -32,5 +53,9 @@ PrivateTmp=true
 # something has gone wrong with what it is being asked to do.
 ReadOnlyPaths=/opt/n409-backups
 
-[Install]
-WantedBy=multi-user.target
+# No [Install] section, deliberately. This unit is started by
+# n409-backup-verify.timer, which is the thing that gets enabled; a `WantedBy=`
+# here would additionally make `systemctl enable n409-backup-verify.service`
+# succeed and run a full restore on every boot — competing for disk and IO with
+# the services coming up, for a check whose whole justification is that weekly is
+# often enough. Without it that command refuses, which is the correct answer.

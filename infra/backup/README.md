@@ -88,6 +88,40 @@ sudo systemctl enable --now n409-backup.timer
 sudo systemctl enable --now n409-backup-verify.timer
 ```
 
+Only the **timers** are enabled. The two `.service` units are triggered by them
+and are meant to stay disabled; `n409-backup-verify.service` has no `[Install]`
+section at all, so `systemctl enable` on it refuses rather than scheduling a full
+restore at every boot.
+
+### The verification credential
+
+`n409-backup-verify.service` needs a second env file, provisioned by hand because
+it holds a password:
+
+```bash
+sudo -u postgres psql -qtAc \
+  "CREATE ROLE n409_verify LOGIN CREATEDB PASSWORD '<generated>'"
+sudo install -d -m 0750 -o root -g n409 /etc/n409
+sudo install -m 0640 -o root -g n409 /dev/null /etc/n409/backup-verify.env
+# then write one line into it:
+#   DATABASE_URL=postgres://n409_verify:<generated>@localhost:5432/postgres
+```
+
+The restore creates a scratch database, which needs `CREATE DATABASE`. The
+application role does not have that privilege and should not gain it — it is the
+credential the internet-facing service holds, and widening it so a weekly
+maintenance job can run is the wrong trade. `n409_verify` has `LOGIN` and
+`CREATEDB` and nothing else: no ownership of any application object, no grants on
+the application database. `pg_restore --no-owner --no-acl` means it never needs
+any, and restoring with a credential that is not the application's is closer to
+the situation the job rehearses.
+
+The unit lists this file *after* `/opt/N409/.env`, because that is what makes its
+`DATABASE_URL` win. Without the `-` prefix, so a host missing the file fails to
+start with the reason named, rather than falling through to the application URL
+and reporting `permission denied to create database` every Sunday — which reads
+like a broken backup rather than a missing credential.
+
 Check the schedule and run one on demand:
 
 ```bash
