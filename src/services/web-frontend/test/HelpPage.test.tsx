@@ -92,4 +92,33 @@ describe('HelpPage (Help Center)', () => {
     // Static content is unaffected by the failed supplement.
     expect(screen.getByRole('button', { name: 'Assumptions' })).toBeInTheDocument();
   });
+
+  /**
+   * "Not found" is a claim, and after a failed CMS fetch it is a false one.
+   *
+   * The index shows the load error in a banner; the single-article view showed
+   * nothing at all, so a reader following a link to a CMS-authored article
+   * during an outage was told the article does not exist. That is the reading
+   * that sends them to look for the wrong problem — and the article they are
+   * after during an outage is quite often the one about the thing that is
+   * currently broken.
+   */
+  it('does not claim an article is missing when the fetch is what failed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));
+    renderAt('/help/some-cms-article');
+    expect(await screen.findByText('This article could not be loaded')).toBeInTheDocument();
+    expect(screen.queryByText('Article not found')).not.toBeInTheDocument();
+    // Still a way out, which is the whole value of the branch it replaces.
+    expect(screen.getByRole('link', { name: /browse the Help Center/i })).toBeInTheDocument();
+  });
+
+  // The vacuity guard: with the fetch working, an unknown slug must still say
+  // "not found" — the two states are different answers and the fix must not
+  // collapse them into one.
+  it('still says not found when the CMS answered and the article is genuinely absent', async () => {
+    mockArticles();
+    renderAt('/help/does-not-exist');
+    expect(await screen.findByText('Article not found')).toBeInTheDocument();
+    expect(screen.queryByText('This article could not be loaded')).not.toBeInTheDocument();
+  });
 });

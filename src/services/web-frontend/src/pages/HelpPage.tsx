@@ -158,11 +158,31 @@ export function HelpPage() {
       return (
         <div className="max-w-2xl">
           <Breadcrumbs trail={[{ label: 'Help Center', to: '/help' }, { label: 'Not found' }]} />
-          <EmptyState title="Article not found">
-            <Link to="/help" className="font-semibold text-bond-600 hover:text-bond-700">
-              ← Back to the Help Center
-            </Link>
-          </EmptyState>
+          {/*
+           * "Not found" is a claim, and when the CMS fetch failed it is a
+           * false one: the article may exist and simply not have arrived. The
+           * index below shows `error` in a banner; this branch showed nothing
+           * at all, so a reader following a link to a CMS-authored article
+           * during an outage was told it did not exist — and the article they
+           * were looking for is quite often the one explaining the thing that
+           * is currently broken.
+           */}
+          {error ? (
+            <EmptyState title="This article could not be loaded">
+              Some help articles are still loading or could not be fetched, so this one may exist and not be
+              here yet. Reload the page, or{' '}
+              <Link to="/help" className="font-semibold text-bond-600 hover:text-bond-700">
+                browse the Help Center
+              </Link>
+              .
+            </EmptyState>
+          ) : (
+            <EmptyState title="Article not found">
+              <Link to="/help" className="font-semibold text-bond-600 hover:text-bond-700">
+                ← Back to the Help Center
+              </Link>
+            </EmptyState>
+          )}
         </div>
       );
     }

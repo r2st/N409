@@ -113,16 +113,33 @@ export function WorkbookTab() {
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
 
+  /**
+   * Adopt a workbook, keeping the analyst's place only if it still exists.
+   *
+   * Both the load and the save replace `sheets` wholesale, and the selection
+   * used to survive either unconditionally (`cur ?? first`, which keeps `cur`
+   * whenever it is non-null). The engine emits one sheet per approach the
+   * weighting asks for, so dropping an approach drops its sheet — and a save
+   * that does that leaves `activeSheet` naming a sheet that is gone, `sheet`
+   * resolving to null, and the panel showing the not-found branch over data it
+   * already has. Shared between the two paths rather than fixed in `load`,
+   * because the save is the one that actually reaches it: it sets `sheets`
+   * from the PATCH response and never calls `load` at all.
+   */
+  const adoptSheets = useCallback((s: WorkbookSheet[], a: FinancialAnomalyReport) => {
+    setSheets(s);
+    setAnomalies(a);
+    setActiveSheet((cur) => (cur !== null && s.some((x) => x.key === cur) ? cur : (s[0]?.key ?? null)));
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const { sheets: s, anomalies: a } = await api<WorkbookResponse>(`/valuations/${valuation.id}/workbook`);
-      setSheets(s);
-      setAnomalies(a);
-      setActiveSheet((cur) => cur ?? s[0]?.key ?? null);
+      adoptSheets(s, a);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load the workbook.');
     }
-  }, [valuation.id]);
+  }, [valuation.id, adoptSheets]);
 
   useEffect(() => {
     void load();
@@ -148,7 +165,10 @@ export function WorkbookTab() {
       </EmptyState>
     );
   }
-  if (!sheet) return <Spinner />;
+  // Unreachable now that `load` re-seeds a stale key, and kept as a floor
+  // rather than a `!` — but a *refusal*, not a spinner. A spinner here waits
+  // for a load that has already finished.
+  if (!sheet) return <ErrorNote>That sheet is no longer part of this workbook.</ErrorNote>;
 
   /**
    * The auditor workbook: the assumption register and calculation record, the
@@ -208,10 +228,9 @@ export function WorkbookTab() {
         `/valuations/${valuation.id}/workbook`,
         { method: 'PATCH', body: { cells } },
       );
-      setSheets(s);
-      // Re-checked against what was just saved, so correcting the cell that
-      // raised a finding clears it without a reload.
-      setAnomalies(a);
+      // Anomalies are re-checked against what was just saved, so correcting the
+      // cell that raised a finding clears it without a reload.
+      adoptSheets(s, a);
       setDrafts(new Map());
       setSavedAt(Date.now());
     } catch (err) {

@@ -310,3 +310,73 @@ describe('WorkbookTab — edges', () => {
     });
   });
 });
+
+/**
+ * A sheet that goes away under the tab.
+ *
+ * The engine emits one sheet per approach the weighting asks for, so a
+ * recalculation that drops an approach drops its sheet. `load` re-seeded the
+ * active key with `cur ?? first`, which keeps `cur` whenever it is non-null —
+ * including when it names a sheet the reload no longer returned. `sheet` then
+ * resolves to null and the panel fell into `if (!sheet) return <Spinner />`:
+ * an endless spinner over data that had already arrived, which is the one
+ * reading that is definitely wrong. The tab looks hung; nothing is.
+ */
+describe('WorkbookTab — a sheet that disappears on reload', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  /** First call serves both sheets, every later call serves only the first. */
+  function mockShrinkingWorkbook() {
+    let calls = 0;
+    // The PATCH answers with a workbook too — that is the path that matters
+    // here, because the save adopts its response directly and never calls the
+    // loader.
+    return vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      calls += 1;
+      return jsonResponse({
+        sheets: calls === 1 ? SHEETS : [SHEETS[0]],
+        anomalies: report([], {}),
+      });
+    });
+  }
+
+  it('falls back to a sheet that still exists rather than spinning', async () => {
+    mockShrinkingWorkbook();
+    renderTab();
+
+    // Select the sheet that is about to vanish.
+    await screen.findByRole('button', { name: /Balance sheet/i });
+    await userEvent.click(screen.getByRole('button', { name: /Balance sheet/i }));
+    expect(await screen.findByText('Cash')).toBeInTheDocument();
+
+    // An edit, then a save: the save button is disabled until the grid is
+    // dirty, and it is the save that triggers the reload which drops the sheet.
+    await userEvent.type(screen.getByLabelText('Cash fy_current'), '9');
+    await userEvent.click(screen.getByRole('button', { name: 'Save workbook' }));
+
+    // The grid comes back on the surviving sheet. Before the fix this was a
+    // spinner, and stayed one.
+    expect(await screen.findByText('Revenue')).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: /loading/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Balance sheet/i })).not.toBeInTheDocument();
+  });
+
+  // The vacuity guard: a selection that is still there must survive the
+  // reload, or "always re-seed to the first sheet" would pass the test above
+  // while throwing away the analyst's place every time they save.
+  it('keeps a selection the reload still offers', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      jsonResponse({ sheets: SHEETS, anomalies: report([], {}) }),
+    );
+    renderTab();
+
+    await screen.findByRole('button', { name: /Balance sheet/i });
+    await userEvent.click(screen.getByRole('button', { name: /Balance sheet/i }));
+    expect(await screen.findByText('Cash')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('Cash fy_current'), '9');
+    await userEvent.click(screen.getByRole('button', { name: 'Save workbook' }));
+    await waitFor(() => expect(screen.getByText('Cash')).toBeInTheDocument());
+    expect(screen.queryByText('Revenue')).not.toBeInTheDocument();
+  });
+});
