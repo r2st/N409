@@ -527,8 +527,40 @@ const GUIDANCE_FRAGMENT = 24;
  * has lost part of the guidance is one somebody is working through, and firing
  * on it would make the finding something analysts learn to ignore.
  */
+/**
+ * `{{#exhibit:II}} … {{/exhibit:II}}` — a pointer the *renderer* drops.
+ *
+ * Mirrors `CONDITIONAL` in domain/reportExhibitIndex.ts, which is the code that
+ * removes these blocks. Kept as its own constant rather than imported because
+ * the two want opposite things from the same syntax: that module resolves the
+ * block, this one has to pretend it was never written.
+ */
+const CONDITIONAL_POINTER = /\{\{#exhibit:[A-Za-z0-9-]+\}\}[\s\S]*?\{\{\/exhibit:[A-Za-z0-9-]+\}\}/g;
+
 function stillCarriesGuidance(skeletonHtml: string, storedHtml: string): boolean {
-  const fragments = textOf(skeletonHtml)
+  /*
+   * Conditional exhibit pointers come out of the skeleton before the split.
+   *
+   * The rule below is `every`, and it is `every` for a good reason — see the
+   * note above. But the body being compared against has been through
+   * `resolveExhibitReferences`, which deletes a `{{#exhibit:II}}` block whole
+   * when Exhibit II was not printed. So a fragment inside one of those blocks
+   * is absent from the stored chapter for a reason that has nothing to do with
+   * anybody editing anything, `every` fails, and the chapter is reported as
+   * edited.
+   *
+   * That is not hypothetical: `financial_analysis` is the one authored chapter
+   * of the 409A skeleton carrying conditional pointers, and it escaped this
+   * check entirely on every engagement whose calculation produced no financial
+   * appendices — which is most of them. Its instruction ("Summarize historical
+   * performance and management projections…") shipped, unread by the gate that
+   * exists to stop exactly that.
+   *
+   * Stripping rather than splitting on the markers: splitting would leave the
+   * conditional text as its own fragment and require it, which is the bug. What
+   * the check can honestly ask about is the text that is there unconditionally.
+   */
+  const fragments = textOf(skeletonHtml.replace(CONDITIONAL_POINTER, ' '))
     .split(/\{\{[^}]*\}\}/)
     .map((f) => f.trim())
     .filter((f) => f.length >= GUIDANCE_FRAGMENT);

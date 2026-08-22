@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { reviewReport } from '../../src/domain/reportReview.js';
 import type { ReportContent } from '../../src/domain/report.js';
 import { instantiateTemplate, templateForKind, TEMPLATE_VAR_NAMES } from '../../src/domain/report.js';
+import { resolveExhibitReferences } from '../../src/domain/reportExhibitIndex.js';
 import { VALUATION_KINDS } from '../../src/domain/valuation.js';
 
 /**
@@ -371,6 +372,53 @@ describe('reviewing the drafted report', () => {
       const section = drafted.sections.find((s) => s.key === 'financial_analysis')!;
       section.html = `<p>Revenue reached $4.1m with 14 months of runway.</p>${section.html}`;
       expect(guidanceFindings(drafted).some((f) => f.section_key === 'financial_analysis')).toBe(true);
+    });
+
+    /**
+     * The body this check grades has been through `resolveExhibitReferences`,
+     * and the skeleton it is graded against has not.
+     *
+     * That difference is the whole of this case. `financial_analysis` closes
+     * with two `{{#exhibit:…}}` pointers at the financial appendices, and the
+     * resolver deletes such a block *whole* when the appendix was not printed.
+     * The comparison split the skeleton on its markers and required every
+     * literal run to survive — so the runs inside those two blocks were
+     * required, were missing for a reason nobody chose, and the chapter read as
+     * edited. The instruction went out under a heading the gate had cleared.
+     *
+     * The cases above never saw it because they grade a body straight out of
+     * `instantiateTemplate`, where the markers are still in the text and every
+     * fragment therefore matches. Both halves have to be crossed in one test or
+     * the hole reopens.
+     */
+    it('still names an unwritten chapter whose conditional exhibit pointers were dropped', () => {
+      const resolved = resolveExhibitReferences(pristine(), [
+        'Exhibit A — Capitalization Table',
+      ]);
+      const section = resolved.sections.find((s) => s.key === 'financial_analysis')!;
+      expect(section.html, 'the resolver should have dropped the appendix pointers').not.toContain(
+        'Appendix II',
+      );
+      expect(
+        reviewReport({ content: resolved, exhibitHeadings: EXHIBITS, template })
+          .findings.filter((f) => f.check === 'unedited_template_guidance')
+          .map((f) => f.section_key),
+      ).toContain('financial_analysis');
+    });
+
+    it('does not invent a finding for a chapter written over a dropped pointer', () => {
+      // The other direction: an analyst who replaced the instruction has a
+      // finished chapter whether or not the appendices printed, and stripping
+      // the conditional runs must not make every rewritten chapter match.
+      const drafted = pristine();
+      const section = drafted.sections.find((s) => s.key === 'financial_analysis')!;
+      section.html = '<p>Revenue reached $8.4m against a $1.2m first-year outflow.</p>';
+      const resolved = resolveExhibitReferences(drafted, ['Exhibit A — Capitalization Table']);
+      expect(
+        reviewReport({ content: resolved, exhibitHeadings: EXHIBITS, template })
+          .findings.filter((f) => f.check === 'unedited_template_guidance')
+          .map((f) => f.section_key),
+      ).not.toContain('financial_analysis');
     });
 
     it('ignores a chapter the analyst hid', () => {
