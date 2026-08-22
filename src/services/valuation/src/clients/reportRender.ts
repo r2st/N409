@@ -9,6 +9,7 @@ import {
   flagEnabled,
   requestIdHeaders,
 } from '@n409/shared';
+import { Semaphore } from '../pipeline/semaphore.js';
 import { circuits, internalAuthHeaders } from './internal.js';
 
 /**
@@ -64,7 +65,12 @@ import { circuits, internalAuthHeaders } from './internal.js';
  * waiting is rendering it here, which costs this process more than waiting
  * does. A deadline that fires readily would convert every burst of concurrent
  * renders back into the blocking behaviour under exactly the load that made
- * offloading worth doing.
+ * offloading worth doing — and worse than that, would do the work twice: our
+ * giving up does not stop the report unit, which goes on rendering a document
+ * nobody is waiting for while this process renders it again. `postJson` calls
+ * that case `abandoned` and refuses to retry it for the same reason. The
+ * breaker is what stops it repeating: five such failures and the delegation is
+ * skipped outright until the unit answers a trial call.
  */
 export const REPORT_RENDER_TIMEOUT_MS = 30_000;
 
@@ -79,7 +85,14 @@ export type RenderMode = 'delegated' | 'local';
  * failure of the delegated path that the fallback absorbed.
  */
 export type LocalReason =
-  'not_configured' | 'render_options' | 'circuit_open' | 'unreachable' | 'timeout' | 'rejected' | 'not_a_pdf';
+  | 'not_configured'
+  | 'render_options'
+  | 'circuit_open'
+  | 'queue_full'
+  | 'unreachable'
+  | 'timeout'
+  | 'rejected'
+  | 'not_a_pdf';
 
 /** Just enough of a Fastify logger for this module; keeps the import weight off. */
 export interface RenderLogger {
@@ -96,6 +109,13 @@ export interface RenderVia {
   fetchFn?: typeof fetch;
   /** Test seam; defaults to `process.env`. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Test seam: the whole-call budget, queue wait included. Defaults to
+   * {@link REPORT_RENDER_TIMEOUT_MS}. Present so a suite can assert the budget
+   * is *shared* — which takes a render that waits out its deadline for a slot,
+   * and nothing else can express that in under thirty seconds.
+   */
+  timeoutMs?: number;
 }
 
 /**
@@ -177,6 +197,52 @@ function looksLikePdf(bytes: Buffer): boolean {
   return bytes.length > PDF_MAGIC.length && bytes.subarray(0, PDF_MAGIC.length).equals(PDF_MAGIC);
 }
 
+/**
+ * How many renders this process will have in flight at the report unit at once,
+ * and how many more it will let wait for a slot.
+ *
+ * The offload took away an accidental bound and this puts a deliberate one
+ * back. In-process rendering was self-limiting in a way nobody designed: pdfkit
+ * is synchronous, so N simultaneous report downloads rendered strictly one at a
+ * time and the process could not even accept new work while one was running.
+ * Delegating removes exactly that — which is the point — so N downloads now
+ * arrive at port 3004 as N concurrent requests.
+ *
+ * Measured on the report service rather than guessed: idle RSS 116MB, and each
+ * concurrent render adds about 10MB of retained working set while it waits its
+ * turn (326MB at 12 concurrent, 407MB at 24). The renders themselves still
+ * serialize — one Node thread — so wall time is linear and the extra
+ * concurrency buys no throughput at all; it buys only memory. On a host with
+ * 3.8GB, 2.4GB in use and swap already touched, and with no `MemoryMax` on any
+ * unit in this estate, an unbounded queue there is the OOM candidate.
+ *
+ * Four in flight, because one renderer means anything above one adds latency
+ * rather than throughput — the small number is only to keep the pipe full
+ * across the loopback round trip and the JSON encode. Twelve more may wait; at
+ * the ~350ms a report takes, a full queue is about five seconds, which is
+ * inside every caller's patience and well inside the 30s budget.
+ *
+ * Past that the request renders here instead. That is the unpleasant end of the
+ * trade and it is chosen deliberately: it blocks this event loop for one render
+ * — the pre-R98 behaviour, bounded and survivable — where the alternatives are
+ * to queue without limit (converting memory into an OOM on the box) or to
+ * refuse (failing the download of a document a client has paid for). A
+ * deliverable that arrives slowly beats one that does not arrive.
+ *
+ * `report_render_total{reason="queue_full"}` is what says this is happening,
+ * and a non-zero rate is the signal that the renders want their own host rather
+ * than a bigger queue.
+ */
+export const MAX_DELEGATED_IN_FLIGHT = 4;
+export const MAX_DELEGATED_QUEUED = 12;
+
+const renderSlots = new Semaphore(MAX_DELEGATED_IN_FLIGHT);
+
+/** Live snapshot of the delegation queue — surfaced as gauges, asserted in tests. */
+export function delegationConcurrency(): { active: number; pending: number } {
+  return { active: renderSlots.activeCount, pending: renderSlots.pendingCount };
+}
+
 // ── Metrics ───────────────────────────────────────────────────────────────────
 
 let renderCounter: Counter | null = null;
@@ -200,6 +266,18 @@ export function registerReportRenderMetrics(registry: MetricsRegistry): void {
     'report_render_duration_seconds',
     'Wall time to produce a report PDF, including a fallback after a failed delegation.',
     ['mode'],
+  );
+  // The two numbers the `queue_full` counter cannot give: how close the queue
+  // runs to its ceiling in normal operation, rather than how often it hit it.
+  registry.gauge(
+    'report_render_delegations_active',
+    'Renders currently in flight at the report service',
+    () => renderSlots.activeCount,
+  );
+  registry.gauge(
+    'report_render_delegations_queued',
+    'Renders waiting for a delegation slot',
+    () => renderSlots.pendingCount,
   );
 }
 
@@ -274,6 +352,22 @@ export async function renderReportPdf(input: ReportPdfInput, via: RenderVia = {}
   // compressed stream from a service that never heard the question.
   if (via.options && Object.keys(via.options).length > 0) return local('render_options');
 
+  // Before the breaker, not after: `acquire()` takes a half-open trial slot, and
+  // bailing out between that and a recordSuccess/recordFailure would leak it —
+  // the breaker would then be one trial short of ever closing again.
+  if (renderSlots.pendingCount >= MAX_DELEGATED_QUEUED) {
+    logger(via)?.warn(
+      {
+        service: SERVICE,
+        active: renderSlots.activeCount,
+        queued: renderSlots.pendingCount,
+        request_id: currentRequestId() ?? null,
+      },
+      'report offload queue full; rendering in-process',
+    );
+    return local('queue_full');
+  }
+
   const breaker = circuits.get(SERVICE);
   try {
     // Same asymmetry as `postJson`: the flag gates the *refusal*, never the
@@ -292,7 +386,22 @@ export async function renderReportPdf(input: ReportPdfInput, via: RenderVia = {}
   }
 
   try {
-    const pdf = await postForPdf(url, input, via);
+    const pdf = await renderSlots.run(async () => {
+      // One budget for the whole delegated path, queue wait included —
+      // `postJson` shares a deadline across its retries for the same reason.
+      // Starting the clock after the slot is acquired would make the constant
+      // above not the bound it says it is: with four slots stuck on an
+      // unresponsive service, a queued render would wait out their deadline and
+      // then be given a fresh one of its own.
+      const budget = via.timeoutMs ?? REPORT_RENDER_TIMEOUT_MS;
+      const remaining = budget - (Date.now() - startedAt);
+      // Too little left to be worth dialling; the request would only run into
+      // the deadline and report a timeout instead of getting on with the work.
+      if (remaining < MIN_ATTEMPT_MS) {
+        throw new DelegationError('timeout', null, 'no budget left after waiting for a render slot');
+      }
+      return postForPdf(url, input, via, remaining);
+    });
     breaker.recordSuccess();
     record('delegated', 'ok', startedAt);
     return pdf;
@@ -351,9 +460,16 @@ class DelegationError extends Error {
   }
 }
 
-async function postForPdf(url: string, input: ReportPdfInput, via: RenderVia): Promise<Buffer> {
+/** Below this there is no point starting the request; it would only time out. */
+const MIN_ATTEMPT_MS = 250;
+
+async function postForPdf(
+  url: string,
+  input: ReportPdfInput,
+  via: RenderVia,
+  timeoutMs: number,
+): Promise<Buffer> {
   const fetchFn = via.fetchFn ?? fetch;
-  const timeoutMs = REPORT_RENDER_TIMEOUT_MS;
   let res: Response;
   try {
     res = await fetchFn(`${url}/render/v1/pdf`, {

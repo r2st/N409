@@ -7,8 +7,9 @@ import PDFDocument from 'pdfkit';
  * the report editor (valuation service domain/report.ts whitelist) and lays
  * it out with pdfkit — pure JS, no headless browser, deterministic output.
  *
- * Exported as a library (`@n409/report/pdf`) for in-process rendering by the
- * valuation service, and served over HTTP via POST /render/v1/pdf.
+ * Served over HTTP via POST /render/v1/pdf, which is how the valuation service
+ * renders since R98, and still exported as a library (`@n409/report/pdf`) —
+ * which is that caller's fallback when the hop fails.
  */
 
 export interface ReportPdfSection {
@@ -309,9 +310,11 @@ function tokenize(html: string): Token[] {
  * those measurements walks the string. For one token that is O(n²) — rendering
  * a single 64,000-character "word" took 5.5s against 23ms for the same bytes
  * as ordinary words, and at the schema's 200,000-character section limit it is
- * 52 seconds of one pinned CPU. The valuation service renders in-process, so
- * that is the report path for every other request on the box, not a separate
- * renderer that can be left to be slow.
+ * 52 seconds of one pinned CPU. Since R98 that is the report service's loop
+ * rather than the API's, which lowers the blast radius and does not change the
+ * argument: the renders serialize on one thread there too, so a single
+ * pathological document stalls every queued report behind it — and the caller's
+ * 30s budget then expires, sending the work back to the API to be done there.
  *
  * Chunking is what removes the exponent, and the chunk size barely matters to
  * that: bounded at K, the fitting loop costs O(K²) per chunk over n/K chunks —

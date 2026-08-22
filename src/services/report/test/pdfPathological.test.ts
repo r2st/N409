@@ -13,8 +13,9 @@ import { extractText } from './support/pdfText.js';
  * `>` in it (the tokenizer re-scanned to the end from every `<`) and a single
  * unbroken "word" (pdfkit fits an over-wide word character by character, and
  * each fitting step re-measures the string). At the 200k limit they cost 16s
- * and 52s of one pinned CPU. The valuation service renders in-process, so that
- * is every other request on the box waiting.
+ * and 52s of one pinned CPU. That was every other request on the box waiting;
+ * since R98 it is every other *report* waiting, and then the caller's deadline
+ * firing and the work coming back to the API anyway.
  *
  * The timings below are budgets, not benchmarks: they are set two orders of
  * magnitude above what the fixed code needs (72ms and 137ms measured) and an

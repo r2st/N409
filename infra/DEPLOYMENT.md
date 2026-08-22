@@ -33,9 +33,20 @@ and should be treated as **unused** until a migration is actually planned.
   `REPORT_URL=` takes the hop back out. **A report unit that is down is not an
   outage:** the caller falls back to rendering in-process, which is what it did
   before. Confirm which is happening with
-  `curl -H "authorization: Bearer $METRICS_TOKEN" localhost:3001/metrics | grep report_render_total`
+  `curl -H "authorization: Bearer $METRICS_TOKEN" localhost:3001/metrics | grep report_render`
   — a rising `mode="local"` with a `reason` other than `not_configured` means
-  the offload is failing and nothing else will say so.
+  the offload is failing and nothing else will say so. (`METRICS_TOKEN` is
+  optional and unset here; the endpoint accepts `INTERNAL_SERVICE_TOKEN`, which
+  is what the command above actually uses on this host.)
+- The valuation service holds at most 4 renders in flight at 3004 and lets 12
+  more wait; past that it renders in-process again and counts
+  `reason="queue_full"`. The bound is memory, measured on the report service:
+  116MB idle and about 10MB of retained working set per concurrent render
+  (326MB at 12, 407MB at 24), against 3.8GB of host with ~2.4GB in use, swap
+  already touched, and no `MemoryMax` on any unit in this estate. The renders
+  serialize anyway — one Node thread — so a deeper queue buys latency and memory
+  and no throughput at all. A non-zero `queue_full` rate means the renders want
+  their own host, not a bigger number.
 - Unit files: `infra/systemd/*.service` and `infra/backup/*.{service,timer}`.
   **`deploy.sh` installs these** (via `infra/install-units.sh`) on every deploy:
   it copies any that differ from the checkout into `/etc/systemd/system/`,

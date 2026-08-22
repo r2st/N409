@@ -4,6 +4,9 @@ import { buildApp as buildReportApp, RenderBody } from '@n409/report';
 import { renderReportPdf as renderLocally, type ReportPdfInput } from '@n409/report/pdf';
 import {
   configureReportRenderer,
+  delegationConcurrency,
+  MAX_DELEGATED_IN_FLIGHT,
+  MAX_DELEGATED_QUEUED,
   registerReportRenderMetrics,
   renderReportPdf,
   reportRenderPayload,
@@ -312,5 +315,125 @@ describe('the fallback is visible', () => {
     // The upstream's own words: a 422 here is a contract drift somebody has to
     // read a field list to fix, and the field list is in the body.
     expect(String(warns[0]!.detail)).toContain('at most 100');
+  });
+});
+
+describe('the offload is bounded, because delegating removed the bound it had', () => {
+  /** The smallest document the renderer will take; these tests count calls, not bytes. */
+  const tiny = () => ({
+    title: 'T',
+    company_name: 'Acme',
+    meta: [],
+    sections: [{ heading: 'H', html: '<p>x</p>' }],
+  });
+
+  /**
+   * A fetch that parks every call until `release()`, and answers immediately
+   * after it. Latched rather than one-shot on purpose: the queued renders start
+   * their own fetch only once a slot frees, so a `release` that drained the
+   * waiters it could see would leave the next wave parked forever — which, with
+   * a module-level semaphore, hangs every test that runs after it too.
+   */
+  function heldFetch() {
+    const waiting: Array<() => void> = [];
+    let started = 0;
+    let open = false;
+    const fetchFn = (async () => {
+      started += 1;
+      if (!open) await new Promise<void>((resolve) => waiting.push(resolve));
+      // Nine bytes: enough for `looksLikePdf`, and nothing this suite reads.
+      return new Response(new Uint8Array(Buffer.from('%PDF-1.7\n')), { status: 200 });
+    }) as unknown as typeof fetch;
+    return {
+      fetchFn,
+      started: () => started,
+      release: () => {
+        open = true;
+        waiting.splice(0).forEach((resolve) => resolve());
+      },
+    };
+  }
+
+  it('holds no more than MAX_DELEGATED_IN_FLIGHT renders at the report service', async () => {
+    configureReportRenderer(REPORT);
+    const held = heldFetch();
+    const inFlight = Array.from({ length: MAX_DELEGATED_IN_FLIGHT + 3 }, () =>
+      renderReportPdf(tiny(), { fetchFn: held.fetchFn }),
+    );
+    // A microtask turn is enough for every one of them to reach the semaphore.
+    await new Promise((r) => setTimeout(r, 0));
+    // The excess is queued, not dialled. Before this bound existed, N concurrent
+    // report downloads meant N concurrent requests at port 3004, each holding
+    // about 10MB while it waited its turn behind a single-threaded renderer.
+    expect(held.started()).toBe(MAX_DELEGATED_IN_FLIGHT);
+    expect(delegationConcurrency()).toEqual({ active: MAX_DELEGATED_IN_FLIGHT, pending: 3 });
+    held.release();
+    await Promise.all(inFlight);
+    expect(held.started()).toBe(MAX_DELEGATED_IN_FLIGHT + 3);
+    expect(delegationConcurrency()).toEqual({ active: 0, pending: 0 });
+  });
+
+  it('renders in-process rather than queueing without limit', async () => {
+    configureReportRenderer(REPORT);
+    const held = heldFetch();
+    const saturating = Array.from({ length: MAX_DELEGATED_IN_FLIGHT + MAX_DELEGATED_QUEUED }, () =>
+      renderReportPdf(tiny(), { fetchFn: held.fetchFn }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(delegationConcurrency().pending).toBe(MAX_DELEGATED_QUEUED);
+
+    // One more. It must not join the queue, and it must not fail: a client is
+    // waiting for a document they have paid for, so the honest answer is the
+    // pre-R98 behaviour — block this loop once and hand over the bytes.
+    const overflow = await renderReportPdf(tiny(), {
+      fetchFn: failingFetch(new Error('must not be dialled')),
+    });
+    expect(overflow.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(renderCounts(registry)['local:queue_full']).toBe(1);
+
+    held.release();
+    await Promise.all(saturating);
+  });
+
+  it('releases its slot when the delegated render fails', async () => {
+    configureReportRenderer(REPORT);
+    // A leaked slot is invisible until the fourth failure, at which point every
+    // render falls back forever with the report unit perfectly healthy.
+    for (let i = 0; i < MAX_DELEGATED_IN_FLIGHT + 2; i++) {
+      await renderReportPdf(tiny(), { fetchFn: answeringFetch(500, 'boom') });
+      expect(delegationConcurrency()).toEqual({ active: 0, pending: 0 });
+    }
+  });
+
+  it('counts the wait for a slot against the render budget, not on top of it', async () => {
+    configureReportRenderer(REPORT);
+    const held = heldFetch();
+    // A 400ms budget — comfortably above the floor below which a request is not
+    // worth starting — and four slots that will not answer inside it.
+    const busy = Array.from({ length: MAX_DELEGATED_IN_FLIGHT }, () =>
+      renderReportPdf(tiny(), { fetchFn: held.fetchFn, timeoutMs: 400 }),
+    );
+    let dialledByQueued = false;
+    const queued = renderReportPdf(tiny(), {
+      fetchFn: (async () => {
+        dialledByQueued = true;
+        throw new Error('unreachable');
+      }) as unknown as typeof fetch,
+      timeoutMs: 400,
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    held.release();
+    await Promise.all(busy);
+    const pdf = await queued;
+    // It waited out the whole budget for a slot, so by the time it had one there
+    // was nothing left to spend. Without a shared budget it would have been
+    // handed a fresh 200ms here — which is how a four-slot stall turns one
+    // deadline into two, and a queue of twelve into thirteen of them in series.
+    expect(dialledByQueued).toBe(false);
+    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(renderCounts(registry)).toEqual({
+      'delegated:ok': MAX_DELEGATED_IN_FLIGHT,
+      'local:timeout': 1,
+    });
   });
 });
