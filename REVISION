@@ -2231,3 +2231,112 @@
 #            for an OOM everybody would. The capability is implemented, disclosed
 #            through the optional-capabilities roster, and waiting on a larger
 #            host rather than on code.
+# commit:    981157b
+# subject:   the signature nobody printed, and eleven schedules nobody was sent to
+# previous:  75f0929 (the version column half its own row was reading).
+# includes:  2 commits — R96, on the deliverable. Four commits sit between this
+#            entry and the last one and belong to other sessions: 501a497 and
+#            20311c3 record R93, 97fe05f seals the integration credentials, and
+#            d8f9575 re-labels AUDIT.md. They are not this round's and are not
+#            described here.
+#
+#            The round was given a checklist of what a 409A report has to
+#            contain and a list of what such reports are commonly criticised
+#            for. Most of the checklist was already built — an executive summary
+#            page, a capital-structure chapter, four approach chapters, a DLOM
+#            chapter naming Chaffee, Finnerty and Ghaidarov by model, twenty-one
+#            schedules. What the checklist found was not absent chapters but two
+#            things the document could not say about itself.
+#
+#            2b4a082 — the signature. `publishGate` refuses to publish an
+#              engagement with no `main` row, so every 409A this platform has
+#              issued was signed by somebody; the PDF named nobody. The
+#              certification chapter went out over five bullets, one of them
+#              referring to "the persons signing this report", and stopped.
+#
+#              This is the one item on a report-deficiency list that is not a
+#              matter of degree. USPAP Standards Rule 10-3 requires a signed
+#              certification, and the §409A safe harbour turns on the valuation
+#              having been made by a qualified independent appraiser — a person
+#              the document has to name. An auditor holding the file cannot see
+#              a row in a database they will never be shown.
+#
+#              Resolved at render, like every other computed thing: the stored
+#              body keeps `{{signatures}}` and nothing is written back, so a
+#              concurring reviewer signing later, or `upsertSignature` replacing
+#              a signature after a correction, restates the block on the next
+#              render with no edit to the chapter. An unsigned draft prints
+#              ruled, empty lines and the sentence saying it may not be relied
+#              upon, rather than omitting the block — a draft and a final that
+#              differ by the *absence* of a page element differ in the way a
+#              reader is least likely to notice.
+#
+#              Two things came out of writing it. `RENDER_RESOLVED_MARKERS`
+#              names the markers that resolve from something other than the
+#              calculation: `reportReview` had excluded `{{exhibit_index}}` by
+#              name and `reportReadiness` excluded nothing, saved only by the QA
+#              route happening to resolve before grading — the arrangement that
+#              breaks the day a second such marker is added, which is this one.
+#              And the certification was three copies that had drifted, the
+#              unwatched one certifying least: the gift-and-estate skeleton made
+#              four of the nine statements SR 10-3 requires, the 409A five, and
+#              neither said what standard the work was done under. One text now,
+#              all nine, USPAP and SSVS-1 named — and named again in the scope
+#              chapter at the front, where a reader actually looks for them.
+#
+#            981157b — the schedules the body never mentioned. Eleven of the
+#              twenty-one in `SCHEDULE_CATALOGUE` were built, indexed and printed
+#              with no chapter naming any of them. For most that is friction. For
+#              two it is the difference between a supported conclusion and an
+#              asserted one: Exhibit D-1 answers "which companies, and why not
+#              the ones you left out", and Appendix I is the discount-rate
+#              derivation the income chapter instructs its author to give. Both
+#              were in the file, unfindable.
+#
+#              Nothing caught it because both halves were individually right.
+#              `reportReview` grades a pointer at a schedule that was *not*
+#              built; no check asked the opposite question. The new census asks
+#              it per schedule, against the catalogue, so one added later cannot
+#              ship unnamed.
+#
+#              The same commit closes "missing key assumptions", which is the
+#              standard finding against a 409A and is usually about the discount
+#              rate. The chapter could only instruct an author to state it, so a
+#              report where nobody typed over the instruction described a
+#              discounted cash flow and never said what rate it discounted at.
+#              `income_dcf` records `discount_rate` and `forecast_years` on the
+#              result now, for the reason it already records
+#              `mid_year_convention`: the report re-reads a stored valuation and
+#              could otherwise only consult the request, which on the `auto_wacc`
+#              path the calculation has itself rewritten.
+#
+# method:    the checklist was the wrong instrument and finding that out was the
+#            round. Read as "which of these twelve sections is missing" it
+#            returns nothing — they are all there, and have been for thirty
+#            template versions. Read as "which of these sections can the document
+#            not actually deliver on", it returns two: a certification with
+#            nobody's name under it, and chapters that instruct an author to
+#            state something the calculation already knows. Both are invisible to
+#            a section-by-section audit because in both cases the section exists,
+#            renders, and is graded correct by every check the product has.
+#
+# note:      the two 409.ai features the round was asked to add were already
+#            built, end to end. The free calculator is `POST /api/v1/fmv-
+#            estimator` behind `/tools/409a-valuation-calculator`, public and
+#            keyless; the sample report is `GET /api/v1/sample-report/pdf`
+#            behind `/sample-report`, rendered through the production path
+#            rather than checked in as bytes. Both are in the sitemap and the
+#            marketing nav. All five valuation types named — ASC 718, ESOP, SMB,
+#            gift-and-estate, QSBS — are among the fifteen kinds with their own
+#            skeletons. Checking cost minutes; building any of them again would
+#            have cost the round.
+#
+# note:      one item on the twelve-section list is genuinely absent and stays
+#            absent: the engagement letter. It is not a chapter a valuation
+#            report generates — it is the signed contract that precedes the
+#            engagement, and building it means a template, a counterparty
+#            signature flow and storage of its own. The report's own coverage of
+#            the same ground (intended user, intended use, subject interest,
+#            scope of work, standards applied, fee non-contingency) is in the
+#            scope chapter and the certification. Naming it here rather than
+#            quietly scoring the section as met.
