@@ -84,3 +84,38 @@ describe('the report service metrics endpoint', () => {
     }
   });
 });
+
+/**
+ * The cgroup gauges (round 99), asserted against the real wiring rather than
+ * against the module that produces them.
+ *
+ * The unit tests in `@n409/shared` cover the reading; what cannot be checked
+ * there is that `buildApp` registers it at all, and this is the service the
+ * registration matters most for — the report unit's ceiling is the one derived
+ * from a concurrency bound rather than from a flat measurement, so it is the
+ * one an operator will want to watch.
+ *
+ * Both branches assert. On Linux the series must be present and must carry the
+ * unit's real ceiling; everywhere else they must be absent, which is the other
+ * half of the contract — five gauges reading zero on a developer machine would
+ * be worse than none, because only one of those is obviously not an answer.
+ */
+describe('cgroup memory gauges', () => {
+  const linux = process.platform === 'linux';
+
+  it(linux ? 'exports the ceiling this unit runs under' : 'exports nothing off Linux', async () => {
+    const app = buildApp();
+    try {
+      const body = (await app.inject({ method: 'GET', url: '/metrics' })).body;
+      if (linux) {
+        expect(body).toContain('# TYPE n409_cgroup_memory_current_bytes gauge');
+        expect(body).toContain('# TYPE n409_cgroup_memory_max_bytes gauge');
+        expect(body).toContain('n409_cgroup_memory_events{event="oom_kill"}');
+      } else {
+        expect(body).not.toContain('n409_cgroup_memory_');
+      }
+    } finally {
+      await app.close();
+    }
+  });
+});

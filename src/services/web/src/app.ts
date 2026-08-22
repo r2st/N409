@@ -15,6 +15,7 @@ import {
   registerHealth,
   registerHttpMetrics,
   registerMetricsEndpoint,
+  registerCgroupMemoryMetrics,
   registerProcessMetrics,
   registerPermissionsPolicy,
   registerProblemHandler,
@@ -378,6 +379,12 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
   const metricsRegistry = new MetricsRegistry();
   registerHttpMetrics(app, metricsRegistry);
   registerProcessMetrics(metricsRegistry, 'web');
+  // The ceiling this process is running under, beside what it is holding.
+  // Round 99 gave every unit a MemoryMax, which means a service can now be
+  // SIGKILLed by the cgroup limiter and restarted by systemd inside a few
+  // seconds, leaving nothing in this process's own output to say it happened.
+  // No-op off Linux and on a cgroup v1 host — see cgroupMemory.ts.
+  registerCgroupMemoryMetrics(metricsRegistry);
   metricsRegistry.gauge(
     'http_requests_in_flight',
     'Requests currently being served',

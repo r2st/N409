@@ -137,6 +137,14 @@ export {
   type UnitCeiling,
   type UnitMemory,
 } from './systemdResources.js';
+export {
+  CGROUP_MEMORY_EVENTS,
+  readCgroupMemory,
+  registerCgroupMemoryMetrics,
+  type CgroupMemory,
+  type CgroupReadOptions,
+  type GaugeSink,
+} from './cgroupMemory.js';
 export { TtlCache } from './cache.js';
 export {
   conditionalJson,
