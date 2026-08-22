@@ -116,6 +116,12 @@ export function consolidate(entities: PortfolioEntity[]): ConsolidatedReport {
   const perCurrency = new Map<string, CurrencyTotals>();
   // The ids present in this roll-up. A subsidiary is only double-counted by a
   // parent that is here to double-count it.
+  //
+  // "Here" means this page of entities: `loadEntities` caps at
+  // ORG_ENTITY_PAGE_LIMIT, so a parent past the cap reads as absent and its
+  // subsidiary is counted. That is the safe direction — the totals already
+  // cover a prefix, and the page says so above them — and it is the same answer
+  // the roll-up gives for a parent that is genuinely gone.
   const present = new Set(entities.map((e) => e.valuation_id));
   const unanchored: Array<{ valuation_id: string; company_name: string }> = [];
 
