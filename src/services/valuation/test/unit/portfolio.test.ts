@@ -18,7 +18,12 @@ describe('portfolio consolidation (feature 6)', () => {
   it('sums total equity but excludes subsidiaries from the consolidated figure', () => {
     const report = consolidate([
       entity({ valuation_id: 'p', entity_type: 'parent', equity_value: 10_000_000 }),
-      entity({ valuation_id: 's', entity_type: 'subsidiary', equity_value: 3_000_000 }),
+      entity({
+        valuation_id: 's',
+        entity_type: 'subsidiary',
+        parent_valuation_id: 'p',
+        equity_value: 3_000_000,
+      }),
       entity({ valuation_id: 'x', entity_type: 'portfolio_company', equity_value: 5_000_000 }),
     ]);
     expect(report.entity_count).toBe(3);
@@ -27,6 +32,78 @@ describe('portfolio consolidation (feature 6)', () => {
     // subsidiary excluded → 10M + 5M
     expect(report.consolidated_equity_value).toBe(15_000_000);
     expect(report.by_entity_type.subsidiary.equity_value).toBe(3_000_000);
+    expect(report.unanchored_subsidiaries).toEqual([]);
+  });
+
+  describe('a subsidiary is only eliminated by a parent that is present', () => {
+    // The elimination exists to avoid double counting. Applied to a subsidiary
+    // whose parent is not in the roll-up it does the opposite — it removes a
+    // value nothing else contains — and the holding company's consolidated
+    // equity comes back short by the whole subsidiary with nothing said.
+    it('counts a subsidiary that was never given a parent', () => {
+      const report = consolidate([
+        entity({ valuation_id: 'p', entity_type: 'parent', equity_value: 10_000_000 }),
+        // Assigned with `entity_type: 'subsidiary'` and never linked: the
+        // assignment route takes the type, the parent link is a second call to
+        // a different route, and nothing insists on it.
+        entity({ valuation_id: 's', entity_type: 'subsidiary', equity_value: 3_000_000 }),
+      ]);
+      expect(report.total_equity_value).toBe(13_000_000);
+      expect(report.consolidated_equity_value).toBe(13_000_000);
+      expect(report.unanchored_subsidiaries).toEqual([{ valuation_id: 's', company_name: 'Co' }]);
+    });
+
+    it('counts a subsidiary whose parent has left the roll-up', () => {
+      // The parent was archived or detached; `loadEntities` filters it out and
+      // the subsidiary stays. Same arithmetic, arrived at by doing nothing.
+      const report = consolidate([
+        entity({
+          valuation_id: 's',
+          company_name: 'Sub Ltd',
+          entity_type: 'subsidiary',
+          parent_valuation_id: 'gone',
+          equity_value: 3_000_000,
+        }),
+      ]);
+      expect(report.consolidated_equity_value).toBe(3_000_000);
+      expect(report.unanchored_subsidiaries).toEqual([{ valuation_id: 's', company_name: 'Sub Ltd' }]);
+    });
+
+    it('reports an unvalued unanchored subsidiary too', () => {
+      // Nothing to add to the total, but the link is still missing, and the
+      // reader who fixes it is the one who will later give this a number.
+      const report = consolidate([
+        entity({ valuation_id: 's', entity_type: 'subsidiary', equity_value: null }),
+      ]);
+      expect(report.valued_count).toBe(0);
+      expect(report.unanchored_subsidiaries).toHaveLength(1);
+    });
+
+    it('applies the same rule inside each currency bucket', () => {
+      // The per-currency roll-up is the figure a mixed portfolio is actually
+      // read from — the scalars are null there — so a fix that only reached
+      // the scalars would leave the bug where it is most often seen.
+      const report = consolidate([
+        entity({ valuation_id: 'p', entity_type: 'parent', equity_value: 10_000_000 }),
+        entity({
+          valuation_id: 's',
+          entity_type: 'subsidiary',
+          parent_valuation_id: 'p',
+          equity_value: 3_000_000,
+        }),
+        entity({
+          valuation_id: 'u',
+          entity_type: 'subsidiary',
+          parent_valuation_id: 'elsewhere',
+          equity_value: 4_000_000,
+        }),
+      ]);
+      const usd = report.by_currency.find((c) => c.currency === 'USD')!;
+      expect(usd.total_equity_value).toBe(17_000_000);
+      // 10M parent + 4M unanchored; only the anchored 3M is eliminated.
+      expect(usd.consolidated_equity_value).toBe(14_000_000);
+      expect(report.consolidated_equity_value).toBe(14_000_000);
+    });
   });
 
   it('ignores unvalued entities in the totals', () => {
@@ -50,8 +127,13 @@ describe('portfolio consolidation (feature 6)', () => {
 
   it('reports a single currency roll-up alongside the scalar totals', () => {
     const report = consolidate([
-      entity({ valuation_id: 'a', equity_value: 4_000_000 }),
-      entity({ valuation_id: 'b', entity_type: 'subsidiary', equity_value: 1_000_000 }),
+      entity({ valuation_id: 'a', entity_type: 'parent', equity_value: 4_000_000 }),
+      entity({
+        valuation_id: 'b',
+        entity_type: 'subsidiary',
+        parent_valuation_id: 'a',
+        equity_value: 1_000_000,
+      }),
     ]);
     expect(report.mixed_currency).toBe(false);
     expect(report.total_equity_value).toBe(5_000_000);
@@ -84,11 +166,12 @@ describe('portfolio consolidation (feature 6)', () => {
   it('breaks a mixed-currency portfolio out per currency, largest first', () => {
     const report = consolidate([
       entity({ valuation_id: 'eu1', currency: 'EUR', equity_value: 5_000_000 }),
-      entity({ valuation_id: 'us1', currency: 'USD', equity_value: 8_000_000 }),
+      entity({ valuation_id: 'us1', currency: 'USD', entity_type: 'parent', equity_value: 8_000_000 }),
       entity({
         valuation_id: 'us2',
         currency: 'USD',
         entity_type: 'subsidiary',
+        parent_valuation_id: 'us1',
         equity_value: 2_000_000,
       }),
       entity({ valuation_id: 'gb1', currency: 'GBP', equity_value: null }),

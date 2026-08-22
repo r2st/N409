@@ -130,6 +130,40 @@ describe('PortfolioPage (feature 6)', () => {
     expect(screen.getAllByText(/€5,000,000/).length).toBeGreaterThan(0);
   });
 
+  it('says which subsidiaries the consolidated figure did not eliminate', async () => {
+    // The label reads "Subsidiaries excluded". A subsidiary whose parent is not
+    // in the roll-up is *not* excluded — counting it is the only honest answer,
+    // and a figure that is right for a reason the label denies is the shape a
+    // reader cannot check. So the page names them.
+    const unanchored = {
+      ...detail,
+      consolidated: {
+        ...detail.consolidated,
+        unanchored_subsidiaries: [{ valuation_id: 'v9', company_name: 'Acme Sub Ltd' }],
+      },
+    };
+    mockApi({ 'GET /organizations/org1': () => jsonResponse(unanchored) });
+    render(
+      <MemoryRouter>
+        <PortfolioPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText(/Acme Sub Ltd is marked a subsidiary/)).toBeInTheDocument();
+    expect(screen.getByText('Consolidated subsidiaries excluded')).toBeInTheDocument();
+  });
+
+  it('says nothing about anchoring when every subsidiary has its parent', async () => {
+    mockApi();
+    render(
+      <MemoryRouter>
+        <PortfolioPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('Acme Holdings')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Subsidiaries excluded')).toBeInTheDocument());
+    expect(screen.queryByText(/marked a subsidiary/)).not.toBeInTheDocument();
+  });
+
   it('shows an empty state with no organizations', async () => {
     mockApi({ 'GET /organizations': () => jsonResponse({ organizations: [] }) });
     render(

@@ -42,6 +42,8 @@ interface Consolidated {
   by_currency?: CurrencyTotals[];
   currencies: string[];
   mixed_currency?: boolean;
+  /** Subsidiaries whose parent is not in this roll-up, so nothing eliminated them. */
+  unanchored_subsidiaries?: Array<{ valuation_id: string; company_name: string }>;
 }
 interface OrgDetail {
   organization: Organization;
@@ -191,6 +193,22 @@ export function PortfolioPage() {
                   {detail.entities.length} are listed, and the consolidated figures below cover only those.
                 </ErrorNote>
               )}
+              {/* "Consolidated equity" is read as "the group, without double
+                  counting". It is only that while every subsidiary's parent is
+                  in the roll-up; one whose parent is missing is counted in
+                  full, which is the honest answer and not the one the label
+                  implies. Said here rather than left to be inferred from a
+                  figure that looks ordinary either way. */}
+              {(detail.consolidated.unanchored_subsidiaries?.length ?? 0) > 0 && (
+                <ErrorNote>
+                  {detail.consolidated.unanchored_subsidiaries!.length === 1
+                    ? `${detail.consolidated.unanchored_subsidiaries![0]!.company_name} is marked a subsidiary but its parent is not in this organization, so its equity is counted in full below.`
+                    : `${detail.consolidated.unanchored_subsidiaries!.length} entities are marked subsidiaries but their parents are not in this organization, so their equity is counted in full below: ${detail.consolidated
+                        .unanchored_subsidiaries!.map((e) => e.company_name)
+                        .join(', ')}.`}{' '}
+                  Set each one&rsquo;s parent on its engagement to consolidate it.
+                </ErrorNote>
+              )}
               <div className="flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
                 <Metric label="Entities" value={String(detail.consolidated.entity_count)} />
                 <Metric label="Valued" value={String(detail.consolidated.valued_count)} />
@@ -205,7 +223,11 @@ export function PortfolioPage() {
                     <Metric
                       label="Consolidated equity"
                       value={usd(detail.consolidated.consolidated_equity_value ?? 0, currency)}
-                      hint="Subsidiaries excluded"
+                      hint={
+                        (detail.consolidated.unanchored_subsidiaries?.length ?? 0) > 0
+                          ? 'Consolidated subsidiaries excluded'
+                          : 'Subsidiaries excluded'
+                      }
                     />
                   </>
                 )}

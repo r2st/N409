@@ -91,6 +91,109 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
     expect(body.tree.childrenOf[parent.id]).toEqual([sub.id]);
   });
 
+  it('counts a subsidiary whose parent never arrived, and names it', async () => {
+    // The two-step flow: `POST /entities` takes the type, the parent link is a
+    // separate PATCH. Stopping after the first step is not an error anywhere,
+    // and until this was fixed it removed the subsidiary's whole equity from
+    // the consolidated figure — the one the page labels as the group's.
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/organizations',
+      headers: authHeader(owner.token),
+      payload: { name: 'Half-linked Group', entity_type: 'holding_company' },
+    });
+    const orgId = created.json().organization.id;
+    const parent = await seedValuation(owner, 'Linked Parent', 10_000_000);
+    const sub = await seedValuation(owner, 'Orphan Sub', 3_000_000);
+    for (const [v, type] of [
+      [parent, 'parent'],
+      [sub, 'subsidiary'],
+    ] as const) {
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/organizations/${orgId}/entities`,
+        headers: authHeader(owner.token),
+        payload: { valuation_id: v.id, entity_type: type },
+      });
+    }
+    // No PATCH linking sub to parent — that is the whole scenario.
+    const body = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/organizations/${orgId}`,
+        headers: authHeader(owner.token),
+      })
+    ).json();
+    expect(body.consolidated.total_equity_value).toBe(13_000_000);
+    expect(body.consolidated.consolidated_equity_value).toBe(13_000_000);
+    expect(body.consolidated.unanchored_subsidiaries).toEqual([
+      { valuation_id: sub.id, company_name: 'Orphan Sub' },
+    ]);
+  });
+
+  it('re-counts a subsidiary once its parent leaves the organization', async () => {
+    // Detaching the parent is one request and says nothing about the child.
+    // Before the fix the roll-up kept eliminating the subsidiary against a
+    // parent that had gone, so removing a 10M entity moved the consolidated
+    // figure by 13M.
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/organizations',
+      headers: authHeader(owner.token),
+      payload: { name: 'Departing Parent Group', entity_type: 'holding_company' },
+    });
+    const orgId = created.json().organization.id;
+    const parent = await seedValuation(owner, 'Leaving Parent', 10_000_000);
+    const sub = await seedValuation(owner, 'Staying Sub', 3_000_000);
+    for (const [v, type] of [
+      [parent, 'parent'],
+      [sub, 'subsidiary'],
+    ] as const) {
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/organizations/${orgId}/entities`,
+        headers: authHeader(owner.token),
+        payload: { valuation_id: v.id, entity_type: type },
+      });
+    }
+    await ctx.app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${sub.id}/entity`,
+      headers: authHeader(owner.token),
+      payload: { entity_type: 'subsidiary', parent_valuation_id: parent.id },
+    });
+
+    const before = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/organizations/${orgId}`,
+        headers: authHeader(owner.token),
+      })
+    ).json();
+    expect(before.consolidated.consolidated_equity_value).toBe(10_000_000);
+    expect(before.consolidated.unanchored_subsidiaries).toEqual([]);
+
+    const detached = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/v1/organizations/${orgId}/entities/${parent.id}`,
+      headers: authHeader(owner.token),
+    });
+    expect(detached.statusCode).toBe(204);
+
+    const after = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/organizations/${orgId}`,
+        headers: authHeader(owner.token),
+      })
+    ).json();
+    expect(after.consolidated.total_equity_value).toBe(3_000_000);
+    expect(after.consolidated.consolidated_equity_value).toBe(3_000_000);
+    expect(after.consolidated.unanchored_subsidiaries).toEqual([
+      { valuation_id: sub.id, company_name: 'Staying Sub' },
+    ]);
+  });
+
   it('hides organizations from non-owners', async () => {
     const created = await ctx.app.inject({
       method: 'POST',
