@@ -194,6 +194,171 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
     ]);
   });
 
+  it('refuses a standalone entity with a parent', async () => {
+    const parent = await seedValuation(owner, 'Contradiction Parent', 1_000_000);
+    const child = await seedValuation(owner, 'Contradiction Child', 1_000_000);
+    const res = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${child.id}/entity`,
+      headers: authHeader(owner.token),
+      payload: { entity_type: 'standalone', parent_valuation_id: parent.id },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().detail).toMatch(/standalone entity has no parent/);
+  });
+
+  describe('deleting an organization accounts for what it was holding', () => {
+    async function group(name: string) {
+      const created = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/organizations',
+        headers: authHeader(owner.token),
+        payload: { name, entity_type: 'holding_company' },
+      });
+      return created.json().organization.id as string;
+    }
+
+    it('refuses while the organization still holds engagements', async () => {
+      const orgId = await group('Populated Group');
+      const sub = await seedValuation(owner, 'Held Sub', 1_000_000);
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/organizations/${orgId}/entities`,
+        headers: authHeader(owner.token),
+        payload: { valuation_id: sub.id, entity_type: 'portfolio_company' },
+      });
+
+      const refused = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/organizations/${orgId}`,
+        headers: authHeader(owner.token),
+      });
+      expect(refused.statusCode).toBe(409);
+      expect(refused.json().detail).toMatch(/1 engagement/);
+      // And it really did not delete it.
+      const still = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/organizations/${orgId}`,
+        headers: authHeader(owner.token),
+      });
+      expect(still.statusCode).toBe(200);
+    });
+
+    it('deletes an empty organization without an acknowledgement', async () => {
+      const orgId = await group('Empty Group');
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/organizations/${orgId}`,
+        headers: authHeader(owner.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        deleted: true,
+        detached_entities: [],
+        reparented_organizations: [],
+      });
+    });
+
+    it('returns detached engagements to standalone rather than leaving the type behind', async () => {
+      // `ON DELETE SET NULL` cleared organization_id and left entity_type, so a
+      // valuation came out of this typed `portfolio_company` and belonging to
+      // no portfolio — and, until the roll-up learned to check, a `subsidiary`
+      // in that state was worth its whole equity in somebody's total.
+      const orgId = await group('Dissolving Group');
+      const parent = await seedValuation(owner, 'Dissolving Parent', 4_000_000);
+      const sub = await seedValuation(owner, 'Dissolving Sub', 1_000_000);
+      for (const [v, type] of [
+        [parent, 'parent'],
+        [sub, 'subsidiary'],
+      ] as const) {
+        await ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/organizations/${orgId}/entities`,
+          headers: authHeader(owner.token),
+          payload: { valuation_id: v.id, entity_type: type },
+        });
+      }
+      await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${sub.id}/entity`,
+        headers: authHeader(owner.token),
+        payload: { entity_type: 'subsidiary', parent_valuation_id: parent.id },
+      });
+
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/organizations/${orgId}?detach=true`,
+        headers: authHeader(owner.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().detached_entities.sort()).toEqual([parent.id, sub.id].sort());
+
+      const { rows } = await ctx.pool.query(
+        'SELECT id, organization_id, entity_type, parent_valuation_id FROM valuations WHERE id = ANY($1)',
+        [[parent.id, sub.id]],
+      );
+      for (const row of rows) {
+        expect(row.organization_id).toBeNull();
+        expect(row.entity_type).toBe('standalone');
+        expect(row.parent_valuation_id).toBeNull();
+      }
+    });
+
+    it('closes the holdco tree up instead of re-rooting the children', async () => {
+      // SET NULL was the database's default answer, not a decision: deleting a
+      // middle node scattered its children to the top of the tree.
+      const grandparent = await group('Top Group');
+      const middle = await group('Middle Group');
+      const child = await group('Child Group');
+      for (const [id, parentId] of [
+        [middle, grandparent],
+        [child, middle],
+      ] as const) {
+        const res = await ctx.app.inject({
+          method: 'PATCH',
+          url: `/api/v1/organizations/${id}`,
+          headers: authHeader(owner.token),
+          payload: { parent_org_id: parentId },
+        });
+        expect(res.statusCode).toBe(200);
+      }
+
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/organizations/${middle}?detach=true`,
+        headers: authHeader(owner.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().reparented_organizations).toEqual([child]);
+
+      const after = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/organizations/${child}`,
+        headers: authHeader(owner.token),
+      });
+      expect(after.json().organization.parent_org_id).toBe(grandparent);
+    });
+
+    it('is still a 404 to somebody else, before it is a 409', async () => {
+      // Order matters: the conflict names how many engagements the
+      // organization holds, which is not something a stranger may learn.
+      const orgId = await group('Not Yours');
+      const sub = await seedValuation(owner, 'Not Yours Sub', 1_000_000);
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/organizations/${orgId}/entities`,
+        headers: authHeader(owner.token),
+        payload: { valuation_id: sub.id },
+      });
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/organizations/${orgId}`,
+        headers: authHeader(other.token),
+      });
+      expect(res.statusCode).toBe(404);
+    });
+  });
+
   it('hides organizations from non-owners', async () => {
     const created = await ctx.app.inject({
       method: 'POST',

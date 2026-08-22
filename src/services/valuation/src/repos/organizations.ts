@@ -148,9 +148,96 @@ export function entityParentWouldCycle(
   return wouldCycle(pool, 'valuations', 'parent_valuation_id', valuationId, candidateParentId);
 }
 
-export async function deleteOrganization(pool: pg.Pool, id: string): Promise<boolean> {
-  const { rowCount } = await pool.query('DELETE FROM organizations WHERE id = $1', [id]);
-  return (rowCount ?? 0) > 0;
+/** What a delete would take with it: live members and child organizations. */
+export interface OrganizationContents {
+  /** Live (non-archived) valuations whose `organization_id` is this one. */
+  entities: number;
+  /** Organizations whose `parent_org_id` is this one. */
+  children: number;
+}
+
+export async function organizationContents(pool: pg.Pool, id: string): Promise<OrganizationContents> {
+  const { rows } = await pool.query<{ entities: string; children: string }>(
+    `SELECT (SELECT count(*) FROM valuations
+              WHERE organization_id = $1 AND archived_at IS NULL) AS entities,
+            (SELECT count(*) FROM organizations WHERE parent_org_id = $1) AS children`,
+    [id],
+  );
+  const row = rows[0];
+  return { entities: Number(row?.entities ?? 0), children: Number(row?.children ?? 0) };
+}
+
+/** Outcome of a delete, so the caller can say what went with the container. */
+export interface DeleteOrganizationResult {
+  deleted: boolean;
+  /** Valuations detached and returned to `standalone`. */
+  detachedEntities: string[];
+  /** Child organizations moved up to this one's parent. */
+  reparentedOrganizations: string[];
+}
+
+/**
+ * Delete an organization, accounting for what it was holding.
+ *
+ * Both foreign keys into this table are `ON DELETE SET NULL`, so a plain
+ * `DELETE` succeeded on a populated organization and did three things quietly:
+ * every member valuation lost its `organization_id`, every child organization
+ * was re-rooted to the top of the tree, and both kept the entity type they had
+ * been given as members of the thing that no longer exists. A valuation typed
+ * `subsidiary` or `portfolio_company` belonging to no portfolio is a state the
+ * product has no reading of — and one that used to be worth real money in the
+ * consolidated figure, see domain/portfolio.ts.
+ *
+ * Done explicitly and in one transaction instead:
+ *
+ *   - members are detached *and* returned to `standalone`, because the type
+ *     described a membership and the membership is what is being removed. The
+ *     inter-company `parent_valuation_id` is cleared with it for the same
+ *     reason — it named a parent inside this organization.
+ *   - children are re-parented to this organization's own parent rather than to
+ *     null. A holdco tree that loses a middle node should close up, not
+ *     scatter; SET NULL was the database's default answer, not a decision.
+ */
+export async function deleteOrganization(pool: pg.Pool, id: string): Promise<DeleteOrganizationResult> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const org = await client.query<{ parent_org_id: string | null }>(
+      'SELECT parent_org_id FROM organizations WHERE id = $1 FOR UPDATE',
+      [id],
+    );
+    if (org.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return { deleted: false, detachedEntities: [], reparentedOrganizations: [] };
+    }
+    const detached = await client.query<{ id: string }>(
+      `UPDATE valuations
+          SET organization_id = NULL, entity_type = 'standalone', parent_valuation_id = NULL
+        WHERE organization_id = $1
+        RETURNING id`,
+      [id],
+    );
+    const reparented = await client.query<{ id: string }>(
+      'UPDATE organizations SET parent_org_id = $2 WHERE parent_org_id = $1 RETURNING id',
+      [id, org.rows[0]?.parent_org_id ?? null],
+    );
+    await client.query('DELETE FROM organizations WHERE id = $1', [id]);
+    await client.query('COMMIT');
+    const detachedEntities = detached.rows.map((r) => r.id);
+    // The read-through cache holds the row this just rewrote; without the drop
+    // every reader keeps seeing the old membership for a full TTL.
+    for (const valuationId of detachedEntities) invalidateValuation(valuationId);
+    return {
+      deleted: true,
+      detachedEntities,
+      reparentedOrganizations: reparented.rows.map((r) => r.id),
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /** Assign a valuation to an organization (or detach with orgId = null). */

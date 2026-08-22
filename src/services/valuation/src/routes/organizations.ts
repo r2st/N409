@@ -7,6 +7,7 @@ import {
   assignValuationToOrg,
   createOrganization,
   deleteOrganization,
+  organizationContents,
   entityParentWouldCycle,
   findOrganization,
   organizationParentWouldCycle,
@@ -49,6 +50,17 @@ const AssignBody = z.object({
 const EntityBody = z.object({
   entity_type: EntityTypeEnum,
   parent_valuation_id: z.string().nullable().optional(),
+});
+/**
+ * `?detach=true` on the delete: the acknowledgement that this is dissolving a
+ * group rather than tidying an empty one. Query rather than body because a
+ * DELETE body is not reliably sent by the clients that would use this.
+ */
+const DeleteQuery = z.object({
+  detach: z
+    .enum(['true', 'false', '1', '0'])
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
 });
 
 export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
@@ -154,12 +166,41 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     return { organization: updated };
   });
 
+  /**
+   * Delete an organization.
+   *
+   * Refuses while it still holds anything, unless the caller says `detach=true`.
+   * The database's `ON DELETE SET NULL` made this succeed on a populated
+   * organization and take every member's membership with it, unannounced and
+   * with no way back — organizations have no restore, unlike a retired
+   * engagement. Deleting an empty container and dissolving a holding company
+   * are different requests and were the same one.
+   *
+   * The 409 names the counts, so a caller who meant it can say so in a second
+   * request that reads as the thing it does.
+   */
   app.delete('/api/v1/organizations/:id', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     await loadOwnedOrg(principal, id);
-    await deleteOrganization(deps.pool, id);
-    return reply.status(204).send();
+    const query = DeleteQuery.safeParse(req.query ?? {});
+    if (!query.success) throw problems.badRequest('Invalid query', { errors: query.error.issues });
+    const holding = await organizationContents(deps.pool, id);
+    if (!query.data.detach && (holding.entities > 0 || holding.children > 0)) {
+      throw problems.conflict(
+        `This organization still holds ${holding.entities} ${
+          holding.entities === 1 ? 'engagement' : 'engagements'
+        } and ${holding.children} sub-${holding.children === 1 ? 'organization' : 'organizations'}. ` +
+          'Deleting it returns every engagement to standalone and cannot be undone — repeat with ' +
+          '?detach=true to go ahead.',
+      );
+    }
+    const result = await deleteOrganization(deps.pool, id);
+    return reply.status(200).send({
+      deleted: result.deleted,
+      detached_entities: result.detachedEntities,
+      reparented_organizations: result.reparentedOrganizations,
+    });
   });
 
   app.get('/api/v1/organizations/:id/consolidated', { preHandler: app.authenticate }, async (req) => {
@@ -211,6 +252,13 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const parsed = EntityBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid entity', { errors: parsed.error.issues });
     if (parsed.data.parent_valuation_id) {
+      // A standalone company with a parent is a contradiction the roll-up has
+      // no reading of: `consolidate` eliminates on the type, so the link would
+      // be stored, shown in the tree, and counted as if it were not there.
+      if (parsed.data.entity_type === 'standalone')
+        throw problems.unprocessable(
+          'A standalone entity has no parent — set its type to subsidiary or portfolio company first',
+        );
       if (parsed.data.parent_valuation_id === id)
         throw problems.unprocessable('A valuation cannot be its own parent');
       await loadEditableValuation(principal, parsed.data.parent_valuation_id);
