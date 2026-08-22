@@ -577,7 +577,7 @@ function Progress({
                 type="button"
                 aria-current={i === step ? 'step' : undefined}
                 onClick={() => onStep(i)}
-                className={`flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-paper-100 ${
+                className={`touch:min-h-11 flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-paper-100 ${
                   i === step ? 'font-semibold text-ink-900' : 'text-ink-600'
                 }`}
               >
@@ -599,7 +599,7 @@ function Progress({
               type="button"
               aria-current={step >= reviewStep ? 'step' : undefined}
               onClick={() => onStep(reviewStep)}
-              className={`flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-paper-100 ${
+              className={`touch:min-h-11 flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-paper-100 ${
                 step >= reviewStep ? 'font-semibold text-ink-900' : 'text-ink-600'
               }`}
             >

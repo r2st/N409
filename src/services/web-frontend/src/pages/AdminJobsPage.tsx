@@ -303,7 +303,7 @@ export function AdminJobsPage() {
           <button
             key={s}
             onClick={() => setStatus(s)}
-            className={`cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+            className={`tap-area cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
               status === s
                 ? 'bg-ink-900 text-paper-50'
                 : 'border border-ink-200 bg-surface text-ink-600 hover:border-ink-400'

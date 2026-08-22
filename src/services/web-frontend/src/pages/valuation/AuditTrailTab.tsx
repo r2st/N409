@@ -235,7 +235,7 @@ export function AuditTrailTab() {
               getToken(),
             ).catch(() => {})
           }
-          className="ml-auto cursor-pointer rounded-md border border-paper-300 px-3 py-1.5 text-sm font-semibold text-ink-700 hover:bg-paper-100"
+          className="tap-area ml-auto cursor-pointer rounded-md border border-paper-300 px-3 py-1.5 text-sm font-semibold text-ink-700 hover:bg-paper-100"
         >
           Download change log (CSV)
         </button>
@@ -273,7 +273,7 @@ export function AuditTrailTab() {
             type="button"
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="cursor-pointer rounded-md border border-paper-300 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
+            className="tap-area cursor-pointer rounded-md border border-paper-300 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Previous
           </button>
@@ -284,7 +284,7 @@ export function AuditTrailTab() {
             type="button"
             disabled={page >= pages}
             onClick={() => setPage((p) => p + 1)}
-            className="cursor-pointer rounded-md border border-paper-300 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
+            className="tap-area cursor-pointer rounded-md border border-paper-300 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Next
           </button>

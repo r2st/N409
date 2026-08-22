@@ -39,14 +39,14 @@ export function CookieConsent(): React.JSX.Element | null {
           <button
             type="button"
             onClick={decline}
-            className="cursor-pointer rounded-md border border-paper-300 px-4 py-2 text-sm font-semibold text-ink-700 transition-colors hover:bg-paper-100"
+            className="tap-area cursor-pointer rounded-md border border-paper-300 px-4 py-2 text-sm font-semibold text-ink-700 transition-colors hover:bg-paper-100"
           >
             Decline
           </button>
           <button
             type="button"
             onClick={accept}
-            className="cursor-pointer rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
+            className="tap-area cursor-pointer rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
           >
             Accept
           </button>

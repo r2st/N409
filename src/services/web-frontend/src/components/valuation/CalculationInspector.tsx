@@ -60,7 +60,7 @@ function StepRow({ step }: { step: CalculationStep }) {
         disabled={!hasPayload}
         onClick={() => setOpen((v) => !v)}
         aria-expanded={hasPayload ? open : undefined}
-        className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-left text-sm enabled:cursor-pointer enabled:hover:bg-paper-100"
+        className="touch:min-h-11 flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-left text-sm enabled:cursor-pointer enabled:hover:bg-paper-100"
       >
         <span className="tnum w-5 shrink-0 text-xs text-ink-400">{step.seq}</span>
         <span className="font-semibold text-ink-900">{step.label}</span>

@@ -104,7 +104,7 @@ export function RegisterPage() {
     <AuthShell title="Create your account" subtitle="Start your first valuation in minutes.">
       <form onSubmit={submit} className="space-y-5" noValidate>
         <ErrorNote>{error}</ErrorNote>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="First name">
             <TextInput
               autoComplete="given-name"

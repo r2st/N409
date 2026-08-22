@@ -52,7 +52,7 @@ function Toggle<K extends string>({
         <button
           key={key}
           onClick={() => onChange(key)}
-          className={`cursor-pointer rounded px-3 py-1.5 text-sm font-semibold transition-colors ${
+          className={`tap-area cursor-pointer rounded px-3 py-1.5 text-sm font-semibold transition-colors ${
             value === key ? 'bg-ink-900 text-paper-50' : 'text-ink-600 hover:text-ink-900'
           }`}
         >

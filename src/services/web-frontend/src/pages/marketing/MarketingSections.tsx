@@ -124,10 +124,22 @@ export function TestimonialsSection() {
             type="button"
             onClick={() => go(-1)}
             aria-label="Previous testimonial"
-            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-surface text-ink-700 transition-colors hover:border-ink-400 hover:text-ink-900"
+            className="touch:h-11 touch:w-11 flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-surface text-ink-700 transition-colors hover:border-ink-400 hover:text-ink-900"
           >
             <span aria-hidden="true">‹</span>
           </button>
+          {/*
+            The dot is 10px, which is the smallest thing anybody was asked to
+            hit in the product. It cannot grow — a 44px dot is not a dot — and
+            padding it with `tap-area` would not work either: the dots sit 18px
+            apart, so four 44px pads would overlap three ways and a tap near a
+            boundary would select the neighbour.
+
+            So the button is the target and the dot is what it draws: a
+            transparent 44px box under a finger with the coloured circle
+            centred inside it. On a desktop the box collapses to the dot and
+            the strip looks exactly as it did.
+          */}
           <div className="flex gap-2" role="tablist" aria-label="Select testimonial">
             {TESTIMONIALS.map((t, i) => (
               <button
@@ -137,17 +149,22 @@ export function TestimonialsSection() {
                 aria-selected={i === index}
                 aria-label={`Testimonial ${i + 1}: ${t.company}`}
                 onClick={() => setIndex(i)}
-                className={`h-2.5 w-2.5 cursor-pointer rounded-full transition-colors ${
-                  i === index ? 'bg-bond-600' : 'bg-ink-200 hover:bg-ink-300'
-                }`}
-              />
+                className="group flex cursor-pointer items-center justify-center touch:h-11 touch:w-11"
+              >
+                <span
+                  aria-hidden="true"
+                  className={`h-2.5 w-2.5 rounded-full transition-colors ${
+                    i === index ? 'bg-bond-600' : 'bg-ink-200 group-hover:bg-ink-300'
+                  }`}
+                />
+              </button>
             ))}
           </div>
           <button
             type="button"
             onClick={() => go(1)}
             aria-label="Next testimonial"
-            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-surface text-ink-700 transition-colors hover:border-ink-400 hover:text-ink-900"
+            className="touch:h-11 touch:w-11 flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-surface text-ink-700 transition-colors hover:border-ink-400 hover:text-ink-900"
           >
             <span aria-hidden="true">›</span>
           </button>

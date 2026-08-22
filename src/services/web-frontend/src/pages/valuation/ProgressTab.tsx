@@ -282,7 +282,7 @@ export function ProgressTab() {
                   getToken(),
                 ).catch(() => {})
               }
-              className="mt-5 inline-block cursor-pointer rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-bond-fg hover:bg-bond-700"
+              className="tap-area mt-5 inline-block cursor-pointer rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-bond-fg hover:bg-bond-700"
             >
               Download your report
             </button>

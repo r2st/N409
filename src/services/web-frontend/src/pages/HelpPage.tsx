@@ -294,7 +294,7 @@ export function HelpPage() {
               type="button"
               onClick={() => setActiveCategory(null)}
               aria-current={activeCategory === null ? 'true' : undefined}
-              className={`rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors ${
+              className={`tap-area rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors ${
                 activeCategory === null
                   ? 'bg-ink-900 text-paper-50'
                   : 'text-ink-600 hover:bg-paper-200 hover:text-ink-900'
@@ -308,7 +308,7 @@ export function HelpPage() {
                 type="button"
                 onClick={() => setActiveCategory(s.id)}
                 aria-current={activeCategory === s.id ? 'true' : undefined}
-                className={`rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors ${
+                className={`tap-area rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors ${
                   activeCategory === s.id
                     ? 'bg-ink-900 text-paper-50'
                     : 'text-ink-600 hover:bg-paper-200 hover:text-ink-900'

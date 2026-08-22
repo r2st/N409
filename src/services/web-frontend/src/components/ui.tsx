@@ -37,7 +37,11 @@ export function Button({
   return (
     <button
       {...props}
-      className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed ${buttonStyles[variant]} ${className}`}
+      // `touch:min-h-11` — 44px under a finger. The designed height is 36px
+      // (py-2 on a 14px line), which is comfortable for a cursor and under the
+      // touch floor; a minimum rather than a fixed height so a button that
+      // wraps to two lines still grows past it.
+      className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition-colors touch:min-h-11 disabled:cursor-not-allowed ${buttonStyles[variant]} ${className}`}
     />
   );
 }
@@ -104,7 +108,14 @@ export function InfoTooltip({
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        className="flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-ink-300 text-[0.6rem] font-bold text-ink-400 transition-colors hover:border-bond-500 hover:text-bond-600 focus:ring-2 focus:ring-bond-600/30 focus:outline-none"
+        /*
+         * 16px drawn, 44px to a finger (`tap-area`). The circle is sized to sit
+         * on a label's baseline beside its text, so the box cannot grow — and
+         * at 16px it was the smallest target in the product. Fixing the toggle
+         * for touch, as this button already had, only got a tap counted once
+         * the tap landed.
+         */
+        className="tap-area flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-ink-300 text-[0.6rem] font-bold text-ink-400 transition-colors hover:border-bond-500 hover:text-bond-600 focus:ring-2 focus:ring-bond-600/30 focus:outline-none"
       >
         ?
       </button>
@@ -960,7 +971,7 @@ export function Toast({
           type="button"
           aria-label="Dismiss"
           onClick={onDismiss}
-          className="rounded p-0.5 text-current/60 hover:text-current"
+          className="tap-area rounded p-0.5 text-current/60 hover:text-current"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M5 5l14 14M19 5L5 19" strokeLinecap="round" />

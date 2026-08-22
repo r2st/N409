@@ -47,7 +47,7 @@ export function ViewModeToggle({ onNavigate }: { onNavigate?: () => void }) {
           normal ? 'admin' : 'user'
         } view`}
         onClick={toggle}
-        className={`flex w-full cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-colors ${
+        className={`touch:min-h-11 flex w-full cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-colors ${
           normal
             ? 'border-brass-400 bg-chrome-800/60 text-chrome-fg'
             : 'border-chrome-700 bg-chrome-800/40 text-chrome-dim hover:border-chrome-600 hover:text-chrome-fg'

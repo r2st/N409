@@ -74,7 +74,7 @@ export function ThemeToggle({ variant = 'surface' }: { variant?: 'chrome' | 'sur
             aria-checked={active}
             title={`${option.label} theme`}
             onClick={() => choose(option.value)}
-            className={`flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded px-2 py-1 text-xs font-semibold transition-colors ${
+            className={`touch:min-h-11 flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded px-2 py-1 text-xs font-semibold transition-colors ${
               active
                 ? onChrome
                   ? 'bg-chrome-700 text-chrome-fg'
@@ -108,7 +108,7 @@ export function ThemeToggleButton({ variant = 'surface' }: { variant?: 'chrome' 
       onClick={() => choose(next)}
       aria-label={`Colour theme: ${current.label}. Switch to ${next}.`}
       title={`Theme: ${current.label} — click for ${next}`}
-      className={`cursor-pointer rounded-md p-2 transition-colors ${
+      className={`tap-area cursor-pointer rounded-md p-2 transition-colors ${
         variant === 'chrome'
           ? 'text-chrome-dim hover:bg-chrome-800 hover:text-chrome-fg'
           : 'text-ink-600 hover:bg-paper-200 hover:text-ink-900'

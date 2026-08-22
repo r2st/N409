@@ -169,7 +169,7 @@ function ArrowButton({ side, onClick }: { side: 'left' | 'right'; onClick: () =>
       type="button"
       onClick={onClick}
       aria-label={side === 'left' ? 'Scroll tabs left' : 'Scroll tabs right'}
-      className={`absolute top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-paper-300 bg-surface text-ink-500 shadow-card transition-colors hover:text-ink-900 ${
+      className={`touch:h-11 touch:w-11 absolute top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-paper-300 bg-surface text-ink-500 shadow-card transition-colors hover:text-ink-900 ${
         side === 'left' ? 'left-0' : 'right-0'
       }`}
     >

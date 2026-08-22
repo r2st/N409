@@ -123,7 +123,7 @@ export function BlogIndexPage() {
             type="button"
             onClick={() => setCategory(null)}
             aria-pressed={category === null}
-            className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+            className={`tap-area rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
               category === null ? 'bg-bond-600 text-bond-fg' : 'bg-paper-100 text-ink-600 hover:bg-paper-200'
             }`}
           >
@@ -135,7 +135,7 @@ export function BlogIndexPage() {
               type="button"
               onClick={() => setCategory(name)}
               aria-pressed={category === name}
-              className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+              className={`tap-area rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                 category === name
                   ? 'bg-bond-600 text-bond-fg'
                   : 'bg-paper-100 text-ink-600 hover:bg-paper-200'

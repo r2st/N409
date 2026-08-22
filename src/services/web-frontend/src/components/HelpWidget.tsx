@@ -221,7 +221,7 @@ export function HelpWidget() {
               <button
                 aria-label="Close help"
                 onClick={closePanel}
-                className="rounded-md p-1 text-chrome-dim hover:bg-chrome-800 hover:text-chrome-fg"
+                className="tap-area rounded-md p-1 text-chrome-dim hover:bg-chrome-800 hover:text-chrome-fg"
               >
                 <svg
                   width="16"
@@ -263,7 +263,7 @@ export function HelpWidget() {
                       type="button"
                       onClick={() => setOpenTopic(openTopic === t.id ? null : t.id)}
                       aria-expanded={openTopic === t.id}
-                      className="flex w-full cursor-pointer items-center justify-between rounded-md px-3 py-2.5 text-left text-sm font-semibold text-ink-800 hover:bg-paper-100"
+                      className="touch:min-h-11 flex w-full cursor-pointer items-center justify-between rounded-md px-3 py-2.5 text-left text-sm font-semibold text-ink-800 hover:bg-paper-100"
                     >
                       {t.title}
                       <svg

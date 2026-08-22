@@ -163,7 +163,7 @@ export function GettingStarted() {
         <button
           type="button"
           onClick={dismiss}
-          className="shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-ink-400 hover:bg-paper-100 hover:text-ink-700"
+          className="tap-area shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-ink-400 hover:bg-paper-100 hover:text-ink-700"
         >
           {allDone ? 'Dismiss' : 'Hide'}
         </button>
@@ -200,7 +200,7 @@ export function GettingStarted() {
                 }
                 title={isEarned ? 'Completed in your account' : undefined}
                 onClick={() => toggle(step.id)}
-                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs font-bold transition-colors ${
+                className={`touch:min-h-11 mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs font-bold transition-colors ${
                   isDone
                     ? 'border-bond-600 bg-bond-600 text-bond-fg'
                     : 'border-ink-300 text-transparent hover:border-bond-500'

@@ -138,7 +138,7 @@ function VariablePalette({
                     type="button"
                     title={`${v.description} (e.g. ${v.sample})`}
                     onClick={() => onInsert(`{{${v.name}}}`)}
-                    className="cursor-pointer rounded border border-paper-300 bg-surface px-2 py-1 font-mono text-[0.7rem] text-ink-700 hover:border-bond-400 hover:text-bond-700"
+                    className="tap-area cursor-pointer rounded border border-paper-300 bg-surface px-2 py-1 font-mono text-[0.7rem] text-ink-700 hover:border-bond-400 hover:text-bond-700"
                   >
                     {v.name}
                   </button>
@@ -520,7 +520,7 @@ function TemplatesTab() {
             <button
               key={c}
               onClick={() => setCategory(c)}
-              className={`cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+              className={`tap-area cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
                 category === c
                   ? 'bg-ink-900 text-paper-50'
                   : 'border border-ink-200 bg-surface text-ink-600 hover:border-ink-400'
@@ -1033,7 +1033,7 @@ export function CommunicationsPage() {
           <button
             key={value}
             onClick={() => setTab(value)}
-            className={`cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+            className={`tap-area cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
               tab === value
                 ? 'bg-ink-900 text-paper-50'
                 : 'border border-ink-200 bg-surface text-ink-600 hover:border-ink-400'

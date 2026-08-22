@@ -222,7 +222,7 @@ export function NetworkTab() {
               type="button"
               onClick={() => selectTier('')}
               aria-pressed={service === ''}
-              className={`cursor-pointer rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset ${
+              className={`tap-area cursor-pointer rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset ${
                 service === ''
                   ? 'bg-ink-900 text-paper-50 ring-ink-900'
                   : 'bg-surface text-ink-600 ring-paper-300 hover:bg-paper-100'
@@ -236,7 +236,7 @@ export function NetworkTab() {
                 type="button"
                 onClick={() => selectTier(key)}
                 aria-pressed={service === key}
-                className={`cursor-pointer rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset ${
+                className={`tap-area cursor-pointer rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset ${
                   service === key
                     ? 'bg-ink-900 text-paper-50 ring-ink-900'
                     : 'bg-surface text-ink-600 ring-paper-300 hover:bg-paper-100'
@@ -254,7 +254,7 @@ export function NetworkTab() {
                   type="button"
                   onClick={() => setOpen((cur) => (cur === item.id ? null : item.id))}
                   aria-expanded={open === item.id}
-                  className="flex w-full cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-left hover:bg-paper-100"
+                  className="touch:min-h-11 flex w-full cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-left hover:bg-paper-100"
                 >
                   <StatusPill item={item} />
                   <span className="font-semibold text-ink-900">{item.name}</span>
@@ -282,7 +282,7 @@ export function NetworkTab() {
                 type="button"
                 disabled={page <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="cursor-pointer rounded-md border border-paper-300 px-3 py-1 disabled:cursor-default disabled:opacity-40"
+                className="tap-area cursor-pointer rounded-md border border-paper-300 px-3 py-1 disabled:cursor-default disabled:opacity-40"
               >
                 Previous
               </button>
@@ -293,7 +293,7 @@ export function NetworkTab() {
                 type="button"
                 disabled={page >= pages}
                 onClick={() => setPage((p) => p + 1)}
-                className="cursor-pointer rounded-md border border-paper-300 px-3 py-1 disabled:cursor-default disabled:opacity-40"
+                className="tap-area cursor-pointer rounded-md border border-paper-300 px-3 py-1 disabled:cursor-default disabled:opacity-40"
               >
                 Next
               </button>

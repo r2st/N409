@@ -352,7 +352,7 @@ export function ValuationsPage() {
                 next.delete('page');
                 setParams(next, { replace: true });
               }}
-              className={`cursor-pointer border-b-2 px-3.5 py-2 text-sm font-semibold transition-colors ${
+              className={`tap-area cursor-pointer border-b-2 px-3.5 py-2 text-sm font-semibold transition-colors ${
                 active
                   ? 'border-bond-600 text-bond-700'
                   : 'border-transparent text-ink-400 hover:border-ink-200 hover:text-ink-700'

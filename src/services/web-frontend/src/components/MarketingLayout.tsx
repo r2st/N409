@@ -128,7 +128,7 @@ export function MarketingHeader() {
           >
             <button
               ref={productsButtonRef}
-              className="cursor-pointer rounded-md px-3 py-2 text-sm font-semibold text-ink-700 hover:text-ink-900"
+              className="tap-area cursor-pointer rounded-md px-3 py-2 text-sm font-semibold text-ink-700 hover:text-ink-900"
               aria-haspopup="true"
               aria-expanded={productsOpen}
               aria-controls="marketing-products-menu"
@@ -185,7 +185,7 @@ export function MarketingHeader() {
           <ThemeToggleButton />
           <button
             ref={mobileButtonRef}
-            className="cursor-pointer rounded-md p-2 text-ink-700"
+            className="flex cursor-pointer items-center justify-center rounded-md p-2 text-ink-700 touch:min-h-11 touch:min-w-11"
             aria-label="Toggle menu"
             aria-expanded={mobileOpen}
             aria-controls="marketing-mobile-menu"

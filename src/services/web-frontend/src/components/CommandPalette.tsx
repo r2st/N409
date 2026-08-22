@@ -54,7 +54,7 @@ export function PaletteTrigger({ onNavigate }: { onNavigate?: () => void }) {
           onNavigate?.();
           window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
         }}
-        className="flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-chrome-700 bg-chrome-800/40 px-3 py-2 text-left text-xs font-semibold text-chrome-dim transition-colors hover:border-chrome-600 hover:text-chrome-fg"
+        className="touch:min-h-11 flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-chrome-700 bg-chrome-800/40 px-3 py-2 text-left text-xs font-semibold text-chrome-dim transition-colors hover:border-chrome-600 hover:text-chrome-fg"
       >
         <span aria-hidden>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -334,7 +334,7 @@ export function CommandPalette() {
                   data-active={active}
                   onMouseMove={() => setCursor(index)}
                   onClick={() => run(row)}
-                  className={`flex w-full cursor-pointer items-center gap-3 px-4 py-2 text-left text-sm ${
+                  className={`touch:min-h-11 flex w-full cursor-pointer items-center gap-3 px-4 py-2 text-left text-sm ${
                     active ? 'bg-bond-50 text-ink-900' : 'text-ink-700'
                   }`}
                 >

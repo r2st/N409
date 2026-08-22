@@ -142,6 +142,22 @@
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 /*
+ * `touch:` — a device driven by a finger rather than a cursor.
+ *
+ * Keyed on the pointing device, not on the viewport width, because the two
+ * answer different questions. `sm:`/`lg:` ask how much room there is, which is
+ * what decides layout. This asks how precisely the user can aim, which is what
+ * decides how big a control has to be — and the two disagree in both
+ * directions: an iPad in landscape is 1024px wide and still driven by a
+ * fingertip, while a 500px-wide desktop window is not.
+ *
+ * Every rule written against it therefore grows a hit area or a font size and
+ * none of them change layout, so the dense analyst workbench this product is
+ * on a desktop stays exactly as dense as it was designed to be.
+ */
+@custom-variant touch (@media (pointer: coarse));
+
+/*
  * Dark theme (feature-improvements §2 "Dark mode"): analysts sit in the
  * workbook all day.
  *
@@ -315,6 +331,68 @@ html {
   background-color: var(--color-paper-100);
   color: var(--color-ink-900);
   -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Form controls are 16px on a touch device, and 16px exactly.
+ *
+ * WebKit on iOS zooms the viewport whenever a control it is focusing computes
+ * a font-size below 16px, and it does not zoom back out when the control
+ * blurs. `inputClass` is `text-sm` — 14px — and it dresses all but eight of
+ * the ~490 controls in the product, so tapping any field on an iPhone
+ * magnified the page and left it magnified: the rest of the form was then off
+ * the right-hand edge and had to be pinched back by hand, once per field.
+ *
+ * The other way to stop it is `maximum-scale=1` on the viewport tag, which
+ * works by taking pinch-zoom away from everyone — the accessibility failure
+ * that trade is famous for. Sizing the text so the browser has no reason to
+ * zoom leaves zoom where it belongs, with the user.
+ *
+ * Scoped to the controls themselves rather than to `body`, so it changes the
+ * things WebKit measures and nothing else: labels, hints and validation text
+ * around them keep their designed sizes. The `:not([type=...])` list excludes
+ * the controls whose box is not sized by its text, where 16px would only
+ * enlarge a checkbox.
+ */
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/*
+ * Expands a control's touch area without moving anything on the page.
+ *
+ * The workbench has controls that are deliberately small — the 16px "?" beside
+ * a field label, a 12px dismiss cross on a banner — and they are small because
+ * of what sits next to them: the "?" is baseline-aligned inside a `<label>`,
+ * so growing its box to 44px would push the label's own text out of line. The
+ * pseudo-element takes the hit area to the 44px the finger needs while the box
+ * the layout sees stays the size the design drew.
+ *
+ * Only under a coarse pointer: a mouse hits 16px accurately, and an invisible
+ * 44px pad around every "?" on a desktop would swallow clicks meant for the
+ * text beside it.
+ */
+@utility tap-area {
+  @media (pointer: coarse) {
+    position: relative;
+
+    &::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      translate: -50% -50%;
+      min-width: 44px;
+      min-height: 44px;
+      /* The box, when it is already bigger than the floor. */
+      width: 100%;
+      height: 100%;
+    }
+  }
 }
 
 /* Figures line up in tables and stat cards. */

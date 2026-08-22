@@ -553,7 +553,7 @@ export function AppLayout() {
           logout();
           navigate('/login');
         }}
-        className="mt-3 w-full cursor-pointer rounded-md border border-chrome-700 px-3 py-1.5 text-xs font-semibold text-chrome-dim transition-colors hover:border-chrome-600 hover:text-chrome-fg"
+        className="tap-area mt-3 w-full cursor-pointer rounded-md border border-chrome-700 px-3 py-1.5 text-xs font-semibold text-chrome-dim transition-colors hover:border-chrome-600 hover:text-chrome-fg"
       >
         Sign out
       </button>
@@ -583,7 +583,7 @@ export function AppLayout() {
           aria-expanded={menuOpen}
           aria-controls="mobile-nav-drawer"
           onClick={() => setMenuOpen((v) => !v)}
-          className="rounded-md p-2 text-chrome-fg hover:bg-chrome-800"
+          className="flex items-center justify-center rounded-md p-2 text-chrome-fg touch:min-h-11 touch:min-w-11 hover:bg-chrome-800"
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             {menuOpen ? (

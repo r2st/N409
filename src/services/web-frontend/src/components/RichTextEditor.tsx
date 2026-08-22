@@ -74,7 +74,7 @@ export function RichTextEditor({
             disabled={disabled}
             onMouseDown={(e) => e.preventDefault() /* keep editor selection */}
             onClick={() => exec(tool.command, tool.arg)}
-            className={`cursor-pointer rounded px-2 py-1 text-xs font-semibold text-ink-600 hover:bg-paper-200 hover:text-ink-900 disabled:cursor-not-allowed ${tool.className ?? ''}`}
+            className={`cursor-pointer rounded px-2 py-1 text-xs font-semibold text-ink-600 touch:min-h-11 touch:min-w-11 hover:bg-paper-200 hover:text-ink-900 disabled:cursor-not-allowed ${tool.className ?? ''}`}
           >
             {tool.label}
           </button>
@@ -85,7 +85,7 @@ export function RichTextEditor({
           disabled={disabled}
           onMouseDown={(e) => e.preventDefault()}
           onClick={insertLink}
-          className="cursor-pointer rounded px-2 py-1 text-xs font-semibold text-ink-600 underline decoration-dotted hover:bg-paper-200 hover:text-ink-900 disabled:cursor-not-allowed"
+          className="cursor-pointer rounded px-2 py-1 text-xs font-semibold text-ink-600 touch:min-h-11 touch:min-w-11 underline decoration-dotted hover:bg-paper-200 hover:text-ink-900 disabled:cursor-not-allowed"
         >
           Link
         </button>
@@ -95,7 +95,7 @@ export function RichTextEditor({
           disabled={disabled}
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => exec('unlink')}
-          className="cursor-pointer rounded px-2 py-1 text-xs font-semibold text-ink-600 hover:bg-paper-200 hover:text-ink-900 disabled:cursor-not-allowed"
+          className="cursor-pointer rounded px-2 py-1 text-xs font-semibold text-ink-600 touch:min-h-11 touch:min-w-11 hover:bg-paper-200 hover:text-ink-900 disabled:cursor-not-allowed"
         >
           Unlink
         </button>
@@ -105,7 +105,7 @@ export function RichTextEditor({
           disabled={disabled}
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => exec('insertHTML', TABLE_HTML)}
-          className="cursor-pointer rounded px-2 py-1 text-xs font-semibold text-ink-600 hover:bg-paper-200 hover:text-ink-900 disabled:cursor-not-allowed"
+          className="cursor-pointer rounded px-2 py-1 text-xs font-semibold text-ink-600 touch:min-h-11 touch:min-w-11 hover:bg-paper-200 hover:text-ink-900 disabled:cursor-not-allowed"
         >
           Table
         </button>

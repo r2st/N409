@@ -37,7 +37,7 @@ export function HelpIcon({
         aria-label={label ?? `Help: ${title}`}
         aria-haspopup="dialog"
         onClick={() => setOpen(true)}
-        className={`inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-full border border-ink-200 text-[0.7rem] font-bold text-ink-400 align-middle transition-colors hover:border-bond-500 hover:text-bond-600 focus:ring-2 focus:ring-bond-600/30 focus:outline-none ${className}`}
+        className={`touch:min-h-11 inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-full border border-ink-200 text-[0.7rem] font-bold text-ink-400 align-middle transition-colors hover:border-bond-500 hover:text-bond-600 focus:ring-2 focus:ring-bond-600/30 focus:outline-none ${className}`}
       >
         ?
       </button>
@@ -67,7 +67,7 @@ export function HelpIcon({
                   type="button"
                   aria-label="Close help"
                   onClick={close}
-                  className="rounded-md p-1 text-ink-400 hover:bg-paper-100 hover:text-ink-700"
+                  className="tap-area rounded-md p-1 text-ink-400 hover:bg-paper-100 hover:text-ink-700"
                 >
                   <svg
                     width="18"

@@ -171,7 +171,7 @@ export function PortfolioPage() {
               <button
                 key={o.id}
                 onClick={() => setSelected(o.id)}
-                className={`rounded-full px-3.5 py-1.5 text-sm font-semibold ${
+                className={`tap-area rounded-full px-3.5 py-1.5 text-sm font-semibold ${
                   selected === o.id
                     ? 'bg-bond-700 text-paper-50'
                     : 'bg-paper-100 text-ink-600 hover:bg-paper-200'

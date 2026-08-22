@@ -221,7 +221,7 @@ export function FundPortfolioPage() {
             <button
               key={f.id}
               onClick={() => setSelected(f.id)}
-              className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
+              className={`tap-area rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
                 selected === f.id
                   ? 'border-bond-600 bg-bond-50 text-bond-700'
                   : 'border-paper-300 text-ink-600 hover:bg-paper-100'
@@ -536,7 +536,7 @@ function PositionRow({
         type="button"
         onClick={toggle}
         aria-expanded={open}
-        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-paper-50"
+        className="touch:min-h-11 flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-paper-50"
       >
         <span className="font-medium text-ink-700">
           {position.company_name}
