@@ -2713,3 +2713,164 @@
 #            a minute against a delegated capacity near 170. Checked rather than
 #            assumed, because the queue above only degrades gracefully if
 #            nothing can drive it to the ceiling on its own.
+
+# N409 revision
+# commit:    db29d9c
+# subject:   the ceiling every unit was missing, and the one place it could be read
+# previous:  fd6f83c (the service that had been deployed for nothing, and the
+#            bound that went with it).
+# includes:  3 commits — R99, taking the gap R98 recorded and closing it.
+#
+#            R98 ended by writing down what it had deliberately not done: no
+#            unit in this estate set a `MemoryMax`, which was harmless while
+#            every process was small and flat, and had just stopped being so.
+#            Delegating PDF rendering removed the bound nobody had designed —
+#            pdfkit is synchronous, so in-process renders were strictly serial
+#            — and made one unit's working set a function of load, at ~10MB per
+#            concurrent render on a 3.8GB host with swap already touched.
+#
+#            c421aca — the argument for doing all nine units rather than the one
+#              that provoked it. Without a per-unit limit the answer to a leak
+#              is the kernel's global OOM killer, which picks by resident size;
+#              on this box the two largest processes are an unrelated product's
+#              engine and PostgreSQL, so a memory bug in the *renderer* would
+#              have killed the *database* and left the renderer running.
+#
+#              Three directives per unit, not one, and the middle one is the
+#              whole point: swap is accounted separately and defaults to
+#              unlimited, so a leak under `MemoryMax` alone stays under its
+#              limit indefinitely while filling the host's 2GB of swap.
+#              `MemoryHigh` is the throttle, so a unit has a warning rather than
+#              one behaviour and then death.
+#
+#              Sized from the running host, except the report service, whose
+#              ceiling is *derived*: in-flight plus queued is 16 renders that
+#              can be resident at once, and preflight recomputes the floor from
+#              those two constants — so raising the queue depth without raising
+#              the ceiling fails the deploy rather than the host. Two checks
+#              could not live in any unit file and went to preflight: that
+#              floor, and the estate's total against `os.totalmem()`, which
+#              catches a ceiling raised past what the box can honour and the
+#              estate being moved onto a smaller box.
+#
+#            d22d2fc — a limit is only useful to whoever can see it, and the
+#              ceiling lives in a file the process had never read. The three
+#              Fastify services now read their own cgroup and export the limit
+#              beside the usage. `high` and `max` in `memory.events` are the two
+#              that matter: they tick when the cgroup is throttled and when an
+#              allocation nearly breached the ceiling, long before anything
+#              dies, and neither is visible from inside the process.
+#
+#              `oom_kill` is documented rather than trusted. systemd destroys a
+#              unit's cgroup on stop and creates a fresh one on start, so the
+#              counter resets on every restart — and a restart is what follows a
+#              kill. A service killed at its ceiling comes back reporting zero.
+#              The durable record is the journal; the gauges give the approach.
+#
+#            db29d9c — the cases the two commits above were not written for.
+#              Three are the difference between a wrong limit and no limit: a
+#              suffix systemd does not know (`512Mib`) parsed as bytes-with-the-
+#              suffix-dropped becomes a 512-*byte* ceiling that kills the unit on
+#              its first allocation; a bare `[Service]` word read as a directive
+#              with an empty value becomes a reset, so a stray line silently
+#              clears a ceiling; and the reset rule has to apply to every
+#              directive rather than the one that happened to be tested, or a
+#              drop-in clearing `MemoryAccounting=` disarms the unit while the
+#              fault still reports `no`.
+#
+# note:      the unit sweep covers every directory `install-units.sh` installs
+#            from, which is wider than the environment guards and deliberately
+#            so: the two backup units are installed onto this host by the same
+#            script and share its RAM, and until now nothing in this repo
+#            checked them.
+
+# N409 revision
+# commit:    64ca96f
+# subject:   the form that zoomed itself, and the targets a finger could not hit
+# previous:  db29d9c (the ceiling every unit was missing).
+# includes:  1 commit — R100, a mobile round over the frontend.
+#
+#            The brief was mobile responsiveness broadly. Most of it turned out
+#            to be already done, and saying which parts is the useful half of
+#            this entry: the viewport tag is set, the nav is a drawer under
+#            `lg:` with Escape and focus return, charts are `viewBox` + `w-full`,
+#            the 27-tab workspace strip scrolls natively with its own edge
+#            affordances, and `appResponsive.test.ts` already pins table widths
+#            against browser measurements taken at 375px. Thirteen tables looked
+#            like unwrapped stragglers; four were deliberate, *measured*
+#            exemptions in that test's allowlist and nine were narrow enough
+#            never to have needed one. Wrapping them was written and then
+#            reverted — an `overflow-x-auto` that never overflows is churn, and
+#            it fought a decision somebody had made with a browser open.
+#
+#            What was actually open were the two questions about the input
+#            device rather than the viewport, which is why a width test had not
+#            found them and why both survived several responsive rounds.
+#
+#            The first is that focusing a field threw the layout away. WebKit on
+#            iOS zooms the viewport whenever it focuses a control whose
+#            font-size is under 16px, and does not zoom back out on blur.
+#            `inputClass` is `text-sm` — 14px — and dresses all but eight of the
+#            ~490 controls in the product, so tapping any field on an iPhone
+#            magnified the page and left it magnified, with the rest of the form
+#            off the right-hand edge, to be pinched back by hand once per field.
+#            The alternative fix is `maximum-scale=1` on the viewport tag, which
+#            works by taking pinch-zoom away from everyone; sizing the text so
+#            the browser has no reason to zoom leaves zoom with the user.
+#
+#            The second is target size: 57 controls drawn under the 44px floor.
+#            The smallest was the 16px "?" beside a field label — the app's
+#            entire inline-help mechanism, and the one whose *toggle* an earlier
+#            round had already fixed for touch, which only ever mattered once
+#            the tap could land — and a 10px carousel dot.
+#
+#            Two mechanisms, chosen per control by whether its box may move. A
+#            `touch:` variant (`@media (pointer: coarse)`) grows controls that
+#            already centre their content; a `tap-area` utility pads the hit
+#            region with a pseudo-element where the box has to stay put, because
+#            the "?" is baseline-aligned inside a `<label>` and growing it
+#            shifts the label's own text. The carousel dots got neither: they
+#            sit 18px apart, so four 44px pads would have overlapped three ways
+#            and a tap near a boundary would have selected the neighbour — the
+#            button became the target and the dot became what it draws.
+#
+#            The variant is keyed on the pointing device and not on the
+#            viewport width, which is the reason it exists beside `sm:`. The two
+#            disagree in both directions: an iPad in landscape is 1024px wide
+#            and still driven by a fingertip, a 500px desktop window is not.
+#            Every rule written against it grows a hit area or a font size and
+#            none of them change layout, so the dense analyst workbench is
+#            byte-for-byte what it was on a desktop.
+#
+# method:    the tests assert against *compiled* CSS rather than against the
+#            source, and that is this codebase's own scar rather than a
+#            preference. `--color-ink-500` was missing from `@theme` for a long
+#            time, so `text-ink-500` at 260 call sites generated no rule at all
+#            and the whole muted tier rendered at full body weight — a source
+#            grep would have found 260 reasons to call it fine. An undefined
+#            `touch:` variant or a deleted `tap-area` fails in exactly that way:
+#            the class stays in the markup, Tailwind emits nothing, every
+#            assertion written against the source still passes. So the suite
+#            runs the real `index.css` through the real compiler and reads what
+#            a browser would get, including that 11 on the spacing scale is
+#            still 44px.
+#
+#            One defect fell out of writing the guards rather than the code:
+#            `tap-area` sets `position: relative` so its pseudo-element has an
+#            anchor, and on a control that is already `absolute` that is a
+#            replacement at equal specificity, not an addition — the control
+#            jumps out of the place it was holding, only under a coarse pointer,
+#            so no desktop walkthrough would ever show it. Nothing shipped with
+#            it; the tab-strip arrows were the near miss, and they take
+#            `touch:h-11 touch:w-11` instead.
+#
+# gap:       `InfoTooltip`'s bubble is `w-56` centred on its trigger with
+#            `left-1/2 -translate-x-1/2`. On a 360px screen a "?" that lands far
+#            enough right puts the bubble's right edge past the viewport, and an
+#            absolutely-positioned box that overflows to the right extends the
+#            document's scrollable width — the page then scrolls sideways. A
+#            width cap does not fix it (224px is already inside 360px; the
+#            centring is what moves it out) and repositioning needs the
+#            trigger's measured x, which is a browser away. Left rather than
+#            half-fixed, because a fix that only narrows the odds reads in the
+#            diff like one that closed it.
