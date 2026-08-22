@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { openConnectionTokens, sealNullable, sealSecret } from '../crypto/connectionSecrets.js';
 import type { AccountingProvider, ImportedFinancials, TokenSet } from '../clients/accounting.js';
 
 export interface AccountingConnectionRow {
@@ -35,7 +36,7 @@ export async function listConnections(
     'SELECT * FROM accounting_connections WHERE valuation_id = $1 ORDER BY provider',
     [valuationId],
   );
-  return rows;
+  return rows.map((r) => openConnectionTokens(r));
 }
 
 export async function findConnection(
@@ -47,7 +48,7 @@ export async function findConnection(
     'SELECT * FROM accounting_connections WHERE valuation_id = $1 AND provider = $2',
     [valuationId, provider],
   );
-  return rows[0] ?? null;
+  return rows[0] ? openConnectionTokens(rows[0]) : null;
 }
 
 /** Reconnecting replaces tokens and revives a revoked/errored connection. */
@@ -81,15 +82,15 @@ export async function upsertConnection(
       newUlid(),
       input.valuationId,
       input.provider,
-      input.tokens.accessToken,
-      input.tokens.refreshToken,
+      sealSecret(input.tokens.accessToken),
+      sealNullable(input.tokens.refreshToken),
       input.tokens.expiresAt,
       input.externalOrgId ?? input.tokens.externalOrgId ?? null,
       input.tokens.externalOrgName ?? null,
       input.connectedBy,
     ],
   );
-  return rows[0]!;
+  return openConnectionTokens(rows[0]!);
 }
 
 export async function recordImport(pool: pg.Pool, id: string, summary: ImportedFinancials): Promise<void> {

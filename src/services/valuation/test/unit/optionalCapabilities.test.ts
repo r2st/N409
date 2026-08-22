@@ -21,6 +21,8 @@ import {
 const ALL_OFF: CapabilityConfig = {
   CLAMAV_HOST: undefined,
   DOCUMENTS_ENCRYPTION_KEY: undefined,
+  MFA_ENCRYPTION_KEY: undefined,
+  CONNECTION_ENCRYPTION_KEY: undefined,
   EMAIL_MODE: 'log',
   SMTP_HOST: undefined,
   STRIPE_SECRET_KEY: undefined,
@@ -33,6 +35,8 @@ const ALL_OFF: CapabilityConfig = {
 const ALL_ON: CapabilityConfig = {
   CLAMAV_HOST: 'clamd.internal',
   DOCUMENTS_ENCRYPTION_KEY: 'a'.repeat(64),
+  MFA_ENCRYPTION_KEY: 'b'.repeat(64),
+  CONNECTION_ENCRYPTION_KEY: 'c'.repeat(64),
   EMAIL_MODE: 'smtp',
   SMTP_HOST: 'smtp.example.com',
   STRIPE_SECRET_KEY: 'sk_test_x',
@@ -71,15 +75,33 @@ describe('the optional-capability roster', () => {
     expect(byKey({ ...ALL_ON, EMAIL_MODE: 'off' }, 'email_delivery').configured).toBe(false);
   });
 
+  it('counts integration-credential encryption as on when any one key covers it', () => {
+    // The three names are a fallback chain, not three separate requirements —
+    // reporting this off on a box that has DOCUMENTS_ENCRYPTION_KEY set would
+    // send an operator to add a key that changes nothing.
+    const only = (name: keyof CapabilityConfig) =>
+      byKey({ ...ALL_OFF, [name]: 'd'.repeat(64) }, 'connection_secret_encryption').configured;
+    expect(only('CONNECTION_ENCRYPTION_KEY')).toBe(true);
+    expect(only('MFA_ENCRYPTION_KEY')).toBe(true);
+    expect(only('DOCUMENTS_ENCRYPTION_KEY')).toBe(true);
+    expect(byKey(ALL_OFF, 'connection_secret_encryption').configured).toBe(false);
+  });
+
   it('treats an empty string as unset — an env file with a bare key is not a key', () => {
     expect(byKey({ ...ALL_ON, CLAMAV_HOST: '' }, 'virus_scanning').configured).toBe(false);
   });
 
   it('separates the subsystems whose absence shows from the ones that do not', () => {
     const quiet = silentlyDegraded(ALL_OFF).map((c) => c.key);
-    // Uploads accepted unscanned, blobs written in the clear, and mail recorded
-    // as delivered to the log. None of the three tells anybody.
-    expect(quiet).toEqual(['virus_scanning', 'document_encryption', 'email_delivery']);
+    // Uploads accepted unscanned, blobs and third-party OAuth credentials
+    // written in the clear, and mail recorded as delivered to the log. None of
+    // the four tells anybody.
+    expect(quiet).toEqual([
+      'virus_scanning',
+      'document_encryption',
+      'connection_secret_encryption',
+      'email_delivery',
+    ]);
     // Checkout being unavailable is on screen, and the Google button is simply
     // not drawn. Those are decisions a reader can already see.
     expect(quiet).not.toContain('payments');

@@ -60,6 +60,8 @@ export type CapabilityConfig = Pick<
   Config,
   | 'CLAMAV_HOST'
   | 'DOCUMENTS_ENCRYPTION_KEY'
+  | 'MFA_ENCRYPTION_KEY'
+  | 'CONNECTION_ENCRYPTION_KEY'
   | 'EMAIL_MODE'
   | 'SMTP_HOST'
   | 'STRIPE_SECRET_KEY'
@@ -93,6 +95,27 @@ export function optionalCapabilities(config: CapabilityConfig): OptionalCapabili
         'Document blobs are written to DOCUMENTS_DIR in the clear. Anyone with the filesystem ' +
         'has the cap tables. Blobs already encrypted stay readable after the key is set, so ' +
         'turning it on is not a migration.',
+      severity: 'silent',
+    },
+    {
+      key: 'connection_secret_encryption',
+      label: 'Integration credential encryption at rest',
+      // Any one of the three covers it; the first that is set is the key used.
+      configured:
+        set(config.CONNECTION_ENCRYPTION_KEY) ||
+        set(config.MFA_ENCRYPTION_KEY) ||
+        set(config.DOCUMENTS_ENCRYPTION_KEY),
+      env: ['CONNECTION_ENCRYPTION_KEY', 'MFA_ENCRYPTION_KEY', 'DOCUMENTS_ENCRYPTION_KEY'],
+      fallback:
+        'The OAuth access and refresh tokens for a client\u2019s accounting software, HRIS and ' +
+        'cap-table provider, and the HMAC secrets partners verify our webhook signatures with, ' +
+        'are stored in the clear. Each refresh token is a standing grant on somebody else\u2019s ' +
+        'ledger or payroll, and it is in every database dump. Values written before the key is ' +
+        'set stay readable afterwards and re-seal on the next reconnect, so turning it on is not ' +
+        'a migration.',
+      // Silent for the same reason document encryption is: everything works.
+      // The tokens are simply legible to anyone holding a dump, and nothing in
+      // the product or the logs is in a position to mention it.
       severity: 'silent',
     },
     {

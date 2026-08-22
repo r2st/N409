@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { openSecret, sealSecret } from '../crypto/connectionSecrets.js';
 import { WEBHOOK_MAX_ATTEMPTS } from '../domain/partnerWebhooks.js';
 import { type Cursor, cursorAtSql, encodeCursor, keysetAfterSql, pageFrom } from '../domain/pagination.js';
 
@@ -40,6 +41,20 @@ export interface ClaimedDelivery extends WebhookDeliveryRow {
   secret: string;
 }
 
+/**
+ * Unseals the signing secret on any row shaped like one that carries it —
+ * `PartnerWebhookRow` and the `ClaimedDelivery` the retry sweep joins it onto.
+ *
+ * Every read goes through here rather than the delivery site, because the
+ * secret has two consumers with opposite needs: `signWebhookBody` must have the
+ * plaintext HMAC key, and the create response shows it to the partner once and
+ * never again. Sealing at the column and opening at the repo boundary keeps
+ * both of those unchanged while the column stops being readable from a dump.
+ */
+function openWebhookSecret<T extends { secret: string }>(row: T): T {
+  return { ...row, secret: openSecret(row.secret) };
+}
+
 export async function createWebhook(
   pool: pg.Pool,
   args: { partnerId: string; url: string; secret: string; events: string[]; createdBy: string },
@@ -47,9 +62,9 @@ export async function createWebhook(
   const { rows } = await pool.query<PartnerWebhookRow>(
     `INSERT INTO partner_webhooks (id, partner_id, url, secret, events, created_by)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [newUlid(), args.partnerId, args.url, args.secret, args.events, args.createdBy],
+    [newUlid(), args.partnerId, args.url, sealSecret(args.secret), args.events, args.createdBy],
   );
-  return rows[0]!;
+  return openWebhookSecret(rows[0]!);
 }
 
 export async function listWebhooks(pool: pg.Pool, partnerId: string): Promise<PartnerWebhookRow[]> {
@@ -57,7 +72,7 @@ export async function listWebhooks(pool: pg.Pool, partnerId: string): Promise<Pa
     'SELECT * FROM partner_webhooks WHERE partner_id = $1 ORDER BY created_at',
     [partnerId],
   );
-  return rows;
+  return rows.map(openWebhookSecret);
 }
 
 export async function findWebhook(
@@ -69,7 +84,7 @@ export async function findWebhook(
     'SELECT * FROM partner_webhooks WHERE id = $1 AND partner_id = $2',
     [id, partnerId],
   );
-  return rows[0] ?? null;
+  return rows[0] ? openWebhookSecret(rows[0]) : null;
 }
 
 export async function deleteWebhook(pool: pg.Pool, partnerId: string, id: string): Promise<boolean> {
@@ -86,7 +101,7 @@ export async function enabledWebhooks(pool: pg.Pool, partnerId: string): Promise
     'SELECT * FROM partner_webhooks WHERE partner_id = $1 AND enabled',
     [partnerId],
   );
-  return rows;
+  return rows.map(openWebhookSecret);
 }
 
 /**
@@ -272,7 +287,7 @@ export async function claimRetryableDeliveries(
       RETURNING d.*, w2.url AS url, w2.secret AS secret`,
     [String(leaseSeconds), Math.min(opts.limit ?? 100, 500)],
   );
-  return rows;
+  return rows.map(openWebhookSecret);
 }
 
 /**

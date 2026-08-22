@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { envelope, keyRing, type KeyRing } from '../crypto/envelope.js';
 
 /**
  * Envelope-style encryption of document blobs at rest (audit B-5 P1).
@@ -7,19 +7,24 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
  * disk in the clear. When DOCUMENTS_ENCRYPTION_KEY is set we AES-256-GCM every
  * stored blob; when it's unset (local dev / tests) blobs are written as-is.
  *
- * On-disk format: MAGIC(8) ‖ IV(12) ‖ authTag(16) ‖ ciphertext. The MAGIC
- * prefix lets reads transparently handle a mix of encrypted and legacy
- * plaintext blobs, so turning the key on doesn't require a migration to keep
- * serving files uploaded before it.
+ * On-disk format and key parsing come from crypto/envelope.ts, which is also
+ * where the reasoning about MAGIC and about the retired key lives. Reads accept
+ * DOCUMENTS_ENCRYPTION_KEY_PREVIOUS as well, so the key can be rotated without
+ * every file uploaded before the rotation becoming unreadable. Writes only ever
+ * use the current key; `tools/rotate-at-rest-keys.mjs` re-seals the backlog,
+ * because nothing else in the product ever rewrites a stored document.
  */
-const MAGIC = Buffer.from('N409ENC1');
-const IV_LEN = 12;
-const TAG_LEN = 16;
+const MAGIC = 'N409ENC1';
+const box = envelope(MAGIC);
 
 let cachedKey: Buffer | null | undefined;
 let cachedRaw: string | undefined;
 
-/** Resolve the 32-byte key from hex or base64 env, memoized. Returns null when unset. */
+/**
+ * Resolve the 32-byte key from hex or base64 env, memoized. Returns null when
+ * unset. This is the key blobs are *written* with; see `documentKeyRing` for
+ * the set a read may try.
+ */
 export function documentKey(env: NodeJS.ProcessEnv = process.env): Buffer | null {
   const raw = env.DOCUMENTS_ENCRYPTION_KEY;
   if (!raw) {
@@ -29,41 +34,26 @@ export function documentKey(env: NodeJS.ProcessEnv = process.env): Buffer | null
   }
   // Only re-parse when the env value actually changed.
   if (cachedKey && cachedRaw === raw) return cachedKey;
-  cachedKey = parseKey(raw);
+  cachedKey = keyRing(env, ['DOCUMENTS_ENCRYPTION_KEY']).current;
   cachedRaw = raw;
   return cachedKey;
 }
 
-function parseKey(raw: string): Buffer {
-  const key = /^[0-9a-fA-F]{64}$/.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
-  if (key.length !== 32) {
-    throw new Error('DOCUMENTS_ENCRYPTION_KEY must be 32 bytes (64 hex chars or base64)');
-  }
-  return key;
+/** Current key plus the retired one, if `DOCUMENTS_ENCRYPTION_KEY_PREVIOUS` is set. */
+export function documentKeyRing(env: NodeJS.ProcessEnv = process.env): KeyRing {
+  return keyRing(env, ['DOCUMENTS_ENCRYPTION_KEY']);
 }
 
 export function isEncrypted(blob: Buffer): boolean {
-  return blob.length >= MAGIC.length && blob.subarray(0, MAGIC.length).equals(MAGIC);
+  return box.isSealed(blob);
 }
 
 export function encryptDocument(plain: Buffer, key: Buffer): Buffer {
-  const iv = randomBytes(IV_LEN);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ct = Buffer.concat([cipher.update(plain), cipher.final()]);
-  return Buffer.concat([MAGIC, iv, cipher.getAuthTag(), ct]);
+  return box.seal(plain, key);
 }
 
-export function decryptDocument(blob: Buffer, key: Buffer): Buffer {
-  const minLen = MAGIC.length + IV_LEN + TAG_LEN + 1; // at least 1 byte of ciphertext
-  if (blob.length < minLen) {
-    throw new Error('Encrypted document is truncated (' + `${blob.length} bytes, need at least ${minLen})`);
-  }
-  const iv = blob.subarray(MAGIC.length, MAGIC.length + IV_LEN);
-  const tag = blob.subarray(MAGIC.length + IV_LEN, MAGIC.length + IV_LEN + TAG_LEN);
-  const ct = blob.subarray(MAGIC.length + IV_LEN + TAG_LEN);
-  const decipher = createDecipheriv('aes-256-gcm', key, iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(ct), decipher.final()]);
+export function decryptDocument(blob: Buffer, key: Buffer | readonly Buffer[]): Buffer {
+  return box.open(blob, Array.isArray(key) ? key : [key as Buffer]);
 }
 
 /** Bytes to write to disk: encrypted when a key is configured, else the plaintext. */
@@ -75,11 +65,23 @@ export function encodeForStorage(plain: Buffer, key: Buffer | null = documentKey
  * Plaintext from a stored blob. Legacy plaintext (no MAGIC) passes through so a
  * newly-enabled key doesn't break older uploads; an encrypted blob with no key
  * available is a hard error rather than silent corruption.
+ *
+ * Omitting `key` reads the whole ring — current key first, then the retired
+ * one. Passing an explicit key (or null) pins the read to exactly that, which
+ * is what the rotation tool needs to tell "already re-sealed" from "not yet".
  */
-export function decodeFromStorage(stored: Buffer, key: Buffer | null = documentKey()): Buffer {
+export function decodeFromStorage(stored: Buffer, key?: Buffer | null | readonly Buffer[]): Buffer {
   if (!isEncrypted(stored)) return stored;
-  if (!key) {
+  const keys =
+    key === undefined
+      ? documentKeyRing().accepted
+      : key === null
+        ? []
+        : Array.isArray(key)
+          ? key
+          : [key as Buffer];
+  if (keys.length === 0) {
     throw new Error('Stored document is encrypted but DOCUMENTS_ENCRYPTION_KEY is not set');
   }
-  return decryptDocument(stored, key);
+  return decryptDocument(stored, keys);
 }

@@ -68,6 +68,14 @@ The single most important production control, and the reason this doc exists:
    for the token check in item 3 — it has no LLM call to redact.
 5. **Document encryption at rest.** Set `DOCUMENTS_ENCRYPTION_KEY` in
    `/opt/N409/.env` (`openssl rand -hex 32`) to AES-256-GCM the stored blobs.
+6. **Integration credentials at rest.** The same key (or `MFA_ENCRYPTION_KEY`,
+   or a dedicated `CONNECTION_ENCRYPTION_KEY` — the first one set wins) also
+   seals the OAuth access and refresh tokens for a client's accounting
+   software, HRIS and cap-table provider, and the HMAC secrets partners verify
+   our webhook signatures with. Both keys are already set on this box, so this
+   needs no new variable; `GET /api/v1/monitoring/capabilities` reports it as
+   `connection_secret_encryption` either way. Values written before the key was
+   set stay readable and re-seal on the next reconnect.
 
 ## Cloudflare sits in front of the origin
 
@@ -164,6 +172,9 @@ work adds:
 NODE_ENV=production
 INTERNAL_SERVICE_TOKEN=<openssl rand -hex 32>   # valuation ⇄ ai/engine/report; REQUIRED
 DOCUMENTS_ENCRYPTION_KEY=<openssl rand -hex 32> # document blobs at rest
+MFA_ENCRYPTION_KEY=<openssl rand -hex 32>       # TOTP seeds; falls back to the above
+# CONNECTION_ENCRYPTION_KEY=...                 # optional: separates integration
+#                                               # credentials from the two above
 PUBLIC_BASE_URL=https://n409.aiknol.com         # emailed links (reset, board sign)
 BUILD_SHA_FILE=/opt/N409/BUILD_SHA              # provenance, written by the deploy
 # On the ai and engine-wrapper units (set in the unit files, not .env):
@@ -173,6 +184,31 @@ BUILD_SHA_FILE=/opt/N409/BUILD_SHA              # provenance, written by the dep
 `INTERNAL_SERVICE_TOKEN` is the one entry above that is not optional: omit it
 and `report`, `ai` and `engine-wrapper` all fail to start (security posture
 item 3). Everything else degrades rather than refusing.
+
+### Rotating an at-rest key
+
+AES-GCM authenticates, so a value written under an old key does not decode to
+garbage under a new one — it throws. Changing `DOCUMENTS_ENCRYPTION_KEY` on its
+own is therefore not a rotation, it is data loss with a delayed fuse: every
+document uploaded before the change becomes unreadable, and nothing says so
+until somebody clicks download.
+
+Each key accepts a retired companion, `<NAME>_PREVIOUS`, on read only.
+
+1. `openssl rand -hex 32`
+2. In `/opt/N409/.env`, move the current value to `<NAME>_PREVIOUS` and put the
+   new one in `<NAME>`. Restart the units. Reads try new-then-old, so nothing
+   is down at any point; this step is safe to leave in place indefinitely.
+3. `node tools/rotate-at-rest-keys.mjs --apply` from `/opt/N409` (after
+   `npm run build`). It re-seals every value still under the old key —
+   documents on disk and the four sealed columns — and is safe to re-run and to
+   interrupt. Run it without `--apply` first for a count.
+4. Re-run without `--apply`. When it reports nothing left to write, delete
+   `<NAME>_PREVIOUS` and restart.
+
+Step 4 is the point of the exercise: until that line is gone, the key you
+rotated away from is still one this process accepts. A rotation stopped after
+step 3 looks finished and is not.
 
 ### Optional: Amazon Bedrock as a second completion provider (design §12.2)
 

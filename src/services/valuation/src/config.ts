@@ -1,6 +1,27 @@
 import { z } from 'zod';
 import { EMAIL_MAX_ATTEMPTS } from './domain/emailRetry.js';
 
+/**
+ * An optional AES-256 key from the environment: 64 hex chars, or base64 that
+ * decodes to 32 bytes.
+ *
+ * Validated here so a mistyped key is a refusal to boot rather than a 500 on
+ * the first upload. `parseKey` in crypto/envelope.ts throws the same way, but
+ * it only runs when something is actually encrypted — which for the retired
+ * `_PREVIOUS` keys means "when a value that needs it is read", i.e. possibly
+ * never, and certainly not while the operator is still watching the deploy.
+ */
+const atRestKey = () =>
+  z
+    .string()
+    .optional()
+    .refine(
+      (raw) =>
+        raw === undefined ||
+        (/^[0-9a-fA-F]{64}$/.test(raw) ? true : Buffer.from(raw, 'base64').length === 32),
+      { message: 'must be 32 bytes (64 hex chars or base64)' },
+    );
+
 const Env = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   // Bounded like every other number here, and for a sharper reason than most:
@@ -50,7 +71,23 @@ const Env = z.object({
   // Encrypt document blobs at rest with AES-256-GCM (audit B-5 P1). 32 bytes as
   // 64 hex chars or base64; unset leaves blobs in the clear (dev). Legacy
   // plaintext blobs are still readable after the key is enabled.
-  DOCUMENTS_ENCRYPTION_KEY: z.string().optional(),
+  DOCUMENTS_ENCRYPTION_KEY: atRestKey(),
+  // The retired key, honoured on read so DOCUMENTS_ENCRYPTION_KEY can be
+  // rotated without stranding every blob written before the rotation. See
+  // crypto/envelope.ts and tools/rotate-at-rest-keys.mjs; drop it once that
+  // tool reports nothing left to re-seal.
+  DOCUMENTS_ENCRYPTION_KEY_PREVIOUS: atRestKey(),
+  // At-rest key for TOTP seeds and for the third-party OAuth credentials in
+  // accounting_connections / hris_connections / cap_table_connections and the
+  // partner webhook signing secrets. Each falls back to the next when unset —
+  // CONNECTION_ENCRYPTION_KEY, then MFA_ENCRYPTION_KEY, then
+  // DOCUMENTS_ENCRYPTION_KEY — so one configured key covers all three
+  // subsystems. Declared here so `loadConfig` reports a wrong-length key at
+  // boot rather than at the first write.
+  MFA_ENCRYPTION_KEY: atRestKey(),
+  MFA_ENCRYPTION_KEY_PREVIOUS: atRestKey(),
+  CONNECTION_ENCRYPTION_KEY: atRestKey(),
+  CONNECTION_ENCRYPTION_KEY_PREVIOUS: atRestKey(),
   // Auto-pipeline on upload (extraction → param fill → draft calculation).
   // 'off' disables it globally; per-valuation opt-out is valuations.auto_pipeline.
   AUTO_PIPELINE: z.enum(['on', 'off']).default('on'),

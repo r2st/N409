@@ -240,3 +240,47 @@ describe('loadConfig PORT bounds', () => {
     expect(() => loadConfig({ ...base, PORT: '3001.5' })).toThrow(/PORT/);
   });
 });
+
+/**
+ * At-rest key shape, checked at boot.
+ *
+ * These were `z.string().optional()`, so a truncated or mistyped key was
+ * accepted by `loadConfig` and only rejected by `parseKey` at the first
+ * encrypt or decrypt. For DOCUMENTS_ENCRYPTION_KEY that means the first upload
+ * after a deploy; for the retired `_PREVIOUS` keys it means the first read of a
+ * value old enough to need one, which can be weeks later or never. Either way,
+ * long after the operator who typed it has stopped watching.
+ */
+describe('loadConfig at-rest key shape', () => {
+  const KEY_VARS = [
+    'DOCUMENTS_ENCRYPTION_KEY',
+    'DOCUMENTS_ENCRYPTION_KEY_PREVIOUS',
+    'MFA_ENCRYPTION_KEY',
+    'MFA_ENCRYPTION_KEY_PREVIOUS',
+    'CONNECTION_ENCRYPTION_KEY',
+    'CONNECTION_ENCRYPTION_KEY_PREVIOUS',
+  ] as const;
+
+  const base = { NODE_ENV: 'test', JWT_SECRET: REAL_SECRET };
+
+  it('accepts 64 hex chars and 32-byte base64, and unset, for every key', () => {
+    const hex = 'a'.repeat(64);
+    const b64 = Buffer.alloc(32, 7).toString('base64');
+    for (const name of KEY_VARS) {
+      expect(() => loadConfig({ ...base, [name]: hex })).not.toThrow();
+      expect(() => loadConfig({ ...base, [name]: b64 })).not.toThrow();
+    }
+    expect(() => loadConfig(base)).not.toThrow();
+  });
+
+  it('refuses a key of the wrong length, naming the variable', () => {
+    for (const name of KEY_VARS) {
+      // 63 hex chars: the shape of a copy-paste that dropped a character, and
+      // the one a length check catches that a regex on the alphabet does not.
+      expect(() => loadConfig({ ...base, [name]: 'a'.repeat(63) })).toThrow(
+        new RegExp(`${name}[\\s\\S]*32 bytes`),
+      );
+      expect(() => loadConfig({ ...base, [name]: 'not-a-key' })).toThrow(/32 bytes/);
+    }
+  });
+});

@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { openConnectionTokens, sealNullable, sealSecret } from '../crypto/connectionSecrets.js';
 import type { HrisProvider, TokenSet } from '../clients/hris.js';
 
 export type SyncFrequency = 'manual' | 'daily' | 'weekly';
@@ -41,7 +42,7 @@ export async function listConnections(pool: pg.Pool, valuationId: string): Promi
     'SELECT * FROM hris_connections WHERE valuation_id = $1 ORDER BY provider',
     [valuationId],
   );
-  return rows;
+  return rows.map((r) => openConnectionTokens(r));
 }
 
 export async function findConnection(
@@ -53,7 +54,7 @@ export async function findConnection(
     'SELECT * FROM hris_connections WHERE valuation_id = $1 AND provider = $2',
     [valuationId, provider],
   );
-  return rows[0] ?? null;
+  return rows[0] ? openConnectionTokens(rows[0]) : null;
 }
 
 export async function upsertConnection(
@@ -86,15 +87,15 @@ export async function upsertConnection(
       newUlid(),
       input.valuationId,
       input.provider,
-      input.tokens.accessToken,
-      input.tokens.refreshToken,
+      sealSecret(input.tokens.accessToken),
+      sealNullable(input.tokens.refreshToken),
       input.tokens.expiresAt,
       input.externalCompanyId ?? input.tokens.externalCompanyId ?? null,
       input.tokens.externalCompanyName ?? null,
       input.connectedBy,
     ],
   );
-  return rows[0]!;
+  return openConnectionTokens(rows[0]!);
 }
 
 export async function recordSync(
@@ -173,7 +174,7 @@ export async function findDueConnections(pool: pg.Pool, limit = 25): Promise<Hri
      ORDER BY next_sync_at ASC LIMIT $1`,
     [limit],
   );
-  return rows;
+  return rows.map((r) => openConnectionTokens(r));
 }
 
 /** External grant ids already imported for this valuation (idempotency). */
