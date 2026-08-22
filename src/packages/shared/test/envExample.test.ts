@@ -137,6 +137,37 @@ function used(): Map<string, string[]> {
     if (file.endsWith('flags.ts')) {
       for (const m of text.matchAll(/^\s+env:\s*['"]([A-Z][A-Z0-9_]{2,})['"]/gm)) note(m[1]!, rel);
     }
+    // The at-rest key ring: `keyRing(env, KEY_NAMES)` / `keyRing(env, ['FOO'])`.
+    //
+    // Three subsystems seal something at rest — document blobs, TOTP seeds, and
+    // the OAuth tokens and webhook secrets belonging to somebody else — and
+    // since the envelope was factored out (round 95) not one of their key names
+    // appears next to a read. The name is an element of a `KEY_NAMES` array, or
+    // an inline array argument, and `env[name]` happens a file away in
+    // `keyRing`. Every idiom above is blind to that, in *both* directions:
+    // `MFA_ENCRYPTION_KEY` and `CONNECTION_ENCRYPTION_KEY` were undocumented
+    // and invisible, and `DOCUMENTS_ENCRYPTION_KEY` — which had been read as
+    // `process.env.DOCUMENTS_ENCRYPTION_KEY` until the refactor — turned into a
+    // documented variable that nothing appeared to read, which is what the
+    // second test below started failing on.
+    //
+    // The `_PREVIOUS` partner is noted with it because `keyRing` derives that
+    // name rather than being given it: it is read from `env` and can therefore
+    // never be seen by a scan for literals, and it is the half an operator most
+    // needs the contract to mention — a key that cannot be rotated after it
+    // leaks is a key that cannot be rotated when it matters.
+    for (const m of text.matchAll(/\bkeyRing\(\s*[A-Za-z_$][\w$]*\s*,\s*(\[[^\]]*\]|[A-Za-z_$][\w$]*)/g)) {
+      const arg = m[1]!;
+      const list = arg.startsWith('[')
+        ? arg
+        : // A module constant: `const KEY_NAMES = ['A', 'B'] as const;`
+          (text.match(new RegExp(`\\b${arg}\\s*=\\s*(\\[[^\\]]*\\])`))?.[1] ?? '');
+      for (const n of list.matchAll(/["']([A-Z][A-Z0-9_]{2,})["']/g)) {
+        note(n[1]!, rel);
+        note(`${n[1]!}_PREVIOUS`, rel);
+      }
+    }
+
     // The Vite build's client-visible list, which reads `env[name]` in a loop.
     if (file.endsWith('vite.config.ts')) {
       const start = text.indexOf('const names = [');
@@ -199,6 +230,12 @@ describe('.env.example is the deployment contract', () => {
     expect(names.has('TAVILY_API_KEY')).toBe(true); // provider lookup table
     expect(names.has('CALENDLY_URL')).toBe(true); // Vite clientEnv list
     expect(names.has('METRICS_TOKEN')).toBe(true); // name held in an _ENV constant
+    // The key ring, both halves: a name from a KEY_NAMES array and the
+    // `_PREVIOUS` partner keyRing derives rather than is given.
+    expect(names.has('CONNECTION_ENCRYPTION_KEY')).toBe(true);
+    expect(names.has('MFA_ENCRYPTION_KEY_PREVIOUS')).toBe(true);
+    // The inline-array form, `keyRing(env, ['DOCUMENTS_ENCRYPTION_KEY'])`.
+    expect(names.has('DOCUMENTS_ENCRYPTION_KEY')).toBe(true);
     expect(names.size).toBeGreaterThan(50);
   });
 
