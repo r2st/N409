@@ -9,6 +9,21 @@ recommends; it implements nothing.
 
 ---
 
+> **This is a snapshot from 2026-07-20, not a backlog.** A month of hardening rounds has
+> closed a large share of what follows, and nothing here was rewritten as items shipped —
+> so a finding below is a description of the code *as it was on that date* and has to be
+> checked against the code before it is acted on. R94 walked into four of them looking for
+> open work and found all four already fixed: every Fastify service sets a strict CSP and
+> the rest of the header set (B-1 P1) — `valuation` and `report` through `@fastify/helmet`,
+> `web` through `shared/securityHeaders.ts` — the document download carries `nosniff`, login
+> timing is equalised through `verifyPasswordOrDecoy`, and uploads are magic-byte checked in
+> `documents/fileType.ts`. That is a 4-for-4 hit rate on
+> already-closed findings, which is the reason for this paragraph rather than a mark against
+> any one entry.
+>
+> `REVISION` is the record of what actually shipped. Where the two disagree, `REVISION` is
+> the one written afterwards.
+
 ## Executive summary
 
 The platform is **well-engineered**. The TypeScript backend is disciplined: every SQL
