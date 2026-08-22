@@ -2604,3 +2604,112 @@
 #            sweep and the organization delete is not one of them — it is not
 #            valuation-scoped. It had no tests at all before this round; it has
 #            seven.
+
+# commit:    fd6f83c
+# subject:   the service that had been deployed for nothing, and the bound that went with it
+# previous:  69d9b8f (what a capped entity list does to the anchor check).
+# includes:  2 commits — R98, which spent the whole round on the gap R97 left:
+#            a PDF render blocks the valuation service's event loop for its
+#            whole duration, and the unit built to hold that work somewhere else
+#            had been deployed, healthy and idle since M2.
+#
+#            05c1936 — the offload. `renderReportPdf` is pdfkit laying out a
+#              whole 409A, and pdfkit is synchronous: the `await` in front of it
+#              yields once, at the end. R97 measured what that costs — a 5ms
+#              interval timer fires zero times across a 103ms local render, and
+#              the box logs 436–661ms for the public sample — so for half a
+#              second the API serves nobody: not a health probe, not an SSE
+#              heartbeat, not the requests queued behind it.
+#
+#              Four routes (report.pdf, the sample, the receipt, the invoice)
+#              now reach the renderer through `clients/reportRender.ts`, which
+#              POSTs the document to 3004. Only their import line changed; the
+#              module is a drop-in for the library function, which is what kept
+#              a change to the platform's core deliverable down to four lines of
+#              routing and one call in the composition root.
+#
+#              `REPORT_URL` defaults to loopback rather than being optional, and
+#              that is the decision worth recording rather than the plumbing. A
+#              performance fix that only takes effect once somebody remembers to
+#              add a line to `/opt/N409/.env` is a fix that stays off, and
+#              config living only on the host is this platform's recurring
+#              defect (R88). Defaulting it on is safe because the fallback is
+#              the point: every way the hop can fail — refused connection, our
+#              own deadline, a 4xx, a 5xx, a 200 whose first five bytes are not
+#              `%PDF-` — renders in-process instead, which is what every commit
+#              before this one did unconditionally. The report unit is a latency
+#              dependency and never an availability one, which is also why it is
+#              deliberately absent from valuation's `/ready`: probing a
+#              dependency the service can do without would take a slower process
+#              out of rotation entirely, manufacturing the outage it reports.
+#
+#              A fallback nobody can see becomes permanent, so
+#              `report_render_total{mode,reason}` says where each render
+#              happened. The reason worth watching is `rejected`: `RenderBody`
+#              carries caps the library has none of, so a report that outgrows
+#              one is a 422 — and a 422 produces correct bytes from the local
+#              renderer while the offload silently stops. `reportOffload.test.ts`
+#              answers that at build time by putting the real sample payload
+#              through the real schema, and round-trips it through a real report
+#              app asserting the delegated bytes equal the local ones exactly.
+#
+#              One bug fell out of writing it: wrapping a fetch failure without
+#              carrying its `cause` classifies ECONNREFUSED as `unclassified`,
+#              which CircuitBreaker treats as permanent and does not count. The
+#              breaker would never have opened, and a dead report unit would
+#              have cost a connection attempt on every render for as long as it
+#              stayed down.
+#
+#            fd6f83c — the bound the offload had quietly removed. In-process
+#              rendering was self-limiting in a way nobody designed: pdfkit is
+#              synchronous, so N simultaneous downloads rendered strictly one at
+#              a time and the process could not accept new work while one ran.
+#              Delegating removes exactly that, which is the point, so N
+#              downloads now arrive at 3004 as N concurrent requests.
+#
+#              Measured on the report service rather than argued: 116MB idle,
+#              and about 10MB of retained working set per concurrent render
+#              while it waits its turn — 326MB at 12, 407MB at 24. The renders
+#              still serialize, one Node thread, so wall time is linear and the
+#              extra concurrency buys no throughput whatever; it buys only
+#              memory. Against 3.8GB of host with 2.4GB in use, swap already
+#              touched, and no `MemoryMax` on any unit in this estate, that is
+#              the OOM candidate.
+#
+#              Four in flight, twelve more may wait, and past that the request
+#              renders here and counts `queue_full`. The unpleasant end of that
+#              trade is chosen deliberately: it blocks this loop once — the
+#              pre-R98 behaviour, bounded and survivable — where queueing
+#              without limit converts memory into an OOM and refusing fails the
+#              download of a document a client has paid for. One 30s budget
+#              covers the queue wait and the request together, because four
+#              slots stuck on an unresponsive service would otherwise hand each
+#              queued render a fresh deadline of its own.
+#
+# method:    the round had its finding handed to it, so the work was in the two
+#            questions the gap did not ask. The first was what the fallback is
+#            for: not resilience in the abstract, but the specific refusal to
+#            let the deliverable acquire a new way to fail — which then decides
+#            the readiness check, the default, and what a 422 means. The second
+#            only appears after the change is written: an optimisation that
+#            removes a bottleneck removes whatever that bottleneck was
+#            incidentally bounding, and here the blocked event loop had been the
+#            only admission control the renderer had. Both halves were measured
+#            on the running services rather than reasoned about — the /health
+#            latency under concurrent renders before and after, and the report
+#            unit's RSS at 1, 4, 12 and 24 concurrent.
+#
+# gap:       the estate sets no memory limit on any unit, which was harmless
+#            while every process was small and is now one process away from
+#            mattering: the report service's working set is proportional to how
+#            many renders are in flight, and the host has ~900MB free with swap
+#            already touched. `MemoryMax` on that unit alone would be
+#            inconsistent and would trade an OOM for a kill — the honest version
+#            is a decision about all nine units, and it wants its own round.
+#
+# note:      the authenticated PDF routes are already bounded per principal by
+#            the weighted cost budget (`domain/requestCost.ts`, `.pdf` = 10 of
+#            HEAVY_RATE_LIMIT_PER_MIN=200), so one user reaches about 20 renders
+#            a minute against a delegated capacity near 170. Checked rather than
+#            assumed, because the queue above only degrades gracefully if
+#            nothing can drive it to the ceiling on its own.
