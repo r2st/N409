@@ -11,15 +11,17 @@ const here = path.dirname(fileURLToPath(import.meta.url));
  * The HTTP contract against the library it wraps.
  *
  * This service exists so a PDF render can happen somewhere other than the
- * process serving the API. Nothing in this repository crosses that boundary —
- * the valuation service imports `@n409/report/pdf` and renders in-process — so
- * a field added to `ReportPdfInput` and not to `RenderBody` breaks no test and
- * no caller here. It breaks whoever first uses the service the way the
- * deployment document describes it, and it breaks them silently: zod strips
- * what it was not told about, so the render succeeds and the field is simply
- * not in the document.
+ * process serving the API, and since round 98 that is what happens: the
+ * valuation service POSTs here rather than laying out a 409A on its own event
+ * loop (`clients/reportRender.ts`). A field added to `ReportPdfInput` and not
+ * to `RenderBody` is therefore now a live defect rather than a latent one — and
+ * still a silent one, in two layers. Zod strips what it was not told about, so
+ * the render succeeds with the field simply absent from the document; and the
+ * caller's fallback means that even a *rejected* payload produces correct bytes
+ * from the in-process renderer, so the only symptom of a drifted contract is
+ * that the offload stopped happening.
  *
- * Two had drifted. `branding` had been absent since white-labelling shipped, so
+ * Two had drifted before anything crossed. `branding` had been absent since white-labelling shipped, so
  * a partner's report would have come back in the platform's own livery. And
  * `watermark` — the diagonal DRAFT stamp added in R92 precisely because an
  * unmarked draft is forwarded to auditors and filed in data rooms as final —
@@ -29,6 +31,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
  *
  * The census is a source scan of the interface rather than a list, so the next
  * field is caught the day it is added rather than the day somebody needs it.
+ * Its opposite number lives with the caller: `reportOffload.test.ts` in the
+ * valuation service puts a real report's payload through this schema, which is
+ * what catches a *cap* being too tight rather than a field being missing.
  */
 function libraryFields(): string[] {
   const src = readFileSync(path.join(here, '../src/pdf.ts'), 'utf8');

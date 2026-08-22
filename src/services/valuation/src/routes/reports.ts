@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
-import { renderReportPdf, type ReportPdfSection, type ReportPdfSummary } from '@n409/report/pdf';
+import type { ReportPdfSection, ReportPdfSummary } from '@n409/report/pdf';
+import { renderReportPdf } from '../clients/reportRender.js';
 import { canEditWorkingData, canReadReport, canReadValuation } from '../auth/rbac.js';
 import {
   contentFromManagedTemplate,

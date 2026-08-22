@@ -24,6 +24,18 @@ and should be treated as **unused** until a migration is actually planned.
   Docker on the server. `docker-compose.yml` is for **local dev only**.
 - Caddy terminates TLS for `n409.aiknol.com` and reverse-proxies to `:3000`
   (`infra/caddy/`). Only the web service faces the internet.
+- Request flow: browser → Caddy → `web` → `valuation`, and `valuation` →
+  `ai` / `engine-wrapper` / `report`. The last of those three was aspirational
+  until round 98 — `n409-report` had run since M2 serving nothing but `/health`
+  while the valuation service rendered every PDF in-process — and is now real:
+  `REPORT_URL` (default `http://127.0.0.1:3004`) sends the document to 3004 so
+  that a 400–700ms pdfkit layout does not block the API's event loop.
+  `REPORT_URL=` takes the hop back out. **A report unit that is down is not an
+  outage:** the caller falls back to rendering in-process, which is what it did
+  before. Confirm which is happening with
+  `curl -H "authorization: Bearer $METRICS_TOKEN" localhost:3001/metrics | grep report_render_total`
+  — a rising `mode="local"` with a `reason` other than `not_configured` means
+  the offload is failing and nothing else will say so.
 - Unit files: `infra/systemd/*.service` and `infra/backup/*.{service,timer}`.
   **`deploy.sh` installs these** (via `infra/install-units.sh`) on every deploy:
   it copies any that differ from the checkout into `/etc/systemd/system/`,

@@ -2,7 +2,7 @@ import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { ApiProblem, isUlid, problems } from '@n409/shared';
-import { renderReportPdf } from '@n409/report/pdf';
+import { renderReportPdf } from '../clients/reportRender.js';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { receiptSections } from '../domain/billing.js';
 import {

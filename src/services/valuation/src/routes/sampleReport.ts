@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { renderReportPdf } from '@n409/report/pdf';
 import { problems } from '@n409/shared';
 import { VALUATION_KINDS } from '../domain/valuation.js';
 import { sampleReportOutline } from '../domain/sampleReport.js';
 import { SAMPLE_FIGURES, SAMPLE_NOTICE, sampleReportPdfInput } from '../domain/sampleReportPdf.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
+import { renderReportPdf } from '../clients/reportRender.js';
 
 /**
  * "See a sample report" (`/sample-report`). Public: it is the page that shows

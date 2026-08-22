@@ -19,9 +19,15 @@ import { renderReportPdf, verifyFontAssets } from './pdf.js';
 
 /**
  * Report service (M2): stateless PDF rendering for valuation reports.
- * Persistence (reports/report_versions) lives with the valuation service,
- * which renders in-process via the `@n409/report/pdf` library; this HTTP
- * surface serves other consumers and keeps rendering independently scalable.
+ * Persistence (reports/report_versions) lives with the valuation service; this
+ * is where its renders happen.
+ *
+ * Round 98 gave this surface its first caller. Until then the valuation service
+ * imported `@n409/report/pdf` and laid out every 409A on its own event loop —
+ * 436–661ms on the deployed box during which the API served nobody — while this
+ * unit sat deployed and idle, answering health probes. The library import remains, and
+ * is the caller's fallback: a render that cannot happen here still happens
+ * there, so this service is a latency dependency and never an availability one.
  */
 
 const ChartPoint = z.object({
@@ -73,11 +79,16 @@ const SummaryFigure = z.object({
  * The wire contract for `POST /render/v1/pdf`.
  *
  * Exported so `renderContract.test.ts` can hold it against `ReportPdfInput`.
- * The two had drifted by two fields — `branding` and `watermark` — because
- * nothing in this repository crosses the boundary: the valuation service
- * renders through the library, so a field added to the library and not to this
- * schema breaks no test and no caller, and is discovered by whoever first uses
- * the service as documented.
+ * The two had drifted by two fields — `branding` and `watermark` — over the
+ * years when nothing in this repository crossed the boundary and a field added
+ * to the library but not to this schema therefore broke no test and no caller.
+ *
+ * The valuation service crosses it now, which changes what a drift costs but
+ * not how quiet it is. The caps here are the half worth watching: they are
+ * tighter than the library's (which has none), so a report that outgrows one is
+ * a 422, and the caller answers a 422 by rendering in-process — correct bytes,
+ * and the offload silently stops happening. Before tightening any number below,
+ * see `reportOffload.test.ts`, which puts a real report through this schema.
  */
 export const RenderBody = z.object({
   title: z.string().min(1).max(300),

@@ -146,6 +146,7 @@ import type { QueryStats } from './db/queryStats.js';
 import type { PoolHealth } from './db/poolHealth.js';
 import { clamdScanner, type ScanPolicy } from './documents/virusScan.js';
 import { probeReady, setNetworkSink } from './clients/internal.js';
+import { configureReportRenderer, registerReportRenderMetrics } from './clients/reportRender.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 
 export interface AppDeps {
@@ -300,6 +301,17 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     done();
   });
 
+  // Point the PDF renderer at the report unit, if there is one configured.
+  // Set here for the same reason `setNetworkSink` below is: the four routes
+  // that produce a PDF reach the renderer through helpers that are themselves
+  // called from three more files, and widening all of those signatures to carry
+  // a URL and a logger would be a lot of plumbing for a call that is made once.
+  //
+  // `config.REPORT_URL` defaults to loopback, so this is on after a redeploy
+  // with nothing to remember; `REPORT_URL=` in the environment file takes it
+  // back out of the path without a build. See clients/reportRender.ts.
+  configureReportRenderer(config.REPORT_URL, app.log);
+
   // Persist every engagement-scoped engine/AI call (409.ai §11, migration
   // 0127). Set here rather than passed through the twelve route modules that
   // make such calls: the client is a JSON HTTP client, and giving it a database
@@ -402,11 +414,20 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       },
       ai: () => probeReady('ai', config.AI_URL, { fetchFn: deps.readinessFetch }),
       engine: () => probeReady('engine', config.ENGINE_URL, { fetchFn: deps.readinessFetch }),
-      // The 409A PDF is rendered here, in-process (`@n409/report/pdf`), not by
-      // the report unit — so the font assets that render depends on are this
-      // service's dependency as much as Postgres is, and are checked here for
-      // the same reason the AI and engine probes are: readiness that covers
-      // only the connections misses the deliverable.
+      // The 409A PDF is rendered on the report unit when `REPORT_URL` is set,
+      // and in this process whenever that hop fails — so the font assets are
+      // still this service's dependency, checked here for the same reason the
+      // AI and engine probes are: readiness that covers only the connections
+      // misses the deliverable.
+      //
+      // Note what is deliberately *not* here: a probe of the report service.
+      // Every other internal dependency in this list is one this service cannot
+      // do without, which is what makes an unready upstream worth refusing
+      // traffic over. The report unit is not: `clients/reportRender.ts` falls
+      // back to rendering here, so a report unit that is down costs latency and
+      // nothing else. Probing it would take a service that is merely slower out
+      // of the load balancer entirely — a readiness check that manufactures the
+      // outage it is reporting.
       fonts: async () => verifyFontAssets(),
     },
   });
@@ -633,6 +654,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     'Open per-valuation SSE connections',
     () => hub.stats().total,
   );
+  // Where PDF renders actually happen. `mode="local"` with a failure reason is
+  // the signal that the offload has stopped working and this process is back to
+  // blocking its event loop for half a second per report — a regression with no
+  // other symptom, because the fallback keeps producing correct bytes.
+  registerReportRenderMetrics(metricsRegistry);
   registerMetricsEndpoint(app, { registry: metricsRegistry, service: 'valuation' });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });

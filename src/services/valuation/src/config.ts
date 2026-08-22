@@ -63,6 +63,30 @@ const Env = z.object({
   // M1 core pipeline — internal service URLs + document storage
   AI_URL: z.string().url().default('http://127.0.0.1:3002'),
   ENGINE_URL: z.string().url().default('http://127.0.0.1:3003'),
+  /**
+   * The report service, which renders the 409A PDF so that this process does
+   * not (`clients/reportRender.ts`).
+   *
+   * Defaulted rather than left optional, and that is the decision worth
+   * recording. A pdfkit render is half a second of blocked event loop on the
+   * deployed box, the unit that exists to absorb it has been running and idle
+   * since M2, and a fix that only takes effect once somebody remembers to add a
+   * line to `/opt/N409/.env` is a fix that stays off — config living only on
+   * the host is this platform's recurring defect, not a hypothetical one. The
+   * loopback default means a redeploy turns it on with nothing to remember and
+   * no systemd unit to reinstall.
+   *
+   * Safe to default because there is nothing to lose by trying: every failure
+   * of the delegated path — refused connection, timeout, rejection, an answer
+   * that is not a PDF — falls back to rendering here, which is what every
+   * commit before this one did unconditionally.
+   *
+   * The empty string is the off switch, which is why this is a union rather
+   * than a plain `.url()`: `REPORT_URL=` has to mean "render in-process" rather
+   * than fail the boot, so an operator can take the offload out of the path
+   * during an incident with an edit and a restart.
+   */
+  REPORT_URL: z.union([z.literal(''), z.string().url()]).default('http://127.0.0.1:3004'),
   // Shared secret sent as X-Internal-Token on every AI/engine call (audit
   // B-1 P0). Both Python services enforce it when set; leave unset in local
   // dev where the services also skip the check.
