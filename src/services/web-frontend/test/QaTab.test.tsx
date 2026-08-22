@@ -56,6 +56,52 @@ describe('QaTab (quality gate §4.3)', () => {
     vi.restoreAllMocks();
   });
 
+  /**
+   * The gate refuses a publish whose report body was saved after the review
+   * that would otherwise clear it, and this banner is the only place an analyst
+   * is told whether the engagement can publish. A banner reading "gate
+   * satisfied" over a gate returning 409 is worse than no banner.
+   *
+   * Said in its own words, too: "run a QA review" is the wrong instruction
+   * here. There is one — it graded prose that is no longer in the document.
+   */
+  it('says the body moved, not that a review is missing', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      jsonResponse({
+        reviews: [{ ...REVIEW, report_version: 3 }],
+        latest_calculation_id: 'calc-1',
+        report_version: 4,
+        gate: { satisfied: false, review_id: REVIEW.id, status: 'warn', body_stale: true },
+      }),
+    );
+    renderTab();
+
+    const banner = await screen.findByTestId('qa-gate-banner');
+    expect(banner).toHaveTextContent(/NOT satisfied/);
+    expect(banner).toHaveTextContent(/report body has been edited since the last QA review/);
+    expect(banner).not.toHaveTextContent(/needs a non-failing QA review/);
+    expect(screen.getByText('stale — reviews an older report body')).toBeInTheDocument();
+  });
+
+  it('does not call a review stale when the body has not moved', async () => {
+    // The vacuity guard: a pill that showed on every review would carry no
+    // information, and `report_version` null on both sides is the shape a
+    // pre-migration review takes.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      jsonResponse({
+        reviews: [{ ...REVIEW, report_version: 4 }],
+        latest_calculation_id: 'calc-1',
+        report_version: 4,
+        gate: { satisfied: true, review_id: REVIEW.id, status: 'warn', body_stale: false },
+      }),
+    );
+    renderTab();
+
+    const banner = await screen.findByTestId('qa-gate-banner');
+    expect(banner).toHaveTextContent(/satisfied/);
+    expect(screen.queryByText('stale — reviews an older report body')).not.toBeInTheDocument();
+  });
+
   it('shows an unsatisfied gate and runs the checks', async () => {
     let posted = false;
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {

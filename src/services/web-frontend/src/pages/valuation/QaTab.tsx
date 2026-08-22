@@ -30,6 +30,8 @@ interface AiFinding {
 interface QaReview {
   id: string;
   calculation_id: string;
+  /** The report version this review graded; null for one filed before it was recorded. */
+  report_version: number | null;
   status: QaStatus;
   checks: QaCheck[];
   ai_findings: { findings?: AiFinding[]; assessment?: string; verdict?: string } | null;
@@ -40,7 +42,14 @@ interface QaReview {
 interface QaResponse {
   reviews: QaReview[];
   latest_calculation_id: string | null;
-  gate: { satisfied: boolean; review_id: string | null; status: QaStatus | null };
+  report_version: number | null;
+  gate: {
+    satisfied: boolean;
+    review_id: string | null;
+    status: QaStatus | null;
+    /** The report body has been saved since the review that would otherwise clear it. */
+    body_stale: boolean;
+  };
 }
 
 const STATUS_STYLES: Record<QaStatus | 'info', string> = {
@@ -133,7 +142,12 @@ export function QaTab() {
           ? 'No completed calculation yet — QA opens once the first calculation succeeds.'
           : data.gate.satisfied
             ? `Publish gate satisfied — the latest calculation has a ${data.gate.status} review.`
-            : 'Publish gate NOT satisfied — the latest calculation needs a non-failing QA review before this valuation can publish.'}
+            : data.gate.body_stale
+              ? // The review passed and the calculation has not moved; the report body has.
+                // Said separately because "run a QA review" is the wrong instruction here —
+                // there is one, it just graded prose that is no longer in the document.
+                'Publish gate NOT satisfied — the report body has been edited since the last QA review. Re-run the checks so the review covers the document that would be delivered.'
+              : 'Publish gate NOT satisfied — the latest calculation needs a non-failing QA review before this valuation can publish.'}
       </div>
 
       <div className="flex gap-2">
@@ -170,6 +184,12 @@ export function QaTab() {
                 stale — reviews an older calculation
               </span>
             )}
+            {data.report_version !== null &&
+              (latest.report_version === null || data.report_version > latest.report_version) && (
+                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 ring-inset">
+                  stale — reviews an older report body
+                </span>
+              )}
           </div>
 
           <table className="w-full text-left text-sm">

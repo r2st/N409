@@ -242,19 +242,35 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     requireOps(principal);
     const { id } = req.params as { id: string };
     await loadValuation(id);
-    const [reviews, calculation] = await Promise.all([
+    const [reviews, calculation, report] = await Promise.all([
       listQaReviews(deps.pool, id),
       latestSucceededCalculation(deps.pool, id),
+      findReportByValuation(deps.pool, id),
     ]);
     // Which review (if any) currently satisfies the publish gate.
     const current = calculation ? (reviews.find((r) => r.calculation_id === calculation.id) ?? null) : null;
+    /*
+     * The body rule, reported here as well as enforced in `assertPublishGate`.
+     *
+     * This banner is the only place an analyst is told whether the engagement
+     * can publish, and a banner that says "gate satisfied" over a gate that
+     * returns 409 is worse than no banner. The two readings are deliberately
+     * the same expression as rule 3 there — a report that exists, and a review
+     * that either does not say which body it graded or graded an older one.
+     */
+    const bodyStale =
+      report !== null &&
+      current !== null &&
+      (current.report_version === null || report.current_version > current.report_version);
     return {
       reviews,
       latest_calculation_id: calculation?.id ?? null,
+      report_version: report?.current_version ?? null,
       gate: {
-        satisfied: calculation ? current !== null && current.status !== 'fail' : true,
+        satisfied: calculation ? current !== null && current.status !== 'fail' && !bodyStale : true,
         review_id: current?.id ?? null,
         status: current?.status ?? null,
+        body_stale: bodyStale,
       },
     };
   });
