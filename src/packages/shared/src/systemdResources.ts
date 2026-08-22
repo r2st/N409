@@ -98,7 +98,7 @@ export function parseMemorySize(raw: string): MemorySize {
   if (/^\d+(\.\d+)?%$/.test(text)) return { raw: text, bytes: null, kind: 'percent' };
   const match = /^(\d+)\s*([A-Za-z]*)$/.exec(text);
   if (!match) return { raw: text, bytes: null, kind: 'unparseable' };
-  const suffix = (match[2] ?? '').toUpperCase();
+  const suffix = match[2]!.toUpperCase();
   const factor = SUFFIXES[suffix];
   if (factor === undefined) return { raw: text, bytes: null, kind: 'unparseable' };
   return { raw: text, bytes: Number(match[1]) * factor, kind: 'bytes' };
@@ -127,7 +127,7 @@ export function parseUnitMemory(text: string): UnitMemory {
     if (trimmed === '' || trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
     const sectionMatch = /^\[(.+)\]$/.exec(trimmed);
     if (sectionMatch) {
-      section = sectionMatch[1] ?? '';
+      section = sectionMatch[1]!;
       continue;
     }
     if (section !== 'Service') continue;

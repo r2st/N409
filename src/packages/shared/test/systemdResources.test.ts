@@ -58,6 +58,14 @@ describe('parseMemorySize', () => {
     expect(parseMemorySize('20%').kind).toBe('percent');
     expect(parseMemorySize('lots').kind).toBe('unparseable');
   });
+
+  // A number with a suffix systemd has no meaning for. Reading it as bytes and
+  // dropping the suffix would turn `512Mib` — a plausible typo — into 512
+  // bytes, which is a ceiling that kills the service on its first allocation.
+  it('refuses a number with a suffix systemd does not know', () => {
+    expect(parseMemorySize('512Mib').kind).toBe('unparseable');
+    expect(parseMemorySize('12XYZ').bytes).toBeNull();
+  });
 });
 
 describe('parseUnitMemory', () => {
@@ -90,8 +98,37 @@ describe('parseUnitMemory', () => {
     expect(parsed.max).toBeNull();
   });
 
+  // systemd's reset applies to every directive, not just the one that happened
+  // to be tested. A `MemoryAccounting=` cleared by a drop-in and read as `no`
+  // would disarm every limit in the unit while reporting a fault about it.
+  it('applies the reset rule to each directive it reads', () => {
+    const parsed = parseUnitMemory(
+      [
+        '[Service]',
+        'Type=oneshot',
+        'Type=',
+        'MemoryAccounting=no',
+        'MemoryAccounting=',
+        'MemoryHigh=192M',
+        'MemoryHigh=',
+        'MemorySwapMax=64M',
+        'MemorySwapMax=',
+        '',
+      ].join('\n'),
+    );
+    expect(parsed).toEqual({ type: null, accounting: null, high: null, max: null, swapMax: null });
+  });
+
   it('takes the last assignment when a directive repeats', () => {
     const parsed = parseUnitMemory('[Service]\nMemoryMax=256M\nMemoryMax=512M\n');
+    expect(parsed.max?.bytes).toBe(512 * 1024 ** 2);
+  });
+
+  // systemd drops a [Service] line with no `=` and logs a warning. Reading it
+  // as a directive with an empty value would make it a reset, so a stray word
+  // in a unit file would silently clear a ceiling.
+  it('ignores a line with no assignment rather than reading it as a reset', () => {
+    const parsed = parseUnitMemory('[Service]\nMemoryMax=512M\nMemoryMax\n');
     expect(parsed.max?.bytes).toBe(512 * 1024 ** 2);
   });
 });
@@ -148,6 +185,30 @@ describe('memoryLimitFaults', () => {
     }
   });
 
+  it('rejects a value systemd itself would not read', () => {
+    const faults = memoryLimitFaults(
+      parseUnitMemory('[Service]\nMemoryHigh=192M\nMemoryMax=lots\nMemorySwapMax=64M\n'),
+    );
+    expect(faults.join('\n')).toContain('not a size systemd will read');
+  });
+
+  // The estate writes a quarter of the RAM ceiling. The check is at a half so
+  // that a considered exception need not argue with the rule, and refuses the
+  // shape with no defence: a swap allowance in the region of the RAM ceiling
+  // lets a service run mostly paged out and answer every probe, slowly.
+  it('rejects a swap allowance in the region of the RAM ceiling', () => {
+    const faults = memoryLimitFaults(
+      parseUnitMemory('[Service]\nMemoryHigh=192M\nMemoryMax=256M\nMemorySwapMax=256M\n'),
+    );
+    expect(faults.join('\n')).toContain('run largely paged out');
+  });
+
+  it('allows the quarter the estate actually writes', () => {
+    expect(
+      memoryLimitFaults(parseUnitMemory('[Service]\nMemoryHigh=384M\nMemoryMax=512M\nMemorySwapMax=128M\n')),
+    ).toEqual([]);
+  });
+
   // The one that would make every other check in this file vacuous: the
   // directives stay in the file, read as a decision, and are not enforced.
   it('rejects MemoryAccounting=no, which disarms every limit above it', () => {
@@ -161,6 +222,14 @@ describe('estateCeiling', () => {
     const body = `[Service]\n${type ? `Type=${type}\n` : ''}MemoryMax=${max}\nMemorySwapMax=${swap}\n`;
     return { unit: name, resources: parseUnitMemory(body) };
   }
+
+  // A unit with no ceilings contributes nothing to the sum rather than NaN.
+  // The fault for having none is `memoryLimitFaults`' job, and a NaN total
+  // here would make the estate check report on every unit's behalf instead.
+  it('contributes nothing for a unit that declares no ceiling', () => {
+    const bare: UnitCeiling = { unit: 'bare.service', resources: parseUnitMemory('[Service]\n') };
+    expect(estateCeiling([bare]).totalBytes).toBe(0);
+  });
 
   it('counts RAM and swap together, because a unit at both is holding both', () => {
     const { totalBytes } = estateCeiling([unit('a.service', '256M', '64M')]);

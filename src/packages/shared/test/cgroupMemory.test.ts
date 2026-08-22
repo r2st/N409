@@ -123,6 +123,43 @@ describe('readCgroupMemory', () => {
     expect(m.peak).toBeNull();
     expect(m.max).toBe(512 * 1024 ** 2);
   });
+
+  // An empty file is not a zero. cgroup pseudo-files are normally never empty,
+  // but a read racing a cgroup being torn down can come back with nothing, and
+  // reporting that as `0 bytes in use` would be a measurement invented from an
+  // absence.
+  it('reads an empty limit file as null, not as zero', () => {
+    const files = { ...HOST, '/sys/fs/cgroup/system.slice/n409-report.service/memory.high': '\n' };
+    expect(readCgroupMemory({ readFile: reader(files) })!.high).toBeNull();
+  });
+
+  // Not a number and not `max`. Nothing should ever write this, and reading it
+  // through `Number()` unguarded would put a NaN in a gauge — which poisons the
+  // whole scrape, not just this series.
+  it('reads an unparseable value as null rather than as NaN', () => {
+    const files = {
+      ...HOST,
+      '/sys/fs/cgroup/system.slice/n409-report.service/memory.current': 'unexpected\n',
+    };
+    expect(readCgroupMemory({ readFile: reader(files) })!.current).toBeNull();
+  });
+
+  it('honours an alternative cgroup mount point', () => {
+    const files = {
+      '/proc/self/cgroup': '0::/system.slice/n409-report.service\n',
+      '/elsewhere/system.slice/n409-report.service/memory.current': '42\n',
+    };
+    const m = readCgroupMemory({ readFile: reader(files), root: '/elsewhere' })!;
+    expect(m.current).toBe(42);
+  });
+
+  // With no injected reader it goes to the real filesystem. On a developer
+  // machine that is a missing /proc and a null; on Linux it is this process's
+  // own cgroup. Either is fine — what must not happen is a throw, because the
+  // registration below calls this during app construction.
+  it('does not throw when reading the real filesystem', () => {
+    expect(() => readCgroupMemory()).not.toThrow();
+  });
 });
 
 describe('registerCgroupMemoryMetrics', () => {
@@ -149,6 +186,24 @@ describe('registerCgroupMemoryMetrics', () => {
     expect(events.map((e) => e.labels.event)).toEqual([...CGROUP_MEMORY_EVENTS]);
     expect(events.find((e) => e.labels.event === 'high')?.value).toBe(3);
     expect(events.find((e) => e.labels.event === 'max')?.value).toBe(1);
+  });
+
+  // A kernel that does not carry every name — `oom_group_kill` and
+  // `sock_throttled` are recent — must still produce the full series set, or a
+  // dashboard's query breaks on a kernel upgrade rather than on a change here.
+  it('reports zero for an event this kernel does not name', () => {
+    const files = {
+      ...HOST,
+      '/sys/fs/cgroup/system.slice/n409-report.service/memory.events': 'low 0\nhigh 3\n',
+    };
+    const registry = sink();
+    registerCgroupMemoryMetrics(registry, { readFile: reader(files) });
+    const events = registry.read('n409_cgroup_memory_events') as {
+      value: number;
+      labels: { event: string };
+    }[];
+    expect(events.map((e) => e.labels.event)).toEqual([...CGROUP_MEMORY_EVENTS]);
+    expect(events.find((e) => e.labels.event === 'oom_kill')?.value).toBe(0);
   });
 
   // Zero, not absent. A ceiling of zero is impossible, so the value is
