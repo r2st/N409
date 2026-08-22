@@ -1,5 +1,12 @@
 import type { ReportPdfInput, ReportPdfSection, ReportPdfSummary } from '@n409/report/pdf';
-import { DISCOUNT_RATE_SCHEDULE, instantiateTemplate, templateForKind, visibleSections } from './report.js';
+import {
+  DISCOUNT_RATE_SCHEDULE,
+  instantiateTemplate,
+  templateForKind,
+  visibleSections,
+  type ReportContent,
+  type ReportTemplate,
+} from './report.js';
 import { resolveExhibitReferences } from './reportExhibitIndex.js';
 import { resolveSignatures } from './reportSignatures.js';
 import { SCHEDULE } from './reportExhibits.js';
@@ -109,6 +116,18 @@ const DLOM = 0.275;
 /** No control discount: the interest appraised is already a minority one. */
 const DLOC = 0;
 
+/**
+ * The option-pricing model's own inputs.
+ *
+ * Named rather than typed inline in `sampleResults` because the Economic
+ * Outlook chapter states the interest-rate environment the risk-free rate was
+ * taken from, and the Valuation Methodology chapter states the expected time to
+ * a liquidity event. A sample whose prose says 4.2% while its allocation
+ * discounts at something else is the defect the whole of this file is arranged
+ * to make impossible.
+ */
+const OPM = { volatility: 0.62, risk_free_rate: 0.0418, time_to_exit_years: 3.5 } as const;
+
 const sum = (xs: readonly number[]) => xs.reduce((a, b) => a + b, 0);
 const discountFactor = (year: number) => 1 / (1 + DCF.wacc) ** year;
 
@@ -186,6 +205,223 @@ export const SAMPLE_FIGURES: readonly SampleFigure[] = [
 export const SAMPLE_NOTICE = 'SAMPLE — illustrative only, not a valuation opinion';
 
 /**
+ * The descriptive facts of the fabricated engagement — the ones no schedule
+ * computes.
+ *
+ * Everything with money in it is derived above; these are the things a real
+ * Company Overview states and no arithmetic can produce. Declared here rather
+ * than written into the prose so the narrative chapters cannot disagree with
+ * each other about how many people work there.
+ */
+const PROFILE = {
+  incorporated: 2021,
+  state: 'Delaware',
+  location: 'Pittsburgh, Pennsylvania',
+  headcount: 64,
+  engineers: 29,
+  customers: 22,
+  /** Share of LTM revenue billed to the three largest customers. */
+  concentration: 0.46,
+  series_a_year: 2023,
+} as const;
+
+/** Capital raised: the preference stack is 1x non-participating, so it is the money in. */
+const SERIES_A_RAISED = CAP_TABLE.find((r) => r.klass === 'Series A Preferred')!.preference;
+const SERIES_B_RAISED = CAP_TABLE.find((r) => r.klass === 'Series B Preferred')!.preference;
+
+const li = (items: readonly string[]) => `<ul>${items.map((i) => `<li>${i}</li>`).join('')}</ul>`;
+
+/**
+ * The chapters the skeleton leaves for the analyst, written for this engagement.
+ *
+ * ## Why this exists
+ *
+ * Seven chapters of the 409A skeleton are marked `authored` — their text tells
+ * whoever writes the report what belongs there rather than being the report.
+ * "Summarize the industry landscape, market size and growth, and competitive
+ * positioning." is a to-do item, and `domain/reportReview.ts` grades a
+ * deliverable still carrying one as a `fail`: there is no reading under which an
+ * instruction to the analyst is the report.
+ *
+ * The public sample was that document. It is built by instantiating the real
+ * skeleton, which is what keeps it from going stale — and instantiating the real
+ * skeleton is exactly how a chapter of instructions reaches the page. So the one
+ * 409A this product publishes to everyone, the document a prospect judges the
+ * deliverable by, was the document the product's own publish gate exists to
+ * refuse. Running `reviewReport` over it returned seven failures.
+ *
+ * ## Why an override map rather than a second skeleton
+ *
+ * A sample template of its own would drift from the real one silently, which is
+ * the failure this whole file is arranged against. Keyed overrides keep the
+ * sample tracking the skeleton chapter for chapter: the headings, the order, the
+ * closing sections and every chapter that is *meant* to ship verbatim still come
+ * from `templateForKind`. A new `authored` chapter added to the skeleton has no
+ * entry here, and `sampleReportPdf.test.ts` fails until somebody writes one —
+ * which is the same forcing function `missingBlurbs` gives the marketing page.
+ *
+ * ## Why the figures are markers and constants
+ *
+ * Same rule as everywhere above: nothing here states a number this file cannot
+ * reproduce. Calculation figures are written as the `{{markers}}` a real chapter
+ * would carry, so they resolve through `reportFigures` at render time and agree
+ * with the exhibits digit for digit; the rest are interpolated from the
+ * primitives at the top of the file. No number in this prose is typed twice.
+ */
+const SAMPLE_NARRATIVE: Readonly<Record<string, string>> = {
+  company_overview:
+    `<p><strong>{{company_name}}</strong> designs and sells autonomous mobile robots, together with the ` +
+    `fleet-management software that coordinates them, for order fulfilment inside third-party logistics ` +
+    `and grocery distribution warehouses. The company was incorporated in ${PROFILE.state} in ` +
+    `${PROFILE.incorporated} and operates from a single facility in ${PROFILE.location}. It employed ` +
+    `${PROFILE.headcount} people at the valuation date, ${PROFILE.engineers} of them in engineering.</p>` +
+    `<p>Robots are placed under multi-year subscriptions that bundle the hardware, the software and ` +
+    `on-site service into a per-robot monthly fee, so substantially all revenue is recurring and the ` +
+    `company carries the residual value of the fleet on its own balance sheet. The company had ` +
+    `${PROFILE.customers} customers under contract at the valuation date, and the three largest ` +
+    `accounted for ${formatPercent(PROFILE.concentration)} of last-twelve-months revenue of ` +
+    `${money(MARKET.ltm_revenue)}.</p>` +
+    `<p>The company has raised ${money(SERIES_A_RAISED + SERIES_B_RAISED)} across two priced preferred ` +
+    `rounds — ${money(SERIES_A_RAISED)} of Series A in ${PROFILE.series_a_year} and ` +
+    `${money(SERIES_B_RAISED)} of Series B, which closed shortly before the valuation date. Its only ` +
+    `borrowing is ${money(ADJUSTMENTS.debt)} drawn under an equipment facility.</p>`,
+
+  company_analysis:
+    `<p>Revenue Ruling 59-60 §4.01 sets out the factors to be considered in valuing the stock of a ` +
+    `closely held corporation. Each is addressed below.</p>` +
+    li([
+      `<strong>Nature and history of the business</strong> — ${PROFILE.incorporated} formation by two ` +
+        `robotics engineers; first revenue in the following year, and an unbroken record of quarter-on-` +
+        `quarter growth in contracted robots since. The subscription model was adopted at the outset and ` +
+        `has not changed, so the revenue record is comparable across the whole period.`,
+      `<strong>Economic and industry outlook</strong> — addressed in the two sections that follow.`,
+      `<strong>Book value and financial condition</strong> — book value is not indicative of value here: ` +
+        `the balance sheet carries ${money(ADJUSTMENTS.cash)} of cash and the depreciated cost of a ` +
+        `deployed fleet, and none of the enterprise value concluded below rests on tangible net assets.`,
+      `<strong>Earning capacity</strong> — the company is not yet profitable. Management's projections, ` +
+        `discussed under the income approach, reach positive free cash flow in the second forecast year ` +
+        `and were prepared on a bottom-up basis from contracted robots and the fleet deployment plan.`,
+      `<strong>Dividend-paying capacity</strong> — none. Cash generated is committed to fleet build and ` +
+        `engineering headcount for the duration of the forecast period, and the preferred stock terms ` +
+        `restrict distributions in any event.`,
+      `<strong>Goodwill and other intangible value</strong> — the fleet-coordination software, the ` +
+        `deployment data accumulated across ${PROFILE.customers} sites and the assembled engineering ` +
+        `team. These are captured in the income and market indications rather than valued separately.`,
+      `<strong>Prior sales of stock and the size of the block</strong> — the Series B round described ` +
+        `above is the most recent arm's-length transaction in the company's stock and is the ` +
+        `calibration point for the option-pricing backsolve. No secondary transactions in common stock ` +
+        `have occurred.`,
+      `<strong>Comparable companies</strong> — the guideline set is discussed under the market approach ` +
+        `and set out in <strong>Exhibit D</strong>.`,
+    ]) +
+    `<p>The specific risks a buyer of common stock would price are customer concentration at ` +
+    `${formatPercent(PROFILE.concentration)} of revenue in three accounts, competition from materially ` +
+    `better-capitalised warehouse-automation vendors, dependence on the two founding engineers, and the ` +
+    `financing required to reach the deployment scale the projections assume.</p>`,
+
+  economic_outlook:
+    `<p>Revenue Ruling 59-60 §4.01(b) requires consideration of the economic outlook in general, and the ` +
+    `condition and outlook of the specific industry in particular.</p>` +
+    `<p>At the valuation date the economy was expanding at a moderate rate with inflation close to the ` +
+    `central bank's target, and the Treasury yield curve, interpolated to the ` +
+    `${OPM.time_to_exit_years}-year expected time to a liquidity event applied in the allocation below, ` +
+    `stood at <strong>{{risk_free_rate}}</strong>. That yield is the risk-free rate used in the ` +
+    `option-pricing model, and it is stated here rather than only at the point of use because the rate ` +
+    `environment is the economic condition that bears most directly on this valuation.</p>` +
+    `<p>Private capital markets were selective rather than closed. Late-stage rounds were being priced, ` +
+    `but on longer diligence and with a clearer requirement for a route to profitability than in the ` +
+    `preceding cycle. For a company that must raise again to fund its deployment plan, that condition is ` +
+    `a risk to the equity holder and is reflected both in the discount rate applied to the projections ` +
+    `and in the discount for lack of marketability concluded below.</p>`,
+
+  industry_market:
+    `<p>Warehouse automation is the substitution of robotics for manual travel inside a fulfilment ` +
+    `centre. The addressable market is driven by labour cost and availability in distribution ` +
+    `operations rather than by discretionary technology spend, which makes demand comparatively ` +
+    `durable through a slowdown; industry sources placed the mobile-robotics segment in the low tens of ` +
+    `billions of dollars at the valuation date, growing at a mid-teens compound rate.</p>` +
+    `<p>The segment has three tiers: the integrated materials-handling incumbents, who sell automation ` +
+    `as part of a whole-facility build; a small number of scaled independents; and venture-funded ` +
+    `entrants selling into single sites. <strong>{{company_name}}</strong> is in the third tier. Its ` +
+    `position rests on the subscription model, which removes the capital decision from the customer, ` +
+    `and on retrofit deployment into existing racking rather than a facility rebuild.</p>` +
+    `<p>The guideline companies selected for the market approach traded between ` +
+    `${MARKET.peers[MARKET.peers.length - 1]!.ev_revenue.toFixed(1)}x and ` +
+    `${MARKET.peers[0]!.ev_revenue.toFixed(1)}x enterprise value to last-twelve-months revenue at the ` +
+    `valuation date. They are larger and closer to profitability than the subject; the multiple selected ` +
+    `and the basis for it are set out under the market approach and in <strong>Exhibit D</strong>.</p>`,
+
+  financial_analysis:
+    `<p>Last-twelve-months revenue to the valuation date was ${money(MARKET.ltm_revenue)}, substantially ` +
+    `all of it recurring subscription revenue. The company is not profitable: gross margin is held down ` +
+    `by fleet depreciation and on-site service, and operating expense is dominated by the engineering ` +
+    `headcount described above.</p>` +
+    `<p>Management's projections cover {{forecast_years}} years, from ${DCF.first_year} to ` +
+    `${DCF.first_year + DCF.free_cash_flow.length - 1}. Free cash flow is negative in the first ` +
+    `forecast year at ${money(DCF.free_cash_flow[0]!)} and turns positive in the second, reaching ` +
+    `${money(DCF.free_cash_flow[DCF.free_cash_flow.length - 1]!)} in the terminal forecast year. The ` +
+    `forecast is set out year by year in <strong>Exhibit C</strong>.</p>` +
+    `<p>The balance sheet at the valuation date holds ${money(ADJUSTMENTS.cash)} of cash against ` +
+    `${money(ADJUSTMENTS.debt)} of equipment borrowing. Measured against the first forecast year's ` +
+    `outflow, that cash does not fund the plan to the point at which the business becomes ` +
+    `self-financing, and management expects to raise again within the forecast period. We have taken ` +
+    `the projections as management's own and have not audited or reviewed them; the risk that they are ` +
+    `not achieved is carried in the discount rate rather than by adjusting the cash flows.</p>`,
+
+  methodology:
+    `<p>All three approaches to value were considered. The option-pricing backsolve was given primary ` +
+    `weight, the market approach secondary weight, and the income approach a low weight; the asset ` +
+    `approach was considered and rejected. The indications, the weights and the concluded equity value ` +
+    `of <strong>{{equity_value}}</strong> are set out in <strong>Exhibit B</strong>.</p>` +
+    li(
+      APPROACHES.map(
+        (a) =>
+          `<strong>${a.name}</strong> — ${formatPercent(a.weight, 0)} weight, indicating ` +
+          `${money(a.indication)}.`,
+      ),
+    ) +
+    `<p>The reasoning is the quality of the inputs available to each. The Series B round transacted at ` +
+    `arm's length shortly before the valuation date and is direct market evidence of this company's ` +
+    `equity value, which is why it carries the majority of the weight. The guideline companies are real ` +
+    `but imperfect comparables, larger and further along than the subject. The projections are ` +
+    `management's own and reach beyond the point at which the company must raise again, so the income ` +
+    `approach corroborates rather than concludes. The asset approach was given no weight: the value of ` +
+    `this business rests on contracted recurring revenue and software rather than on tangible net ` +
+    `assets, and a net-asset indication would be a floor rather than a measure.</p>` +
+    `<p>The concluded equity value is then allocated across the classes in <strong>Exhibit F</strong> by ` +
+    `the option-pricing method, on an expected time to a liquidity event of ${OPM.time_to_exit_years} ` +
+    `years, and the resulting common-stock value is discounted as set out in <strong>Exhibit H</strong>.</p>`,
+
+  /*
+   * Framed rather than invented, and the only chapter here written in the
+   * sample's own voice.
+   *
+   * Every other chapter can be written for Northwind Robotics because Northwind
+   * Robotics does not exist. An analyst does. Naming a credentialed appraiser
+   * who never examined anything, on a document that is published to the open
+   * internet and looks like an appraisal, manufactures exactly the artefact the
+   * three SAMPLE marks exist to prevent — and a credential is the one fact in
+   * this file a reader might act on. So this chapter states the requirement and
+   * then says plainly what a delivered report puts here, in the same voice the
+   * summary page already uses.
+   */
+  qualifications:
+    `<p>SSVS-1 and the independent-appraiser condition of Treasury Regulation ` +
+    `§1.409A-1(b)(5)(iv)(B)(1) require this chapter to identify the analyst responsible for the ` +
+    `valuation and establish their competence to have performed it.</p>` +
+    `<p>${SAMPLE_NOTICE}. No analyst performed this valuation and none is named. In a client's report ` +
+    `this chapter states, for each analyst who took part:</p>` +
+    li([
+      'their name, role and firm',
+      'the professional credentials they hold (ABV, ASA, CFA, CVA or equivalent)',
+      'their experience in the valuation of privately held equity securities',
+      'the extent of their participation in the analyses and conclusions reported',
+    ]) +
+    `<p>The certification that follows carries their signature. On this document it is ruled and empty, ` +
+    `which is the fourth mark separating it from an appraisal.</p>`,
+};
+
+/**
  * The engine results the fabricated engagement would have produced.
  *
  * Shaped for `reportFigures`, which is the point: the body's `{{fmv_per_share}}`
@@ -201,7 +437,7 @@ function sampleResults(): Record<string, unknown> {
     fully_diluted_common: CAP_TABLE.reduce((n, r) => n + r.shares, 0),
     allocation: { common_per_share: MARKETABLE_PER_SHARE },
     discounts: { dloc: DLOC, dlom: DLOM },
-    assumptions: { volatility: 0.62, risk_free_rate: 0.0418, time_to_exit_years: 3.5 },
+    assumptions: { ...OPM },
     // The income approach's own assumptions, in the shape `income_dcf` records
     // them. Not decoration: the body states the rate, the forecast length and
     // the terminal basis from these, and a sample that omitted them would show
@@ -413,16 +649,39 @@ function sampleSummary(): ReportPdfSummary {
 }
 
 /**
- * The render input for the public sample, ready for `renderReportPdf`.
+ * The skeleton with the sample's narrative swapped into the chapters it leaves
+ * for the analyst.
  *
- * Split out from the route so the assertions can read the document's structure
- * without rendering 8 MB of PDF for every case, and so `tools/sample-report.mjs`
- * has something to diff a real engagement against.
+ * `authored` is left on the overridden sections deliberately. It is the
+ * skeleton's declaration of what *kind* of chapter this is, not a claim about
+ * this copy's contents, and the census test reads it from `templateForKind`
+ * anyway — clearing it here would only hide a chapter from the very check that
+ * is supposed to notice a missing override.
  */
-export function sampleReportPdfInput(kind: ValuationKind = '409a'): ReportPdfInput {
+function sampleTemplate(kind: ValuationKind): ReportTemplate {
   const template = templateForKind(kind);
+  return {
+    ...template,
+    sections: template.sections.map((s) => {
+      const written = SAMPLE_NARRATIVE[s.key];
+      return written === undefined ? s : { ...s, html: written };
+    }),
+  };
+}
+
+/**
+ * The sample's body, resolved exactly as the render will print it.
+ *
+ * Split out of `sampleReportPdfInput` so `reviewReport` can be run over the
+ * document with its section keys intact. The keys are what every check in
+ * `domain/reportReview.ts` is written against, and `ReportPdfInput.sections`
+ * has dropped them by the time the renderer sees it — so a test built from the
+ * render input could only rejoin body and finding by matching headings, which
+ * is a second opinion about the document rather than the document.
+ */
+export function sampleReportContent(kind: ValuationKind = '409a'): ReportContent {
   const exhibits = sampleExhibits();
-  const content = fillFigures(
+  return fillFigures(
     /*
      * Signed by nobody, deliberately — and therefore *resolved* rather than
      * skipped. The certification carries `{{signatures}}`, so a sample that did
@@ -435,7 +694,7 @@ export function sampleReportPdfInput(kind: ValuationKind = '409a'): ReportPdfInp
      */
     resolveSignatures(
       resolveExhibitReferences(
-        instantiateTemplate(template, {
+        instantiateTemplate(sampleTemplate(kind), {
           company_name: SAMPLE_COMPANY,
           kind,
           valuation_ref: 'SAMPLE-409A',
@@ -454,6 +713,19 @@ export function sampleReportPdfInput(kind: ValuationKind = '409a'): ReportPdfInp
       SAMPLE_CURRENCY,
     ),
   );
+}
+
+/**
+ * The render input for the public sample, ready for `renderReportPdf`.
+ *
+ * Split out from the route so the assertions can read the document's structure
+ * without rendering 8 MB of PDF for every case, and so `tools/sample-report.mjs`
+ * has something to diff a real engagement against.
+ */
+export function sampleReportPdfInput(kind: ValuationKind = '409a'): ReportPdfInput {
+  const template = templateForKind(kind);
+  const content = sampleReportContent(kind);
+  const exhibits = sampleExhibits();
 
   return {
     title: `${template.name} — ${SAMPLE_COMPANY} (SAMPLE)`,

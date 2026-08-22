@@ -392,9 +392,7 @@ describe('reviewing the drafted report', () => {
      * the hole reopens.
      */
     it('still names an unwritten chapter whose conditional exhibit pointers were dropped', () => {
-      const resolved = resolveExhibitReferences(pristine(), [
-        'Exhibit A — Capitalization Table',
-      ]);
+      const resolved = resolveExhibitReferences(pristine(), ['Exhibit A — Capitalization Table']);
       const section = resolved.sections.find((s) => s.key === 'financial_analysis')!;
       expect(section.html, 'the resolver should have dropped the appendix pointers').not.toContain(
         'Appendix II',

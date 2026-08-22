@@ -5,9 +5,11 @@ import {
   SAMPLE_FIGURES,
   SAMPLE_NOTICE,
   SAMPLE_VALUATION_DATE,
+  sampleReportContent,
   sampleReportPdfInput,
 } from '../../src/domain/sampleReportPdf.js';
-import { templateForKind } from '../../src/domain/report.js';
+import { templateForKind, visibleSections } from '../../src/domain/report.js';
+import { reviewReport } from '../../src/domain/reportReview.js';
 import {
   scheduleTitle,
   SCHEDULE,
@@ -206,6 +208,106 @@ describe('sample report PDF — it cannot be passed off as an opinion', () => {
     expect(income.html).toContain('5-year explicit forecast period');
     expect(income.html).toContain('a perpetual growth rate of 3.50%');
     expect(income.html).not.toContain('{{');
+  });
+
+  /**
+   * The sample, put through the product's own publish gate.
+   *
+   * `domain/reportReview.ts` refuses a deliverable whose chapters still carry
+   * the skeleton's instructions to the analyst — "Summarize the industry
+   * landscape, market size and growth, and competitive positioning." is a to-do
+   * item, and a signed 409A containing it tells its reader the analyst did not
+   * do that work. The public sample is built by instantiating that same
+   * skeleton, so it was that document: seven chapters of instructions, published
+   * to everyone, on the one 409A a prospect judges the deliverable by.
+   *
+   * Graded rather than asserted chapter by chapter. A test that listed the
+   * seven headings and looked for prose under each would pass a sample that
+   * grew an eighth unwritten chapter; running the real check over the real
+   * document cannot.
+   */
+  describe('graded by the product’s own publish gate', () => {
+    const graded = () => {
+      const input = sampleReportPdfInput();
+      return reviewReport({
+        content: sampleReportContent(),
+        exhibitHeadings: input.sections
+          .filter((s) => /^(Exhibit|Appendix) /.test(s.heading))
+          .map((s) => s.heading),
+        template: templateForKind('409a'),
+      });
+    };
+
+    it('carries no chapter of instructions to the analyst', () => {
+      expect(
+        graded()
+          .findings.filter((f) => f.check === 'unedited_template_guidance')
+          .map((f) => f.heading),
+      ).toEqual([]);
+    });
+
+    it('would not be blocked from publication', () => {
+      /*
+       * Nothing at `fail`, which is the whole gate — dead exhibit references
+       * included, so the narrative added above cannot point at a schedule the
+       * sample does not print.
+       *
+       * Warnings are expected and are not asserted against. This grades the
+       * *rendered* body, whose `{{markers}}` `fillFigures` has already
+       * substituted; `frozen_figure` reads that as prose that stopped restating
+       * itself, which for a stored body would be true and for a rendered one is
+       * what rendering means. A real engagement is graded before that step.
+       */
+      const result = graded();
+      expect(result.findings.filter((f) => f.severity === 'fail').map((f) => f.summary)).toEqual([]);
+    });
+  });
+
+  /**
+   * The forcing function that keeps the narrative from falling behind the
+   * skeleton.
+   *
+   * `authored` is the skeleton's own declaration that a chapter is guidance
+   * rather than report. Add one and the sample instantiates it, prints it, and
+   * publishes an instruction — which is how the seven above shipped. Reading
+   * the flag off `templateForKind` rather than listing keys here means the
+   * skeleton and the sample cannot drift apart quietly: the new chapter has no
+   * narrative, this fails, and somebody writes one or decides not to.
+   */
+  it('writes every chapter the skeleton leaves to the analyst', () => {
+    const guidance = templateForKind('409a')
+      .sections.filter((s) => s.authored === true)
+      .map((s) => s.heading);
+    expect(guidance.length, 'the 409A skeleton should still declare guidance chapters').toBeGreaterThan(0);
+
+    const sample = new Map(visibleSections(sampleReportContent()).map((s) => [s.heading, s.html]));
+    const skeleton = new Map(templateForKind('409a').sections.map((s) => [s.heading, s.html]));
+    for (const heading of guidance) {
+      const written = sample.get(heading);
+      expect(written, `${heading} is not in the sample at all`).toBeDefined();
+      expect(written, `${heading} still holds the skeleton's text`).not.toBe(skeleton.get(heading));
+    }
+  });
+
+  /**
+   * The narrative states figures, and a sample whose prose disagrees with its
+   * own schedules is worse than one that says nothing. Every number in these
+   * chapters is either a `{{marker}}` resolved by `reportFigures` or
+   * interpolated from the primitives the exhibits are built from — so the check
+   * is that the chapters reconcile to the strip, not that they contain
+   * particular strings.
+   */
+  it('states figures in the narrative that reconcile to the summary strip', () => {
+    const sections = new Map(sampleReportPdfInput().sections.map((s) => [s.heading, s.html]));
+    const methodology = sections.get('Valuation Methodology')!;
+    expect(methodology).toContain(figure('Equity value').value);
+    expect(methodology).not.toContain('{{');
+
+    const outlook = sections.get('Economic Outlook')!;
+    // Resolved through reportFigures, so it is the rate the allocation used
+    // rather than a second statement of it.
+    expect(outlook).toMatch(/<strong>\d+\.\d+%<\/strong>/);
+    expect(outlook).not.toContain('{{');
   });
 
   it('names a fictitious company and says so in the summary', () => {
