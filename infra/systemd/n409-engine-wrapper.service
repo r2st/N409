@@ -23,6 +23,16 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+# ── Memory (round 99) ────────────────────────────────────────────────────────
+# 49MB resident, 50MB peak. Flat at rest and the one unit whose cost is a
+# function of its *input* rather than its concurrency: /engine/v1/compute walks
+# a cap table, and a pathological one allocates. The body caps in
+# `app/config.py` are the real defence; this is the backstop for a shape they
+# admit and the allocator does not like.
+MemoryAccounting=yes
+MemoryHigh=192M
+MemoryMax=256M
+MemorySwapMax=64M
 # Non-root service user (audit P1-1). Create on the host first:
 #   useradd --system --home /opt/N409 --shell /usr/sbin/nologin n409
 User=n409

@@ -9,6 +9,8 @@ import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { estateCeiling, parseUnitMemory } from '@n409/shared';
+import { modelledRenderCeilingBytes } from '../../src/clients/reportRender.js';
 import { KNOWN_UNITS, formatFaults, preflight } from '../../src/preflight.js';
 
 /** A valid production .env, as the smallest thing that passes everything. */
@@ -19,23 +21,33 @@ const GOOD_ENV = [
   'INTERNAL_SERVICE_TOKEN=b41f7e9d0236a8c5b4f1e7d9a0c369f2',
 ].join('\n');
 
+/**
+ * The memory ceilings round 99 gave every unit, as a suffix the fixtures share.
+ *
+ * Present in the fixtures because they are present in the real units, and their
+ * absence is now a fault: without this every test in this file would be
+ * asserting against a pile of memory faults instead of against the thing it is
+ * about. `report` gets its own, larger, ceiling — the modelled floor derived
+ * from the delegation bound is checked against it.
+ */
+const LIMITS = 'MemoryAccounting=yes\nMemoryHigh=144M\nMemoryMax=192M\nMemorySwapMax=64M\n';
+const REPORT_LIMITS = 'MemoryAccounting=yes\nMemoryHigh=384M\nMemoryMax=512M\nMemorySwapMax=128M\n';
+
 /** Units as `infra/systemd` really has them, trimmed to what the checker reads. */
 const UNITS: Record<string, string> = {
-  'n409-valuation.service':
-    '[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=NODE_ENV=production\nEnvironment=PORT=3001\n',
-  'n409-report.service':
-    '[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=NODE_ENV=production\nEnvironment=PORT=3004\n',
-  'n409-web.service':
-    '[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=NODE_ENV=production\nEnvironment=PORT=3000\n',
-  'n409-ai.service': '[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=APP_ENV=production\n',
-  'n409-engine-wrapper.service':
-    '[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=APP_ENV=production\n',
+  'n409-valuation.service': `[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=NODE_ENV=production\nEnvironment=PORT=3001\n${LIMITS}`,
+  'n409-report.service': `[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=NODE_ENV=production\nEnvironment=PORT=3004\n${REPORT_LIMITS}`,
+  'n409-web.service': `[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=NODE_ENV=production\nEnvironment=PORT=3000\n${LIMITS}`,
+  'n409-ai.service': `[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=APP_ENV=production\n${LIMITS}`,
+  'n409-engine-wrapper.service': `[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=APP_ENV=production\n${LIMITS}`,
 };
 
 interface RunOptions {
   env?: string;
   units?: Record<string, string>;
   mode?: number;
+  /** Physical RAM of the pretend host. Generous by default; the estate sum has its own tests. */
+  hostTotalBytes?: number;
 }
 
 function run(options: RunOptions = {}) {
@@ -56,6 +68,11 @@ function run(options: RunOptions = {}) {
     // checker has no guard for would read a `/units` that does not exist, come
     // back empty, and pass every test by never looking at anything.
     readDir: () => Object.keys(units),
+    // Never `os.totalmem()`: the estate sum would otherwise be a property of
+    // whichever machine ran the suite, so the same fixtures would pass on a
+    // laptop and fail in CI. 8GiB is comfortably above every fixture here; the
+    // tests that are actually about the host budget pass their own number.
+    hostTotalBytes: options.hostTotalBytes ?? 8 * 1024 ** 3,
   });
 }
 
@@ -200,11 +217,12 @@ describe('the environment file itself', () => {
     // EnvironmentFile: a unit stripped down to nothing is a unit that no longer
     // declares NODE_ENV=production, which is a fault of its own now, and the
     // assertion below — "nothing at all is reported against n409-web" — would
-    // fail for a reason that has nothing to do with optional env files.
+    // fail for a reason that has nothing to do with optional env files. Round 99
+    // added a second thing a stripped-down unit stops declaring, and `LIMITS` is
+    // here for the same reason.
     const units = {
       ...UNITS,
-      'n409-web.service':
-        '[Service]\nEnvironmentFile=-/opt/N409/.env.local\nEnvironment=NODE_ENV=production\nEnvironment=PORT=3000\n',
+      'n409-web.service': `[Service]\nEnvironmentFile=-/opt/N409/.env.local\nEnvironment=NODE_ENV=production\nEnvironment=PORT=3000\n${LIMITS}`,
     };
     const text = messages({ units });
     expect(text).not.toContain('n409-web.service');
@@ -443,8 +461,7 @@ describe('the production posture each unit declares', () => {
   it('accepts the casing the services accept', () => {
     const units = {
       ...UNITS,
-      'n409-engine-wrapper.service':
-        '[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=APP_ENV=PRODUCTION\n',
+      'n409-engine-wrapper.service': `[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=APP_ENV=PRODUCTION\n${LIMITS}`,
     };
     expect(messages({ units })).toBe('');
   });
@@ -457,8 +474,7 @@ describe('the production posture each unit declares', () => {
   it('accepts a trailing space, which systemd strips before the service sees it', () => {
     const units = {
       ...UNITS,
-      'n409-engine-wrapper.service':
-        '[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=APP_ENV=production \n',
+      'n409-engine-wrapper.service': `[Service]\nEnvironmentFile=/opt/N409/.env\nEnvironment=APP_ENV=production \n${LIMITS}`,
     };
     expect(messages({ units })).toBe('');
   });
@@ -519,5 +535,105 @@ describe('units on disk the checker has no guard for', () => {
     const ai = result.faults.filter((f) => f.scope === 'n409-ai.service');
     expect(ai).toHaveLength(1);
     expect(ai[0]!.message).toContain('unit file is missing');
+  });
+});
+
+// ── Memory ceilings (round 99) ───────────────────────────────────────────────
+//
+// The estate ran with no `MemoryMax` on any unit until this round, which was
+// harmless while every process was small and flat and stopped being harmless
+// when round 98 made the report service's working set a function of load. These
+// are the tests for the half of that fix that is a check rather than a number:
+// the deploy refuses a unit with no ceiling, refuses a set of ceilings the host
+// cannot honour, and refuses a report ceiling that has drifted below the
+// concurrency the delegation client is willing to create.
+describe('memory ceilings', () => {
+  /** A unit body with the memory stanza replaced. */
+  function withLimits(unit: string, limits: string): Record<string, string> {
+    const base = UNITS[unit]!.split('MemoryAccounting')[0]!;
+    return { ...UNITS, [unit]: base + limits };
+  }
+
+  it('passes the ceilings the fixtures declare', () => {
+    expect(messages()).toBe('');
+  });
+
+  it('faults a unit with no ceiling at all, naming what it costs', () => {
+    const text = messages({ units: withLimits('n409-web.service', '') });
+    expect(text).toContain('n409-web.service: MemoryMax is not set');
+    expect(text).toContain("kernel's global OOM killer");
+  });
+
+  // The sweep iterates the *directory*, not KNOWN_UNITS, so a unit this checker
+  // has no environment guard for still has to declare a ceiling. That is the
+  // whole reason the two checks have different scopes: the backup pair is
+  // installed onto the same host by the same script and shares its RAM.
+  it('covers a unit the environment guards have never heard of', () => {
+    const units = { ...UNITS, 'n409-backup.service': '[Service]\nType=oneshot\nExecStart=/bin/true\n' };
+    const text = messages({ units });
+    expect(text).toContain('n409-backup.service: MemoryMax is not set');
+  });
+
+  // A `.timer` has no cgroup of its own — it starts a `.service`, and that is
+  // where the limit belongs. Demanding one here would be a fault nobody can fix.
+  it('does not ask a timer for a memory limit', () => {
+    const units = { ...UNITS, 'n409-backup.timer': '[Timer]\nOnCalendar=daily\n' };
+    expect(messages({ units })).toBe('');
+  });
+
+  // THE DRIFT THIS EXISTS FOR: the report unit's 512M was derived from
+  // MAX_DELEGATED_IN_FLIGHT + MAX_DELEGATED_QUEUED and the per-render cost
+  // measured in round 98. Raising the queue depth without raising the ceiling
+  // is a change that looks local to one TypeScript file and is really a change
+  // to how much memory a systemd unit needs — the two would drift silently, and
+  // the discovery would be a SIGKILL at full load.
+  it('faults a report ceiling below what the delegation bound can fill', () => {
+    const limits = 'MemoryAccounting=yes\nMemoryHigh=96M\nMemoryMax=128M\nMemorySwapMax=32M\n';
+    const text = messages({ units: withLimits('n409-report.service', limits) });
+    expect(text).toContain('is below the 276M this service is designed to be able to hold');
+    expect(text).toContain('MAX_DELEGATED_IN_FLIGHT + MAX_DELEGATED_QUEUED');
+  });
+
+  // The modelled floor is a floor and not a target: the shipped 512M clears the
+  // 276M model with room for GC lag and heap fragmentation, which the model
+  // does not attempt to account for.
+  it('accepts the ceiling the report unit actually ships with', () => {
+    expect(messages()).toBe('');
+    expect(modelledRenderCeilingBytes()).toBe(276 * 1024 ** 2);
+  });
+
+  // Nothing in a single unit file can see this. Both of the ways it fires —
+  // somebody raising a limit past what the box can honour, and the estate being
+  // moved onto a smaller box — are silent otherwise, and both end as the
+  // host-wide OOM the per-unit limits were added to prevent.
+  it('faults ceilings that do not fit the host the deploy is running on', () => {
+    const text = messages({ hostTotalBytes: 1024 ** 3 });
+    expect(text).toContain('estate:');
+    expect(text).toContain('moved onto a smaller one');
+  });
+
+  // A unit named by two --install-dir arguments is one unit on the host. Adding
+  // its ceiling twice would fail a deploy over memory nothing will ever hold.
+  it('counts a unit listed in two install directories once', () => {
+    const both = preflight({
+      unitDir: '/units',
+      installDirs: ['/units', '/units'],
+      resolveEnvFile: () => '/opt/N409/.env',
+      readFile: (file) => {
+        if (file === '/opt/N409/.env') return GOOD_ENV;
+        const text = UNITS[file.replace('/units/', '')];
+        if (text === undefined) throw new Error(`ENOENT ${file}`);
+        return text;
+      },
+      statFile: () => 0o100600,
+      readDir: () => Object.keys(UNITS),
+      // Just above the estate's real ceiling: with the double count it is not.
+      hostTotalBytes:
+        1024 ** 3 +
+        estateCeiling(
+          Object.entries(UNITS).map(([unit, text]) => ({ unit, resources: parseUnitMemory(text) })),
+        ).totalBytes,
+    });
+    expect(formatFaults(both)).toBe('');
   });
 });

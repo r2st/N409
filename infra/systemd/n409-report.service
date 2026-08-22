@@ -21,6 +21,24 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+# ── Memory (round 99) ────────────────────────────────────────────────────────
+# The unit this estate actually needed a limit for. Round 98 moved PDF rendering
+# here off the API's event loop, and in doing so removed the bound nobody had
+# designed: pdfkit is synchronous, so in-process renders were strictly serial
+# and one render's working set was the whole cost however many clients asked.
+# Delegating makes them concurrent. `MAX_DELEGATED_IN_FLIGHT` (4) +
+# `MAX_DELEGATED_QUEUED` (12) is 16 renders that can be resident here at once,
+# measured at ~10MB of retained working set each on top of a 116MB idle process
+# — 326MB at 12 concurrent, 407MB at 24. So the designed ceiling is ~280MB and
+# 512M is that plus room for GC lag and heap fragmentation.
+#
+# `src/services/valuation/src/preflight.ts` recomputes that floor from the two
+# constants at deploy time: raise the queue depth without raising this number
+# and the deploy fails rather than the host.
+MemoryAccounting=yes
+MemoryHigh=384M
+MemoryMax=512M
+MemorySwapMax=128M
 # Non-root service user (audit P1-1). Create on the host first:
 #   useradd --system --home /opt/N409 --shell /usr/sbin/nologin n409
 User=n409

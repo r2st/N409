@@ -236,6 +236,34 @@ function looksLikePdf(bytes: Buffer): boolean {
 export const MAX_DELEGATED_IN_FLIGHT = 4;
 export const MAX_DELEGATED_QUEUED = 12;
 
+/**
+ * The two measurements above, as numbers rather than prose.
+ *
+ * They exist so that the bound this file chooses and the `MemoryMax` the report
+ * unit is given cannot drift apart. Round 99 sized `infra/systemd/
+ * n409-report.service` from exactly these constants, and
+ * `modelledRenderCeilingBytes()` is recomputed against that unit file by the
+ * deploy-time preflight — so raising `MAX_DELEGATED_QUEUED` without raising the
+ * unit's ceiling fails the deploy instead of the host.
+ *
+ * The alternative was a comment in each file naming the other, which is the
+ * arrangement that let the deployed units sit four weeks behind the repo.
+ */
+export const RENDER_IDLE_BYTES = 116 * 1024 * 1024;
+export const RENDER_BYTES_PER_CONCURRENT = 10 * 1024 * 1024;
+
+/**
+ * What the report service can be holding when this client has it as busy as it
+ * is willing to make it: every slot full and every queue place taken.
+ *
+ * A floor for the unit's `MemoryMax`, not a target for it — nothing here
+ * accounts for GC lag or heap fragmentation, so a ceiling equal to this number
+ * would be a ceiling the service reaches on a normal busy afternoon.
+ */
+export function modelledRenderCeilingBytes(): number {
+  return RENDER_IDLE_BYTES + (MAX_DELEGATED_IN_FLIGHT + MAX_DELEGATED_QUEUED) * RENDER_BYTES_PER_CONCURRENT;
+}
+
 const renderSlots = new Semaphore(MAX_DELEGATED_IN_FLIGHT);
 
 /** Live snapshot of the delegation queue — surfaced as gauges, asserted in tests. */

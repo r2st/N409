@@ -262,6 +262,17 @@ describe('the host config is validated before anything restarts', () => {
     expect(check).toContain('--unit-dir /opt/N409/infra/systemd');
   });
 
+  // The memory-ceiling sweep added in round 99 covers everything
+  // install-units.sh installs, which is wider than the environment guards.
+  // Without infra/backup here the two backup units keep the position they had
+  // before that round: installed onto this host by the deploy, sharing its RAM
+  // with the five services, and checked by nothing in this repo.
+  it('sweeps both directories install-units.sh installs from, not just the services', () => {
+    const check = deploy(['--apply']).remote.find((c) => c.includes('preflight-cli.js'))!;
+    expect(check).toContain('--install-dir /opt/N409/infra/systemd');
+    expect(check).toContain('--install-dir /opt/N409/infra/backup');
+  });
+
   it('restarts nothing when the config would be rejected at boot', () => {
     const run = deploy(['--apply'], {}, ['[[ "$*" == *"preflight-cli.js"* ]] && exit 1']);
     expect(run.status).not.toBe(0);

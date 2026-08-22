@@ -26,6 +26,18 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/opt/n409-data
+# ── Memory (round 99) ────────────────────────────────────────────────────────
+# 120MB resident, 144MB peak. Sized above that rather than at it because this is
+# the unit that still renders PDFs in-process whenever the report service is
+# unreachable — the fallback in `clients/reportRender.ts` is the whole reason
+# delegation is safe, and a memory limit that made the fallback the thing that
+# killed the API would defeat it. Those renders serialize (pdfkit blocks this
+# loop, which is what round 98 was about), so the fallback costs one render's
+# working set at a time, not sixteen.
+MemoryAccounting=yes
+MemoryHigh=288M
+MemoryMax=384M
+MemorySwapMax=96M
 # Runs as a dedicated non-root system user (audit P1-1). Create it once on the
 # host before enabling the unit:
 #   useradd --system --home /opt/N409 --shell /usr/sbin/nologin n409

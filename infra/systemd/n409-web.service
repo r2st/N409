@@ -21,6 +21,16 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+# ── Memory (round 99) ────────────────────────────────────────────────────────
+# 57MB resident, 78MB peak. It serves static SPA assets and proxies /api, and
+# neither cost scales with anything but concurrency. The smallest ceiling in the
+# estate, which is also the point: this is the only unit Caddy dials, so it is
+# the one whose death is the whole site, and a bound this far above its measured
+# working set only fires on something genuinely wrong.
+MemoryAccounting=yes
+MemoryHigh=144M
+MemoryMax=192M
+MemorySwapMax=48M
 # Non-root service user (audit P1-1). Create on the host first:
 #   useradd --system --home /opt/N409 --shell /usr/sbin/nologin n409
 User=n409

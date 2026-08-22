@@ -42,8 +42,10 @@ and should be treated as **unused** until a migration is actually planned.
   more wait; past that it renders in-process again and counts
   `reason="queue_full"`. The bound is memory, measured on the report service:
   116MB idle and about 10MB of retained working set per concurrent render
-  (326MB at 12, 407MB at 24), against 3.8GB of host with ~2.4GB in use, swap
-  already touched, and no `MemoryMax` on any unit in this estate. The renders
+  (326MB at 12, 407MB at 24), against 3.8GB of host with ~2.4GB in use and swap
+  already touched. Round 99 gave that bound a ceiling to sit under — see
+  [Memory limits](#memory-limits) — and the two numbers are checked against each
+  other on every deploy rather than kept in step by hand. The renders
   serialize anyway — one Node thread — so a deeper queue buys latency and memory
   and no throughput at all. A non-zero `queue_full` rate means the renders want
   their own host, not a bigger number.
@@ -58,6 +60,89 @@ and should be treated as **unused** until a migration is actually planned.
   switch that makes its `INTERNAL_SERVICE_TOKEN` guard mandatory rather than
   advisory. First-time bring-up on a bare host is the same command:
   `bash infra/install-units.sh` as root.
+
+## Memory limits
+
+Every unit this repo installs declares three memory directives. Until round 99
+none of them did, which meant the answer to a leak in any N409 process was the
+kernel's global OOM killer — and that picks its victim by resident size. On this
+box the two largest processes are an unrelated product's engine and PostgreSQL,
+so a memory bug in the report renderer would have killed the database and left
+the renderer running.
+
+| Unit                       |   High |    Max | Swap | Sized from                             |
+| -------------------------- | -----: | -----: | ---: | -------------------------------------- |
+| `n409-report`              |  384M  |  512M  | 128M | 16 concurrent renders (derived, below) |
+| `n409-valuation`           |  288M  |  384M  |  96M | 144M peak + in-process render fallback |
+| `n409-web`                 |  144M  |  192M  |  48M | 78M peak                               |
+| `n409-ai`                  |  192M  |  256M  |  64M | 62M peak                               |
+| `n409-engine-wrapper`      |  192M  |  256M  |  64M | 50M peak                               |
+| `n409-backup`              |  192M  |  256M  |  64M | `pg_dump` is a streaming client        |
+| `n409-backup-verify`       |  384M  |  512M  | 128M | as above, doubled — see below          |
+
+Why three directives rather than one `MemoryMax`:
+
+- **`MemoryMax`** is the kill. Under cgroup v2 it caps pages resident in RAM,
+  and a process that breaches it is SIGKILLed and restarted by `Restart=always`.
+- **`MemorySwapMax`** is what makes `MemoryMax` a bound at all. Swap is
+  accounted separately and defaults to unlimited, so a leak under a `MemoryMax`
+  alone stays *under its limit indefinitely* while filling this host's 2GB of
+  swap and thrashing every other tenant. The estate writes a quarter of the RAM
+  ceiling: enough for reclaim to have somewhere to put cold pages, not enough
+  for a service to run mostly paged out.
+- **`MemoryHigh`** is the throttle, and the only thing that happens *before* the
+  kill. Without it a unit has one memory behaviour and no warning.
+
+Two of the numbers are checked rather than trusted, both by
+`preflight-cli.js` during the deploy (section 4b), so a fault costs a failed
+deploy with the previous release still serving:
+
+- **The report ceiling against the delegation bound.** `MAX_DELEGATED_IN_FLIGHT`
+  + `MAX_DELEGATED_QUEUED` in `clients/reportRender.ts` is 16 renders that can
+  be resident at once, at the idle size and per-render cost measured in round
+  98 — a 276M floor. Raise the queue depth without raising the unit's ceiling
+  and the deploy fails instead of the host.
+- **The estate's total against the host's RAM.** The sum is the always-on units
+  plus the largest scheduled job — 04:00 Sunday is a moment when the backup
+  verification and all five services are live at once — and it has to leave a
+  gigabyte for PostgreSQL, Caddy, the kernel and the two unrelated products. A
+  limit raised past what this box can honour, or the estate moved onto a smaller
+  box, is invisible from any single unit file and fails here.
+
+The backup pair sits above its measurement rather than at it, deliberately: a
+`pg_dump` killed by a memory limit is a night with no backup, and a verification
+killed part-way reports as a failed verification — the one false alarm
+guaranteed to get that timer switched off.
+
+### Watching a unit approach its ceiling
+
+The three Fastify services export their own cgroup state, so the limit is
+visible beside the usage rather than only in `systemctl show`:
+
+```bash
+curl -H "authorization: Bearer $INTERNAL_SERVICE_TOKEN" localhost:3004/metrics \
+  | grep n409_cgroup_memory
+```
+
+`n409_cgroup_memory_current_bytes` over `n409_cgroup_memory_max_bytes` is the
+number to watch. `n409_cgroup_memory_events{event="high"}` counts throttling
+episodes and `{event="max"}` counts near-breaches; both tick long before
+anything dies and are the actual early warning.
+
+`{event="oom_kill"}` is the one to read carefully. systemd destroys a unit's
+cgroup when it stops and creates a fresh one when it starts, so these counters
+reset on every restart — and a restart is what follows a kill. A service killed
+at its ceiling comes back reporting `oom_kill 0`. The durable record of a kill
+is the journal:
+
+```bash
+journalctl -u n409-report --since '-1d' | grep -i 'memory\|oom\|killed'
+systemctl show n409-report -p MemoryPeak -p MemoryCurrent -p MemoryMax
+```
+
+The Python pair has no `/metrics` endpoint — the same reason the readiness
+contract covers three services rather than five — so their ceilings are visible
+through `systemctl show` and the journal only.
 
 ## Security posture (audit B-1 P0 / I-1)
 

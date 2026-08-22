@@ -16,6 +16,20 @@ Group=n409
 EnvironmentFile=/opt/N409/.env
 Environment=BACKUP_ROOT=/opt/n409-backups
 ExecStart=/opt/N409/infra/backup/pg-backup.sh
+# ── Memory (round 99) ────────────────────────────────────────────────────────
+# `pg_dump -Fc` streams: it holds the schema, one row's worth of buffer and a
+# zlib window, and the sorting and index work that could actually allocate
+# happens in the PostgreSQL backend, which is in postgresql.service's cgroup and
+# not this one. So the client side is small and the ceiling is generous — the
+# limit exists because this unit runs at 02:00 against a live estate, not
+# because anything here is expected to approach it.
+#
+# Deliberately *not* tight: a backup killed by a memory limit is a night with no
+# backup, reported as a failed unit that reads like a broken database.
+MemoryAccounting=yes
+MemoryHigh=192M
+MemoryMax=256M
+MemorySwapMax=64M
 # Hardening: the job only needs to read the app tree + write the backup root.
 NoNewPrivileges=true
 ProtectSystem=strict

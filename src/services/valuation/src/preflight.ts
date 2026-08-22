@@ -30,8 +30,22 @@
  * does.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { totalmem } from 'node:os';
 import path from 'node:path';
-import { flagProblems, listenPort, mergeEnvSources, parseEnvironmentFile, parseUnitFile } from '@n409/shared';
+import {
+  estateCeiling,
+  estateCeilingFaults,
+  flagProblems,
+  formatBytes,
+  listenPort,
+  memoryLimitFaults,
+  mergeEnvSources,
+  parseEnvironmentFile,
+  parseUnitFile,
+  parseUnitMemory,
+  type UnitCeiling,
+} from '@n409/shared';
+import { modelledRenderCeilingBytes } from './clients/reportRender.js';
 import { loadConfig } from './config.js';
 
 export interface PreflightFault {
@@ -183,6 +197,28 @@ export interface PreflightOptions {
   readFile?: (file: string) => string;
   /** File mode of the env file, for the permissions check. */
   statFile?: (file: string) => number | null;
+  /**
+   * Every directory `infra/install-units.sh` installs from — `infra/systemd`
+   * *and* `infra/backup`. Defaults to `[unitDir]`, which is what a caller that
+   * only knows about the services wants; the deploy passes both.
+   *
+   * Separate from `unitDir` because the two checks have genuinely different
+   * scopes and pretending otherwise would be worse than either. The environment
+   * guards above are about what a service reads at boot, and the backup pair
+   * reads a second file, `/etc/n409/backup-verify.env`, which is deliberately
+   * mode 0640 root:n409 so the service user can read a credential root owns —
+   * a shape the `.env` permission rule is right to reject and right not to be
+   * applied to. The memory rules have no such asymmetry: every unit installed
+   * on this host shares its RAM with every other one, so the resource sweep
+   * covers the whole install set.
+   */
+  installDirs?: string[];
+  /**
+   * Physical memory of the host the units will boot on. Defaults to
+   * `os.totalmem()`, which is the right answer when this runs where it is meant
+   * to — on the host, from the deploy, before anything is restarted.
+   */
+  hostTotalBytes?: number;
   /** Lists `unitDir`; injectable so the unit tests need no fixtures on disk. */
   readDir?: (dir: string) => string[];
   /**
@@ -354,7 +390,112 @@ export function preflight(options: PreflightOptions): PreflightResult {
     });
   }
 
+  // ── Memory ceilings, over everything install-units.sh installs ──────────
+  //
+  // THE GAP THIS CLOSES: until round 99 no unit in this estate set a
+  // `MemoryMax`, which was harmless while every process was small and flat, and
+  // stopped being harmless the moment round 98 made one of them a function of
+  // load. Without a per-unit limit the answer to a leak is the kernel's global
+  // OOM killer, which chooses by resident size rather than by blame — and on
+  // 204.168.241.124 the two largest processes are an unrelated product and
+  // PostgreSQL. A memory bug in the report renderer would have taken the
+  // database down and left the renderer running.
+  //
+  // Checked here rather than in a script of its own because this is the one
+  // place in the deploy where a "no" is cheap: it runs after the build, before
+  // the first restart, and a fault leaves the previous release serving.
+  for (const message of memoryFaults(options, read, list)) faults.push(message);
+
   return { faults, units };
+}
+
+/**
+ * The floor a unit's `MemoryMax` has to clear, for the units whose working set
+ * is a function of something this repo controls.
+ *
+ * Only the report service qualifies, and it qualifies because of round 98: its
+ * memory is `idle + concurrent renders x per-render cost`, and the concurrency
+ * is not the operating system's business or the operator's — it is two
+ * constants in `clients/reportRender.ts`. Recomputing the floor from those
+ * constants is what stops the two files drifting: raise `MAX_DELEGATED_QUEUED`
+ * to 100 and this fails the deploy, rather than the host discovering it.
+ *
+ * Every other unit is sized from a measurement, and a measurement cannot be
+ * recomputed from source. Those are pinned by the unit file's own comment and
+ * by `systemdResources.test.ts`, not from here.
+ */
+const MODELLED_FLOORS: Record<string, () => { bytes: number; why: string }> = {
+  'n409-report.service': () => ({
+    bytes: modelledRenderCeilingBytes(),
+    why:
+      'MAX_DELEGATED_IN_FLIGHT + MAX_DELEGATED_QUEUED renders can be resident at once, at the idle size ' +
+      'and per-render cost measured in round 98 (clients/reportRender.ts)',
+  }),
+};
+
+/**
+ * Every `.service` in the install set must declare a bounded ceiling, and the
+ * ceilings together must fit the host.
+ *
+ * Separate from the loop above and deliberately so: that one iterates
+ * `KNOWN_UNITS`, a hardcoded list, and this one iterates the directories the
+ * installer actually reads. A limit that only covered the list would miss the
+ * two backup units — which is not hypothetical, it is where they were before
+ * this function existed: installed by `install-units.sh` onto the same host,
+ * validated by nothing.
+ */
+function memoryFaults(
+  options: PreflightOptions,
+  read: (file: string) => string,
+  list: (dir: string) => string[],
+): PreflightFault[] {
+  const faults: PreflightFault[] = [];
+  const dirs = options.installDirs ?? [options.unitDir];
+  const ceilings: UnitCeiling[] = [];
+  // A unit named by two directories is one unit on the host and must be counted
+  // once, or the estate sum double-counts its ceiling and fails a deploy over
+  // memory nothing will ever hold.
+  const seen = new Set<string>();
+
+  for (const dir of dirs) {
+    for (const entry of list(dir).sort()) {
+      if (!entry.endsWith('.service')) continue;
+      if (seen.has(entry)) continue;
+      seen.add(entry);
+      let text: string;
+      try {
+        text = read(path.join(dir, entry));
+      } catch {
+        // A unit missing from a directory it was listed in is a race or a
+        // permission problem, not a memory fault. The env loop above already
+        // reports an unreadable unit for the services it knows; saying it twice
+        // here in different words would not help anyone.
+        continue;
+      }
+      const resources = parseUnitMemory(text);
+      ceilings.push({ unit: entry, resources });
+      for (const message of memoryLimitFaults(resources)) faults.push({ scope: entry, message });
+
+      const floor = MODELLED_FLOORS[entry]?.();
+      const declared = resources.max?.bytes ?? null;
+      if (floor && declared !== null && declared < floor.bytes) {
+        faults.push({
+          scope: entry,
+          message:
+            `MemoryMax=${resources.max!.raw} is below the ${formatBytes(floor.bytes)} this service is ` +
+            `designed to be able to hold — ${floor.why}. Either raise the limit or lower the bound; ` +
+            'leaving them disagreeing means the service is killed by its own design at full load.',
+        });
+      }
+    }
+  }
+
+  if (ceilings.length === 0) return faults;
+  const total = options.hostTotalBytes ?? totalmem();
+  for (const message of estateCeilingFaults(estateCeiling(ceilings), total)) {
+    faults.push({ scope: 'estate', message });
+  }
+  return faults;
 }
 
 /** One line per fault, plus a headline. Empty string when there are none. */

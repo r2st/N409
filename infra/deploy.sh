@@ -407,7 +407,14 @@ if [[ "${SKIP_PREFLIGHT:-0}" == "1" ]]; then
   log "SKIP_PREFLIGHT=1 — not validating the host's configuration"
 else
   log "validating $REMOTE_DIR/.env against the start-up guards"
-  run_remote "cd $REMOTE_DIR/src/services/valuation && node dist/preflight-cli.js --env-file $REMOTE_DIR/.env --unit-dir $REMOTE_DIR/infra/systemd" \
+  #
+  # --install-dir is passed twice, naming the same two directories
+  # infra/install-units.sh installs from. That is the scope of the memory-ceiling
+  # sweep added in round 99, and it is wider than --unit-dir on purpose: the two
+  # backup units are installed onto this host by the same script and share its
+  # RAM with the five services, but they were outside every check in this file
+  # until now — installed by the deploy, validated by nothing.
+  run_remote "cd $REMOTE_DIR/src/services/valuation && node dist/preflight-cli.js --env-file $REMOTE_DIR/.env --unit-dir $REMOTE_DIR/infra/systemd --install-dir $REMOTE_DIR/infra/systemd --install-dir $REMOTE_DIR/infra/backup" \
     || die "the host's configuration would be rejected at boot — nothing was restarted, the previous release is still serving. Fix $REMOTE_DIR/.env and deploy again (SKIP_PREFLIGHT=1 overrides, which trades a failed deploy for a failed service)"
 
   # The Python pair validates its own tunables — body caps, threadpool sizes,

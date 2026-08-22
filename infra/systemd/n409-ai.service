@@ -22,6 +22,14 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+# ── Memory (round 99) ────────────────────────────────────────────────────────
+# 61MB resident, 62MB peak — flat, because the pipelines stream OpenRouter
+# responses rather than accumulating them. Sized at 4x the observed working set
+# so the limit is a runaway detector rather than a capacity plan.
+MemoryAccounting=yes
+MemoryHigh=192M
+MemoryMax=256M
+MemorySwapMax=64M
 # Non-root service user (audit P1-1). Create on the host first:
 #   useradd --system --home /opt/N409 --shell /usr/sbin/nologin n409
 User=n409

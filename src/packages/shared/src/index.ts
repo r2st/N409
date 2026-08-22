@@ -124,6 +124,19 @@ export {
   type ParsedEnvFile,
   type ParsedUnit,
 } from './systemdEnv.js';
+export {
+  MIN_HOST_HEADROOM_BYTES,
+  estateCeiling,
+  estateCeilingFaults,
+  formatBytes,
+  memoryLimitFaults,
+  parseMemorySize,
+  parseUnitMemory,
+  type EstateCeiling,
+  type MemorySize,
+  type UnitCeiling,
+  type UnitMemory,
+} from './systemdResources.js';
 export { TtlCache } from './cache.js';
 export {
   conditionalJson,

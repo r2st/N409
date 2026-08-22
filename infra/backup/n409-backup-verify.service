@@ -44,6 +44,21 @@ ExecStart=/opt/N409/infra/backup/pg-verify.sh
 # verification killed by a timeout would report as a failed verification —
 # which is the one false alarm guaranteed to get this timer disabled.
 TimeoutStartSec=3600
+# ── Memory (round 99) ────────────────────────────────────────────────────────
+# Twice the nightly backup's ceiling, for the same reason its TimeoutStartSec is
+# an hour: this is the unit that restores a production-sized dump, and a
+# verification killed part-way reports as a failed verification — the one false
+# alarm guaranteed to get this timer switched off. `pg_restore` is as
+# stream-shaped as `pg_dump` and the heavy work is again the server's, so this
+# is headroom rather than a measurement.
+#
+# It is the largest scheduled job in the estate, which is what the deploy-time
+# estate sum adds to the always-on units: 04:00 Sunday is a moment when this
+# ceiling and all five services' ceilings are live at once.
+MemoryAccounting=yes
+MemoryHigh=384M
+MemoryMax=512M
+MemorySwapMax=128M
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

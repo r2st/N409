@@ -17,8 +17,14 @@
  *                     EnvironmentFile. Defaults to honouring the path in the
  *                     unit, which is right on the host and wrong everywhere
  *                     else, since the units name /opt/N409/.env.
- *   --unit-dir PATH   Where the .service files are (default: infra/systemd next
- *                     to this checkout).
+ *   --unit-dir PATH   Where the .service files whose *environment* is validated
+ *                     are (default: infra/systemd next to this checkout).
+ *   --install-dir PATH
+ *                     A directory infra/install-units.sh installs from. May be
+ *                     repeated. Every .service found in one has its memory
+ *                     ceilings checked, and the ceilings are summed against
+ *                     this host's RAM. Defaults to --unit-dir alone, which
+ *                     leaves infra/backup unchecked — so the deploy passes both.
  *   --inherit-env     Also consider the variables in this process's environment.
  *                     Off by default: the deploy shell's variables are not the
  *                     ones the services boot with, and letting one satisfy a
@@ -28,15 +34,27 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatFaults, preflight } from './preflight.js';
 
-function parseArgs(argv: string[]): { envFile?: string; unitDir?: string; inheritEnv: boolean } {
-  const out: { envFile?: string; unitDir?: string; inheritEnv: boolean } = { inheritEnv: false };
+interface Args {
+  envFile?: string;
+  unitDir?: string;
+  installDirs: string[];
+  inheritEnv: boolean;
+}
+
+function parseArgs(argv: string[]): Args {
+  const out: Args = { installDirs: [], inheritEnv: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--env-file') out.envFile = argv[++i];
     else if (arg === '--unit-dir') out.unitDir = argv[++i];
-    else if (arg === '--inherit-env') out.inheritEnv = true;
+    else if (arg === '--install-dir') {
+      const dir = argv[++i];
+      if (dir !== undefined) out.installDirs.push(dir);
+    } else if (arg === '--inherit-env') out.inheritEnv = true;
     else if (arg === '-h' || arg === '--help') {
-      process.stdout.write('usage: preflight-cli [--env-file PATH] [--unit-dir PATH] [--inherit-env]\n');
+      process.stdout.write(
+        'usage: preflight-cli [--env-file PATH] [--unit-dir PATH] [--install-dir PATH]... [--inherit-env]\n',
+      );
       process.exit(0);
     } else {
       process.stderr.write(`n409-preflight: unknown argument ${arg}\n`);
@@ -51,8 +69,15 @@ const args = parseArgs(process.argv.slice(2));
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const unitDir = args.unitDir ?? path.join(repoRoot, 'infra/systemd');
 
+// The install set defaults to the unit directory alone rather than to
+// "infra/systemd plus infra/backup": a caller that named --unit-dir explicitly
+// and nothing else means that directory, and silently sweeping a sibling it did
+// not ask for would report faults about units it is not deploying.
+const installDirs = args.installDirs.length > 0 ? args.installDirs : [unitDir];
+
 const result = preflight({
   unitDir,
+  installDirs,
   ...(args.envFile ? { resolveEnvFile: () => args.envFile! } : {}),
   baseEnv: args.inheritEnv ? process.env : {},
 });
@@ -65,4 +90,7 @@ if (result.faults.length > 0) {
   process.exit(1);
 }
 
-process.stdout.write(`n409-preflight: ${result.units.length} unit(s) validated, no configuration faults\n`);
+process.stdout.write(
+  `n409-preflight: ${result.units.length} unit(s) validated, no configuration faults; memory ceilings ` +
+    `checked in ${installDirs.join(', ')}\n`,
+);
