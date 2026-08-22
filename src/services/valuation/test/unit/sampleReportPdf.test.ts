@@ -193,6 +193,21 @@ describe('sample report PDF — it cannot be passed off as an opinion', () => {
     expect(cert.html).not.toContain('/s/');
   });
 
+  it('states the rate its own DCF discounted at', () => {
+    /*
+     * The sample is what a prospect reads to judge whether the deliverable is
+     * any good, and "the report describes a DCF without ever saying what rate
+     * it discounted at" is the deficiency finding this chapter was changed to
+     * close. Both figures reconcile to Exhibit C on the same page, because
+     * both come from the same `DCF` constant.
+     */
+    const income = sampleReportPdfInput().sections.find((s) => s.heading === 'Income Approach')!;
+    expect(income.html).toContain('discounted at <strong>18.50%</strong>');
+    expect(income.html).toContain('5-year explicit forecast period');
+    expect(income.html).toContain('a perpetual growth rate of 3.50%');
+    expect(income.html).not.toContain('{{');
+  });
+
   it('names a fictitious company and says so in the summary', () => {
     const input = sampleReportPdfInput();
     expect(input.company_name).toBe(SAMPLE_COMPANY);

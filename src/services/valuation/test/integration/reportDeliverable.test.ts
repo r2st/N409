@@ -248,6 +248,45 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
     });
   });
 
+  // ── the assumptions the body states ────────────────────────────────────────
+
+  /**
+   * "Missing key assumptions" is the standard finding against a 409A that fails
+   * review, and the discount rate is what it is usually about. Exhibit C has
+   * printed the rate for as long as the exhibit has existed; the chapter that
+   * describes the approach could only instruct its author to state it, so a
+   * report where nobody typed over the instruction described a discounted cash
+   * flow and never said what rate it discounted at.
+   *
+   * Pinned end to end rather than on `reportFigures`, because the seam is the
+   * part that was missing: the figure has to be produced, the sentence has to
+   * survive `resolveExhibitReferences`, and both have to reach the page.
+   */
+  describe('the income approach', () => {
+    it('states the rate, the forecast length and the terminal basis', async () => {
+      const text = await pdfText(computed.id);
+      expect(text).toContain('discounted at 25.00%');
+      expect(text).toContain('2-year explicit forecast period');
+      expect(text).toContain('a perpetual growth rate of 3.00% beyond the forecast period');
+    });
+
+    it('sends the reader to no schedule this run did not build', async () => {
+      /*
+       * The other half of the pointer work, and the half `reportReview` already
+       * grades: every new pointer is behind `EXHIBIT_IF`, so a chapter says
+       * nothing about a schedule the calculation did not produce. This
+       * engagement has no persisted peer set and no WACC build-up, so Exhibit
+       * D-1 and Appendix I are absent and neither may be named.
+       */
+      const text = await pdfText(computed.id);
+      expect(text).not.toContain('Exhibit D-1');
+      expect(text).not.toContain('Appendix I');
+      expect(text).not.toContain('Exhibit G');
+      // And the pointers themselves never reach paper as markers.
+      expect(text).not.toContain('{{#exhibit');
+    });
+  });
+
   // ── the valuation date ─────────────────────────────────────────────────────
 
   describe('the date the report states', () => {
@@ -1048,7 +1087,7 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       await opsGet(`/api/v1/valuations/${v.id}/report`);
       const res = await draft(v.id, ops.token);
       expect(res.statusCode).toBe(200);
-      expect(res.json().template_version).toBe('409a.v63');
+      expect(res.json().template_version).toBe('409a.v64');
       const keys = (res.json().version.content.sections as Array<{ key: string }>).map((s) => s.key);
       expect(keys).toContain('purpose_and_scope');
     });
@@ -1071,7 +1110,7 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       const v = await seed('Redraft Three, Inc.', true);
       await opsGet(`/api/v1/valuations/${v.id}/report`);
       const res = await draft(v.id, ops.token);
-      expect(res.json().report.template_version).toBe('409a.v63');
+      expect(res.json().report.template_version).toBe('409a.v64');
     });
 
     it('is refused to a client', async () => {

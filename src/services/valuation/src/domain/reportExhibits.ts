@@ -12,7 +12,7 @@ import {
 import { buildSpecialtyExhibits } from './specialtyExhibits.js';
 import { esc, P, section, table } from './exhibitHtml.js';
 import { calendarDate, calendarDateOf } from './calendarDate.js';
-import { CLASS_VOLATILITY_SCHEDULE } from './report.js';
+import { CLASS_VOLATILITY_SCHEDULE, DISCOUNT_RATE_SCHEDULE } from './report.js';
 import { MULTIPLE_LABELS, multipleKeyFor, type MultipleKey } from './comparables.js';
 import { isProjectionColumn, type ComputedSheet, type WorkbookFormat } from './workbook.js';
 import { requiredReturnRows } from './requiredReturns.js';
@@ -958,8 +958,19 @@ export function incomeExhibit(
   const revenues = list(income.revenues)
     .map(num)
     .filter((v): v is number => v !== null);
-  const rate = num(income.discount_rate);
-  const growth = num(income.terminal_growth) ?? 0;
+  /*
+   * The rate off the *result* where the engine recorded it, and off the request
+   * only for the calculations stored before it did.
+   *
+   * The order matters on the `auto_wacc` path: `compute._resolve_auto` writes
+   * the built-up WACC back into the request before the DCF runs, so the request
+   * is no longer purely what was asked for — but where an analyst's manual rate
+   * overrode a build-up, the request holds the override and the result holds
+   * what discounted the flows, and those are the same number. The result is the
+   * one that cannot be anything else.
+   */
+  const rate = num(approach.discount_rate) ?? num(income.discount_rate);
+  const growth = num(record(approach.terminal_detail)?.terminal_growth) ?? num(income.terminal_growth) ?? 0;
 
   /*
    * The two methodology choices come off the *result*, not off the inputs.
@@ -1061,24 +1072,31 @@ export function incomeExhibit(
   push('Add: cash and equivalents', num(inputs.cash));
   push('Less: interest-bearing debt', num(inputs.debt) === null ? null : -(num(inputs.debt) as number));
 
-  return section(SCHEDULE.C, [
-    P(
-      'The income approach discounts the projected free cash flows of the business to present value at ' +
-        'a rate reflecting the risk of achieving them, and adds the present value of a terminal value ' +
-        'representing the cash flows beyond the forecast period. The result is an enterprise value, ' +
-        'bridged to equity by adding cash and deducting debt.',
-    ),
-    schedule,
-    table({
-      head: ['Component', 'Amount', 'Basis'],
-      rows: bridge,
-      foot: [
-        'Indicated equity value — income approach',
-        formatCurrency(num(approach.equity_value) ?? 0, currency, 0),
-        '',
-      ],
-    }),
-  ]);
+  return section(
+    SCHEDULE.C,
+    [
+      P(
+        'The income approach discounts the projected free cash flows of the business to present value at ' +
+          'a rate reflecting the risk of achieving them, and adds the present value of a terminal value ' +
+          'representing the cash flows beyond the forecast period. The result is an enterprise value, ' +
+          'bridged to equity by adding cash and deducting debt.',
+      ),
+      schedule,
+      table({
+        head: ['Component', 'Amount', 'Basis'],
+        rows: bridge,
+        foot: [
+          'Indicated equity value — income approach',
+          formatCurrency(num(approach.equity_value) ?? 0, currency, 0),
+          '',
+        ],
+      }),
+    ],
+    // Declared only where the rate row printed, so the body sentence that states
+    // the rate as a figure is dropped on a run that has no rate to state rather
+    // than printing its own placeholder. See `DISCOUNT_RATE_SCHEDULE`.
+    rate !== null ? [DISCOUNT_RATE_SCHEDULE] : undefined,
+  );
 }
 
 // ── Exhibit C-1 — basis of the cash-flow forecast ────────────────────────────

@@ -318,3 +318,54 @@ class TestThePreFlightAgrees:
             i.field == "inputs.income.mid_year_convention" and i.severity == ERROR
             for i in issues
         )
+
+
+# ── the rate itself, on the result ───────────────────────────────────────────
+
+
+class TestTheRateIsRecorded:
+    """The assumption a DCF is challenged on first, where the report can read it.
+
+    The result carried `mid_year_convention` and `terminal_method` for the
+    stated reason that a stored valuation is re-read by the report service —
+    and not the rate those conventions qualify. So the report could reach the
+    discount rate only by reading the *request*, which is what was asked for
+    rather than what ran; on the `auto_wacc` path `compute._resolve_auto`
+    rewrites the request before this function sees it, so the document a reader
+    inspects has been edited by the calculation it is meant to evidence.
+    """
+
+    def test_the_result_states_the_rate_that_discounted_the_flows(self):
+        assert income_dcf(FCF, RATE, GROWTH)["discount_rate"] == pytest.approx(RATE)
+
+    def test_the_result_states_the_length_of_the_explicit_forecast(self):
+        assert income_dcf(FCF, RATE, GROWTH)["forecast_years"] == len(FCF)
+        assert income_dcf(FCF[:3], RATE, GROWTH)["forecast_years"] == 3
+
+    def test_both_are_recorded_whichever_terminal_method_ran(self):
+        # The exit-multiple path builds a different `terminal_detail` and takes
+        # a different discount factor for the terminal value; neither changes
+        # what the explicit flows were discounted at.
+        got = income_dcf(FCF, RATE, terminal_method="exit_multiple", exit_multiple=8.0)
+        assert got["discount_rate"] == pytest.approx(RATE)
+        assert got["forecast_years"] == len(FCF)
+
+    def test_the_recorded_rate_is_the_one_the_wacc_build_up_produced(self):
+        """`auto_wacc` writes its build-up into the request, and the result has
+        to agree with it — this is the path where reading the request and
+        reading the result could have diverged."""
+        inputs = {
+            **INPUTS,
+            # No `discount_rate`: the build-up only fills one that is absent.
+            "income": {"free_cash_flows": FCF, "terminal_growth": GROWTH},
+            "wacc": {
+                "unlevered_beta_input": 1.2,
+                "equity_risk_premium": 0.055,
+                "risk_free_rate_override": 0.042,
+                "size_premium_override": 0.03,
+                "company_specific_premium": 0.05,
+            },
+        }
+        out = compute(PARAMS, inputs, auto_wacc=True)
+        built = out["results"]["auto"]["wacc"]["wacc"]
+        assert out["results"]["approaches"]["income"]["discount_rate"] == pytest.approx(built)

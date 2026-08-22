@@ -197,10 +197,22 @@ def income_dcf(
         "pv_terminal": _finite_result(pv_terminal, "income.pv_terminal", hint),
         "enterprise_value": _finite_result(enterprise, "income.enterprise_value", hint),
         "equity_value": _finite_result(enterprise + cash - debt, "income.equity_value", hint),
-        # The two methodology choices, on the result rather than only on the
-        # request: a stored valuation is re-read by the report service and by
-        # the next year's roll-forward, and neither can tell an 8% difference in
-        # present value from a different forecast unless the convention is here.
+        # The methodology choices and the rate itself, on the result rather than
+        # only on the request: a stored valuation is re-read by the report
+        # service and by the next year's roll-forward, and neither can tell an
+        # 8% difference in present value from a different forecast unless the
+        # convention is here.
+        #
+        # `discount_rate` and `forecast_years` join them for the same reason and
+        # one more. The discount rate is the assumption a DCF is challenged on
+        # first, and the report could only reach it by reading the *request* —
+        # which is what was asked for, not necessarily what ran. On the
+        # `auto_wacc` path they differ: `compute._resolve_auto` writes the
+        # built-up WACC back into the request before calling this, so the
+        # request a reader inspects has been rewritten by the calculation. The
+        # rate that discounted the flows is the one that belongs beside them.
+        "discount_rate": discount_rate,
+        "forecast_years": horizon,
         "mid_year_convention": mid_year_convention,
         "terminal_method": terminal_method,
         "terminal_value": _finite_result(terminal_value, "income.terminal_value", hint),

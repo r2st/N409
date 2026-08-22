@@ -67,6 +67,17 @@ function esc(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+interface IncomeApproachShape {
+  discount_rate?: unknown;
+  forecast_years?: unknown;
+  terminal_method?: unknown;
+  terminal_detail?: {
+    terminal_growth?: unknown;
+    exit_multiple?: unknown;
+    terminal_metric_basis?: unknown;
+  } | null;
+}
+
 interface ResultsShape {
   fmv_per_share?: unknown;
   equity_value?: unknown;
@@ -88,6 +99,87 @@ interface ResultsShape {
 }
 
 const INT = new Intl.NumberFormat('en-US');
+
+/**
+ * The three assumptions a discounted cash flow is challenged on, as the body
+ * states them.
+ *
+ * ## Why the body has to state them
+ *
+ * "Missing key assumptions" is the standard finding against a 409A that fails
+ * review, and the discount rate is the assumption it is usually about. Exhibit
+ * C has printed the rate and the terminal basis since it existed — but an
+ * exhibit is a schedule a reader turns to, and the chapter that describes the
+ * approach could only instruct its author to "state the derivation of the
+ * discount rate" and then hope. Where nobody typed over the instruction, the
+ * delivered report described a DCF and never said what rate it discounted at.
+ *
+ * ## Where they come from
+ *
+ * The result, which is what the engine did, in preference to the request, which
+ * is what was asked for. `income_dcf` records `discount_rate` and
+ * `forecast_years` for exactly this reader (see its note); calculations stored
+ * before it did fall back to the request, which is the same number on every
+ * path but one — `auto_wacc`, where the engine writes the build-up back into
+ * the request before running, so the two agree there too.
+ *
+ * ## Why `terminal_basis` is prose rather than a rate
+ *
+ * A Gordon terminal value has a growth rate and an exit-multiple terminal value
+ * does not. A `{{terminal_growth}}` figure would therefore resolve on one of
+ * the two methods and stay literal on the other, in a signed PDF. One figure
+ * that names whichever basis was used always resolves, and reads as the
+ * sentence a valuation report actually writes.
+ */
+function incomeAssumptions(
+  calculation: CalculationRow,
+  results: ResultsShape,
+): Record<string, string | null> {
+  // Read through a local view rather than off `ResultsShape`: that interface is
+  // structurally assignable to `reportSummary`'s reading of the same payload,
+  // and narrowing `approaches` here would break the assignment for every other
+  // figure that goes through it.
+  const approaches = (results as { approaches?: Record<string, unknown> | null }).approaches;
+  const approach = (approaches?.income ?? null) as IncomeApproachShape | null;
+  if (!approach) return {};
+  // `{ params, inputs }` — the document the engine was called with, as
+  // `buildExhibits` reads it. Only reached for a calculation predating the
+  // engine recording these on the result.
+  const payload = (calculation.inputs ?? {}) as { inputs?: { income?: Record<string, unknown> } | null };
+  const requested = payload.inputs?.income ?? {};
+
+  const rate = num(approach.discount_rate) ?? num(requested.discount_rate);
+  const years = (num(approach.forecast_years) ?? list(requested.free_cash_flows).length) || null;
+
+  const detail = approach.terminal_detail ?? {};
+  const growth = num(detail.terminal_growth) ?? num(requested.terminal_growth);
+  const multiple = num(detail.exit_multiple);
+  const basis =
+    approach.terminal_method === 'exit_multiple'
+      ? multiple === null
+        ? 'an exit multiple applied to the terminal-year metric'
+        : `an exit multiple of ${multiple.toFixed(1)}x applied to the terminal-year ` +
+          `${terminalMetricName(detail.terminal_metric_basis)}`
+      : `a perpetual growth rate of ${formatPercent(growth ?? 0, 2)} beyond the forecast period`;
+
+  return {
+    discount_rate: rate === null ? null : formatPercent(rate, 2),
+    forecast_years: years === null ? null : String(Math.round(years)),
+    terminal_basis: basis,
+  };
+}
+
+/** How the exit multiple's denominator is named in a sentence. */
+function terminalMetricName(basis: unknown): string {
+  if (basis === 'ebitda') return 'EBITDA';
+  if (basis === 'revenue') return 'revenue';
+  if (basis === 'fcff') return 'free cash flow';
+  return 'metric';
+}
+
+function list(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
 
 /**
  * Every figure the 409A skeleton can name, keyed by its placeholder.
@@ -211,6 +303,9 @@ export function reportFigures(calculation: CalculationRow | null, currency: stri
   // supplies is the *underlying* price and the market assumptions, which are
   // exactly the rows that were blank.
   put('asc718_underlying', fmv !== null ? formatCurrency(fmv, currency, 4) : null);
+
+  // ── the income approach's stated assumptions ───────────────────────────────
+  for (const [key, value] of Object.entries(incomeAssumptions(calculation, results))) put(key, value);
 
   return out;
 }

@@ -1,5 +1,5 @@
 import type { ReportPdfInput, ReportPdfSection, ReportPdfSummary } from '@n409/report/pdf';
-import { instantiateTemplate, templateForKind, visibleSections } from './report.js';
+import { DISCOUNT_RATE_SCHEDULE, instantiateTemplate, templateForKind, visibleSections } from './report.js';
 import { resolveExhibitReferences } from './reportExhibitIndex.js';
 import { resolveSignatures } from './reportSignatures.js';
 import { SCHEDULE } from './reportExhibits.js';
@@ -24,8 +24,8 @@ import type { ValuationKind } from './valuation.js';
  * binary against a skeleton. So this renders through the *production* path —
  * `templateForKind` → `instantiateTemplate` → `resolveExhibitReferences` →
  * `resolveSignatures` → `fillFigures` → `renderReportPdf` — with a fabricated
- * engagement standing in
- * for the database. Change the 409A template and the sample changes with it;
+ * engagement standing in for the database. Change the 409A template and the
+ * sample changes with it;
  * break the renderer and the sample's own test fails alongside the real one's.
  *
  * ## Why the figures are derived and not typed
@@ -202,6 +202,19 @@ function sampleResults(): Record<string, unknown> {
     allocation: { common_per_share: MARKETABLE_PER_SHARE },
     discounts: { dloc: DLOC, dlom: DLOM },
     assumptions: { volatility: 0.62, risk_free_rate: 0.0418, time_to_exit_years: 3.5 },
+    // The income approach's own assumptions, in the shape `income_dcf` records
+    // them. Not decoration: the body states the rate, the forecast length and
+    // the terminal basis from these, and a sample that omitted them would show
+    // a DCF chapter that never says what it discounted at — which is the
+    // deficiency the chapter was changed to close.
+    approaches: {
+      income: {
+        discount_rate: DCF.wacc,
+        forecast_years: DCF.free_cash_flow.length,
+        terminal_method: 'gordon',
+        terminal_detail: { terminal_growth: DCF.terminal_growth },
+      },
+    },
   };
 }
 
@@ -226,6 +239,9 @@ function sampleExhibits(): ReportPdfSection[] {
 
   const income: ReportPdfSection = {
     heading: SCHEDULE.C,
+    // The rate row is on this schedule, so the body's sentence naming the rate
+    // prints with it — see `DISCOUNT_RATE_SCHEDULE`.
+    schedules: [DISCOUNT_RATE_SCHEDULE],
     html:
       table({
         head: ['Year', 'Free cash flow', `Discount factor @ ${formatPercent(DCF.wacc)}`, 'Present value'],

@@ -159,13 +159,13 @@ describe('sanitizeHtml, continued', () => {
 });
 
 describe('report templates', () => {
-  it('registers the 409a.v63 and generic templates', () => {
-    expect(REPORT_TEMPLATES.has('409a.v63')).toBe(true);
+  it('registers the 409a.v64 and generic templates', () => {
+    expect(REPORT_TEMPLATES.has('409a.v64')).toBe(true);
     expect(REPORT_TEMPLATES.has('generic.v3')).toBe(true);
   });
 
-  it('selects 409a.v63 for 409a and a measurement skeleton for fund and debt', () => {
-    expect(templateForKind('409a').version).toBe('409a.v63');
+  it('selects 409a.v64 for 409a and a measurement skeleton for fund and debt', () => {
+    expect(templateForKind('409a').version).toBe('409a.v64');
     // Both were on generic.v2 (now v3) until 0109 connected an engagement to the
     // portfolio / instrument its figures live in — see domain/navExhibits.ts.
     expect(templateForKind('fund').version).toBe('fund.v2');

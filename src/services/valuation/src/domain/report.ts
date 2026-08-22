@@ -452,6 +452,23 @@ const EXHIBIT_IF = (id: string, html: string) => `{{#exhibit:${id}}}${html}{{/ex
 export const CLASS_VOLATILITY_SCHEDULE = 'H-1-CLASS-VOLATILITY';
 
 /**
+ * The pointer id for Exhibit C's discount-rate row.
+ *
+ * The same arrangement as `CLASS_VOLATILITY_SCHEDULE`, one exhibit along, and
+ * for the same reason: "Exhibit C was built" and "the rate that discounted the
+ * flows is on it" are different facts. `incomeExhibit` prints the row from the
+ * rate the engine recorded, and a calculation stored before the engine recorded
+ * it — or one that reused a prior period's income approach without restating
+ * the request — has no rate to print and prints an em-dash instead.
+ *
+ * The body states the rate as a figure, so a sentence conditional only on
+ * Exhibit C would print `{{discount_rate}}` literally on exactly those
+ * engagements. Conditional on this, it says nothing, and the schedule still
+ * carries every other row.
+ */
+export const DISCOUNT_RATE_SCHEDULE = 'C-DISCOUNT-RATE';
+
+/**
  * The appraiser certification — one text, for all fifteen deliverables.
  *
  * ## Why it is shared
@@ -612,9 +629,26 @@ const CERTIFICATION_SECTION: TemplateSectionDef = {
  * chapter — a reader checking what standard a valuation was prepared under
  * looks at the front of the report, not at the certification eleven chapters
  * later.
+ *
+ * v64 makes the body point at the schedules it ships. Eleven of the twenty-two
+ * in `SCHEDULE_CATALOGUE` — the guideline company set, the discount-rate
+ * build-up, the historical statements, the PWERM scenarios, both allocation
+ * sensitivities, the OPM arithmetic, the level-of-value classification, the
+ * roll-forward, the operating metrics and the stage-return ladder — were built,
+ * indexed and printed with no chapter naming any of them, so a reader reached
+ * them only by leafing through the back of the report. Every pointer is behind
+ * `EXHIBIT_IF`, so a chapter still says nothing about a schedule this run did
+ * not build.
+ *
+ * It also states the income approach's own assumptions. The chapter instructed
+ * an author to give "the derivation of the discount rate" and, where nobody
+ * typed over the instruction, described a DCF without ever saying what rate it
+ * discounted at — the commonest deficiency finding against a 409A. The rate,
+ * the forecast length and the terminal basis now resolve from the calculation
+ * (domain/reportFigures.ts).
  */
 const TEMPLATE_409A: ReportTemplate = {
-  version: '409a.v63',
+  version: '409a.v64',
   name: 'IRC 409A Valuation Report',
   sections: [
     {
@@ -739,7 +773,19 @@ const TEMPLATE_409A: ReportTemplate = {
       heading: 'Financial Analysis',
       authored: true,
       html: P(
-        'Summarize historical performance and management projections from the valuation workbook, noting revenue status, burn and runway.',
+        'Summarize historical performance and management projections from the valuation workbook, noting revenue status, burn and runway.' +
+          // The statements the summary is a summary *of*. Both appendices are
+          // built from the financials on file and neither was named by any
+          // chapter, so the reader of this section had no way to know the
+          // underlying statements were in the same document.
+          EXHIBIT_IF(
+            'II',
+            ' The historical financial statements relied on are set out in <strong>Appendix II</strong>.',
+          ) +
+          EXHIBIT_IF(
+            'II-1',
+            ' The core operating metrics behind them — growth, gross margin, burn and runway — are set out in <strong>Appendix II-1</strong>.',
+          ),
       ),
     },
     {
@@ -759,6 +805,21 @@ const TEMPLATE_409A: ReportTemplate = {
         P(
           'The income approach measures value as the present worth of the future economic benefits of the business. We applied the discounted cash flow method: management’s projected free cash flows over the explicit forecast period are discounted to present value at a rate reflecting the risk of achieving them, and a terminal value representing the cash flows beyond that period is discounted alongside them.',
         ) +
+        // The assumptions the approach turns on, stated rather than left to be
+        // typed over. "Missing key assumptions" is the standard finding against
+        // a 409A that fails review and the discount rate is usually what it is
+        // about; the instruction below asked an author to state it and a report
+        // where nobody did described a DCF without ever saying what rate it
+        // discounted at. Conditional on the rate having been recorded, not
+        // merely on Exhibit C printing — see `DISCOUNT_RATE_SCHEDULE`.
+        EXHIBIT_IF(
+          DISCOUNT_RATE_SCHEDULE,
+          P(
+            'The projected cash flows were discounted at <strong>{{discount_rate}}</strong> over a ' +
+              '{{forecast_years}}-year explicit forecast period, with a terminal value struck on ' +
+              '{{terminal_basis}}.',
+          ),
+        ) +
         P(
           'State the source and reliability of the projections, the derivation of the discount rate, and the basis for the terminal growth rate.' +
             // Dropped where the approach was described and not applied, which is
@@ -773,6 +834,18 @@ const TEMPLATE_409A: ReportTemplate = {
             EXHIBIT_IF(
               'C-1',
               ' The cash flows were built from a revenue and margin forecast rather than supplied as a stream; the assumptions behind them are set out in <strong>Exhibit C-1</strong>.',
+            ) +
+            // The build-up itself. The instruction above asks for the derivation
+            // of the discount rate and the appendix *is* the derivation, and no
+            // chapter sent a reader to it — so a reviewer checking the rate had
+            // to find Appendix I by leafing through the back of the report.
+            EXHIBIT_IF(
+              'I',
+              ' The build-up of the discount rate from its cost-of-equity and cost-of-debt components is set out in <strong>Appendix I</strong>.',
+            ) +
+            EXHIBIT_IF(
+              'III',
+              ' The required rates of return observed for companies at comparable stages of development, against which the concluded rate is benchmarked, are set out in <strong>Appendix III</strong>.',
             ),
         ),
     },
@@ -791,6 +864,15 @@ const TEMPLATE_409A: ReportTemplate = {
             EXHIBIT_IF(
               'D',
               ' The observed multiples and the resulting indication are set out in <strong>Exhibit D</strong>.',
+            ) +
+            // The half of the market approach a reviewer actually argues with.
+            // Exhibit D prints the multiples as "Comparable 1 … Comparable n";
+            // D-1 names the companies and says why each was retained or
+            // dropped, which is what separates a company-specific comparable
+            // set from generic benchmarking — and no chapter pointed at it.
+            EXHIBIT_IF(
+              'D-1',
+              ' The guideline companies screened, those retained and those excluded with the reason for each, are set out in <strong>Exhibit D-1</strong>.',
             ),
         ),
     },
@@ -832,7 +914,17 @@ const TEMPLATE_409A: ReportTemplate = {
         P(
           'Explain the weighting: the relevance of each approach to a company of this stage and sector, the quality of the inputs available to it, and the reason any approach considered was assigned no weight. The concluded equity value carried forward to the allocation below is the weighted result.',
         ) +
-        P('Concluded total equity value: <strong>{{equity_value}}</strong>.'),
+        P(
+          'Concluded total equity value: <strong>{{equity_value}}</strong>.' +
+            // Where the anchor came from, when it came from last year rather
+            // than from a round. A reader comparing this valuation with the
+            // prior one asks what moved between them, and the schedule that
+            // answers it was in the file with nothing pointing at it.
+            EXHIBIT_IF(
+              'B-2',
+              ' The movement from the prior valuation, component by component, is set out in <strong>Exhibit B-2</strong>.',
+            ),
+        ),
     },
     {
       key: 'allocation',
@@ -845,7 +937,28 @@ const TEMPLATE_409A: ReportTemplate = {
           'Under the breakpoint method the payoff of each class is piecewise linear in exit equity value, so its expected value is the sum of Black-Scholes call spreads between consecutive breakpoints. The breakpoints, the value of each tranche and the resulting value of each class are set out in <strong>Exhibit F</strong>. State the basis for the expected time to a liquidity event; the expected volatility is dealt with in the section that follows.',
         ) +
         P(
-          'Inputs applied: expected volatility {{volatility}}, expected time to liquidity {{time_to_exit_years}} years, risk-free rate {{risk_free_rate}}. The allocation indicates a {{allocated_level}} value of <strong>{{marketable_value_per_share}}</strong> per common share before the discounts below.',
+          'Inputs applied: expected volatility {{volatility}}, expected time to liquidity {{time_to_exit_years}} years, risk-free rate {{risk_free_rate}}. The allocation indicates a {{allocated_level}} value of <strong>{{marketable_value_per_share}}</strong> per common share before the discounts below.' +
+            // Four schedules the allocation produces and the chapter never
+            // named. G is the whole of a PWERM or hybrid run's reasoning; IV is
+            // the arithmetic a reviewer re-performs; F-2 and F-3 are the answer
+            // to "how much does this conclusion depend on the two inputs you
+            // chose", which is the first question asked of an OPM.
+            EXHIBIT_IF(
+              'G',
+              ' The scenarios, their probabilities and the probability-weighted indication are set out in <strong>Exhibit G</strong>.',
+            ) +
+            EXHIBIT_IF(
+              'IV',
+              ' The option-pricing calculations underlying the tranche values are set out in <strong>Appendix IV</strong>.',
+            ) +
+            EXHIBIT_IF(
+              'F-2',
+              ' The sensitivity of the concluded common value to the volatility and term assumed is set out in <strong>Exhibit F-2</strong>.',
+            ) +
+            EXHIBIT_IF(
+              'F-3',
+              ' Its sensitivity to the risk-free rate is set out in <strong>Exhibit F-3</strong>.',
+            ),
         ),
     },
     {
@@ -893,7 +1006,15 @@ const TEMPLATE_409A: ReportTemplate = {
           'The allocation above produces the value of a common share on a {{allocated_level}} basis. A holder of common stock in {{company_name}} holds a minority interest: it cannot compel a liquidity event, set the timing or terms of an exit, direct the business, or access the company’s cash flows. A discount for lack of control is therefore applied to reflect the difference between a controlling and a minority interest in the same equity. Where the approaches carrying the weight already produce a minority value, <strong>Exhibit H</strong> says so and states what portion of the conclusion they carried.',
         ) +
         P(
-          'State the basis for the concluded discount — control premium studies, the specific rights held by the preferred classes, or the analyst’s qualitative assessment. The concluded discount is <strong>{{dloc}}</strong>, applied as set out in <strong>Exhibit H</strong>.',
+          'State the basis for the concluded discount — control premium studies, the specific rights held by the preferred classes, or the analyst’s qualitative assessment. The concluded discount is <strong>{{dloc}}</strong>, applied as set out in <strong>Exhibit H</strong>.' +
+            // What decides whether this chapter's discount is warranted at all:
+            // the level of value the weighted approaches produced. The schedule
+            // classifies it approach by approach and the chapter that turns on
+            // the answer never sent anyone to it.
+            EXHIBIT_IF(
+              'B-1',
+              ' The level of value produced by each approach, and the weighted basis on which the allocation was struck, are set out in <strong>Exhibit B-1</strong>.',
+            ),
         ),
     },
     {
