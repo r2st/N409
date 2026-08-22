@@ -2340,3 +2340,267 @@
 #            scope of work, standards applied, fee non-contingency) is in the
 #            scope chapter and the certification. Naming it here rather than
 #            quietly scoring the section as met.
+# commit:    d8f9575
+# subject:   the audit that had become a description of the past
+# previous:  981157b (the signature nobody printed, and eleven schedules nobody
+#            was sent to).
+# includes:  1 commit — R94. Recorded here after R96 because the round that ran
+#            it did not write an entry, and the two rounds either side of it did.
+#            R94 ran before R95 and R96; the file's order is the order these
+#            paragraphs were written, not the order the work happened.
+#
+#            The round took docs/AUDIT.md as its worklist and got four findings
+#            into it before noticing that all four were already closed: every
+#            Fastify service sets a strict CSP and the rest of the header set —
+#            valuation and report through @fastify/helmet, web through
+#            shared/securityHeaders.ts — the document download carries nosniff,
+#            login timing is equalised through `verifyPasswordOrDecoy`, and
+#            uploads are magic-byte checked in documents/fileType.ts.
+#
+#            Four for four is not a run of luck, it is a fact about the
+#            document. AUDIT.md was written on 2026-07-20 and never rewritten as
+#            items shipped, so every finding in it describes the code as it was
+#            on that date. Nothing marks the ones that have since been fixed,
+#            and there is no way to tell from inside the file which those are.
+#
+#            d8f9575 — a paragraph at the top saying so, with the four named as
+#              evidence rather than annotated one by one: the problem is the
+#              document's relationship to time, not four particular entries, and
+#              striking through four would leave the next reader with the same
+#              question about the remaining ones. REVISION is the record of what
+#              shipped; where the two disagree, REVISION is the one written
+#              afterwards.
+#
+# method:    the round produced no code and that is the entry. A round can spend
+#            its whole budget re-deriving closed work — this one nearly did, and
+#            the fifteen lines it wrote instead are worth more than a fifth fix
+#            would have been, because they are what stops the sixth round from
+#            starting where this one did. The same correction was made to
+#            docs/remaining-gaps.md and the 409.ai comparison in earlier rounds,
+#            for the same reason; AUDIT.md was the last stale worklist still
+#            reading as current.
+#
+# note:      the standing lesson, now three documents old: a findings document
+#            with no dates and no closure marks decays into a list of things
+#            that were once true, and it decays *silently* — every entry still
+#            reads as an open item. Anything in docs/ that lists work has to
+#            carry the date it describes.
+# commit:    97fe05f
+# subject:   the credentials belonging to somebody else, in the clear
+# previous:  d8f9575 (the audit that had become a description of the past).
+# includes:  1 commit — R95, which ran between R94 and R96 and likewise wrote no
+#            entry at the time.
+#
+#            Four columns across four tables held bearer material this platform
+#            did not mint and cannot re-mint: the OAuth access and refresh
+#            tokens for a client's accounting software, HRIS and cap-table
+#            provider, and the HMAC secret partners verify our webhook
+#            signatures with. All four were stored as text.
+#
+#            The asymmetry is what made it worth a round. `SENSITIVE_FIELDS` in
+#            shared/logger.ts names `access_token` and `refresh_token` at four
+#            nesting depths, with a test that fails when a new integration adds
+#            a credential field the list has not been told about — an unusual
+#            amount of care spent keeping those strings out of stdout, while
+#            every one of them sat in a Postgres column that goes into the
+#            nightly dump. A refresh token there is a standing grant to read a
+#            client company's general ledger or its payroll roster: strictly
+#            worse than the document blobs that have been sealed since B-5,
+#            because a blob is one client's file and a refresh token is an open
+#            door into a third party's system.
+#
+#            97fe05f — the format to seal them with already existed twice.
+#              storage/documentEncryption and auth/mfaCrypto were written months
+#              apart, byte-identical on the wire and subtly different in
+#              behaviour: one memoized its key, the other refused to write
+#              plaintext in production, and neither had a reason to be the one
+#              that did. A third copy would have made three, so the envelope
+#              moved to crypto/envelope.ts and the differences became parameters
+#              — which MAGIC, which env vars, whether an unset key may degrade.
+#              The wire format is unchanged from both originals, so nothing
+#              already written needs re-reading, and the MAGIC prefix still lets
+#              a read tell a sealed value from one written before the key
+#              existed: turning the key on is not a migration.
+#
+#              Unset is not fatal here, and that is a decision rather than an
+#              oversight. `encryptSecret` refuses to write a plaintext TOTP
+#              secret in production; a connection token degrades to plaintext
+#              instead, because it is written at the end of an OAuth round trip
+#              *after* the grant has been made at the provider. Throwing there
+#              leaves the provider believing in a live connection we did not
+#              store, and the user cannot retry without first hunting down and
+#              revoking the orphaned grant. Refusing to write is the more
+#              damaging answer, so the state is disclosed through the
+#              optional-capabilities roster rather than enforced.
+#
+#              Rotation is the other half and the reason `open` takes a list.
+#              GCM authenticates, so a value sealed under an old key does not
+#              decode to garbage under a new one — it throws. With one key that
+#              makes a rotation indistinguishable from data loss: change
+#              DOCUMENTS_ENCRYPTION_KEY and every document uploaded before that
+#              moment is permanently unreadable, with nothing saying so until
+#              somebody clicks download. Each key now accepts a retired
+#              `<NAME>_PREVIOUS` on read only, tools/rotate-at-rest-keys.mjs
+#              re-seals the backlog, and the four documented steps end with
+#              deleting `_PREVIOUS` — until that line is gone the key you
+#              rotated away from is still one this process accepts, so a
+#              rotation stopped after step 3 looks finished and is not.
+#
+# method:    the finding came from reading one file against another rather than
+#            from scanning either. logger.ts already knew these fields were
+#            dangerous and said so at length; the repos that write them did not.
+#            A guard that is thorough about one exit and silent about another is
+#            a good place to look, because the thoroughness is evidence somebody
+#            has already decided the data matters.
+#
+# closed:    the census test is the part meant to outlive the commit. It walks
+#            the schema and classifies every credential-shaped column, so a
+#            fourth integration cannot land a plaintext token column quietly.
+#
+# gap:       R95 left the shared suite red and nobody noticed for two rounds.
+#            Moving the key read behind `keyRing(env, KEY_NAMES)` took
+#            DOCUMENTS_ENCRYPTION_KEY out of the one shape envExample.test.ts
+#            can see, so the deployment-contract guard failed on "documented but
+#            unread" from this commit until R97 fixed it — and was blind in the
+#            other direction to the two key names this commit introduced. See
+#            R97's first commit.
+# commit:    10712fe
+# subject:   the subsidiary of nobody, and two fields nothing was left to notice
+# previous:  97fe05f (the credentials belonging to somebody else, in the clear).
+# includes:  4 commits — R97, on assumptions nothing was left in a position to
+#            check. Three of the four are the same shape: a rule that was true
+#            when it was written, a caller or a schema that moved, and no test
+#            standing between them because the two halves never meet inside this
+#            repository.
+#
+#            0b7543a — the deployment contract that had stopped naming the keys.
+#              `.env.example` is enforced in both directions: nothing read may be
+#              undocumented, nothing documented may be unread. R95 moved the key
+#              read behind `keyRing(env, KEY_NAMES)`, where the name is an array
+#              element and `env[name]` happens a file away, and every idiom the
+#              scanner knows names the variable next to the read. So the guard
+#              had been failing on DOCUMENTS_ENCRYPTION_KEY for two rounds — the
+#              harmless direction — while going blind on the direction that
+#              costs something: MFA_ENCRYPTION_KEY, which the code refuses to
+#              boot production without for TOTP seeds, and
+#              CONNECTION_ENCRYPTION_KEY, which seals a client's payroll and
+#              ledger credentials, were both absent from the one file an
+#              operator is told to read.
+#
+#              The `_PREVIOUS` half could never have been seen: `keyRing`
+#              *derives* that name rather than being given it, so no scan for
+#              literals reaches it. It is also the half that matters most — a
+#              key that cannot be rotated is a key that cannot be rotated after
+#              it leaks, which is the only time anybody wants to. Six names
+#              documented, the idiom taught in both halves, three self-checks so
+#              a regex that stops matching names itself instead of passing an
+#              empty list.
+#
+#            0001aec — the subsidiary of nobody. `consolidated_equity_value`
+#              strikes out every entity typed `subsidiary`, on the holding-
+#              company convention that a parent's valuation already contains it.
+#              `parent_valuation_id` was carried on the entity, selected by
+#              `loadEntities`, returned to the client — and never read by the
+#              function doing the striking out. The assumption was never
+#              checked, and four ordinary sequences make it false: assign an
+#              entity as `subsidiary` and stop, because the parent link is a
+#              second request to a different route and nothing insists on it;
+#              archive or detach the parent and leave the child, because
+#              `loadEntities` filters `archived_at IS NULL`; point the link at a
+#              valuation in another organization, which is permitted; delete the
+#              organization the parent was in.
+#
+#              In each the subsidiary's equity was eliminated as double-counted
+#              against a parent that is not there, so a holding company's
+#              consolidated equity came back understated by the whole
+#              subsidiary. The detach case is the one that reads as impossible:
+#              removing a 10M parent moved the figure by 13M. This is the number
+#              domain/portfolio.ts elsewhere calls the one an auditor relies on.
+#
+#              Fixed at the assumption rather than at the four doors, and inside
+#              each currency bucket as well as in the scalars — a mixed
+#              portfolio's scalars are null, so a fix reaching only those would
+#              have left the bug exactly where it is most often read. Counting
+#              the entity then makes the label "Subsidiaries excluded" wrong,
+#              which is the shape a reader cannot check, so the roll-up carries
+#              `unanchored_subsidiaries` and the page names them above the
+#              metrics. The existing unit test had encoded the bug: every
+#              subsidiary in it was built with `parent_valuation_id: null`.
+#
+#            fbe97d5 — the delete that dissolved a group and said 204. Both
+#              foreign keys into `organizations` are `ON DELETE SET NULL`, so
+#              deleting a populated one succeeded: members lost their
+#              `organization_id`, children were re-rooted to the top of the
+#              holdco tree, and both kept the entity type they had been given as
+#              members of a thing that no longer exists. Organizations have no
+#              restore — R90 spent a round making a retired engagement
+#              reversible; this had nothing.
+#
+#              Deleting an empty container and dissolving a group were the same
+#              request. It refuses now while anything is held, naming the two
+#              counts *behind the ownership load* so a stranger cannot learn
+#              them, and `?detach=true` is the second request that reads as the
+#              thing it does. The detach is explicit and transactional rather
+#              than the database's default: members return to `standalone` with
+#              the inter-company link cleared, because the type described a
+#              membership that is being removed, and children re-parent to this
+#              organization's own parent so a tree that loses a middle node
+#              closes up instead of scattering. SET NULL was Postgres's answer
+#              to a question nobody had asked.
+#
+#            10712fe — the render contract two fields behind its own library.
+#              `POST /render/v1/pdf` is the report service's whole reason to
+#              exist, and nothing in this repository calls it: the valuation
+#              service imports `@n409/report/pdf` and renders in-process. So
+#              `RenderBody` had drifted from `ReportPdfInput` with nothing to
+#              notice, and zod strips what it is not told about — the failure is
+#              a 200 with the field simply absent from the document.
+#
+#              `branding` had been missing since white-labelling, so a partner
+#              would have received their client's report in this platform's
+#              livery. `watermark` is the serious one: R92 added the diagonal
+#              DRAFT stamp because a draft is forwarded to auditors, attached to
+#              board packs and filed in data rooms, where an unmarked document
+#              is taken as final — and over HTTP the marker was dropped, handing
+#              back bytes indistinguishable from the signed deliverable. The
+#              guard is a source scan of the interface, not a list, so the next
+#              field is caught the day it is added rather than the day somebody
+#              first uses the service the way infra/DEPLOYMENT.md describes it.
+#
+# method:    the productive question was "which of these two halves has moved
+#            since the other one last looked". Every finding this round sits on
+#            a boundary that nothing crosses in the test suite: a scanner and
+#            the idiom it scans for, a figure and the field it should have read,
+#            a schema and the library behind it, a DELETE and the rows it
+#            silently rewrites. A boundary with no traffic over it is not
+#            covered by the tests on either side of it, and it drifts at exactly
+#            the rate the two sides are edited independently.
+#
+#            The counterpart is worth recording too, because it cost most of the
+#            round: eight areas were swept for the obvious classes — CSP and the
+#            header set, CORS, rate limits including per-account login throttles,
+#            SSRF on every outbound URL, CSV injection, log redaction, timeouts
+#            on all seventeen outbound fetches, unvalidated bodies, orphaning
+#            deletes across every table the app deletes from, ON CONFLICT
+#            targets, accessibility — and all of them were already closed, most
+#            with a test naming the reasoning. Ninety-six rounds have taken the
+#            findable-by-pattern work. What is left is findable by reading two
+#            things against each other.
+#
+# gap:       a PDF render blocks the valuation service's event loop for its
+#            whole duration — measured, not inferred: a 5ms interval timer fires
+#            zero times across a 103ms local render, and the deployed box logs
+#            436–661ms for the public sample. Every request, SSE stream and
+#            timer in the API waits behind it. The service built to hold that
+#            work off this loop is deployed, healthy, health-checked by
+#            deploy.sh and holding 58MB, and has served nothing but its own
+#            probe in seven days: 21 requests, all `/health`. Making the boundary
+#            real is a change to the platform's core deliverable and wants its
+#            own round with a fallback path; the contract it would have to cross
+#            is at least correct now. Retiring the unit instead is the other
+#            honest answer.
+#
+# note:      the valuation DELETE routes stay exempt from the retired-engagement
+#            sweep and the organization delete is not one of them — it is not
+#            valuation-scoped. It had no tests at all before this round; it has
+#            seven.
