@@ -69,7 +69,17 @@ const SummaryFigure = z.object({
   note: z.string().max(300).optional(),
 });
 
-const RenderBody = z.object({
+/**
+ * The wire contract for `POST /render/v1/pdf`.
+ *
+ * Exported so `renderContract.test.ts` can hold it against `ReportPdfInput`.
+ * The two had drifted by two fields — `branding` and `watermark` — because
+ * nothing in this repository crosses the boundary: the valuation service
+ * renders through the library, so a field added to the library and not to this
+ * schema breaks no test and no caller, and is discovered by whoever first uses
+ * the service as documented.
+ */
+export const RenderBody = z.object({
   title: z.string().min(1).max(300),
   company_name: z.string().min(1).max(300),
   meta: z
@@ -96,6 +106,38 @@ const RenderBody = z.object({
     .optional(),
   include_toc: z.boolean().optional(),
   confidentiality: z.string().max(120).nullable().optional(),
+  /**
+   * White-label branding. `logo` is a Buffer in the library and does not
+   * survive JSON, so the wire carries base64 and it is decoded below — the one
+   * field on this contract whose name differs from the library's, which is why
+   * it is spelled out rather than left to be inferred.
+   */
+  branding: z
+    .object({
+      partner_name: z.string().min(1).max(200),
+      brand_color: z
+        .string()
+        .regex(/^#[0-9a-fA-F]{6}$/, 'brand_color must be #rrggbb')
+        .nullable()
+        .optional(),
+      logo_base64: z
+        .string()
+        .max(4 * 1024 * 1024)
+        .nullable()
+        .optional(),
+    })
+    .optional(),
+  /**
+   * Draft marker: every page carries a diagonal stamp of this word and the
+   * cover a notice naming it.
+   *
+   * Absent from this schema until round 97, while the library it wraps has had
+   * it since R92. Zod strips what it is not told about, so an HTTP caller
+   * asking for a watermarked draft would have been handed back bytes
+   * indistinguishable from the signed deliverable — the exact failure the
+   * watermark exists to prevent, arriving as a silent success.
+   */
+  watermark: z.string().min(1).max(60).nullable().optional(),
   // Written to the PDF's CreationDate, so a report re-downloaded months later
   // still says when it was produced rather than when the bytes were.
   generated_at: z.coerce.date().optional(),
@@ -180,7 +222,19 @@ export function buildApp(): FastifyInstance {
     const parsed = RenderBody.safeParse(req.body);
     if (!parsed.success)
       throw problems.unprocessable('Invalid render request', { errors: parsed.error.issues });
-    const pdf = await renderReportPdf(parsed.data);
+    const { branding, ...rest } = parsed.data;
+    const pdf = await renderReportPdf({
+      ...rest,
+      ...(branding
+        ? {
+            branding: {
+              partner_name: branding.partner_name,
+              brand_color: branding.brand_color ?? null,
+              logo: branding.logo_base64 ? Buffer.from(branding.logo_base64, 'base64') : null,
+            },
+          }
+        : {}),
+    });
     return reply
       .type('application/pdf')
       .header('content-disposition', 'inline; filename="report.pdf"')
