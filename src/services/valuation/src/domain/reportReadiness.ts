@@ -1,4 +1,4 @@
-import type { ReportContent } from './report.js';
+import { RENDER_RESOLVED_MARKERS, type ReportContent } from './report.js';
 
 /**
  * Does the drafted report still contain the template's fill-me markers?
@@ -149,6 +149,16 @@ export function findReportPlaceholders(
     let computed: RegExpExecArray | null;
     while ((computed = COMPUTED.exec(text)) !== null) {
       if (Object.hasOwn(figures, computed[1]!)) continue;
+      /*
+       * Resolved at render from the exhibit list and the signatures on file
+       * rather than from the calculation, so `figures` will never carry them and
+       * their presence in a body is correct rather than unfinished. The QA route
+       * resolves both before calling this, so on that path they are already
+       * gone; the callers that pass a *stored* body are the ones this protects,
+       * and it is what stops a marker's exclusion depending on which caller
+       * asked. See `RENDER_RESOLVED_MARKERS`.
+       */
+      if (RENDER_RESOLVED_MARKERS.has(computed[1]!)) continue;
       found.push({
         key: section.key,
         heading: section.heading,

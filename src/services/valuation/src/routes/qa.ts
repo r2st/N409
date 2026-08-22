@@ -14,6 +14,8 @@ import { templateForKind } from '../domain/report.js';
 import { summaryFor } from './reports.js';
 import { reportFigures } from '../domain/reportFigures.js';
 import { resolveExhibitReferences } from '../domain/reportExhibitIndex.js';
+import { resolveSignatures } from '../domain/reportSignatures.js';
+import { listSignatures } from '../repos/signatures.js';
 import { calculationPayload, runAiPipeline, type AiPipelineDeps } from './ai.js';
 import { InternalServiceError, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -96,17 +98,27 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
      * same order, that `renderVersionPdf` performs.
      *
      * Both checks below have to read the *resolved* body or they grade a
-     * document nobody receives: `{{exhibit_index}}` is a render-time marker and
-     * would otherwise be counted as an unfilled hole, and the index's list of
-     * schedules does not exist until it is built from this very array.
+     * document nobody receives: `{{exhibit_index}}` and `{{signatures}}` are
+     * render-time markers and would otherwise be counted as unfilled holes, and
+     * neither the index's list of schedules nor the certification's signature
+     * block exists until it is built — the first from this very array, the
+     * second from the rows on file.
      */
-    const { exhibits } = await summaryFor(deps.pool, valuation);
+    const [{ exhibits }, signatories] = await Promise.all([
+      summaryFor(deps.pool, valuation),
+      listSignatures(deps.pool, valuation.id),
+    ]);
     const exhibitHeadings = exhibits.map((s) => s.heading);
     // The sections rather than the headings, for the reason `renderedScheduleIds`
     // gives: an exhibit built from separately-conditional blocks declares which
     // of them printed, and a body pointer at one resolves against that.
+    //
+    // Signed last, exactly as `renderVersionPdf` does it. A QA run before the
+    // signature lands — which is every QA run, since the signature is what
+    // closes the review this grades — sees the unsigned block, which is what the
+    // deliverable would carry if it were rendered at that moment.
     const reportContent = reportVersion?.content
-      ? resolveExhibitReferences(reportVersion.content, exhibits)
+      ? resolveSignatures(resolveExhibitReferences(reportVersion.content, exhibits), signatories)
       : null;
     // Checked against what this calculation can actually fill in. A computed
     // marker the run supplies is not a hole; one it does not is a set of literal

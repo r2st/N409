@@ -155,6 +155,99 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
     return readable(pdf.rawPayload);
   }
 
+  // ── the signature ──────────────────────────────────────────────────────────
+
+  /**
+   * The one thing the platform gated the deliverable on and never printed.
+   *
+   * `publishGate` refuses to publish an engagement with no `main` signature, so
+   * the row is always there by the time the document is the file of record; the
+   * PDF named nobody. What is pinned here is the seam — the render loads the
+   * rows and resolves them into the certification — because both halves passed
+   * their own tests while nothing connected them.
+   */
+  describe('the appraiser signature', () => {
+    let unsigned: ValuationRow;
+
+    beforeAll(async () => {
+      unsigned = await seed('Halloway Instruments, Inc.', true);
+    });
+
+    const sign = (id: string, role: 'main' | 'second', name: string, title: string) =>
+      ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/signatures`,
+        headers: authHeader(ops.token),
+        payload: { role, signer_name: name, signer_title: title, signature_text: name },
+      });
+
+    it('says the report is unsigned until somebody signs it', async () => {
+      const text = await pdfText(unsigned.id);
+      expect(text).toContain('Appraiser Certification');
+      expect(text).toContain('not yet signed');
+    });
+
+    it('prints the analyst who signed, and their title', async () => {
+      const signed = await seed('Calder Dynamics, Inc.', true);
+      const res = await sign(signed.id, 'main', 'Dana Whitfield', 'Managing Director, ASA');
+      expect(res.statusCode).toBeLessThan(300);
+
+      const text = await pdfText(signed.id);
+      expect(text).toContain('Dana Whitfield');
+      expect(text).toContain('Managing Director, ASA');
+      expect(text).not.toContain('not yet signed');
+    });
+
+    it('picks up a concurring reviewer who signs after the body was drafted', async () => {
+      /*
+       * The reason the block is resolved at render rather than written into the
+       * stored body. A second signature lands after the report has been drafted
+       * and rendered once; the next render has to carry it, with no edit to the
+       * certification chapter.
+       */
+      const signed = await seed('Brightwater Systems, Inc.', true);
+      await sign(signed.id, 'main', 'Dana Whitfield', 'Managing Director, ASA');
+      const first = await pdfText(signed.id);
+      expect(first).not.toContain('Ravi Menon');
+
+      await sign(signed.id, 'second', 'Ravi Menon', 'Director, CFA');
+      const second = await pdfText(signed.id);
+      expect(second).toContain('Dana Whitfield');
+      expect(second).toContain('Ravi Menon');
+    });
+
+    it('replaces a superseded signature rather than printing both', async () => {
+      // `upsertSignature` is insert-or-replace: re-signing after a change is how
+      // a corrected report is re-signed, and the previous signer must not stay
+      // on the page.
+      const signed = await seed('Pemberton Optics, Inc.', true);
+      await sign(signed.id, 'main', 'Dana Whitfield', 'Managing Director, ASA');
+      await sign(signed.id, 'main', 'Ines Okafor', 'Partner, ABV');
+
+      const text = await pdfText(signed.id);
+      expect(text).toContain('Ines Okafor');
+      expect(text).not.toContain('Dana Whitfield');
+    });
+
+    it('states the nine certification statements USPAP requires', async () => {
+      const text = await pdfText(unsigned.id);
+      for (const required of [
+        'true and correct',
+        'impartial and unbiased',
+        'no present or prospective interest',
+        'three-year period immediately preceding',
+        'no bias with respect to',
+        'engagement in this assignment was not contingent',
+        'compensation is not contingent',
+        'Uniform Standards of Professional Appraisal Practice',
+        'Statement on Standards for Valuation Services No. 1',
+        'significant professional assistance',
+      ]) {
+        expect(text, required).toContain(required);
+      }
+    });
+  });
+
   // ── the valuation date ─────────────────────────────────────────────────────
 
   describe('the date the report states', () => {
@@ -955,7 +1048,7 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       await opsGet(`/api/v1/valuations/${v.id}/report`);
       const res = await draft(v.id, ops.token);
       expect(res.statusCode).toBe(200);
-      expect(res.json().template_version).toBe('409a.v62');
+      expect(res.json().template_version).toBe('409a.v63');
       const keys = (res.json().version.content.sections as Array<{ key: string }>).map((s) => s.key);
       expect(keys).toContain('purpose_and_scope');
     });
@@ -978,7 +1071,7 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       const v = await seed('Redraft Three, Inc.', true);
       await opsGet(`/api/v1/valuations/${v.id}/report`);
       const res = await draft(v.id, ops.token);
-      expect(res.json().report.template_version).toBe('409a.v62');
+      expect(res.json().report.template_version).toBe('409a.v63');
     });
 
     it('is refused to a client', async () => {

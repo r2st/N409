@@ -1,4 +1,10 @@
-import { TEMPLATE_VAR_NAMES, visibleSections, type ReportContent, type ReportTemplate } from './report.js';
+import {
+  RENDER_RESOLVED_MARKERS,
+  TEMPLATE_VAR_NAMES,
+  visibleSections,
+  type ReportContent,
+  type ReportTemplate,
+} from './report.js';
 import type { QaStatus } from './qaChecks.js';
 
 /**
@@ -98,13 +104,14 @@ function computedMarkers(html: string): Set<string> {
   for (const m of html.matchAll(MARKER)) {
     if (TEMPLATE_VAR_NAMES.has(m[1]!)) continue;
     /*
-     * Not a figure either. `{{exhibit_index}}` is resolved from the exhibit list
-     * rather than from the calculation (domain/reportExhibitIndex.ts), and this
-     * check reads the *resolved* body — so counting it would report the Index of
-     * Exhibits, whose whole content is generated, as a chapter that had stopped
-     * restating itself.
+     * Not a figure either. These resolve at render from something other than the
+     * calculation — the exhibit list (domain/reportExhibitIndex.ts) and the
+     * signatures on file (domain/reportSignatures.ts) — and this check reads the
+     * *resolved* body, so counting them would report the Index of Exhibits and
+     * the certification, whose blocks are generated in full, as chapters that
+     * had stopped restating themselves.
      */
-    if (m[1] === 'exhibit_index') continue;
+    if (RENDER_RESOLVED_MARKERS.has(m[1]!)) continue;
     out.add(m[1]!);
   }
   return out;

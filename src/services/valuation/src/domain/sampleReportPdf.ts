@@ -1,6 +1,7 @@
 import type { ReportPdfInput, ReportPdfSection, ReportPdfSummary } from '@n409/report/pdf';
 import { instantiateTemplate, templateForKind, visibleSections } from './report.js';
 import { resolveExhibitReferences } from './reportExhibitIndex.js';
+import { resolveSignatures } from './reportSignatures.js';
 import { SCHEDULE } from './reportExhibits.js';
 import { fillFigures, reportFigures } from './reportFigures.js';
 import { formatCurrency, formatPercent } from './reportSummary.js';
@@ -22,7 +23,8 @@ import type { ValuationKind } from './valuation.js';
  * 59 versions and will move again: it goes stale silently, and nobody diffs a
  * binary against a skeleton. So this renders through the *production* path —
  * `templateForKind` → `instantiateTemplate` → `resolveExhibitReferences` →
- * `fillFigures` → `renderReportPdf` — with a fabricated engagement standing in
+ * `resolveSignatures` → `fillFigures` → `renderReportPdf` — with a fabricated
+ * engagement standing in
  * for the database. Change the 409A template and the sample changes with it;
  * break the renderer and the sample's own test fails alongside the real one's.
  *
@@ -405,15 +407,28 @@ export function sampleReportPdfInput(kind: ValuationKind = '409a'): ReportPdfInp
   const template = templateForKind(kind);
   const exhibits = sampleExhibits();
   const content = fillFigures(
-    resolveExhibitReferences(
-      instantiateTemplate(template, {
-        company_name: SAMPLE_COMPANY,
-        kind,
-        valuation_ref: 'SAMPLE-409A',
-        date: SAMPLE_VALUATION_DATE,
-        currency: SAMPLE_CURRENCY,
-      }),
-      exhibits,
+    /*
+     * Signed by nobody, deliberately — and therefore *resolved* rather than
+     * skipped. The certification carries `{{signatures}}`, so a sample that did
+     * not run this step would print the marker itself on a public marketing
+     * asset. Resolving it against an empty list prints the ruled, empty
+     * signature lines and the sentence saying the report is unsigned and may not
+     * be relied upon, which is the fourth mark (after the footer, the cover fact
+     * and the summary's opening sentence) separating this document from an
+     * appraisal.
+     */
+    resolveSignatures(
+      resolveExhibitReferences(
+        instantiateTemplate(template, {
+          company_name: SAMPLE_COMPANY,
+          kind,
+          valuation_ref: 'SAMPLE-409A',
+          date: SAMPLE_VALUATION_DATE,
+          currency: SAMPLE_CURRENCY,
+        }),
+        exhibits,
+      ),
+      [],
     ),
     // A plain object rather than a row: `reportFigures` reads `status` and
     // `results` and nothing else, and fabricating a whole CalculationRow would

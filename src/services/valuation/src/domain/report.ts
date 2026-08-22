@@ -378,6 +378,49 @@ export const EXHIBIT_INDEX_MARKER = '{{exhibit_index}}';
 const INDEX_MARKER = EXHIBIT_INDEX_MARKER;
 
 /**
+ * Where the appraiser's signature block goes, at render time.
+ *
+ * Declared here for the same reason as `EXHIBIT_INDEX_MARKER` — the skeleton
+ * below writes it — and consumed by `domain/reportSignatures.ts`, which
+ * resolves it against the `valuation_signatures` rows on file. Never resolved
+ * at instantiation: a signature lands after QA closes and may be replaced, so a
+ * signature written into the stored body would be one that could not be
+ * corrected without editing prose.
+ */
+export const SIGNATURE_MARKER = '{{signatures}}';
+
+/**
+ * The markers that resolve at render from something other than the calculation.
+ *
+ * Two checks read a body and ask what is still unresolved in it, and neither
+ * can answer correctly without knowing that these never resolve from
+ * `reportFigures` and are *supposed* to still be there:
+ *
+ *   * `reportReview.computedMarkers` — which chapters restate themselves from
+ *     the calculation. It has excluded `{{exhibit_index}}` by name since that
+ *     marker existed;
+ *   * `reportReadiness.findReportPlaceholders` — which chapters still hold an
+ *     unfilled placeholder. It excluded nothing.
+ *
+ * The QA route resolves the body before grading it, which is what has kept the
+ * second of those from firing: `resolveExhibitReferences` has already replaced
+ * `{{exhibit_index}}` by the time readiness reads the chapter. That is the
+ * right design and it is not a substitute for this set, for two reasons. It
+ * holds only for callers that resolve first, and `narrativeApply` does not —
+ * it reads the stored body, where the marker is still present, and counts the
+ * Index of Exhibits as a chapter nobody has written. And it makes the
+ * correctness of a publish gate depend on a caller remembering to run a step,
+ * which is the arrangement that quietly breaks the day a second render-time
+ * marker is added and one of the two call sites is updated. `{{signatures}}`
+ * is that second marker, which is why the set exists rather than a second
+ * literal beside the first.
+ *
+ * Named once, here, so the answer cannot differ between the check that grades
+ * the body and the check that gates the publish.
+ */
+export const RENDER_RESOLVED_MARKERS: ReadonlySet<string> = new Set(['exhibit_index', 'signatures']);
+
+/**
  * A pointer that only makes sense when the schedule it names is printed.
  *
  * `EXHIBIT_IF('E', '…set out in <strong>Exhibit E</strong>.')` survives the
@@ -407,6 +450,69 @@ const EXHIBIT_IF = (id: string, html: string) => `{{#exhibit:${id}}}${html}{{/ex
  * and resolved by `domain/reportExhibitIndex.ts`.
  */
 export const CLASS_VOLATILITY_SCHEDULE = 'H-1-CLASS-VOLATILITY';
+
+/**
+ * The appraiser certification — one text, for all fifteen deliverables.
+ *
+ * ## Why it is shared
+ *
+ * There were three copies: the 409A's, the gift-and-estate skeleton's, and the
+ * one `CLOSING_SECTIONS` appends to the twelve that declared none. They had
+ * drifted, in the direction drift always takes — the copy nobody was looking at
+ * certified least. The GIFTS certification made four of the nine statements
+ * USPAP requires; the 409A made five. Neither said what standard the work was
+ * done under, which is the statement an auditor reads the page for.
+ *
+ * A certification is not a chapter where per-kind wording earns anything. It is
+ * a fixed list of assertions about the appraiser, and the subject of the
+ * valuation does not change any of them. So there is one, and
+ * `withClosingSections` hands it to every skeleton that does not place it
+ * itself.
+ *
+ * ## The nine statements
+ *
+ * USPAP Standards Rule 10-3 enumerates them and a signed business-appraisal
+ * certification must contain all nine. Four were missing everywhere:
+ *
+ *   * SR 10-3(iv) — prior services in the three years before the engagement.
+ *     Silence is not the same disclosure as "none": a reader cannot tell an
+ *     appraiser who had no prior involvement from one who did not mention it;
+ *   * SR 10-3(v) — absence of bias, which is a separate assertion from the
+ *     absence of financial interest in (iii);
+ *   * SR 10-3(vi) — that the *engagement* was not contingent on a predetermined
+ *     result, which is separate from (vii)'s statement about the fee;
+ *   * SR 10-3(viii) — conformity with USPAP. Without it the document does not
+ *     say what standard it was prepared under, and a §409A safe-harbour claim
+ *     rests on an appraisal whose standard the file leaves to inference.
+ *
+ * SSVS-1 is named alongside USPAP because both govern this work and the AICPA
+ * statement is the one the company's auditors apply.
+ *
+ * ## The marker
+ *
+ * `{{signatures}}` is the last thing on the page and resolves at render against
+ * the rows on file — see `SIGNATURE_MARKER` and domain/reportSignatures.ts. It
+ * is written into the skeleton rather than appended by the resolver so that an
+ * analyst who rewords the chapter can still say where the block goes.
+ */
+const CERTIFICATION_SECTION: TemplateSectionDef = {
+  key: 'certification',
+  heading: 'Appraiser Certification',
+  html:
+    P('We certify that, to the best of our knowledge and belief:') +
+    '<ul>' +
+    '<li>The statements of fact contained in this report are true and correct.</li>' +
+    '<li>The reported analyses, opinions and conclusions are limited only by the reported assumptions and limiting conditions, and are our personal, impartial and unbiased professional analyses, opinions and conclusions.</li>' +
+    '<li>We have no present or prospective interest in {{company_name}} or in the property that is the subject of this report, and no personal interest with respect to the parties involved.</li>' +
+    '<li>We have performed no services, as an appraiser or in any other capacity, regarding the property that is the subject of this report within the three-year period immediately preceding acceptance of this assignment, except as disclosed herein.</li>' +
+    '<li>We have no bias with respect to the property that is the subject of this report or to the parties involved with this assignment.</li>' +
+    '<li>Our engagement in this assignment was not contingent upon developing or reporting predetermined results.</li>' +
+    '<li>Our compensation is not contingent on the reporting of a predetermined value or direction in value that favors the cause of the client, on the amount of the value opinion, on the attainment of a stipulated result, or on the occurrence of any subsequent event directly related to the intended use of this report.</li>' +
+    '<li>Our analyses, opinions and conclusions were developed, and this report has been prepared, in conformity with the Uniform Standards of Professional Appraisal Practice and with the Statement on Standards for Valuation Services No. 1 issued by the American Institute of Certified Public Accountants.</li>' +
+    '<li>No one provided significant professional assistance to the persons signing this report except as disclosed herein.</li>' +
+    '</ul>' +
+    SIGNATURE_MARKER,
+};
 
 /**
  * The 409A deliverable skeleton, modelled on the production 409a layout.
@@ -498,9 +604,17 @@ export const CLASS_VOLATILITY_SCHEDULE = 'H-1-CLASS-VOLATILITY';
  * two beside it were not, which is why `reportReview` graded the stock skeleton
  * a `dangling_exhibit_reference` failure on the commonest shape of 409A this
  * platform values.
+ *
+ * v63 replaces the certification with the shared `CERTIFICATION_SECTION`: all
+ * nine of the statements USPAP Standards Rule 10-3 requires rather than five,
+ * and the `{{signatures}}` marker the render fills with whoever actually signed
+ * (domain/reportSignatures.ts). It also names USPAP and SSVS-1 in the scope
+ * chapter — a reader checking what standard a valuation was prepared under
+ * looks at the front of the report, not at the certification eleven chapters
+ * later.
  */
 const TEMPLATE_409A: ReportTemplate = {
-  version: '409a.v62',
+  version: '409a.v63',
   name: 'IRC 409A Valuation Report',
   sections: [
     {
@@ -523,6 +637,7 @@ const TEMPLATE_409A: ReportTemplate = {
         '<li><strong>Intended use</strong> — setting option exercise prices and measuring compensation cost. No other use is intended or authorized.</li>' +
         '<li><strong>Subject interest</strong> — one share of common stock, on a non-marketable, minority-interest basis.</li>' +
         '<li><strong>Scope of work</strong> — a full appraisal reported in this detailed report; no scope limitation was agreed or applied.</li>' +
+        '<li><strong>Standards applied</strong> — this valuation engagement was performed, and this detailed report prepared, in conformity with the Uniform Standards of Professional Appraisal Practice (USPAP) promulgated by the Appraisal Foundation and with the Statement on Standards for Valuation Services No. 1 (SSVS-1) issued by the American Institute of Certified Public Accountants. The analysis also follows the factors of Revenue Ruling 59-60 and the AICPA <em>Valuation of Privately-Held-Company Equity Securities Issued as Compensation</em> practice aid.</li>' +
         '</ul>' +
         P(
           'The valuation is not an opinion on the price at which the company or any interest in it would transact in a negotiated sale, a fairness opinion, an audit, or investment advice, and it should not be relied on for any of those purposes.',
@@ -880,19 +995,7 @@ const TEMPLATE_409A: ReportTemplate = {
           'This valuation is intended to satisfy that independent-appraisal presumption. The presumption may be rebutted by the Internal Revenue Service only on a showing that the valuation was grossly unreasonable.',
         ),
     },
-    {
-      key: 'certification',
-      heading: 'Appraiser Certification',
-      html:
-        P('We certify that, to the best of our knowledge and belief:') +
-        '<ul>' +
-        '<li>The statements of fact in this report are true and correct.</li>' +
-        '<li>The analyses, opinions and conclusions are limited only by the assumptions and limiting conditions stated, and are our personal, impartial and unbiased professional analyses.</li>' +
-        '<li>We have no present or prospective interest in {{company_name}} and no personal interest with respect to the parties involved.</li>' +
-        '<li>Our compensation is not contingent on the reporting of a predetermined value, on the amount of the value opinion, or on the occurrence of any subsequent event.</li>' +
-        '<li>No one provided significant professional assistance to the persons signing this report except as disclosed herein.</li>' +
-        '</ul>',
-    },
+    CERTIFICATION_SECTION,
     {
       key: 'qualifications',
       heading: 'Qualifications of the Valuation Analyst',
@@ -931,7 +1034,7 @@ const TEMPLATE_409A: ReportTemplate = {
 
 /** Fallback skeleton for the kinds without a dedicated skeleton below. */
 const TEMPLATE_GENERIC: ReportTemplate = {
-  version: 'generic.v2',
+  version: 'generic.v3',
   name: 'Valuation Report',
   sections: [
     {
@@ -974,7 +1077,7 @@ const TEMPLATE_GENERIC: ReportTemplate = {
  * Every kind now has a skeleton; nothing falls through to TEMPLATE_GENERIC.
  */
 const TEMPLATE_QSBS: ReportTemplate = {
-  version: 'qsbs.v2',
+  version: 'qsbs.v3',
   name: 'QSBS Attestation Letter (IRC §1202)',
   sections: [
     {
@@ -1031,7 +1134,7 @@ const TEMPLATE_QSBS: ReportTemplate = {
 };
 
 const TEMPLATE_PPA: ReportTemplate = {
-  version: 'ppa.v2',
+  version: 'ppa.v3',
   name: 'Purchase Price Allocation (ASC 805)',
   sections: [
     {
@@ -1079,7 +1182,7 @@ const TEMPLATE_PPA: ReportTemplate = {
 };
 
 const TEMPLATE_IMPAIRMENT: ReportTemplate = {
-  version: 'impairment.v2',
+  version: 'impairment.v3',
   name: 'Goodwill & Intangible Impairment Testing (ASC 350/360)',
   sections: [
     {
@@ -1122,7 +1225,7 @@ const TEMPLATE_IMPAIRMENT: ReportTemplate = {
 };
 
 const TEMPLATE_ESOP: ReportTemplate = {
-  version: 'esop.v2',
+  version: 'esop.v3',
   name: 'ESOP Valuation Report',
   sections: [
     {
@@ -1168,7 +1271,7 @@ const TEMPLATE_ESOP: ReportTemplate = {
 };
 
 const TEMPLATE_SMB: ReportTemplate = {
-  version: 'smb.v2',
+  version: 'smb.v3',
   name: 'Business Valuation Report',
   sections: [
     {
@@ -1209,7 +1312,7 @@ const TEMPLATE_SMB: ReportTemplate = {
 };
 
 const TEMPLATE_EMI: ReportTemplate = {
-  version: 'emi.v2',
+  version: 'emi.v3',
   name: 'EMI Valuation Report (HMRC)',
   sections: [
     {
@@ -1255,7 +1358,7 @@ const TEMPLATE_EMI: ReportTemplate = {
 };
 
 const TEMPLATE_CSOP: ReportTemplate = {
-  version: 'csop.v2',
+  version: 'csop.v3',
   name: 'CSOP Valuation Report (HMRC)',
   sections: [
     {
@@ -1294,7 +1397,7 @@ const TEMPLATE_CSOP: ReportTemplate = {
 };
 
 const TEMPLATE_IP: ReportTemplate = {
-  version: 'ip.v2',
+  version: 'ip.v3',
   name: 'Intellectual Property Valuation Report',
   sections: [
     {
@@ -1328,7 +1431,7 @@ const TEMPLATE_IP: ReportTemplate = {
 };
 
 const TEMPLATE_718: ReportTemplate = {
-  version: '718.v2',
+  version: '718.v3',
   name: 'ASC 718 Stock-Based Compensation Report',
   sections: [
     {
@@ -1405,7 +1508,7 @@ const TEMPLATE_718: ReportTemplate = {
 };
 
 const TEMPLATE_820: ReportTemplate = {
-  version: '820.v2',
+  version: '820.v3',
   name: 'ASC 820 Fair Value Measurement Report',
   sections: [
     {
@@ -1482,7 +1585,7 @@ const TEMPLATE_820: ReportTemplate = {
 };
 
 const TEMPLATE_GIFTS: ReportTemplate = {
-  version: 'gifts.v2',
+  version: 'gifts.v3',
   name: 'Gift & Estate Tax Valuation Report',
   sections: [
     {
@@ -1559,18 +1662,7 @@ const TEMPLATE_GIFTS: ReportTemplate = {
         'This report is intended to satisfy the adequate-disclosure requirements of Treasury Regulation §301.6501(c)-1(f)(3): it describes the transferred property, the parties and their relationship, and the method, factors and assumptions used in determining the reported value, and it is prepared by an appraiser holding the qualifications described herein.',
       ),
     },
-    {
-      key: 'certification',
-      heading: 'Appraiser Certification',
-      html:
-        P('We certify that, to the best of our knowledge and belief:') +
-        '<ul>' +
-        '<li>The statements of fact in this report are true and correct.</li>' +
-        '<li>The analyses, opinions and conclusions are our personal, impartial and unbiased professional analyses.</li>' +
-        '<li>We have no present or prospective interest in the property valued and no bias with respect to the parties.</li>' +
-        '<li>Our compensation is not contingent on the reporting of a predetermined value or the amount of the value opinion.</li>' +
-        '</ul>',
-    },
+    CERTIFICATION_SECTION,
     {
       key: 'limiting_conditions',
       heading: 'Assumptions & Limiting Conditions',
@@ -1582,7 +1674,7 @@ const TEMPLATE_GIFTS: ReportTemplate = {
 };
 
 const TEMPLATE_IFRS2: ReportTemplate = {
-  version: 'ifrs2.v2',
+  version: 'ifrs2.v3',
   name: 'IFRS 2 Share-Based Payment Report',
   sections: [
     {
@@ -1665,7 +1757,7 @@ const TEMPLATE_IFRS2: ReportTemplate = {
  * do.
  */
 const TEMPLATE_FUND: ReportTemplate = {
-  version: 'fund.v1',
+  version: 'fund.v2',
   name: 'Fund Net Asset Value Report (ASC 820)',
   sections: [
     {
@@ -1739,7 +1831,7 @@ const TEMPLATE_FUND: ReportTemplate = {
 };
 
 const TEMPLATE_DEBT: ReportTemplate = {
-  version: 'debt.v1',
+  version: 'debt.v2',
   name: 'Debt Instrument Valuation Report',
   sections: [
     {
@@ -1824,9 +1916,13 @@ const TEMPLATE_DEBT: ReportTemplate = {
  *
  * Defined once and appended rather than pasted into each skeleton, so a new
  * report type cannot be added without them. `withClosingSections` skips any
- * key the template already declares, which is how 409A keeps its §409A-
- * specific certification and GIFTS keeps its Chapter 14 wording — the shared
- * block is a floor, not an override.
+ * key the template already declares, which is how 409A and GIFTS place the
+ * certification where they want it in their running order rather than after
+ * the Index of Exhibits — the shared block is a floor, not an override.
+ *
+ * The certification itself is `CERTIFICATION_SECTION`, shared with the two
+ * skeletons that position it themselves. It used to be written out here and
+ * again in each of them, and the copies had drifted; see its own note.
  */
 const CLOSING_SECTIONS: TemplateSectionDef[] = [
   {
@@ -1843,19 +1939,7 @@ const CLOSING_SECTIONS: TemplateSectionDef[] = [
       '<li>Neither this report nor any part of it may be published or referred to publicly without our prior written consent.</li>' +
       '</ul>',
   },
-  {
-    key: 'certification',
-    heading: 'Appraiser Certification',
-    html:
-      P('We certify that, to the best of our knowledge and belief:') +
-      '<ul>' +
-      '<li>The statements of fact in this report are true and correct.</li>' +
-      '<li>The analyses, opinions and conclusions are limited only by the assumptions and limiting conditions stated, and are our personal, impartial and unbiased professional analyses.</li>' +
-      '<li>We have no present or prospective interest in {{company_name}} and no personal interest with respect to the parties involved.</li>' +
-      '<li>Our compensation is not contingent on the reporting of a predetermined value, on the amount of the value opinion, or on the occurrence of any subsequent event.</li>' +
-      '<li>No one provided significant professional assistance to the persons signing this report except as disclosed herein.</li>' +
-      '</ul>',
-  },
+  CERTIFICATION_SECTION,
   {
     key: 'qualifications',
     heading: 'Qualifications of the Valuation Analyst',

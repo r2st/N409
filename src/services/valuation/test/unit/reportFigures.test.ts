@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { fillFigures, reportFigures } from '../../src/domain/reportFigures.js';
 import { instantiateTemplate, templateForKind } from '../../src/domain/report.js';
 import { resolveExhibitReferences } from '../../src/domain/reportExhibitIndex.js';
+import { resolveSignatures, type ReportSignatory } from '../../src/domain/reportSignatures.js';
 import type { CalculationRow } from '../../src/repos/calculations.js';
 
 /**
@@ -10,6 +11,24 @@ import type { CalculationRow } from '../../src/repos/calculations.js';
  * index are resolved against this list, so a heading that drifts from the
  * builder's drops the pointer that names it — which is the behaviour under test.
  */
+/** A signed engagement: both roles on file, as `listSignatures` returns them. */
+const SIGNED_BY: ReportSignatory[] = [
+  {
+    role: 'main',
+    signer_name: 'Dana Whitfield',
+    signer_title: 'Managing Director, ASA',
+    signature_text: 'Dana Whitfield',
+    signed_at: new Date('2026-07-02T14:05:00Z'),
+  },
+  {
+    role: 'second',
+    signer_name: 'Ravi Menon',
+    signer_title: 'Director, CFA',
+    signature_text: 'Ravi Menon',
+    signed_at: new Date('2026-07-03T09:20:00Z'),
+  },
+];
+
 const EXHIBITS_BUILT = [
   'Exhibit A — Capitalization Table',
   'Exhibit B — Reconciliation of Valuation Approaches',
@@ -256,16 +275,23 @@ describe('the 409A skeleton and the figures it names', () => {
 
   it('leaves no ellipsis where a computed figure belongs', () => {
     /*
-     * Both render steps, in the order `renderVersionPdf` performs them: the
+     * All three render steps, in the order `renderVersionPdf` performs them: the
      * exhibit index and the conditional pointers are resolved against the
-     * schedules built for this run, then the figures are filled. Asserting on
-     * `fillFigures` alone would read `{{exhibit_index}}` as an unfilled hole —
-     * it is a marker for the other step, not for this one — and, worse, would
-     * pass a body in which a `{{#exhibit:…}}` block had gone unresolved and
-     * shipped its own braces to the reader.
+     * schedules built for this run, the certification is signed, then the
+     * figures are filled. Asserting on `fillFigures` alone would read
+     * `{{exhibit_index}}` and `{{signatures}}` as unfilled holes — they are
+     * markers for the other steps, not for this one — and, worse, would pass a
+     * body in which a `{{#exhibit:…}}` block had gone unresolved and shipped its
+     * own braces to the reader.
+     *
+     * Signed by two, so the block that lands here is the one a delivered report
+     * carries rather than the unsigned draft form.
      */
     const body = fillFigures(
-      resolveExhibitReferences(instantiateTemplate(template, vars), EXHIBITS_BUILT),
+      resolveSignatures(
+        resolveExhibitReferences(instantiateTemplate(template, vars), EXHIBITS_BUILT),
+        SIGNED_BY,
+      ),
       reportFigures(calculation(), 'USD'),
     );
     // The ASC 718 rows that belong to the *grants* keep their ellipsis — they

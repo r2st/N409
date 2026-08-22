@@ -46,6 +46,8 @@ import { loadHmrcForm } from '../repos/hmrcForms.js';
 import { loadDebtReport, loadFundReport } from '../repos/measurementReport.js';
 import { buildDebtExhibits, buildFundExhibits } from '../domain/navExhibits.js';
 import { resolveExhibitReferences } from '../domain/reportExhibitIndex.js';
+import { resolveSignatures } from '../domain/reportSignatures.js';
+import { listSignatures } from '../repos/signatures.js';
 import { findParams } from '../repos/params.js';
 import { findCurrentVolatilityEstimate } from '../repos/volatilityEstimates.js';
 import { findCurrentProjection } from '../repos/projections.js';
@@ -460,9 +462,15 @@ async function renderVersionPdf(
   // Branding is a partner lookup plus, on a white-labelled engagement, a logo
   // fetch over the network. It has nothing to say about the figures, so it has
   // no reason to wait behind them.
-  const [{ summary, exhibits, valuationDate, figures }, branding] = await Promise.all([
+  const [{ summary, exhibits, valuationDate, figures }, branding, signatories] = await Promise.all([
     summaryFor(pool, valuation),
     brandingFor(pool, valuation),
+    // Who signed. Not part of `summaryFor`, which loads what the *calculation*
+    // needs — a signature is a fact about the engagement's approval and moves
+    // on its own clock, after the figures have stopped changing. Alongside the
+    // branding fetch for the same reason: it has nothing to say about any
+    // number on the page and no reason to wait behind one.
+    listSignatures(pool, valuation.id),
   ]);
   // The authored body states the conclusion, and only the calculation knows it.
   // Resolved here rather than at instantiation, and never written back: the
@@ -477,7 +485,15 @@ async function renderVersionPdf(
   // separately-conditional blocks declares what it actually printed, and a
   // pointer at one of those blocks resolves against that. See
   // `renderedScheduleIds`.
-  const body = fillFigures(resolveExhibitReferences(content, exhibits), figures);
+  // The certification is signed at render for the same reason the figures are
+  // filled at render: the stored body must keep its marker so that re-rendering
+  // after a concurring reviewer signs — or after a signature is replaced —
+  // restates the block rather than leaving the previous one in place. See
+  // domain/reportSignatures.ts.
+  const body = fillFigures(
+    resolveSignatures(resolveExhibitReferences(content, exhibits), signatories),
+    figures,
+  );
   const pdf = await renderReportPdf({
     title: body.title,
     company_name: valuation.company_name,

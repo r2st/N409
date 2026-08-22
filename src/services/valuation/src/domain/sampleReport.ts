@@ -70,7 +70,7 @@ const SECTION_BLURBS: Record<string, string> = {
   safe_harbor:
     'How this appraisal meets the independent-appraisal presumption of reasonableness under Section 409A.',
   certification:
-    "The appraiser's certification: the statement of independence and professional standards that makes the document an appraisal.",
+    "The appraiser's certification and signature: the nine statements USPAP Standards Rule 10-3 requires — independence, absence of bias, non-contingent fee, conformity with USPAP and SSVS-1 — signed by the analyst responsible. It is the page that makes the document an appraisal rather than an analysis.",
   qualifications:
     'The credentials of the analyst who signed it — the CPA, CFA and FRM designations an auditor checks.',
   exhibit_index:

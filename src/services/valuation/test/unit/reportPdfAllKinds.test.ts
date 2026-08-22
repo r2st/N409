@@ -4,9 +4,11 @@ import {
   instantiateTemplate,
   templateForKind,
   visibleSections,
+  RENDER_RESOLVED_MARKERS,
   type ReportContent,
 } from '../../src/domain/report.js';
 import { resolveExhibitReferences } from '../../src/domain/reportExhibitIndex.js';
+import { resolveSignatures } from '../../src/domain/reportSignatures.js';
 import { fillFigures, reportFigures } from '../../src/domain/reportFigures.js';
 import { VALUATION_KINDS, type ValuationKind } from '../../src/domain/valuation.js';
 import type { CalculationRow } from '../../src/repos/calculations.js';
@@ -65,7 +67,16 @@ function body(kind: ValuationKind): ReportContent {
   // pointer and prints the "none produced yet" index — which is exactly the
   // state a report drafted before the first calculation is in, and therefore a
   // state that must render rather than throw.
-  return resolveExhibitReferences(instantiateTemplate(templateForKind(kind), { ...VARS, kind }), []);
+  //
+  // Unsigned for the same reason: a body drafted before anyone has signed is
+  // the state every report passes through, and `resolveSignatures` has to print
+  // the empty signature lines rather than leave `{{signatures}}` on the page.
+  // Running it here is what puts the block through the renderer for all fifteen
+  // kinds.
+  return resolveSignatures(
+    resolveExhibitReferences(instantiateTemplate(templateForKind(kind), { ...VARS, kind }), []),
+    [],
+  );
 }
 
 function input(kind: ValuationKind) {
@@ -153,8 +164,11 @@ describe('every report type renders', () => {
       for (const s of visibleSections(body(kind))) {
         for (const m of s.html.matchAll(/\{\{([a-z0-9_]+)\}\}/g)) {
           const name = m[1]!;
-          // Resolved by `reportExhibitIndex`, not by the figures layer.
-          if (name === 'exhibit_index') continue;
+          // Resolved elsewhere than the figures layer — by `reportExhibitIndex`
+          // and `reportSignatures`. Read from the shared set rather than named
+          // here, so a marker added to one and not the other fails loudly
+          // instead of being excused by a literal this file forgot to update.
+          if (RENDER_RESOLVED_MARKERS.has(name)) continue;
           expect(
             producible.has(name),
             `${kind}/${s.heading}: {{${name}}} has no producer in reportFigures`,

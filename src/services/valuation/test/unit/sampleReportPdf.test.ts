@@ -178,6 +178,21 @@ describe('sample report PDF — it cannot be passed off as an opinion', () => {
     expect(input.title).toContain('SAMPLE');
   });
 
+  it('shows the certification unsigned rather than dropping it', () => {
+    /*
+     * A fourth independent mark, and the one that answers the question a reader
+     * of a certification page actually asks. The sample renders through the
+     * production path, so its certification carries `{{signatures}}` — which
+     * means the choice is not "block or no block" but "block or a literal pair
+     * of braces on a public marketing asset". Resolved against nobody, it prints
+     * the empty signature lines and says the report is unsigned.
+     */
+    const cert = sampleReportPdfInput().sections.find((s) => s.heading === 'Appraiser Certification')!;
+    expect(cert.html).not.toContain('{{');
+    expect(cert.html).toContain('not yet signed');
+    expect(cert.html).not.toContain('/s/');
+  });
+
   it('names a fictitious company and says so in the summary', () => {
     const input = sampleReportPdfInput();
     expect(input.company_name).toBe(SAMPLE_COMPANY);

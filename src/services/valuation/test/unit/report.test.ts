@@ -159,17 +159,17 @@ describe('sanitizeHtml, continued', () => {
 });
 
 describe('report templates', () => {
-  it('registers the 409a.v62 and generic templates', () => {
-    expect(REPORT_TEMPLATES.has('409a.v62')).toBe(true);
-    expect(REPORT_TEMPLATES.has('generic.v2')).toBe(true);
+  it('registers the 409a.v63 and generic templates', () => {
+    expect(REPORT_TEMPLATES.has('409a.v63')).toBe(true);
+    expect(REPORT_TEMPLATES.has('generic.v3')).toBe(true);
   });
 
-  it('selects 409a.v62 for 409a and a measurement skeleton for fund and debt', () => {
-    expect(templateForKind('409a').version).toBe('409a.v62');
-    // Both were on generic.v2 until 0109 connected an engagement to the
+  it('selects 409a.v63 for 409a and a measurement skeleton for fund and debt', () => {
+    expect(templateForKind('409a').version).toBe('409a.v63');
+    // Both were on generic.v2 (now v3) until 0109 connected an engagement to the
     // portfolio / instrument its figures live in — see domain/navExhibits.ts.
-    expect(templateForKind('fund').version).toBe('fund.v1');
-    expect(templateForKind('debt').version).toBe('debt.v1');
+    expect(templateForKind('fund').version).toBe('fund.v2');
+    expect(templateForKind('debt').version).toBe('debt.v2');
   });
 
   it('leaves no kind on the generic skeleton', () => {
@@ -177,39 +177,39 @@ describe('report templates', () => {
     // version stored on an older report, but nothing selects it any more: a
     // kind reaching it would be a report type shipped without a skeleton.
     for (const kind of VALUATION_KINDS) {
-      expect(templateForKind(kind).version).not.toBe('generic.v2');
+      expect(templateForKind(kind).version).not.toBe('generic.v3');
     }
   });
 
   it('selects a dedicated skeleton for each specialty report type', () => {
-    expect(templateForKind('qsbs').version).toBe('qsbs.v2');
-    expect(templateForKind('ppa').version).toBe('ppa.v2');
-    expect(templateForKind('goodwill').version).toBe('impairment.v2');
-    expect(templateForKind('esop').version).toBe('esop.v2');
-    expect(templateForKind('fmv').version).toBe('smb.v2');
-    expect(templateForKind('emi').version).toBe('emi.v2');
-    expect(templateForKind('csop').version).toBe('csop.v2');
-    expect(templateForKind('ip').version).toBe('ip.v2');
-    expect(templateForKind('718').version).toBe('718.v2');
-    expect(templateForKind('820').version).toBe('820.v2');
-    expect(templateForKind('gifts').version).toBe('gifts.v2');
-    expect(templateForKind('ifrs2').version).toBe('ifrs2.v2');
+    expect(templateForKind('qsbs').version).toBe('qsbs.v3');
+    expect(templateForKind('ppa').version).toBe('ppa.v3');
+    expect(templateForKind('goodwill').version).toBe('impairment.v3');
+    expect(templateForKind('esop').version).toBe('esop.v3');
+    expect(templateForKind('fmv').version).toBe('smb.v3');
+    expect(templateForKind('emi').version).toBe('emi.v3');
+    expect(templateForKind('csop').version).toBe('csop.v3');
+    expect(templateForKind('ip').version).toBe('ip.v3');
+    expect(templateForKind('718').version).toBe('718.v3');
+    expect(templateForKind('820').version).toBe('820.v3');
+    expect(templateForKind('gifts').version).toBe('gifts.v3');
+    expect(templateForKind('ifrs2').version).toBe('ifrs2.v3');
   });
 
   it('registers every specialty skeleton in the registry under its version', () => {
     for (const version of [
-      'qsbs.v2',
-      'ppa.v2',
-      'impairment.v2',
-      'esop.v2',
-      'smb.v2',
-      'emi.v2',
-      'csop.v2',
-      'ip.v2',
-      '718.v2',
-      '820.v2',
-      'gifts.v2',
-      'ifrs2.v2',
+      'qsbs.v3',
+      'ppa.v3',
+      'impairment.v3',
+      'esop.v3',
+      'smb.v3',
+      'emi.v3',
+      'csop.v3',
+      'ip.v3',
+      '718.v3',
+      '820.v3',
+      'gifts.v3',
+      'ifrs2.v3',
     ]) {
       expect(REPORT_TEMPLATES.has(version), version).toBe(true);
     }
@@ -349,7 +349,12 @@ describe('report templates', () => {
     });
     const cert = content.sections.find((s) => s.key === 'certification');
     expect(cert?.html).toContain('Acme Holdings');
-    expect(cert?.html).not.toContain('{{');
+    // Every *instantiation-time* variable is gone. `{{signatures}}` is the one
+    // marker that must survive: it resolves at render against the rows on file,
+    // and a certification instantiated without it is one no signature can reach.
+    // See domain/reportSignatures.ts.
+    expect(cert?.html.replace('{{signatures}}', '')).not.toContain('{{');
+    expect(cert?.html).toContain('{{signatures}}');
   });
 
   it('carries the sections an auditor reviewing a 409A expects to find', () => {
@@ -659,5 +664,96 @@ describe('fillTemplateVars', () => {
     for (const section of content.sections) {
       expect(section.html, section.key).not.toContain('native code');
     }
+  });
+});
+
+/**
+ * The certification, against the rule that governs it.
+ *
+ * USPAP Standards Rule 10-3 lists nine statements a signed business-appraisal
+ * certification must contain. Five were here and four were not, and the four
+ * were not decorative: without the conformity statement the document does not
+ * say what standard it was prepared under, and without the prior-services
+ * disclosure the reader is left to infer from silence that there were none.
+ *
+ * Checked as substance rather than as a byte-for-byte fixture — an analyst may
+ * reword the skeleton, and this is about what the certification has to *say*.
+ * Checked across all fifteen kinds because the three separate copies that used
+ * to exist are exactly how a gift-and-estate report came to certify less than a
+ * 409A did.
+ */
+describe('the appraiser certification', () => {
+  const REQUIRED: { of: string; match: RegExp }[] = [
+    { of: 'SR 10-3(i) — statements of fact true and correct', match: /true and correct/i },
+    { of: 'SR 10-3(ii) — personal, impartial, unbiased analyses', match: /impartial and unbiased/i },
+    { of: 'SR 10-3(iii) — no present or prospective interest', match: /no present or prospective interest/i },
+    {
+      of: 'SR 10-3(iv) — prior services in the last three years',
+      match: /three-year period immediately preceding/i,
+    },
+    { of: 'SR 10-3(v) — no bias', match: /no bias with respect to/i },
+    {
+      of: 'SR 10-3(vi) — engagement not contingent on a result',
+      match: /engagement in this assignment was not contingent/i,
+    },
+    { of: 'SR 10-3(vii) — compensation not contingent', match: /compensation is not contingent/i },
+    {
+      of: 'SR 10-3(viii) — conformity with USPAP',
+      match: /Uniform Standards of Professional Appraisal Practice/i,
+    },
+    {
+      of: 'SSVS-1 — the other standard the work is done under',
+      match: /Statement on Standards for Valuation Services No\. 1/i,
+    },
+    {
+      of: 'SR 10-3(ix) — significant professional assistance',
+      match: /significant professional assistance/i,
+    },
+  ];
+
+  const certOf = (kind: (typeof VALUATION_KINDS)[number]) =>
+    templateForKind(kind).sections.find((s) => s.key === 'certification');
+
+  it('makes every one of the nine statements, on every report type', () => {
+    for (const kind of VALUATION_KINDS) {
+      const cert = certOf(kind);
+      expect(cert, kind).toBeDefined();
+      for (const required of REQUIRED) {
+        expect(cert!.html, `${kind}: missing ${required.of}`).toMatch(required.match);
+      }
+    }
+  });
+
+  it('is one text, not fifteen', () => {
+    // The property that makes the check above cheap to keep true. Three copies
+    // drifted; one cannot.
+    const texts = new Set(VALUATION_KINDS.map((k) => certOf(k)!.html));
+    expect(texts.size).toBe(1);
+  });
+
+  it('sits before the qualifications and the index of exhibits', () => {
+    /*
+     * `withClosingSections` appends, so a skeleton that stopped declaring the
+     * certification itself would gain it *after* the Index of Exhibits — a
+     * signature page at the back of the schedules. The 409A and GIFTS name it
+     * at the position they want for exactly this reason.
+     */
+    const keys = templateForKind('409a').sections.map((s) => s.key);
+    expect(keys.indexOf('certification')).toBeGreaterThan(keys.indexOf('safe_harbor'));
+    expect(keys.indexOf('certification')).toBeLessThan(keys.indexOf('qualifications'));
+    expect(keys.indexOf('certification')).toBeLessThan(keys.indexOf('exhibit_index'));
+
+    const gifts = templateForKind('gifts').sections.map((s) => s.key);
+    expect(gifts.indexOf('certification')).toBeGreaterThan(gifts.indexOf('adequate_disclosure'));
+    expect(gifts.indexOf('certification')).toBeLessThan(gifts.indexOf('exhibit_index'));
+  });
+
+  it('names the standards at the front of the 409A as well as the back', () => {
+    // A reader checking what standard a valuation was prepared under looks at
+    // the scope section, not at the certification eleven chapters later.
+    const scope = templateForKind('409a').sections.find((s) => s.key === 'purpose_and_scope')!;
+    expect(scope.html).toMatch(/Uniform Standards of Professional Appraisal Practice/);
+    expect(scope.html).toMatch(/Statement on Standards for Valuation Services No\. 1/);
+    expect(scope.html).toMatch(/detailed report/);
   });
 });
