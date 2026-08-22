@@ -1,0 +1,31 @@
+-- The half of the QA review the publish gate could not see.
+--
+-- `runQa` grades two independent things and files one row. It grades the
+-- calculation — arithmetic, params, the discount chain — and, since the
+-- coherence checks were added, it also grades the *report body*: dead exhibit
+-- references, a weighted approach no chapter explains, a chapter that stopped
+-- restating its own conclusion, a chapter still carrying the skeleton's
+-- instructions to the analyst.
+--
+-- `qa_reviews` recorded only `calculation_id`. So `assertPublishGate` can say
+-- "this review examined the calculation that is current" and cannot say
+-- anything at all about the body. Its own comment states the reasoning it
+-- relies on: "A recalculation invalidates the previous review by construction —
+-- the review is keyed to the calculation it examined." The body has no such
+-- construction. `PUT /valuations/:id/report` writes a new `report_versions` row
+-- and bumps `reports.current_version`, and touches nothing the gate reads.
+--
+-- Draft, calculate, QA, sign, *edit a chapter*, publish — and a 409A goes out
+-- whose prose no review ever saw, over a review that passed on prose no longer
+-- in the document. Nothing about that sequence looks unusual: an analyst
+-- reading a QA report and fixing what it found lands in exactly it.
+--
+-- Nullable, and a NULL is read by the gate as "this review does not say", which
+-- it refuses. Fail-closed rather than fail-open because the column exists to
+-- answer a compliance question and an unknown is not a yes; the remediation is
+-- one QA re-run per in-flight engagement, and the 409 names it. Backfilling
+-- these rows with the current version was the alternative and is worse — it
+-- would assert that every historic review graded whatever the body happens to
+-- be now, which is exactly the claim that cannot be checked.
+ALTER TABLE qa_reviews
+  ADD COLUMN IF NOT EXISTS report_version integer;

@@ -213,6 +213,19 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       {
         valuationId: valuation.id,
         calculationId: calculation.id,
+        /*
+         * Which body was graded, so the publish gate can tell whether the
+         * document has moved since. `report.current_version` rather than
+         * `reportVersion.version`: they are the same row here, and the pointer
+         * is what the gate compares against — reading the version off the
+         * content row would make the two halves of the comparison come from
+         * different places for no reason.
+         *
+         * Null when there is no report at all. That is not "unknown"; it is
+         * "there was nothing to grade", and the gate treats an engagement with
+         * no report the same way.
+         */
+        reportVersion: report?.current_version ?? null,
         status,
         checks: deterministic.checks,
         aiFindings,

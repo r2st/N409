@@ -222,6 +222,9 @@ describe.skipIf(!dbUp)('publish gate under concurrency', () => {
         {
           valuationId: id,
           calculationId: first.id,
+          // No report was ever drafted on these engagements, which is what the
+          // route files as null and what rule 3 of the gate returns early on.
+          reportVersion: null,
           status: 'pass',
           checks: [{ key: 'k', label: 'l', status: 'pass', detail: 'd' }],
           createdBy: ops.id,

@@ -9,6 +9,16 @@ export interface QaReviewRow {
   id: string;
   valuation_id: string;
   calculation_id: string;
+  /**
+   * The `reports.current_version` this review graded, or null for a review
+   * filed before the column existed.
+   *
+   * The coherence checks open the report body, and the body moves independently
+   * of the calculation — so without this the publish gate could confirm the
+   * arithmetic had been reviewed and nothing at all about the document. Null is
+   * read by the gate as "does not say", and refused.
+   */
+  report_version: number | null;
   status: QaStatus;
   checks: QaCheck[];
   ai_findings: Record<string, unknown> | null;
@@ -22,6 +32,8 @@ export async function createQaReview(
   args: {
     valuationId: string;
     calculationId: string;
+    /** The report version graded, or null when the engagement has no report. */
+    reportVersion: number | null;
     status: QaStatus;
     checks: QaCheck[];
     aiFindings?: Record<string, unknown> | null;
@@ -37,13 +49,14 @@ export async function createQaReview(
     await lockPublishGate(client, args.valuationId);
     const { rows } = await client.query<QaReviewRow>(
       `INSERT INTO qa_reviews
-         (id, valuation_id, calculation_id, status, checks, ai_findings, ai_model, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         (id, valuation_id, calculation_id, report_version, status, checks, ai_findings, ai_model, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
       [
         newUlid(),
         args.valuationId,
         args.calculationId,
+        args.reportVersion,
         args.status,
         JSON.stringify(args.checks),
         args.aiFindings ? JSON.stringify(args.aiFindings) : null,
@@ -58,6 +71,7 @@ export async function createQaReview(
       payload: {
         qa_review_id: rows[0]!.id,
         calculation_id: args.calculationId,
+        report_version: args.reportVersion,
         status: args.status,
         checks: args.checks.length,
         ai: args.aiFindings != null,

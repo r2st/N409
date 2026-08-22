@@ -1,8 +1,9 @@
 import type pg from 'pg';
 import { newUlid, problems } from '@n409/shared';
-import { withTransaction } from '../db/pool.js';
+import { withTransaction, type Queryable } from '../db/pool.js';
 import { EVENT_TYPES } from '../domain/valuation.js';
 import { recordEvent, type EventActor } from '../events/record.js';
+import { lockPublishGate } from './publishLock.js';
 import type { ReportContent } from '../domain/report.js';
 
 export interface ReportRow {
@@ -26,10 +27,14 @@ export interface ReportVersionRow {
   created_at: Date;
 }
 
-export async function findReportByValuation(pool: pg.Pool, valuationId: string): Promise<ReportRow | null> {
-  const { rows } = await pool.query<ReportRow>('SELECT * FROM reports WHERE valuation_id = $1', [
-    valuationId,
-  ]);
+/**
+ * `Queryable` rather than `Pool`: the publish gate reads this row twice, once
+ * on the pool to answer the operator quickly and once on the client that is
+ * about to write `state`, under the lock. Only the second reading decides
+ * anything, and it cannot be taken on a pool.
+ */
+export async function findReportByValuation(db: Queryable, valuationId: string): Promise<ReportRow | null> {
+  const { rows } = await db.query<ReportRow>('SELECT * FROM reports WHERE valuation_id = $1', [valuationId]);
   return rows[0] ?? null;
 }
 
@@ -146,6 +151,23 @@ export async function saveVersion(
   },
 ): Promise<{ report: ReportRow; version: ReportVersionRow }> {
   return withTransaction(pool, async (client) => {
+    /*
+     * The publish gate's lock, taken before the report's own row lock.
+     *
+     * Rule 3 of `assertPublishGate` compares `reports.current_version` against
+     * the version the last QA review graded, and this function is the writer
+     * that moves the left-hand side. Without this the rule closes the ordinary
+     * case and leaves the interleaved one exactly as it was: the gate reads
+     * version 3 against a review of version 3, this save commits version 4, and
+     * the publish lands on a body no review has seen — the same shape as the
+     * signature deleted mid-publish, which is what the lock class was
+     * introduced for.
+     *
+     * Before the `FOR UPDATE` rather than after, so the two locks are always
+     * taken in that order here and in the gate; the reverse pairing anywhere
+     * else would be a deadlock waiting for load.
+     */
+    await lockPublishGate(client, args.report.valuation_id);
     // Re-read the pointer under lock so concurrent saves can't collide on version.
     const { rows: lockedRows } = await client.query<ReportRow>(
       'SELECT * FROM reports WHERE id = $1 FOR UPDATE',
