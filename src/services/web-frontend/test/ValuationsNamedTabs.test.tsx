@@ -102,6 +102,49 @@ describe('ValuationsPage named tabs', () => {
    * Two copies of the mapping would be two answers to "how many are in
    * progress", and a tab whose count and rows disagree is worse than no tab.
    */
+  it('moves between the nine with the arrow keys, and chooses on Enter', async () => {
+    const calls = mockApi();
+    renderPage();
+    const tabs = await screen.findAllByRole('tab');
+
+    tabs[0]!.focus();
+    await userEvent.keyboard('{ArrowRight}{ArrowRight}');
+    expect(screen.getByRole('tab', { name: /Unverified/ })).toHaveFocus();
+
+    // Manual activation. Arrowing across nine scopes with selection following
+    // focus would rewrite the URL and refetch the list nine times.
+    expect(calls.some((c) => c.includes('bucket=unverified'))).toBe(false);
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => expect(calls.some((c) => c.includes('bucket=unverified'))).toBe(true));
+  });
+
+  it('wraps at the ends and takes Home and End', async () => {
+    mockApi();
+    renderPage();
+    const tabs = await screen.findAllByRole('tab');
+
+    tabs[0]!.focus();
+    await userEvent.keyboard('{ArrowLeft}');
+    expect(tabs[8]).toHaveFocus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(tabs[0]).toHaveFocus();
+    await userEvent.keyboard('{End}');
+    expect(tabs[8]).toHaveFocus();
+    await userEvent.keyboard('{Home}');
+    expect(tabs[0]).toHaveFocus();
+  });
+
+  it('puts one tab in the tab order, not nine', async () => {
+    mockApi();
+    renderPage('/valuations?bucket=drafted');
+    const tabs = await screen.findAllByRole('tab');
+
+    // Nine tabs each reachable by Tab is nine presses between the heading and
+    // the table, past choices the reader has already rejected.
+    expect(tabs.filter((t) => t.tabIndex === 0).map((t) => t.textContent)).toEqual(['Drafted41']);
+    expect(tabs.filter((t) => t.tabIndex === -1)).toHaveLength(8);
+  });
+
   it('asks for the named bucket shape', async () => {
     const calls = mockApi();
     renderPage();

@@ -111,6 +111,53 @@ describe('TestimonialsSection carousel', () => {
     expect(dots()[0]).toHaveAttribute('aria-selected', 'false');
   });
 
+  it('moves between dots with the arrow keys the tab role promises', async () => {
+    const user = userEvent.setup();
+    render(<TestimonialsSection />);
+
+    dots()[0]!.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(dots()[1]).toHaveFocus();
+    // Manual activation: the arrows move focus, the quote does not change
+    // until the dot is chosen.
+    expect(quoted()).toContain('Dana Reed');
+
+    await user.keyboard('{Enter}');
+    expect(quoted()).toContain('Sam Ito');
+  });
+
+  it('wraps at both ends and takes Home and End', async () => {
+    const user = userEvent.setup();
+    render(<TestimonialsSection />);
+
+    dots()[0]!.focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(dots()[2]).toHaveFocus();
+    await user.keyboard('{ArrowRight}');
+    expect(dots()[0]).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(dots()[2]).toHaveFocus();
+    await user.keyboard('{Home}');
+    expect(dots()[0]).toHaveFocus();
+  });
+
+  it('keeps one dot in the tab order rather than all three', async () => {
+    const user = userEvent.setup();
+    render(<TestimonialsSection />);
+
+    // The roving tabindex. Without it, reaching the "Next" button past a strip
+    // of dots costs one Tab per quote, and the count grows with the quotes.
+    expect(dots().map((d) => d.tabIndex)).toEqual([0, -1, -1]);
+    await user.click(screen.getByRole('tab', { name: 'Testimonial 3: Halcyon Bio' }));
+    expect(dots().map((d) => d.tabIndex)).toEqual([-1, -1, 0]);
+
+    screen.getByRole('button', { name: 'Previous testimonial' }).focus();
+    await user.tab();
+    expect(dots()[2]).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Next testimonial' })).toHaveFocus();
+  });
+
   it('gives one dot per quote, each naming the company it selects', () => {
     render(<TestimonialsSection />);
     const labels = dots().map((d) => d.getAttribute('aria-label'));

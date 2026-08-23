@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { DEMO_VIDEO_TITLE, PARTNER_LOGOS, PROOF_POINTS, TESTIMONIALS } from '../../lib/marketing';
 import { siteConfig } from '../../lib/siteConfig';
+import { tabListKeyDown, tabProps } from '../../lib/tablist';
 
 /**
  * Shared marketing sections (409.ai gaps #20–#22): the testimonial carousel,
@@ -140,13 +141,17 @@ export function TestimonialsSection() {
             centred inside it. On a desktop the box collapses to the dot and
             the strip looks exactly as it did.
           */}
-          <div className="flex gap-2" role="tablist" aria-label="Select testimonial">
+          <div
+            className="flex gap-2"
+            role="tablist"
+            aria-label="Select testimonial"
+            onKeyDown={tabListKeyDown}
+          >
             {TESTIMONIALS.map((t, i) => (
               <button
                 key={t.company}
                 type="button"
-                role="tab"
-                aria-selected={i === index}
+                {...tabProps(i === index)}
                 aria-label={`Testimonial ${i + 1}: ${t.company}`}
                 onClick={() => setIndex(i)}
                 className="group flex cursor-pointer items-center justify-center touch:h-11 touch:w-11"

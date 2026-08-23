@@ -15,6 +15,7 @@ import type {
   UserOption,
   ValuationList,
 } from '../lib/types';
+import { tabListKeyDown, tabProps } from '../lib/tablist';
 import {
   Button,
   EmptyState,
@@ -365,15 +366,19 @@ export function ValuationsPage() {
       )}
 
       {/* Tabbed scopes with live counts (M3 feature 15) */}
-      <div className="mt-6 flex flex-wrap gap-1 border-b border-paper-300" role="tablist">
+      <div
+        className="mt-6 flex flex-wrap gap-1 border-b border-paper-300"
+        role="tablist"
+        aria-label="Valuation scope"
+        onKeyDown={tabListKeyDown}
+      >
         {tabs.map((tab) => {
           const active = bucket === tab.key;
           const count = counts ? counts[(tab.key || 'all') as keyof NamedBucketCounts] : null;
           return (
             <button
               key={tab.key || 'all'}
-              role="tab"
-              aria-selected={active}
+              {...tabProps(active)}
               onClick={() => {
                 // Switching tabs drops the legacy alias so the two cannot both
                 // be in the URL saying different things.
