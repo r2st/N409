@@ -22,12 +22,13 @@
  *     field has been blurred once, or the form has been submitted once.
  *   - After that it updates live, so a correction clears the message as soon as
  *     the value is good rather than on the next blur.
- *   - Submitting reveals every message at once and does not call the handler.
+ *   - Submitting reveals every message at once, does not call the handler, and
+ *     moves focus to the first field that is failing.
  *
  * Validators are pure functions of the whole value object, so a rule that spans
  * two fields (confirm-password) is written the same way as one that does not.
  */
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 
 /** Returns a message when the values are wrong for this field, else null. */
@@ -40,8 +41,9 @@ export interface FormValidation<V> {
   /** `onBlur` for the control; reveals this field's message. */
   blurHandler: (key: keyof V) => () => void;
   /**
-   * Wraps a submit handler: prevents the default, reveals every message, and
-   * runs the handler only if nothing is wrong.
+   * Wraps a submit handler: prevents the default, reveals every message, moves
+   * focus to the first field that is failing, and runs the handler only if
+   * nothing is wrong.
    */
   handleSubmit: (run: () => void | Promise<void>) => (e: FormEvent) => void;
   /** True when no rule is failing, regardless of what is currently shown. */
@@ -92,15 +94,65 @@ export function useFormValidation<V extends Record<string, unknown>>(
   const failuresRef = useRef(failures);
   failuresRef.current = failures;
 
+  /*
+   * A rejected submit has to move focus, or it is silent.
+   *
+   * Revealing the messages is enough for someone looking at the form and
+   * nothing at all for someone who is not: focus stays on the submit button,
+   * the messages are ordinary text rather than live regions, and a screen
+   * reader announces exactly nothing. The button appears to have done nothing,
+   * which is also how a broken button appears. Focusing the first failing
+   * control announces its label, its invalid state and — via the
+   * `aria-describedby` `Field` already wires — the message itself, and on a
+   * long form it scrolls the problem into view for everyone else.
+   *
+   * The failing control is found in the DOM rather than tracked, because the
+   * hook knows which *rules* fail and only `Field` knows which element each one
+   * is about. `Field` marks it `aria-invalid` in the same render that reveals
+   * the message, so the first such control inside the form is the first
+   * failure in reading order.
+   *
+   * `submitAttempt` exists so this runs after that render rather than before
+   * it, and so that submitting twice against the same errors focuses twice.
+   */
+  const [submitAttempt, setSubmitAttempt] = useState(0);
+  const rejectedFrom = useRef<HTMLElement | null>(null);
+
   const handleSubmit = useCallback(
     (run: () => void | Promise<void>) => (e: FormEvent) => {
       e.preventDefault();
       setSubmitted(true);
-      if (failuresRef.current.size > 0) return;
+      if (failuresRef.current.size > 0) {
+        rejectedFrom.current = e.currentTarget as HTMLElement;
+        setSubmitAttempt((n) => n + 1);
+        return;
+      }
       void run();
     },
     [],
   );
+
+  useEffect(() => {
+    if (submitAttempt === 0) return;
+    const origin = rejectedFrom.current;
+    if (!origin) return;
+    /*
+     * Nearly every call site hands this to `<form onSubmit>`, so the origin is
+     * the form and scoping to it is exact. The one that does not is a `Save`
+     * button inside a `<section>` with no form around it, and searching the
+     * whole document from there could steal focus into an unrelated form that
+     * happens to be showing an error. Widening only as far as the nearest
+     * enclosing form or sectioning box keeps the search inside the thing the
+     * button belongs to.
+     */
+    const scope = origin.closest?.('form, fieldset, dialog, [role="dialog"], section, article');
+    const invalid = (scope ?? origin).querySelectorAll<HTMLElement>('[aria-invalid="true"]');
+    for (const el of invalid) {
+      if (el.hasAttribute('disabled')) continue;
+      el.focus();
+      if (el.ownerDocument.activeElement === el) return;
+    }
+  }, [submitAttempt]);
 
   const reset = useCallback(() => {
     setTouched({});

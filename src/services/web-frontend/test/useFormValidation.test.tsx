@@ -164,6 +164,99 @@ describe('useFormValidation', () => {
     expect(screen.queryByText('Passwords do not match.')).not.toBeInTheDocument();
   });
 
+  it('puts focus on the first failing field when a submit is rejected', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    // Everything is empty, so all three rules fail. Focus has to land on the
+    // email box — first in reading order — and not stay on the button, which
+    // is what makes a rejected submit silent for a screen reader.
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(emailBox()).toHaveFocus();
+  });
+
+  it('skips a field that passes and focuses the one that does not', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(emailBox(), 'ada@corp.com');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    // The email is fine; the first *failure* is the password.
+    expect(screen.getByLabelText('Password')).toHaveFocus();
+  });
+
+  it('moves focus again when the same broken form is submitted twice', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(emailBox()).toHaveFocus();
+
+    // Nothing about the failing set changed, so the effect only re-runs if the
+    // attempt is counted rather than the verdict watched. Without that, the
+    // second press of a button that already looks inert is inert.
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(emailBox()).toHaveFocus();
+  });
+
+  it('leaves focus alone when the submit is accepted', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<Harness onSubmit={onSubmit} />);
+    await user.type(emailBox(), 'ada@corp.com');
+    await user.type(screen.getByLabelText('Password'), 'correcthorse');
+    await user.type(screen.getByLabelText('Confirm'), 'correcthorse');
+    const save = screen.getByRole('button', { name: 'Save' });
+    await user.click(save);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(save).toHaveFocus();
+  });
+
+  it('does not reach outside its own form for something to focus', async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <form aria-label="other">
+          <Field label="Other email" error="Enter a valid email address.">
+            <TextInput defaultValue="nope" />
+          </Field>
+        </form>
+        <Harness />
+      </>,
+    );
+    // The unrelated form above is already showing an error, so a search that
+    // started at the document would focus its box. Only this form's fields are
+    // this form's business.
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(emailBox()).toHaveFocus();
+  });
+
+  it('finds the failing field when the submit is a button rather than a form', async () => {
+    // The scenario table in ParamsPanel is this shape: a `Save` button with an
+    // onClick, inside a section, with no <form> anywhere above it.
+    function SectionHarness() {
+      const [form, setForm] = useState({ weight: '' });
+      const { errorFor, blurHandler, handleSubmit } = useFormValidation(form, {
+        weight: numberRange('weight', 0, 1, 'Weight'),
+      });
+      return (
+        <section>
+          <Field label="Weight" error={errorFor('weight')}>
+            <TextInput
+              value={form.weight}
+              onChange={(e) => setForm({ weight: e.target.value })}
+              onBlur={blurHandler('weight')}
+            />
+          </Field>
+          <Button type="button" onClick={(e) => handleSubmit(vi.fn())(e)}>
+            Save scenarios
+          </Button>
+        </section>
+      );
+    }
+    const user = userEvent.setup();
+    render(<SectionHarness />);
+    await user.click(screen.getByRole('button', { name: 'Save scenarios' }));
+    expect(screen.getByLabelText('Weight')).toHaveFocus();
+  });
+
   it('tracks validity independently of what is currently shown', async () => {
     const user = userEvent.setup();
     render(<Harness />);
