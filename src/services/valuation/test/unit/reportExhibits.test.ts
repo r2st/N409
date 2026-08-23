@@ -4302,7 +4302,13 @@ describe('the new schedules survive the PDF renderer', () => {
     // digits survive into the artefact the client is actually sent.
     expect(text).toContain('1.9090');
     expect(text).toContain('0.971871');
-    expect(text).toContain('-0.4470');
+    // U+2212, not the hyphen the engine's own JSON carries. The renderer sets
+    // a hyphen that opens a figure as a minus sign, so that a document whose
+    // negatives arrive from `Intl.NumberFormat` and a document whose negatives
+    // were typed by hand are set with one glyph rather than two. Asserted here
+    // in the PDF because it is a property of the rendered file; the HTML
+    // assertion above still reads the hyphen the exhibit builder emitted.
+    expect(text).toContain('\u22120.4470');
     // And the reconciliation — the same three tranche values Exhibit F prints.
     for (const tranche of ['$7,706,566', '$12,879,706', '$21,413,728']) {
       expect(text).toContain(tranche);

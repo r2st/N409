@@ -562,6 +562,36 @@ const ODD_SPACES = /[\u2007\u2009\u200a\u202f\u2060]/g;
 const CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 
 /**
+ * A hyphen-minus doing a minus sign's job: `-$1,200,000`, `-27.5%`, `(-5)`.
+ *
+ * The document was setting two different glyphs for one meaning, on one page.
+ * Everything routed through `Intl.NumberFormat` — the DCF forecast rows, the
+ * present values struck off them — carries U+002D, because that is what `Intl`
+ * emits for a negative; everything the report composes by hand carries U+2212,
+ * because whoever wrote those lines typed the character a typographer would.
+ * Exhibit C printed `-$1,200,000` in its forecast table and `−$700,000` five
+ * rows below it. In a document whose whole claim is that its arithmetic was
+ * done carefully, two minus signs is the detail a reviewer circles.
+ *
+ * U+2212 is the one to keep: a hyphen is drawn short and set low, to join
+ * words, and beside a run of figures it reads as a dash rather than a sign.
+ *
+ * The guard is on both sides, because most hyphens in a valuation report are
+ * doing their actual job. It converts only a hyphen that opens a figure —
+ * preceded by nothing, whitespace or an opening bracket, and followed
+ * immediately by a digit or a currency symbol. `free cash flow`, `Exhibit B-1`,
+ * `put-option`, `2026-03-31` and `2027-2031` all keep their hyphens: the first
+ * three fail the right-hand test and the last two fail the left-hand one, a
+ * date being the case that would be most visible if this got it wrong.
+ */
+const SIGN_HYPHEN = /(^|[\s([{<"'“‘—–])-(?=[\d$€£¥])/gu;
+
+/** Sets a hyphen that is acting as a minus sign as one. */
+export function typographicMinus(text: string): string {
+  return text.replace(SIGN_HYPHEN, '$1−');
+}
+
+/**
  * Makes a string safe to hand to `face`.
  *
  * Applied at the one place text reaches pdfkit rather than at the 40-odd
@@ -574,9 +604,13 @@ const CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
  * With a Unicode face embedded this is now close to a pass-through: a character
  * is left exactly as it was written unless the face has no glyph for it. Only
  * then does the transliteration table apply, and only after that a `?`.
+ *
+ * Idempotent, which the callers below rely on: two of them sanitize a string
+ * themselves so they can measure the form that will be drawn, and then hand
+ * that same form to `.text()`, where it is sanitized again.
  */
 export function fontSafe(text: string, face: FaceName = 'regular'): string {
-  const out = text.replace(ZERO_WIDTH, '').replace(ODD_SPACES, ' ').replace(CONTROLS, '');
+  const out = typographicMinus(text).replace(ZERO_WIDTH, '').replace(ODD_SPACES, ' ').replace(CONTROLS, '');
   // Fast path: the overwhelming majority of report text is ASCII, which every
   // face covers, and scanning is cheaper than rebuilding.
   if (!/[^ -~\t\n\r]/.test(out)) return out;
@@ -967,8 +1001,15 @@ const BLANK_CELLS = new Set(['', '-', '—', '–', 'n/a', 'N/A', 'N/M', 'n/m'])
  * A figure rather than prose: optional currency or sign, digits with grouping,
  * an optional decimal, and an optional trailing unit — `1,234`, `$(4,200.50)`,
  * `12.5%`, `3.2x`.
+ *
+ * U+2212 sits in the sign class beside `-` and `+`, and has to. Every negative
+ * figure in the document is set with it — see `typographicMinus` — so without
+ * it here `−$700,000` reads as prose, votes against its own column, and a
+ * column of losses left-aligns. That is the outcome `columnAlignments` below
+ * calls the single thing that makes a report look amateur, arrived at by the
+ * one route it was not watching.
  */
-const NUMERIC_CELL = /^[($€£¥]?\s*[-+(]?\s*[($€£¥]?\s*\d[\d,\s]*(\.\d+)?\s*[)%x×]?\s*$/;
+const NUMERIC_CELL = /^[($€£¥]?\s*[-+(−]?\s*[($€£¥]?\s*\d[\d,\s]*(\.\d+)?\s*[)%x×]?\s*$/u;
 
 /** True when a cell reads as a figure, so its column should align right. */
 export function isNumericCell(text: string): boolean {
@@ -2024,6 +2065,35 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     // same way rather than refusing what the library allows.
     drawText(fontSafe(typeof text === 'string' ? text : String(text), face), ...rest);
 
+  /*
+   * …and so does every string it *measures*, which is the same statement or the
+   * layout is computed for a document other than the one produced.
+   *
+   * `fontSafe` can change a string's length — a character the face cannot draw
+   * becomes `?` or a multi-character transliteration, and a hyphen acting as a
+   * minus becomes a wider glyph. Measure the raw form and draw the sanitized
+   * one and every derived quantity is wrong: a column sized to fit, a heading
+   * whose keep-with-next budget was computed one line short, a summary label
+   * measured as one line and drawn as two.
+   *
+   * That last one is not hypothetical. It happened, it overprinted the two
+   * figures a board reads off the summary page, and it was repaired by
+   * sanitizing by hand at that one call site — which fixed the instance and
+   * left the other twelve measurements taking the raw string. Wrapping the two
+   * measure methods where `text` is already wrapped makes the guarantee general
+   * and the hand-applied ones redundant rather than load-bearing.
+   */
+  const measured =
+    <T>(fn: (text: string, ...rest: unknown[]) => T) =>
+    (text: unknown, ...rest: unknown[]): T =>
+      fn(fontSafe(typeof text === 'string' ? text : String(text), face), ...rest);
+  (doc as { widthOfString: unknown }).widthOfString = measured(
+    doc.widthOfString.bind(doc) as (text: string, ...rest: unknown[]) => number,
+  );
+  (doc as { heightOfString: unknown }).heightOfString = measured(
+    doc.heightOfString.bind(doc) as (text: string, ...rest: unknown[]) => number,
+  );
+
   const chunks: Buffer[] = [];
   const done = new Promise<Buffer>((resolve, reject) => {
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -2810,37 +2880,66 @@ function renderBlock(
       const list = openTag(doc, parent, 'L');
       block.items.forEach((item, idx) => {
         const marker = block.ordered ? `${idx + 1}. ` : '•  ';
-        // The marker is drawn inline with the item, so a break inside the item
-        // would leave the bullet behind on the previous page.
         doc.font(FONTS.regular).fontSize(BODY_FONT_SIZE);
         const markerWidth = doc.widthOfString(marker);
         const { lines, lineHeight } = bodyLines(doc, item, usable - 10 - markerWidth);
         keepLinesTogether(doc, lines, lineHeight);
         const li = openTag(doc, list, 'LI');
-        // Marker and text are one continued run — pdfkit holds the last line
-        // open until a call that does not continue, so the bullet's glyphs are
-        // not necessarily emitted before the body's. Splitting Lbl from LBody
-        // would therefore risk an empty Lbl and a marker filed under the body,
-        // which reads no better than the LBody-only structure and validates
-        // worse. Lbl is optional; LBody alone is correct, and the bullet is
-        // announced as part of the item either way.
+
+        /*
+         * The item's text is its own column, to the right of the marker.
+         *
+         * Marker and text used to be one continued run opened at the marker's
+         * x, and pdfkit wraps a run back to where the run began — so the second
+         * line of an item started *under the bullet*, a hair to the left of the
+         * first line and level with the marker itself. A list whose runover
+         * lines out-dent has no left edge for the eye to follow: the items stop
+         * looking like items and read as prose with bullets loose in it. The
+         * five-item list under Purpose & Intended Use, where four items run to
+         * three lines, is what a 409A's second page opens with.
+         *
+         * Drawing the body from `textX` gives every line of the item the same
+         * left edge — a hanging indent, which is what a list is. It also makes
+         * the drawn wrap agree with `bodyLines` above, which has always
+         * measured against `usable - 10 - markerWidth`: the old draw passed the
+         * full `usable - 10` and let the marker eat into the first line only,
+         * so the line count `keepLinesTogether` was given could differ from the
+         * one actually set, on exactly the long items where the keep decision
+         * matters.
+         *
+         * `top` is captured before either call, so the two are set on one
+         * baseline whatever y the marker's own draw leaves behind — the point
+         * of the previous arrangement, kept.
+         */
+        const top = doc.y;
+        const textX = doc.page.margins.left + 10 + markerWidth;
+        const textWidth = usable - 10 - markerWidth;
+        // Marker and text are separate calls but still one LBody, so nothing
+        // changes for a screen reader: the bullet is announced as part of the
+        // item. Lbl is optional and LBody alone is correct, which is what this
+        // stayed as when the two were a single continued run and could not be
+        // relied on to emit in order.
         tagged(doc, li, 'LBody', {}, () => {
           doc
             .font(FONTS.regular)
             .fontSize(BODY_FONT_SIZE)
             .fillColor(INK.body)
-            .text(marker, doc.page.margins.left + 10, doc.y, {
-              continued: true,
-              width: usable - 10,
+            .text(marker, doc.page.margins.left + 10, top, {
+              width: markerWidth,
+              lineBreak: false,
               lineGap: BODY_LINE_GAP,
             });
+          if (item.length === 0) {
+            doc.text('', textX, top, { width: textWidth, lineGap: BODY_LINE_GAP });
+            return;
+          }
           item.forEach((run, runIdx) => {
             const last = runIdx === item.length - 1;
-            doc
-              .font(fontFor(run))
-              .text(run.text, { continued: !last, underline: run.underline, lineGap: BODY_LINE_GAP });
+            const opts = { continued: !last, underline: run.underline, lineGap: BODY_LINE_GAP };
+            doc.font(fontFor(run));
+            if (runIdx === 0) doc.text(run.text, textX, top, { ...opts, width: textWidth });
+            else doc.text(run.text, opts);
           });
-          if (item.length === 0) doc.text('', { continued: false });
         });
         li.end();
         doc.moveDown(0.2);
