@@ -1,6 +1,17 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
-import { invoicePeriod, type PlanLimit, type InvoiceLineItem } from '../domain/billing.js';
+import {
+  BILLING_SUBSCRIPTION_STATUSES,
+  invoicePeriod,
+  SERVED_SUBSCRIPTION_STATUSES,
+  type PlanLimit,
+  type InvoiceLineItem,
+} from '../domain/billing.js';
+
+/** The status sets as a SQL array literal, so the queries below cannot restate them. */
+const sqlList = (statuses: readonly string[]) => statuses.map((s) => `'${s}'`).join(', ');
+const SERVED_SQL = sqlList(SERVED_SUBSCRIPTION_STATUSES);
+const BILLING_SQL = sqlList(BILLING_SUBSCRIPTION_STATUSES);
 
 // ── Plans ────────────────────────────────────────────────────────────────────
 
@@ -40,7 +51,7 @@ export interface SubscriptionRow {
 export async function findActiveSubscription(pool: pg.Pool, userId: string): Promise<SubscriptionRow | null> {
   const { rows } = await pool.query<SubscriptionRow>(
     `SELECT * FROM subscriptions
-      WHERE user_id = $1 AND status IN ('active', 'trialing', 'past_due')
+      WHERE user_id = $1 AND status IN (${SERVED_SQL})
       ORDER BY created_at DESC LIMIT 1`,
     [userId],
   );
@@ -230,7 +241,7 @@ export async function consumeValuation(pool: pg.Pool, userId: string): Promise<b
         SET valuations_used = valuations_used + 1
        FROM plan_limits p
       WHERE s.user_id = $1
-        AND s.status IN ('active', 'trialing', 'past_due')
+        AND s.status IN (${SERVED_SQL})
         AND p.tier = s.plan_tier
         AND (p.valuation_limit IS NULL OR s.valuations_used < p.valuation_limit)
       RETURNING true AS ok`,
@@ -432,9 +443,17 @@ export async function listAllInvoices(
   return { invoices: invoices.slice(0, limit), truncated: invoices.length > limit };
 }
 
-/** The three figures the admin billing screen states above its two tables. */
+/** The figures the admin billing screen states above its two tables. */
 export interface BillingSummary {
+  /** Paying and current. */
   active: number;
+  /** Paying-to-be: in a trial that has not billed yet. */
+  trialing: number;
+  /** Being served on a renewal that has not cleared — what dunning is chasing. */
+  past_due: number;
+  /** The three above: every account consuming a plan's quota. */
+  served: number;
+  /** Over {@link BILLING_SUBSCRIPTION_STATUSES} — `active` + `trialing`. */
   mrr_cents: number;
   collected_cents: number;
 }
@@ -451,11 +470,28 @@ export interface BillingSummary {
  * The annual → monthly conversion rounds per subscription and then sums, which
  * is what the reduce it replaces did; rounding the sum instead would move the
  * total by a few cents against every figure ops has already reconciled.
+ *
+ * The counts are broken out per status rather than collapsed into one, because
+ * collapsing them is what made the screen unreadable: a single "active" figure
+ * counted `status = 'active'` while the MRR beside it summed
+ * `('active','trialing')`, so the two could not be reconciled and the
+ * `past_due` accounts — the ones being served without paying, which dunning
+ * exists to chase — appeared in neither. `served` is the sum of the three and
+ * is exactly the set `findActiveSubscription` and `consumeValuation` grant
+ * quota to; `mrr_cents` covers `active` + `trialing`, and now says so.
  */
 export async function billingSummary(pool: pg.Pool): Promise<BillingSummary> {
-  const { rows } = await pool.query<{ active: string; mrr_cents: string; collected_cents: string }>(
+  const { rows } = await pool.query<{
+    active: string;
+    trialing: string;
+    past_due: string;
+    mrr_cents: string;
+    collected_cents: string;
+  }>(
     `SELECT
-       (SELECT count(*) FROM subscriptions WHERE status = 'active') AS active,
+       (SELECT count(*) FROM subscriptions WHERE status = 'active')   AS active,
+       (SELECT count(*) FROM subscriptions WHERE status = 'trialing') AS trialing,
+       (SELECT count(*) FROM subscriptions WHERE status = 'past_due') AS past_due,
        (SELECT coalesce(sum(CASE p.interval
                               WHEN 'year'  THEN round(p.price_cents / 12.0)
                               WHEN 'month' THEN p.price_cents
@@ -463,12 +499,18 @@ export async function billingSummary(pool: pg.Pool): Promise<BillingSummary> {
                             END), 0)
           FROM subscriptions s
           JOIN plan_limits p ON p.tier = s.plan_tier
-         WHERE s.status IN ('active', 'trialing')) AS mrr_cents,
+         WHERE s.status IN (${BILLING_SQL})) AS mrr_cents,
        (SELECT coalesce(sum(amount_cents), 0) FROM invoices WHERE status = 'paid') AS collected_cents`,
   );
   const row = rows[0];
+  const active = Number(row?.active ?? 0);
+  const trialing = Number(row?.trialing ?? 0);
+  const pastDue = Number(row?.past_due ?? 0);
   return {
-    active: Number(row?.active ?? 0),
+    active,
+    trialing,
+    past_due: pastDue,
+    served: active + trialing + pastDue,
     mrr_cents: Number(row?.mrr_cents ?? 0),
     collected_cents: Number(row?.collected_cents ?? 0),
   };

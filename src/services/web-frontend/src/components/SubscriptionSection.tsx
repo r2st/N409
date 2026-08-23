@@ -268,7 +268,14 @@ interface AdminBilling {
     currency: string;
     status: string;
   }>;
-  summary: { active: number; mrr_cents: number; collected_cents: number };
+  summary: {
+    active: number;
+    trialing: number;
+    past_due: number;
+    served: number;
+    mrr_cents: number;
+    collected_cents: number;
+  };
 }
 
 function AdminBillingDashboard() {
@@ -309,8 +316,16 @@ function AdminBillingDashboard() {
     <div className="mt-10" data-testid="admin-billing">
       <h3 className="font-display text-lg font-semibold text-ink-900">Billing dashboard (ops)</h3>
       <div className="mt-3 flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
-        <Metric label="Active subscriptions" value={String(data.summary.active)} />
-        <Metric label="MRR" value={money(data.summary.mrr_cents)} />
+        {/* Broken out because one "active" figure could not be reconciled with
+            the MRR beside it: the count read `status = 'active'` and the MRR
+            summed `active` + `trialing`. Served is the three counts together —
+            every account consuming a plan's quota — and is the number to read
+            against "how many customers are we carrying". */}
+        <Metric label="Active" value={String(data.summary.active)} />
+        <Metric label="Trialing" value={String(data.summary.trialing)} />
+        <Metric label="Past due" value={String(data.summary.past_due)} />
+        <Metric label="Served" value={String(data.summary.served)} />
+        <Metric label="MRR (active + trialing)" value={money(data.summary.mrr_cents)} />
         <Metric label="Collected" value={money(data.summary.collected_cents)} />
       </div>
       <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">

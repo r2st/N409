@@ -13,6 +13,43 @@ export interface PlanLimit {
   interval: 'one_time' | 'month' | 'year';
 }
 
+// ── What counts as a live subscription ───────────────────────────────────────
+
+/**
+ * The two questions the word "active" was being used for, separated.
+ *
+ * There were three answers in the codebase and no statement of any of them.
+ * `findActiveSubscription` and `consumeValuation` — the pair that decides
+ * whether an account is served and may spend quota — read
+ * `('active','trialing','past_due')`. The ops dashboard's subscription count
+ * read `status = 'active'`. The MRR beside it, on the same row of the same
+ * screen, read `('active','trialing')`.
+ *
+ * So the three figures an operator reads together could not be reconciled with
+ * each other: an MRR containing subscriptions the count next to it excluded,
+ * and a count excluding accounts that were consuming a plan's valuations. The
+ * gap is not cosmetic — `past_due` is the state dunning exists for, and a
+ * screen that reports "3 active subscriptions" while five accounts are being
+ * served is where a failed renewal goes unnoticed.
+ *
+ * Neither set is wrong; they answer different questions. Named here, once, so
+ * that the answer to each is a decision rather than whatever the nearest query
+ * happened to say.
+ */
+
+/**
+ * Being served: quota is granted and work is done. Includes `past_due`,
+ * because a renewal that has not cleared is a customer we have not yet cut
+ * off — that is what dunning is for.
+ */
+export const SERVED_SUBSCRIPTION_STATUSES = ['active', 'trialing', 'past_due'] as const;
+
+/**
+ * Contributing recurring revenue. Excludes `past_due`: money that has not
+ * arrived is not revenue, and counting it is how MRR drifts above cash.
+ */
+export const BILLING_SUBSCRIPTION_STATUSES = ['active', 'trialing'] as const;
+
 export interface UsageState {
   valuation_limit: number | null;
   valuations_used: number;

@@ -291,7 +291,14 @@ describe('SubscriptionSection (feature 7)', () => {
 
   describe('the ops billing dashboard', () => {
     const adminBilling = {
-      summary: { active: 4, mrr_cents: 500000, collected_cents: 12000000 },
+      summary: {
+        active: 4,
+        trialing: 1,
+        past_due: 2,
+        served: 7,
+        mrr_cents: 500000,
+        collected_cents: 12000000,
+      },
       subscriptions: [
         {
           id: 'sub_1',
@@ -366,8 +373,33 @@ describe('SubscriptionSection (feature 7)', () => {
       const panel = await screen.findByTestId('admin-billing');
       expect(within(panel).getByText('Billing dashboard (ops)')).toBeInTheDocument();
       expect(within(panel).getByText('Billing is resyncing.')).toBeInTheDocument();
-      // No figures, because none were read.
-      expect(within(panel).queryByText('Active subscriptions')).not.toBeInTheDocument();
+      // No figures, because none were read. Asserted on a label the panel does
+      // render when it has figures — a negative assertion against a string that
+      // no longer appears anywhere passes for the wrong reason.
+      expect(within(panel).queryByText('Served')).not.toBeInTheDocument();
+      expect(within(panel).queryByText('MRR (active + trialing)')).not.toBeInTheDocument();
+    });
+
+    /**
+     * The three figures used to be one count and one MRR that disagreed about
+     * `trialing`, so an operator could not add up what they were shown. Broken
+     * out, they have to reconcile.
+     */
+    it('states counts that add up to the served set', async () => {
+      flags.ops = true;
+      mockApi(subscribed(), undefined, { '/admin/billing': { body: adminBilling } });
+      render(<SubscriptionSection />);
+
+      const panel = await screen.findByTestId('admin-billing');
+      for (const label of ['Active', 'Trialing', 'Past due', 'Served']) {
+        expect(within(panel).getByText(label)).toBeInTheDocument();
+      }
+      // Past due is what dunning chases; it appeared in neither of the two
+      // figures the panel used to show.
+      expect(within(panel).getByText('2')).toBeInTheDocument();
+      expect(within(panel).getByText('7')).toBeInTheDocument();
+      // MRR names the set it covers, so it cannot be read against the wrong one.
+      expect(within(panel).getByText('MRR (active + trialing)')).toBeInTheDocument();
     });
   });
 });
