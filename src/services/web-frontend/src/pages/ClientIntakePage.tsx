@@ -63,6 +63,38 @@ interface Portal {
 /** How long after the last keystroke a section's answers are written back. */
 const AUTOSAVE_MS = 900;
 
+/**
+ * How long to wait before re-attempting a write that failed, by attempt, then
+ * every thirty seconds.
+ *
+ * The sidebar has always read `Not saved \u2014 retrying` on a failed write, and
+ * nothing retried. The keys went back into `pending` and waited for one of the
+ * three things that flush \u2014 another keystroke, moving between steps, Submit \u2014
+ * so a client whose connection blipped on their *last* answer saw a promise the
+ * page never kept, and the only way to keep it was to type something else.
+ *
+ * A ladder rather than a fixed interval because the failure this recovers from
+ * is usually a moment (a tunnel, a handover) but is sometimes an hour (the
+ * server is down, the link was revoked mid-form), and a tab left open on the
+ * second must not spend that hour issuing a request every two seconds against
+ * an endpoint whose per-IP budget is 120 a minute.
+ */
+const RETRY_MS = [1_500, 4_000, 10_000, 30_000] as const;
+
+/**
+ * The largest body still worth sending with `keepalive`.
+ *
+ * The Fetch standard gives keepalive requests a 64 KiB body quota, shared
+ * across everything in flight for the origin, and a body over it makes `fetch`
+ * *reject* rather than send \u2014 which on the hide path would turn a save that
+ * would have worked into silence. An intake answer may be 10,000 characters
+ * (MAX_INTAKE_ANSWER_CHARS) and there may be many pending at once, so the slice
+ * really can exceed it. Over the cap the request goes without keepalive: it
+ * still completes on a tab merely switched away from, and on a genuine unload
+ * it is no worse than the nothing that was sent before.
+ */
+const KEEPALIVE_MAX_BYTES = 60_000;
+
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 const post = async <T,>(path: string, body: unknown): Promise<T> => {
@@ -103,6 +135,10 @@ export function ClientIntakePage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submittedAt, setSubmittedAt] = useState<string | null>(null);
+  // Consecutive failed writes. State rather than a ref because it is what
+  // re-arms the autosave effect: a failure changes nothing else the effect
+  // watches, which is the whole reason `retrying` was never true.
+  const [failures, setFailures] = useState(0);
 
   // Keys edited since the last successful write. Only these are sent, so a save
   // never re-posts (and never resurrects) a field the client did not touch.
@@ -190,13 +226,16 @@ export function ClientIntakePage() {
         setCompletion(res.completion);
         setSaveState('saved');
         setSaveError(null);
+        setFailures(0);
         return true;
       } catch (err) {
-        // Put the keys back so the next attempt — a later edit, or leaving the
-        // step — retries them rather than dropping the client's typing.
+        // Put the keys back so the next attempt retries them rather than
+        // dropping the client's typing — and count the failure, which is what
+        // schedules that attempt.
         for (const key of keys) pending.current.add(key);
         setSaveState('error');
         setSaveError(err instanceof Error ? err.message : 'Could not save your answers.');
+        setFailures((n) => n + 1);
         return false;
       }
     });
@@ -209,18 +248,102 @@ export function ClientIntakePage() {
     return next;
   }, [token]);
 
+  /**
+   * The body of the last hide-flush, so one departure sends one request.
+   *
+   * `visibilitychange` and `pagehide` both fire when a tab is closed, and the
+   * page has nothing new to say the second time. Cleared when the tab comes
+   * back (below) and on the next keystroke (just after), so a client who leaves,
+   * returns and leaves again is beaconed each time — the send is unobservable
+   * by construction, and skipping a later one because an earlier one *looked*
+   * the same would reintroduce exactly the loss this closes.
+   */
+  const beaconed = useRef<string | null>(null);
+
   const setField = (key: string, value: unknown) => {
     pending.current.add(key);
     setAnswers((a) => ({ ...a, [key]: value }));
     setSaveState('idle');
+    // New typing is new content, so the hide-flush below owes another send even
+    // if the tab has already been hidden once with this key pending.
+    beaconed.current = null;
   };
 
-  // Debounced autosave: one write per pause in typing, not one per keystroke.
+  // Debounced autosave — one write per pause in typing, not one per keystroke —
+  // and, after a failure, the retry the sidebar has always said it was making.
+  //
+  // `failures` is in the dependencies for the second half of that: a failed
+  // write puts its keys back but changes no state this effect watches, so
+  // without it the effect never re-runs and the only retry is another
+  // keystroke. Counting the failure is what arms the timer, and the count is
+  // also the ladder position.
   useEffect(() => {
     if (pending.current.size === 0) return;
-    const timer = setTimeout(() => void flush(), AUTOSAVE_MS);
+    const delay = failures === 0 ? AUTOSAVE_MS : RETRY_MS[Math.min(failures, RETRY_MS.length) - 1]!;
+    const timer = setTimeout(() => void flush(), delay);
     return () => clearTimeout(timer);
-  }, [answers, flush]);
+  }, [answers, failures, flush]);
+
+  /**
+   * Write the pending keys back over a request that outlives the document.
+   *
+   * The page promises the client, in as many words, that their answers save
+   * automatically and they can close the page. Between the last keystroke and
+   * AUTOSAVE_MS there is nothing on the server, and closing the tab there threw
+   * the answer away — reliably the *last* one, since that is when a form is
+   * abandoned. `beforeunload` is not the signal (iOS Safari does not fire it,
+   * and a phone backgrounding the browser is the common case), and an ordinary
+   * `fetch` issued while the document tears down is cancelled: `keepalive` is
+   * what makes the request survive, and `visibilitychange` is what fires.
+   *
+   * Deliberately not queued behind `inFlight` and deliberately not clearing
+   * `pending`:
+   *
+   *  - Queueing would put the write behind a promise callback that a closing
+   *    document never runs, which is the one case this exists for. The ordering
+   *    hazard the queue prevents is real but strictly smaller than what it
+   *    replaces — an open write was issued *earlier* and usually lands earlier,
+   *    and the alternative is losing the newer value every time rather than
+   *    rarely.
+   *  - Clearing would make a page that survives (a tab switched away from and
+   *    switched back) believe the answers reached the server when nothing here
+   *    can observe that. Leaving them pending costs one duplicate write — the
+   *    server merges per key, and `flush` re-reads the current value — and
+   *    keeps the retry ladder above responsible for them.
+   */
+  const flushOnHide = useCallback(() => {
+    if (!token || pending.current.size === 0) return;
+    const slice: Record<string, unknown> = {};
+    for (const key of pending.current) slice[key] = answersRef.current[key] ?? null;
+    const body = JSON.stringify({ token, answers: slice });
+    if (body === beaconed.current) return;
+    beaconed.current = body;
+    // Measured in bytes, not characters: an answer written in a non-Latin
+    // script is up to four bytes a character, and it is the byte count the
+    // quota is against.
+    const bytes = new TextEncoder().encode(body).length;
+    // No state is touched on this path. Nobody is looking at the page, and a
+    // result that arrives after it is gone has nowhere to land.
+    void fetch('/api/v1/intake/portal/answers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+      keepalive: bytes <= KEEPALIVE_MAX_BYTES,
+    }).catch(() => {});
+  }, [token]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushOnHide();
+      else beaconed.current = null;
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flushOnHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flushOnHide);
+    };
+  }, [flushOnHide]);
 
   const goTo = (next: number) => {
     void flush();

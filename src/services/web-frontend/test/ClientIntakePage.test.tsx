@@ -655,3 +655,236 @@ describe('ClientIntakePage — the field types', () => {
     expect(answersFor(calls).at(-1)).toMatchObject({ entity_type: 'c_corp' });
   });
 });
+
+/**
+ * Leaving the page mid-answer.
+ *
+ * The form tells the client, in as many words, that their answers save
+ * automatically and they can close the page — and between the last keystroke
+ * and the 900ms autosave there was nothing on the server. Closing the tab there
+ * threw the answer away, reliably the last one, since that is when a form gets
+ * abandoned.
+ */
+describe('ClientIntakePage — leaving before the autosave fires', () => {
+  interface Sent {
+    path: string;
+    body: { token?: string; answers?: Record<string, unknown> };
+    keepalive: boolean | undefined;
+  }
+
+  /** Same three endpoints, but recording the transport as well as the body. */
+  function mockWithTransport(o: PortalOverrides = {}) {
+    const sent: Sent[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const path = String(url);
+      sent.push({
+        path,
+        body: init?.body ? (JSON.parse(String(init.body)) as Sent['body']) : {},
+        keepalive: init?.keepalive,
+      });
+      if (path.endsWith('/intake/portal')) return jsonResponse(portalBody(o));
+      if (path.endsWith('/portal/answers')) {
+        const answers = (JSON.parse(String(init!.body)) as { answers: Record<string, unknown> }).answers;
+        return jsonResponse({ answers, completion: completion(Object.keys(answers).length) });
+      }
+      throw new Error(`unexpected fetch ${path}`);
+    });
+    return sent;
+  }
+
+  const saves = (sent: Sent[]) => sent.filter((s) => s.path.endsWith('/portal/answers'));
+
+  /** jsdom's visibilityState is a read-only getter; this is the only way in. */
+  const setVisibility = (value: DocumentVisibilityState) =>
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => value });
+
+  const hide = () => {
+    setVisibility('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+  const show = () => {
+    setVisibility('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+
+  afterEach(() => setVisibility('visible'));
+
+  it('writes the answer back when the tab is hidden inside the debounce window', async () => {
+    const sent = mockWithTransport();
+    const user = userEvent.setup();
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+
+    await user.type(screen.getByLabelText('Legal company name *'), 'Halcyon Bio');
+    // Nothing has been written yet — the debounce has not elapsed.
+    expect(saves(sent)).toHaveLength(0);
+
+    hide();
+
+    // Asserted without waiting: a save that exists *now* cannot be the timer's.
+    const beacon = saves(sent);
+    expect(beacon).toHaveLength(1);
+    expect(beacon[0]!.body.answers).toEqual({ legal_name: 'Halcyon Bio' });
+    expect(beacon[0]!.body.token).toBe('intake-token-abc');
+    // An ordinary fetch issued as the document tears down is cancelled.
+    expect(beacon[0]!.keepalive).toBe(true);
+  });
+
+  it('sends nothing when there is nothing pending', async () => {
+    const sent = mockWithTransport();
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+
+    hide();
+
+    expect(saves(sent)).toHaveLength(0);
+  });
+
+  it('sends one request per departure, not one per event', async () => {
+    const sent = mockWithTransport();
+    const user = userEvent.setup();
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+
+    await user.type(screen.getByLabelText('Number of employees'), '42');
+    // Closing a tab fires both, and the page has nothing new to say the second
+    // time.
+    hide();
+    window.dispatchEvent(new Event('pagehide'));
+
+    expect(saves(sent)).toHaveLength(1);
+  });
+
+  it('beacons again after the client comes back and leaves once more', async () => {
+    const sent = mockWithTransport();
+    const user = userEvent.setup();
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+
+    await user.type(screen.getByLabelText('Number of employees'), '42');
+    hide();
+    expect(saves(sent)).toHaveLength(1);
+
+    show();
+    hide();
+
+    // The send is unobservable by construction, so a second departure with the
+    // same answers still owes a second attempt — the first may never have
+    // arrived.
+    expect(saves(sent)).toHaveLength(2);
+    expect(saves(sent)[1]!.body.answers).toEqual({ employee_count: 42 });
+  });
+
+  /**
+   * The keepalive body quota is 64 KiB and a body over it makes `fetch` reject
+   * rather than send. An intake answer may be 10,000 characters and several may
+   * be pending, so the slice really can exceed it — and rejecting would turn a
+   * save that would otherwise have worked into silence.
+   */
+  it('sends an over-quota body without keepalive rather than not at all', async () => {
+    const sent = mockWithTransport();
+    const user = userEvent.setup();
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+
+    // Pasted rather than typed: 70,000 characters is not a keystroke sequence.
+    const long = 'x'.repeat(70_000);
+    const box = screen.getByLabelText(/Business description/);
+    await user.click(box);
+    await user.paste(long);
+    expect(saves(sent)).toHaveLength(0);
+
+    hide();
+
+    const beacon = saves(sent);
+    expect(beacon).toHaveLength(1);
+    expect((beacon[0]!.body.answers as Record<string, string>).business_description).toHaveLength(70_000);
+    expect(beacon[0]!.keepalive).toBe(false);
+  });
+
+  /**
+   * Measured in bytes rather than characters. A form filled in in a non-Latin
+   * script is up to four bytes a character, and it is bytes the quota counts —
+   * 40,000 characters of it is 120,000 bytes, well over.
+   */
+  it('counts the quota in bytes, not characters', async () => {
+    const sent = mockWithTransport();
+    const user = userEvent.setup();
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+
+    const box = screen.getByLabelText(/Business description/);
+    await user.click(box);
+    await user.paste('計'.repeat(40_000));
+
+    hide();
+
+    expect(saves(sent)[0]!.keepalive).toBe(false);
+  });
+});
+
+/**
+ * The sidebar reads "Not saved — retrying" on a failed write. Nothing retried:
+ * the keys went back into `pending` and waited for another keystroke, a step
+ * change or Submit, so a client whose connection blipped on their last answer
+ * was shown a promise the page had no way of keeping.
+ */
+describe('ClientIntakePage — the retry the sidebar promises', () => {
+  it('re-attempts a failed write without the client typing again', async () => {
+    const user = userEvent.setup();
+    let attempts = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const path = String(url);
+      if (path.endsWith('/intake/portal')) return jsonResponse(portalBody());
+      if (path.endsWith('/portal/answers')) {
+        attempts += 1;
+        if (attempts === 1) return jsonResponse({ detail: 'Network hiccup' }, 503);
+        const answers = (JSON.parse(String(init!.body)) as { answers: Record<string, unknown> }).answers;
+        return jsonResponse({ answers, completion: completion(1) });
+      }
+      throw new Error(`unexpected fetch ${path}`);
+    });
+
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+    await user.type(screen.getByLabelText('Legal company name *'), 'Halcyon');
+
+    expect(await screen.findByText('Network hiccup')).toBeInTheDocument();
+    expect(screen.getByText('Not saved — retrying')).toBeInTheDocument();
+
+    // No further typing, no step change, no Submit. The retry is the page's.
+    await waitFor(() => expect(screen.getByText('All answers saved')).toBeInTheDocument(), {
+      timeout: 6000,
+    });
+    expect(attempts).toBe(2);
+  });
+
+  it('keeps the answer the client typed through the retry', async () => {
+    const user = userEvent.setup();
+    const bodies: Array<Record<string, unknown>> = [];
+    let attempts = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const path = String(url);
+      if (path.endsWith('/intake/portal')) return jsonResponse(portalBody());
+      if (path.endsWith('/portal/answers')) {
+        attempts += 1;
+        const answers = (JSON.parse(String(init!.body)) as { answers: Record<string, unknown> }).answers;
+        bodies.push(answers);
+        if (attempts <= 2) return jsonResponse({ detail: 'Network hiccup' }, 503);
+        return jsonResponse({ answers, completion: completion(1) });
+      }
+      throw new Error(`unexpected fetch ${path}`);
+    });
+
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+    await user.type(screen.getByLabelText('Legal company name *'), 'Halcyon');
+
+    await waitFor(() => expect(screen.getByText('All answers saved')).toBeInTheDocument(), {
+      timeout: 10_000,
+    });
+    // Every attempt carries the same answer, read fresh each time rather than
+    // captured at the first failure.
+    expect(bodies).toEqual([{ legal_name: 'Halcyon' }, { legal_name: 'Halcyon' }, { legal_name: 'Halcyon' }]);
+  });
+});
