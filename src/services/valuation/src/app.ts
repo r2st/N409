@@ -766,6 +766,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // note on STRIPE_BILLING_WEBHOOK_SECRET in config.ts.
     stripeWebhookSecret: config.STRIPE_BILLING_WEBHOOK_SECRET ?? config.STRIPE_WEBHOOK_SECRET,
     publicBaseUrl: config.PUBLIC_BASE_URL,
+    transport,
   });
   registerSignatureRoutes(app, { pool });
   // Feature 5 — board approval workflow (resolution + e-signature collection)

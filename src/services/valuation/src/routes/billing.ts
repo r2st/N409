@@ -5,6 +5,8 @@ import { ApiProblem, problems } from '@n409/shared';
 import { renderReportPdf } from '../clients/reportRender.js';
 import { isOps } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { sendTransactionalEmail } from '../email/transactional.js';
+import type { EmailTransport } from '../hooks/stateChange.js';
 import { findUserById } from '../repos/users.js';
 import {
   createBillingPortalSession,
@@ -40,6 +42,7 @@ import { classifyStripeEvent, recordStripeEvent } from '../repos/stripeEvents.js
 import {
   formatMoneyCents,
   invoiceNumber,
+  invoicePaidMessage,
   invoicePeriod,
   invoiceSections,
   usageView,
@@ -58,6 +61,8 @@ export interface BillingDeps {
   stripeSecretKey?: string;
   stripeWebhookSecret?: string;
   publicBaseUrl: string;
+  /** A settled invoice is confirmed to the subscriber who paid it. */
+  transport?: EmailTransport;
 }
 
 const billingUnavailable = (detail: string) =>
@@ -292,6 +297,74 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     }
   }
 
+  /**
+   * Confirm a settled subscription invoice to the subscriber.
+   *
+   * The counterpart of `alertPaymentFailed` above, which existed first. A
+   * failed renewal has told the subscriber and the billing group since
+   * dunning was added; a successful one told nobody, though it is the event
+   * that allocates a sequenced invoice number — a numbering an auditor reads
+   * as a count of what was billed, generated and then never mentioned to the
+   * person billed.
+   *
+   * Ops are not copied: a renewal going through is the expected case and the
+   * billing rollup already counts it.
+   *
+   * Contained like every other announcement on this path. The invoice row is
+   * committed by the time this runs, so letting an exception out would 5xx the
+   * webhook and Stripe's redelivery would find `already` set, skip the block
+   * and never re-attempt the message.
+   */
+  async function announceInvoicePaid(
+    log: FastifyBaseLogger,
+    inv: {
+      userId: string;
+      number: string;
+      amountCents: number;
+      currency: string;
+      periodStart: Date | null;
+      periodEnd: Date | null;
+    },
+  ): Promise<void> {
+    try {
+      const user = await findUserById(deps.pool, inv.userId);
+      const base = deps.publicBaseUrl.replace(/\/$/, '');
+      const message = invoicePaidMessage({
+        number: inv.number,
+        amount_cents: inv.amountCents,
+        currency: inv.currency,
+        period_start: inv.periodStart ? inv.periodStart.toISOString() : null,
+        period_end: inv.periodEnd ? inv.periodEnd.toISOString() : null,
+        invoice_link: `${base}/billing`,
+      });
+      await createNotifications(deps.pool, [
+        {
+          userId: inv.userId,
+          type: 'invoice_paid',
+          title: message.subject,
+          body: message.body.split('\n\n')[0]!,
+        },
+      ]);
+      // Transactional, like the receipt on the engagement side: an invoice is
+      // a financial record and does not consult the notification matrix.
+      if (user?.email) {
+        await sendTransactionalEmail(
+          { pool: deps.pool, transport: deps.transport, log },
+          {
+            toUserId: inv.userId,
+            toEmail: user.email,
+            templateKey: 'invoice_receipt',
+            subject: message.subject,
+            body: message.body,
+            vars: message.vars,
+          },
+        );
+      }
+    } catch (err) {
+      log.warn({ err, invoice: inv.number }, 'invoice paid announcement failed');
+    }
+  }
+
   // ── Webhook (subscription lifecycle + invoices) ──────────────────────────
   void app.register(async (scope) => {
     scope.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) =>
@@ -392,21 +465,36 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             const issuedIso = new Date().toISOString();
             const seq = await nextInvoiceSequence(deps.pool, invoicePeriod(issuedIso));
             const amount = Number(obj.amount_paid ?? obj.amount_due ?? 0);
+            const number = invoiceNumber(issuedIso, seq);
+            const currency = String(obj.currency ?? 'usd');
+            const periodStart = tsToDate(obj.period_start);
+            const periodEnd = tsToDate(obj.period_end);
             const lineItems: InvoiceLineItem[] = [
               { description: String(obj.description ?? 'Subscription'), amount_cents: amount },
             ];
             await createInvoice(deps.pool, {
-              number: invoiceNumber(issuedIso, seq),
+              number,
               userId,
               subscriptionId,
               amountCents: amount,
-              currency: String(obj.currency ?? 'usd'),
+              currency,
               status: 'paid',
-              periodStart: tsToDate(obj.period_start),
-              periodEnd: tsToDate(obj.period_end),
+              periodStart,
+              periodEnd,
               lineItems,
               stripeInvoiceId,
               paidAt: new Date(),
+            });
+            // Inside the `!already` guard, which is what makes this send once:
+            // a redelivered `invoice.paid` finds the row and skips the whole
+            // block, and the ledger classifies the ordinary replay before that.
+            await announceInvoicePaid(req.log, {
+              userId,
+              number,
+              amountCents: amount,
+              currency,
+              periodStart,
+              periodEnd,
             });
           }
         } else if (type === 'invoice.payment_failed') {

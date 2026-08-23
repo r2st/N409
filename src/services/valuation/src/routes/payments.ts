@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { renderReportPdf } from '../clients/reportRender.js';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
-import { receiptSections } from '../domain/billing.js';
+import { paymentReceivedMessage, receiptSections } from '../domain/billing.js';
 import {
   addonFlags,
   EXPRESS_DELIVERY_DAYS,
@@ -41,8 +41,9 @@ import {
 import { requirePrincipal } from '../plugins/auth.js';
 import { collectedTotals, disputeStatusOf, refundState, type DisputeStatus } from '../domain/payments.js';
 import { createNotifications } from '../repos/notifications.js';
+import { sendTransactionalEmail } from '../email/transactional.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
-import { listUserIdsWithRoles } from '../repos/users.js';
+import { findUserById, listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
 import { stripeEventKey } from '../domain/stripeEvents.js';
 import { classifyStripeEvent, recordStripeEvent } from '../repos/stripeEvents.js';
@@ -526,6 +527,69 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
   }
 
   /**
+   * Tell the payer their money arrived.
+   *
+   * Ops are deliberately not copied. A successful charge is the expected case
+   * and the billing group has the rollup; the reversals alert them because
+   * those need somebody to act.
+   *
+   * Wrapped whole, like `alertBilling` above and for a sharper reason. This
+   * runs after the compare-and-set in `fulfill` has already claimed the row, so
+   * the settlement is committed: an exception escaping here would 5xx the
+   * webhook, and Stripe's redelivery would find the payment no longer
+   * `pending`, take the `!claimed` early return, and never reach this code
+   * again. The announcement would be lost by the retry that exists to save it.
+   * Once `sendTransactionalEmail` has written the outbox row the retry ladder
+   * owns delivery, so the only thing this can swallow is the enqueue itself.
+   */
+  async function announcePaymentReceived(
+    log: FastifyBaseLogger,
+    payment: PaymentRow,
+    valuation: ValuationRow,
+  ): Promise<void> {
+    try {
+      const owner = await findUserById(deps.pool, valuation.user_id);
+      const base = deps.publicBaseUrl.replace(/\/$/, '');
+      const message = paymentReceivedMessage({
+        reference: String(valuation.number),
+        company_name: valuation.company_name,
+        kind: valuation.kind,
+        amount_cents: Number(payment.amount_cents),
+        currency: payment.currency,
+        express: payment.express,
+        receipt_link: `${base}/valuations/${valuation.id}`,
+      });
+      await createNotifications(deps.pool, [
+        {
+          userId: valuation.user_id,
+          valuationId: valuation.id,
+          type: 'payment_received',
+          title: message.subject,
+          body: message.body.split('\n\n')[0]!,
+        },
+      ]);
+      // A receipt is a financial record, not a preference: it goes through the
+      // transactional path, which ignores the notification matrix and the
+      // marketing opt-out, exactly like the invitation and the password reset.
+      if (owner?.email) {
+        await sendTransactionalEmail(
+          { pool: deps.pool, transport: deps.transport, log },
+          {
+            toUserId: valuation.user_id,
+            toEmail: owner.email,
+            templateKey: 'payment_receipt',
+            subject: message.subject,
+            body: message.body,
+            vars: message.vars,
+          },
+        );
+      }
+    } catch (err) {
+      log.warn({ err, paymentId: payment.id }, 'payment receipt announcement failed');
+    }
+  }
+
+  /**
    * `charge.refunded` — the charge object carries the running total refunded,
    * so this is idempotent by assignment. A partial refund is recorded but does
    * not revoke: the client still bought the report and still holds it.
@@ -772,6 +836,12 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
             );
           }
         }
+        // Outside the `paid_status === 'unpaid'` branch on purpose. That branch
+        // is about the *engagement* crossing the payment gate, which a second
+        // charge on an already-paid file does not do; this is about the charge,
+        // and `claimed` above has already established there is exactly one of
+        // them. An add-on bought after the fact is still money we took.
+        if (valuation) await announcePaymentReceived(req.log, claimed, valuation);
       };
 
       if (event.type === 'checkout.session.completed') {

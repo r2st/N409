@@ -387,9 +387,18 @@ export interface CommunicationTemplate {
   unknown_variables?: string[];
 }
 
+/**
+ * Mirrors `TemplateVarScope` in the service's `domain/templateVariables.ts`.
+ * The palette on the communications screen is keyed by this union, so a scope
+ * the service serves and this union does not know about would render as an
+ * unheaded group of variables — or, as it did before the union was a `Record`
+ * key, not render at all.
+ */
+export type TemplateVarScope = 'always' | 'valuation' | 'link' | 'payment';
+
 export interface TemplateVariable {
   name: string;
-  scope: 'always' | 'valuation' | 'link';
+  scope: TemplateVarScope;
   description: string;
   sample: string;
 }

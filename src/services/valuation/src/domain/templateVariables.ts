@@ -24,7 +24,16 @@ export type TemplateVarScope =
   /** Available on anything a valuation sends. Absent on account emails. */
   | 'valuation'
   /** Available only where a link is generated — reset, invite, payment. */
-  | 'link';
+  | 'link'
+  /**
+   * Available only on a settlement confirmation — the receipt for an
+   * engagement payment, the notice that a subscription invoice was paid.
+   * Its own scope rather than `valuation` because half of it is not about an
+   * engagement at all (a subscription invoice has no valuation), and because
+   * the `valuation` scope is pinned by a census against what
+   * `valuationTemplateVars` supplies.
+   */
+  | 'payment';
 
 export interface TemplateVariable {
   name: string;
@@ -124,6 +133,36 @@ export const TEMPLATE_VARIABLES: readonly TemplateVariable[] = [
     scope: 'link',
     description: 'The one action link a transactional email is about — reset, verify, or sign.',
     sample: 'https://app.n409.local/reset-password#token=…',
+  },
+  {
+    name: 'receipt_link',
+    scope: 'link',
+    description: "A signed-in link to the itemised receipt for an engagement's payment.",
+    sample: 'https://app.n409.local/valuations/01JQ…/payments',
+  },
+  {
+    name: 'invoice_link',
+    scope: 'link',
+    description: 'A signed-in link to the billing page an invoice can be downloaded from.',
+    sample: 'https://app.n409.local/billing',
+  },
+  {
+    name: 'amount_paid',
+    scope: 'payment',
+    description: 'What was actually charged, formatted in the currency it was charged in.',
+    sample: '$1,190.00',
+  },
+  {
+    name: 'invoice_number',
+    scope: 'payment',
+    description: 'The sequenced invoice number a subscription payment was billed under.',
+    sample: 'INV-202608-0007',
+  },
+  {
+    name: 'invoice_period',
+    scope: 'payment',
+    description: 'The service period an invoice covers, blank unless both ends of it are known.',
+    sample: '2026-08-01 to 2026-09-01',
   },
 ];
 

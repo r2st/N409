@@ -18,6 +18,7 @@ import {
   type CommunicationTemplate,
   type TemplateCategory,
   type TemplateVariable,
+  type TemplateVarScope,
 } from '../lib/types';
 import { STATE_LABELS } from '../lib/format';
 import {
@@ -142,11 +143,19 @@ function VariablePalette({
   variables: TemplateVariable[];
   onInsert: (token: string) => void;
 }) {
-  const scopes: Array<{ key: TemplateVariable['scope']; label: string }> = [
-    { key: 'always', label: 'Always available' },
-    { key: 'valuation', label: 'Engagement' },
-    { key: 'link', label: 'Links' },
-  ];
+  // Keyed by the scope union rather than listed, for the same reason as
+  // CONDITION_LABELS above: a scope the service starts serving and this screen
+  // has no heading for would drop its whole group out of the palette silently.
+  const SCOPE_LABELS: Record<TemplateVarScope, string> = {
+    always: 'Always available',
+    valuation: 'Engagement',
+    link: 'Links',
+    payment: 'Payments',
+  };
+  const scopes = (Object.keys(SCOPE_LABELS) as TemplateVarScope[]).map((key) => ({
+    key,
+    label: SCOPE_LABELS[key],
+  }));
   return (
     <div className="rounded-md border border-paper-300 bg-paper-50 p-4">
       <div className="overline text-ink-400">Variables</div>

@@ -27,6 +27,7 @@ import type { AutoEmail } from '../src/lib/types';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const COMMUNICATIONS_DOMAIN = path.resolve(here, '../../valuation/src/domain/communications.ts');
+const TEMPLATE_VARIABLES_DOMAIN = path.resolve(here, '../../valuation/src/domain/templateVariables.ts');
 
 /** The service's list, read out of its source rather than imported. */
 function serviceConditions(): string[] {
@@ -34,6 +35,15 @@ function serviceConditions(): string[] {
   const block = /export const AUTO_EMAIL_CONDITIONS = \[([\s\S]*?)\] as const;/.exec(source);
   if (!block) throw new Error(`AUTO_EMAIL_CONDITIONS not found in ${COMMUNICATIONS_DOMAIN}`);
   return [...block[1]!.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+}
+
+/** The service's `TemplateVarScope` union, read out of its source. */
+function serviceScopes(): string[] {
+  const source = readFileSync(TEMPLATE_VARIABLES_DOMAIN, 'utf8');
+  const block = /export type TemplateVarScope =([\s\S]*?);\n/.exec(source);
+  if (!block) throw new Error(`TemplateVarScope not found in ${TEMPLATE_VARIABLES_DOMAIN}`);
+  // Only the union members, not the words inside the doc comments between them.
+  return [...block[1]!.matchAll(/\|\s*'([a-z_]+)'/g)].map((m) => m[1]!);
 }
 
 const jsonResponse = (body: unknown, status = 200) =>
@@ -56,11 +66,11 @@ const campaign = (over: Partial<AutoEmail>): AutoEmail => ({
   ...over,
 });
 
-function mockApi(autoEmails: AutoEmail[]) {
+function mockApi(autoEmails: AutoEmail[], variables: unknown[] = []) {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const p = String(url);
     const method = init?.method ?? 'GET';
-    if (p.includes('/communication-templates/variables')) return jsonResponse({ variables: [] });
+    if (p.includes('/communication-templates/variables')) return jsonResponse({ variables });
     if (p.includes('/admin/communication-templates')) return jsonResponse({ templates: [] });
     if (p.includes('/admin/auto-emails')) return jsonResponse({ auto_emails: autoEmails });
     if (method !== 'GET') return new Response(null, { status: 204 });
@@ -141,5 +151,36 @@ describe('auto-email campaign conditions', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Auto emails' }));
     expect(await screen.findByText('No cap table uploaded')).toBeInTheDocument();
+  });
+
+  it('heads a group for every variable scope the service serves', async () => {
+    // The other half of the same drift. The palette groups the service's
+    // variables under headings this screen keeps, and it kept a list of three
+    // while the service grew a fourth — a scope with no heading takes its whole
+    // group of variables out of the palette without saying so.
+    const scopes = serviceScopes();
+    expect(scopes.length).toBeGreaterThanOrEqual(4);
+    expect(scopes).toContain('payment');
+
+    mockApi(
+      [campaign({})],
+      scopes.map((scope, i) => ({
+        name: `var_${scope}`,
+        scope,
+        description: `A ${scope} variable`,
+        sample: `sample ${i}`,
+      })),
+    );
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <CommunicationsPage />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'New template' }));
+    for (const scope of scopes) {
+      expect(await screen.findByRole('button', { name: `var_${scope}` })).toBeInTheDocument();
+    }
   });
 });

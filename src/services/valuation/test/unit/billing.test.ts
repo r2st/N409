@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   canConsume,
   invoiceNumber,
+  invoicePaidMessage,
   invoiceSections,
+  paymentReceivedMessage,
   receiptSections,
   usageView,
 } from '../../src/domain/billing.js';
@@ -135,5 +137,84 @@ describe('engagement receipts', () => {
     expect(out).toContain('Ben &amp; Co');
     expect(out).not.toContain('<script>');
     for (const s of sections) expect(sanitizeHtml(s.html)).toBe(s.html);
+  });
+});
+
+/**
+ * The confirmations a settlement sends. These are the only place the platform
+ * states a figure to the person who was charged outside a PDF, so what they say
+ * about the money is asserted rather than assumed.
+ */
+describe('settlement confirmations', () => {
+  const payment = {
+    reference: '1766',
+    company_name: 'Northwind Robotics, Inc.',
+    kind: '409a',
+    amount_cents: 119_000,
+    currency: 'usd',
+    express: false,
+    receipt_link: 'https://app.n409.local/valuations/01JQ',
+  };
+
+  it('states the amount charged, in the currency it was charged in', () => {
+    expect(paymentReceivedMessage(payment).body).toContain('$1,190.00');
+    expect(paymentReceivedMessage({ ...payment, currency: 'eur' }).body).toContain('€1,190.00');
+  });
+
+  it('names the engagement in the subject, so a client with several can tell them apart', () => {
+    const m = paymentReceivedMessage(payment);
+    expect(m.subject).toContain('409A');
+    expect(m.subject).toContain('Northwind Robotics, Inc.');
+    expect(m.body).toContain('1766');
+  });
+
+  it('points at the receipt rather than carrying it', () => {
+    const m = paymentReceivedMessage(payment);
+    expect(m.body).toContain(payment.receipt_link);
+    expect(m.vars.receipt_link).toBe(payment.receipt_link);
+  });
+
+  it('mentions express only when express was bought', () => {
+    expect(paymentReceivedMessage(payment).body).not.toContain('Express');
+    expect(paymentReceivedMessage({ ...payment, express: true }).body).toContain('Express');
+  });
+
+  it('supplies every variable it interpolates for a template override', () => {
+    const m = paymentReceivedMessage(payment);
+    expect(Object.keys(m.vars).sort()).toEqual([
+      'amount_paid',
+      'company_name',
+      'receipt_link',
+      'valuation_number',
+    ]);
+    expect(m.vars.amount_paid).toBe('$1,190.00');
+  });
+
+  const invoice = {
+    number: 'INV-202608-0007',
+    amount_cents: 9_900,
+    currency: 'usd',
+    period_start: '2026-08-01T00:00:00.000Z',
+    period_end: '2026-09-01T00:00:00.000Z',
+    invoice_link: 'https://app.n409.local/billing',
+  };
+
+  it('states the invoice number, the amount and the period', () => {
+    const m = invoicePaidMessage(invoice);
+    expect(m.subject).toContain('INV-202608-0007');
+    expect(m.body).toContain('$99.00');
+    expect(m.body).toContain('2026-08-01 to 2026-09-01');
+    expect(m.body).toContain(invoice.invoice_link);
+  });
+
+  it('states no period at all rather than half of one', () => {
+    // "for the period starting 1 August" reads as a claim about when it stops,
+    // and a row with one end missing does not say.
+    for (const half of [{ period_end: null }, { period_start: null }]) {
+      const m = invoicePaidMessage({ ...invoice, ...half });
+      expect(m.body).not.toContain('period');
+      expect(m.body).toContain('$99.00');
+      expect(m.vars.invoice_period).toBeUndefined();
+    }
   });
 });

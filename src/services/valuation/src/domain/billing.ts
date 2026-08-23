@@ -229,3 +229,98 @@ export function receiptSections(r: ReceiptForRender): Array<{ heading: string; h
   }
   return sections;
 }
+
+// ── "We have your money" ─────────────────────────────────────────────────────
+
+/**
+ * The confirmations sent when a payment actually settles.
+ *
+ * Everything else that can happen to a payment already tells somebody. A
+ * declined renewal notifies the subscriber and the billing group, a refund and
+ * a chargeback both alert ops, and a checkout that is never completed leaves a
+ * `pending` row the pay panel keeps offering. Money *arriving* told nobody: the
+ * payment was marked succeeded, the engagement flipped to paid, an invoice was
+ * allocated a sequence number an auditor reads as a count of what was billed —
+ * and the client's whole account of it was Stripe's own receipt, which states
+ * one total and knows nothing about what that total was made of, or a PDF
+ * behind a login they had to know to go and look for.
+ *
+ * Both messages state the figure and *name* the document rather than carrying
+ * it. The receipt and the invoice are authenticated routes on purpose: a PDF
+ * mailed to whatever address is on the account is a financial record that
+ * outlives our control of it, and the itemisation is precisely the part that
+ * gets argued about eighteen months later.
+ *
+ * Pure, and next to `receiptSections` rather than inline at the webhook,
+ * because the figure in the sentence and the figure in the PDF have to be the
+ * same figure. Both read the same cents off the same row.
+ */
+export interface SettlementMessage {
+  subject: string;
+  body: string;
+  /** Values for a `communication_templates` override of the built-in copy. */
+  vars: Record<string, string>;
+}
+
+/** A settled one-off engagement payment, in the words the payer gets. */
+export function paymentReceivedMessage(r: {
+  /** The engagement number the client already quotes. */
+  reference: string;
+  company_name: string;
+  kind: string;
+  amount_cents: number;
+  currency: string;
+  /** Bought next-business-day delivery. A property of the order, so it is stated. */
+  express: boolean;
+  /** Where the itemised receipt lives — an authenticated page, not an attachment. */
+  receipt_link: string;
+}): SettlementMessage {
+  const amount = formatMoneyCents(r.amount_cents, r.currency);
+  const kindLabel = r.kind.toUpperCase();
+  const subject = `Payment received — ${kindLabel} valuation for ${r.company_name}`;
+  const body =
+    `We've received your payment of ${amount} for the ${kindLabel} valuation for ` +
+    `${r.company_name} (engagement ${r.reference}).` +
+    (r.express ? ' Express delivery was included in this order.' : '') +
+    `\n\nThe itemised receipt is on the engagement's payment panel: ${r.receipt_link}` +
+    `\n\nIf you were not expecting this charge, reply to this email and we will look into it.`;
+  return {
+    subject,
+    body,
+    vars: {
+      company_name: r.company_name,
+      valuation_number: r.reference,
+      amount_paid: amount,
+      receipt_link: r.receipt_link,
+    },
+  };
+}
+
+/** A settled subscription invoice, in the words the subscriber gets. */
+export function invoicePaidMessage(r: {
+  number: string;
+  amount_cents: number;
+  currency: string;
+  period_start: string | null;
+  period_end: string | null;
+  invoice_link: string;
+}): SettlementMessage {
+  const amount = formatMoneyCents(r.amount_cents, r.currency);
+  // A period is stated only when both ends of it are known. Half a period is
+  // worse than none: "for the period starting 1 August" reads as a commitment
+  // about when it stops, and the row does not say.
+  const period = r.period_start && r.period_end ? `${day(r.period_start)} to ${day(r.period_end)}` : null;
+  return {
+    subject: `Invoice ${r.number} — payment received`,
+    body:
+      `Thank you — we've received your payment of ${amount}` +
+      (period ? ` for the period ${period}` : '') +
+      `.\n\nInvoice ${r.number} is on your billing page: ${r.invoice_link}`,
+    vars: {
+      invoice_number: r.number,
+      amount_paid: amount,
+      invoice_link: r.invoice_link,
+      ...(period ? { invoice_period: period } : {}),
+    },
+  };
+}
