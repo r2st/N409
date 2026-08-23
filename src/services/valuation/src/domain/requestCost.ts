@@ -79,10 +79,14 @@ export const COST_RULES: readonly CostRule[] = [
 
   // Document/report rendering and bundling — CPU plus large buffers.
   { pattern: /\/evidence-bundle$/, methods: ['POST'], cost: 30 },
-  // The subject-access export: eleven capped queries across the corpus, one of
-  // them the whole valuations table for an owner. Above `/export` because it
+  // The subject-access export: seventeen capped queries across the corpus, one
+  // of them the whole valuations table for an owner. Above `/export` because it
   // fans out further, and priced at all because it is the rare heavy route a
   // signed-in user can hit without owning anything.
+  //
+  // The count is not load-bearing — costs here are order-of-magnitude and
+  // eleven sections and seventeen are the same order — but it is written down,
+  // so it is kept true. `personalDataCensus` is what will keep growing it.
   { pattern: /\/data-export$/, methods: ['GET'], cost: 20 },
   { pattern: /\/export$/, methods: ['GET'], cost: 15 },
   { pattern: /\.xlsx$/, cost: 15 },

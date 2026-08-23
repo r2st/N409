@@ -255,11 +255,17 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     // lifted the suppression, which is another person's data and Art. 15(4)'s
     // exact concern. That the release happened is the subject's business; who
     // did it is the audit trail's.
+    //
+    // `s.to_email` is compared bare against `lower(u.email)` rather than being
+    // folded itself: `email_suppressions.to_email` is the primary key and every
+    // write to it goes through `normalizeAddress`, so it is already lowercase.
+    // Wrapping it in `lower()` would be a no-op that no index can see, turning
+    // a primary-key lookup into a scan of the whole suppression list.
     section(
       pool,
       `SELECT s.to_email, s.reason::text AS reason, s.detail, s.created_at, s.released_at
          FROM email_suppressions s
-         JOIN users u ON lower(u.email) = lower(s.to_email)
+         JOIN users u ON s.to_email = lower(u.email)
         WHERE u.id = $1 ORDER BY s.created_at DESC LIMIT $2`,
       [userId],
     ),
