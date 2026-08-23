@@ -14,6 +14,7 @@ import {
   TEMPLATE_CATEGORY_LABELS,
   VALUATION_STATES,
   type AutoEmail,
+  type AutoEmailCondition,
   type CommunicationTemplate,
   type TemplateCategory,
   type TemplateVariable,
@@ -36,12 +37,37 @@ import {
  * them. Ops-only.
  */
 
-const CONDITIONS = [
-  { value: 'always', label: 'Always' },
-  { value: 'unpaid', label: 'Unpaid' },
-  { value: 'no_documents', label: 'No documents uploaded' },
-  { value: 'waiting_on_client', label: 'Waiting on client' },
-] as const;
+/**
+ * The gate a campaign may put in front of a send, labelled for the operator.
+ *
+ * Keyed by `AutoEmailCondition`, so this is exhaustive by construction: the
+ * union is the mirror of the service's `AUTO_EMAIL_CONDITIONS`, and a name
+ * added there and here without a label stops the build rather than quietly
+ * dropping out of the dropdown. It dropped six that way — `paid`,
+ * `intake_incomplete`, `no_captable`, `no_financials`, `unassigned_reviewer`
+ * and `unsigned` each had SQL in `dueCandidates`, a DB constraint and a
+ * migration behind them, and none could be picked on this screen. A campaign
+ * already carrying one was worse than unreachable: the `<Select>` held a value
+ * matching no `<option>` and rendered blank, so opening the form and saving
+ * anything moved a live gate the operator was never shown.
+ */
+const CONDITION_LABELS: Record<AutoEmailCondition, string> = {
+  always: 'Always',
+  unpaid: 'Unpaid',
+  paid: 'Paid',
+  no_documents: 'No documents uploaded',
+  no_captable: 'No cap table uploaded',
+  no_financials: 'No financials uploaded',
+  waiting_on_client: 'Waiting on client',
+  intake_incomplete: 'Intake not submitted',
+  unassigned_reviewer: 'No reviewer assigned',
+  unsigned: 'Not signed off',
+};
+
+const CONDITIONS = (Object.keys(CONDITION_LABELS) as AutoEmailCondition[]).map((value) => ({
+  value,
+  label: CONDITION_LABELS[value],
+}));
 
 function ChannelBadge({ channel }: { channel: 'email' | 'sms' }) {
   return (
@@ -952,7 +978,9 @@ function AutoEmailsTab() {
                     {STATE_LABELS[c.trigger_state] ?? c.trigger_state}
                     {c.condition !== 'always' && (
                       <div className="text-xs text-ink-400">
-                        {CONDITIONS.find((x) => x.value === c.condition)?.label}
+                        {/* Falls back to the raw name: an unlabelled condition
+                            must read as an unfamiliar gate, not as no gate. */}
+                        {CONDITION_LABELS[c.condition] ?? c.condition}
                       </div>
                     )}
                   </td>

@@ -394,7 +394,29 @@ export interface TemplateVariable {
   sample: string;
 }
 
-export type AutoEmailCondition = 'always' | 'unpaid' | 'no_documents' | 'waiting_on_client';
+/**
+ * Mirrors `AUTO_EMAIL_CONDITIONS` in the valuation service's
+ * `domain/communications.ts`, which is the authority — that list is what the
+ * DB CHECK constraint accepts and what `dueCandidates` has SQL for.
+ *
+ * This copy stood at four names while the service grew to ten, and the drift
+ * was invisible from here: the admin dropdown is built from a list in
+ * CommunicationsPage, so six conditions that had SQL, a constraint and a
+ * migration behind them could not be chosen, and a campaign already using one
+ * showed a blank gate. `test/CommunicationsConditions.test.tsx` reads the
+ * service's list and fails when this one falls behind it again.
+ */
+export type AutoEmailCondition =
+  | 'always'
+  | 'unpaid'
+  | 'no_documents'
+  | 'waiting_on_client'
+  | 'paid'
+  | 'intake_incomplete'
+  | 'no_captable'
+  | 'no_financials'
+  | 'unassigned_reviewer'
+  | 'unsigned';
 
 export interface AutoEmail {
   id: string;
