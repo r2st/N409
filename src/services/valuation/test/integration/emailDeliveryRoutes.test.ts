@@ -167,14 +167,18 @@ describe.skipIf(!dbUp)('email delivery routes', () => {
       expect(res.statusCode).toBe(422);
     });
 
+    const release = async (address: string, token = admin.token) =>
+      ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/email/suppressions/release',
+        headers: authHeader(token),
+        payload: { address },
+      });
+
     it('releases a suppression and leaves the history behind', async () => {
       await suppressAddress(ctx.pool, { address: 'gone@test.example.com', reason: 'hard' });
 
-      const res = await ctx.app.inject({
-        method: 'DELETE',
-        url: '/api/v1/admin/email/suppressions/gone@test.example.com',
-        headers: authHeader(admin.token),
-      });
+      const res = await release('gone@test.example.com');
       expect(res.statusCode).toBe(204);
       expect(await isSuppressed(ctx.pool, 'gone@test.example.com')).toBeNull();
 
@@ -189,12 +193,51 @@ describe.skipIf(!dbUp)('email delivery routes', () => {
     });
 
     it('answers 404 when there is nothing to release', async () => {
-      const res = await ctx.app.inject({
-        method: 'DELETE',
-        url: '/api/v1/admin/email/suppressions/never@test.example.com',
+      expect((await release('never@test.example.com')).statusCode).toBe(404);
+    });
+
+    /**
+     * The address is carried in the body rather than the path, and this is the
+     * case that forced it: fastify's router refuses a path parameter longer
+     * than `maxParamLength` (100), while an address is valid to 320 and a
+     * provider bounce can suppress one without any admin involved. On the old
+     * `DELETE /suppressions/:address` a long address answered 414 and the
+     * suppression could never be lifted — a permanent block on precisely the
+     * addresses an operator most needs to unblock.
+     *
+     * Anything this service will suppress it must be able to release, so the
+     * two are asserted as one round trip rather than as a length — the round
+     * trip is the property, and it is what the old shape could not do. The
+     * router's refusal itself is pinned in the blog suite, on a route that
+     * still takes a path parameter; asserting it here would only prove that a
+     * route which no longer exists does not exist.
+     */
+    it('releases an address too long to have been a path parameter', async () => {
+      const long = `${'a'.repeat(64)}@${'b'.repeat(60)}.${'c'.repeat(60)}.example.com`;
+      expect(long.length).toBeGreaterThan(100);
+
+      const suppressed = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/email/suppressions',
         headers: authHeader(admin.token),
+        payload: { address: long, reason: 'hard' },
       });
-      expect(res.statusCode).toBe(404);
+      expect(suppressed.statusCode).toBe(200);
+      expect(await isSuppressed(ctx.pool, long)).not.toBeNull();
+
+      expect((await release(long)).statusCode).toBe(204);
+      expect(await isSuppressed(ctx.pool, long)).toBeNull();
+    });
+
+    it('rejects a release for something that is not an address', async () => {
+      expect((await release('not-an-address')).statusCode).toBe(422);
+    });
+
+    it('keeps the release behind the same bar as the console', async () => {
+      await suppressAddress(ctx.pool, { address: 'guarded@test.example.com', reason: 'hard' });
+      const res = await release('guarded@test.example.com', ops.token);
+      expect(res.statusCode).toBe(403);
+      expect(await isSuppressed(ctx.pool, 'guarded@test.example.com')).not.toBeNull();
     });
   });
 

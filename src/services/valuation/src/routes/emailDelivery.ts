@@ -185,16 +185,38 @@ export function registerEmailDeliveryRoutes(
    * audited and restricted to the same bar as the user console. The row is
    * kept, released rather than deleted — "this was suppressed and an admin
    * lifted it" is exactly the history somebody will want later.
+   *
+   * The address travels in the body, and it used to be a path parameter on a
+   * `DELETE`. Two things were wrong with that. Fastify's router refuses a path
+   * parameter longer than `maxParamLength`, which is 100; an address is valid
+   * to 320 (RFC 5321, and what the suppressing schema accepts), so an
+   * address of 101 characters or more could be suppressed — by an admin here,
+   * or by a provider bounce, which needs no admin at all — and then never
+   * released through the API. A hard bounce was permanent for exactly the
+   * addresses nobody could do anything about.
+   *
+   * The second is that an address is PII and a path is the part of a request
+   * everything logs. Suppressing already keeps the address out of the audit
+   * label for that reason; releasing put it in the URL. A body is read by the
+   * handler and nothing else.
+   *
+   * `POST .../release` rather than `DELETE`, because that is what it does:
+   * this endpoint has never deleted the row, and no client depended on the old
+   * shape — nothing in the SPA called it.
    */
-  app.delete(
-    '/api/v1/admin/email/suppressions/:address',
+  app.post(
+    '/api/v1/admin/email/suppressions/release',
     { preHandler: app.authenticate },
     async (req, reply) => {
       const principal = requirePrincipal(req);
       if (!canManageUsers(principal))
         throw problems.forbidden('Only administrators can release a suppression');
-      const { address } = req.params as { address: string };
-      const released = await releaseSuppression(deps.pool, address, principal.id);
+      // The suppressing schema's own address field, so the two can never
+      // diverge: an address this service accepted a suppression for is by
+      // construction one it will accept a release for.
+      const parsed = z.object({ address: SuppressBody.shape.address }).safeParse(req.body);
+      if (!parsed.success) throw problems.unprocessable('Invalid address', { errors: parsed.error.issues });
+      const released = await releaseSuppression(deps.pool, parsed.data.address, principal.id);
       if (!released) throw problems.notFound('No active suppression for that address');
 
       await recordAdminEvent(deps.pool, {
