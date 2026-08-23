@@ -34,6 +34,8 @@ interface Job {
   error: string | null;
   attempts: number | null;
   created_at: string;
+  /** Earliest moment a worker may take this row — the retry ladder's next step. */
+  due_at: string;
   finished_at: string | null;
   duration_ms: number | null;
 }
@@ -114,10 +116,25 @@ function waitingFor(iso: string | null): string {
   return duration(Date.now() - new Date(iso).getTime());
 }
 
+/**
+ * How long until a queued row becomes claimable, or null if it already is.
+ *
+ * An outbox row and a webhook delivery both spend their retry ladder sitting at
+ * the status they arrived at, so a backlog of deliveries backing off politely
+ * and a queue whose worker has died look identical on this page. They need
+ * opposite responses, and the difference is only ever this one field.
+ */
+function retryDueIn(job: Job): string | null {
+  if (job.status !== 'queued') return null;
+  const ms = new Date(job.due_at).getTime() - Date.now();
+  return ms > 0 ? duration(ms) : null;
+}
+
 function StatusBadge({ job }: { job: Job }) {
   // The queue's own word is shown alongside only when it says more than the
   // normalised one — otherwise it is the same string twice.
   const showsDetail = job.detail !== job.status;
+  const dueIn = retryDueIn(job);
   return (
     <span className="inline-flex items-center gap-1.5">
       <span
@@ -126,6 +143,11 @@ function StatusBadge({ job }: { job: Job }) {
         {job.status[0]!.toUpperCase() + job.status.slice(1)}
       </span>
       {showsDetail && <span className="text-xs text-ink-400">{job.detail}</span>}
+      {dueIn && (
+        <span className="text-xs text-ink-400" title="Waiting out its retry backoff — not stuck.">
+          retry in {dueIn}
+        </span>
+      )}
     </span>
   );
 }

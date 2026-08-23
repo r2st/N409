@@ -12,9 +12,12 @@ import { ACTIVE_JOB_STATUSES, JOB_SOURCE_LABELS, type JobSource, type JobStats }
  *
  * So there are two conditions and they measure different things:
  *
- *   * **stalled** — the oldest still-owed job is older than the queue's window.
- *     This is the one that catches a stopped worker, and it is the reason the
- *     age is measured rather than the depth.
+ *   * **stalled** — the oldest job that is *due now* has been due for longer
+ *     than the queue's window. This is the one that catches a stopped worker,
+ *     and it is the reason the age is measured rather than the depth. Due
+ *     rather than merely outstanding, because two of the queues express a
+ *     deliberate backoff as an active status and a receiver that is down is
+ *     not a queue that is stalled — see `oldestActiveJobs`.
  *   * **failing** — more than N jobs failed inside the window. This catches a
  *     queue that is moving fine and getting every answer wrong, which the age
  *     check cannot see at all because a failed job is not outstanding.
@@ -39,7 +42,14 @@ export interface JobAlertRule {
 /** One queue's current state, as `jobStats` + `oldestActiveJobs` report it. */
 export interface QueueObservation {
   source: JobSource;
-  /** Oldest still-owed job, or null when the queue is empty. */
+  /**
+   * When the oldest job that is *due now* became due, or null when nothing is.
+   *
+   * Not the oldest active job: a webhook delivery waiting out its backoff and
+   * an outbox row on its retry ladder are both still owed and both perfectly
+   * healthy. `oldestActiveJobs` explains why the distinction is what keeps this
+   * rule from paging an operator about a partner's downtime.
+   */
   oldestActiveAt: Date | null;
   active: number;
   failed: number;
@@ -77,14 +87,14 @@ export function humanMinutes(minutes: number): string {
 export function observeQueues(
   sources: readonly JobSource[],
   stats: readonly JobStats[],
-  oldest: readonly { source: JobSource; oldest_created_at: Date; active: number }[],
+  oldest: readonly { source: JobSource; oldest_due_at: Date; active: number }[],
 ): QueueObservation[] {
   return sources.map((source) => {
     const mine = stats.filter((s) => s.source === source);
     const head = oldest.find((o) => o.source === source);
     return {
       source,
-      oldestActiveAt: head ? new Date(head.oldest_created_at) : null,
+      oldestActiveAt: head ? new Date(head.oldest_due_at) : null,
       active: mine.reduce((n, s) => (ACTIVE_JOB_STATUSES.includes(s.status) ? n + s.count : n), 0),
       failed: mine.reduce((n, s) => (s.status === 'failed' ? n + s.count : n), 0),
     };
@@ -117,8 +127,8 @@ export function evaluateJobAlerts(
           observed: Math.round(minutes * 100) / 100,
           threshold: rule.stall_minutes,
           detail:
-            `${JOB_SOURCE_LABELS[observation.source]}: oldest outstanding job is ` +
-            `${humanMinutes(minutes)} old (threshold ${humanMinutes(rule.stall_minutes)}), ` +
+            `${JOB_SOURCE_LABELS[observation.source]}: oldest due job has been waiting ` +
+            `${humanMinutes(minutes)} (threshold ${humanMinutes(rule.stall_minutes)}), ` +
             `${observation.active} still owed`,
         });
       }

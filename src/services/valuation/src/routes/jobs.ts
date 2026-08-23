@@ -86,7 +86,10 @@ export function registerJobRoutes(app: FastifyInstance, deps: { pool: pg.Pool })
         source,
         label: JOB_SOURCE_LABELS[source],
         ...summarizeJobStats(stats.filter((s) => s.source === source)),
-        oldest_active_at: oldest.find((o) => o.source === source)?.oldest_created_at ?? null,
+        // "How long the oldest outstanding item has been waiting" on the admin
+        // page — anchored at when it became claimable, so a queue backing off
+        // on purpose does not read as a queue that is behind.
+        oldest_active_at: oldest.find((o) => o.source === source)?.oldest_due_at ?? null,
       })),
     };
   });

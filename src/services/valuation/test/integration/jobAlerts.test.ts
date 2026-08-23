@@ -103,7 +103,7 @@ describe.skipIf(!dbUp)('job queue alerts', () => {
     const result = await scan();
     expect(result.opened).toHaveLength(1);
     expect(result.opened[0]).toMatchObject({ source: 'email', kind: 'stalled' });
-    expect(result.opened[0]!.detail).toContain('8h old');
+    expect(result.opened[0]!.detail).toContain('waiting 8h');
   });
 
   it('measures the age against the database clock, not the process clock', async () => {
@@ -149,7 +149,7 @@ describe.skipIf(!dbUp)('job queue alerts', () => {
     const second = await scan();
     expect(second.opened).toEqual([]);
     expect(second.ongoing).toHaveLength(1);
-    expect(second.ongoing[0]!.detail).toContain('20h old');
+    expect(second.ongoing[0]!.detail).toContain('waiting 20h');
 
     const { rows } = await pool.query(`SELECT count(*)::int AS n FROM job_alerts`);
     expect(rows[0]!.n).toBe(1);

@@ -20,6 +20,7 @@ const JOBS = [
     error: null,
     attempts: null,
     created_at: '2026-08-08T09:00:00Z',
+    due_at: '2026-08-08T09:00:00Z',
     finished_at: null,
     duration_ms: null,
   },
@@ -35,6 +36,7 @@ const JOBS = [
     error: 'upstream timeout',
     attempts: null,
     created_at: '2026-08-08T08:00:00Z',
+    due_at: '2026-08-08T08:00:00Z',
     finished_at: '2026-08-08T08:01:00Z',
     duration_ms: 60_000,
   },
@@ -50,6 +52,7 @@ const JOBS = [
     error: null,
     attempts: 0,
     created_at: '2026-08-08T07:00:00Z',
+    due_at: '2026-08-08T07:00:00Z',
     finished_at: null,
     duration_ms: null,
   },
@@ -107,6 +110,49 @@ const STATS = {
   ],
 };
 
+/**
+ * Two deliveries that are queued for opposite reasons.
+ *
+ * `W1` failed at 06:00 and is not claimable again until 13:00 — three hours
+ * from the test's clock — which is the retry ladder working. `W2` came due an
+ * hour ago and is still sitting there, which is a worker that has stopped. Both
+ * read `queued`/`pending` and nothing else on the row separates them.
+ */
+const WAITING_JOBS = [
+  {
+    id: 'W1',
+    source: 'webhook_delivery',
+    status: 'queued',
+    detail: 'pending',
+    name: 'valuation.report_ready',
+    valuation_id: 'V1',
+    valuation_number: '1766',
+    company_name: 'Acme Corp',
+    error: 'receiver responded 503',
+    attempts: 4,
+    created_at: '2026-08-08T06:00:00Z',
+    due_at: '2026-08-08T13:00:00Z',
+    finished_at: null,
+    duration_ms: null,
+  },
+  {
+    id: 'W2',
+    source: 'webhook_delivery',
+    status: 'queued',
+    detail: 'pending',
+    name: 'valuation.state_changed',
+    valuation_id: 'V1',
+    valuation_number: '1766',
+    company_name: 'Acme Corp',
+    error: null,
+    attempts: 1,
+    created_at: '2026-08-08T06:00:00Z',
+    due_at: '2026-08-08T09:00:00Z',
+    finished_at: null,
+    duration_ms: null,
+  },
+];
+
 const RULES = [
   { source: 'email', enabled: true, stall_minutes: 120, failure_count: 10, failure_window_hours: 24 },
   { source: 'ai_job', enabled: true, stall_minutes: 60, failure_count: 5, failure_window_hours: 24 },
@@ -134,6 +180,7 @@ const STALLED = {
 
 /** Swapped per test; the mock reads it at request time. */
 let alertsBody: unknown = QUIET;
+let jobsBody: typeof JOBS | typeof WAITING_JOBS = JOBS;
 
 function mockApi() {
   const calls: string[] = [];
@@ -142,7 +189,7 @@ function mockApi() {
     calls.push(path);
     if (path.includes('/admin/jobs/stats')) return jsonResponse(STATS);
     if (path.includes('/admin/jobs/alerts')) return jsonResponse(alertsBody);
-    if (path.includes('/admin/jobs')) return jsonResponse({ jobs: JOBS, total: JOBS.length });
+    if (path.includes('/admin/jobs')) return jsonResponse({ jobs: jobsBody, total: jobsBody.length });
     return jsonResponse({}, 404);
   });
   return calls;
@@ -159,6 +206,7 @@ describe('AdminJobsPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     alertsBody = QUIET;
+    jobsBody = JOBS;
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date('2026-08-08T10:00:00Z'));
   });
@@ -182,6 +230,36 @@ describe('AdminJobsPage', () => {
     // Scoped to the row: 'Running' is also a filter button.
     expect(within(row).getByText('Running')).toBeInTheDocument();
     expect(within(row).getByText('extracting')).toBeInTheDocument();
+  });
+
+  it('says when a queued row is waiting out a retry rather than stuck', async () => {
+    // Both rows read Queued/pending. One is not claimable for another three
+    // hours because its receiver answered 503 and the ladder is doing its job;
+    // the other came due an hour ago and nothing has taken it. Opposite
+    // responses, and until the row carried `due_at` the page could not tell
+    // them apart at all — which is the same confusion the stall alert had.
+    jobsBody = WAITING_JOBS;
+    mockApi();
+    renderPage();
+    const table = await screen.findByLabelText('Background jobs');
+
+    const backingOff = within(table).getByText('valuation.report_ready').closest('tr')!;
+    expect(within(backingOff).getByText('Queued')).toBeInTheDocument();
+    expect(within(backingOff).getByText('retry in 3 h 0 min')).toBeInTheDocument();
+
+    const overdue = within(table).getByText('valuation.state_changed').closest('tr')!;
+    expect(within(overdue).getByText('Queued')).toBeInTheDocument();
+    expect(within(overdue).queryByText(/retry in/)).toBeNull();
+  });
+
+  it('does not label a row that is not queued as awaiting a retry', async () => {
+    // `due_at` is whatever the last attempt left behind on a settled row, and a
+    // succeeded or skipped job is not owed another one. Reading it there would
+    // put "retry in …" on work that is over.
+    mockApi();
+    renderPage();
+    const table = await screen.findByLabelText('Background jobs');
+    expect(within(table).queryByText(/retry in/)).toBeNull();
   });
 
   it('does not repeat the status when the two words agree', async () => {

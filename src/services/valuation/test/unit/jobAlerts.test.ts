@@ -48,7 +48,7 @@ describe('evaluateJobAlerts — stalled', () => {
     const findings = evaluateJobAlerts([stopped], [rule()], NOW);
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({ kind: 'stalled', threshold: 120 });
-    expect(findings[0]!.detail).toContain('1d 6h old');
+    expect(findings[0]!.detail).toContain('waiting 1d 6h');
   });
 
   it('does not fire exactly at the threshold', () => {
@@ -109,7 +109,7 @@ describe('observeQueues', () => {
 
   it('folds the per-status counts into active and failed', () => {
     const email = observeQueues(JOB_SOURCES, stats, [
-      { source: 'email', oldest_created_at: minutesAgo(30), active: 6 },
+      { source: 'email', oldest_due_at: minutesAgo(30), active: 6 },
     ]).find((o) => o.source === 'email')!;
     expect(email.active).toBe(6);
     expect(email.failed).toBe(7);

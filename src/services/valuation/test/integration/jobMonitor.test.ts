@@ -82,9 +82,15 @@ describe.skipIf(!dbUp)('job monitor API', () => {
       [webhookId, partnerId],
     );
     await ctx.pool.query(
+      // `next_attempt_at` is set alongside `created_at`, not left to its
+      // `DEFAULT now()`: this fixture is a delivery that has been due for two
+      // hours and not picked up, and the monitor now distinguishes that from a
+      // delivery created two hours ago that is deliberately waiting out its
+      // backoff. See jobAlertsBackoff.test.ts.
       `INSERT INTO partner_webhook_deliveries
-         (id, webhook_id, event_type, valuation_id, payload, status, attempts, created_at)
-       VALUES ($1, $2, 'valuation.published', $3, '{}'::jsonb, 'pending', 2, now() - interval '2 hours')`,
+         (id, webhook_id, event_type, valuation_id, payload, status, attempts, created_at, next_attempt_at)
+       VALUES ($1, $2, 'valuation.published', $3, '{}'::jsonb, 'pending', 2,
+               now() - interval '2 hours', now() - interval '2 hours')`,
       [newUlid(), webhookId, valuationId],
     );
   });

@@ -20,7 +20,7 @@ import {
  * know all five schemas; the cost of the table would have been that all five
  * have to know about this page. The dependency points the right way here.
  *
- * Every branch projects the same eight columns in the same order, and each
+ * Every branch projects the same nine columns in the same order, and each
  * carries its own status vocabulary through as `detail` — `domain/jobQueue.ts`
  * maps it onto the common scale. The mapping is applied in SQL rather than in
  * JS because the status *filter* has to run before LIMIT, and a filter applied
@@ -48,6 +48,12 @@ function statusCase(source: JobSource, column: string): string {
  * The five SELECT branches. `name` is whatever identifies the unit of work to
  * a person reading the row: the pipeline the AI job ran, the template the
  * message used, the event the webhook carried.
+ *
+ * `due_at` is the earliest moment the row's own worker may pick it up — the
+ * same predicate that queue's claim uses, restated here. For three of the five
+ * that is simply when the row was created; two carry a retry ladder, and for
+ * those "still owed" and "owed *now*" are different questions. See
+ * `oldestActiveJobs`, which is the only reader that needs the distinction.
  */
 function branch(source: JobSource): string {
   switch (source) {
@@ -56,7 +62,9 @@ function branch(source: JobSource): string {
         SELECT p.id, 'pipeline_run' AS source, ${statusCase('pipeline_run', 'p.status')} AS status,
                p.status::text AS detail, p.trigger AS name,
                p.valuation_id, p.error, NULL::integer AS attempts,
-               p.created_at,
+               -- 0161's ladder only ever schedules a *failed* run, which is
+               -- never active, so an in-flight run is owed the moment it exists.
+               p.created_at, p.created_at AS due_at,
                CASE WHEN p.status IN ('ready','failed') THEN p.updated_at END AS finished_at
         FROM pipeline_runs p`;
     case 'ai_job':
@@ -64,7 +72,7 @@ function branch(source: JobSource): string {
         SELECT j.id, 'ai_job' AS source, ${statusCase('ai_job', 'j.status')} AS status,
                j.status::text AS detail, j.pipeline::text AS name,
                j.valuation_id, j.error, NULL::integer AS attempts,
-               j.created_at, j.completed_at AS finished_at
+               j.created_at, j.created_at AS due_at, j.completed_at AS finished_at
         FROM ai_jobs j`;
     case 'calculation':
       return `
@@ -74,21 +82,27 @@ function branch(source: JobSource): string {
                -- A calculation row is written when the engine returns, so its
                -- start and end are the same instant and duration is always 0.
                -- Recorded honestly rather than left null: 0 is what we know.
-               c.created_at, c.created_at AS finished_at
+               c.created_at, c.created_at AS due_at, c.created_at AS finished_at
         FROM calculations c`;
     case 'email':
       return `
         SELECT e.id, 'email' AS source, ${statusCase('email', 'e.status')} AS status,
                e.status::text AS detail, e.template_key AS name,
                e.valuation_id, e.error, e.attempts,
-               e.created_at, e.sent_at AS finished_at
+               -- 0159: NULL means "no wait" — a fresh row, or one whose ladder
+               -- is spent. claimRetryableEmails reads it the same way.
+               e.created_at, coalesce(e.next_attempt_at, e.created_at) AS due_at,
+               e.sent_at AS finished_at
         FROM email_outbox e`;
     case 'webhook_delivery':
       return `
         SELECT d.id, 'webhook_delivery' AS source, ${statusCase('webhook_delivery', 'd.status')} AS status,
                d.status::text AS detail, d.event_type AS name,
                d.valuation_id, d.last_error AS error, d.attempts,
-               d.created_at, d.delivered_at AS finished_at
+               -- 0103: NOT NULL, defaulted to now() on insert, and moved up the
+               -- ladder by every failed attempt. claimDueDeliveries claims on
+               -- next_attempt_at <= now(), and this must agree with it.
+               d.created_at, d.next_attempt_at AS due_at, d.delivered_at AS finished_at
         FROM partner_webhook_deliveries d`;
   }
 }
@@ -132,7 +146,7 @@ export async function listJobs(pool: pg.Pool, filter: JobFilter): Promise<JobPag
   params.push(filter.perPage, offset);
   const { rows } = await pool.query<Omit<JobRow, 'duration_ms'>>(
     `SELECT j.id, j.source, j.status, j.detail, j.name, j.valuation_id,
-            j.error, j.attempts, j.created_at, j.finished_at,
+            j.error, j.attempts, j.created_at, j.due_at, j.finished_at,
             v.number AS valuation_number, v.company_name
      ${from}
      ORDER BY j.created_at DESC, j.id DESC
@@ -197,21 +211,50 @@ export async function dbNow(pool: pg.Pool): Promise<Date> {
 }
 
 /**
- * The oldest still-owed job per source — "how far behind is each queue".
+ * The oldest job a worker could have picked up by now and has not — "how far
+ * behind is each queue".
  *
  * A count of active jobs cannot distinguish a busy queue from a stopped one.
- * The age of the oldest outstanding item can, and it is the number an alert
- * should eventually be built on.
+ * An age can, and this is the number `evaluateJobAlerts` compares against
+ * `stall_minutes`.
+ *
+ * **Owed is not the same as owed *now*.** Two of the five queues express a
+ * deliberate wait as an active status: a webhook delivery backing off sits at
+ * `pending` (0103/0139) and an outbox row can carry a schedule (0159). Anchor
+ * the age at `created_at` and a receiver that is merely down reads as a stalled
+ * queue — 0139 widened the webhook ladder to 1+5+30+120+360 minutes precisely
+ * so an overnight outage would be survived, which put every retry past the
+ * 120-minute `stall_minutes` 0120 chose when the ladder only reached 36. The
+ * alert then fires on the mechanism working: a partner's receiver goes down for
+ * three hours, and an operator is paged about *our* webhook queue.
+ *
+ * So both halves come from `due_at` — the row's own claim predicate:
+ *
+ *   * a row not yet due is not counted at all. Nothing is late about it, and
+ *     it will become due on its own;
+ *   * the age is measured from when the row *became* due, not from when it was
+ *     created, so it reads as "how long has the worker not touched this".
+ *
+ * This keeps the threshold sensitive rather than blinding it. A webhook sweep
+ * that has genuinely stopped still crosses 120 minutes, because its due rows
+ * stay due; a healthy sweep never has a row overdue by more than its interval.
+ * The counts on the page are unaffected — `jobStats` still shows every pending
+ * delivery, and `observeQueues` takes `active` from there.
+ *
+ * `now()` rather than `clock_timestamp()`, deliberately, and unlike `dbNow`:
+ * this predicate must agree with the claim it is mirroring
+ * (`claimDueDeliveries`, `claimRetryableEmails`), and those read `now()`.
  */
 export async function oldestActiveJobs(
   pool: pg.Pool,
-): Promise<Array<{ source: JobSource; oldest_created_at: Date; active: number }>> {
-  const { rows } = await pool.query<{ source: JobSource; oldest_created_at: Date; active: string }>(
-    `SELECT j.source, min(j.created_at) AS oldest_created_at, count(*)::text AS active
+): Promise<Array<{ source: JobSource; oldest_due_at: Date; active: number }>> {
+  const { rows } = await pool.query<{ source: JobSource; oldest_due_at: Date; active: string }>(
+    `SELECT j.source, min(j.due_at) AS oldest_due_at, count(*)::text AS active
      FROM (${unionSql(JOB_SOURCES)}) j
      WHERE j.status IN ('queued', 'running')
+       AND j.due_at <= now()
      GROUP BY j.source
-     ORDER BY oldest_created_at ASC`,
+     ORDER BY oldest_due_at ASC`,
   );
   return rows.map((r) => ({ ...r, active: Number(r.active) }));
 }

@@ -89,6 +89,19 @@ export interface JobRow {
   error: string | null;
   attempts: number | null;
   created_at: Date;
+  /**
+   * The earliest moment a worker may pick this row up.
+   *
+   * Equal to `created_at` for three of the five queues; for an outbox row and a
+   * webhook delivery it is the retry ladder's next step, and it is the only
+   * thing on the row that separates "queued, and nothing is taking it" from
+   * "queued, and deliberately not due until 06:00". Both read `queued` on the
+   * common scale and both read `pending` in the queue's own words, so without
+   * this the page cannot tell an operator which one they are looking at — the
+   * same question the stall alert was getting wrong. Meaningless on a settled
+   * row, where it is whatever the last attempt left behind.
+   */
+  due_at: Date;
   finished_at: Date | null;
   /** Wall-clock ms where both ends are known, else null. */
   duration_ms: number | null;
