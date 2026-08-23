@@ -201,6 +201,41 @@ describe('useValuationStream', () => {
     }
   });
 
+  /**
+   * The server re-checks, on a timer, that an open stream is still allowed to be
+   * open — a session signed out everywhere, a revoked token, a permission taken
+   * away — and sends a `revoked` frame before it hangs up. Without reading the
+   * frame the client cannot tell that close from a dropped socket, so it would
+   * wait out its backoff and reconnect into a refusal it has already been told
+   * about.
+   */
+  it('does not reconnect after the server says the stream was revoked', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const live = sseResponse();
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(live.res);
+
+      const { result } = renderHook(() => useValuationStream('v1'));
+      await act(async () => live.push(presence('Ana', 'Bo')));
+      await waitFor(() => expect(result.current.viewers).toHaveLength(2));
+
+      await act(async () => live.push('event: revoked\ndata: {"reason":"forbidden"}\n\n'));
+      await act(async () => live.end());
+
+      // The badges go, because presence is only ever true of an open socket.
+      await waitFor(() => expect(result.current.viewers).toEqual([]));
+
+      // And nothing comes back — well past the 3s the client waits after an
+      // ordinary drop.
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('opens no stream at all without a valuation id', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
     renderHook(() => useValuationStream(''));

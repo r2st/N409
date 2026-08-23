@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { isUlid, problems } from '@n409/shared';
-import { canReadValuation, type Principal } from '../auth/rbac.js';
-import { findValuationById } from '../repos/valuations.js';
+import type { Principal } from '../auth/rbac.js';
 import { findUserById } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { HubCapacityError, type ValuationHub } from '../realtime/hub.js';
+import { authorizeStream, startStreamRevalidation, type StreamCredential } from '../realtime/streamAccess.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -22,22 +22,37 @@ declare module 'fastify' {
  */
 export function registerStreamRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; hub: ValuationHub; heartbeatMs?: number },
+  deps: { pool: pg.Pool; hub: ValuationHub; heartbeatMs?: number; revalidateMs?: number },
 ): void {
   const heartbeatMs = deps.heartbeatMs ?? 25_000;
+  // Slower than the heartbeat on purpose. The heartbeat is a socket write; this
+  // is two queries per open stream, so it is paced by what the database should
+  // be asked to carry for a connection that is idle by definition. A minute is
+  // the window a revocation may lag by, against sessions that otherwise lasted
+  // as long as the tab.
+  const revalidateMs = deps.revalidateMs ?? 60_000;
   app.decorate('realtimeHub', deps.hub);
 
   app.get('/api/v1/valuations/:id/stream', { preHandler: app.authenticate }, async (req, reply) => {
     const principal: Principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     if (!isUlid(id)) throw problems.notFound();
-    const valuation = await findValuationById(deps.pool, id);
-    if (
-      !valuation ||
-      !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id })
-    ) {
-      throw problems.notFound();
-    }
+
+    // The credential, kept for as long as the stream is: it is what the
+    // periodic re-check re-answers against. A session carries the epoch the JWT
+    // was minted under; an API token carries its row id, since the secret
+    // itself is never held past `resolveApiToken`.
+    const credential: StreamCredential = req.apiToken
+      ? { kind: 'api_token', tokenId: req.apiToken.tokenId }
+      : { kind: 'session', epoch: req.sessionEpoch };
+
+    const check = () => authorizeStream(deps.pool, { userId: principal.id, valuationId: id, credential });
+    const access = await check();
+    // Both failures are a 404 here, which is what this route already answered
+    // for an unreadable valuation: an authenticated caller has just cleared
+    // `app.authenticate`, so 'unauthorized' at this point means the account was
+    // deleted between the two reads and is not worth a different status.
+    if (!access.ok) throw problems.notFound();
 
     const user = await findUserById(deps.pool, principal.id);
     const name = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || user?.email || 'Someone';
@@ -45,7 +60,7 @@ export function registerStreamRoutes(
     // Refuse before hijacking: once the event-stream headers are on the wire
     // there is no status left to answer with. `capacityFor` and the `join`
     // below are one synchronous run, so no second request can slip between.
-    if (deps.hub.capacityFor(valuation.id, principal.id)) {
+    if (deps.hub.capacityFor(id, principal.id)) {
       throw problems.tooManyRequests('Too many open realtime streams — close a tab and retry', 30);
     }
 
@@ -71,7 +86,7 @@ export function registerStreamRoutes(
     const heartbeat: { stop?: () => void } = {};
     let leave: () => void;
     try {
-      leave = deps.hub.join(valuation.id, {
+      leave = deps.hub.join(id, {
         userId: principal.id,
         name,
         send,
@@ -96,7 +111,29 @@ export function registerStreamRoutes(
     });
     heartbeat.stop = stop;
 
-    req.raw.on('close', stop);
+    // Revocation. Told before it is closed: the client's reader sees a socket
+    // that ended and cannot tell a revoked stream from a dropped one, so
+    // without the frame it waits out its backoff and reconnects into a refusal.
+    const stopRevalidation = startStreamRevalidation({
+      intervalMs: revalidateMs,
+      check,
+      onRevoked: (reason) => {
+        req.log.info({ valuationId: id, userId: principal.id, reason }, 'realtime stream revoked');
+        try {
+          send('revoked', { reason });
+        } catch {
+          // The socket is already gone; the teardown below is what matters.
+        }
+        stop();
+        reply.raw.end();
+      },
+      onError: (err) => req.log.warn({ err }, 'realtime revocation check failed; stream kept'),
+    });
+
+    req.raw.on('close', () => {
+      stopRevalidation();
+      stop();
+    });
   });
 }
 

@@ -22,6 +22,18 @@ declare module 'fastify' {
     principal: Principal | null;
     /** Set when the bearer was an API token (n409_pat_…). */
     apiToken: ApiTokenContext | null;
+    /**
+     * The `session_epoch` the presented JWT was minted under, or null when the
+     * request did not present one (an API token, or a legacy token from before
+     * the claim existed).
+     *
+     * Recorded rather than recomputed because one route outlives its own
+     * request: `routes/stream.ts` holds an SSE connection open for as long as a
+     * tab is, and re-checks revocation on a timer. Re-verifying the JWT there
+     * would mean the route keeping the raw bearer for hours, which is the one
+     * thing this service takes care not to do.
+     */
+    sessionEpoch: number | null;
   }
   interface FastifyInstance {
     authenticate: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
@@ -107,6 +119,7 @@ export function registerAuth(
 ): void {
   app.decorateRequest('principal', null);
   app.decorateRequest('apiToken', null);
+  app.decorateRequest('sessionEpoch', null);
 
   app.decorate('authenticate', async (req: FastifyRequest, reply: FastifyReply) => {
     // Bearer header first (API tokens + JS clients), falling back to the
@@ -144,6 +157,7 @@ export function registerAuth(
     }
 
     req.principal = { id: user.id, roles: user.roles, partnerId: user.partner_id };
+    req.sessionEpoch = sessionEpoch;
 
     // Per-user / per-org throttling (improvement 5), checked right after the
     // principal resolves so it covers every authenticated route through this

@@ -78,7 +78,7 @@ interface Route {
  * different ways, and a list of names would have to be edited by the same
  * person who forgets the check.
  */
-function helpersIn(source: string): Set<string> {
+function declarationsIn(source: string): Set<string> {
   const names = new Set<string>();
   const declaration =
     /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)|(?:^|\n)\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?\(/g;
@@ -97,12 +97,53 @@ function helpersIn(source: string): Set<string> {
   return names;
 }
 
+/**
+ * The same resolution, one level out through the file's own relative imports.
+ *
+ * A helper does not stop being a helper for living in another module, and this
+ * sweep has exactly the blind spot the env-contract scanner has: move a check
+ * behind a named function in a different file and the predicate vanishes from
+ * the route body, so the route reads as unauthorized when nothing about its
+ * authorization changed. `routes/stream.ts` is the first to do it —
+ * `authorizeStream` is shared with the re-check that runs on a timer for as
+ * long as the stream is open, and the two must be the same predicate or the
+ * client loops — and it will not be the last.
+ *
+ * One level, and only relative imports inside this service. Following the graph
+ * further would eventually reach something that mentions `valuationScope` for
+ * an unrelated reason and start marking routes authorized by association, which
+ * is how a sweep stops sweeping. What is imported is checked the same way a
+ * local helper is: the module's own function bodies have to consult a
+ * predicate. A name alone is never enough.
+ */
+function importedHelpersIn(source: string, file: string): Set<string> {
+  const names = new Set<string>();
+  const dir = path.dirname(path.join(ROUTES, file));
+  for (const m of source.matchAll(/from\s+'(\.[^']+)'/g)) {
+    const target = path.resolve(dir, m[1]!.replace(/\.js$/, '.ts'));
+    let imported: string;
+    try {
+      imported = readFileSync(target, 'utf8');
+    } catch {
+      continue; // a type-only path, or one this resolution does not reach
+    }
+    for (const name of declarationsIn(imported)) names.add(name);
+  }
+  return names;
+}
+
+function helpersIn(source: string, file: string): Set<string> {
+  const names = declarationsIn(source);
+  for (const name of importedHelpersIn(source, file)) names.add(name);
+  return names;
+}
+
 function routes(): Route[] {
   const found: Route[] = [];
   for (const file of readdirSync(ROUTES).filter((f) => f.endsWith('.ts'))) {
     const source = readFileSync(path.join(ROUTES, file), 'utf8');
     const lines = source.split('\n');
-    const helpers = helpersIn(source);
+    const helpers = helpersIn(source, file);
 
     lines.forEach((line, i) => {
       const verb = /app\.(get|post|put|patch|delete)[<(]/.exec(line);
@@ -221,9 +262,57 @@ describe('per-engagement routes authorize the engagement', () => {
       }
       const loadAnything = async (pool, id) => findValuationById(pool, id);
     `;
-    const helpers = helpersIn(source);
+    const helpers = declarationsIn(source);
     expect(helpers.has('loadForCaller')).toBe(true);
     expect(helpers.has('loadAnything')).toBe(false);
+  });
+
+  /**
+   * The import-following half, stated the same way: a name is trusted for what
+   * the module it comes from consults, never for being imported. Without this
+   * the extension would be a way to launder any imported name into an
+   * authorization — which is the failure mode of every list-of-names guard this
+   * file was written to avoid.
+   */
+  it("follows a route file's own imports, and still judges by what it finds there", () => {
+    // `routes/stream.ts` imports `authorizeStream` from `realtime/streamAccess`,
+    // which is where its `canReadValuation` call now lives.
+    const streamSource = readFileSync(path.join(ROUTES, 'stream.ts'), 'utf8');
+    expect(helpersIn(streamSource, 'stream.ts').has('authorizeStream')).toBe(true);
+
+    // `findValuationById` is imported by most of the route table and reads a row
+    // without asking whose it is. Following imports must not have made it an
+    // authorization.
+    const anyReader = readFileSync(path.join(ROUTES, 'valuations.ts'), 'utf8');
+    expect(helpersIn(anyReader, 'valuations.ts').has('findValuationById')).toBe(false);
+  });
+
+  /**
+   * The bound that keeps the import-following honest at the scale of the whole
+   * table. A single module that happens to mention `valuationScope` and is
+   * imported broadly — `repos/valuations`, `auth/rbac` — would mark most of this
+   * surface authorized by association and the sweep would go quiet without
+   * failing. So the question is not "does it still pass" but "how many verdicts
+   * did following imports change": today, one, the route it was added for.
+   *
+   * Loose on purpose. It is a ceiling on laundering, not a count to maintain.
+   */
+  it('following imports re-verdicts a handful of routes, not the table', () => {
+    const local = new Map<string, Set<string>>();
+    for (const route of SCOPED) {
+      if (!local.has(route.file)) {
+        local.set(route.file, declarationsIn(readFileSync(path.join(ROUTES, route.file), 'utf8')));
+      }
+    }
+    const authorizedLocally = (route: Route): boolean => {
+      if (AUTHORIZES.test(route.body)) return true;
+      const names = local.get(route.file)!;
+      return [...route.body.matchAll(/\b(\w+)\s*\(/g)].some((m) => names.has(m[1]!));
+    };
+    // Named by route rather than by `at`, which carries a line number that any
+    // edit above the handler would move.
+    const changed = SCOPED.filter((r) => authorizes(r) && !authorizedLocally(r));
+    expect(changed.map((r) => `${r.method} ${r.url}`)).toEqual(['GET /api/v1/valuations/:id/stream']);
   });
 
   it('reads a bare child lookup as unscoped and a parented one as scoped', () => {

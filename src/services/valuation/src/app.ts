@@ -188,6 +188,9 @@ export interface AppDeps {
   hrisFetch?: FetchFn;
   /** injectable for tests — realtime SSE hub, to exercise its connection caps */
   hub?: ValuationHub;
+  /** injectable for tests — how often an open SSE stream re-checks that it is
+   *  still allowed to be open (default 60s; see realtime/streamAccess.ts). */
+  streamRevalidateMs?: number;
   /** injectable for tests — /ready probes against the AI + engine services */
   readinessFetch?: FetchFn;
   /** Per-statement timing aggregate, surfaced at /api/v1/admin/db/slow-queries.
@@ -592,7 +595,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
   // Improvement 4 — realtime collaboration: presence + live comment pushes
   const hub = deps.hub ?? new ValuationHub();
-  registerStreamRoutes(app, { pool, hub });
+  registerStreamRoutes(app, { pool, hub, revalidateMs: deps.streamRevalidateMs });
   // Let a request that is already being served finish before `close()` takes
   // its socket away — Fastify 5 does not, see drain.ts. Registered here rather
   // than in the composition root so it is a property of the app: every instance

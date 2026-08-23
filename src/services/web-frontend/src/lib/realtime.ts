@@ -107,6 +107,14 @@ export function useValuationStream(valuationId: string): ValuationStream {
                 setViewers(((ev.data as { viewers?: Viewer[] }).viewers ?? []) as Viewer[]);
               } else if (ev.event === 'comment') {
                 setCommentTick((t) => t + 1);
+              } else if (ev.event === 'revoked') {
+                // The server re-checks, on a timer, that this stream is still
+                // allowed to be open — a signed-out session, a revoked token, a
+                // permission taken away — and says so before it hangs up. The
+                // reconnect behind a silent close would be refused anyway; the
+                // frame is what makes that refusal immediate instead of a
+                // three-second wait and a pointless request.
+                terminal = true;
               }
             }
           }
