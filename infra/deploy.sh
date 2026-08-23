@@ -53,6 +53,10 @@
 #                 checkout's site block before restarting (see section 4d).
 #                 The edge config is the one thing a deploy cannot install, so
 #                 this is the one check that can only report.
+#   SKIP_JOURNALD Set to 1 to skip installing the journald drop-in and
+#                 confirming its limits are in force (see section 4c2).
+#                 Skipping it leaves the journal bounded by whatever the distro
+#                 defaults to, which is where it was before this step existed.
 #
 # Usage:
 #   infra/deploy.sh                    # dry run — prints the plan, touches nothing
@@ -448,6 +452,32 @@ fi
 # into a set of units nobody can name.
 run_remote "cd $REMOTE_DIR && bash infra/install-units.sh" \
   || die "could not install the systemd units on the host — nothing was restarted, the previous release is still serving"
+
+# ── 4c2. Bound the journal ───────────────────────────────────────────────────
+#
+# The other half of 4c's problem. Every service here logs to stdout and systemd
+# puts that in the journal — DEPLOYMENT.md says so, and then tells an operator
+# to read the journal after an OOM kill. How large that journal may grow, how
+# long it is kept, and whether it survives a reboot were the distro's defaults,
+# recorded in this repo nowhere at all. On a single-disk host an unbounded
+# journal is an outage whose first symptom is Postgres refusing writes, and a
+# journal that turns out to have been volatile is an incident with no evidence.
+#
+# Unlike the Caddyfile below, this one *can* be installed: journald.conf.d is a
+# drop-in directory, our file is ours alone, and the bound it sets is one the
+# other two products on the box want too.
+#
+# Fatal, and after 4c so the two systemd-facing steps stay together. The script
+# does not stop at writing the file — it asks systemd what journald's effective
+# configuration is and fails if our values are not the ones in force, because a
+# drop-in that a later-sorting file overrides looks identical on disk to one
+# that is working. See infra/install-journald.sh.
+if [[ "${SKIP_JOURNALD:-0}" == "1" ]]; then
+  log "SKIP_JOURNALD=1 — not installing the journald drop-in"
+else
+  run_remote "cd $REMOTE_DIR && bash infra/install-journald.sh" \
+    || die "could not put the journald limits in force on the host — nothing was restarted, the previous release is still serving (SKIP_JOURNALD=1 overrides)"
+fi
 
 # ── 4d. Check the edge config, which cannot be installed ─────────────────────
 #

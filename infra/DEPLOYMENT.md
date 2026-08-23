@@ -144,6 +144,35 @@ The Python pair has no `/metrics` endpoint — the same reason the readiness
 contract covers three services rather than five — so their ceilings are visible
 through `systemctl show` and the journal only.
 
+### How much journal there is to read
+
+`journalctl` is only useful for as far back as the journal goes, and that used
+to be whatever the distro defaulted to. `infra/journald/10-n409.conf` states it,
+`infra/install-journald.sh` puts it in place, and section 4c2 of `deploy.sh`
+runs that on every deploy:
+
+- **persistent** — the default `auto` keeps the journal in a tmpfs unless
+  `/var/log/journal` already exists, which means the reboot that follows an OOM
+  kill is also what erases the evidence of it. This creates the directory.
+- **512M, 30 days** — whichever binds first. Unbounded, the journal is a
+  slow-motion outage on a single-disk host whose first symptom is Postgres
+  refusing writes, not "the logs got big". `SystemKeepFree` is deliberately left
+  at its 15%-of-filesystem default; any absolute figure worth writing would be
+  smaller.
+- **rate limit raised to 20000/30s** — the default 10000 drops the rest with one
+  "Suppressed N messages" line, and five Fastify services plus two Python ones
+  sharing an incident will pass it at exactly the moment the lines matter.
+
+The install verifies rather than assuming: it asks `systemd-analyze cat-config
+systemd/journald.conf` what is actually in force and fails the deploy if a
+later-sorting drop-in has overridden any of it. A drop-in being overridden looks
+identical on disk to one that is working.
+
+```bash
+journalctl --disk-usage
+systemd-analyze cat-config systemd/journald.conf | grep -E '^(Storage|SystemMaxUse|MaxRetentionSec)='
+```
+
 ## Security posture (audit B-1 P0 / I-1)
 
 The single most important production control, and the reason this doc exists:
@@ -521,7 +550,8 @@ The units run with `ProtectSystem=strict` (the whole FS is read-only), so each
 service can write only to its `ReadWritePaths`: `n409-valuation` →
 `/opt/n409-data` (uploaded documents), `n409-backup` → `/opt/n409-backups`. The
 other services (web, ai, engine-wrapper, report) write nothing to disk (logs go
-to the journal), so they need no `ReadWritePaths`. Code under `/opt/N409` stays
+to the journal, which `infra/journald/10-n409.conf` bounds — see above), so they
+need no `ReadWritePaths`. Code under `/opt/N409` stays
 world-readable, so services still start even if a deploy resets file ownership;
 only `/opt/n409-data` and `/opt/n409-backups` must remain `n409`-owned.
 

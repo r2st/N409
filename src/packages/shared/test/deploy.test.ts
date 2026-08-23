@@ -1136,6 +1136,57 @@ describe('installing the systemd units', () => {
   });
 });
 
+// The journal is 4c's other half: every service logs to stdout, systemd keeps
+// it, and nothing in this repo said how much of it or for how long. Unlike the
+// Caddyfile below it *can* be installed — journald.conf.d is a drop-in
+// directory and our file is ours alone. What is pinned here is only the wiring;
+// infra/install-journald.sh has its own tests for what it does once called.
+describe('putting the journald limits in force', () => {
+  const step = (run: Run) => run.remote.findIndex((c) => c.includes('install-journald.sh'));
+
+  it('installs the drop-in from the checkout on every deploy', () => {
+    const run = deploy(['--apply']);
+    expect(run.remote.some((c) => c.includes('cd /opt/N409 && bash infra/install-journald.sh'))).toBe(true);
+  });
+
+  // Before the restarts: the services about to come up are the ones that will
+  // fill the journal, and a ceiling applied after them is a ceiling that was
+  // not there for the riskiest minutes of the deploy.
+  it('runs after the units are installed and before anything restarts', () => {
+    const run = deploy(['--apply']);
+    const units = run.remote.findIndex((c) => c.includes('install-units.sh'));
+    const restart = run.remote.findIndex((c) => c.includes('systemctl restart'));
+    expect(step(run)).toBeGreaterThan(units);
+    expect(restart).toBeGreaterThan(step(run));
+  });
+
+  // Fatal, and this is the deliberate part. The failure it reports is not "the
+  // file could not be written" but "the values are not the ones in force", and
+  // that state is invisible from everywhere else: the drop-in on disk looks
+  // correct, the services are healthy, and the journal quietly grows or
+  // quietly evaporates on the next reboot.
+  it('restarts nothing when the limits could not be put in force', () => {
+    const run = deploy(['--apply'], {}, ['[[ "$*" == *"install-journald.sh"* ]] && exit 1']);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('journald limits in force');
+    expect(run.remote.some((c) => c.includes('systemctl restart'))).toBe(false);
+  });
+
+  it('can be skipped for one deploy', () => {
+    const run = deploy(['--apply'], { SKIP_JOURNALD: '1' });
+    expect(run.remote.some((c) => c.includes('install-journald.sh'))).toBe(false);
+    expect(run.stderr).toContain('SKIP_JOURNALD=1');
+    // Skipping the step must not skip the deploy.
+    expect(run.remote.some((c) => c.includes('systemctl restart'))).toBe(true);
+  });
+
+  it('plans the install in a dry run without running it', () => {
+    const run = deploy([]);
+    expect(run.transcript).toBe('');
+    expect(run.stderr).toContain('install-journald.sh');
+  });
+});
+
 // The edge config is the one piece of the estate a deploy cannot install:
 // /etc/caddy/Caddyfile is shared with two other products, so ours is a site
 // block and the only safe direction is to report. That makes *when* it runs and
