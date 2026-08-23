@@ -3,7 +3,10 @@ import { createValuation } from '../../src/repos/valuations.js';
 import { createComment } from '../../src/repos/comments.js';
 import { createNotifications } from '../../src/repos/notifications.js';
 import { createPayment } from '../../src/repos/payments.js';
+import { newUlid } from '@n409/shared';
 import { EXPORT_SECTION_LIMIT } from '../../src/repos/dataExport.js';
+import { enqueueEmail } from '../../src/repos/emailOutbox.js';
+import { suppressAddress } from '../../src/repos/emailDelivery.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
@@ -123,7 +126,95 @@ describe.skipIf(!dbUp)('personal data export', () => {
       'totp_secret',
       'mfa_backup_codes',
       'api_token_secrets',
+      'trusted_device_tokens',
     ]);
+  });
+
+  /**
+   * The mail is where the platform says most of what it says to a person, and
+   * the export used to answer "what did you send me" with the in-app
+   * notification list alone — the smaller half. A subject access request that
+   * omits the messages actually sent to the subject's address is not a copy of
+   * what is held.
+   */
+  it('includes the mail it sent them, with the text it sent', async () => {
+    await enqueueEmail(ctx.pool, {
+      toUserId: owner.id,
+      toEmail: owner.email,
+      templateKey: 'valuation_completed',
+      subject: 'Your 409A report is ready',
+      body: 'The report for Export Co has been published.',
+    });
+
+    const body = (await exportSelf(owner.token)).json();
+    const mail = body.emails_sent.rows.find(
+      (r: { subject: string }) => r.subject === 'Your 409A report is ready',
+    );
+    expect(mail).toBeTruthy();
+    // The body, not a summary of it: this text was addressed to this person and
+    // they already hold a copy, so quoting it back is unambiguously theirs.
+    expect(mail.body).toContain('Export Co');
+    expect(mail.to_email).toBe(owner.email);
+  });
+
+  it("does not hand them another person's mail", async () => {
+    await enqueueEmail(ctx.pool, {
+      toUserId: stranger.id,
+      toEmail: stranger.email,
+      templateKey: 'valuation_completed',
+      subject: 'Somebody else entirely',
+      body: 'Not for the owner.',
+    });
+
+    const body = (await exportSelf(owner.token)).json();
+    expect(JSON.stringify(body)).not.toContain('Somebody else entirely');
+    // Anchored, because "the stranger's subject is absent" is also true of an
+    // export that ships no mail at all — which is the bug this section fixes.
+    expect(body.emails_sent.rows.map((r: { subject: string }) => r.subject)).toContain(
+      'Your 409A report is ready',
+    );
+  });
+
+  /**
+   * A suppressed address stops receiving service mail entirely, and "why did I
+   * stop hearing from you" is a question only this row answers. It is the one
+   * section reached through the subject's email rather than their primary key,
+   * because that is how the table is keyed.
+   */
+  it('tells them their address is on the bounce list', async () => {
+    const body0 = (await exportSelf(owner.token)).json();
+    expect(body0.email_suppression.rows).toHaveLength(0);
+
+    await suppressAddress(ctx.pool, {
+      address: owner.email,
+      reason: 'hard',
+      detail: 'mailbox does not exist',
+    });
+
+    const body = (await exportSelf(owner.token)).json();
+    expect(body.email_suppression.rows).toHaveLength(1);
+    expect(body.email_suppression.rows[0]).toMatchObject({
+      to_email: owner.email,
+      reason: 'hard',
+      detail: 'mailbox does not exist',
+    });
+    // Who lifted a suppression is another person, and Art. 15(4) is the reason
+    // that name is not in this person's copy.
+    expect(body.email_suppression.rows[0]).not.toHaveProperty('released_by');
+  });
+
+  it('lists a trusted device without the token that makes it trusted', async () => {
+    await ctx.pool.query(
+      `INSERT INTO mfa_trusted_devices (id, user_id, token_hash, label, expires_at)
+       VALUES ($1, $2, $3, $4, now() + interval '30 days')`,
+      [newUlid(), owner.id, 'sha256-of-the-cookie', 'Work laptop'],
+    );
+
+    const body = (await exportSelf(owner.token)).json();
+    expect(body.trusted_devices.rows.map((r: { label: string }) => r.label)).toContain('Work laptop');
+    expect(JSON.stringify(body)).not.toContain('sha256-of-the-cookie');
+    expect(body.trusted_devices.rows[0]).not.toHaveProperty('token_hash');
+    expect(body.withheld.find((w: { field: string }) => w.field === 'trusted_device_tokens').held).toBe(true);
   });
 
   it('lists an API token by prefix and never by hash', async () => {
@@ -160,6 +251,12 @@ describe.skipIf(!dbUp)('personal data export', () => {
       'invoices',
       'subscriptions',
       'api_tokens',
+      'emails_sent',
+      'email_suppression',
+      'mentions',
+      'saved_views',
+      'signatures',
+      'trusted_devices',
     ]) {
       expect(body[key], key).toMatchObject({ truncated: false });
       expect(Array.isArray(body[key].rows), key).toBe(true);

@@ -15,13 +15,25 @@ import type pg from 'pg';
  * rather than a database dump:
  *
  * **What is a person's data here.** The account itself, the records they
- * authored (comments, support tickets, uploads, API tokens), the messages the
- * platform sent them, and the commercial relationship (engagements, payments,
- * invoices, subscription). Not the valuation *content*: a 409A's cap table,
- * projections and comparables are the company's data, they are already
- * downloadable per engagement through the evidence bundle and the exports, and
- * copying them here would turn an access request into a second, unaudited
- * route to the deliverable.
+ * authored (comments, support tickets, uploads, API tokens, saved views), the
+ * things addressed to them (notifications, mentions, and every message the
+ * platform actually sent to their address), what they put their name to
+ * (report signatures), the devices they told us to trust, and the commercial
+ * relationship (engagements, payments, invoices, subscription). Not the
+ * valuation *content*: a 409A's cap table, projections and comparables are the
+ * company's data, they are already downloadable per engagement through the
+ * evidence bundle and the exports, and copying them here would turn an access
+ * request into a second, unaudited route to the deliverable.
+ *
+ * "The messages the platform sent them" used to mean the in-app notification
+ * list alone, which is the smaller half — the mail is where the platform says
+ * most of what it says to a person, and `email_outbox` holds the subject and
+ * body of every one of them. Its delivery state belongs here too, including
+ * the suppression list: an address that hard-bounced stops receiving service
+ * mail entirely, and "why did I stop hearing from you" is a question only that
+ * row answers. `email_suppressions` is keyed by the address rather than by a
+ * user id, so it is the one section that reaches the subject through their
+ * email rather than their primary key.
  *
  * **What is deliberately withheld.** The password digest, the TOTP secret and
  * its backup codes, the API token hashes, and the reset/verification tokens.
@@ -71,6 +83,15 @@ export interface PersonalDataExport {
   documents_uploaded: ExportSection<Record<string, unknown>>;
   notifications: ExportSection<Record<string, unknown>>;
   notification_preferences: ExportSection<Record<string, unknown>>;
+  /** Mail actually sent to them: subject, body, and what became of it. */
+  emails_sent: ExportSection<Record<string, unknown>>;
+  /** Their address on the bounce/complaint list, if it is on it. */
+  email_suppression: ExportSection<Record<string, unknown>>;
+  mentions: ExportSection<Record<string, unknown>>;
+  saved_views: ExportSection<Record<string, unknown>>;
+  signatures: ExportSection<Record<string, unknown>>;
+  /** Metadata only; the device token is a credential — see `withheld`. */
+  trusted_devices: ExportSection<Record<string, unknown>>;
   support_messages: ExportSection<Record<string, unknown>>;
   payments: ExportSection<Record<string, unknown>>;
   invoices: ExportSection<Record<string, unknown>>;
@@ -112,11 +133,13 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     has_totp: boolean;
     backup_codes: string;
     api_tokens: string;
+    trusted_devices: string;
   }>(
     `SELECT (u.password_digest IS NOT NULL) AS has_password,
             (u.totp_secret IS NOT NULL) AS has_totp,
             (SELECT count(*) FROM mfa_backup_codes b WHERE b.user_id = u.id) AS backup_codes,
-            (SELECT count(*) FROM api_tokens t WHERE t.created_by = u.id) AS api_tokens
+            (SELECT count(*) FROM api_tokens t WHERE t.created_by = u.id) AS api_tokens,
+            (SELECT count(*) FROM mfa_trusted_devices d WHERE d.user_id = u.id) AS trusted_devices
        FROM users u WHERE u.id = $1`,
     [userId],
   );
@@ -142,6 +165,13 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
       held: Number(held?.api_tokens ?? 0) > 0,
       reason: 'Stored as a SHA-256 hash and shown once at creation. The tokens are listed without them.',
     },
+    {
+      field: 'trusted_device_tokens',
+      held: Number(held?.trusted_devices ?? 0) > 0,
+      reason:
+        'The cookie value that lets a device skip the second factor, stored hashed. ' +
+        'Exporting it would export the skip. The devices themselves are listed.',
+    },
   ];
 
   const [
@@ -150,6 +180,12 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     documentsUploaded,
     notifications,
     notificationPreferences,
+    emailsSent,
+    emailSuppression,
+    mentions,
+    savedViews,
+    signatures,
+    trustedDevices,
     supportMessages,
     payments,
     invoices,
@@ -191,6 +227,73 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
       pool,
       `SELECT event_type, in_app, email, updated_at
          FROM notification_preferences WHERE user_id = $1 ORDER BY event_type LIMIT $2`,
+      [userId],
+    ),
+    // Every message the platform put in their inbox, with the text it sent and
+    // what became of it. The body is included rather than summarised: it was
+    // addressed to this person and they already have a copy of it, so quoting
+    // it back is the one place where an export is unambiguously theirs to have.
+    // `to_email` is included because it records which address a given message
+    // actually went to, which a changed address makes non-obvious.
+    section(
+      pool,
+      `SELECT id, valuation_id, channel::text AS channel, to_email, template_key, subject, body,
+              status::text AS status, promotional, attempts, created_at, sent_at, delivered_at,
+              bounced_at, bounce_kind::text AS bounce_kind, bounce_detail,
+              first_opened_at, last_opened_at, open_count
+         FROM email_outbox WHERE to_user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [userId],
+    ),
+    // Keyed by address, not by user id — so this reaches the subject through
+    // their email. At most one row, but shaped as a section like the rest so a
+    // reader does not have to learn a second convention for one field.
+    //
+    // `released_by` is deliberately not selected: it names the *operator* who
+    // lifted the suppression, which is another person's data and Art. 15(4)'s
+    // exact concern. That the release happened is the subject's business; who
+    // did it is the audit trail's.
+    section(
+      pool,
+      `SELECT s.to_email, s.reason::text AS reason, s.detail, s.created_at, s.released_at
+         FROM email_suppressions s
+         JOIN users u ON lower(u.email) = lower(s.to_email)
+        WHERE u.id = $1 ORDER BY s.created_at DESC LIMIT $2`,
+      [userId],
+    ),
+    // Being named in someone else's comment is a record about this person that
+    // they did not author, which is precisely the kind Art. 15 exists for. The
+    // comment body is not quoted: it is another person's writing, and the
+    // engagement it hangs off is the pointer that makes it findable.
+    section(
+      pool,
+      `SELECT m.comment_id, m.task_id, m.created_at, c.valuation_id
+         FROM comment_mentions m JOIN valuation_comments c ON c.id = m.comment_id
+        WHERE m.user_id = $1 ORDER BY m.created_at DESC LIMIT $2`,
+      [userId],
+    ),
+    section(
+      pool,
+      `SELECT id, name, query, visibility, is_default, created_at, updated_at
+         FROM saved_views WHERE owner_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [userId],
+    ),
+    // What they put their name to. `signature_text` is the typed name that
+    // stands in for a wet signature, and a person is entitled to a copy of the
+    // thing that was recorded as their signature.
+    section(
+      pool,
+      `SELECT id, valuation_id, role::text AS role, signer_name, signer_title,
+              signature_text, signed_at
+         FROM valuation_signatures WHERE signer_user_id = $1 ORDER BY signed_at DESC LIMIT $2`,
+      [userId],
+    ),
+    // Metadata only; `token_hash` is the credential and is reported in
+    // `withheld` instead. Expired rows are included on purpose — the export
+    // answers what is held, and a row the sweep has not reached yet is held.
+    section(
+      pool,
+      `SELECT id, label, expires_at, created_at, last_used_at
+         FROM mfa_trusted_devices WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [userId],
     ),
     section(
@@ -243,6 +346,12 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     documents_uploaded: documentsUploaded,
     notifications,
     notification_preferences: notificationPreferences,
+    emails_sent: emailsSent,
+    email_suppression: emailSuppression,
+    mentions,
+    saved_views: savedViews,
+    signatures,
+    trusted_devices: trustedDevices,
     support_messages: supportMessages,
     payments,
     invoices,
