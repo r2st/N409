@@ -71,3 +71,62 @@ export function resumeStep(sections: readonly ResumeSection[]): number {
   const firstIncomplete = sections.findIndex((s) => !s.complete);
   return firstIncomplete === -1 ? sections.length : firstIncomplete;
 }
+
+// ── The link's own clock ──────────────────────────────────────────────────────
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How many days left stops being a footnote and becomes something to say.
+ *
+ * The same window the workspace uses for a due date (`DUE_SOON_DAYS`), for the
+ * same reason: a week is long enough to find the cap table and short enough
+ * that "sometime" is no longer an answer.
+ */
+export const INTAKE_DEADLINE_WARN_DAYS = 7;
+
+export interface IntakeDeadline {
+  /** The expiry instant, for formatting in the client's own locale. */
+  at: Date;
+  /** Whole calendar days from today. 0 is today; negative has passed. */
+  daysLeft: number;
+  /** Whether the client should be *told*, rather than merely shown. */
+  urgent: boolean;
+}
+
+/**
+ * When this intake link stops working, as a client would count it.
+ *
+ * Counted in whole calendar days between local midnights rather than in
+ * elapsed hours, because "expires in 1 day" for something that dies at nine
+ * tomorrow morning is a different promise from the one a client hears. Rounding
+ * across the two midnights is also what keeps a clock change from turning a
+ * seven-day window into a six-and-three-quarter-day one.
+ *
+ * A firm sets the window per link — anywhere from a day to `MAX_EXPIRY_DAYS`,
+ * defaulting to thirty — and until now the client was never told what it was.
+ * The page's own standing promise is that they can close it and pick it up from
+ * the same link, and that promise has an end date the form did not name.
+ */
+export function intakeDeadline(expiresAt: string | null | undefined, now: Date): IntakeDeadline | null {
+  if (!expiresAt) return null;
+  const at = new Date(expiresAt);
+  if (Number.isNaN(at.getTime())) return null;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const then = new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime();
+  const daysLeft = Math.round((then - today) / DAY_MS);
+  return { at, daysLeft, urgent: daysLeft <= INTAKE_DEADLINE_WARN_DAYS };
+}
+
+/**
+ * The same figure in the words a person uses.
+ *
+ * "Expires in 0 days" is not something anyone says, and it is the reading that
+ * matters most — the last day is the day the form is either finished or lost.
+ */
+export function deadlineInWords(daysLeft: number): string {
+  if (daysLeft < 0) return 'has expired';
+  if (daysLeft === 0) return 'expires today';
+  if (daysLeft === 1) return 'expires tomorrow';
+  return `expires in ${daysLeft} days`;
+}

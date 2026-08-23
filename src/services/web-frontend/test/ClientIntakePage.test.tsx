@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ClientIntakePage } from '../src/pages/ClientIntakePage';
+import { formatDate } from '../src/lib/format';
 
 /**
  * The client intake form. Everything asserted here is something a prospect —
@@ -85,6 +86,7 @@ interface PortalOverrides {
   submitted_at?: string | null;
   ready?: boolean;
   answered?: number;
+  expires_at?: string;
 }
 
 function portalBody(o: PortalOverrides = {}) {
@@ -97,7 +99,7 @@ function portalBody(o: PortalOverrides = {}) {
     status: o.status ?? 'sent',
     can_edit: o.can_edit ?? true,
     submitted_at: o.submitted_at ?? null,
-    expires_at: '2026-09-01T00:00:00Z',
+    expires_at: o.expires_at ?? '2026-09-01T00:00:00Z',
   };
 }
 
@@ -886,5 +888,106 @@ describe('ClientIntakePage — the retry the sidebar promises', () => {
     // Every attempt carries the same answer, read fresh each time rather than
     // captured at the first failure.
     expect(bodies).toEqual([{ legal_name: 'Halcyon' }, { legal_name: 'Halcyon' }, { legal_name: 'Halcyon' }]);
+  });
+});
+
+/**
+ * When the link stops working.
+ *
+ * A firm sets the window per link — a day to a month — and the form's standing
+ * promise is that the client can close the page and pick it up from the same
+ * link. That promise has an end date, and the page had it on the wire
+ * (`expires_at`, fetched and never read) without ever saying it. A prospect who
+ * left a half-finished form for a fortnight came back to "This link isn't
+ * available" and no warning they had ever been given.
+ */
+describe('ClientIntakePage — the link’s own deadline', () => {
+  /**
+   * Only `Date` is faked: the page's autosave and this file's `waitFor`s both
+   * run on real timers, and faking those would stall them.
+   */
+  const at = (y: number, m: number, d: number, h = 12) => new Date(y, m, d, h).toISOString();
+
+  /**
+   * The date as this host will render it. Asserting the literal `Sep 22, 2026`
+   * would be an assertion about the machine's locale rather than about the
+   * page — the same test reads `22. Sep. 2026` under a German one. What is
+   * being pinned is *which day* is named, so the expectation is built the way
+   * the page builds it, with a guard against the placeholder `formatDate`
+   * returns for an unreadable date so the check cannot pass vacuously.
+   */
+  const shown = (isoDate: string) => {
+    const text = formatDate(isoDate);
+    expect(text).not.toBe('—');
+    return text;
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    // Local components on both sides, so the calendar-day arithmetic below
+    // holds in whatever zone the suite runs in.
+    vi.setSystemTime(new Date(2026, 7, 23, 9));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('names the date the link stops working, in the standing promise', async () => {
+    mockPortal({ portal: { expires_at: at(2026, 8, 22) } });
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+
+    const expiry = shown(at(2026, 8, 22));
+    expect(
+      screen.getByText(`pick it up from the same link until ${expiry}.`, { exact: false }),
+    ).toBeInTheDocument();
+    // A month out is a footnote, not a warning.
+    expect(screen.queryByText(/you’ll need a fresh link/)).not.toBeInTheDocument();
+  });
+
+  it('says so plainly once the deadline is inside a week', async () => {
+    mockPortal({ portal: { expires_at: at(2026, 7, 26) } });
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+
+    expect(
+      screen.getByText(`This link expires in 3 days (${shown(at(2026, 7, 26))}).`, { exact: false }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/you’ll need a fresh link/)).toBeInTheDocument();
+    // The footnote gives way to the notice rather than doubling it.
+    expect(screen.queryByText(/pick it up from the same link until/)).not.toBeInTheDocument();
+  });
+
+  /** "Expires in 0 days" is not something anyone says, and it is the day that matters. */
+  it('calls the last day today, without a date in brackets', async () => {
+    mockPortal({ portal: { expires_at: at(2026, 7, 23, 23) } });
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+
+    const notice = screen.getByText(/This link expires today/);
+    expect(notice).toBeInTheDocument();
+    expect(notice.textContent).not.toMatch(/\(/);
+  });
+
+  it('calls the next day tomorrow', async () => {
+    mockPortal({ portal: { expires_at: at(2026, 7, 24) } });
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+
+    expect(
+      screen.getByText(`This link expires tomorrow (${shown(at(2026, 7, 24))}).`, { exact: false }),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * A converted or submitted link is the firm's business now. Telling the
+   * client a deadline for a form they can no longer change is noise.
+   */
+  it('says nothing about a deadline on a form that is closed to changes', async () => {
+    mockPortal({ portal: { can_edit: false, status: 'converted', expires_at: at(2026, 7, 24) } });
+    render(<ClientIntakePage />);
+    await screen.findByText('Welcome, Northwind Robotics');
+
+    expect(screen.getByText(/no longer accepting changes/)).toBeInTheDocument();
+    expect(screen.queryByText(/expires/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/pick it up from the same link until/)).not.toBeInTheDocument();
   });
 });

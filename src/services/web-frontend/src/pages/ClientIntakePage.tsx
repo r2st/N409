@@ -2,7 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 import { FieldWarnings, ValidationSummary } from '../components/ValidationNotes';
 import { PLATFORM_BRANDING, type Branding } from '../lib/branding';
-import { answerFromControl, controlValue, resumeStep } from '../lib/intakeAnswers';
+import {
+  answerFromControl,
+  controlValue,
+  deadlineInWords,
+  intakeDeadline,
+  resumeStep,
+} from '../lib/intakeAnswers';
+import { formatDate } from '../lib/format';
 import {
   hasBlockingIssues,
   issuesByField,
@@ -434,6 +441,10 @@ export function ClientIntakePage() {
   }
 
   const readOnly = !data.can_edit;
+  // Read at render rather than held in state: nothing here ticks, and the only
+  // thing that would move the figure is a tab left open across midnight, which
+  // the next keystroke re-renders anyway.
+  const deadline = readOnly ? null : intakeDeadline(data.expires_at, new Date());
   const reviewStep = data.sections.length;
   const onReview = step >= reviewStep;
   const section = data.sections[step];
@@ -456,8 +467,17 @@ export function ClientIntakePage() {
           </h1>
           <p className="mt-1.5 text-sm text-ink-500">
             {firm.name} needs a few details to begin your valuation. Your answers save automatically — you can
-            close this page and pick it up from the same link.
+            close this page and pick it up from the same link
+            {deadline && !deadline.urgent ? ` until ${formatDate(data.expires_at)}` : ''}.
           </p>
+
+          {deadline?.urgent && (
+            <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              This link {deadlineInWords(deadline.daysLeft)}
+              {deadline.daysLeft > 0 && ` (${formatDate(data.expires_at)})`}. Send your answers to {firm.name}{' '}
+              before then — after that you’ll need a fresh link.
+            </div>
+          )}
 
           {readOnly && (
             <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">

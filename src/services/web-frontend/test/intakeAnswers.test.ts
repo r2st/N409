@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { answerFromControl, controlValue, resumeStep } from '../src/lib/intakeAnswers';
+import {
+  answerFromControl,
+  controlValue,
+  deadlineInWords,
+  INTAKE_DEADLINE_WARN_DAYS,
+  intakeDeadline,
+  resumeStep,
+} from '../src/lib/intakeAnswers';
 import type { IntakeField } from '../src/lib/intakeValidation';
 
 /**
@@ -101,5 +108,88 @@ describe('resumeStep', () => {
 
   it('resolves a form with no sections to 0, which is its review step', () => {
     expect(resumeStep([])).toBe(0);
+  });
+});
+
+/**
+ * How long a client has left on the link they were sent.
+ *
+ * Counted in whole calendar days between local midnights, not in elapsed hours:
+ * a link that dies at nine tomorrow morning expires *tomorrow*, and telling a
+ * client it expires "in 0 days" because sixteen hours is less than
+ * twenty-four is both wrong and unreadable.
+ */
+describe('intakeDeadline', () => {
+  /** Local components on both sides, so every case holds in any zone. */
+  const local = (y: number, m: number, d: number, h = 12) => new Date(y, m, d, h);
+  const iso = (...args: Parameters<typeof local>) => local(...args).toISOString();
+
+  const now = local(2026, 7, 23, 9);
+
+  it('counts the days a calendar does, not the hours a clock does', () => {
+    // Sixteen hours away, and still tomorrow.
+    expect(intakeDeadline(iso(2026, 7, 24, 1), now)!.daysLeft).toBe(1);
+    // Fourteen hours away, and still today.
+    expect(intakeDeadline(iso(2026, 7, 23, 23), now)!.daysLeft).toBe(0);
+    expect(intakeDeadline(iso(2026, 8, 22), now)!.daysLeft).toBe(30);
+  });
+
+  it('goes negative once the date has passed', () => {
+    expect(intakeDeadline(iso(2026, 7, 22, 23), now)!.daysLeft).toBe(-1);
+  });
+
+  /**
+   * The window is inclusive of its own edge. A link with exactly a week left is
+   * the last one the client can still comfortably act on, and it is the one a
+   * strict `<` would say nothing about.
+   */
+  it('treats exactly the warning window as urgent', () => {
+    expect(intakeDeadline(iso(2026, 7, 30), now)!.urgent).toBe(true);
+    expect(intakeDeadline(iso(2026, 7, 31), now)!.urgent).toBe(false);
+    expect(intakeDeadline(iso(2026, 7, 23 + INTAKE_DEADLINE_WARN_DAYS), now)!.daysLeft).toBe(
+      INTAKE_DEADLINE_WARN_DAYS,
+    );
+  });
+
+  /**
+   * Rounding between two local midnights rather than dividing an elapsed
+   * interval. A spring-forward inside the window makes the span 167 hours, and
+   * a truncating division would call a week six days.
+   */
+  it('survives a clock change inside the window', () => {
+    // US DST begins 8 March 2026; this window straddles it either way the host
+    // is set, and the answer is a week in both.
+    const before = local(2026, 2, 5, 9);
+    expect(intakeDeadline(iso(2026, 2, 12, 9), before)!.daysLeft).toBe(7);
+    // And the other direction, across the autumn change.
+    const autumn = local(2026, 9, 29, 9);
+    expect(intakeDeadline(iso(2026, 10, 5, 9), autumn)!.daysLeft).toBe(7);
+  });
+
+  it('has nothing to say about a missing or unreadable date', () => {
+    expect(intakeDeadline(null, now)).toBeNull();
+    expect(intakeDeadline(undefined, now)).toBeNull();
+    expect(intakeDeadline('', now)).toBeNull();
+    expect(intakeDeadline('whenever', now)).toBeNull();
+  });
+
+  it('hands back the instant itself for the caller to format', () => {
+    expect(intakeDeadline(iso(2026, 8, 22), now)!.at.toISOString()).toBe(iso(2026, 8, 22));
+  });
+});
+
+describe('deadlineInWords', () => {
+  it('says today and tomorrow rather than counting to them', () => {
+    expect(deadlineInWords(0)).toBe('expires today');
+    expect(deadlineInWords(1)).toBe('expires tomorrow');
+  });
+
+  it('counts from two upwards', () => {
+    expect(deadlineInWords(2)).toBe('expires in 2 days');
+    expect(deadlineInWords(30)).toBe('expires in 30 days');
+  });
+
+  it('speaks in the past tense once the date is behind us', () => {
+    expect(deadlineInWords(-1)).toBe('has expired');
   });
 });
