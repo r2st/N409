@@ -52,7 +52,27 @@ const FILTER_KEYS = [
   'unread',
 ] as const;
 
-/** Clickable column header with the M4 multi-sort indicator (↑/↓ + priority). */
+/**
+ * Clickable column header with the M4 multi-sort indicator (↑/↓ + priority).
+ *
+ * The whole sort state used to be carried by two glyphs and a digit inside a
+ * span, and the button's `aria-label` was a fixed "Sort by Company" that
+ * *replaced* them in the accessible name. So a screen reader user was told what
+ * the control does and never which columns this list is actually ordered by, in
+ * which direction, or in what priority — on the screen that is the platform's
+ * primary index of every engagement. An arrow character is not a status: it is
+ * announced as "upwards arrow", or at most verbosity settings not at all.
+ *
+ * The split is the one the ARIA sortable-table pattern prescribes. `aria-sort`
+ * on the `th` is the state, which is what a screen reader reports when it
+ * reaches the column; the glyphs become `aria-hidden` because they are now a
+ * second rendering of it rather than the only one.
+ *
+ * Priority is the part `aria-sort` cannot express — it has no vocabulary for
+ * "second key" — so it goes in the button's name, and only when there is more
+ * than one key. Saying "sort priority 1 of 1" on every single-column sort would
+ * be noise on the common case.
+ */
 function SortableTh({
   column,
   label,
@@ -64,19 +84,31 @@ function SortableTh({
   sortParam: string;
   onSort: (column: SortableColumn) => void;
 }) {
-  const indicator = sortIndicator(parseSortParam(sortParam), column);
+  const specs = parseSortParam(sortParam);
+  const indicator = sortIndicator(specs, column);
+  const multi = specs.length > 1;
   return (
-    <th className="overline px-5 py-3 font-semibold text-ink-400">
+    <th
+      className="overline px-5 py-3 font-semibold text-ink-400"
+      aria-sort={indicator ? (indicator.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
       <button
         onClick={() => onSort(column)}
         className="inline-flex cursor-pointer items-center gap-1 uppercase hover:text-ink-700"
-        aria-label={`Sort by ${label}`}
+        // Direction is deliberately not repeated here — the th above already
+        // carries it, and a name that restates it makes every header announce
+        // its sort twice.
+        aria-label={
+          indicator && multi
+            ? `Sort by ${label}, sort priority ${indicator.position} of ${specs.length}`
+            : `Sort by ${label}`
+        }
       >
         {label}
         {indicator && (
-          <span className="tnum text-bond-600">
+          <span className="tnum text-bond-600" aria-hidden="true">
             {indicator.dir === 'asc' ? '↑' : '↓'}
-            {parseSortParam(sortParam).length > 1 ? indicator.position : ''}
+            {multi ? indicator.position : ''}
           </span>
         )}
       </button>

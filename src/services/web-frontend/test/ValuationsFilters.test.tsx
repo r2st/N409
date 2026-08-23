@@ -298,12 +298,74 @@ describe('ValuationsPage — sorting', () => {
       expect(screen.getByRole('button', { name: 'Sort by Company' })).toHaveTextContent(/^Company↑$/),
     );
 
-    // The newly clicked column becomes primary, so Company falls to second.
+    // The newly clicked column becomes primary, so Company falls to second —
+    // and once there is a priority to state, the button's own name states it,
+    // because `aria-sort` has no vocabulary for "second key".
     await user.click(screen.getByRole('button', { name: 'Sort by Due' }));
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Sort by Due' })).toHaveTextContent(/^Due↑1$/),
+      expect(screen.getByRole('button', { name: 'Sort by Due, sort priority 1 of 2' })).toHaveTextContent(
+        /^Due↑1$/,
+      ),
     );
-    expect(screen.getByRole('button', { name: 'Sort by Company' })).toHaveTextContent(/^Company↑2$/);
+    expect(screen.getByRole('button', { name: 'Sort by Company, sort priority 2 of 2' })).toHaveTextContent(
+      /^Company↑2$/,
+    );
+  });
+
+  // The sort state was carried by two glyphs and a digit inside a span, and the
+  // button's fixed `aria-label` replaced them in the accessible name. So a
+  // screen reader announced what the control *does* and never what the list is
+  // ordered by — on the platform's primary index of every engagement. An arrow
+  // character is not a status.
+  it('reports each column’s sort state on the header itself', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findAllByText('Acme Corp');
+
+    const header = (name: string) => screen.getByRole('columnheader', { name: new RegExp(`^${name}`) });
+
+    // Nothing sorted: every sortable column says so explicitly. `none` rather
+    // than an absent attribute — absent means "not sortable", which is a
+    // different claim and the one the unsorted columns would have made.
+    expect(header('Company')).toHaveAttribute('aria-sort', 'none');
+
+    await user.click(screen.getByRole('button', { name: 'Sort by Company' }));
+    await waitFor(() => expect(header('Company')).toHaveAttribute('aria-sort', 'ascending'));
+    // The other columns stay 'none' — the attribute is per column, and a stale
+    // 'ascending' left on a neighbour would name the wrong ordering.
+    expect(header('Kind')).toHaveAttribute('aria-sort', 'none');
+
+    await user.click(screen.getByRole('button', { name: 'Sort by Company' }));
+    await waitFor(() => expect(header('Company')).toHaveAttribute('aria-sort', 'descending'));
+
+    // Cycled off: back to 'none', not left describing an order no longer applied.
+    await user.click(screen.getByRole('button', { name: 'Sort by Company' }));
+    await waitFor(() => expect(header('Company')).toHaveAttribute('aria-sort', 'none'));
+  });
+
+  it('hides the arrow glyphs from assistive technology', async () => {
+    // They are a second rendering of `aria-sort` now, not the only one. Left
+    // exposed they are announced as "upwards arrow" beside the real state, or
+    // as a bare digit that reads as part of the column name.
+    mockApi();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findAllByText('Acme Corp');
+
+    await user.click(screen.getByRole('button', { name: 'Sort by Company' }));
+    const button = await screen.findByRole('button', { name: 'Sort by Company' });
+    await waitFor(() => expect(button).toHaveTextContent(/^Company↑$/));
+    const glyph = button.querySelector('span');
+    expect(glyph).not.toBeNull();
+    expect(glyph).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('reads a sort out of the URL onto the header, not only onto the arrow', async () => {
+    mockApi();
+    renderPage('/valuations?sort=due_date:desc');
+    await screen.findAllByText('Acme Corp');
+    expect(screen.getByRole('columnheader', { name: /^Due/ })).toHaveAttribute('aria-sort', 'descending');
   });
 
   it('returns to the first page when the sort changes', async () => {
