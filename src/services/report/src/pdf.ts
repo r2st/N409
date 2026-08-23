@@ -624,6 +624,99 @@ export function fontSafe(text: string, face: FaceName = 'regular'): string {
   return safe;
 }
 
+/** The character a truncated string ends in. */
+const ELLIPSIS = '\u2026';
+
+/**
+ * The longest prefix of `text` that fits in `width`, ellipsized if anything
+ * was dropped.
+ *
+ * Measurement is injected rather than taken from a document, so the rule can be
+ * stated and tested without rendering: `measure` is `widthOfString` under
+ * whatever face and size the caller has selected.
+ *
+ * Cut by code point, not by UTF-16 unit. A 409A carries `d\u2081`, `\u2014` and
+ * `\u2212` as a matter of course and an authored section can carry anything an
+ * analyst pasted; slicing a surrogate pair in half would put a lone half-
+ * character into the content stream, which is a worse failure than the overflow
+ * being repaired. Trailing space is trimmed before the ellipsis so a cut at a
+ * word boundary does not read as `Introduction \u2026`.
+ */
+export function ellipsize(text: string, width: number, measure: (text: string) => number): string {
+  if (measure(text) <= width) return text;
+  if (width <= 0) return '';
+  const chars = [...text];
+  // `lo` is always a length whose ellipsized form fits — 0 does trivially,
+  // standing for the empty result — and `hi` is the largest not yet ruled out.
+  let lo = 0;
+  let hi = chars.length;
+  const cut = (n: number) => chars.slice(0, n).join('').trimEnd();
+  const fits = (n: number) => n === 0 || measure(cut(n) + ELLIPSIS) <= width;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (fits(mid)) lo = mid;
+    else hi = mid - 1;
+  }
+  // Not one character of the field survives. An ellipsis on its own is a mark
+  // the reader cannot interpret — it says something was cut without saying
+  // what — so this yields the field instead, which is what lets `footerLine`
+  // close up the gap rather than print `… · … · Page 1 of 20`.
+  return lo === 0 ? '' : cut(lo) + ELLIPSIS;
+}
+
+/** What separates the fields of the running footer. */
+const FOOTER_SEP = ' \u00b7 ';
+
+/**
+ * The running footer, fitted to one line by shortening everything except the
+ * page number.
+ *
+ * The footer is the only line on the sheet that is the same on every sheet, so
+ * an overflow there is not one bad page — it is the whole document. It had one:
+ * `Intl`-free, all three fields at their natural width, `IRC 409A Valuation
+ * Report \u2014 Northwind Robotics, Inc. (SAMPLE) \u00b7 SAMPLE \u2014 illustrative only, not a
+ * valuation opinion \u00b7 Page 1 of 20` ran to 130 characters in a 468pt band and
+ * wrapped, leaving `opinion \u00b7 Page 1 of 20` centred on a second line below the
+ * bottom margin, on all twenty pages.
+ *
+ * The page number is last and is never cut. It is the field with no other
+ * source — a loose sheet says which company and which document it belongs to in
+ * the running head as well, but nothing else on the page says which sheet it
+ * is — and it is also the shortest, so protecting it costs the others little.
+ * Plain right-to-left elision would have cut exactly that field, since it sits
+ * at the end of the line.
+ *
+ * The rest share what is left in proportion to their natural widths, so a long
+ * confidentiality notice beside a short title gives up more than a short notice
+ * beside a long title. A field elided to nothing is dropped rather than left as
+ * a bare ellipsis between two separators.
+ *
+ * A budget too small even for the page number returns it alone and still
+ * overflowing; `oneLine` is what stops that reaching the page as two lines.
+ */
+export function footerLine(
+  parts: readonly string[],
+  width: number,
+  measure: (text: string) => number,
+): string {
+  const joined = parts.join(FOOTER_SEP);
+  if (parts.length <= 1 || measure(joined) <= width) return joined;
+
+  const last = parts[parts.length - 1]!;
+  const rest = parts.slice(0, -1);
+  const natural = rest.map(measure);
+  const total = natural.reduce((sum, w) => sum + w, 0);
+  const budget = width - measure(last) - measure(FOOTER_SEP) * rest.length;
+
+  const kept =
+    budget <= 0 || total === 0
+      ? []
+      : rest
+          .map((part, i) => ellipsize(part, (budget * natural[i]!) / total, measure))
+          .filter((part) => part !== '' && part !== ELLIPSIS);
+  return [...kept, last].join(FOOTER_SEP);
+}
+
 /**
  * Parses the sanitized subset into render blocks. Defensive: unknown or
  * mis-nested tags never throw — text content always survives.
@@ -924,6 +1017,49 @@ function artifact(doc: PDFKit.PDFDocument, body: () => void): void {
 }
 
 /**
+ * Draws text that occupies exactly one line, truncating it when it will not
+ * fit.
+ *
+ * This exists because `lineBreak: false` does not do what its name says, and
+ * every place in this file that believed it did was wrong. pdfkit only consults
+ * the flag to decide whether to *default* a missing width (`_initOptions`);
+ * once `options.width` is set — and it is set at every one of these call sites,
+ * because page furniture, chart labels and contents entries are all drawn into
+ * a box — `_text` hands the string to the line wrapper regardless and it wraps.
+ * The flag was inert at twenty call sites and the guarantee they were each
+ * written to make was never in force.
+ *
+ * It showed on every page of every report: the running footer wrapped, and
+ * `opinion \u00b7 Page 1 of 20` sat centred on a second line, below the bottom
+ * margin. The rest were a character away rather than harmless — the longest
+ * running head in the sample, `31. Exhibit C \u2014 Income Approach (Discounted Cash
+ * Flow)`, fits its half of the band with 3pt to spare.
+ *
+ * `height` is the option that actually binds. The wrapper takes it as the box
+ * it may fill, and with one line's worth it ellipsizes the first line and stops
+ * — which is also what finally makes the `ellipsis: true` already passed at
+ * several of these call sites mean anything, since the wrapper ignores it
+ * unless a height is set.
+ *
+ * The font and size have to be selected before the call, as they are
+ * everywhere here: the line height is read off the document.
+ */
+function oneLine(
+  doc: PDFKit.PDFDocument,
+  text: string,
+  x: number,
+  y: number,
+  opts: PDFKit.Mixins.TextOptions & { width: number },
+): void {
+  doc.text(text, x, y, {
+    ellipsis: true,
+    ...opts,
+    lineBreak: false,
+    height: doc.currentLineHeight(true),
+  });
+}
+
+/**
  * Structure type for a heading at `depth`, where 1 is a top-level section.
  *
  * PDF defines H1–H6 and expects them not to skip levels. The section heading is
@@ -976,6 +1112,28 @@ const WATERMARK_INK = '#b03030';
  * glance at any page, or a monochrome print of it, says draft.
  */
 const WATERMARK_OPACITY = 0.11;
+
+/** The largest a stamp is ever set, and the smallest it is allowed to shrink to. */
+const WATERMARK_MAX_SIZE = 96;
+const WATERMARK_MIN_SIZE = 28;
+
+/**
+ * The font size at which `stamp` fits across `width` on one line.
+ *
+ * Glyph advances scale linearly with the font size, so the natural width at the
+ * maximum gives the answer in one measurement; the floor is rounded *down* so
+ * rounding cannot put it back over the edge.
+ *
+ * The floor is there because a stamp is meant to be read across a photographed
+ * page. Below about 28pt it stops competing with the body text it sits over and
+ * a reader's eye no longer picks it up as a stamp, which is worse than letting
+ * a pathological one be cut — and cut is what `oneLine` does with it.
+ */
+function watermarkSize(doc: PDFKit.PDFDocument, stamp: string, width: number): number {
+  const natural = doc.font(FONTS.bold).fontSize(WATERMARK_MAX_SIZE).widthOfString(stamp);
+  if (natural <= width) return WATERMARK_MAX_SIZE;
+  return Math.max(WATERMARK_MIN_SIZE, Math.floor((WATERMARK_MAX_SIZE * width) / natural));
+}
 
 const BODY_FONT_SIZE = 10.5;
 const BODY_LINE_GAP = 2;
@@ -1543,11 +1701,8 @@ function renderBarChart(
 
   spec.points.forEach((point) => {
     const y = doc.y;
-    doc
-      .font(FONTS.regular)
-      .fontSize(9.5)
-      .fillColor(CHART_INK)
-      .text(point.label, left, y + 1, { width: labelWidth - 8, lineBreak: false, ellipsis: true });
+    doc.font(FONTS.regular).fontSize(9.5).fillColor(CHART_INK).fillColor(CHART_INK);
+    oneLine(doc, point.label, left, y + 1, { width: labelWidth - 8 });
 
     const barX = left + labelWidth;
     // A track behind every bar. Without it the shortest bar in a set reads as
@@ -1561,15 +1716,11 @@ function renderBarChart(
         .fillColor(point.value < 0 ? CHART_MUTED : accent)
         .fill();
     }
-    doc
-      .font(FONTS.regular)
-      .fontSize(9.5)
-      .fillColor(CHART_INK)
-      .text(point.display ?? formatChartValue(point.value), left + labelWidth + trackWidth + 8, y + 1, {
-        width: valueWidth,
-        align: 'right',
-        lineBreak: false,
-      });
+    doc.font(FONTS.regular).fontSize(9.5).fillColor(CHART_INK);
+    oneLine(doc, point.display ?? formatChartValue(point.value), left + labelWidth + trackWidth + 8, y + 1, {
+      width: valueWidth,
+      align: 'right',
+    });
     doc.y = y + rowHeight;
     doc.x = left;
   });
@@ -1637,26 +1788,18 @@ function renderDonutChart(
   });
 
   if (spec.center) {
-    doc
-      .font(FONTS.bold)
-      .fontSize(13)
-      .fillColor(CHART_INK)
-      .text(spec.center, cx - inner, cy - (spec.center_note ? 14 : 7), {
-        width: inner * 2,
-        align: 'center',
-        lineBreak: false,
-      });
+    doc.font(FONTS.bold).fontSize(13).fillColor(CHART_INK);
+    oneLine(doc, spec.center, cx - inner, cy - (spec.center_note ? 14 : 7), {
+      width: inner * 2,
+      align: 'center',
+    });
   }
   if (spec.center_note) {
-    doc
-      .font(FONTS.regular)
-      .fontSize(7.5)
-      .fillColor('#777777')
-      .text(spec.center_note, cx - inner, cy + (spec.center ? 3 : -4), {
-        width: inner * 2,
-        align: 'center',
-        lineBreak: false,
-      });
+    doc.font(FONTS.regular).fontSize(7.5).fillColor('#777777');
+    oneLine(doc, spec.center_note, cx - inner, cy + (spec.center ? 3 : -4), {
+      width: inner * 2,
+      align: 'center',
+    });
   }
 
   // Legend to the right of the ring: a slice is unreadable without its name,
@@ -1669,24 +1812,13 @@ function renderDonutChart(
       .rect(legendX, legendY + 2.5, 8, 8)
       .fillColor(donutColor(i, accent))
       .fill();
-    doc
-      .font(FONTS.regular)
-      .fontSize(9)
-      .fillColor(CHART_INK)
-      .text(segment.label, legendX + 14, legendY + 1, {
-        width: legendWidth - 76,
-        lineBreak: false,
-        ellipsis: true,
-      });
-    doc
-      .font(FONTS.bold)
-      .fontSize(9)
-      .fillColor(CHART_INK)
-      .text(segment.display, legendX + legendWidth - 60, legendY + 1, {
-        width: 60,
-        align: 'right',
-        lineBreak: false,
-      });
+    doc.font(FONTS.regular).fontSize(9).fillColor(CHART_INK);
+    oneLine(doc, segment.label, legendX + 14, legendY + 1, { width: legendWidth - 76 });
+    doc.font(FONTS.bold).fontSize(9).fillColor(CHART_INK);
+    oneLine(doc, segment.display, legendX + legendWidth - 60, legendY + 1, {
+      width: 60,
+      align: 'right',
+    });
     legendY += 18;
   });
 
@@ -1730,15 +1862,11 @@ function renderLineChart(
       .lineWidth(0.5)
       .strokeColor(CHART_GRID)
       .stroke();
-    doc
-      .font(FONTS.regular)
-      .fontSize(7.5)
-      .fillColor('#888888')
-      .text(formatChartValue(plot.min + level * (plot.max - plot.min)), left, y - 4, {
-        width: axisWidth - 8,
-        align: 'right',
-        lineBreak: false,
-      });
+    doc.font(FONTS.regular).fontSize(7.5).fillColor('#888888');
+    oneLine(doc, formatChartValue(plot.min + level * (plot.max - plot.min)), left, y - 4, {
+      width: axisWidth - 8,
+      align: 'right',
+    });
   }
 
   const coords = plot.points.map((p) => ({
@@ -1758,17 +1886,11 @@ function renderLineChart(
     // Only the endpoints carry a value. Labelling every marker on a six-point
     // series produces a chart made of overlapping numbers.
     if (i === 0 || i === coords.length - 1) {
-      doc
-        .font(FONTS.bold)
-        .fontSize(7.5)
-        .fillColor(CHART_INK)
-        .text(c.display, c.px - 30, c.py - 13, { width: 60, align: 'center', lineBreak: false });
+      doc.font(FONTS.bold).fontSize(7.5).fillColor(CHART_INK);
+      oneLine(doc, c.display, c.px - 30, c.py - 13, { width: 60, align: 'center' });
     }
-    doc
-      .font(FONTS.regular)
-      .fontSize(7.5)
-      .fillColor('#777777')
-      .text(c.label, c.px - 30, baseline + 6, { width: 60, align: 'center', lineBreak: false });
+    doc.font(FONTS.regular).fontSize(7.5).fillColor('#777777');
+    oneLine(doc, c.label, c.px - 30, baseline + 6, { width: 60, align: 'center' });
   });
 
   doc.x = left;
@@ -1819,15 +1941,11 @@ function renderWaterfallChart(
         .stroke();
     }
 
-    doc
-      .font(FONTS.bold)
-      .fontSize(8)
-      .fillColor(CHART_INK)
-      .text(column.display, centre - slotWidth / 2, yTop - 11, {
-        width: slotWidth,
-        align: 'center',
-        lineBreak: false,
-      });
+    doc.font(FONTS.bold).fontSize(8).fillColor(CHART_INK);
+    oneLine(doc, column.display, centre - slotWidth / 2, yTop - 11, {
+      width: slotWidth,
+      align: 'center',
+    });
     doc
       .font(FONTS.regular)
       .fontSize(8)
@@ -1908,11 +2026,8 @@ function renderSummaryPage(
       .fillColor('#111111')
       .text(summary.headline.value, left + 18, boxTop + 26, { width: usable - 36 });
     if (summary.headline.note) {
-      doc
-        .font(FONTS.italic)
-        .fontSize(8.5)
-        .fillColor('#777777')
-        .text(summary.headline.note, left + 18, boxTop + 60, { width: usable - 36, lineBreak: false });
+      doc.font(FONTS.italic).fontSize(8.5).fillColor('#777777');
+      oneLine(doc, summary.headline.note, left + 18, boxTop + 60, { width: usable - 36 });
     }
   });
   doc.x = left;
@@ -2412,24 +2527,17 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     const heading = headings[i - range.start];
     if (i > range.start && heading) {
       artifact(doc, () => {
-        doc
-          .font(FONTS.regular)
-          .fontSize(8)
-          .fillColor(INK.faint)
-          .text(input.company_name, doc.page.margins.left, 42, {
-            width: usable / 2,
-            lineBreak: false,
-          });
-        doc
-          .font(FONTS.regular)
-          .fontSize(8)
-          .fillColor(INK.faint)
-          .text(heading, doc.page.margins.left + usable / 2, 42, {
-            width: usable / 2,
-            align: 'right',
-            lineBreak: false,
-            ellipsis: true,
-          });
+        doc.font(FONTS.regular).fontSize(8).fillColor(INK.faint);
+        oneLine(doc, input.company_name, doc.page.margins.left, 42, { width: usable / 2 });
+        // The two fields share the band, so the heading is elided into its half
+        // rather than allowed to run under the company name. The longest in the
+        // sample report, `31. Exhibit C — Income Approach (Discounted Cash
+        // Flow)`, clears its half by 3pt — which is how close this was to being
+        // a visible defect rather than a latent one.
+        oneLine(doc, heading, doc.page.margins.left + usable / 2, 42, {
+          width: usable / 2,
+          align: 'right',
+        });
         doc
           .moveTo(doc.page.margins.left, 56)
           .lineTo(doc.page.margins.left + usable, 56)
@@ -2459,15 +2567,17 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
       artifact(doc, () => {
         doc.save();
         doc.rotate(-38, { origin: [doc.page.width / 2, doc.page.height / 2] });
-        doc
-          .font(FONTS.bold)
-          .fontSize(96)
-          .fillColor(WATERMARK_INK, WATERMARK_OPACITY)
-          .text(stamp, 0, doc.page.height / 2 - 60, {
-            width: doc.page.width,
-            align: 'center',
-            lineBreak: false,
-          });
+        // Fitted rather than elided. A stamp is a single word read at a
+        // glance, and `PRELIMINARY — DO NOT DISTRIBUTE` cut to `PRELIMIN…`
+        // says less than the same words set smaller. Width is linear in the
+        // font size, so one measurement gives the size that fits; `oneLine`
+        // still backs it up for a stamp so long that even the floor overflows.
+        doc.font(FONTS.bold).fontSize(watermarkSize(doc, stamp, doc.page.width));
+        doc.fillColor(WATERMARK_INK, WATERMARK_OPACITY);
+        oneLine(doc, stamp, 0, doc.page.height / 2 - 60, {
+          width: doc.page.width,
+          align: 'center',
+        });
         doc.restore();
       });
       // `restore` returns the graphics state but not pdfkit's own fill opacity
@@ -2480,15 +2590,14 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     if (confidentiality) parts.push(confidentiality);
     parts.push(`Page ${i - range.start + 1} of ${range.count}`);
     artifact(doc, () => {
-      doc
-        .font(FONTS.regular)
-        .fontSize(8)
-        .fillColor(INK.faint)
-        .text(parts.join(' · '), doc.page.margins.left, doc.page.height - 46, {
-          width: usable,
-          align: 'center',
-          lineBreak: false,
-        });
+      doc.font(FONTS.regular).fontSize(8).fillColor(INK.faint);
+      oneLine(
+        doc,
+        footerLine(parts, usable, (text) => doc.widthOfString(text)),
+        doc.page.margins.left,
+        doc.page.height - 46,
+        { width: usable, align: 'center' },
+      );
     });
     doc.page.margins.bottom = bottom;
     doc.page.margins.top = top;
@@ -2763,21 +2872,29 @@ function renderTableOfContents(
     // substitutes the sentence the layout is drawing instead.
     tagged(doc, parent, 'TOCI', { actual: `${label}, page ${page}` }, () => {
       doc.font(FONTS.regular).fontSize(11).fillColor('#222222');
-      const labelWidth = doc.widthOfString(label);
-      doc.text(label, left, y, { width: usable - numberWidth, lineBreak: false, goTo });
+      // Elided here rather than left to `oneLine`, because the leader has to
+      // start where the label actually ends: measuring the full string and
+      // drawing a shortened one would open a gap between the heading and its
+      // dots. The `actual` text above stays whole, so what a screen reader
+      // announces is the entry, not the entry as far as it fitted.
+      const drawn = ellipsize(label, usable - numberWidth, (text) => doc.widthOfString(text));
+      const labelWidth = doc.widthOfString(drawn);
+      oneLine(doc, drawn, left, y, { width: usable - numberWidth, goTo });
 
       const leaderStart = left + labelWidth + 4;
       const leaderEnd = left + usable - numberWidth - 4;
       if (leaderEnd > leaderStart) {
         const dotWidth = doc.widthOfString('.');
         const dots = '.'.repeat(Math.max(0, Math.floor((leaderEnd - leaderStart) / dotWidth)));
+        // No `width` here either, and for the same reason: it is what stops
+        // pdfkit wrapping the leader into the entry below.
         doc.fillColor('#bbbbbb').text(dots, leaderStart, y, { lineBreak: false });
       }
 
-      doc.fillColor('#222222').text(page, left + usable - numberWidth, y, {
+      doc.fillColor('#222222');
+      oneLine(doc, page, left + usable - numberWidth, y, {
         width: numberWidth,
         align: 'right',
-        lineBreak: false,
         goTo,
       });
     });
@@ -2920,12 +3037,19 @@ function renderBlock(
         // stayed as when the two were a single continued run and could not be
         // relied on to emit in order.
         tagged(doc, li, 'LBody', {}, () => {
+          // No `width`, which is what makes `lineBreak: false` bind: with one
+          // set, pdfkit wraps regardless (see `oneLine`), and the box here was
+          // the marker's own measured width — a float comparison against
+          // itself, one rounding away from wrapping the bullet onto a second
+          // line and leaving the first blank. `oneLine` is the wrong tool for
+          // this one field: it ellipsizes, and a bullet cut to `…` is worse
+          // than the overflow. Unbounded is right for a string whose width is
+          // three characters of the renderer's own choosing.
           doc
             .font(FONTS.regular)
             .fontSize(BODY_FONT_SIZE)
             .fillColor(INK.body)
             .text(marker, doc.page.margins.left + 10, top, {
-              width: markerWidth,
               lineBreak: false,
               lineGap: BODY_LINE_GAP,
             });
