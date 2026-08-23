@@ -108,9 +108,9 @@ describe('AuthProvider session lifecycle', () => {
   afterEach(() => vi.useRealTimers());
 
   /** Renders a probe that reports status and can drive logout. */
-  function renderProbe() {
+  function renderProbe(replacement?: string) {
     function Probe() {
-      const { status, user, logout, viewMode, setViewMode } = useAuth();
+      const { status, user, logout, viewMode, setViewMode, replaceToken } = useAuth();
       return (
         <div>
           <span data-testid="status">{status}</span>
@@ -118,6 +118,7 @@ describe('AuthProvider session lifecycle', () => {
           <span data-testid="view-mode">{viewMode}</span>
           <button onClick={() => setViewMode('normal')}>preview as user</button>
           <button onClick={logout}>sign out</button>
+          {replacement && <button onClick={() => replaceToken(replacement)}>change password</button>}
         </div>
       );
     }
@@ -198,6 +199,37 @@ describe('AuthProvider session lifecycle', () => {
 
     expect(screen.getByTestId('status')).toHaveTextContent('anonymous');
     expect(getToken()).toBeNull();
+  });
+
+  /*
+   * Changing a password, and signing out other sessions, both invalidate the
+   * token in hand and hand back its successor. The successor carries a full
+   * fresh lifetime — so a session that survives one of those must not end when
+   * the token it replaced would have.
+   */
+  it('reschedules the sign-out when a token is replaced in place', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    localStorage.setItem('n409.token', '1');
+    setToken(tokenExpiringIn(60));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ user: me }));
+    renderProbe(tokenExpiringIn(3600));
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('authenticated'));
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'change password' }).click();
+    });
+
+    // Well past the replaced token's expiry, comfortably inside the new one's.
+    await act(async () => {
+      vi.advanceTimersByTime(61_000);
+    });
+    expect(screen.getByTestId('status')).toHaveTextContent('authenticated');
+
+    // …and the replacement's own expiry still ends the session.
+    await act(async () => {
+      vi.advanceTimersByTime(3_600_000);
+    });
+    expect(screen.getByTestId('status')).toHaveTextContent('anonymous');
   });
 
   it('stays signed in when no expiry is known at all', async () => {

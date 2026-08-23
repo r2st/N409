@@ -102,6 +102,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, logout);
   }, [logout]);
 
+  /*
+   * Bumped by every path that puts a new token in hand, so the sign-out timer
+   * below is rescheduled around it.
+   *
+   * The token is module state in `api.ts`, which React cannot observe: the
+   * timer effect re-ran on `status`, and replacing a token does not change the
+   * status — the user was signed in before and is signed in after. So the two
+   * flows that swap a token in place, changing a password and signing out
+   * other sessions, left the timer pointed at the *replaced* token's expiry.
+   * The server had just minted a full-lifetime successor and the marker in
+   * localStorage had already been updated to its expiry, so a reload read the
+   * new one correctly while the open tab signed itself out at the old one —
+   * and the flow that did it most visibly is the one where a user deliberately
+   * ends their other sessions and gets their own ended minutes later.
+   */
+  const [tokenEpoch, setTokenEpoch] = useState(0);
+
+  /**
+   * The single place a token is stored. `setToken` alone is not enough — see
+   * `tokenEpoch`.
+   */
+  const storeToken = useCallback((token: string) => {
+    setToken(token);
+    setTokenEpoch((n) => n + 1);
+  }, []);
+
   // The API issues fixed-lifetime JWTs (no refresh endpoint yet), so schedule
   // a clean sign-out at expiry instead of letting requests start failing.
   useEffect(() => {
@@ -116,14 +142,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const timer = window.setTimeout(logout, ms);
     return () => window.clearTimeout(timer);
-  }, [status, logout]);
+  }, [status, tokenEpoch, logout]);
 
-  const adopt = useCallback(async (token: string, known?: User) => {
-    setToken(token);
-    const me = known ?? (await api<{ user: User }>('/auth/me')).user;
-    setUser(me);
-    setStatus('authenticated');
-  }, []);
+  const adopt = useCallback(
+    async (token: string, known?: User) => {
+      storeToken(token);
+      const me = known ?? (await api<{ user: User }>('/auth/me')).user;
+      setUser(me);
+      setStatus('authenticated');
+    },
+    [storeToken],
+  );
 
   const login = useCallback(
     async (email: string, password: string): Promise<LoginResult> => {
@@ -169,7 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const adoptToken = useCallback(async (token: string) => adopt(token), [adopt]);
 
-  const replaceToken = useCallback((token: string) => setToken(token), []);
+  const replaceToken = useCallback((token: string) => storeToken(token), [storeToken]);
 
   const value = useMemo(
     () => ({
