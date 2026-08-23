@@ -7,6 +7,7 @@ import {
   SAMPLE_VALUATION_DATE,
   sampleReportContent,
   sampleReportPdfInput,
+  unappliedSampleAnswers,
 } from '../../src/domain/sampleReportPdf.js';
 import { templateForKind, visibleSections } from '../../src/domain/report.js';
 import { reviewReport } from '../../src/domain/reportReview.js';
@@ -260,6 +261,83 @@ describe('sample report PDF — it cannot be passed off as an opinion', () => {
        */
       const result = graded();
       expect(result.findings.filter((f) => f.severity === 'fail').map((f) => f.summary)).toEqual([]);
+    });
+  });
+
+  /**
+   * The instruction sentences the mixed chapters carried.
+   *
+   * The seven `authored` chapters were rewritten whole when this was last
+   * looked at, and the ten chapters that carry one instruction inside otherwise
+   * deliverable prose were not — so the published sample still told its reader
+   * to "Describe each class of stock outstanding", to "Explain the weighting"
+   * and to "State the basis for the concluded discount". Fourteen of them, on
+   * the one 409A this product publishes to everyone.
+   *
+   * Two assertions, because the mechanism can fail in both directions. An
+   * answer whose instruction has been rephrased in the skeleton silently
+   * replaces nothing, which `unappliedSampleAnswers` reports; and an
+   * instruction nobody wrote an answer for is simply still there, which the
+   * scan below finds. Neither alone would have caught this.
+   */
+  describe('the sentences that ask the analyst for something', () => {
+    /**
+     * A clause reads as an instruction when it opens with one of these verbs,
+     * either at the start of a sentence or after the punctuation that starts a
+     * new clause. Deliberately blunt: a false positive costs a sentence being
+     * rewritten, and every hit on this document today was real.
+     */
+    const IMPERATIVE = [
+      'address',
+      'cite',
+      'confirm',
+      'describe',
+      'disclose',
+      'discuss',
+      'document',
+      'explain',
+      'identify',
+      'list',
+      'name',
+      'outline',
+      'provide',
+      'say',
+      'set out',
+      'show',
+      'state',
+      'summarize',
+      'weigh',
+    ];
+    const CLAUSE = new RegExp(`(?:^|[.;:,]\\s+)(${IMPERATIVE.join('|')})\\b`, 'gi');
+
+    const clausesIn = (sections: readonly { key: string; html: string }[]) => {
+      const found: string[] = [];
+      for (const section of sections) {
+        const text = section.html
+          .replace(/\{\{[^}]*\}\}/g, ' X ')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        for (const hit of text.matchAll(CLAUSE)) {
+          found.push(`${section.key}: …${text.slice(hit.index, hit.index + 70)}`);
+        }
+      }
+      return found;
+    };
+
+    it('every answer still finds the sentence it answers', () => {
+      expect(unappliedSampleAnswers()).toEqual([]);
+    });
+
+    it('is what the skeleton is full of, which is why the sample needed answers', () => {
+      // Non-vacuity, and the more useful half of it: this proves the scan below
+      // can see an instruction at all. Run against the skeleton the sample is
+      // built from, it finds the sentences the answers replace.
+      expect(clausesIn(templateForKind('409a').sections).length).toBeGreaterThanOrEqual(10);
+    });
+
+    it('leaves none of them in the published body', () => {
+      expect(clausesIn(visibleSections(sampleReportContent()))).toEqual([]);
     });
   });
 

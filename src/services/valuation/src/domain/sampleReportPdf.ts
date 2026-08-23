@@ -262,6 +262,16 @@ const SERIES_B_RAISED = CAP_TABLE.find((r) => r.klass === 'Series B Preferred')!
 
 const li = (items: readonly string[]) => `<ul>${items.map((i) => `<li>${i}</li>`).join('')}</ul>`;
 
+/** Share counts by class, so the prose cannot disagree with Exhibit A. */
+const sharesOf = (klass: string) => CAP_TABLE.find((r) => r.klass === klass)!.shares;
+const SERIES_A_SHARES = sharesOf('Series A Preferred');
+const SERIES_B_SHARES = sharesOf('Series B Preferred');
+const POOL_SHARES = sharesOf('Options & pool');
+
+/** A reconciliation weight, as the body states it and Exhibit B prints it. */
+const weightOf = (prefix: string) =>
+  formatPercent(APPROACHES.find((a) => a.name.startsWith(prefix))!.weight, 0);
+
 /**
  * The chapters the skeleton leaves for the analyst, written for this engagement.
  *
@@ -451,6 +461,237 @@ const SAMPLE_NARRATIVE: Readonly<Record<string, string>> = {
     `<p>The certification that follows carries their signature. On this document it is ruled and empty, ` +
     `which is the fourth mark separating it from an appraisal.</p>`,
 };
+
+/**
+ * The instruction sentences the *mixed* chapters carry, answered.
+ *
+ * `SAMPLE_NARRATIVE` above replaces a chapter whole, which is the right shape
+ * for the seven the skeleton flags `authored`: those are nothing but a to-do
+ * list, so there is no prose underneath to preserve. Ten other chapters are the
+ * opposite arrangement — a paragraph of report with one instruction standing in
+ * it ("State whether the approach was applied and the weight assigned to it") —
+ * and they were left alone, so the published sample still asked its reader to
+ * describe the capital structure, explain the weighting and state the basis for
+ * the concluded discount. Fourteen sentences, on the document a prospect judges
+ * the deliverable by.
+ *
+ * `reportReview.ts` does not refuse those chapters and this file does not
+ * relitigate that: a gate on every imperative sentence would refuse every
+ * report ever drafted, which is the reasoning that check was written with. The
+ * sample is held to the higher standard because it is *published*, not because
+ * the rule changed.
+ *
+ * ## Why sentences rather than another chapter override
+ *
+ * Copying capital_structure or dlom into a sample version to edit one sentence
+ * out reproduces the whole chapter here, and a second copy of a chapter is the
+ * silent-drift failure this file is arranged against. A keyed substring keeps
+ * the sample carrying the skeleton's own prose and replacing only the sentence
+ * it answers — and when the skeleton edits that sentence, the replacement stops
+ * matching and `unappliedSampleAnswers` names it. Loud, and in a test rather
+ * than in a 500 on the marketing page.
+ */
+const SAMPLE_ANSWERS: Readonly<Record<string, ReadonlyArray<readonly [string, string]>>> = {
+  capital_structure: [
+    [
+      'Describe each class of stock outstanding and the economic rights that bear on the allocation of ' +
+        'equity value:</p><ul><li>Liquidation preference of each preferred series, its seniority rank, and ' +
+        'whether ranks are pari passu</li><li>Participation rights and any participation cap</li><li>' +
+        'Conversion ratios and any anti-dilution adjustments in effect</li><li>Options, warrants and other ' +
+        'dilutive instruments, with their exercise prices</li><li>Convertible notes and SAFEs outstanding, ' +
+        'and the terms on which they convert</li></ul>',
+      'Three classes are outstanding, together with the reserved option pool:</p>' +
+        li([
+          `<strong>Series B Preferred</strong> — ${INT.format(SERIES_B_SHARES)} shares carrying a 1x ` +
+            `non-participating liquidation preference of ${money(SERIES_B_RAISED)}, senior to the ` +
+            'Series A.',
+          `<strong>Series A Preferred</strong> — ${INT.format(SERIES_A_SHARES)} shares carrying a 1x ` +
+            `non-participating preference of ${money(SERIES_A_RAISED)}, junior to the Series B and ` +
+            'senior to the common.',
+          `<strong>Options and pool</strong> — ${INT.format(POOL_SHARES)} shares reserved under the ` +
+            'stock plan, exercisable into common.',
+          `<strong>Common Stock</strong> — ${INT.format(COMMON_SHARES)} shares, ranking behind both ` +
+            'preferred series.',
+        ]) +
+        '<p>Neither preferred series participates in the residual after taking its preference, both ' +
+        'convert one-for-one into common, and no anti-dilution adjustment was in effect at the ' +
+        'valuation date. No convertible notes or SAFEs were outstanding.',
+    ],
+  ],
+
+  income_approach: [
+    [
+      'State the source and reliability of the projections, the derivation of the discount rate, and the ' +
+        'basis for the terminal growth rate.',
+      'The projections are management’s own, prepared for its board and adopted here without ' +
+        'adjustment; they rest on the robots already under contract at the valuation date and on the ' +
+        'pipeline behind them. The discount rate is a required rate of return for a company at this stage ' +
+        'of development rather than a weighted average cost of capital built from public comparables, ' +
+        'which would understate the risk that the forecast is not met. The terminal growth rate is set ' +
+        'below long-run nominal growth for the economy, on the view that the explicit forecast period ' +
+        'already carries the scaling and the terminal year is a mature business.',
+    ],
+  ],
+
+  market_approach: [
+    [
+      'Identify the guideline companies or transactions selected, the basis for selecting them, the metric ' +
+        'and period chosen, and any adjustments made for differences in size, growth, margin or stage.',
+      'The guideline companies are warehouse-automation and industrial-robotics businesses selling on ' +
+        'recurring contracts, screened for a comparable revenue scale and growth profile; those whose ' +
+        'stage or scale differed materially were excluded rather than adjusted for. The metric is ' +
+        'enterprise value to last-twelve-months revenue — earnings multiples are not meaningful for a ' +
+        'company at this margin — measured over the twelve months to the valuation date, and the ' +
+        'selected multiple is the median of the retained set, applied without further adjustment.',
+    ],
+  ],
+
+  asset_approach: [
+    [
+      'State whether the approach was applied and the weight assigned to it; for a going concern whose ' +
+        'value rests on intangible assets and future earnings rather than tangible net assets, explain the ' +
+        'reason for a low weight or for excluding it.',
+      'The approach was considered and assigned no weight. The value of {{company_name}} rests on its ' +
+        'contracted subscription base, its fleet-management software and its engineering organisation, ' +
+        'none of which the balance sheet carries at anything like its contribution to value; a net-asset ' +
+        'measure would state the depreciated cost of the deployed fleet and would understate the business ' +
+        'by a wide margin.',
+    ],
+  ],
+
+  market_movement: [
+    [
+      'Identify the benchmark selected and why it is the right proxy for this company, the measurement ' +
+        'dates, and the basis for the beta applied.',
+      'A report that applies one names the benchmark selected and why it is the right proxy for this ' +
+        'company, the measurement dates, and the basis for the beta applied.',
+    ],
+    [
+      'Where no adjustment has been applied — because the round is close enough to the valuation date ' +
+        'that no measurable movement separates them, or because no benchmark is a defensible proxy — ' +
+        'say so and state the reason. An unadjusted round indication is a conclusion, not an omission, and ' +
+        'should read as one.',
+      'No adjustment has been applied here. The Series B closed shortly before the valuation date, and no ' +
+        'measurable movement in the market for companies of this profile separates the two, so the round ' +
+        'indication is carried at the price it transacted at. That is a conclusion, not an omission.',
+    ],
+  ],
+
+  reconciliation: [
+    [
+      'Explain the weighting: the relevance of each approach to a company of this stage and sector, the ' +
+        'quality of the inputs available to it, and the reason any approach considered was assigned no ' +
+        'weight.',
+      `The backsolve carries ${weightOf('OPM backsolve')}: the Series B closed shortly before the ` +
+        'valuation date in an arm’s-length priced round, and the price it transacted at is the ' +
+        'strongest single piece of evidence available about what this equity was worth. The market ' +
+        `approach carries ${weightOf('Market approach')} — the guideline set is a reasonable proxy ` +
+        'for the sector, but none of its members is close to the subject on stage or on scale. The income ' +
+        `approach carries ${weightOf('Income approach')}: the forecast is management’s and is not ` +
+        'yet supported by a record of having met one, so it corroborates the other two rather than ' +
+        'driving the conclusion. The asset approach was considered and assigned no weight, for the reason ' +
+        'given above.',
+    ],
+  ],
+
+  allocation: [
+    [
+      'Describe the option-pricing model allocation across share classes, including term, volatility and ' +
+        'risk-free-rate inputs.',
+      'The concluded equity value is allocated across the share classes by an option-pricing model: each ' +
+        'class is valued as a claim that pays only above the exit value at which the classes ranking ahead ' +
+        'of it have been satisfied, so the preferred, the option pool and the common each take value in ' +
+        'the ranges where their own rights bite.',
+    ],
+    [
+      'State the basis for the expected time to a liquidity event; the expected volatility is dealt with ' +
+        'in the section that follows.',
+      'The expected time to a liquidity event is the horizon over which the board’s plan contemplates ' +
+        'a sale or an offering; the expected volatility is dealt with in the section that follows.',
+    ],
+  ],
+
+  selected_volatility: [
+    [
+      'State whether the window was matched to the expected time to a liquidity event, and the basis for ' +
+        'any departure from the derived figure.',
+      'The observation window was matched to the expected time to a liquidity event, and the median of the ' +
+        'guideline set was adopted without departure from the derived figure.',
+    ],
+  ],
+
+  dloc: [
+    [
+      'A discount for lack of control is therefore applied to reflect the difference between a controlling ' +
+        'and a minority interest in the same equity.',
+      'Where the allocated value stands at a controlling level, a discount for lack of control is applied ' +
+        'to reflect the difference between a controlling and a minority interest in the same equity.',
+    ],
+    [
+      'State the basis for the concluded discount — control premium studies, the specific rights held ' +
+        'by the preferred classes, or the analyst’s qualitative assessment.',
+      'The conclusion rests on the level of value the weighted approaches already produced rather than on ' +
+        'control-premium studies: the backsolve inverts the price a minority investor paid for the ' +
+        'Series B, and the guideline companies are freely traded minority interests. The allocated value ' +
+        'therefore stands at a marketable minority level already, and no further step down for lack of ' +
+        'control is warranted.',
+    ],
+  ],
+
+  dlom: [
+    [
+      'Describe the analysis supporting the concluded discount and why the method selected suits this ' +
+        'holding:',
+      'The discount was struck with an option-based model, which suits a holding whose illiquidity is a ' +
+        'matter of time rather than of registration:',
+    ],
+    [
+      'Where the conclusion rests on empirical studies of private placements of registered but ' +
+        'unregistered-for-resale stock, name the studies relied on and note that observations predating ' +
+        'the 1997 and 2008 amendments to Rule 144 measured a longer restriction than applies today.',
+      'Considered and not relied on. The observations are of registered stock subject to a fixed resale ' +
+        'restriction, and those predating the 1997 and 2008 amendments to Rule 144 measured a longer ' +
+        'restriction than applies today.',
+    ],
+    [
+      'State the volatility and the holding period assumed, and note that the volatility of the ' +
+        '<em>subject class</em> is not the volatility of the enterprise: common is a levered claim behind ' +
+        'the preference stack.',
+      'The concluded discount is a Finnerty average-strike put, struck over the expected holding period ' +
+        'on the volatility of the <em>common class</em> rather than of the enterprise: common is a levered ' +
+        'claim behind the preference stack, so its volatility is the higher of the two.',
+    ],
+    [
+      'Where judgement adjusts a modelled figure, identify the factors weighed — distribution ' +
+        'history, transfer restrictions, the pool of likely buyers, the expected time to liquidity — ' +
+        'and the direction and size of the adjustment.',
+      'No judgement adjustment was made to the modelled figure. The factors a report weighs where one is ' +
+        'made — distribution history, transfer restrictions, the pool of likely buyers, the expected ' +
+        'time to liquidity — did not indicate a departure here.',
+    ],
+  ],
+};
+
+/**
+ * Answers whose instruction is no longer in the skeleton, so they replaced
+ * nothing.
+ *
+ * Exported rather than thrown, in the shape `sampleReportOutline` reports its
+ * `missingBlurbs`: the forcing function belongs in a test, and a marketing page
+ * that 500s because somebody rephrased a sentence in a skeleton is a worse
+ * failure than the one being guarded against.
+ */
+export function unappliedSampleAnswers(): string[] {
+  const skeleton = new Map(templateForKind('409a').sections.map((s) => [s.key, s.html]));
+  const out: string[] = [];
+  for (const [key, answers] of Object.entries(SAMPLE_ANSWERS)) {
+    const html = skeleton.get(key);
+    for (const [instruction] of answers) {
+      if (html === undefined || !html.includes(instruction)) out.push(`${key}: ${instruction.slice(0, 60)}…`);
+    }
+  }
+  return out;
+}
 
 /**
  * The engine results the fabricated engagement would have produced.
@@ -713,7 +954,16 @@ function sampleTemplate(kind: ValuationKind): ReportTemplate {
     ...template,
     sections: template.sections.map((s) => {
       const written = SAMPLE_NARRATIVE[s.key];
-      return written === undefined ? s : { ...s, html: written };
+      if (written !== undefined) return { ...s, html: written };
+      // The mixed chapters: the skeleton's own prose, with the sentences that
+      // ask the analyst for something replaced by this engagement's answer. A
+      // replacement that no longer matches leaves the chapter as it was and is
+      // reported by `unappliedSampleAnswers`.
+      const answers = SAMPLE_ANSWERS[s.key];
+      if (answers === undefined) return s;
+      let html = s.html;
+      for (const [instruction, answer] of answers) html = html.replace(instruction, answer);
+      return { ...s, html };
     }),
   };
 }
