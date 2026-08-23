@@ -162,6 +162,12 @@ key and restart; no code changes.
    billing page, and nobody is told — and a chargeback in particular runs
    against a Stripe evidence deadline that starts whether we noticed or not.
 
+   `charge.refunded` covers subscriptions too, which is why it stays on the
+   payment endpoint rather than moving to the billing one. A renewal is charged
+   against a Stripe *invoice* and has no `payments` row, so the handler falls
+   through to the invoice when the charge matches no engagement; there is one
+   place refunds are recorded and one endpoint to subscribe it on.
+
    `invoice.payment_failed` is the dunning signal. A subscription renewal that
    fails is almost always an expired card rather than a decision, and it is
    recoverable only if the subscriber is told; unsubscribed, the account drifts

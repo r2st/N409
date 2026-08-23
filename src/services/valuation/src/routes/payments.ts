@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { renderReportPdf } from '../clients/reportRender.js';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
-import { paymentReceivedMessage, receiptSections } from '../domain/billing.js';
+import { formatMoneyCents, paymentReceivedMessage, receiptSections } from '../domain/billing.js';
 import {
   addonFlags,
   EXPRESS_DELIVERY_DAYS,
@@ -41,6 +41,7 @@ import {
 import { requirePrincipal } from '../plugins/auth.js';
 import { collectedTotals, disputeStatusOf, refundState, type DisputeStatus } from '../domain/payments.js';
 import { createNotifications } from '../repos/notifications.js';
+import { recordInvoiceRefund } from '../repos/billing.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
 import { findUserById, listUserIdsWithRoles } from '../repos/users.js';
@@ -590,6 +591,71 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
   }
 
   /**
+   * The subscription half of `charge.refunded`.
+   *
+   * Reached only when the charge matches no engagement payment, which is what a
+   * subscription charge looks like from here. Stripe puts the invoice id on the
+   * charge, so the invoice is found the same way the payment would have been.
+   *
+   * A refund does not move a Stripe invoice's status — it stays `paid` and the
+   * money comes back off the charge — so this records an amount rather than a
+   * state, and `recordInvoiceRefund` is idempotent by assignment for the same
+   * reason the payment path is: `amount_refunded` is a running total, so a
+   * redelivery writes the number that is already there.
+   *
+   * The subscriber is told, and ops with it. A renewal refund is usually ours
+   * to explain — a proration, a goodwill credit, a plan corrected after the
+   * fact — and the client's own card statement will show it either way; the
+   * damaging version is the one where it shows there and nowhere here.
+   */
+  async function handleInvoiceRefund(
+    log: FastifyBaseLogger,
+    charge: Record<string, unknown>,
+  ): Promise<{ received: boolean; ignored?: string; refunded?: boolean }> {
+    const invoiceId = typeof charge.invoice === 'string' ? charge.invoice : null;
+    if (!invoiceId) return { received: true, ignored: 'unknown charge' };
+    const refundedCents = Number(charge.amount_refunded ?? 0);
+    if (!Number.isFinite(refundedCents) || refundedCents <= 0) {
+      return { received: true, ignored: 'no refunded amount' };
+    }
+    const invoice = await recordInvoiceRefund(deps.pool, invoiceId, refundedCents);
+    // Null means the invoice is unknown to us, or the figure is not news. Both
+    // are ordinary — a Stripe account can carry invoices this platform never
+    // created — and neither is worth an alert.
+    if (!invoice) return { received: true, ignored: 'unknown or already-recorded invoice' };
+
+    const amount = formatMoneyCents(
+      Math.min(Number(invoice.refunded_cents), Number(invoice.amount_cents)),
+      invoice.currency,
+    );
+    const full = Number(invoice.refunded_cents) >= Number(invoice.amount_cents);
+    try {
+      const opsIds = await listUserIdsWithRoles(deps.pool, BILLING_ALERT_ROLES);
+      await createNotifications(deps.pool, [
+        {
+          userId: invoice.user_id,
+          type: 'invoice_refunded',
+          title: `Refund issued — invoice ${invoice.number}`,
+          body:
+            `${amount} has been refunded against invoice ${invoice.number}. ` +
+            'It will appear on your statement in a few business days.',
+        },
+        ...opsIds
+          .filter((id) => id !== invoice.user_id)
+          .map((userId) => ({
+            userId,
+            type: 'invoice_refunded',
+            title: `${full ? 'Full' : 'Partial'} refund — invoice ${invoice.number}`,
+            body: `${amount} was refunded against a subscription invoice.`,
+          })),
+      ]);
+    } catch (err) {
+      log.warn({ err, invoice: invoice.number }, 'invoice refund notification failed');
+    }
+    return { received: true, refunded: full };
+  }
+
+  /**
    * `charge.refunded` — the charge object carries the running total refunded,
    * so this is idempotent by assignment. A partial refund is recorded but does
    * not revoke: the client still bought the report and still holds it.
@@ -602,7 +668,15 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       chargeId: typeof charge.id === 'string' ? charge.id : null,
       paymentIntentId: typeof charge.payment_intent === 'string' ? charge.payment_intent : null,
     });
-    if (!payment) return { received: true, ignored: 'unknown charge' };
+    if (!payment) {
+      // Not every refunded charge is an engagement payment. A subscription
+      // renewal is charged against a Stripe *invoice*, which has no `payments`
+      // row at all, so every subscription refund landed here and was dropped as
+      // an unknown charge — leaving `invoices` saying the money was collected,
+      // permanently, because nothing else ever writes to that table after the
+      // row is created. The ops dashboard's revenue line read the sum of it.
+      return handleInvoiceRefund(log, charge);
+    }
 
     const state = refundState({
       amountCents: Number(payment.amount_cents),

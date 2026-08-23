@@ -145,6 +145,11 @@ export interface InvoiceForRender {
   line_items: InvoiceLineItem[];
   bill_to: { name: string; email: string };
   plan_name?: string | null;
+  /**
+   * Money returned against this invoice (migration 0169). Optional because the
+   * PDF is rendered from rows that predate the column, where 0 is correct.
+   */
+  refunded_cents?: number;
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -171,9 +176,22 @@ export function invoiceSections(inv: InvoiceForRender): Array<{ heading: string;
     (inv.period_start ? ` · Period ${day(inv.period_start)} – ${day(inv.period_end)}` : '') +
     `</p>`;
 
+  // Bounded against the invoice for the same reason the SQL rollup is: Stripe's
+  // refund total is authoritative, and a document is the wrong place to argue
+  // with it by rendering a negative net.
+  const refunded = Math.max(0, Math.min(inv.refunded_cents ?? 0, inv.amount_cents));
   const table =
     `<table><thead><tr><th>Description</th><th>Qty</th><th>Amount</th></tr></thead>` +
-    `<tbody>${rows}<tr><th>Total</th><th></th><th>${formatMoneyCents(inv.amount_cents, inv.currency)}</th></tr></tbody></table>`;
+    `<tbody>${rows}<tr><th>Total</th><th></th><th>${formatMoneyCents(inv.amount_cents, inv.currency)}</th></tr>` +
+    // The same refusal `receiptSections` makes below: an invoice that has been
+    // refunded states it on its face and shows what is actually left. Rendering
+    // the gross gives the customer a document saying they paid us money they
+    // did not.
+    (refunded > 0
+      ? `<tr><td>Refunded</td><td></td><td>−${formatMoneyCents(refunded, inv.currency)}</td></tr>` +
+        `<tr><th>Net paid</th><th></th><th>${formatMoneyCents(inv.amount_cents - refunded, inv.currency)}</th></tr>`
+      : '') +
+    `</tbody></table>`;
 
   return [
     { heading: 'Invoice', html: summary },

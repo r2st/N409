@@ -249,6 +249,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         period_end: invoice.period_end ? new Date(invoice.period_end).toISOString() : null,
         line_items: invoice.line_items,
         bill_to: { name: user?.company_name ?? user?.first_name ?? 'Customer', email: user?.email ?? '' },
+        refunded_cents: Number(invoice.refunded_cents ?? 0),
       }),
     });
     return reply

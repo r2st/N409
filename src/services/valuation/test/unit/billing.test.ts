@@ -218,3 +218,58 @@ describe('settlement confirmations', () => {
     }
   });
 });
+
+describe('an invoice that has been refunded', () => {
+  const base = {
+    number: 'INV-202608-0007',
+    amount_cents: 100_000,
+    currency: 'usd',
+    status: 'paid',
+    issued_at: '2026-08-01T00:00:00.000Z',
+    period_start: null,
+    period_end: null,
+    line_items: [{ description: 'Annual retainer', amount_cents: 100_000 }],
+    bill_to: { name: 'Northwind Robotics, Inc.', email: 'cfo@northwind.example' },
+  };
+
+  it('states the refund and what is actually left', () => {
+    // The same refusal receiptSections makes on the engagement side: rendering
+    // the gross gives a customer a document saying they paid us money they did
+    // not.
+    const html = invoiceSections({ ...base, refunded_cents: 30_000 })
+      .map((s) => s.html)
+      .join('');
+    expect(html).toContain('Refunded');
+    expect(html).toContain('$300.00');
+    expect(html).toContain('Net paid');
+    expect(html).toContain('$700.00');
+    // The gross stays on the face of it — it is what was billed.
+    expect(html).toContain('$1,000.00');
+  });
+
+  it('says nothing about refunds when there have been none', () => {
+    for (const inv of [base, { ...base, refunded_cents: 0 }]) {
+      const html = invoiceSections(inv)
+        .map((s) => s.html)
+        .join('');
+      expect(html).not.toContain('Refunded');
+      expect(html).not.toContain('Net paid');
+    }
+  });
+
+  it('never renders a negative net from a refund total above the invoice', () => {
+    // Stripe's figure is authoritative and a document is the wrong place to
+    // argue with it.
+    const html = invoiceSections({ ...base, refunded_cents: 250_000 })
+      .map((s) => s.html)
+      .join('');
+    expect(html).not.toContain('-$');
+    expect(html).toContain('$0.00');
+  });
+
+  it('stays inside what the report sanitizer accepts', () => {
+    for (const s of invoiceSections({ ...base, refunded_cents: 30_000 })) {
+      expect(sanitizeHtml(s.html)).toBe(s.html);
+    }
+  });
+});

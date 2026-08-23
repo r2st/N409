@@ -274,6 +274,8 @@ interface AdminBilling {
     past_due: number;
     served: number;
     mrr_cents: number;
+    gross_cents: number;
+    refunded_cents: number;
     collected_cents: number;
   };
 }
@@ -326,7 +328,16 @@ function AdminBillingDashboard() {
         <Metric label="Past due" value={String(data.summary.past_due)} />
         <Metric label="Served" value={String(data.summary.served)} />
         <Metric label="MRR (active + trialing)" value={money(data.summary.mrr_cents)} />
-        <Metric label="Collected" value={money(data.summary.collected_cents)} />
+        {/* Net of refunds. Gross was the figure until invoices could record
+            one at all — a revenue line a customer could disprove from their own
+            card statement, which is the lesson the engagement side learned
+            first (domain/payments.collectedTotals). The refunded figure is
+            shown beside it rather than folded away, because "collected went
+            down" is a question ops has to be able to answer. */}
+        <Metric label="Collected (net)" value={money(data.summary.collected_cents)} />
+        {data.summary.refunded_cents > 0 && (
+          <Metric label="Refunded" value={money(data.summary.refunded_cents)} />
+        )}
       </div>
       <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[560px] text-sm">

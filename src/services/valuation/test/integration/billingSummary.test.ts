@@ -1,5 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { billingSummary, findActiveSubscription, upsertSubscription } from '../../src/repos/billing.js';
+import { newUlid } from '@n409/shared';
+import {
+  billingSummary,
+  findActiveSubscription,
+  recordInvoiceRefund,
+  upsertSubscription,
+} from '../../src/repos/billing.js';
 import { BILLING_SUBSCRIPTION_STATUSES, SERVED_SUBSCRIPTION_STATUSES } from '../../src/domain/billing.js';
 import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
@@ -90,6 +96,53 @@ describe.skipIf(!dbUp)('ops billing summary', () => {
     const summary = await billingSummary(ctx.pool);
     expect(summary.mrr_cents).toBe(monthly(ANNUAL_RETAINER_CENTS) * 2);
     expect(summary.mrr_cents).not.toBe(monthly(ANNUAL_RETAINER_CENTS) * 2 + monthly(ENTERPRISE_CENTS));
+  });
+
+  /**
+   * `invoices` had no way to record money going back out until migration 0169:
+   * every row is created 'paid' and nothing wrote to it again, so the revenue
+   * line was gross of every refund ever issued and stayed that way.
+   */
+  it('nets refunds out of collected, and still states the gross', async () => {
+    const user = await seedUser(ctx, { roles: ['valuation_user'] });
+    await ctx.pool.query(
+      `INSERT INTO invoices (id, user_id, number, amount_cents, currency, status, issued_at, line_items,
+                             stripe_invoice_id)
+       VALUES ($1, $2, $3, 100000, 'usd', 'paid', now(), '[]', $4)`,
+      [newUlid(), user.id, `INV-TEST-${Date.now()}`, 'in_refund_summary'],
+    );
+
+    const before = await billingSummary(ctx.pool);
+    expect(before.collected_cents).toBe(before.gross_cents);
+    expect(before.refunded_cents).toBe(0);
+
+    await recordInvoiceRefund(ctx.pool, 'in_refund_summary', 25_000);
+    const after = await billingSummary(ctx.pool);
+    // The gross is what was billed and does not move — an auditor reading the
+    // invoice sequence has to be able to find it.
+    expect(after.gross_cents).toBe(before.gross_cents);
+    expect(after.refunded_cents).toBe(25_000);
+    expect(after.collected_cents).toBe(before.collected_cents - 25_000);
+  });
+
+  it('records a refund total by assignment, so a redelivery is free', async () => {
+    // `amount_refunded` on the Stripe charge is a running total, so the same
+    // event delivered twice writes the number that is already there.
+    expect(await recordInvoiceRefund(ctx.pool, 'in_refund_summary', 25_000)).toBeNull();
+    expect((await billingSummary(ctx.pool)).refunded_cents).toBe(25_000);
+
+    // A second, larger refund is news.
+    expect(await recordInvoiceRefund(ctx.pool, 'in_refund_summary', 40_000)).not.toBeNull();
+    expect((await billingSummary(ctx.pool)).refunded_cents).toBe(40_000);
+
+    // An out-of-order redelivery carrying the earlier, smaller total must not
+    // walk the figure back up the revenue line.
+    expect(await recordInvoiceRefund(ctx.pool, 'in_refund_summary', 25_000)).toBeNull();
+    expect((await billingSummary(ctx.pool)).refunded_cents).toBe(40_000);
+  });
+
+  it('ignores a refund against an invoice this platform never issued', async () => {
+    expect(await recordInvoiceRefund(ctx.pool, 'in_not_ours', 5_000)).toBeNull();
   });
 
   it('ignores a cancelled subscription in every figure', async () => {

@@ -305,7 +305,40 @@ export interface InvoiceRow {
   stripe_invoice_id: string | null;
   issued_at: Date;
   paid_at: Date | null;
+  /** Running total refunded (migration 0169). Assigned, never incremented. */
+  refunded_cents: number;
+  refunded_at: Date | null;
   created_at: Date;
+}
+
+/**
+ * Record money returned against an invoice, from the running total Stripe puts
+ * on the charge.
+ *
+ * Assigned rather than incremented, which is what makes a redelivered
+ * `charge.refunded` free: the charge object always carries `amount_refunded` as
+ * a total, so writing it twice writes the same number. The guard is
+ * `refunded_cents < $2` rather than `<>`, so an out-of-order redelivery
+ * carrying a *smaller* total — an earlier partial refund arriving after a later
+ * one — cannot walk the figure backwards.
+ *
+ * Returns null when there was nothing to update: no such invoice, or the
+ * refund is not news. Callers use that to decide whether to say anything.
+ */
+export async function recordInvoiceRefund(
+  pool: pg.Pool,
+  stripeInvoiceId: string,
+  refundedCents: number,
+): Promise<InvoiceRow | null> {
+  const { rows } = await pool.query<InvoiceRow>(
+    `UPDATE invoices
+        SET refunded_cents = $2,
+            refunded_at = CASE WHEN $2 > 0 THEN now() ELSE refunded_at END
+      WHERE stripe_invoice_id = $1 AND refunded_cents < $2
+      RETURNING *`,
+    [stripeInvoiceId, refundedCents],
+  );
+  return rows[0] ?? null;
 }
 
 /**
@@ -455,6 +488,11 @@ export interface BillingSummary {
   served: number;
   /** Over {@link BILLING_SUBSCRIPTION_STATUSES} — `active` + `trialing`. */
   mrr_cents: number;
+  /** Billed on paid invoices, before anything was returned. */
+  gross_cents: number;
+  /** Returned against those invoices (migration 0169). */
+  refunded_cents: number;
+  /** What we actually kept: `gross_cents` − `refunded_cents`. */
   collected_cents: number;
 }
 
@@ -486,7 +524,8 @@ export async function billingSummary(pool: pg.Pool): Promise<BillingSummary> {
     trialing: string;
     past_due: string;
     mrr_cents: string;
-    collected_cents: string;
+    gross_cents: string;
+    refunded_cents: string;
   }>(
     `SELECT
        (SELECT count(*) FROM subscriptions WHERE status = 'active')   AS active,
@@ -500,18 +539,29 @@ export async function billingSummary(pool: pg.Pool): Promise<BillingSummary> {
           FROM subscriptions s
           JOIN plan_limits p ON p.tier = s.plan_tier
          WHERE s.status IN (${BILLING_SQL})) AS mrr_cents,
-       (SELECT coalesce(sum(amount_cents), 0) FROM invoices WHERE status = 'paid') AS collected_cents`,
+       (SELECT coalesce(sum(amount_cents), 0) FROM invoices WHERE status = 'paid') AS gross_cents,
+       -- Netted, not gross. A refund does not move a Stripe invoice's status,
+       -- so 'paid' is still the right set to sum over; what changed is that the
+       -- money returned comes off it. least() bounds a refund total that
+       -- exceeds the invoice: Stripe's figure is authoritative and this is a
+       -- revenue line, not a reconciliation.
+       (SELECT coalesce(sum(least(refunded_cents, amount_cents)), 0)
+          FROM invoices WHERE status = 'paid') AS refunded_cents`,
   );
   const row = rows[0];
   const active = Number(row?.active ?? 0);
   const trialing = Number(row?.trialing ?? 0);
   const pastDue = Number(row?.past_due ?? 0);
+  const gross = Number(row?.gross_cents ?? 0);
+  const refunded = Number(row?.refunded_cents ?? 0);
   return {
     active,
     trialing,
     past_due: pastDue,
     served: active + trialing + pastDue,
     mrr_cents: Number(row?.mrr_cents ?? 0),
-    collected_cents: Number(row?.collected_cents ?? 0),
+    gross_cents: gross,
+    refunded_cents: refunded,
+    collected_cents: Math.max(0, gross - refunded),
   };
 }

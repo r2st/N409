@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { newUlid } from '@n409/shared';
 import { createPayment, findPaymentBySessionId, markPayment } from '../../src/repos/payments.js';
+import { findInvoiceByStripeId } from '../../src/repos/billing.js';
 import { priceForKind } from '../../src/routes/payments.js';
 import { listNotifications } from '../../src/repos/notifications.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
@@ -456,6 +458,77 @@ describe.skipIf(!dbUp)('refunds and chargebacks', () => {
       // And the unconditional form is still available to callers that are not
       // racing for anything — the receipt fixtures above use it.
       expect(await markPayment(ctx.pool, payment.id, 'failed')).not.toBeNull();
+    });
+  });
+
+  /**
+   * A subscription renewal is charged against a Stripe *invoice* and has no
+   * `payments` row, so its `charge.refunded` matched nothing here and was
+   * answered `{ignored: 'unknown charge'}`. Nothing else ever writes to
+   * `invoices` after the row is created, so the money stayed collected — on the
+   * invoice PDF and in the ops revenue line — permanently.
+   */
+  describe('a refund against a subscription invoice', () => {
+    const seedInvoice = async (stripeInvoiceId: string, amountCents: number) => {
+      const number = `INV-REFUND-${stripeInvoiceId}`;
+      await ctx.pool.query(
+        `INSERT INTO invoices (id, user_id, number, amount_cents, currency, status, issued_at,
+                               line_items, stripe_invoice_id)
+         VALUES ($1, $2, $3, $4, 'usd', 'paid', now(), '[]', $5)`,
+        [newUlid(), client.id, number, amountCents, stripeInvoiceId],
+      );
+      return number;
+    };
+
+    const refundCharge = (invoiceId: string, amountRefunded: number, chargeId: string) =>
+      post(
+        JSON.stringify({
+          id: `evt_${chargeId}`,
+          type: 'charge.refunded',
+          data: { object: { id: chargeId, invoice: invoiceId, amount_refunded: amountRefunded } },
+        }),
+      );
+
+    it('records it against the invoice and tells the subscriber', async () => {
+      const number = await seedInvoice('in_sub_refund_1', 100_000);
+      const res = await refundCharge('in_sub_refund_1', 30_000, 'ch_sub_refund_1');
+      expect(res.statusCode).toBe(200);
+      expect(res.json().refunded).toBe(false); // partial
+
+      const invoice = await findInvoiceByStripeId(ctx.pool, 'in_sub_refund_1');
+      expect(Number(invoice?.refunded_cents)).toBe(30_000);
+      expect(invoice?.refunded_at).not.toBeNull();
+      // The status does not move: Stripe leaves the invoice `paid` and takes
+      // the money off the charge, and saying otherwise would say something
+      // Stripe does not.
+      expect(invoice?.status).toBe('paid');
+
+      const notes = await listNotifications(ctx.pool, client.id, {});
+      const refundNote = notes.find((n) => n.type === 'invoice_refunded');
+      expect(refundNote?.title).toContain(number);
+    });
+
+    it('reports a full refund as full', async () => {
+      await seedInvoice('in_sub_refund_2', 50_000);
+      const res = await refundCharge('in_sub_refund_2', 50_000, 'ch_sub_refund_2');
+      expect(res.json().refunded).toBe(true);
+    });
+
+    it('ignores a charge that belongs to no invoice we issued', async () => {
+      const res = await refundCharge('in_never_issued', 1_000, 'ch_unknown_invoice');
+      expect(res.statusCode).toBe(200);
+      expect(res.json().ignored).toMatch(/unknown/i);
+    });
+
+    it('ignores a charge carrying neither a payment nor an invoice', async () => {
+      const res = await post(
+        JSON.stringify({
+          id: 'evt_bare_charge',
+          type: 'charge.refunded',
+          data: { object: { id: 'ch_bare', amount_refunded: 500 } },
+        }),
+      );
+      expect(res.json().ignored).toBe('unknown charge');
     });
   });
 });
