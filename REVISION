@@ -2874,3 +2874,117 @@
 #            trigger's measured x, which is a browser away. Left rather than
 #            half-fixed, because a fix that only narrows the odds reads in the
 #            diff like one that closed it.
+
+# N409 revision
+# commit:    4f7e539
+# subject:   the document the publish gate could not see, and the sample that
+#            was the document it exists to refuse
+# previous:  f83489f (R99 and R100 recorded).
+# includes:  4 commits — R101, a report-quality round.
+#
+#            Three findings, all the same shape: two halves of the product that
+#            each look right on their own and had never been put in one room.
+#
+#            7481674 — the check `stillCarriesGuidance` performs is "does the
+#              stored chapter still contain the skeleton's literal text", and it
+#              requires *every* run between the skeleton's `{{markers}}` to
+#              survive, so a chapter somebody is halfway through rewriting does
+#              not fire. The body it is handed has been through
+#              `resolveExhibitReferences`; the skeleton it is compared against
+#              has not. That resolver deletes a `{{#exhibit:II}}…{{/exhibit:II}}`
+#              block whole when Exhibit II was not printed — so a fragment
+#              inside one is missing for a reason nobody chose, `every` fails,
+#              and the chapter grades as written.
+#
+#              `financial_analysis` is the one authored chapter of the 409A
+#              skeleton carrying conditional pointers. On every engagement whose
+#              calculation produced no financial appendices — most of them — it
+#              shipped "Summarize historical performance and management
+#              projections from the valuation workbook" under a gate that had
+#              cleared it.
+#
+#              The unit tests could not see it because they grade a body
+#              straight out of `instantiateTemplate`, where the markers are
+#              still in the text and every fragment therefore matches. The
+#              regression test crosses the resolver in both directions.
+#
+#            fcbd819 — `/sample-report/pdf` renders the genuine deliverable by
+#              instantiating the real 409A skeleton, which is what stops it
+#              going stale. It is also exactly how a chapter of *instructions to
+#              the analyst* reaches the page. Seven did. So the one 409A this
+#              product publishes to everyone, ungated, as the thing a prospect
+#              judges the deliverable by, was the document `reportReview` exists
+#              to refuse — seven `fail` findings, run for the first time.
+#
+#              Written as keyed overrides on the skeleton rather than as a
+#              second template, so headings, order, closing sections and every
+#              chapter meant to ship verbatim still come from `templateForKind`.
+#              Every figure in the new prose is a `{{marker}}` resolved through
+#              `reportFigures` or an interpolation of the primitives the
+#              exhibits are built from, so the narrative reconciles to Exhibits
+#              B, C, D, F and H digit for digit and no number is typed twice.
+#
+#              Qualifications is framed rather than invented. Naming a
+#              credentialed appraiser who examined nothing, on a realistic 409A
+#              anyone can download, manufactures the artefact the three SAMPLE
+#              marks exist to prevent, and a credential is the one fact in that
+#              file a reader might act on.
+#
+#            7ea9e3e — `runQa` grades two independent things and files one row:
+#              the calculation, and the report body. `qa_reviews` recorded only
+#              `calculation_id`, so `assertPublishGate` could say "this review
+#              examined the calculation that is current" and nothing at all
+#              about the document. Its own comment states the reasoning it
+#              relies on — "a recalculation invalidates the previous review by
+#              construction" — and the body has no such construction.
+#
+#              Draft, calculate, QA, sign, edit a chapter, publish, and a 409A
+#              goes out whose prose no review ever saw. Nothing about that
+#              sequence looks unusual: an analyst reading a QA report and fixing
+#              what it found lands in exactly it.
+#
+#              The review now records the body it graded. Not a re-grade at
+#              publish time — that would put an exhibit build inside the publish
+#              transaction, and a report edited after review needs a reviewer
+#              rather than a second opinion from the machine that passed the old
+#              one. `saveVersion` takes the publish-gate lock, or the rule would
+#              close the ordinary case and leave the interleaved one exactly as
+#              it was.
+#
+#            4f7e539 — the QA tab's banner is the only place an analyst is told
+#              whether an engagement can publish, and it computed satisfaction
+#              from the calculation half alone. A banner reading "gate
+#              satisfied" over a gate returning 409 is worse than no banner.
+#
+# method:    a null `qa_reviews.report_version` is refused rather than waved
+#            through. It means "this review does not say", and the column
+#            answers a compliance question — an unknown is not a yes. The
+#            alternative was backfilling historic rows with the current version,
+#            which asserts precisely the thing that cannot be checked. Three
+#            rows and five in-flight engagements in production; one QA re-run
+#            each, and the 409 names the remediation.
+#
+#            The race on rule 3 is tested by *holding* the lock rather than by
+#            racing two injects. Editing the body of an already-published
+#            engagement is legitimate and changes nothing that was delivered —
+#            `report_versions.pdf` is frozen at publication — so "published, and
+#            the body is newer than the review" is a correct end state when the
+#            save merely arrived second, and there is no post-hoc invariant to
+#            assert on. What is observable is the mechanism: a save cannot
+#            commit while a publish holds the lock.
+#
+# note:      the parity question in the brief is closed on the outline side and
+#            was not re-derived: all fifteen `VALUATION_KINDS` map to a skeleton
+#            in `TEMPLATE_BY_KIND`, covering 409.ai's fourteen product types
+#            (SMB is `fmv`, Portfolio is `fund`, Impairment is `goodwill`), and
+#            every one of them is closed with a certification chapter by
+#            `withClosingSections`. Only the 409A has a rendered sample, on
+#            purpose — see `PDF_KINDS`.
+#
+# gap:       the sample's LTM revenue and its Series B raise are both $8,400,000,
+#            from two independent constants that happen to coincide. A reader
+#            could take it for a copy error. Changing either moves the market
+#            indication, the concluded equity value, the FMV and every golden
+#            assertion pinned to them, which is a lot of churn for a cosmetic
+#            coincidence — left, and named here so the next person does not
+#            spend the afternoon deciding it is a bug.
