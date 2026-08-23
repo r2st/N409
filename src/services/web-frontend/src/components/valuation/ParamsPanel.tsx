@@ -385,7 +385,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
     } catch {
       setError('Could not load valuation params.');
     }
-  }, [valuationId]);
+  }, [valuationId, setVersion]);
 
   useEffect(() => {
     void load();

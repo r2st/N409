@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
+import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 
 export default tseslint.config(
@@ -60,6 +61,40 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
+    },
+  },
+  /**
+   * The rules of hooks, for the frontend.
+   *
+   * Both of these catch a class of bug the type checker cannot see and a test
+   * usually will not either, because the wrong behaviour depends on which
+   * render you are in. Two landed in this codebase and both were found by
+   * reading:
+   *
+   *   * The session's sign-out timer was a `useEffect` keyed on `status`, and
+   *     replacing a token in place does not change the status — so the timer
+   *     stayed pointed at the expiry of a token that had been thrown away. The
+   *     token is module state in `api.ts`, which is exactly the kind of
+   *     dependency `exhaustive-deps` cannot see either; what it does enforce is
+   *     that everything React *can* see is declared, which is what makes the
+   *     remaining hand-rolled cases few enough to reason about.
+   *   * `ChangeEmailCard` called `useFormValidation` after an early return, so
+   *     its hook count depended on whether a user was in context.
+   *
+   * Set to `error` rather than `warn` because the package is already clean:
+   * across 161 components these two rules had four findings in total, all of
+   * them fixed in the commit that added this. A warning nobody has to act on
+   * is how the fifth would arrive.
+   *
+   * Frontend only — the services have no React in them, and the rules would
+   * cost a plugin's worth of parsing over files with no hooks to check.
+   */
+  {
+    files: ['src/services/web-frontend/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks },
+    rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'error',
     },
   },
   {

@@ -164,7 +164,7 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load the discount-rate build-up.');
     }
-  }, [valuationId]);
+  }, [valuationId, setVersion]);
 
   useEffect(() => {
     void load();

@@ -156,8 +156,6 @@ function ChangeEmailCard() {
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  if (!user) return null;
-
   /*
    * The form carried `noValidate` and both boxes carried `required`, so
    * between them nothing checked anything: a malformed address went to the
@@ -190,6 +188,18 @@ function ChangeEmailCard() {
       setBusy(false);
     }
   });
+
+  /*
+   * Below every hook, not above them. `useFormValidation` used to sit under
+   * this guard, which made the component's hook count depend on whether a user
+   * was in context — a render with none would have run fewer hooks than the
+   * one before it, which React treats as a fatal error rather than a missing
+   * card. It is not reachable today (`RequireAuth` is an ancestor and swaps the
+   * whole subtree for a redirect in the same render that clears the user), so
+   * this is closing the hole rather than fixing a live crash. There is no cost
+   * to being right about it: the guard reads the same here.
+   */
+  if (!user) return null;
 
   return (
     <Card

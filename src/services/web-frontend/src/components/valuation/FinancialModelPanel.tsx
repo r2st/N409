@@ -263,7 +263,7 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
     } catch {
       setError('Could not load the financial model.');
     }
-  }, [valuationId]);
+  }, [valuationId, setVersion]);
 
   useEffect(() => {
     void load();
