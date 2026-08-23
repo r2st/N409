@@ -2988,3 +2988,103 @@
 #            assertion pinned to them, which is a lot of churn for a cosmetic
 #            coincidence — left, and named here so the next person does not
 #            spend the afternoon deciding it is a bug.
+
+# N409 revision
+# commit:    398ede3
+# subject:   the gate that read one of fifteen deliverables, and the level of
+#            value a discount of nothing asserted
+# previous:  4f7e539 (R101 recorded at bc5b164).
+# includes:  3 commits — R102, a report-quality round following R101's thread
+#            one layer out in each direction.
+#
+#            3458e9a — `authored` is the skeleton's declaration that a chapter
+#              is an instruction to whoever writes the report rather than the
+#              report, and `checkUneditedGuidance` refuses to publish one that
+#              still carries it. It can only refuse what the skeleton declares.
+#              The flag was set on TEMPLATE_409A when the check was written and
+#              on no skeleton since, so the gate read one of the fifteen
+#              products; the other fourteen could publish a signed opinion whose
+#              Conclusion of Value chapter read "State the concluded fair market
+#              value…", through a gate that had cleared them.
+#
+#              What made it invisible is the shape this codebase keeps finding.
+#              A test named 'covers the qualifications chapter of every report
+#              kind' passed, and was true, and covered almost nothing:
+#              `qualifications` reaches every kind from `CLOSING_SECTIONS`, so
+#              it was the one chapter of the fourteen specialty skeletons the
+#              check could refuse — see [[n409-vacuous-checks]].
+#
+#              Sixty-eight chapters flagged, against the 409A's seven. That
+#              ratio is not an over-reach; it is what those outlines are. A
+#              specialist works through them, so most of a CSOP or a fund
+#              skeleton is guidance, and none of it was guarded.
+#
+#            fefc0b2 — the same question asked of a figure rather than a
+#              chapter. `allocated_level` — the words the body uses for what the
+#              allocation produced — reads `dloc_detail.minority_basis_weight`,
+#              and the engine withheld that whole block whenever the DLOC was
+#              zero. The reason it gave is about a different question: a zero
+#              discount cannot double-count, so the *warning* would be noise.
+#              The level of value is a property of the weighted mix of
+#              approaches and has nothing to do with the discount taken against
+#              it — and a DLOC is usually zero precisely because the weight sat
+#              on a backsolve and guideline multiples, which already produce a
+#              marketable minority value.
+#
+#              So on those engagements the deliverable said the allocation
+#              produced a "marketable, controlling" value, applied no control
+#              discount to it, and Exhibit H labelled the unchanged figure
+#              "Marketable, minority value per common share": a level of value
+#              changed by a discount of nothing, three statements on one page
+#              that cannot all be true. Exhibit B-1, which sets out the approach
+#              levels and would have shown the mix, was suppressed by the same
+#              gate — and both of its closing paragraphs turn out to be written
+#              about a discount that was taken, because it had never met a zero.
+#
+#            398ede3 — R101 rewrote the seven chapters the sample's skeleton
+#              flags. The ten *mixed* chapters were left, and they are the same
+#              defect in a smaller unit: a paragraph of report with one
+#              instruction standing inside it. The published sample still asked
+#              its reader to describe the capital structure, explain the
+#              weighting and state the basis for the concluded discount —
+#              fourteen sentences on the document a prospect judges the
+#              deliverable by.
+#
+# method:    the flags are kept honest by two guards rather than one, because
+#            they can drift in two ways. `reportAuthoredCensus.test.ts` lists
+#            every skeleton's flagged keys literally, so adding or renaming a
+#            chapter fails until the decision is made in a diff; and a detector
+#            asserts that no chapter whose *every* sentence is an instruction is
+#            left unflagged. The detector is one-directional on purpose — all
+#            guidance implies `authored`, never the reverse — because the line
+#            TEMPLATE_409A already drew is that a chapter stating a standard and
+#            asking one question beside it is a judgement the skeleton makes,
+#            and a gate on every imperative sentence would refuse every report
+#            ever drafted. That is also why the sample is answered here and the
+#            gate is not widened: the sample is held higher because it is
+#            published, not because the rule changed.
+#
+#            No template version is bumped. The html is unchanged, so an
+#            instantiated body is byte-identical, and review resolves its
+#            skeleton through `templateForKind` rather than through the stored
+#            version — so the flags reach bodies already drafted, which is the
+#            point. Production carries only 409A engagements (5 pending, 3
+#            published), so nothing in flight is newly refused.
+#
+#            The sample's fourteen sentences are answered as keyed substrings,
+#            not as ten more whole-chapter overrides: a second copy of a chapter
+#            is the silent-drift failure that file is arranged against. Both
+#            directions are guarded — `unappliedSampleAnswers` names an answer
+#            whose sentence was rephrased out from under it, and a clause scan
+#            over the published body finds an instruction nobody answered. The
+#            scan is proved able to see one by running it over the skeleton,
+#            where it finds ten.
+#
+# gap:       the mixed chapters remain unguarded in a client's report, on
+#            purpose and not because they are harmless. A 409A can still publish
+#            with "State whether the approach was applied" under Asset Approach.
+#            Closing it needs the instruction marked at the sentence level in
+#            the skeleton rather than detected, which is a change to the markup,
+#            the editor and the render path together; the detector in
+#            `reportAuthoredCensus.test.ts` is the measurement that would tell
+#            anybody attempting it how much text is involved.
