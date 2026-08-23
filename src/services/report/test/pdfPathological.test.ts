@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { expectSubQuadratic } from './support/complexity.js';
 import { breakLongRuns, htmlToBlocks, renderReportPdf, type ReportPdfInput } from '../src/pdf.js';
-import { extractText } from './support/pdfText.js';
+import { extractText, pageLines } from './support/pdfText.js';
 
 /**
  * Shapes of input that are well inside every declared limit and used to cost
@@ -131,5 +131,118 @@ describe('rendering pathological sections', () => {
     // Asked of the decoded page rather than of the file: the embedded font
     // program is arbitrary bytes, and 0xAD occurs inside it innocently.
     expect(extractText(pdf)).not.toContain('­');
+  });
+});
+
+/**
+ * The sheet, and what is allowed to be drawn where on it.
+ *
+ * A model-free statement about the layout: whatever the input, body content
+ * lands inside the type area and page furniture lands inside the bands
+ * reserved for it. It says nothing about *where* a given block goes, so it
+ * cannot be satisfied by agreeing with the renderer — a column widened past
+ * the margin, a chart label pushed off the plot, a heading set into the
+ * gutter all fail it without anyone having to have predicted them.
+ *
+ * The shapes below are the ones that push a box outward: more columns than a
+ * letter page has room for, a cell holding a paragraph, a heading twice the
+ * width of the measure, a cover fact and a confidentiality notice long enough
+ * to have wrapped their bands.
+ */
+const LONG_HEADING = 'Reconciliation of the Income, Market and Asset Approaches and the Weights Assigned';
+
+const sheet = (over: Partial<ReportPdfInput> = {}): ReportPdfInput => ({
+  title: 'IRC 409A Valuation Report',
+  company_name: 'Northwind Robotics, Inc.',
+  meta: [],
+  sections: [{ heading: 'Introduction', html: '<p>Body.</p>' }],
+  ...over,
+});
+
+/** US Letter, and the margins `renderReportPdf` opens the document with. */
+const PAGE = { width: 612, height: 792, margin: 72 };
+/** The head rule sits at 56 and the footer baseline at 38.6; the bands are the margins. */
+const HEAD_BAND = PAGE.height - PAGE.margin;
+const FOOT_BAND = PAGE.margin;
+
+describe('nothing is drawn outside the sheet', () => {
+  const shapes: Record<string, ReportPdfInput> = {
+    wideTable: sheet({
+      sections: [
+        {
+          heading: 'Wide',
+          html:
+            '<table><tr>' +
+            Array.from({ length: 14 }, (_, i) => `<th>Column heading ${i + 1}</th>`).join('') +
+            '</tr><tr>' +
+            Array.from({ length: 14 }, (_, i) => `<td>$${i}23,456,789</td>`).join('') +
+            '</tr></table>',
+        },
+      ],
+    }),
+    longCell: sheet({
+      sections: [
+        {
+          heading: 'Long cell',
+          html: `<table><tr><th>A</th><th>B</th></tr><tr><td>${'word '.repeat(200)}</td><td>$1</td></tr></table>`,
+        },
+      ],
+    }),
+    longHeading: sheet({ sections: [{ heading: LONG_HEADING + ' ' + LONG_HEADING, html: '<p>Body.</p>' }] }),
+    deepList: sheet({
+      sections: [{ heading: 'List', html: '<ul>' + `<li>${LONG_HEADING}</li>`.repeat(20) + '</ul>' }],
+    }),
+    longMeta: sheet({
+      meta: [{ label: 'A very long label indeed for a cover fact', value: LONG_HEADING }],
+    }),
+    bigNumbers: sheet({
+      sections: [
+        {
+          heading: 'Figures',
+          html: '<table><tr><th>Step</th><th>Amount</th></tr><tr><td>x</td><td>−$123,456,789,012,345</td></tr></table>',
+        },
+      ],
+    }),
+    manyCols: sheet({
+      sections: [
+        {
+          heading: 'Many',
+          html:
+            '<table><tr>' +
+            Array.from({ length: 30 }, (_, i) => `<th>C${i}</th>`).join('') +
+            '</tr><tr>' +
+            Array.from({ length: 30 }, () => '<td>1</td>').join('') +
+            '</tr></table>',
+        },
+      ],
+    }),
+    longWatermark: sheet({ watermark: 'Preliminary draft — not for distribution to any third party' }),
+    longConf: sheet({ confidentiality: LONG_HEADING + ' ' + LONG_HEADING }),
+    longTitleCover: sheet({ title: LONG_HEADING + ' ' + LONG_HEADING }),
+  };
+
+  it.each(Object.entries(shapes))('keeps %s inside the type area', async (_shape, input) => {
+    const escaped: string[] = [];
+    pageLines(await renderReportPdf(input)).forEach((page, i) => {
+      for (const line of page) {
+        // The running head, the running footer and the diagonal stamp are
+        // drawn into the reserved margins on purpose — that is what the bands
+        // are. `pdfOneLine.test.ts` is what holds them to one line each.
+        const isFurniture = line.size <= 8 && (line.baseline > HEAD_BAND || line.baseline < FOOT_BAND);
+        const isStamp = line.size > 20 && line.x < PAGE.margin;
+        if (isFurniture || isStamp) continue;
+        if (
+          line.x < PAGE.margin - 1 ||
+          line.x > PAGE.width - PAGE.margin + 1 ||
+          line.baseline < FOOT_BAND ||
+          line.baseline > HEAD_BAND
+        ) {
+          escaped.push(
+            `p${i + 1} x=${line.x.toFixed(1)} y=${line.baseline.toFixed(1)} ${JSON.stringify(line.text.slice(0, 40))}`,
+          );
+        }
+      }
+    });
+    expect(escaped).toEqual([]);
   });
 });
