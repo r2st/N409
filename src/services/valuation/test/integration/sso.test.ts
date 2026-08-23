@@ -117,6 +117,23 @@ describe.skipIf(!dbUp)('enterprise SSO — SCIM + admin config (feature 9)', () 
     expect(meta.body).toContain('EntityDescriptor');
   });
 
+  it('refuses an http IdP entry point', async () => {
+    // The AuthnRequest, the relay state and the fact of who is signing in all
+    // ride on this redirect. Over `http:` they ride in clear text, and the
+    // sign-in page is where that is least acceptable.
+    const res = await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/sso/saml',
+      headers: authHeader(admin.token),
+      payload: {
+        enabled: true,
+        idp_sso_url: 'http://idp.example.com/sso',
+        idp_cert: 'MIIC-fake-cert-body',
+      },
+    });
+    expect(res.statusCode).toBe(422);
+  });
+
   it("won't enable SAML without an IdP URL + cert", async () => {
     const res = await ctx.app.inject({
       method: 'PUT',

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { httpsUrl } from './externalUrl.js';
 
 /**
  * White-label branding — the identity a valuation firm puts in front of its own
@@ -266,9 +267,9 @@ export const BRANDING_PATCH_SCHEMA = z
     brand_tagline: z.string().max(200).nullable(),
     brand_color: HEX_COLOR,
     accent_color_dark: HEX_COLOR,
-    logo_url: z.string().url().max(2000).nullable(),
-    logo_dark_url: z.string().url().max(2000).nullable(),
-    favicon_url: z.string().url().max(2000).nullable(),
+    logo_url: httpsUrl(2000).nullable(),
+    logo_dark_url: httpsUrl(2000).nullable(),
+    favicon_url: httpsUrl(2000).nullable(),
     support_email: z.string().email().max(320).nullable(),
     white_label_enabled: z.boolean(),
   })

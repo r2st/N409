@@ -139,6 +139,20 @@ describe.skipIf(!dbUp)('branding', () => {
     expect((await patch(admin.token, { brand_color: 'purple' })).statusCode).toBe(422);
   });
 
+  it('rejects an http logo, which would be blocked as mixed content anyway', async () => {
+    const admin = await seedUser(ctx, { roles: ['partner'], partnerId: firmId });
+    // Saving cleanly and then not appearing is the worst of the outcomes: the
+    // firm has no way to tell the setting from the image.
+    expect((await patch(admin.token, { logo_url: 'http://cdn.example.com/a.svg' })).statusCode).toBe(422);
+    expect((await patch(admin.token, { favicon_url: 'http://cdn.example.com/f.ico' })).statusCode).toBe(422);
+
+    const { rows } = await ctx.pool.query<{ logo_url: string | null }>(
+      'SELECT logo_url FROM partners WHERE id = $1',
+      [firmId],
+    );
+    expect(rows[0]!.logo_url).not.toBe('http://cdn.example.com/a.svg');
+  });
+
   it('records an audit event carrying the applied values', async () => {
     const admin = await seedUser(ctx, { roles: ['partner'], partnerId: firmId });
     await patch(admin.token, { brand_tagline: 'Independent valuations' });

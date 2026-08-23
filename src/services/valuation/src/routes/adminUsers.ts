@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
+import { httpsUrl } from '../domain/externalUrl.js';
 import { isUlid, problems } from '@n409/shared';
 import { canManageUsers, isOps } from '../auth/rbac.js';
 import { PARTNER_ROLES, ROLE_KEYS, RoleSet, USER_ADMIN_ROLES, type RoleKey } from '../domain/roles.js';
@@ -668,7 +669,7 @@ export function registerAdminUserRoutes(
           .string()
           .regex(/^#[0-9a-fA-F]{6}$/, 'expected a #rrggbb colour')
           .nullable(),
-        logo_url: z.string().url().max(2000).nullable(),
+        logo_url: httpsUrl(2000).nullable(),
         // White-label email overrides (improvement 8): only known workflow
         // template keys; empty subject/body pairs are rejected.
         email_templates: z.record(
