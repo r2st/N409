@@ -3088,3 +3088,129 @@
 #            the editor and the render path together; the detector in
 #            `reportAuthoredCensus.test.ts` is the measurement that would tell
 #            anybody attempting it how much text is involved.
+
+# N409 revision
+# commit:    03082c0
+# subject:   the second minus sign, the list that out-dented under it, and the
+#            option that said one line and meant nothing
+# previous:  398ede3 (R102 recorded at 65c4502).
+# includes:  5 commits — R103's tail plus R104, a report-quality round that
+#            turned into a round about an option nobody had read the source of.
+#
+#            9a2406f — R103, recorded here because R103 ended before it was.
+#              pg_locks is cluster-wide and an advisory lock is per-database;
+#              neither query reading the migration lock said so. In the suite
+#              that was a flake with a false story — the leak check counted
+#              every advisory lock on the server while 468 files migrate their
+#              own throwaway databases in parallel, so a sibling inside
+#              migrate() made the runner look like it had leaked its own lock.
+#              In production it is the "held by backend pid N" line naming a
+#              backend migrating something else.
+#
+#            2af633e — the R103 work salvaged. Three repairs to the rendered
+#              409A, and the first two have to land together.
+#
+#              The document set two glyphs for one meaning on one page.
+#              Figures arriving from `Intl.NumberFormat` carry U+002D; figures
+#              the report composes by hand carry U+2212, because whoever wrote
+#              those lines typed what a typographer would. Exhibit C printed
+#              `-$1,200,000` in its forecast table and `−$700,000` five rows
+#              below it. `typographicMinus` normalises, guarded on both sides
+#              so it converts only a hyphen that opens a figure — `2026-03-31`,
+#              `2027-2031`, `Exhibit B-1`, `cash-flow` and `put-option` all
+#              keep theirs. `NUMERIC_CELL` learns U+2212 in the same commit or
+#              every negative figure starts voting *prose* and a column of
+#              losses left-aligns, which is the failure `columnAlignments`
+#              calls the single thing that makes a report look amateur,
+#              reached by the one route it was not watching.
+#
+#              Measurement now goes through `fontSafe` too. `.text()` was
+#              wrapped and the twelve `widthOfString`/`heightOfString` calls
+#              were not, so the layout was computed for a document other than
+#              the one produced. One instance of that had already overprinted
+#              the summary page and been repaired at that call site alone,
+#              leaving the other twelve taking the raw string.
+#
+#              And list items hang. Marker and text were one continued run
+#              opened at the marker's x, and pdfkit wraps a run back to where
+#              it began, so runover lines started *under the bullet* — a list
+#              with no left edge for the eye to follow, which is what the
+#              second page of a 409A opens with.
+#
+#            0f5378b — `lineBreak: false` does not stop pdfkit wrapping. It is
+#              read once, in `_initOptions`, and only to decide whether to
+#              *default* a missing width; with `options.width` set, `_text`
+#              hands the string to the line wrapper regardless. Every one of
+#              the twenty call sites in pdf.ts set a width, because page
+#              furniture, chart labels and contents entries are all drawn into
+#              a box. The guarantee each was written to make had never been in
+#              force at any of them.
+#
+#              The running footer is where it showed, and it showed on every
+#              page of every report: 130 characters in a 468pt band, wrapping,
+#              leaving `opinion · Page 1 of 20` centred on a second line below
+#              the bottom margin of all twenty pages of the sample the platform
+#              publishes. The rest were a character away rather than harmless —
+#              the longest running head in that document clears its half of the
+#              band by 3pt.
+#
+#              `height` is the option that binds, and setting it is also what
+#              finally makes the `ellipsis: true` already passed at several of
+#              those call sites mean anything. The footer is *fitted* rather
+#              than elided, because right-to-left truncation would cut the page
+#              number: it is the last field and the only one with no other
+#              source on the sheet. The stamp is fitted by font size instead —
+#              `PRELIMINARY — DO NOT DISTRIBUTE` cut to `PRELIMIN…` says less
+#              than the same words set smaller.
+#
+#            341859c — a model-free statement about the geometry, since the
+#              two above were both found by reading a rendered sample rather
+#              than by a test: body content lands inside the type area and
+#              furniture inside its bands, over ten shapes that push a box
+#              outward. It says nothing about where any block goes, so it
+#              cannot be satisfied by agreeing with the renderer.
+#
+#            03082c0 — the same shape one service over. `routeAudit` refuses to
+#              boot a route that is neither authenticated nor listed with a
+#              reason, so nothing faces the internet without a sentence written
+#              about it — and nothing checked the second half of most of those
+#              sentences. Fourteen say the route is rate-limited, and a
+#              sentence is not a limiter. Ten were proved; the other
+#              forty-three rested on the comment.
+#
+# method:    the two renderer defects were found the way the sample-report
+#            script was written to find things — by rendering the real 409A and
+#            reading its geometry, 20 pages of x/baseline/size/text — and not
+#            by any of the 286 tests over that file, all of which passed
+#            throughout. That is the second time this file has recorded a
+#            report defect invisible from inside a unit test, and it is why
+#            341859c is an invariant rather than more cases.
+#
+#            Both `oneLine` and the footer fitter are proved against a
+#            deliberate break rather than against their own green: moving
+#            `renderTable`'s left edge 100pt right fails four of the ten
+#            geometry shapes with coordinates named, and loosening the contact
+#            form's limiter from 5 to 5000 fails the throttle census with "no
+#            429 within 10 requests". A guard that has never been seen to fail
+#            is a guard nobody has read.
+#
+#            One assertion moved. `reportExhibits.test.ts` pinned `-0.4470` in
+#            the rendered PDF, which is now `−0.4470`; the HTML assertion above
+#            it still reads the hyphen the exhibit builder emits, which is the
+#            right split — the glyph is a property of the render.
+#
+#            No template version is bumped: the 409A skeleton is untouched, and
+#            an instantiated body is byte-identical. What changed is how the
+#            renderer sets it.
+#
+# gap:       the throttle census records `POST /auth/mfa/verify` as limited on
+#            a key an anonymous burst cannot reach, and takes mfa.test.ts's
+#            word for the rest. That is the one row of 53 not proved in place.
+#
+#            The census's `open` column is argued rather than measured: each
+#            entry says why an unbounded rate is acceptable, and the test only
+#            confirms the route does not in fact refuse. Nothing bounds the
+#            *work* those routes do — the estimator and the selector are pure
+#            functions of a capped body, but `/public/branding` and the blog
+#            reads are unmetered database queries, and if one of them ever
+#            grows a join the census will still pass.
