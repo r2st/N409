@@ -3214,3 +3214,144 @@
 #            functions of a capped body, but `/public/branding` and the blog
 #            reads are unmetered database queries, and if one of them ever
 #            grows a join the census will still pass.
+#
+# N409 revision
+# commit:    f9c5771
+# subject:   the entry read on every request evicted by keys nobody asked for,
+#            and two values minted at addresses the router will not serve
+# previous:  03082c0 (R103's tail and R104).
+# includes:  7 commits — R105's three, recorded here because R105 ended before
+#            they were, plus R106: a round that set out to profile performance
+#            and found instead that the caching already in place could be
+#            switched off by anyone, and that two write paths could mint values
+#            with no reachable URL.
+#
+#            R105 (acfbccb, 8794deb, 3ce3a53) — the client portal. The last
+#              answer a client typed before a failed save, and the retry nobody
+#              made; the end date on the standing promise that the intake link
+#              would still be there; and a confirmation on the board's
+#              soft-delete, which was one mis-click from a legal act with no way
+#              back. Deployed at the head of this round — the box had been
+#              serving 707df4a, so R104's tail and all of R105 were live only
+#              after 3ce3a53 went out and all five units verified.
+#
+#            0db3fc9 — `TtlCache` bounded itself by dropping whatever was
+#              written longest ago, and `get` did not count as touching an
+#              entry. The class docstring said "LRU-ish"; the existing test
+#              said "least recently *written*", which was the honest reading.
+#
+#              That is not a tuning detail, because the keys are chosen by the
+#              caller. Both anonymous read-through routes cache their *misses*
+#              under a caller-supplied string — `slug:<anything>`,
+#              `key:<slug>` — so anyone can insert one entry per request. Five
+#              hundred made-up slugs, one short burst, evicted every real entry
+#              in the branding cache: the `subdomain:` entries the signed-out
+#              login page resolves through, and the `partner:<id>` entries the
+#              *signed-in* SPA reads on every page load. Anonymous traffic could
+#              put a database query back on an authenticated hot path,
+#              platform-wide, and the cache switched itself off under precisely
+#              the load it exists to absorb.
+#
+#              The fix is one line and it was already written elsewhere.
+#              `BoundedWindowStore` in the rate limiter documents the same
+#              defence at length — "a flood of one-shot keys cannot wash out the
+#              entry that is actually tracking it" — and re-inserts on touch to
+#              get it. `get` now does the same. `expiresAt` is carried over
+#              untouched: recency is not a lease renewal, or a hot key would
+#              never be re-read from the source at all.
+#
+#            1075769 — the blog capped a slug at 120 characters. Fastify's
+#              router refuses a path parameter longer than `maxParamLength`,
+#              which is 100 and which nothing here overrides. So a slug of 101
+#              to 120 characters was accepted, stored, listed on the public
+#              index with a link to itself, and answered 414 at that link — a
+#              post that existed everywhere except the address it was published
+#              at. The cap moves down rather than the router being widened for
+#              every route to suit one; production's longest slug is 58.
+#
+#              Same commit gives `/blog/posts/:slug` the guard
+#              `/public/branding/:key` has always had: a slug that could not
+#              name a post is refused before it queries. Both are single-sourced
+#              through one `Slug` schema, so the read rule cannot drift stricter
+#              than the write rule and orphan a post that already exists — which
+#              is the same failure, in the other direction.
+#
+#            fc260e6 — the same defect one route over, and worse.
+#              `DELETE /admin/email/suppressions/:address` carried an address in
+#              the path; an address is valid to 320. So a hard bounce on a long
+#              address — set by a provider webhook, which needs no admin at all
+#              — could never be released through the API, and nothing in the SPA
+#              calls that route, so there was no second way in. The address moves
+#              into the body of `POST .../release`, which also takes it out of
+#              the URL: suppressing already keeps the address out of its audit
+#              label because it is PII, while releasing was writing it to the
+#              access log.
+#
+#            f9c5771 — the pairing, as a standing scan. Both bugs above are one
+#              bug: a write ceiling higher than what the router can address,
+#              with each half correct alone. It reads the caps out of the source
+#              rather than restating them, resolving `.max(SLUG_MAX)` and
+#              `slug: Slug`, so it cannot pass by agreeing with a stale copy.
+#
+# method:    the cache defect was found by reading the rate limiter's own
+#            docstring next to the cache's. One of them had reasoned about a
+#            flood of one-shot keys washing out a live entry and defended
+#            against it; the other had the same structure, the same
+#            caller-chosen keys, and no defence. The census that followed found
+#            `prometheus.ts` and `errorRates.ts` refuse or fold at their ceiling
+#            rather than evicting, so neither can be washed out — `TtlCache` was
+#            the only one of the four with the shape.
+#
+#            The 414 was not looked for. It came out of an invariant written for
+#            the slug guard — that every slug shape the writer accepts can be
+#            read back at its own URL — which is the second time this round a
+#            property stated in both directions caught something a
+#            one-directional test could not.
+#
+#            Everything is proved against a deliberate break rather than against
+#            its own green. Removing the cache re-insert fails both eviction
+#            guards, one of which sprays fifty times the cache's capacity past a
+#            key read on every iteration; dropping the slug guard fails a
+#            no-query assertion counted at the pool, since a 404 is what an
+#            unguarded route returns too; restoring the blog cap to 120 fails
+#            both the route pin and the census, the latter naming the file, the
+#            parameter and both numbers.
+#
+#            One assertion did not survive being written. The suppression test
+#            first asserted that the old path shape answers 414, which it does
+#            not any more: with no route registered at that pattern the router
+#            404s without ever measuring the parameter. The 414 is pinned in the
+#            blog suite instead, on a route that still takes a path parameter —
+#            asserting it beside the email fix would only have proved that a
+#            route which no longer exists does not exist.
+#
+#            Two of the round's five focus areas were closed by measurement
+#            rather than by work. Production's largest table holds 286 rows, so
+#            its sequential scans are correct and there is nothing to index —
+#            the same answer R92 reached, now re-confirmed on current data. The
+#            frontend's swallowed-load-error class swept clean: no error state
+#            is set and never rendered, and the one page whose loading guard
+#            precedes its error guard clears `loading` in a `finally`.
+#
+# gap:       the previous round's note that `/public/branding` and the blog
+#            reads are unmetered database queries is half-answered. Garbage no
+#            longer reaches the database on either, and a spray no longer
+#            evicts what the cache is for — but a spray of *distinct*
+#            well-formed slugs is still one indexed query per request, because
+#            negative caching cannot help a key that is never asked for twice.
+#            Both routes remain in the census's `open` column, deliberately: a
+#            per-IP limit on the blog is a limit on crawlers, and the marketing
+#            site has 47 prerendered routes that want indexing.
+#
+#            The param census reads `src/routes/*.ts` only. A schema assembled
+#            in another module, spread in, or composed at runtime is a cap it
+#            cannot see; the named-set assertion catches a rename but not a
+#            move. `maxParamLength` is also still an implicit framework default
+#            rather than a number written down in app.ts, so the census restates
+#            100 rather than reading it from the place it is configured — there
+#            is no such place.
+#
+#            `TtlCache.inflight` is still unbounded. It self-drains on
+#            completion and is bounded in practice by how many distinct keys can
+#            be missed at once, which the pool bounds — but unlike `entries` it
+#            has no ceiling of its own.
