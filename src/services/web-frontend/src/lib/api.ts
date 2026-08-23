@@ -100,6 +100,44 @@ export function ifMatch(version: number | undefined): Record<string, string> | u
   return version === undefined ? undefined : { 'if-match': `"${version}"` };
 }
 
+/**
+ * Endpoints that exchange credentials for a session. A 401 from one of these
+ * means "what you typed is wrong", not "your session is over": signing out on
+ * them would fire a logout request on every mistyped password, and would end
+ * the still-valid session in the tab behind the login form.
+ */
+const CREDENTIAL_EXCHANGE = new Set(['/auth/login', '/auth/mfa/verify']);
+
+/**
+ * Handle a 401 the way `AuthProvider` claims the app does — "any 401 anywhere
+ * in the app signs the user out".
+ *
+ * Two things it has to get right, and neither was:
+ *
+ *   - The session it is testing for is not the in-memory JWT. `memToken` is
+ *     deliberately lost on reload (the httpOnly cookie is what carries the
+ *     session across one), so in every reloaded tab `getToken()` is null.
+ *     Gating the sign-out on the token therefore skipped it in exactly the
+ *     tabs that had one — a session revoked from elsewhere (sign out other
+ *     sessions, a password change, an admin disabling the account) left the
+ *     app showing a signed-in shell in which nothing would load, with no way
+ *     out but a manual reload. `hasStoredSession()` is the marker that
+ *     actually survives a reload, so it is the one to ask.
+ *
+ *   - The token *is* still worth asking about, for the tab that has one and
+ *     no marker yet, so both are consulted.
+ *
+ * Returns nothing: callers still throw the ApiError, because a failed request
+ * is a failed request whether or not it also ended the session.
+ */
+function noteUnauthorized(path: string, status: number): void {
+  if (status !== 401) return;
+  if (CREDENTIAL_EXCHANGE.has(path.split('?')[0] ?? path)) return;
+  if (getToken() === null && !hasStoredSession()) return;
+  clearToken();
+  window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+}
+
 export async function api<T>(
   path: string,
   init: Omit<RequestInit, 'body'> & { body?: unknown } = {},
@@ -115,11 +153,7 @@ export async function api<T>(
   }
 
   const res = await fetch(`/api/v1${path}`, { ...init, headers, body });
-  if (res.status === 401 && token) {
-    // Session token rejected (expired or revoked) — sign the user out globally.
-    clearToken();
-    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
-  }
+  noteUnauthorized(path, res.status);
   if (!res.ok) {
     const problem: Problem = await res.json().catch(() => ({ status: res.status }));
     throw new ApiError(res.status, problem);
@@ -138,6 +172,7 @@ export async function apiDownload(
   const token = getToken();
   if (token) headers.set('authorization', `Bearer ${token}`);
   const res = await fetch(`/api/v1${path}`, { method: init.method ?? 'GET', headers });
+  noteUnauthorized(path, res.status);
   if (!res.ok) {
     const problem: Problem = await res.json().catch(() => ({ status: res.status }));
     throw new ApiError(res.status, problem);
@@ -162,10 +197,7 @@ export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   if (token) headers.set('authorization', `Bearer ${token}`);
 
   const res = await fetch(`/api/v1${path}`, { method: 'POST', headers, body: form });
-  if (res.status === 401 && token) {
-    clearToken();
-    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
-  }
+  noteUnauthorized(path, res.status);
   if (!res.ok) {
     const problem: Problem = await res.json().catch(() => ({ status: res.status }));
     throw new ApiError(res.status, problem);

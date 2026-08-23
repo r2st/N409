@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   api,
   ApiError,
+  apiDownload,
+  apiUpload,
   clearToken,
   getToken,
   hasStoredSession,
@@ -20,6 +22,35 @@ afterEach(() => {
   vi.restoreAllMocks();
   clearToken();
 });
+
+/** Counts UNAUTHORIZED_EVENT for the duration of `run`, then unsubscribes. */
+async function signOutsDuring(run: () => Promise<unknown>): Promise<number> {
+  const listener = vi.fn();
+  window.addEventListener(UNAUTHORIZED_EVENT, listener);
+  try {
+    await run().catch(() => {});
+  } finally {
+    window.removeEventListener(UNAUTHORIZED_EVENT, listener);
+  }
+  return listener.mock.calls.length;
+}
+
+/** A 401 problem+json response, the shape every guarded route returns. */
+function unauthorized(): Response {
+  return new Response(JSON.stringify({ title: 'Unauthorized', status: 401 }), { status: 401 });
+}
+
+/**
+ * The state of a tab that has been reloaded: the httpOnly cookie still carries
+ * the session and the marker still says one exists, but `memToken` — which is
+ * module state, deliberately not persisted — is gone. Written through
+ * localStorage rather than setToken() precisely because setToken() would also
+ * put the JWT back in memory, which a reload never does.
+ */
+function reloadedTabWithSession(): void {
+  clearToken();
+  localStorage.setItem('n409.token', String(Date.now() + 3_600_000));
+}
 
 describe('api client', () => {
   it('stores and decodes token expiry', () => {
@@ -93,5 +124,73 @@ describe('api client', () => {
     expect(getToken()).toBeNull();
     expect(listener).toHaveBeenCalledOnce();
     window.removeEventListener(UNAUTHORIZED_EVENT, listener);
+  });
+});
+
+/*
+ * `AuthProvider` states the contract these cover in one line — "Any 401
+ * anywhere in the app signs the user out" — and then listens for one event to
+ * implement it. Three of the four ways a 401 can arrive did not raise it.
+ */
+describe('a 401 ends the session', () => {
+  it('signs out a reloaded tab, where the JWT is gone but the cookie session is not', async () => {
+    reloadedTabWithSession();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(unauthorized());
+    // The request carries no bearer header at all — the cookie is the session.
+    expect(getToken()).toBeNull();
+    expect(await signOutsDuring(() => api('/valuations'))).toBe(1);
+    expect(hasStoredSession()).toBe(false);
+  });
+
+  it('signs out on a download, not just on a JSON call', async () => {
+    setToken('stale');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(unauthorized());
+    expect(await signOutsDuring(() => apiDownload('/valuations/export?format=csv', 'v.csv'))).toBe(1);
+    expect(getToken()).toBeNull();
+  });
+
+  it('signs out on an upload', async () => {
+    setToken('stale');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(unauthorized());
+    const body = new FormData();
+    expect(await signOutsDuring(() => apiUpload('/valuations/v1/documents', body))).toBe(1);
+    expect(getToken()).toBeNull();
+  });
+
+  it('still reports the failure as an ApiError — signing out does not swallow it', async () => {
+    reloadedTabWithSession();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(unauthorized());
+    await expect(api('/valuations')).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe('a 401 that is not the end of a session', () => {
+  it('does not sign out on a mistyped password, even with a session in the tab behind it', async () => {
+    reloadedTabWithSession();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(unauthorized());
+    expect(
+      await signOutsDuring(() =>
+        api('/auth/login', { method: 'POST', body: { email: 'a@b.c', password: 'wrong' } }),
+      ),
+    ).toBe(0);
+    // The session it was not about is left intact.
+    expect(hasStoredSession()).toBe(true);
+    clearToken();
+  });
+
+  it('does not sign out on a wrong second factor', async () => {
+    reloadedTabWithSession();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(unauthorized());
+    expect(
+      await signOutsDuring(() => api('/auth/mfa/verify', { method: 'POST', body: { code: '000000' } })),
+    ).toBe(0);
+    expect(hasStoredSession()).toBe(true);
+    clearToken();
+  });
+
+  it('does not sign out an anonymous visitor who never had a session', async () => {
+    clearToken();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(unauthorized());
+    expect(await signOutsDuring(() => api('/public/branding'))).toBe(0);
   });
 });
