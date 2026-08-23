@@ -3490,3 +3490,142 @@
 #            after a stream that worked stops being allowed — a revoked
 #            permission or a deleted valuation shows a frozen list of people who
 #            are not there.
+
+# N409 revision
+# commit:    32bed3c
+# subject:   the money that arrived and told nobody, and the three answers to
+#            which subscriptions are live
+# previous:  ab6d824 (R107).
+# includes:  6 commits — R108's two, recorded here because R108 ended before
+#            they were, plus R109's four. R108 was deployed at the head of this
+#            round: the box had been serving c62d0a0, so 237f434 and 7524dc6
+#            went live only after this round began.
+#
+#            R108 (237f434, 7524dc6) — a frozen presence list and a ledger one
+#              hand-typed DELETE from gone.
+#
+#              `useValuationStream` set `viewers` from every presence frame and
+#              cleared it only on unmount, so a list nothing replays was held
+#              across a disconnect and shown as if it were now; the terminal
+#              401/403/404 case has no way out at all.
+#
+#              `invoices.user_id`, `subscriptions.user_id` and
+#              `payments.valuation_id` were `ON DELETE CASCADE`. Nothing here
+#              hard-deletes a user, which is the whole of what protected them.
+#              An invoice number is drawn from a sequence that is never
+#              decremented, so a deleted invoice is a permanent hole in a series
+#              that exists so there are none.
+#
+#            0793d6f — `AUTO_EMAIL_CONDITIONS` grew to ten and the dropdown that
+#              is the only way to create a campaign was built from a hand-kept
+#              list of four. Six conditions with SQL in `dueCandidates`, a DB
+#              CHECK and a migration behind them could not be chosen.
+#
+#              Unreachable was the smaller half. A campaign already gated on one
+#              of the six put a value into a `<Select>` matching no `<option>` —
+#              `selectedIndex` -1, a field rendering blank — so opening it to
+#              change a delay and saving moved a live gate the operator had
+#              never been shown. The list beside it read
+#              `CONDITIONS.find(...)?.label` into an empty `<div>`, which made
+#              the same six read as no gate rather than an unfamiliar one.
+#
+#            53afed7 — every other outcome of a payment already reached
+#              somebody. A declined renewal notifies the subscriber and the
+#              billing group, a refund and a chargeback alert ops, a bounced
+#              bank debit alerts both. Settlement was silent: the payment marked
+#              succeeded, the engagement flipped to paid, an invoice allocated a
+#              sequence number an auditor reads as a count of what was billed —
+#              and the person charged heard nothing.
+#
+#              Where each announcement sits is the whole of its replay safety,
+#              and neither guard is new: the receipt hangs off `claimed`, the
+#              compare-and-set that decides which delivery owns the settlement,
+#              and the invoice confirmation sits inside `!already`, which is
+#              what makes `invoice.paid` and `invoice.payment_succeeded` — both
+#              emitted for one payment — produce one message. Both are contained
+#              for a sharper reason than tidiness: the settlement is committed
+#              by the time either runs, so an exception escaping would 5xx the
+#              webhook and Stripe's redelivery would take the early return and
+#              never reach the announcement again. The retry that exists to save
+#              the message is what would lose it.
+#
+#            abeb519 — three answers to "which subscriptions are live", none
+#              written down. `findActiveSubscription` and `consumeValuation` —
+#              the pair that grants quota — read
+#              `('active','trialing','past_due')`; the ops dashboard's count
+#              read `status = 'active'`; the MRR printed beside that count read
+#              `('active','trialing')`. A count and a total, side by side,
+#              containing different subscriptions.
+#
+#              The `past_due` rows are the ones that hurt: served, consuming
+#              quota, and in neither figure — which left the only ops billing
+#              screen blind to exactly the state dunning was built to chase.
+#
+#            32bed3c — `invoices` had no column for money going back out, and
+#              could not have used one: Stripe charges a renewal against an
+#              invoice, so the charge has no `payments` row and `handleRefund`
+#              answered every subscription refund `{ignored: 'unknown charge'}`.
+#              Nothing else writes to that table after a row is created, so a
+#              refund was collected revenue forever — on the ops line and on the
+#              invoice PDF, which is a document the customer can hold up.
+#
+# method:    two of the four came out of reading a hand-maintained mirror as a
+#            claim. `web-frontend/src/lib/types.ts` says it mirrors the service's
+#            domain; diffing every const array and string union in it against
+#            the backend took one script, and everything matched except the list
+#            that was not a mirror at all — a separate `CONDITIONS` array in the
+#            page. The palette that groups template variables by scope was the
+#            same shape one screen further down, which is why it is now keyed by
+#            the union too: `Record<K, string>` fails the build where a hand-kept
+#            list fails silently.
+#
+#            The other two came from asking what a payment can do and which of
+#            those tell anyone. Enumerating the outcomes — declined, refunded,
+#            disputed, bounced, settled — put four alerts against five events,
+#            and the missing one was the only outcome that is good news. Reading
+#            `billingSummary` for that answer is what surfaced the status sets:
+#            they are two lines apart and disagree.
+#
+#            Everything is proved against a deliberate break. Restoring the
+#            four-entry condition list fails all three behavioural drift tests
+#            and not the vacuity guard; dropping either announcement fails all
+#            six settlement tests; moving the receipt before `claimed` or the
+#            invoice message outside `!already` fails exactly the two replay
+#            tests; zeroing the trialing count fails the reconciliation and
+#            widening MRR to the served set fails the figure; restoring the
+#            'unknown charge' drop fails the two invoice-refund webhook tests,
+#            summing gross fails the netting test, and zeroing the PDF's refund
+#            fails both rendering tests.
+#
+#            Focus areas closed by measurement rather than by work. Backup/DR:
+#            nightly dumps with TOC verification and an entry-count floor,
+#            weekly promotion, bounded retention and a weekly restore rehearsal
+#            all run on the box; the one real gap is off-host copies, which
+#            needs object-storage credentials this round does not have and which
+#            `infra/backup/README.md` already states. API versioning: every
+#            route is `/api/v1`, nothing is deprecated, and there is nothing to
+#            version — machinery for a second version would be speculation.
+#
+# gap:       the frontend's `AutoEmailCondition` and `TemplateVarScope` are
+#            still hand-written unions; what changed is that a census reads the
+#            service's source and fails when they fall behind. That census is a
+#            regex over source, so it carries the same limitation as the route
+#            scans: a list assembled rather than written as a literal is one it
+#            cannot see. It has its own vacuity guard for the case where it
+#            finds nothing.
+#
+#            The payment receipt goes to `valuation.user_id`, the engagement's
+#            owner. `payments.created_by` records who actually opened the
+#            checkout, and where those differ — ops paying on a client's behalf
+#            — the person who was charged is not the person who is told.
+#
+#            `billingSummary` still counts `trialing` toward MRR. That is now a
+#            decision with a name on it rather than an accident, but a trial has
+#            not billed, and a firm that reads MRR as cash will read it high by
+#            the trial book.
+#
+#            One flake seen once under a full parallel run and not reproduced:
+#            `valuationLifecycle > renders a deliverable carrying the value the
+#            engine returned`. It passes alone and on a second full run; the
+#            report render is the one assertion in that file with a service
+#            offload behind it.
