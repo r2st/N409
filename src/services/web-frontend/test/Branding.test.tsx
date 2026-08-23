@@ -283,6 +283,92 @@ describe('BrandingPage', () => {
     expect(screen.getByRole('button', { name: 'Save branding' })).toBeEnabled();
   });
 
+  it('refuses an http logo before the round trip, beside the box it means', async () => {
+    const calls = mockApi();
+    renderPage();
+    await screen.findByLabelText(/^Logo URL$/);
+
+    await userEvent.type(screen.getByLabelText(/^Logo URL$/), 'http://cdn.example.com/a.svg');
+    await userEvent.click(screen.getByRole('button', { name: 'Save branding' }));
+
+    // The service rejects this too, but as "Invalid branding" above a form
+    // with eight boxes on it. An http image is also the quietest failure the
+    // page has: it saves, and then the browser blocks it as mixed content and
+    // the firm sees the default mark with nothing to explain why.
+    expect(await screen.findByText(/Logo URL must be a full https:\/\/ address\./)).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+  });
+
+  it('names the failing box to a screen reader, not just in red', async () => {
+    mockApi();
+    renderPage();
+    await screen.findByLabelText(/^Favicon URL$/);
+
+    const box = screen.getByLabelText(/^Favicon URL$/);
+    await userEvent.type(box, 'cdn.example.com/f.ico');
+    await userEvent.tab();
+
+    expect(box).toHaveAttribute('aria-invalid', 'true');
+    const describedBy = box.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)).toHaveTextContent(/must be a full https/);
+  });
+
+  it('checks the colour boxes, which are not Fields and were wired by hand', async () => {
+    const calls = mockApi();
+    renderPage();
+    const hex = await screen.findByLabelText('Accent colour');
+
+    await userEvent.clear(hex);
+    await userEvent.type(hex, 'purple');
+    await userEvent.click(screen.getByRole('button', { name: 'Save branding' }));
+
+    expect(await screen.findByText('Enter a colour as #rrggbb.')).toBeInTheDocument();
+    expect(hex).toHaveAttribute('aria-invalid', 'true');
+    expect(document.getElementById(hex.getAttribute('aria-describedby')!)).toHaveTextContent(
+      'Enter a colour as #rrggbb.',
+    );
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+  });
+
+  it('takes focus to the failing box when the save is refused', async () => {
+    mockApi();
+    renderPage();
+    await screen.findByLabelText(/^Support email$/);
+
+    await userEvent.type(screen.getByLabelText(/^Support email$/), 'not-an-address');
+    await userEvent.click(screen.getByRole('button', { name: 'Save branding' }));
+
+    expect(screen.getByLabelText(/^Support email$/)).toHaveFocus();
+  });
+
+  it('still saves a well-formed brand', async () => {
+    const calls = mockApi();
+    renderPage();
+    await screen.findByLabelText(/^Logo URL$/);
+
+    await userEvent.type(screen.getByLabelText(/^Logo URL$/), 'https://cdn.example.com/a.svg');
+    await userEvent.click(screen.getByRole('button', { name: 'Save branding' }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
+    expect(calls.find((c) => c.method === 'PATCH')!.body).toEqual({
+      logo_url: 'https://cdn.example.com/a.svg',
+    });
+  });
+
+  it('leaves every box optional — an unset brand is a valid one', async () => {
+    const calls = mockApi();
+    renderPage();
+    await screen.findByLabelText(/^Tagline/);
+
+    // Nothing here is required; emptying a box means "use the default", and a
+    // rule that read blank as missing would make the page unsavable.
+    await userEvent.type(screen.getByLabelText(/^Tagline/), 'Independent valuations');
+    await userEvent.click(screen.getByRole('button', { name: 'Save branding' }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
+  });
+
   it('explains a 403 instead of showing an empty form', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ status: 403 }, 403));
     renderPage();

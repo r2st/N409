@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
 import { useBrandingRefresh, type Branding } from '../lib/branding';
 import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+import {
+  email as emailRule,
+  httpsUrl,
+  optional,
+  pattern,
+  useFormValidation,
+  type Rules,
+} from '../lib/useFormValidation';
 
 /**
  * White-label branding — a firm shaping its own identity.
@@ -14,7 +21,12 @@ import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
  * will actually get rather than the one it typed.
  */
 
-interface BrandingSettings {
+/*
+ * A type alias rather than an interface: only an alias gets TypeScript's
+ * implicit index signature, and `useFormValidation` takes a
+ * `Record<string, unknown>` so a rule can read any field by key.
+ */
+type BrandingSettings = {
   id: string;
   name: string;
   brand_name: string | null;
@@ -26,7 +38,7 @@ interface BrandingSettings {
   favicon_url: string | null;
   support_email: string | null;
   white_label_enabled: boolean;
-}
+};
 
 interface SettingsResponse {
   settings: BrandingSettings;
@@ -79,6 +91,46 @@ const COLOR_FIELDS: { key: 'brand_color' | 'accent_color_dark'; label: string; h
   },
 ];
 
+/**
+ * Everything here is optional — an unset box means "use the default" — and
+ * everything here has a shape the service enforces. Before this the form had
+ * neither half: `noValidate` on the <form> turned off the `type="email"` on
+ * the support box, and the answer to a mistyped colour or an `http:` logo was
+ * a 422 rendered as "Invalid branding" above the form, which does not say
+ * which of eight boxes it means.
+ *
+ * The colour pattern is the same `#rrggbb` the service requires, spelled out
+ * rather than imported for the same reason `httpsUrl` is.
+ */
+const HEX = /#[0-9a-fA-F]{6}/;
+
+/** Read by the validator on the renders before the settings have loaded. */
+const EMPTY_SETTINGS: BrandingSettings = {
+  id: '',
+  name: '',
+  brand_name: null,
+  brand_tagline: null,
+  brand_color: null,
+  accent_color_dark: null,
+  logo_url: null,
+  logo_dark_url: null,
+  favicon_url: null,
+  support_email: null,
+  white_label_enabled: false,
+};
+
+const BRANDING_RULES: Rules<BrandingSettings> = {
+  logo_url: optional('logo_url', httpsUrl('logo_url', 'Logo URL')),
+  logo_dark_url: optional('logo_dark_url', httpsUrl('logo_dark_url', 'Logo URL (dark backgrounds)')),
+  favicon_url: optional('favicon_url', httpsUrl('favicon_url', 'Favicon URL')),
+  support_email: optional('support_email', emailRule('support_email', 'Support email')),
+  brand_color: optional('brand_color', pattern('brand_color', HEX, 'Enter a colour as #rrggbb.')),
+  accent_color_dark: optional(
+    'accent_color_dark',
+    pattern('accent_color_dark', HEX, 'Enter a colour as #rrggbb.'),
+  ),
+};
+
 export function BrandingPage() {
   const [data, setData] = useState<SettingsResponse | null>(null);
   const [draft, setDraft] = useState<BrandingSettings | null>(null);
@@ -104,6 +156,14 @@ export function BrandingPage() {
       );
   }, []);
 
+  /*
+   * Hoisted above the loading returns because it is a hook: it has to run on
+   * every render, including the ones where there is nothing to validate yet.
+   * `EMPTY_SETTINGS` is what it reads until the draft arrives, and every rule
+   * is `optional`, so the form it describes in that moment is a valid one.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(draft ?? EMPTY_SETTINGS, BRANDING_RULES);
+
   if (error && !data) return <ErrorNote>{error}</ErrorNote>;
   if (!data || !draft) return <Spinner />;
 
@@ -111,8 +171,7 @@ export function BrandingPage() {
     (k) => draft[k] !== data.settings[k],
   );
 
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
+  const save = handleSubmit(async () => {
     setError(null);
     setSaved(false);
     setBusy(true);
@@ -134,7 +193,7 @@ export function BrandingPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const set = (key: keyof BrandingSettings, value: string | boolean | null) => {
     setDraft({ ...draft, [key]: value });
@@ -217,12 +276,13 @@ export function BrandingPage() {
           <h2 className="overline mb-4 text-ink-400">Identity</h2>
           <div className="space-y-5">
             {TEXT_FIELDS.map((field) => (
-              <Field key={field.key} label={field.label} hint={field.help}>
+              <Field key={field.key} label={field.label} hint={field.help} error={errorFor(field.key)}>
                 <TextInput
                   type={field.key === 'support_email' ? 'email' : 'text'}
                   value={draft[field.key] ?? ''}
                   placeholder={field.key === 'brand_name' ? data.settings.name : undefined}
                   onChange={(e) => set(field.key, e.target.value)}
+                  onBlur={blurHandler(field.key)}
                 />
               </Field>
             ))}
@@ -235,37 +295,54 @@ export function BrandingPage() {
             {/* Two controls for one value, so this cannot be a `Field` — that
                 wraps a single control in a <label>, and a label owning two
                 inputs is ambiguous to a screen reader. */}
-            {COLOR_FIELDS.map((field) => (
-              <div key={field.key}>
-                <label
-                  htmlFor={`${field.key}-hex`}
-                  className="mb-1.5 block text-[0.8rem] font-semibold text-ink-700"
-                >
-                  {field.label}
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="color"
-                    aria-label={`${field.label} colour picker`}
-                    className="h-9 w-14 cursor-pointer rounded border border-paper-300 bg-surface"
-                    value={draft[field.key] ?? data.defaults.accent}
-                    onChange={(e) => set(field.key, e.target.value)}
-                  />
-                  <TextInput
-                    id={`${field.key}-hex`}
-                    value={draft[field.key] ?? ''}
-                    placeholder="#000000"
-                    onChange={(e) => set(field.key, e.target.value)}
-                  />
-                  {draft[field.key] && (
-                    <Button type="button" variant="ghost" onClick={() => set(field.key, null)}>
-                      Clear
-                    </Button>
+            {COLOR_FIELDS.map((field) => {
+              // The aria wiring `Field` would have done, done by hand: this
+              // pair cannot be a `Field` (see above), and a hex box that is
+              // wrong in red text alone is the state this round is closing
+              // everywhere else.
+              const message = errorFor(field.key);
+              const messageId = `${field.key}-hex-error`;
+              return (
+                <div key={field.key}>
+                  <label
+                    htmlFor={`${field.key}-hex`}
+                    className="mb-1.5 block text-[0.8rem] font-semibold text-ink-700"
+                  >
+                    {field.label}
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      aria-label={`${field.label} colour picker`}
+                      className="h-9 w-14 cursor-pointer rounded border border-paper-300 bg-surface"
+                      value={draft[field.key] ?? data.defaults.accent}
+                      onChange={(e) => set(field.key, e.target.value)}
+                    />
+                    <TextInput
+                      id={`${field.key}-hex`}
+                      value={draft[field.key] ?? ''}
+                      placeholder="#000000"
+                      onChange={(e) => set(field.key, e.target.value)}
+                      onBlur={blurHandler(field.key)}
+                      aria-invalid={message ? true : undefined}
+                      aria-describedby={message ? messageId : undefined}
+                    />
+                    {draft[field.key] && (
+                      <Button type="button" variant="ghost" onClick={() => set(field.key, null)}>
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                  {message ? (
+                    <p id={messageId} className="mt-1 text-xs font-medium text-red-600">
+                      {message}
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-ink-400">{field.help}</p>
                   )}
                 </div>
-                <p className="mt-1 text-xs text-ink-400">{field.help}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 

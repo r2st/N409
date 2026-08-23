@@ -32,10 +32,32 @@ function walk(dir: string): string[] {
   });
 }
 
-const FILES = walk(SRC).map((file) => ({
-  file: path.relative(SRC, file),
-  lines: readFileSync(file, 'utf8').split('\n'),
-}));
+const FILES = walk(SRC).map((file) => {
+  const text = readFileSync(file, 'utf8');
+  return { file: path.relative(SRC, file), text, lines: text.split('\n') };
+});
+
+/**
+ * The other way an error message reaches a reader: it is not announced when it
+ * appears, it is part of the *name* of the box it belongs to, and the reader
+ * hears it on arriving there.
+ *
+ * `Field` does this for the controls it wraps, and a handful of call sites do
+ * it by hand because their control cannot be a `Field` — the branding colour
+ * boxes are a colour picker and a hex box for one value, and a <label> owning
+ * two inputs is ambiguous. Those are correctly wired, and adding `role=alert`
+ * on top would announce the message twice.
+ *
+ * The test is the pairing rather than the presence: the node carries an `id`,
+ * and that same identifier is what some `aria-describedby` in the file points
+ * at. An `id` on its own proves nothing.
+ */
+function describedByInFile(text: string, context: string): boolean {
+  const declared = /\bid=\{([A-Za-z0-9_$.]+)\}/.exec(context)?.[1];
+  if (!declared) return false;
+  const pointers = text.match(/aria-describedby=\{[^}]*\}/g) ?? [];
+  return pointers.some((p) => new RegExp(`\\b${declared.replace('.', '\\.')}\\b`).test(p));
+}
 
 describe('every rendered error message reaches a screen reader', () => {
   /**
@@ -46,7 +68,7 @@ describe('every rendered error message reaches a screen reader', () => {
    */
   it('gives every red error node a live region or a described-by', () => {
     const offenders: string[] = [];
-    for (const { file, lines } of FILES) {
+    for (const { file, text, lines } of FILES) {
       // `Field` is the one place that wires an error the other way, via
       // aria-describedby on the control it belongs to.
       if (file === 'components/ui.tsx') continue;
@@ -55,6 +77,7 @@ describe('every rendered error message reaches a screen reader', () => {
         const context = lines.slice(Math.max(0, i - 3), i + 4).join('\n');
         if (/role="(alert|status)"/.test(context)) return;
         if (!/\{(\w*[Ee]rror\w*|\w*[Mm]essage\w*)\}/.test(context)) return;
+        if (describedByInFile(text, context)) return;
         offenders.push(`${file}:${i + 1}`);
       });
     }

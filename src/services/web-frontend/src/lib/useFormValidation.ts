@@ -293,6 +293,33 @@ export function pattern<V>(key: keyof V, re: RegExp, message: string): Validator
 }
 
 /**
+ * An absolute `https://` address.
+ *
+ * The three brand-image boxes and the SAML IdP entry point all hold a URL that
+ * somebody else's browser later fetches or is redirected to, and the service
+ * requires https on all four. The rule is restated here rather than shared,
+ * because the browser bundle cannot import the service — the server stays the
+ * authority and this is the early warning, which is the difference between
+ * "Logo URL must be an https:// address" beside the box and "Invalid branding"
+ * above the form after a round trip.
+ *
+ * The scheme is read off a parsed URL rather than matched as a prefix, so
+ * `http://https.example.com/logo.svg` is not mistaken for one.
+ */
+export function httpsUrl<V>(key: keyof V, label: string): Validator<V> {
+  return (values) => {
+    const value = String(values[key] ?? '').trim();
+    if (!value) return `${label} is required.`;
+    try {
+      if (new URL(value).protocol === 'https:') return null;
+    } catch {
+      return `${label} must be a full https:// address.`;
+    }
+    return `${label} must be a full https:// address.`;
+  };
+}
+
+/**
  * Applies `validator` only when the field has been filled in.
  *
  * For the boxes that are genuinely optional but must be well-formed if used —
