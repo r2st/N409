@@ -88,6 +88,8 @@ export interface PersonalDataExport {
   /** Their address on the bounce/complaint list, if it is on it. */
   email_suppression: ExportSection<Record<string, unknown>>;
   mentions: ExportSection<Record<string, unknown>>;
+  /** When they last looked at each engagement's discussion. */
+  comment_reads: ExportSection<Record<string, unknown>>;
   saved_views: ExportSection<Record<string, unknown>>;
   signatures: ExportSection<Record<string, unknown>>;
   /** Metadata only; the device token is a credential — see `withheld`. */
@@ -183,6 +185,7 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     emailsSent,
     emailSuppression,
     mentions,
+    commentReads,
     savedViews,
     signatures,
     trustedDevices,
@@ -271,6 +274,16 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
         WHERE m.user_id = $1 ORDER BY m.created_at DESC LIMIT $2`,
       [userId],
     ),
+    // "When you last looked at this engagement" is behavioural data about a
+    // person rather than about the engagement, so there is no honest way to
+    // call it out of scope. One row per engagement they can see, so it is
+    // bounded by the same thing the engagements section is.
+    section(
+      pool,
+      `SELECT valuation_id, last_read_at
+         FROM valuation_comment_reads WHERE user_id = $1 ORDER BY last_read_at DESC LIMIT $2`,
+      [userId],
+    ),
     section(
       pool,
       `SELECT id, name, query, visibility, is_default, created_at, updated_at
@@ -349,6 +362,7 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     emails_sent: emailsSent,
     email_suppression: emailSuppression,
     mentions,
+    comment_reads: commentReads,
     saved_views: savedViews,
     signatures,
     trusted_devices: trustedDevices,

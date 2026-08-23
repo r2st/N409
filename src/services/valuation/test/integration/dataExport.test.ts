@@ -254,6 +254,7 @@ describe.skipIf(!dbUp)('personal data export', () => {
       'emails_sent',
       'email_suppression',
       'mentions',
+      'comment_reads',
       'saved_views',
       'signatures',
       'trusted_devices',
