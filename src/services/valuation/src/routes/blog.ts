@@ -39,12 +39,38 @@ import { requirePrincipal } from '../plugins/auth.js';
  * once, at the boundary, so nothing downstream has to remember to escape it.
  */
 
+/**
+ * The longest a slug may be, which is not this layer's choice to make.
+ *
+ * A slug is a path parameter, and fastify's router refuses to match one longer
+ * than `maxParamLength` — 100 by default, which nothing here overrides. The
+ * writer used to allow 120, so a slug of 101 to 120 characters was accepted,
+ * stored, and listed on the index, and then answered 414 at its own URL: a
+ * post that existed everywhere except the address it was published at, on the
+ * ops preview too. Nothing in production is near it (the longest is 58), so
+ * the cap moves down to what the router can actually serve rather than the
+ * router being widened for every route to suit this one.
+ */
+const SLUG_MAX = 100;
+
+/**
+ * What a slug may be — used both to validate an author's input and to reject a
+ * reader's, which is why it is a constant rather than an inline shape.
+ *
+ * The read guard must never be stricter than the write rule, or a post that
+ * was legitimately created becomes unreachable at its own URL. Deriving both
+ * from this one schema is what makes that true by construction instead of by
+ * two regexes agreeing today. It matches the table's own
+ * `CHECK (slug ~ '^[a-z0-9-]+$')`; the length cap is {@link SLUG_MAX}.
+ */
+const Slug = z
+  .string()
+  .min(1)
+  .max(SLUG_MAX)
+  .regex(/^[a-z0-9-]+$/, 'lowercase letters, digits and dashes only');
+
 const PostBody = z.object({
-  slug: z
-    .string()
-    .min(1)
-    .max(120)
-    .regex(/^[a-z0-9-]+$/, 'lowercase letters, digits and dashes only'),
+  slug: Slug,
   title: z.string().min(1).max(200),
   excerpt: z.string().max(500).default(''),
   body_html: z.string().min(1).max(200_000),
@@ -156,6 +182,14 @@ export function registerBlogRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
 
   app.get('/api/v1/blog/posts/:slug', async (req, reply) => {
     const { slug } = req.params as { slug: string };
+    // A slug that could not name a post does not get to ask the database
+    // whether it does. This route is anonymous and caches its misses under the
+    // caller's own string, so without this every made-up path is a query and a
+    // cache entry; with it, anything that is not slug-shaped costs a regex.
+    // The same guard `/public/branding/:key` has always had, for the same
+    // reason — and a 404 rather than a 422, because the caller asked for a URL
+    // that names nothing, which is not a malformed request but a missing page.
+    if (!Slug.safeParse(slug).success) throw problems.notFound();
     const post = (await cache.getOrLoad(
       `slug:${slug}`,
       // The miss is cached too (null), so a crawler walking dead links does

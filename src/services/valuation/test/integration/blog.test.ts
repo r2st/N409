@@ -4,6 +4,14 @@ import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from 
 const dbUp = await isDbAvailable();
 
 /**
+ * The router's `maxParamLength`, which the slug cap in routes/blog.ts is set
+ * to. Restated rather than imported so this file asserts against the number
+ * itself: if the route widened its cap past what the router can serve, the
+ * tests below would still be asking the right question.
+ */
+const SLUG_MAX = 100;
+
+/**
  * The marketing blog (design §16.2, P2-20).
  *
  * The two properties worth defending are the public/private boundary — an
@@ -143,6 +151,86 @@ describe.skipIf(!dbUp)('marketing blog', () => {
 
     it('404s an unknown slug', async () => {
       expect((await publicPost('no-such-post')).statusCode).toBe(404);
+    });
+
+    /**
+     * The route is anonymous and caches its misses under the caller's own
+     * string, so a path that cannot name a post must be refused before it
+     * becomes a query and a cache entry. Counted at the pool rather than
+     * inferred from the 404, because a 404 is what an unguarded route returns
+     * too — the query is the whole thing being asserted.
+     */
+    it('refuses a slug that could not name a post without asking the database', async () => {
+      const notSlugs = [
+        'Not-Lowercase',
+        'has spaces',
+        'has_underscore',
+        'dots.and.things',
+        '../../etc/passwd',
+        'unicode-café',
+        '%2e%2e',
+      ];
+      const query = ctx.pool.query.bind(ctx.pool);
+      let queries = 0;
+      ctx.pool.query = ((...args: Parameters<typeof query>) => {
+        queries++;
+        return query(...args);
+      }) as typeof ctx.pool.query;
+      try {
+        for (const slug of notSlugs) {
+          const res = await ctx.app.inject({
+            method: 'GET',
+            url: `/api/v1/blog/posts/${encodeURIComponent(slug)}`,
+          });
+          expect(res.statusCode, slug).toBe(404);
+        }
+      } finally {
+        ctx.pool.query = query;
+      }
+      expect(queries).toBe(0);
+    });
+
+    /**
+     * Why the slug cap is 100 and not a rounder number: it is the router's
+     * `maxParamLength`, which nothing overrides, and a path parameter longer
+     * than that is refused with a 414 before any handler runs.
+     *
+     * The writer used to allow 120. A slug of 101–120 characters was therefore
+     * accepted, stored and listed on the index, and then answered 414 at its
+     * own URL — a published post reachable from everywhere except its own
+     * address. This pins both halves of the coupling: one character over is
+     * refused by the router, and the authoring endpoint will not mint one.
+     */
+    it('will not mint a slug the router cannot route', async () => {
+      const overLong = 'a'.repeat(SLUG_MAX + 1);
+      const res = await ctx.app.inject({ method: 'GET', url: `/api/v1/blog/posts/${overLong}` });
+      expect(res.statusCode).toBe(414);
+      const created = await create({ slug: overLong, title: 'Too long', body_html: '<p>x</p>' });
+      expect(created.statusCode).toBe(422);
+    });
+
+    /**
+     * The other direction, and the one that would actually hurt: a guard on the
+     * read path that is stricter than the write rule makes a post that was
+     * legitimately created unreachable at its own URL. Every slug here is one
+     * the authoring endpoint accepts, so every one of them must be readable —
+     * this is what stops the guard being tightened past what already exists.
+     */
+    it('reads back every slug shape the authoring endpoint accepts', async () => {
+      const legal = ['9', 'a'.repeat(SLUG_MAX), '-leading-dash', 'trailing-dash-', '1-2-3', 'x'];
+      for (const slug of legal) {
+        const created = await create({
+          slug,
+          title: `Post ${slug.slice(0, 20)}`,
+          body_html: '<p>body</p>',
+          published: true,
+          published_at: '2026-01-01',
+        });
+        expect(created.statusCode, `create ${slug}`).toBe(201);
+        const res = await publicPost(slug);
+        expect(res.statusCode, `read ${slug}`).toBe(200);
+        expect(res.json().post.slug).toBe(slug);
+      }
     });
   });
 

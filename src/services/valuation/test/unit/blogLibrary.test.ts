@@ -104,8 +104,12 @@ function seededPosts(): SeededPost[] {
   return posts;
 }
 
-/** Mirrors the zod schema in src/routes/blog.ts — the limits a write enforces. */
-const LIMITS = { title: 200, excerpt: 500, category: 100, keywords: 500, author: 200, slug: 120 };
+/**
+ * Mirrors the zod schema in src/routes/blog.ts — the limits a write enforces.
+ * `slug` is 100 because that is the router's `maxParamLength`: a longer one
+ * could be stored but never routed to, so the writer will not mint it.
+ */
+const LIMITS = { title: 200, excerpt: 500, category: 100, keywords: 500, author: 200, slug: 100 };
 
 describe('seeded blog library', () => {
   const posts = seededPosts();
