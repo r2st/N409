@@ -3355,3 +3355,138 @@
 #            completion and is bounded in practice by how many distinct keys can
 #            be missed at once, which the pool bounds — but unlike `entries` it
 #            has no ceiling of its own.
+
+# N409 revision
+# commit:    ab6d824
+# subject:   the 401 that ended the session in every tab but the one, and the
+#            rule about which 401s may not
+# previous:  d612be8 (R105 and R106).
+# includes:  4 commits. R103–R106 were deployed at the head of this round: the
+#            box had been serving 3ce3a53, so R106's four commits went live
+#            only after d612be8 went out and all five units verified on it.
+#
+#            63b7038 — `AuthProvider` states the contract in one line: "Any 401
+#              anywhere in the app signs the user out." Two of the ways a 401
+#              arrives never raised the event that implements it.
+#
+#              The first is the reloaded tab, which is to say most of them.
+#              `memToken` is in-memory by design — the httpOnly cookie is what
+#              carries a session across a reload, and the JWT is deliberately
+#              never written where script could read it. So after any reload
+#              `getToken()` is null, and `if (res.status === 401 && token)`
+#              skipped the sign-out in exactly the tabs that still had a
+#              session. The server-side counterpart is not hypothetical:
+#              `bumpSessionEpoch` exists to end a user's other sessions on a
+#              password change, and those other sessions are the ones that had
+#              already been reloaded. They received their 401, showed a
+#              signed-in shell in which nothing would load, and offered no way
+#              out but a manual reload. The predicate is now
+#              `hasStoredSession()` — the marker that survives a reload, which
+#              is what the guard meant all along.
+#
+#              The second is `apiDownload`, which had no 401 branch at all
+#              though both its siblings did: nineteen export and download call
+#              sites put "Request failed (401)" in a toast and left the session
+#              for the next JSON call to notice.
+#
+#            36d95f4 — the same session, ended early instead of late. The
+#              sign-out timer is a `useEffect` keyed on `status`, and replacing
+#              a token in place does not change the status: signed in before,
+#              signed in after. So `replaceToken` stored the successor the API
+#              had just minted and the timer stayed pointed at the expiry of the
+#              token that had been thrown away.
+#
+#              The two halves disagreed in a way that is easy to miss because
+#              only one is visible. `setToken` updates the persisted expiry
+#              marker, so a reload read the successor's lifetime correctly; only
+#              the open tab was wrong, and it signed itself out with nothing to
+#              distinguish it from an ordinary expiry. Every path that puts a
+#              token in hand now goes through one `storeToken`, which bumps a
+#              counter the effect depends on — the token is module state in
+#              `api.ts`, which React cannot observe, and that is why the effect
+#              was keyed on the wrong thing to begin with.
+#
+#            9a164cd — the rule the first fix rests on, which nothing stated. A
+#              401 ends the session everywhere except on the endpoints that
+#              answer 401 about some *other* credential, and both halves of that
+#              were already right by two unrelated mechanisms: `api.ts` names
+#              the credential-exchange routes, and the client-intake and auditor
+#              portals sidestep `api()` and call `fetch` directly.
+#
+#              The unstated half is the dangerous one. Routing a portal page
+#              through the shared client is the obviously consistent tidy-up,
+#              and it would sign an analyst out of their own session the moment
+#              a client's intake link expired in the same browser — those pages
+#              are opened by people who are not users of the product, in
+#              whatever browser they have. The census derives the rule instead
+#              of restating it: it reads the valuation routes for registrations
+#              with no session guard that can throw `problems.unauthorized`, and
+#              reads the exclusion set out of `api.ts` rather than keeping a
+#              copy.
+#
+#            ab6d824 — the toolchain that should have found the shape. Two of
+#              this round's three bugs are a hook whose behaviour depends on
+#              which render it is in, and `eslint-plugin-react-hooks` had never
+#              been configured: across 161 components neither `rules-of-hooks`
+#              nor `exhaustive-deps` had ever run. They found four things, which
+#              is the argument for `error` rather than `warn` — there is no
+#              backlog for a warning to hide behind.
+#
+#              One is a real rules-of-hooks violation: `ChangeEmailCard` called
+#              `useFormValidation` below `if (!user) return null`. Not reachable
+#              today, because `RequireAuth` is an ancestor and swaps the whole
+#              subtree for a redirect in the same render that clears the user —
+#              which is luck about tree shape, not a property anything states.
+#              The other three are `useCallback`s over `setVersion`, correct by
+#              a coincidence one refactor of `rowVersion.ts` away from ending.
+#
+# method:    the first defect came out of reading a comment as a claim rather
+#            than as description. "Any 401 anywhere in the app signs the user
+#            out" is a universal, and there were three call sites; checking each
+#            against it took less time than reading them for their own sake, and
+#            two failed. The second came from the same page a screen further
+#            down — having established that the session's lifecycle is held in
+#            two places that can disagree, `replaceToken` was the next thing to
+#            ask about.
+#
+#            Everything is proved against a deliberate break. Restoring the
+#            token gate fails the reloaded-tab test alone; dropping
+#            `apiDownload`'s call fails the download test alone; removing the
+#            credential-exchange exclusion fails both of the "not the end of a
+#            session" tests. Pointing an intake call at `api()` fails the
+#            census's forward direction, adding `/auth/me` to the exclusion set
+#            fails its reverse one, and emptying the set fails both. Dropping
+#            either hook rule to `warn` fails the config gate, and narrowing its
+#            glob to `.tsx` fails exactly the `rowVersion.ts` cases.
+#
+#            Four focus areas closed by measurement rather than by work.
+#            Accessibility: form controls all carry an accessible name — the
+#            61 the first scan flagged are wrapped in a `<label>` with text, and
+#            the one place a hand-rolled label holds an interactive element
+#            alongside its control uses `htmlFor` and an explicit `aria-label`.
+#            Coverage: the five per-package floors are all in CI and the
+#            frontend measures 98% statements. Monitoring: `/metrics` scrapes
+#            clean on all three Fastify units under `INTERNAL_SERVICE_TOKEN`,
+#            and seven days of journal hold no log at warn or above. Frontend
+#            polish: skeletons, error boundary, empty states, focus trap and
+#            skip link are all in place and tested.
+#
+# gap:       the hook rules cover what React can see. The bug that prompted them
+#            was module state in `api.ts`, which `exhaustive-deps` cannot see
+#            and never will — `storeToken` is a hand-rolled dependency, and so
+#            is every other bridge between module state and a hook. What the
+#            rule buys is that the hand-rolled cases are now few enough to
+#            enumerate.
+#
+#            The session-death census reads `app.<verb>('/api/v1…')` string
+#            literals in `src/routes/*.ts`, so a route assembled from a prefix,
+#            registered through a plugin, or built in another module is one it
+#            cannot see — the same limitation the param census carries, for the
+#            same reason.
+#
+#            `useValuationStream` returns without retrying on 401, 403 and 404
+#            and leaves `viewers` holding whatever presence list it last saw. On
+#            a first connect that is the empty array, so it is only visible
+#            after a stream that worked stops being allowed — a revoked
+#            permission or a deleted valuation shows a frozen list of people who
+#            are not there.
