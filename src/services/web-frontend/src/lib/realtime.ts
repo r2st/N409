@@ -59,9 +59,17 @@ export function useValuationStream(valuationId: string): ValuationStream {
     let stopped = false;
     let controller: AbortController | null = null;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    /**
+     * Whether a stream has ever carried presence for this valuation. It is what
+     * separates the first connect from a reconnect, and the two owe the thread
+     * different things — see the tick bump below.
+     */
+    let everConnected = false;
 
     const connect = async () => {
       controller = new AbortController();
+      /** A status that says not to come back, as opposed to a dropped socket. */
+      let terminal = false;
       try {
         const headers = new Headers({ accept: 'text/event-stream' });
         const token = getToken();
@@ -70,30 +78,52 @@ export function useValuationStream(valuationId: string): ValuationStream {
           headers,
           signal: controller.signal,
         });
-        if (res.status === 401 || res.status === 403 || res.status === 404) return; // no retry
-        if (!res.ok || !res.body) throw new Error(`stream failed (${res.status})`);
+        if (res.status === 401 || res.status === 403 || res.status === 404) {
+          terminal = true;
+        } else {
+          if (!res.ok || !res.body) throw new Error(`stream failed (${res.status})`);
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = '';
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const { events, rest } = parseSseBuffer(buf);
-          buf = rest;
-          for (const ev of events) {
-            if (ev.event === 'presence') {
-              setViewers(((ev.data as { viewers?: Viewer[] }).viewers ?? []) as Viewer[]);
-            } else if (ev.event === 'comment') {
-              setCommentTick((t) => t + 1);
+          // A reconnect means the gap it just closed swallowed every `comment`
+          // push the server sent while the socket was down, and the hub replays
+          // nothing on join — only presence. Bumping the tick makes consumers
+          // re-fetch the thread once, which is the only way those comments are
+          // ever seen again without a navigation. Not on the first connect:
+          // there is no gap behind it, and the thread's own initial fetch
+          // already covers that.
+          if (everConnected) setCommentTick((t) => t + 1);
+          everConnected = true;
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = '';
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const { events, rest } = parseSseBuffer(buf);
+            buf = rest;
+            for (const ev of events) {
+              if (ev.event === 'presence') {
+                setViewers(((ev.data as { viewers?: Viewer[] }).viewers ?? []) as Viewer[]);
+              } else if (ev.event === 'comment') {
+                setCommentTick((t) => t + 1);
+              }
             }
           }
         }
       } catch {
-        // aborted on unmount, or a dropped connection — retry below
+        // aborted on unmount, or a dropped connection — handled below
       }
-      if (!stopped) retry = setTimeout(() => void connect(), 3000);
+      if (stopped) return;
+      // Off the stream, for whatever reason. Presence is a fact only the open
+      // socket knows: the hub broadcasts the room on every join and leave and
+      // never replays, so a list held across a disconnect is the membership of
+      // some earlier moment, shown as if it were now. A revoked permission or a
+      // retired valuation ends the stream for good and nothing else would ever
+      // clear those badges. Clearing costs at most a few seconds of an empty
+      // list, because the reconnect's own join broadcasts the room back.
+      setViewers([]);
+      if (!terminal) retry = setTimeout(() => void connect(), 3000);
     };
 
     void connect();
