@@ -146,14 +146,45 @@ const INCOME_INDICATION = toEquity(DCF_ENTERPRISE_VALUE);
 const MARKET_ENTERPRISE_VALUE = MARKET.ltm_revenue * MARKET.multiple;
 const MARKET_INDICATION = toEquity(MARKET_ENTERPRISE_VALUE);
 
-/** The three indications and the weights the reconciliation applies to them. */
+/**
+ * The three indications, the weights the reconciliation applies to them, and
+ * the level of value each one arrives at.
+ *
+ * `level` mirrors `LEVEL_OF_VALUE_BY_APPROACH` in the engine's dloc module: a
+ * backsolve inverts the price a minority investor paid and guideline public
+ * company multiples are struck on minority trading prices, so neither produces
+ * a controlling value; a discounted cash flow does. It is here because the body
+ * *says* which level the allocation landed at, and a sample that concluded no
+ * discount for lack of control while its prose called the allocated figure
+ * "marketable, controlling" was contradicting its own Exhibit H two pages away.
+ */
 const APPROACHES = [
-  { name: 'OPM backsolve to the Series B round', indication: BACKSOLVE_INDICATION, weight: 0.6 },
-  { name: 'Market approach — guideline public companies', indication: MARKET_INDICATION, weight: 0.3 },
-  { name: 'Income approach — discounted cash flow', indication: INCOME_INDICATION, weight: 0.1 },
+  {
+    name: 'OPM backsolve to the Series B round',
+    indication: BACKSOLVE_INDICATION,
+    weight: 0.6,
+    level: 'minority',
+  },
+  {
+    name: 'Market approach — guideline public companies',
+    indication: MARKET_INDICATION,
+    weight: 0.3,
+    level: 'minority',
+  },
+  {
+    name: 'Income approach — discounted cash flow',
+    indication: INCOME_INDICATION,
+    weight: 0.1,
+    level: 'control',
+  },
 ] as const;
 
 const EQUITY_VALUE = sum(APPROACHES.map((a) => a.indication * a.weight));
+
+/** Share of the weighted equity value that arrived at a minority level. */
+const MINORITY_BASIS_WEIGHT =
+  sum(APPROACHES.filter((a) => a.level === 'minority').map((a) => a.weight)) /
+  sum(APPROACHES.map((a) => a.weight));
 
 /** Series A + Series B liquidation preference, allocated ahead of common. */
 const PREFERRED_VALUE = 12_400_000;
@@ -436,7 +467,25 @@ function sampleResults(): Record<string, unknown> {
     common_equity_value: COMMON_VALUE,
     fully_diluted_common: CAP_TABLE.reduce((n, r) => n + r.shares, 0),
     allocation: { common_per_share: MARKETABLE_PER_SHARE },
-    discounts: { dloc: DLOC, dlom: DLOM },
+    /*
+     * `dloc_detail` is what tells the body which level of value the allocation
+     * landed at (`allocated_level`), and it is stated here for the same reason
+     * every other figure in this file is derived rather than typed: the sample
+     * concluded a zero DLOC because the interest appraised is already a
+     * minority one, and without this the Discount for Lack of Control chapter
+     * opened "The allocation above produces the value of a common share on a
+     * marketable, controlling basis" — over an Exhibit H whose own row reads
+     * "Not applied — minority interest appraised".
+     */
+    discounts: {
+      dloc: DLOC,
+      dlom: DLOM,
+      dloc_detail: {
+        minority_basis_weight: MINORITY_BASIS_WEIGHT,
+        control_basis_weight: 1 - MINORITY_BASIS_WEIGHT,
+        double_counts_minority: false,
+      },
+    },
     assumptions: { ...OPM },
     // The income approach's own assumptions, in the shape `income_dcf` records
     // them. Not decoration: the body states the rate, the forecast length and

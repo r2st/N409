@@ -264,6 +264,48 @@ describe('sample report PDF — it cannot be passed off as an opinion', () => {
   });
 
   /**
+   * The level of value the sample says it concluded at, in the two places it
+   * says it.
+   *
+   * The sample takes no discount for lack of control, and its Exhibit H states
+   * the reason in the row: "Not applied — minority interest appraised". The
+   * chapter three pages earlier opened "The allocation above produces the value
+   * of a common share on a marketable, controlling basis" — because
+   * `allocated_level` reads `dloc_detail.minority_basis_weight`, the engine
+   * withheld that block whenever the DLOC was zero, and the fallback is
+   * "controlling". So the public sample asserted a controlling level of value
+   * and then declined to discount it for control, two pages apart, and a
+   * prospect reading both got a document contradicting itself on the sentence
+   * that says what was concluded.
+   *
+   * Asserted on the resolved body rather than on the constant: what is wrong
+   * with the old version is what it *printed*.
+   */
+  it('names one level of value in the body and in the exhibit that carries it', () => {
+    const plain = (html: string) =>
+      html
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const body = new Map(sampleReportContent().sections.map((s) => [s.key, plain(s.html)]));
+    const dloc = body.get('dloc')!;
+    expect(dloc).toContain('on a marketable basis');
+    expect(dloc, 'nothing was discounted for control, so nothing may be called controlling').not.toContain(
+      'marketable, controlling',
+    );
+    expect(dloc).toContain('The concluded discount is 0.0%');
+
+    // The allocation chapter names it too, off the same marker.
+    expect(body.get('allocation')).toContain('allocation indicates a marketable value');
+
+    const exhibitH = sampleReportPdfInput()
+      .sections.filter((s) => s.heading.startsWith('Exhibit H'))
+      .map((s) => plain(s.html))
+      .join(' ');
+    expect(exhibitH).toContain('Not applied — minority interest appraised');
+  });
+
+  /**
    * The forcing function that keeps the narrative from falling behind the
    * skeleton.
    *

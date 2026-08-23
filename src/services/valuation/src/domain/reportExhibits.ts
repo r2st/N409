@@ -735,6 +735,29 @@ export function levelOfValueExhibit(
           'so that a reader can weigh it rather than discover it.',
       ),
     );
+  } else if (dloc <= 0) {
+    /*
+     * No discount at all, which this schedule could not previously describe:
+     * the engine withheld the whole level-of-value block when the DLOC was
+     * zero, so neither branch above ever ran on one and both are written about
+     * a discount that was taken. Read on a zero they say a discount "of 0.0%"
+     * was applied to something, which is not a sentence about anything.
+     *
+     * It is also the common case rather than an edge: a DLOC is usually zero
+     * because the weight sat on a backsolve and guideline multiples, and this
+     * paragraph is where that reasoning belongs.
+     */
+    parts.push(
+      P(
+        minority > 0.5
+          ? `No discount for lack of control has been applied. ${formatPercent(minority, 0)} of the ` +
+              'weighted equity value arrived at a marketable minority level already, so there is no ' +
+              'step from a control level left to take against it.'
+          : `No discount for lack of control has been applied, although ${formatPercent(control, 0)} ` +
+              'of the weighted equity value arrived at a control level. The conclusion is the ' +
+              'appraiser’s and stands as taken; it is disclosed here so that a reader can weigh it.',
+      ),
+    );
   } else {
     parts.push(
       P(

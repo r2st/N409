@@ -806,6 +806,50 @@ describe('Exhibit B-1 — level of value', () => {
     expect(seen).not.toContain('has been applied to a value');
   });
 
+  it('describes a run that concluded no discount for lack of control', () => {
+    // Neither branch above is a sentence about a zero: both are written about a
+    // discount that was taken, and read on one they say a discount "of 0.0%"
+    // was applied to something. The schedule never met a zero until the engine
+    // stopped withholding the level of value on one.
+    const detail = {
+      ...LEVEL_DETAIL,
+      dloc: 0,
+      double_counts_minority: false,
+      note: undefined,
+    };
+    const seen = plain(
+      levelOfValueExhibit(
+        { ...RESULTS, discounts: { ...RESULTS.discounts, dloc: 0, dloc_detail: detail } },
+        CONTEXT,
+      )!.html,
+    );
+    expect(seen).toContain('No discount for lack of control has been applied');
+    expect(seen).toContain('75% of the weighted equity value arrived at a marketable minority level');
+    expect(seen).toContain('no step from a control level left to take');
+    expect(seen).not.toContain('of 0.0%');
+  });
+
+  it('says so plainly when none was taken against a value that stood at a control level', () => {
+    // The other side of the zero: the appraiser's conclusion either way, but a
+    // reader is owed the fact that most of the value was at a control level and
+    // no step down was taken from it.
+    const detail = {
+      ...LEVEL_DETAIL,
+      minority_basis_weight: 0.25,
+      control_basis_weight: 0.75,
+      double_counts_minority: false,
+      note: undefined,
+    };
+    const seen = plain(
+      levelOfValueExhibit(
+        { ...RESULTS, discounts: { ...RESULTS.discounts, dloc: 0, dloc_detail: detail } },
+        CONTEXT,
+      )!.html,
+    );
+    expect(seen).toContain('No discount for lack of control has been applied, although 75%');
+    expect(seen).not.toContain('no step from a control level left to take');
+  });
+
   it('prints an unfamiliar level as itself rather than as a blank cell', () => {
     const detail = { ...LEVEL_DETAIL, approach_levels: { income: 'liquidation' } };
     const seen = plain(
@@ -817,8 +861,9 @@ describe('Exhibit B-1 — level of value', () => {
 
   it('drops rather than guessing when the engine recorded no level of value', () => {
     // The PWERM path derives equity value from its own exit scenarios and has
-    // no approach weights to classify; a zero DLOC cannot double-count. Both
-    // reach here as an absent `approach_levels`.
+    // no approach weights to classify, so there is nothing to tabulate. A zero
+    // DLOC used to arrive here too and no longer does: the level of value is a
+    // property of the weighted mix, not of the discount taken against it.
     expect(levelOfValueExhibit(RESULTS, CONTEXT)).toBeNull();
     expect(levelOfValueExhibit({}, CONTEXT)).toBeNull();
     expect(levelOfValueExhibit({ discounts: { dloc_detail: {} } }, CONTEXT)).toBeNull();
@@ -1918,6 +1963,37 @@ describe('discount exhibit', () => {
     // controlling basis three lines under the note reporting that 75% of the
     // weighted value arrived at a minority level already.
     expect(seen).not.toContain('values every class on a marketable, controlling basis');
+  });
+
+  it('does not step a value from control to minority on a discount of nothing', () => {
+    /*
+     * A zero DLOC used to reach here with no `dloc_detail` at all — the engine
+     * withheld the block, reasoning that a zero discount cannot double-count —
+     * so `controlling` fell back to true and this schedule opened "Marketable,
+     * controlling value per common share", subtracted 0.0%, and labelled the
+     * unchanged figure "Marketable, minority value per common share". A level
+     * of value changed by a discount of nothing.
+     *
+     * It is also the ordinary case rather than a corner: a DLOC is usually zero
+     * *because* the weight sat on approaches that already produce a minority
+     * value, which is exactly what the detail now says.
+     */
+    const undiscounted = {
+      ...RESULTS,
+      discounts: {
+        ...(RESULTS.discounts as object),
+        dloc: 0,
+        dloc_detail: { minority_basis_weight: 0.9, control_basis_weight: 0.1 },
+      },
+    };
+    const seen = plain(discountExhibit(undiscounted, CONTEXT)!.html);
+    expect(seen).not.toContain('Marketable, controlling value');
+    expect(seen).toContain('as allocated');
+    expect(seen).toContain('90%');
+    // No step taken, so no step printed — and nothing calling the same number
+    // by a second name on the next line.
+    expect(seen).not.toContain('discount for lack of control — 0.0%');
+    expect(seen).not.toContain('Marketable, minority value per common share');
   });
 
   it('still calls the allocation controlling where the weight really is', () => {

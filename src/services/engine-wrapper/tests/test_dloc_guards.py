@@ -190,10 +190,22 @@ def test_weights_that_are_all_unusable_read_as_no_information():
     assert minority_basis_share([("income", 1.0)]) is None
 
 
-def test_level_detail_is_silent_without_weights_or_without_a_discount():
+def test_level_detail_is_silent_only_when_there_are_no_weights():
+    # Silence means "the run gives no basis for saying what level of value it
+    # landed at" — the PWERM path, or weights that read as nothing. It used to
+    # mean a zero discount too, which conflated the level of value with the
+    # discount taken against it and left the report calling a minority-based
+    # allocation "marketable, controlling" on precisely the engagements that
+    # concluded no control discount was needed.
     assert level_of_value_detail(0.2, None) is None
-    assert level_of_value_detail(0.0, {"opm_backsolve": 1.0}) is None
-    assert level_of_value_detail(-0.1, {"opm_backsolve": 1.0}) is None
+    assert level_of_value_detail(0.0, {}) is None
+
+    for dloc in (0.0, -0.1):
+        detail = level_of_value_detail(dloc, {"opm_backsolve": 1.0})
+        assert detail is not None
+        assert detail["minority_basis_weight"] == 1.0
+        # No discount, so nothing that could be counted twice.
+        assert detail["double_counts_minority"] is False
 
 
 # ── resolve_dloc ─────────────────────────────────────────────────────────────

@@ -346,13 +346,28 @@ def minority_basis_share(weight_by_approach: dict | None) -> float | None:
 def level_of_value_detail(dloc: float, weight_by_approach: dict | None) -> dict | None:
     """The level-of-value working, or None when there is nothing to say.
 
-    Nothing to say means either no weights (see `minority_basis_share`) or no
-    discount — a zero DLOC cannot double-count, and a note about it on every
-    409A that correctly applied none would be noise that trains readers to skip
-    the block that matters.
+    Nothing to say means no weights (see `minority_basis_share`). A zero DLOC
+    used to mean it too, and that was a confusion of two different questions.
+
+    *Does this discount double-count?* is about the discount, and a zero one
+    cannot — a note about it on every 409A that correctly applied none would be
+    noise that trains readers to skip the block that matters. So the flag and
+    its note stay gated on ``dloc > 0``.
+
+    *What level of value did the allocation land at?* is about the weighted mix
+    of approaches and has nothing to do with the discount. Withholding it when
+    ``dloc`` is zero withheld it exactly where it matters most: a zero DLOC is
+    most often zero *because* the weight sits on a backsolve and guideline
+    multiples, which already produce a marketable minority value. The consumers
+    read `minority_basis_weight` to decide what to call the allocated figure
+    (`allocated_level` in domain/reportFigures.ts, and Exhibit H's opening row),
+    and with the field absent they fell back to "marketable, controlling" — so
+    the report asserted a controlling level of value, applied no control
+    discount to it, and then labelled the unchanged number minority. Three
+    statements, on the same page, that cannot all be true.
     """
     share = minority_basis_share(weight_by_approach)
-    if share is None or not isinstance(weight_by_approach, dict) or dloc <= 0:
+    if share is None or not isinstance(weight_by_approach, dict):
         return None
     detail: dict = {
         "minority_basis_weight": round(share, 6),
@@ -362,7 +377,7 @@ def level_of_value_detail(dloc: float, weight_by_approach: dict | None) -> dict 
             for name, weight in weight_by_approach.items()
             if isinstance(weight, (int, float)) and not isinstance(weight, bool) and weight > 0
         },
-        "double_counts_minority": share > MINORITY_BASIS_WARN_SHARE,
+        "double_counts_minority": dloc > 0 and share > MINORITY_BASIS_WARN_SHARE,
     }
     if detail["double_counts_minority"]:
         detail["note"] = (

@@ -204,7 +204,29 @@ def test_no_weights_means_no_judgement():
 
 
 def test_a_zero_discount_cannot_double_count():
-    assert level_of_value_detail(0.0, {"opm_backsolve": 1.0}) is None
+    # The flag is about the discount, so a zero one clears it — but the level
+    # of value is about the weighted mix and is reported either way. It used to
+    # be withheld here, which is the case it matters most in: a DLOC is usually
+    # zero *because* the weight sat on approaches that already produce a
+    # minority value, and with nothing to read the report called the allocated
+    # figure "marketable, controlling".
+    detail = level_of_value_detail(0.0, {"opm_backsolve": 1.0})
+    assert detail is not None
+    assert detail["double_counts_minority"] is False
+    assert "note" not in detail
+    assert detail["minority_basis_weight"] == pytest.approx(1.0)
+    assert detail["control_basis_weight"] == pytest.approx(0.0)
+    assert detail["approach_levels"] == {"opm_backsolve": "minority"}
+
+
+def test_a_zero_discount_on_a_control_weighted_run_still_reads_control():
+    # The other direction, so the case above is not passing on the sign of the
+    # discount: with the weight on the income approach the allocation really did
+    # land at a control level, and a zero DLOC does not change that.
+    detail = level_of_value_detail(0.0, {"income": 0.8, "opm_backsolve": 0.2})
+    assert detail is not None
+    assert detail["minority_basis_weight"] == pytest.approx(0.2)
+    assert detail["double_counts_minority"] is False
 
 
 def test_a_discount_on_a_wholly_minority_basis_is_flagged():
