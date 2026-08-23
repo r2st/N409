@@ -494,6 +494,12 @@ export interface BillingSummary {
   refunded_cents: number;
   /** What we actually kept: `gross_cents` − `refunded_cents`. */
   collected_cents: number;
+  /** First day of the current UTC month, `YYYY-MM-DD` — what the two below mean. */
+  month_start: string;
+  /** {@link collected_cents} restricted to invoices paid in the current month. */
+  month_collected_cents: number;
+  /** The same figure for the month before it, so the number has a direction. */
+  prev_month_collected_cents: number;
 }
 
 /**
@@ -508,6 +514,27 @@ export interface BillingSummary {
  * The annual → monthly conversion rounds per subscription and then sums, which
  * is what the reduce it replaces did; rounding the sum instead would move the
  * total by a few cents against every figure ops has already reconciled.
+ *
+ * The month figures are the lifetime one windowed, and deliberately not a
+ * second definition of revenue. Summing `month_collected_cents` over every
+ * month equals `collected_cents` exactly, which is the property that lets the
+ * two sit on one screen — the mistake this function has already made once was
+ * printing a count and a total, side by side, over different sets.
+ *
+ * That fixes what a late refund does: it comes off the month the invoice was
+ * *paid* in, not the month the money went back, so a prior month can restate
+ * downwards. The alternative — attributing refunds to when they happened —
+ * cannot be computed from this table anyway. `refunded_cents` is a running
+ * total and `refunded_at` is only the latest one, so a partial refund in July
+ * followed by another in August would put July's share in August.
+ *
+ * The month boundary is stated in UTC rather than taken from the session's
+ * timezone. `date_trunc` alone would silently mean a different month on a
+ * database configured differently from the one this was written against — and
+ * for a revenue line, "which month" is not something to leave to a server
+ * setting. `coalesce(paid_at, issued_at)` for the same reason: a paid invoice
+ * with no `paid_at` would otherwise count toward the lifetime figure and no
+ * month at all, which is exactly the reconciliation this claims to have.
  *
  * The counts are broken out per status rather than collapsed into one, because
  * collapsing them is what made the screen unreadable: a single "active" figure
@@ -526,8 +553,24 @@ export async function billingSummary(pool: pg.Pool): Promise<BillingSummary> {
     mrr_cents: string;
     gross_cents: string;
     refunded_cents: string;
+    month_start: string;
+    month_collected_cents: string;
+    prev_month_collected_cents: string;
   }>(
-    `SELECT
+    `WITH bounds AS (
+       SELECT date_trunc('month', now() AT TIME ZONE 'UTC') AS this_month,
+              date_trunc('month', now() AT TIME ZONE 'UTC') - interval '1 month' AS prev_month
+     ),
+     -- Every paid invoice, netted once, with the instant it was collected.
+     -- Written once so the lifetime figures and the month windows cannot drift
+     -- into two definitions of the same word.
+     collected AS (
+       SELECT amount_cents,
+              least(refunded_cents, amount_cents) AS refunded,
+              coalesce(paid_at, issued_at) AT TIME ZONE 'UTC' AS at
+         FROM invoices WHERE status = 'paid'
+     )
+     SELECT
        (SELECT count(*) FROM subscriptions WHERE status = 'active')   AS active,
        (SELECT count(*) FROM subscriptions WHERE status = 'trialing') AS trialing,
        (SELECT count(*) FROM subscriptions WHERE status = 'past_due') AS past_due,
@@ -539,14 +582,21 @@ export async function billingSummary(pool: pg.Pool): Promise<BillingSummary> {
           FROM subscriptions s
           JOIN plan_limits p ON p.tier = s.plan_tier
          WHERE s.status IN (${BILLING_SQL})) AS mrr_cents,
-       (SELECT coalesce(sum(amount_cents), 0) FROM invoices WHERE status = 'paid') AS gross_cents,
+       (SELECT coalesce(sum(amount_cents), 0) FROM collected) AS gross_cents,
        -- Netted, not gross. A refund does not move a Stripe invoice's status,
        -- so 'paid' is still the right set to sum over; what changed is that the
        -- money returned comes off it. least() bounds a refund total that
        -- exceeds the invoice: Stripe's figure is authoritative and this is a
        -- revenue line, not a reconciliation.
-       (SELECT coalesce(sum(least(refunded_cents, amount_cents)), 0)
-          FROM invoices WHERE status = 'paid') AS refunded_cents`,
+       (SELECT coalesce(sum(refunded), 0) FROM collected) AS refunded_cents,
+       (SELECT to_char(this_month, 'YYYY-MM-DD') FROM bounds) AS month_start,
+       (SELECT coalesce(sum(amount_cents - refunded), 0)
+          FROM collected, bounds WHERE collected.at >= bounds.this_month)
+         AS month_collected_cents,
+       (SELECT coalesce(sum(amount_cents - refunded), 0)
+          FROM collected, bounds
+         WHERE collected.at >= bounds.prev_month AND collected.at < bounds.this_month)
+         AS prev_month_collected_cents`,
   );
   const row = rows[0];
   const active = Number(row?.active ?? 0);
@@ -563,5 +613,8 @@ export async function billingSummary(pool: pg.Pool): Promise<BillingSummary> {
     gross_cents: gross,
     refunded_cents: refunded,
     collected_cents: Math.max(0, gross - refunded),
+    month_start: row?.month_start ?? '',
+    month_collected_cents: Number(row?.month_collected_cents ?? 0),
+    prev_month_collected_cents: Number(row?.prev_month_collected_cents ?? 0),
   };
 }

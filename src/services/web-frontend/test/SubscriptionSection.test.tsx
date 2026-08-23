@@ -8,7 +8,7 @@ vi.mock('../src/lib/auth', () => ({ useAuth: () => ({ user: { roles: ['valuation
 const flags = vi.hoisted(() => ({ ops: false }));
 vi.mock('../src/lib/rbac', () => ({ isOps: () => flags.ops }));
 
-import { SubscriptionSection } from '../src/components/SubscriptionSection';
+import { monthDelta, monthLabel, SubscriptionSection } from '../src/components/SubscriptionSection';
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -289,6 +289,40 @@ describe('SubscriptionSection (feature 7)', () => {
     expect(screen.queryByText('Invoices')).not.toBeInTheDocument();
   });
 
+  /**
+   * The month label is parsed rather than passed through `new Date`. The server
+   * states this boundary in UTC, and `new Date('2026-08-01')` formatted in a
+   * local timezone prints July for every reader west of Greenwich — the
+   * off-by-a-day this codebase has already fixed twice on date columns, arrived
+   * at from the display side.
+   */
+  describe('month figures', () => {
+    it('names the month from the string, without a timezone in the middle', () => {
+      expect(monthLabel('2026-08-01')).toBe('August');
+      expect(monthLabel('2026-01-01')).toBe('January');
+      expect(monthLabel('2026-12-01')).toBe('December');
+    });
+
+    it('falls back rather than printing a wrong month for an unparseable value', () => {
+      expect(monthLabel('')).toBe('this month');
+      expect(monthLabel('August 2026')).toBe('this month');
+      expect(monthLabel('2026-13-01')).toBe('this month');
+    });
+
+    it('reads the month against the one before it, in both directions', () => {
+      expect(monthDelta(900000, 750000)).toBe('+20% vs last month');
+      expect(monthDelta(600000, 750000)).toBe('-20% vs last month');
+      // No sign on nothing: "+0%" reads as a rise that did not happen.
+      expect(monthDelta(750000, 750000)).toBe('0% vs last month');
+    });
+
+    /** "Up ∞%" is not a fact, and a first month of trading has no comparison. */
+    it('says nothing when there is nothing to compare against', () => {
+      expect(monthDelta(900000, 0)).toBeNull();
+      expect(monthDelta(0, 0)).toBeNull();
+    });
+  });
+
   describe('the ops billing dashboard', () => {
     const adminBilling = {
       summary: {
@@ -298,6 +332,13 @@ describe('SubscriptionSection (feature 7)', () => {
         served: 7,
         mrr_cents: 500000,
         collected_cents: 12000000,
+        // Distinct from MRR's $5,000.00: two metrics rendering the same string
+        // make `getByText` ambiguous and the assertion meaningless.
+        gross_cents: 12250000,
+        refunded_cents: 250000,
+        month_start: '2026-08-01',
+        month_collected_cents: 900000,
+        prev_month_collected_cents: 750000,
       },
       subscriptions: [
         {
@@ -335,6 +376,12 @@ describe('SubscriptionSection (feature 7)', () => {
       const panel = await screen.findByTestId('admin-billing');
       expect(within(panel).getByText('$5,000.00')).toBeInTheDocument();
       expect(within(panel).getByText('$120,000.00')).toBeInTheDocument();
+      // The month, named rather than called "this month", and read against the
+      // one before it — a revenue figure with no direction is one an operator
+      // has to go and find last month's copy of before it says anything.
+      expect(within(panel).getByText('Collected in August')).toBeInTheDocument();
+      expect(within(panel).getByText('$9,000.00')).toBeInTheDocument();
+      expect(within(panel).getByText('+20% vs last month')).toBeInTheDocument();
       expect(within(panel).getByText('5 / 12')).toBeInTheDocument();
       // A null limit is unlimited — "40 / null" would be worse than nothing.
       expect(within(panel).getByText('40')).toBeInTheDocument();

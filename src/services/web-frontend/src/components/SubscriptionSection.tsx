@@ -277,6 +277,9 @@ interface AdminBilling {
     gross_cents: number;
     refunded_cents: number;
     collected_cents: number;
+    month_start: string;
+    month_collected_cents: number;
+    prev_month_collected_cents: number;
   };
 }
 
@@ -334,10 +337,20 @@ function AdminBillingDashboard() {
             first (domain/payments.collectedTotals). The refunded figure is
             shown beside it rather than folded away, because "collected went
             down" is a question ops has to be able to answer. */}
-        <Metric label="Collected (net)" value={money(data.summary.collected_cents)} />
+        <Metric label="Collected (net, all time)" value={money(data.summary.collected_cents)} />
         {data.summary.refunded_cents > 0 && (
           <Metric label="Refunded" value={money(data.summary.refunded_cents)} />
         )}
+        {/* Every revenue figure on this screen used to be since-the-beginning,
+            which cannot answer the question ops opens it with. This one is the
+            same definition windowed — a refund comes off the month the invoice
+            was paid in — so it reconciles against the total beside it instead
+            of being a second answer to the same word. */}
+        <Metric
+          label={`Collected in ${monthLabel(data.summary.month_start)}`}
+          value={money(data.summary.month_collected_cents)}
+          note={monthDelta(data.summary.month_collected_cents, data.summary.prev_month_collected_cents)}
+        />
       </div>
       <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[560px] text-sm">
@@ -368,11 +381,54 @@ function AdminBillingDashboard() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, note }: { label: string; value: string; note?: string | null }) {
   return (
     <div>
       <div className="overline text-ink-400">{label}</div>
       <div className="tnum mt-1 font-display text-2xl font-semibold text-ink-900">{value}</div>
+      {note ? <div className="tnum mt-0.5 text-xs text-ink-500">{note}</div> : null}
     </div>
   );
+}
+
+/**
+ * `2026-08-01` → `August`. Parsed by hand rather than through `new Date(...)`:
+ * the server states this boundary in UTC, and a Date built from the string and
+ * formatted locally prints the month before it for every reader west of
+ * Greenwich on the first of the month — the same off-by-a-day this codebase has
+ * already fixed twice on date columns.
+ */
+export function monthLabel(monthStart: string): string {
+  const match = /^(\d{4})-(\d{2})-\d{2}$/.exec(monthStart);
+  if (!match) return 'this month';
+  const month = Number(match[2]) - 1;
+  const names = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  return names[month] ?? 'this month';
+}
+
+/**
+ * The month against the one before it. A revenue figure with no direction is a
+ * number an operator has to go and find last month's copy of to read at all.
+ *
+ * Nothing is printed when the previous month collected nothing: "up ∞%" is not
+ * a fact, and a first month of trading has nothing to compare against.
+ */
+export function monthDelta(current: number, previous: number): string | null {
+  if (previous <= 0) return null;
+  const change = Math.round(((current - previous) / previous) * 100);
+  const sign = change > 0 ? '+' : '';
+  return `${sign}${change}% vs last month`;
 }

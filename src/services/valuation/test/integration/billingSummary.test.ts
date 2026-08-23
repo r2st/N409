@@ -145,6 +145,157 @@ describe.skipIf(!dbUp)('ops billing summary', () => {
     expect(await recordInvoiceRefund(ctx.pool, 'in_not_ours', 5_000)).toBeNull();
   });
 
+  /**
+   * "How did we do this month" — the question the screen could not answer,
+   * because every revenue figure on it was since-the-beginning.
+   *
+   * Asserted as deltas rather than absolutes: the summary aggregates the whole
+   * table and the tests above have already put invoices in it. What each of
+   * these states is which window moved and by how much, which is the whole of
+   * what the figures claim.
+   */
+  describe('revenue by month', () => {
+    /** UTC, matching the boundary the summary states — see billingSummary. */
+    const monthStart = (monthsAgo: number): Date => {
+      const now = new Date();
+      return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthsAgo, 1));
+    };
+    const daysAfter = (from: Date, days: number) => new Date(from.getTime() + days * 24 * 60 * 60 * 1000);
+
+    let seq = 0;
+    const paidInvoice = async (paidAt: Date | null, amountCents: number): Promise<string> => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const stripeId = `in_month_${(seq += 1)}_${Date.now()}`;
+      await ctx.pool.query(
+        `INSERT INTO invoices (id, user_id, number, amount_cents, currency, status,
+                               issued_at, paid_at, line_items, stripe_invoice_id)
+         VALUES ($1, $2, $3, $4, 'usd', 'paid', $5, $6, '[]', $7)`,
+        [
+          newUlid(),
+          user.id,
+          `INV-MONTH-${seq}-${Date.now()}`,
+          amountCents,
+          // issued_at doubles as the fallback the summary coalesces to, so it
+          // is deliberately set to the same instant except where a test is
+          // about the fallback itself.
+          paidAt ?? monthStart(0),
+          paidAt,
+          stripeId,
+        ],
+      );
+      return stripeId;
+    };
+
+    it('names the window it is reporting: the first of the current UTC month', async () => {
+      const summary = await billingSummary(ctx.pool);
+      expect(summary.month_start).toBe(monthStart(0).toISOString().slice(0, 10));
+    });
+
+    it('puts money in the month it was collected in, and only that month', async () => {
+      const before = await billingSummary(ctx.pool);
+      await paidInvoice(daysAfter(monthStart(0), 0.5), 30_000);
+      const afterThis = await billingSummary(ctx.pool);
+      expect(afterThis.month_collected_cents).toBe(before.month_collected_cents + 30_000);
+      expect(afterThis.prev_month_collected_cents).toBe(before.prev_month_collected_cents);
+
+      await paidInvoice(daysAfter(monthStart(1), 3), 12_000);
+      const afterPrev = await billingSummary(ctx.pool);
+      expect(afterPrev.prev_month_collected_cents).toBe(before.prev_month_collected_cents + 12_000);
+      expect(afterPrev.month_collected_cents).toBe(afterThis.month_collected_cents);
+    });
+
+    /**
+     * A window is a window. Older money is still revenue and still in the
+     * lifetime figure — it is simply not in either of the two months on screen,
+     * which is what makes "this month" mean anything.
+     */
+    it('leaves older money out of both windows without losing it from collected', async () => {
+      const before = await billingSummary(ctx.pool);
+      await paidInvoice(daysAfter(monthStart(4), 2), 77_000);
+      const after = await billingSummary(ctx.pool);
+      expect(after.month_collected_cents).toBe(before.month_collected_cents);
+      expect(after.prev_month_collected_cents).toBe(before.prev_month_collected_cents);
+      expect(after.collected_cents).toBe(before.collected_cents + 77_000);
+    });
+
+    /**
+     * The boundary itself. An invoice paid at the first instant of the month
+     * belongs to it; the month before ends strictly before that instant, so
+     * nothing is counted twice and nothing falls between them.
+     */
+    it('counts the month-start instant in the new month, not the old one', async () => {
+      const before = await billingSummary(ctx.pool);
+      await paidInvoice(monthStart(0), 5_000);
+      await paidInvoice(new Date(monthStart(0).getTime() - 1), 7_000);
+      const after = await billingSummary(ctx.pool);
+      expect(after.month_collected_cents).toBe(before.month_collected_cents + 5_000);
+      expect(after.prev_month_collected_cents).toBe(before.prev_month_collected_cents + 7_000);
+    });
+
+    /**
+     * The month figures are the lifetime one windowed, not a second definition
+     * of revenue — which is the property that lets them sit on one screen. A
+     * refund therefore comes off the month the invoice was *paid* in, so a
+     * prior month restates downwards rather than this month absorbing it.
+     */
+    it('nets a refund out of the month the invoice was paid in', async () => {
+      const thisMonth = await paidInvoice(daysAfter(monthStart(0), 0.25), 50_000);
+      const lastMonth = await paidInvoice(daysAfter(monthStart(1), 5), 40_000);
+      const before = await billingSummary(ctx.pool);
+
+      await recordInvoiceRefund(ctx.pool, thisMonth, 20_000);
+      const afterThis = await billingSummary(ctx.pool);
+      expect(afterThis.month_collected_cents).toBe(before.month_collected_cents - 20_000);
+      expect(afterThis.prev_month_collected_cents).toBe(before.prev_month_collected_cents);
+      expect(afterThis.collected_cents).toBe(before.collected_cents - 20_000);
+
+      await recordInvoiceRefund(ctx.pool, lastMonth, 15_000);
+      const afterPrev = await billingSummary(ctx.pool);
+      expect(afterPrev.prev_month_collected_cents).toBe(before.prev_month_collected_cents - 15_000);
+      expect(afterPrev.month_collected_cents).toBe(afterThis.month_collected_cents);
+      expect(afterPrev.collected_cents).toBe(before.collected_cents - 35_000);
+    });
+
+    /**
+     * The gross line never moves, in a window or out of it: it is what was
+     * billed, and an auditor reading the invoice sequence has to be able to
+     * find it.
+     */
+    it('leaves gross alone when a windowed figure comes down', async () => {
+      const invoice = await paidInvoice(daysAfter(monthStart(0), 0.75), 9_000);
+      const before = await billingSummary(ctx.pool);
+      await recordInvoiceRefund(ctx.pool, invoice, 9_000);
+      const after = await billingSummary(ctx.pool);
+      expect(after.gross_cents).toBe(before.gross_cents);
+      expect(after.month_collected_cents).toBe(before.month_collected_cents - 9_000);
+    });
+
+    /**
+     * A paid invoice with no `paid_at` would otherwise be in the lifetime
+     * figure and in no month at all — a row that reconciles against nothing.
+     * The summary falls back to `issued_at`, which is NOT NULL.
+     */
+    it('falls back to issued_at, so no paid invoice is in the lifetime total and no month', async () => {
+      const before = await billingSummary(ctx.pool);
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await ctx.pool.query(
+        `INSERT INTO invoices (id, user_id, number, amount_cents, currency, status,
+                               issued_at, paid_at, line_items, stripe_invoice_id)
+         VALUES ($1, $2, $3, 6500, 'usd', 'paid', $4, NULL, '[]', $5)`,
+        [
+          newUlid(),
+          user.id,
+          `INV-NOPAIDAT-${Date.now()}`,
+          daysAfter(monthStart(0), 0.1),
+          `in_no_paid_at_${Date.now()}`,
+        ],
+      );
+      const after = await billingSummary(ctx.pool);
+      expect(after.collected_cents).toBe(before.collected_cents + 6_500);
+      expect(after.month_collected_cents).toBe(before.month_collected_cents + 6_500);
+    });
+  });
+
   it('ignores a cancelled subscription in every figure', async () => {
     const before = await billingSummary(ctx.pool);
     await subscriber('canceled', 'annual_retainer');
