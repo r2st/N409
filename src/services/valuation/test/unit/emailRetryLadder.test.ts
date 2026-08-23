@@ -7,6 +7,7 @@ import {
   emailRetryWindowMs,
 } from '../../src/domain/emailRetry.js';
 import { WEBHOOK_RETRY_BACKOFF_MINUTES } from '../../src/domain/partnerWebhooks.js';
+import { PIPELINE_RETRY_BACKOFF_MINUTES } from '../../src/domain/pipelineRetry.js';
 
 /**
  * The outbox's retry schedule, as a shape rather than as five numbers.
@@ -56,11 +57,15 @@ describe('email retry ladder', () => {
     }
   });
 
-  it('agrees with the webhook ladder, which answers the same question', () => {
-    // Two ladders for the same kind of upstream would be two things to reason
-    // about during an incident with no argument for either. If one is ever
-    // deliberately re-tuned, this is the line that says so out loud.
+  it('agrees with the webhook and pipeline ladders, which answer the same question', () => {
+    // Three ladders for the same kind of upstream would be three things to
+    // reason about during an incident with no argument for any of them. All
+    // three files say they are deliberately identical; until this line, only
+    // two of them were held to it, and the third could drift while still
+    // claiming otherwise in its own docstring. If one is ever deliberately
+    // re-tuned, this is the line that says so out loud.
     expect(EMAIL_RETRY_BACKOFF_MINUTES).toEqual(WEBHOOK_RETRY_BACKOFF_MINUTES);
+    expect(PIPELINE_RETRY_BACKOFF_MINUTES).toEqual(WEBHOOK_RETRY_BACKOFF_MINUTES);
   });
 
   describe('the jitter window', () => {

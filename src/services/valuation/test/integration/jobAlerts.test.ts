@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { runJobAlertScan } from '../../src/hooks/jobAlerts.js';
+import { JOB_SOURCES } from '../../src/domain/jobQueue.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -71,12 +72,18 @@ describe.skipIf(!dbUp)('job queue alerts', () => {
   });
 
   it('ships a threshold for every queue', async () => {
+    // Read from JOB_SOURCES rather than from a copy of it written here.
+    //
+    // `job_alert_rules.source` is free text with no foreign key, `evaluateJobAlerts`
+    // skips a queue with no rule *silently*, and 0120's seed is a literal list.
+    // So a sixth queue joining the union would ship monitored by nothing — and a
+    // guard holding its own copy of the five would have gone on passing, which is
+    // the vacuous shape this codebase has been bitten by before. Comparing
+    // against the vocabulary itself is what makes this line able to fail.
     const res = await alerts();
     expect(res.statusCode).toBe(200);
     const rules = res.json().rules as Array<{ source: string; enabled: boolean }>;
-    expect(rules.map((r) => r.source).sort()).toEqual(
-      ['ai_job', 'calculation', 'email', 'pipeline_run', 'webhook_delivery'].sort(),
-    );
+    expect(rules.map((r) => r.source).sort()).toEqual([...JOB_SOURCES].sort());
     expect(rules.every((r) => r.enabled)).toBe(true);
   });
 
