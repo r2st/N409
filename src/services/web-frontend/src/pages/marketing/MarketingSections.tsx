@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { DEMO_VIDEO_TITLE, PARTNER_LOGOS, PROOF_POINTS, TESTIMONIALS } from '../../lib/marketing';
 import { siteConfig } from '../../lib/siteConfig';
-import { tabListKeyDown, tabProps } from '../../lib/tablist';
+import { tabListKeyDown, tabProps } from '../../lib/rovingFocus';
 
 /**
  * Shared marketing sections (409.ai gaps #20–#22): the testimonial carousel,

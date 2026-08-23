@@ -15,7 +15,7 @@ import type {
   UserOption,
   ValuationList,
 } from '../lib/types';
-import { tabListKeyDown, tabProps } from '../lib/tablist';
+import { tabListKeyDown, tabProps } from '../lib/rovingFocus';
 import {
   Button,
   EmptyState,

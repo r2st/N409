@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { getThemeChoice, setThemeChoice, subscribeTheme } from '../lib/theme';
 import type { ThemeChoice } from '../lib/theme';
+import { radioGroupKeyDown, radioProps } from '../lib/rovingFocus';
 
 const OPTIONS: { value: ThemeChoice; label: string; icon: ReactNode }[] = [
   {
@@ -60,6 +61,7 @@ export function ThemeToggle({ variant = 'surface' }: { variant?: 'chrome' | 'sur
     <div
       role="radiogroup"
       aria-label="Colour theme"
+      onKeyDown={radioGroupKeyDown}
       className={`flex items-center gap-0.5 rounded-md border p-0.5 ${
         onChrome ? 'border-chrome-700 bg-chrome-800/40' : 'border-ink-200 bg-paper-100'
       }`}
@@ -70,8 +72,7 @@ export function ThemeToggle({ variant = 'surface' }: { variant?: 'chrome' | 'sur
           <button
             key={option.value}
             type="button"
-            role="radio"
-            aria-checked={active}
+            {...radioProps(active)}
             title={`${option.label} theme`}
             onClick={() => choose(option.value)}
             className={`touch:min-h-11 flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded px-2 py-1 text-xs font-semibold transition-colors ${
