@@ -103,14 +103,31 @@ export class MigrationDriftError extends Error {
   }
 }
 
-/** Backend pids holding the migration advisory lock right now, best-effort. */
-async function lockHolders(client: pg.PoolClient): Promise<number[]> {
+/** Anything that can run a query — a Pool, a PoolClient, or a Client. */
+type Queryable = Pick<pg.PoolClient, 'query'>;
+
+/**
+ * Backend pids holding *this database's* migration advisory lock, best-effort.
+ *
+ * Every filter in the predicate is load-bearing, and the one that is easy to
+ * omit is `database`. `pg_locks` is a cluster-wide view, while an advisory lock
+ * is per-database — two databases on one server can hold LOCK_KEY at the same
+ * moment, quite correctly, because they are migrating separate schemas. A query
+ * without the database filter answers "is anyone anywhere holding this key",
+ * which is not a question anybody here is asking: it turns a boot-log line into
+ * a pid an operator can go and kill in the wrong database.
+ *
+ * Exported because the test suite has to ask this same question, and asking it
+ * in its own words is how it drifted: see `migrationRunner.test.ts`.
+ */
+export async function migrationLockHolders(db: Queryable): Promise<number[]> {
   try {
     // `pg_advisory_lock(bigint)` splits its key across classid/objid: the high
     // 32 bits and the low 32. LOCK_KEY fits in 32 bits, so classid is 0.
-    const { rows } = await client.query<{ pid: number }>(
+    const { rows } = await db.query<{ pid: number }>(
       `SELECT pid FROM pg_locks
-        WHERE locktype = 'advisory' AND classid = 0 AND objid = $1 AND granted`,
+        WHERE locktype = 'advisory' AND classid = 0 AND objid = $1 AND granted
+          AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
       [LOCK_KEY],
     );
     return rows.map((r) => r.pid);
@@ -150,11 +167,11 @@ async function acquireMigrationLock(
       return;
     }
     if (now() >= deadline) {
-      throw new MigrationLockTimeoutError(opts.timeoutMs, await lockHolders(client));
+      throw new MigrationLockTimeoutError(opts.timeoutMs, await migrationLockHolders(client));
     }
     if (!announced) {
       announced = true;
-      const holders = await lockHolders(client);
+      const holders = await migrationLockHolders(client);
       opts.log(
         `waiting for the migration lock (held by pid ${holders.join(', ') || 'unknown'}); ` +
           `giving up after ${opts.timeoutMs}ms`,

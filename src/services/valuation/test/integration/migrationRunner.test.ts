@@ -11,6 +11,7 @@ import {
   isEmptyMigration,
   migrate,
   migrationChecksum,
+  migrationLockHolders,
 } from '../../src/db/migrate.js';
 import { isDbAvailable } from './helpers.js';
 
@@ -135,10 +136,58 @@ describe.skipIf(!dbUp)('migration runner', () => {
     await write('0001_first.sql', 'INSERT INTO nope VALUES (1);');
     await expect(migrate(pool, { dir })).rejects.toThrow();
 
-    const { rows } = await pool.query<{ n: number }>(
-      "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory'",
-    );
-    expect(rows[0]?.n).toBe(0);
+    expect(await migrationLockHolders(pool)).toEqual([]);
+  });
+
+  /**
+   * The scoping the assertion above depends on, asserted rather than assumed.
+   *
+   * This used to read `count(*) FROM pg_locks WHERE locktype = 'advisory'` — no
+   * key filter and, the part that bit, no database filter. `pg_locks` is
+   * cluster-wide and an advisory lock is per-database, so the count included
+   * every other database on the same server. Each file in this suite migrates
+   * its own throwaway database and they run in parallel, so the test failed
+   * whenever a sibling happened to be inside `migrate()` at that instant: a red
+   * run that said "the runner leaked its lock" when the runner had done nothing
+   * wrong. Passing it in isolation is what kept it alive.
+   *
+   * So the leak check now goes through `migrationLockHolders` — the same
+   * predicate the boot log names a pid from — and this test holds LOCK_KEY from
+   * a second database in the same cluster to prove that predicate cannot see
+   * it. Without the `database` filter this fails; with it, the flake cannot
+   * come back in either file.
+   */
+  it('does not see the same key held in another database of the same cluster', async () => {
+    const otherName = `n409_migrunner_other_${randomBytes(6).toString('hex')}`;
+    const admin = new pg.Client({ connectionString: BASE_URL });
+    await admin.connect();
+    await admin.query(`CREATE DATABASE ${otherName}`);
+    await admin.end();
+
+    const otherUrl = new URL(BASE_URL);
+    otherUrl.pathname = `/${otherName}`;
+    const other = new pg.Client({ connectionString: otherUrl.toString() });
+    try {
+      await other.connect();
+      // The key `migrate` takes, held from a database this pool is not on.
+      await other.query('SELECT pg_advisory_lock($1)', [0x6e343039]);
+
+      // Visible cluster-wide — otherwise the rest of this proves nothing.
+      const { rows } = await pool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND objid = $1 AND granted",
+        [0x6e343039],
+      );
+      expect(rows[0]?.n).toBeGreaterThan(0);
+
+      // …and invisible to the predicate, which is the point.
+      expect(await migrationLockHolders(pool)).toEqual([]);
+    } finally {
+      await other.end().catch(() => {});
+      const drop = new pg.Client({ connectionString: BASE_URL });
+      await drop.connect();
+      await drop.query(`DROP DATABASE IF EXISTS ${otherName} WITH (FORCE)`);
+      await drop.end();
+    }
   });
 
   it('serializes concurrent runners so a file is applied exactly once', async () => {
