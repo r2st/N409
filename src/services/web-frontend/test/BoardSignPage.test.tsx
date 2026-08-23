@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { BoardSignPage } from '../src/pages/BoardSignPage';
+import { formatAmount } from '../src/lib/format';
 
 /**
  * The one screen an outsider reaches. The signing token is a bearer credential
@@ -113,6 +114,7 @@ describe('BoardSignPage', () => {
 
     await user.type(await screen.findByLabelText('Comment (optional)'), 'Adopted as presented.');
     await user.click(screen.getByRole('button', { name: 'Sign & adopt' }));
+    await user.click(await screen.findByRole('button', { name: 'Confirm signature' }));
 
     await waitFor(() => expect(screen.getByText(/your signature is recorded/i)).toBeInTheDocument());
     const sign = calls.find((c) => c.url.includes('/board/sign'))!;
@@ -127,6 +129,7 @@ describe('BoardSignPage', () => {
     render(<BoardSignPage />);
 
     await user.click(await screen.findByRole('button', { name: 'Sign & adopt' }));
+    await user.click(await screen.findByRole('button', { name: 'Confirm signature' }));
 
     await waitFor(() => expect(calls.some((c) => c.url.includes('/board/sign'))).toBe(true));
     expect(calls.find((c) => c.url.includes('/board/sign'))!.body).toEqual({
@@ -142,6 +145,7 @@ describe('BoardSignPage', () => {
     render(<BoardSignPage />);
 
     await user.click(await screen.findByRole('button', { name: 'Reject' }));
+    await user.click(await screen.findByRole('button', { name: 'Record rejection' }));
 
     await waitFor(() => expect(screen.getByText('Your response is recorded.')).toBeInTheDocument());
     expect(screen.queryByText(/your signature is recorded/i)).not.toBeInTheDocument();
@@ -166,11 +170,14 @@ describe('BoardSignPage', () => {
     render(<BoardSignPage />);
 
     await user.click(await screen.findByRole('button', { name: 'Sign & adopt' }));
+    await user.click(await screen.findByRole('button', { name: 'Confirm signature' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'This resolution has already been superseded.',
     );
-    // A failed write must leave the signer able to retry.
+    // A failed write must leave the signer able to retry — and the error has to
+    // be where they can read it, not behind the dialog that asked them.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign & adopt' })).toBeEnabled();
     expect(screen.getByText('Unanimous Written Consent')).toBeInTheDocument();
   });
@@ -194,5 +201,136 @@ describe('BoardSignPage', () => {
     mockApi({ resolution: () => problem(500, 'boom') });
     render(<BoardSignPage />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the resolution.');
+  });
+});
+
+/**
+ * The confirmation between the click and the legal act.
+ *
+ * `POST /board/sign` refuses anything from a member who is not `pending`, and
+ * the firm's remedy does not reach it: re-sending the link re-mints the token
+ * and leaves the status alone, so the fresh link 409s on arrival. The only way
+ * back is deleting the member and re-adding them. A director who meant Sign and
+ * hit the button beside it had rejected their company's 409A resolution,
+ * permanently, in one click.
+ */
+describe('BoardSignPage — confirming an irreversible decision', () => {
+  /**
+   * Whitespace normalised on both sides. A locale that puts a no-break space
+   * between the figure and the currency symbol renders one the DOM keeps and a
+   * plain `toHaveTextContent` string will not match.
+   */
+  const norm = (text: string | null) => (text ?? '').replace(/\s+/g, ' ');
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    setHash(`#token=${TOKEN}`);
+  });
+  afterEach(() => window.history.replaceState(null, '', '/'));
+
+  it('records nothing on the first click', async () => {
+    const calls = mockApi({});
+    const user = userEvent.setup();
+    render(<BoardSignPage />);
+
+    await user.click(await screen.findByRole('button', { name: 'Reject' }));
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(calls.some((c) => c.url.includes('/board/sign'))).toBe(false);
+  });
+
+  it('lets the member back out with nothing recorded', async () => {
+    const calls = mockApi({});
+    const user = userEvent.setup();
+    render(<BoardSignPage />);
+
+    await user.click(await screen.findByRole('button', { name: 'Reject' }));
+    await user.click(screen.getByRole('button', { name: 'Go back' }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(calls.some((c) => c.url.includes('/board/sign'))).toBe(false);
+    // And the resolution is still there to decide on.
+    expect(screen.getByRole('button', { name: 'Sign & adopt' })).toBeEnabled();
+    expect(screen.getByText('Unanimous Written Consent')).toBeInTheDocument();
+  });
+
+  /**
+   * The figure and the date were on the wire the whole time — `fmv_conclusion`,
+   * `currency` and `valuation_date` were in the payload and read by nothing.
+   * The prose carries them too, inside a box that scrolls; the confirmation is
+   * where they are unmissable.
+   */
+  it('names what is being adopted, in money and as of when', async () => {
+    mockApi({});
+    const user = userEvent.setup();
+    render(<BoardSignPage />);
+
+    await user.click(await screen.findByRole('button', { name: 'Sign & adopt' }));
+
+    const dialog = screen.getByRole('dialog');
+    // Built through the formatter rather than written out: the literal `$1.42`
+    // is an assertion about the machine's locale, and the same figure reads
+    // `1,42 $` under a German one — with a no-break space in it, which is why
+    // both sides go through `norm`. The guard is that it is not the
+    // unreadable-amount placeholder, so the check cannot pass vacuously.
+    const money = formatAmount('1.4200', 'USD');
+    expect(money).not.toBe('—');
+    expect(norm(dialog.textContent)).toContain(`${norm(money)} per share`);
+    expect(dialog).toHaveTextContent(/as of .*2026/);
+    expect(dialog).toHaveTextContent('cannot be changed afterwards');
+    // Recorded against a named person, which is what makes it a signature.
+    expect(dialog).toHaveTextContent('Dana Director');
+    expect(dialog).toHaveTextContent('dana@board.example');
+  });
+
+  /** A sub-dollar common-share price is the ordinary case for a 409A. */
+  it('does not round a fraction-of-a-cent share price away', async () => {
+    mockApi({
+      resolution: () =>
+        jsonResponse({
+          ...RESOLUTION,
+          resolution: { ...RESOLUTION.resolution, fmv_conclusion: '0.0001' },
+        }),
+    });
+    const user = userEvent.setup();
+    render(<BoardSignPage />);
+
+    await user.click(await screen.findByRole('button', { name: 'Sign & adopt' }));
+
+    const money = formatAmount('0.0001', 'USD');
+    expect(money).toMatch(/0[.,]0001/);
+    expect(norm(screen.getByRole('dialog').textContent)).toContain(`${norm(money)} per share`);
+  });
+
+  it('shows the comment that will be recorded alongside the decision', async () => {
+    mockApi({});
+    const user = userEvent.setup();
+    render(<BoardSignPage />);
+
+    await user.type(await screen.findByLabelText('Comment (optional)'), 'Abstaining on process grounds.');
+    await user.click(screen.getByRole('button', { name: 'Reject' }));
+
+    expect(screen.getByRole('dialog')).toHaveTextContent('Abstaining on process grounds.');
+  });
+
+  it('asks a different question for each decision', async () => {
+    mockApi({});
+    const user = userEvent.setup();
+    render(<BoardSignPage />);
+
+    await user.click(await screen.findByRole('button', { name: 'Reject' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('Reject this resolution?');
+    await user.click(screen.getByRole('button', { name: 'Go back' }));
+
+    await user.click(screen.getByRole('button', { name: 'Sign & adopt' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('Sign this resolution?');
+  });
+
+  /** Said before the click too, not only after it. */
+  it('warns on the page itself that a decision is final', async () => {
+    mockApi({});
+    render(<BoardSignPage />);
+
+    expect(await screen.findByText(/recorded against your name and cannot be changed/i)).toBeInTheDocument();
   });
 });
