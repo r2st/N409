@@ -465,6 +465,90 @@ describe('reviewing the drafted report', () => {
         ).toContain('qualifications');
       }
     });
+
+    /**
+     * And the rest of what those fourteen deliverables are made of.
+     *
+     * The case above was true and covered almost nothing, which is the harder
+     * kind of gap to see: `qualifications` reaches every kind from
+     * `CLOSING_SECTIONS`, so it passed while being the *only* chapter of the
+     * fourteen specialty skeletons the check could refuse. Those outlines are
+     * mostly guidance — a specialist works through them — and none of them
+     * declared it, so a QSBS opinion could publish with "State the per-issuer
+     * limitation…" under Gain Exclusion Cap and a fund report with "State the
+     * concluded gross asset value…" under Net Asset Value.
+     *
+     * Asserted against the skeleton's own `authored` set rather than a list
+     * repeated here: which chapters are guidance is a judgement pinned by
+     * `reportAuthoredCensus.test.ts`, and what this test is for is that the
+     * judgement reaches the gate. A kind whose flags all went missing would
+     * pass a literal list nobody updated; it cannot pass this.
+     */
+    it('names every unwritten chapter of a pristine report, for all fifteen kinds', () => {
+      for (const kind of VALUATION_KINDS) {
+        const skeleton = templateForKind(kind);
+        const drafted = instantiateTemplate(skeleton, {
+          company_name: 'Northwind Robotics, Inc.',
+          kind,
+          valuation_ref: 'N-1001',
+          date: '2026-06-30',
+          currency: 'USD',
+        });
+        const declared = skeleton.sections
+          .filter((s) => s.authored === true)
+          .map((s) => s.key)
+          .sort();
+        expect(declared.length, `${kind} declares no guidance chapter at all`).toBeGreaterThan(1);
+        expect(
+          reviewReport({ content: drafted, exhibitHeadings: [], template: skeleton })
+            .findings.filter((f) => f.check === 'unedited_template_guidance')
+            .map((f) => f.section_key)
+            .sort(),
+          `${kind} did not refuse every chapter it declares as guidance`,
+        ).toEqual(declared);
+      }
+    });
+
+    /**
+     * One kind end to end, so the rule above is legible as a document defect
+     * rather than as a set comparison: a CSOP report whose Conclusion is still
+     * the instruction is refused, and the same report with a conclusion written
+     * in it is not.
+     */
+    it('refuses a CSOP conclusion that is still the instruction, and passes one written', () => {
+      const skeleton = templateForKind('csop');
+      const draft = () =>
+        instantiateTemplate(skeleton, {
+          company_name: 'Northwind Robotics, Inc.',
+          kind: 'csop',
+          valuation_ref: 'N-1001',
+          date: '2026-06-30',
+          currency: 'GBP',
+        });
+
+      const pristineCsop = draft();
+      expect(
+        pristineCsop.sections.find((s) => s.key === 'conclusion')!.html,
+        'the skeleton no longer carries the instruction this case is about',
+      ).toContain('State the concluded market value per share');
+      const refused = reviewReport({
+        content: pristineCsop,
+        exhibitHeadings: [],
+        template: skeleton,
+      }).findings.find((f) => f.check === 'unedited_template_guidance' && f.section_key === 'conclusion');
+      expect(refused?.severity).toBe('fail');
+      expect(refused?.heading).toBe('Conclusion');
+
+      const written = draft();
+      written.sections.find((s) => s.key === 'conclusion')!.html =
+        '<p>We conclude an unrestricted market value of £2.41 per ordinary share at the valuation date, ' +
+        'which we propose for agreement with Shares and Assets Valuation.</p>';
+      expect(
+        reviewReport({ content: written, exhibitHeadings: [], template: skeleton })
+          .findings.filter((f) => f.check === 'unedited_template_guidance')
+          .map((f) => f.section_key),
+      ).not.toContain('conclusion');
+    });
   });
 
   it('fails the whole review when any finding is a dead reference', () => {

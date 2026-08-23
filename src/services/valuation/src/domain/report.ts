@@ -1168,16 +1168,19 @@ const TEMPLATE_GENERIC: ReportTemplate = {
     {
       key: 'company_overview',
       heading: 'Company Overview',
+      authored: true,
       html: P('Describe the business of {{company_name}}.'),
     },
     {
       key: 'analysis',
       heading: 'Valuation Analysis',
+      authored: true,
       html: P('Describe the methodology, inputs and analysis supporting the conclusion.'),
     },
     {
       key: 'conclusion',
       heading: 'Conclusion of Value',
+      authored: true,
       html: P('State the concluded value and its basis.'),
     },
   ],
@@ -1196,6 +1199,27 @@ const TEMPLATE_GENERIC: ReportTemplate = {
  * do 'fund' and 'debt' — the two measurement kinds, whose schedules come from
  * their own tables rather than from a calculation (domain/navExhibits.ts).
  * Every kind now has a skeleton; nothing falls through to TEMPLATE_GENERIC.
+ *
+ * ## `authored`, and why it took until R102 to appear here
+ *
+ * `authored` marks a chapter whose text is an instruction to whoever writes the
+ * report rather than the report — the flag `domain/reportReview.ts` reads to
+ * refuse a deliverable that still carries it. It was declared on the 409A and
+ * on nothing else, so `unedited_template_guidance` graded one of fifteen
+ * products, and the other fourteen could ship a signed opinion whose Conclusion
+ * of Value chapter read "State the concluded fair market value…". These
+ * skeletons are *mostly* instruction — they are the outline a specialist works
+ * through — so the flag reaches sixty-eight chapters here against the 409A's
+ * seven, which is a measure of how little of the gate those products had.
+ *
+ * The rule applied, and the one `reportAuthoredCensus.test.ts` enforces: a
+ * chapter is flagged when there is nothing in it a reader could take as a
+ * statement about this engagement. A chapter that states a standard and asks
+ * one question beside it — "The asset approach measures value as… State whether
+ * the approach was applied" — is not flagged, which is the line TEMPLATE_409A
+ * already drew and the reason a gate on every imperative sentence was rejected
+ * when this check was written. That line leaves the mixed chapters unguarded on
+ * purpose; it is not that they are harmless.
  */
 const TEMPLATE_QSBS: ReportTemplate = {
   version: 'qsbs.v3',
@@ -1212,6 +1236,7 @@ const TEMPLATE_QSBS: ReportTemplate = {
     {
       key: 'entity_test',
       heading: 'Eligible Corporation',
+      authored: true,
       html: P(
         'Describe the issuer’s form and domicile: qualification requires a domestic C corporation at issuance and through substantially all of the holding period (§1202(c)(1), (e)(4)).',
       ),
@@ -1219,6 +1244,7 @@ const TEMPLATE_QSBS: ReportTemplate = {
     {
       key: 'gross_asset_test',
       heading: 'Gross Asset Test',
+      authored: true,
       html: P(
         'State the aggregate gross assets immediately before and immediately after the issuance against the $50 million ceiling of §1202(d)(1), and the basis for the measurement.',
       ),
@@ -1226,6 +1252,7 @@ const TEMPLATE_QSBS: ReportTemplate = {
     {
       key: 'active_business_test',
       heading: 'Active Business Requirement',
+      authored: true,
       html: P(
         'Document that at least 80% of assets by value are used in the active conduct of a qualified trade or business (§1202(e)(1)), and that the issuer’s activity is not among the excluded businesses of §1202(e)(3).',
       ),
@@ -1233,6 +1260,7 @@ const TEMPLATE_QSBS: ReportTemplate = {
     {
       key: 'issuance_and_holding',
       heading: 'Original Issuance & Holding Period',
+      authored: true,
       html: P(
         'Confirm the stock was acquired at original issue for money, property or services (§1202(c)(1)(B)), state the acquisition date, the five-year date, and the exclusion percentage the acquisition date fixes.',
       ),
@@ -1240,6 +1268,7 @@ const TEMPLATE_QSBS: ReportTemplate = {
     {
       key: 'exclusion_cap',
       heading: 'Gain Exclusion Cap',
+      authored: true,
       html: P(
         'State the per-issuer limitation: the greater of $10 million (less previously excluded gain) or ten times the aggregate adjusted basis of stock disposed of in the taxable year (§1202(b)(1)).',
       ),
@@ -1247,6 +1276,7 @@ const TEMPLATE_QSBS: ReportTemplate = {
     {
       key: 'conclusion',
       heading: 'Conclusion',
+      authored: true,
       html: P(
         'State the conclusion reached on each requirement and the overall qualification, with the limiting conditions of this assessment.',
       ),
@@ -1269,6 +1299,7 @@ const TEMPLATE_PPA: ReportTemplate = {
     {
       key: 'transaction_overview',
       heading: 'Transaction Overview',
+      authored: true,
       html: P(
         'Describe the transaction: parties, structure, closing date, consideration transferred and its components (cash, equity, contingent consideration).',
       ),
@@ -1276,6 +1307,7 @@ const TEMPLATE_PPA: ReportTemplate = {
     {
       key: 'tangible_assets',
       heading: 'Tangible Assets & Assumed Liabilities',
+      authored: true,
       html: P(
         'Describe the working capital, fixed assets and assumed liabilities recognized, and any deferred-revenue haircut applied.',
       ),
@@ -1283,6 +1315,7 @@ const TEMPLATE_PPA: ReportTemplate = {
     {
       key: 'intangible_assets',
       heading: 'Identified Intangible Assets',
+      authored: true,
       html: P(
         'For each identified intangible (developed technology, customer relationships, trade names, non-competes): the valuation method applied (relief-from-royalty, multi-period excess earnings, with-and-without, cost), its key assumptions — royalty rate, attrition, contributory asset charges, discount rate — and the tax amortization benefit.',
       ),
@@ -1290,6 +1323,7 @@ const TEMPLATE_PPA: ReportTemplate = {
     {
       key: 'goodwill',
       heading: 'Goodwill',
+      authored: true,
       html: P(
         'State goodwill as the residual of consideration over identifiable net assets, and what it represents; a negative residual is recognized as a bargain-purchase gain under ASC 805-30-25-2.',
       ),
@@ -1297,6 +1331,7 @@ const TEMPLATE_PPA: ReportTemplate = {
     {
       key: 'conclusion',
       heading: 'Conclusion of Allocation',
+      authored: true,
       html: P('Present the allocation summary and confirm it ties to the consideration transferred.'),
     },
   ],
@@ -1317,6 +1352,7 @@ const TEMPLATE_IMPAIRMENT: ReportTemplate = {
     {
       key: 'reporting_units',
       heading: 'Reporting Units & Asset Groups',
+      authored: true,
       html: P(
         'Identify the reporting units and long-lived asset groups tested, the carrying amounts on their books, and the sequencing applied (ASC 360 asset groups first, then indefinite-lived intangibles, then goodwill).',
       ),
@@ -1324,6 +1360,7 @@ const TEMPLATE_IMPAIRMENT: ReportTemplate = {
     {
       key: 'qualitative_assessment',
       heading: 'Qualitative Assessment',
+      authored: true,
       html: P(
         'Where a step-zero assessment was performed, document the events and circumstances weighed and why they did or did not indicate that fair value more likely than not falls below carrying amount.',
       ),
@@ -1331,6 +1368,7 @@ const TEMPLATE_IMPAIRMENT: ReportTemplate = {
     {
       key: 'quantitative_tests',
       heading: 'Quantitative Tests',
+      authored: true,
       html: P(
         'For each unit or asset tested quantitatively: the fair-value determination and its method, the recoverability screen against undiscounted cash flows for long-lived asset groups (ASC 360-10), and the resulting comparison to carrying amount.',
       ),
@@ -1338,6 +1376,7 @@ const TEMPLATE_IMPAIRMENT: ReportTemplate = {
     {
       key: 'conclusion',
       heading: 'Conclusion',
+      authored: true,
       html: P(
         'State each impairment loss recognized (or that none was), the carrying amounts after measurement, and the remaining headroom by reporting unit.',
       ),
@@ -1360,11 +1399,13 @@ const TEMPLATE_ESOP: ReportTemplate = {
     {
       key: 'company_overview',
       heading: 'Company Overview',
+      authored: true,
       html: P('Describe the business, its history, ownership and the ESOP’s position in it.'),
     },
     {
       key: 'valuation_approaches',
       heading: 'Valuation Approaches',
+      authored: true,
       html: P(
         'Describe the income and market approaches applied to conclude the enterprise and equity value, and the reconciliation between them.',
       ),
@@ -1372,6 +1413,7 @@ const TEMPLATE_ESOP: ReportTemplate = {
     {
       key: 'level_of_value',
       heading: 'Level of Value & Discounts',
+      authored: true,
       html: P(
         'State the level of value at which the ESOP transacts (controlling or minority), the discount for lack of control or control premium applied, the discount for lack of marketability, and the support for each — the concluded per-share value follows this chain explicitly.',
       ),
@@ -1379,6 +1421,7 @@ const TEMPLATE_ESOP: ReportTemplate = {
     {
       key: 'repurchase_obligation',
       heading: 'Repurchase Obligation',
+      authored: true,
       html: P(
         'Present the projected repurchase liability from expected participant redemptions — the schedule, its assumptions (redemption rate, share-value growth) and its present value — for the sponsor’s planning.',
       ),
@@ -1386,6 +1429,7 @@ const TEMPLATE_ESOP: ReportTemplate = {
     {
       key: 'conclusion',
       heading: 'Conclusion of Value',
+      authored: true,
       html: P('State the concluded fair market value per share and of the ESOP’s holding.'),
     },
   ],
@@ -1406,11 +1450,13 @@ const TEMPLATE_SMB: ReportTemplate = {
     {
       key: 'company_overview',
       heading: 'Company Overview',
+      authored: true,
       html: P('Describe the business, its market, customers, staffing and owner involvement.'),
     },
     {
       key: 'earnings_normalization',
       heading: 'Normalized Earnings (SDE)',
+      authored: true,
       html: P(
         'Present seller’s discretionary earnings: pre-tax income with owner compensation, interest, depreciation and one-time or discretionary items added back, and any replacement wage deducted.',
       ),
@@ -1418,6 +1464,7 @@ const TEMPLATE_SMB: ReportTemplate = {
     {
       key: 'valuation_methods',
       heading: 'Valuation Methods',
+      authored: true,
       html: P(
         'Describe the methods applied — capitalization of normalized earnings with a built-up rate, the SDE multiple, and any rule-of-thumb revenue multiple — with the support for the rates and multiples selected.',
       ),
@@ -1425,6 +1472,7 @@ const TEMPLATE_SMB: ReportTemplate = {
     {
       key: 'conclusion',
       heading: 'Conclusion of Value',
+      authored: true,
       html: P(
         'State the weighting of the method indications and the concluded fair market value, on a debt-free basis with the customary main-street transaction conventions.',
       ),
@@ -1447,11 +1495,13 @@ const TEMPLATE_EMI: ReportTemplate = {
     {
       key: 'company_overview',
       heading: 'Company Overview',
+      authored: true,
       html: P('Describe the business, its capital structure and the class of shares under option.'),
     },
     {
       key: 'valuation_analysis',
       heading: 'Valuation Analysis',
+      authored: true,
       html: P(
         'Describe the approach to the company’s equity value and the per-share value derived from it, including any minority discount appropriate to the holding.',
       ),
@@ -1459,6 +1509,7 @@ const TEMPLATE_EMI: ReportTemplate = {
     {
       key: 'umv_amv',
       heading: 'UMV and AMV',
+      authored: true,
       html: P(
         'State the unrestricted market value and the actual market value per share, and the restrictions on the shares — leaver provisions, transfer restrictions — that separate the two.',
       ),
@@ -1466,6 +1517,7 @@ const TEMPLATE_EMI: ReportTemplate = {
     {
       key: 'scheme_limits',
       heading: 'Scheme Qualification',
+      authored: true,
       html: P(
         'Document the Schedule 5 conditions at grant: gross assets within £30 million, fewer than 250 full-time-equivalent employees, the £250,000 individual limit and £3 million company limit measured at UMV, and the working-time requirement.',
       ),
@@ -1473,6 +1525,7 @@ const TEMPLATE_EMI: ReportTemplate = {
     {
       key: 'conclusion',
       heading: 'Conclusion',
+      authored: true,
       html: P('State the concluded UMV and AMV per share proposed for agreement with HMRC.'),
     },
   ],
@@ -1493,11 +1546,13 @@ const TEMPLATE_CSOP: ReportTemplate = {
     {
       key: 'company_overview',
       heading: 'Company Overview',
+      authored: true,
       html: P('Describe the business, its capital structure and the class of shares under option.'),
     },
     {
       key: 'valuation_analysis',
       heading: 'Valuation Analysis',
+      authored: true,
       html: P(
         'Describe the approach to the company’s equity value and the unrestricted market value per share derived from it.',
       ),
@@ -1505,6 +1560,7 @@ const TEMPLATE_CSOP: ReportTemplate = {
     {
       key: 'scheme_limits',
       heading: 'Scheme Qualification',
+      authored: true,
       html: P(
         'Document the Schedule 4 conditions at grant: the £60,000 individual limit measured at UMV, and that the exercise price is not less than the market value of the shares at grant.',
       ),
@@ -1512,6 +1568,7 @@ const TEMPLATE_CSOP: ReportTemplate = {
     {
       key: 'conclusion',
       heading: 'Conclusion',
+      authored: true,
       html: P('State the concluded market value per share proposed for agreement with HMRC.'),
     },
   ],
@@ -1532,6 +1589,7 @@ const TEMPLATE_IP: ReportTemplate = {
     {
       key: 'asset_description',
       heading: 'Subject Asset',
+      authored: true,
       html: P(
         'Describe the asset — patents, trademarks, software, trade secrets — its legal protection, remaining life and the rights valued.',
       ),
@@ -1539,6 +1597,7 @@ const TEMPLATE_IP: ReportTemplate = {
     {
       key: 'valuation_methods',
       heading: 'Valuation Methods',
+      authored: true,
       html: P(
         'Describe the method applied — relief-from-royalty, multi-period excess earnings, with-and-without, or replacement cost less obsolescence — its key assumptions, and the tax amortization benefit where applicable.',
       ),
@@ -1546,6 +1605,7 @@ const TEMPLATE_IP: ReportTemplate = {
     {
       key: 'conclusion',
       heading: 'Conclusion of Value',
+      authored: true,
       html: P('State the concluded fair value of the subject asset and the limiting conditions.'),
     },
   ],
@@ -1577,6 +1637,7 @@ const TEMPLATE_718: ReportTemplate = {
     {
       key: 'awards',
       heading: 'Awards Measured',
+      authored: true,
       html: P(
         'Describe the awards covered by this measurement: instrument (options, RSUs, ESPP rights), grant dates, counts, exercise prices, vesting schedules, and any performance or market conditions attached.',
       ),
@@ -1584,6 +1645,7 @@ const TEMPLATE_718: ReportTemplate = {
     {
       key: 'underlying_value',
       heading: 'Fair Value of the Underlying Share',
+      authored: true,
       html: P(
         'State the fair value of the underlying share at the measurement date and its source. For a private company this is the concluded value of the concurrent 409A valuation; for a public company it is the observed market price. If the measurement relies on a separate valuation report, cite it and its valuation date.',
       ),
@@ -1591,6 +1653,7 @@ const TEMPLATE_718: ReportTemplate = {
     {
       key: 'model_and_assumptions',
       heading: 'Valuation Model & Assumptions',
+      authored: true,
       html:
         P(
           'State the model applied — Black-Scholes-Merton for plain awards, a lattice or Monte-Carlo simulation where exercise behaviour or market conditions require one — and the basis for each assumption:',
@@ -1605,6 +1668,7 @@ const TEMPLATE_718: ReportTemplate = {
     {
       key: 'expense_recognition',
       heading: 'Expense Recognition',
+      authored: true,
       html: P(
         'Describe the attribution: straight-line or graded over the requisite service period, the forfeiture policy elected (estimated forfeitures or as-incurred), the treatment of performance conditions (recognize when probable) and of market conditions (never reversed for failure to meet the market condition), and any modification accounting in the period.',
       ),
@@ -1612,6 +1676,7 @@ const TEMPLATE_718: ReportTemplate = {
     {
       key: 'schedule',
       heading: 'Compensation Cost Schedule',
+      authored: true,
       html:
         P('Summarize the measurement per grant and the cost recognized:') +
         '<table><thead><tr><th>Grant</th><th>Awards</th><th>Fair value per award</th><th>Total fair value</th><th>Service period</th></tr></thead><tbody>' +
@@ -1664,6 +1729,7 @@ const TEMPLATE_820: ReportTemplate = {
     {
       key: 'methodology',
       heading: 'Valuation Methodology',
+      authored: true,
       html:
         P(
           'Describe the technique applied to each position class — market quotation, recent-round calibration (the backsolve), guideline multiples, discounted cash flows, or NAV as a practical expedient — and why that technique is appropriate for the position.',
@@ -1675,6 +1741,7 @@ const TEMPLATE_820: ReportTemplate = {
     {
       key: 'portfolio_summary',
       heading: 'Portfolio Summary',
+      authored: true,
       html:
         P('Summarize the marks:') +
         '<table><thead><tr><th>Position</th><th>Method</th><th>Level</th><th>Cost basis</th><th>Fair value</th></tr></thead><tbody>' +
@@ -1684,6 +1751,7 @@ const TEMPLATE_820: ReportTemplate = {
     {
       key: 'unobservable_inputs',
       heading: 'Significant Unobservable Inputs',
+      authored: true,
       html: P(
         'For Level 3 positions, disclose the significant unobservable inputs — volatility, time to liquidity, multiples, discount rates — the range applied, and the sensitivity of the measurement to reasonable alternative values.',
       ),
@@ -1691,6 +1759,7 @@ const TEMPLATE_820: ReportTemplate = {
     {
       key: 'conclusion',
       heading: 'Conclusion',
+      authored: true,
       html: P(
         'State the concluded fair value of the portfolio, the net asset value it implies, and any measurement uncertainty a reader should weigh.',
       ),
@@ -1731,6 +1800,7 @@ const TEMPLATE_GIFTS: ReportTemplate = {
     {
       key: 'interest_description',
       heading: 'Description of the Interest',
+      authored: true,
       html: P(
         'Describe the interest transferred: the class of equity, the percentage of the outstanding class and of the whole, the transfer (gift, bequest, generation-skipping transfer, or sale), the transferor and transferee, and the rights and restrictions attaching to the interest under the governing documents.',
       ),
@@ -1738,6 +1808,7 @@ const TEMPLATE_GIFTS: ReportTemplate = {
     {
       key: 'company_overview',
       heading: 'Company Overview',
+      authored: true,
       html: P(
         'Describe the business of {{company_name}}: history, operations, management, financial condition and distribution history.',
       ),
@@ -1745,6 +1816,7 @@ const TEMPLATE_GIFTS: ReportTemplate = {
     {
       key: 'valuation_analysis',
       heading: 'Valuation of the Underlying Entity',
+      authored: true,
       html: P(
         'Describe the approaches applied to value the entity — asset, income, and market — the indications each produced, and the weighting that reached the concluded entity value before interest-level adjustments.',
       ),
@@ -1752,6 +1824,7 @@ const TEMPLATE_GIFTS: ReportTemplate = {
     {
       key: 'discounts',
       heading: 'Interest-Level Discounts',
+      authored: true,
       html:
         P(
           'The interest transferred is a minority, non-marketable interest, and the willing buyer prices those facts:',
@@ -1765,6 +1838,7 @@ const TEMPLATE_GIFTS: ReportTemplate = {
     {
       key: 'chapter_14',
       heading: 'Chapter 14 Considerations',
+      authored: true,
       html: P(
         'Address the special valuation rules of IRC §§2701–2704 where applicable: rights valued at zero under §2701, lapsing rights and restrictions disregarded under §2704, and any buy-sell or option agreement tested under §2703.',
       ),
@@ -1772,6 +1846,7 @@ const TEMPLATE_GIFTS: ReportTemplate = {
     {
       key: 'conclusion',
       heading: 'Conclusion of Value',
+      authored: true,
       html: P(
         'State the concluded fair market value of the interest as of {{date}}, showing the bridge from the entity value through the interest’s pro-rata share and the discounts applied.',
       ),
@@ -1820,6 +1895,7 @@ const TEMPLATE_IFRS2: ReportTemplate = {
     {
       key: 'awards',
       heading: 'Awards Measured',
+      authored: true,
       html: P(
         'Describe the arrangements: instruments granted, grant dates, counterparties, exercise prices, vesting conditions (service, performance, market), and settlement (equity or cash).',
       ),
@@ -1827,6 +1903,7 @@ const TEMPLATE_IFRS2: ReportTemplate = {
     {
       key: 'model_and_assumptions',
       heading: 'Valuation Model & Assumptions',
+      authored: true,
       html:
         P(
           'State the model applied — Black-Scholes-Merton, a binomial lattice, or Monte-Carlo simulation where a market condition requires one — and the basis for each input:',
@@ -1842,6 +1919,7 @@ const TEMPLATE_IFRS2: ReportTemplate = {
     {
       key: 'expense_recognition',
       heading: 'Expense Recognition',
+      authored: true,
       html: P(
         'Describe the recognition: the vesting period of each tranche, the estimate of awards expected to vest and how it is revised, the treatment of modifications and cancellations (incremental fair value; acceleration on cancellation), and the liability remeasurement for cash-settled awards.',
       ),
@@ -1849,6 +1927,7 @@ const TEMPLATE_IFRS2: ReportTemplate = {
     {
       key: 'schedule',
       heading: 'Measurement Schedule',
+      authored: true,
       html:
         P('Summarize the measurement per grant:') +
         '<table><thead><tr><th>Grant</th><th>Awards</th><th>Fair value per award</th><th>Total fair value</th><th>Vesting period</th></tr></thead><tbody>' +
@@ -1899,6 +1978,7 @@ const TEMPLATE_FUND: ReportTemplate = {
     {
       key: 'unit_of_account',
       heading: 'Unit of Account',
+      authored: true,
       html: P(
         'State what is being measured: each holding is measured as the security actually owned — a specific class, with its own liquidation preference and conversion rights — rather than as a pro-rata share of the portfolio company’s equity. Where the fund holds more than one class in the same company, say whether they are measured together or separately, and why.',
       ),
@@ -1923,6 +2003,7 @@ const TEMPLATE_FUND: ReportTemplate = {
     {
       key: 'hierarchy',
       heading: 'Fair Value Hierarchy',
+      authored: true,
       html: P(
         'Explain the level assigned to each measurement and the inputs that drive it. Discuss any transfers between levels since the prior measurement date and what caused them — a holding moving from Level 3 to Level 1 on an IPO, or into Level 3 when the market for its class ceased to be active. The Fair Value Hierarchy exhibit summarizes the portfolio by level.',
       ),
@@ -1930,6 +2011,7 @@ const TEMPLATE_FUND: ReportTemplate = {
     {
       key: 'significant_inputs',
       heading: 'Significant Unobservable Inputs',
+      authored: true,
       html: P(
         'For the Level 3 holdings, describe the significant unobservable inputs — volatility, time to exit, discount for lack of marketability, and the calibrated equity value — including the range applied across the portfolio and the sensitivity of the measurement to each. This is the disclosure a reader of the financial statements will look for first.',
       ),
@@ -1937,6 +2019,7 @@ const TEMPLATE_FUND: ReportTemplate = {
     {
       key: 'nav_conclusion',
       heading: 'Net Asset Value',
+      authored: true,
       html: P(
         'State the concluded gross asset value, any fund-level liabilities, and the resulting net asset value, together with the unrealized gain or loss against cost. The Net Asset Value exhibit sets out the roll-up.',
       ),
@@ -1944,6 +2027,7 @@ const TEMPLATE_FUND: ReportTemplate = {
     {
       key: 'lp_economics',
       heading: 'Partnership Economics',
+      authored: true,
       html: P(
         'Describe how the net asset value above would be distributed under the partnership agreement — return of capital, the preferred return, any general partner catch-up, and the carried interest split — and state whether a clawback would be owed on a hypothetical liquidation at this net asset value. The Limited Partnership Economics exhibit records the terms applied.',
       ),
@@ -1966,6 +2050,7 @@ const TEMPLATE_DEBT: ReportTemplate = {
     {
       key: 'instrument_terms',
       heading: 'Instrument & Terms',
+      authored: true,
       html: P(
         'Describe the instrument: its form, principal, coupon and payment frequency, maturity, amortization, seniority and security, and any embedded conversion or prepayment rights. The Instrument Terms exhibit records the terms the instrument was priced on.',
       ),
@@ -1980,6 +2065,7 @@ const TEMPLATE_DEBT: ReportTemplate = {
     {
       key: 'credit_assessment',
       heading: 'Credit Assessment',
+      authored: true,
       html: P(
         'Set out the assessment of the issuer’s credit: the rating or rating equivalent applied, the basis for it, the instrument’s position in the capital structure, and any security or covenants that alter expected recovery. Explain how this maps to the credit spread applied below.',
       ),
@@ -1987,6 +2073,7 @@ const TEMPLATE_DEBT: ReportTemplate = {
     {
       key: 'discount_rate',
       heading: 'Discount Rate',
+      authored: true,
       html: P(
         'Build up the yield at which the contractual cash flows are discounted: the benchmark yield at the matching tenor, the credit spread for the assessed rating and seniority, and any adjustment for illiquidity or instrument-specific features. The Credit Terms & Discount Rate exhibit records the components applied.',
       ),
@@ -2008,6 +2095,7 @@ const TEMPLATE_DEBT: ReportTemplate = {
     {
       key: 'sensitivity',
       heading: 'Interest-Rate Sensitivity',
+      authored: true,
       html: P(
         'For an instrument measured by discounting, state its duration and convexity and what they imply for the measurement under a parallel shift in yields. Where the instrument carries an embedded option, note that duration alone does not describe its behaviour.',
       ),
@@ -2015,6 +2103,7 @@ const TEMPLATE_DEBT: ReportTemplate = {
     {
       key: 'conclusion',
       heading: 'Conclusion of Value',
+      authored: true,
       html: P(
         'State the concluded fair value of the instrument at the measurement date, identifying accrued interest separately where the price is quoted clean, and note any premium or discount to par.',
       ),
