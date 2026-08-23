@@ -70,6 +70,7 @@ export function EmailOutboxPage() {
           <button
             key={s}
             onClick={() => setScope(s)}
+            aria-pressed={scope === s}
             className={`tap-area cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
               scope === s
                 ? 'bg-ink-900 text-paper-50'

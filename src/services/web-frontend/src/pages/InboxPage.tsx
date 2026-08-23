@@ -151,6 +151,7 @@ function ReplyBox({
               key={k}
               type="button"
               onClick={() => setKind(k)}
+              aria-pressed={kind === k}
               className={`tap-area cursor-pointer rounded-full px-2.5 py-1 text-[0.65rem] font-semibold transition-colors ${
                 kind === k
                   ? 'bg-ink-900 text-paper-50'
@@ -310,6 +311,7 @@ export function InboxPage() {
           <button
             key={k}
             onClick={() => setKind(k)}
+            aria-pressed={kind === k}
             className={`tap-area cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
               kind === k
                 ? 'bg-ink-900 text-paper-50'

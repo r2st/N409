@@ -57,6 +57,7 @@ export function OverwritesSchemaPage() {
             key={c.key}
             type="button"
             onClick={() => setCategory((cur) => (cur === c.key ? null : c.key))}
+            aria-pressed={category === c.key}
             className={`cursor-pointer rounded-lg text-left transition-shadow ${
               category === c.key ? 'ring-2 ring-bond-600' : ''
             }`}

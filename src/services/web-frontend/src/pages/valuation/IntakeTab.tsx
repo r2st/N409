@@ -335,6 +335,7 @@ export function IntakeTab() {
             {completion.sections.map((s, i) => (
               <li key={s.key}>
                 <button
+                  aria-pressed={i === step}
                   className={`flex w-full items-center gap-2 text-left ${i === step ? 'font-semibold text-ink-900' : 'text-ink-600'}`}
                   onClick={() => setStep(i)}
                 >

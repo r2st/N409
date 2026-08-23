@@ -262,6 +262,28 @@ describe('AdminJobsPage', () => {
     expect(within(table).queryByText(/retry in/)).toBeNull();
   });
 
+  it('says which status filter is on, not only which one is dark', async () => {
+    // The chip row conveyed the active filter with a background colour and
+    // nothing else — invisible to a screen reader and to a forced-colours mode.
+    // `toggleStateCensus` states the rule over the whole app; this is the one
+    // place it is watched actually reaching the DOM and flipping.
+    mockApi();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('upload');
+
+    expect(screen.getByRole('button', { name: 'All', pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Failed', pressed: false })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Failed' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Failed', pressed: true })).toBeInTheDocument(),
+    );
+    // The one it left must stop claiming to be on: two pressed chips describe a
+    // filter combination the page cannot be in.
+    expect(screen.getByRole('button', { name: 'All', pressed: false })).toBeInTheDocument();
+  });
+
   it('does not repeat the status when the two words agree', async () => {
     mockApi();
     renderPage();

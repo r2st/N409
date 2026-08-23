@@ -325,6 +325,7 @@ export function AdminJobsPage() {
           <button
             key={s}
             onClick={() => setStatus(s)}
+            aria-pressed={status === s}
             className={`tap-area cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
               status === s
                 ? 'bg-ink-900 text-paper-50'

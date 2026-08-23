@@ -261,6 +261,7 @@ export function WorkbookTab() {
               key={s.key}
               type="button"
               onClick={() => setActiveSheet(s.key)}
+              aria-pressed={s.key === activeSheet}
               className={`tap-area cursor-pointer rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
                 s.key === activeSheet
                   ? 'bg-surface text-ink-900 shadow-card'

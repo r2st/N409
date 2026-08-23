@@ -252,6 +252,7 @@ export function DebtInstrumentsPage() {
             <button
               key={i.id}
               onClick={() => setSelected(i.id)}
+              aria-pressed={selected === i.id}
               className={`tap-area rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
                 selected === i.id
                   ? 'border-bond-600 bg-bond-50 text-bond-700'

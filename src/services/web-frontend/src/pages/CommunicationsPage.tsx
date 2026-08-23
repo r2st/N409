@@ -555,6 +555,7 @@ function TemplatesTab() {
             <button
               key={c}
               onClick={() => setCategory(c)}
+              aria-pressed={category === c}
               className={`tap-area cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
                 category === c
                   ? 'bg-ink-900 text-paper-50'
@@ -1070,6 +1071,7 @@ export function CommunicationsPage() {
           <button
             key={value}
             onClick={() => setTab(value)}
+            aria-pressed={tab === value}
             className={`tap-area cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
               tab === value
                 ? 'bg-ink-900 text-paper-50'
