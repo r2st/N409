@@ -13,7 +13,7 @@ describe('TtlCache', () => {
     expect(cache.get('k')).toBeUndefined();
   });
 
-  it('evicts the least recently written entries beyond maxEntries', () => {
+  it('evicts the least recently used entries beyond maxEntries', () => {
     const cache = new TtlCache<number>({ ttlMs: 10_000, maxEntries: 2 });
     cache.set('a', 1);
     cache.set('b', 2);
@@ -21,6 +21,64 @@ describe('TtlCache', () => {
     expect(cache.get('a')).toBeUndefined();
     expect(cache.get('b')).toBe(2);
     expect(cache.get('c')).toBe(3);
+  });
+
+  it('counts a read as use, so the write order is not the eviction order', () => {
+    const cache = new TtlCache<number>({ ttlMs: 10_000, maxEntries: 2 });
+    cache.set('a', 1);
+    cache.set('b', 2);
+    // `a` is the oldest *write* but the newest *use*, so `b` is what goes.
+    expect(cache.get('a')).toBe(1);
+    cache.set('c', 3);
+    expect(cache.get('a')).toBe(1);
+    expect(cache.get('b')).toBeUndefined();
+    expect(cache.get('c')).toBe(3);
+  });
+
+  /**
+   * The reason `get` re-inserts, stated as the property that matters rather
+   * than as the ordering that produces it.
+   *
+   * Both anonymous read-through routes cache their misses under a key the
+   * caller supplies — `slug:<anything>`, `key:<slug>` — so anyone can insert
+   * one entry per request without limit. If eviction went by write order, an
+   * entry re-read on *every* request would be evicted just as fast as the
+   * one-shot keys, and the cache would stop caching exactly under the traffic
+   * it exists to absorb. Fifty times the cache's capacity is sprayed through
+   * here and the hot key must still be there at the end.
+   */
+  it('keeps a continuously-read entry through a spray of one-shot keys', () => {
+    const max = 10;
+    const cache = new TtlCache<string>({ ttlMs: 10_000, maxEntries: max });
+    cache.set('partner:real', 'brand');
+    for (let i = 0; i < max * 50; i++) {
+      // What the signed-in SPA does on every page load, interleaved with...
+      expect(cache.get('partner:real')).toBe('brand');
+      // ...an anonymous caller inventing another slug that does not exist.
+      cache.set(`key:made-up-${i}`, 'null');
+    }
+    expect(cache.get('partner:real')).toBe('brand');
+  });
+
+  it('does not renew the TTL when a read refreshes recency', () => {
+    let now = 1_000;
+    const cache = new TtlCache<string>({ ttlMs: 100, now: () => now });
+    cache.set('k', 'v');
+    // Read it constantly across the whole TTL: recency moves, expiry does not.
+    for (let i = 0; i < 9; i++) {
+      now += 10;
+      expect(cache.get('k')).toBe('v');
+    }
+    now += 10;
+    expect(cache.get('k')).toBeUndefined();
+  });
+
+  it('keeps tag invalidation working after a read has re-inserted the entry', () => {
+    const cache = new TtlCache<string>({ ttlMs: 10_000 });
+    cache.set('a', '1', ['t']);
+    expect(cache.get('a')).toBe('1'); // re-inserts; byTag must still point here
+    cache.invalidateTag('t');
+    expect(cache.get('a')).toBeUndefined();
   });
 
   it('single-flights concurrent loads for the same key', async () => {

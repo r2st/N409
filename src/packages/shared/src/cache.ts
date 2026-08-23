@@ -1,11 +1,12 @@
 /**
  * Small in-process TTL cache (IMPROVEMENTS_RESEARCH §6 — response caching for
  * frequently-read, rarely-written data like help articles and templates).
- * Deliberately minimal: per-key expiry, LRU-ish size bound, and single-flight
- * loading so a burst of identical reads produces one query. Writers must call
- * delete()/clear() on mutation — this is a same-process cache, so services
- * with multiple replicas should only cache data where brief staleness is
- * acceptable.
+ * Deliberately minimal: per-key expiry, an LRU size bound (reads count as use,
+ * so a spray of one-shot keys cannot evict a hot one — see `get`), and
+ * single-flight loading so a burst of identical reads produces one query.
+ * Writers must call delete()/clear() on mutation — this is a same-process
+ * cache, so services with multiple replicas should only cache data where brief
+ * staleness is acceptable.
  */
 /**
  * A load in progress, and whether an invalidation has overtaken it.
@@ -110,6 +111,37 @@ export class TtlCache<T> {
       this.dropEntry(key);
       return undefined;
     }
+    // Re-insert on the way out, so the Map's iteration order is recency of
+    // *use* rather than recency of write — which is what the eviction loop in
+    // `set` reads it as. Without this, eviction is insertion-ordered, and an
+    // entry being read on every single request is evicted just as readily as
+    // one nothing has touched since it was stored.
+    //
+    // That distinction is the difference between a bounded cache and no cache
+    // at all, because the keys here are chosen by the caller. Both anonymous
+    // read-through routes cache their misses under a caller-supplied string —
+    // `slug:<anything>` for a blog post, `key:<slug>` for a tenant's login
+    // brand — so a crawler walking dead links, or anyone sending 500 made-up
+    // slugs, inserts one entry per request. Insertion-ordered eviction hands
+    // those one-shot keys the whole cache and evicts everything real, including
+    // the `partner:<id>` entries that the *signed-in* SPA reads on every page
+    // load. The cache would switch itself off under precisely the traffic it
+    // exists to absorb.
+    //
+    // Recency-ordered eviction inverts that: a key touched once sits at the
+    // front and goes first, while a key read on every request keeps moving to
+    // the back and survives. It is the same defence, and the same reasoning,
+    // that `BoundedWindowStore` in the rate limiter already documents — "a
+    // flood of one-shot keys cannot wash out the entry that is actually
+    // tracking it".
+    //
+    // `expiresAt` is deliberately carried over untouched. Recency is not a
+    // lease renewal: a value stays as stale as the clock says it is however
+    // often it is read, or a hot key would never be re-read from the source.
+    // Tags are untouched for the same reason they need no relinking — the key
+    // string and its tags are both unchanged, so `byTag` still points here.
+    this.entries.delete(key);
+    this.entries.set(key, entry);
     return entry.value;
   }
 
