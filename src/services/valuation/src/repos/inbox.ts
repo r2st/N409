@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { likeContains } from '../db/like.js';
 import { valuationScope, type Principal } from '../auth/rbac.js';
 import { visibleCommentKinds } from '../auth/operations.js';
 import type { CommentKind } from '../domain/operations.js';
@@ -115,7 +116,10 @@ export async function listInbox(
 
   const where = [scope, kindClause];
   if (filter.search) {
-    params.push(`%${filter.search}%`);
+    // `likeContains`, not a hand-rolled `%…%`: the query is a substring the
+    // user typed, and ILIKE would otherwise read their `%` and `_` as the
+    // pattern language rather than as characters.
+    params.push(likeContains(filter.search));
     const p = `$${params.length}`;
     where.push(`(c.body ILIKE ${p} OR v.company_name ILIKE ${p} OR v.number::text ILIKE ${p})`);
   }

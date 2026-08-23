@@ -406,10 +406,15 @@ describe('SQL interpolation sweep', () => {
    * drifts into fiction.
    */
   it('carries no stale registry entries', () => {
-    const live = new Set(result.interpolations.map((i) => `${i.file} ${i.expr}`));
+    // `\u0000` as the key separator, written as an escape and not as the byte
+    // itself: a literal NUL in the source makes the whole file *binary* to
+    // grep, which silently prints nothing rather than failing. In a repo whose
+    // guarantees rest on source scans, a file no scan can read is the worst
+    // possible one to hide, and this is the file that defines the scan.
+    const live = new Set(result.interpolations.map((i) => `${i.file}\u0000${i.expr}`));
     const stale: string[] = [];
     for (const [file, exprs] of Object.entries(REVIEWED))
-      for (const expr of exprs) if (!live.has(`${file} ${expr}`)) stale.push(`${file}  ${expr}`);
+      for (const expr of exprs) if (!live.has(`${file}\u0000${expr}`)) stale.push(`${file}  ${expr}`);
     expect(stale).toEqual([]);
   });
 });

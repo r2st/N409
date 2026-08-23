@@ -194,6 +194,29 @@ describe.skipIf(!dbUp)('inbox API', () => {
       expect((await inbox(admin.token, '?q=Firm%20Portfolio')).total).toBe(1);
     });
 
+    it('reads a wildcard in the query as text the user typed', async () => {
+      // The search box wraps what it is given in `%…%` and hands it to ILIKE,
+      // so every character the user types is pattern language unless something
+      // escapes it first. A bare `%` turned the narrowest possible query into
+      // no filter at all — it matched all three threads — and `_` matched any
+      // single character, so a real company called "100% Renewable" could not
+      // be found by typing its name.
+      //
+      // Asserted against `total` rather than an empty item list: the bug's
+      // signature is matching *too much*, and a query that matches nothing is
+      // indistinguishable from one that is merely spelled wrong.
+      expect((await inbox(admin.token, '?q=%25')).total).toBe(0);
+      expect((await inbox(admin.token, '?q=_')).total).toBe(0);
+
+      // The escape character itself has to stay literal, or escaping it is the
+      // next way to smuggle the pattern language back in.
+      expect((await inbox(admin.token, '?q=%5C')).total).toBe(0);
+
+      // And the guard must not have been bought by breaking search: the
+      // substring match that was working still works.
+      expect((await inbox(admin.token, '?q=cap%20table')).total).toBe(1);
+    });
+
     it('filters to unread only', async () => {
       const all = await inbox(admin.token);
       const unread = await inbox(admin.token, '?unread=true');

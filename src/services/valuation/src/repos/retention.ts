@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { likeContains } from '../db/like.js';
 import type { RetentionPolicy } from '../domain/retention.js';
 import { invalidateValuation } from './valuations.js';
 
@@ -227,8 +228,11 @@ export async function listRetiredValuations(
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
   const q = opts.q?.trim() ?? '';
   // `LIKE`-escaped: a company name is user input and `%` in it would otherwise
-  // widen the search silently rather than fail.
-  const pattern = q === '' ? null : `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  // widen the search silently rather than fail. Escaping via `likeContains`
+  // rather than a second copy of the character class, because a second copy is
+  // how the inbox came to have none: the rule is only enforceable where it is
+  // written once.
+  const pattern = q === '' ? null : likeContains(q);
 
   const { rows } = await pool.query<RetiredValuationRow & { total: string }>(
     `SELECT v.id, v.number, v.company_name, v.kind, v.state, v.archived_at,
