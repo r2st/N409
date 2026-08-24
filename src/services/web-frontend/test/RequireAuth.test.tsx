@@ -257,7 +257,14 @@ describe('AuthProvider session lifecycle', () => {
     const realSetTimeout = window.setTimeout.bind(window);
     vi.spyOn(window, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
       if (typeof ms === 'number') scheduled.push(ms);
-      return realSetTimeout(fn, 0);
+      // Short delays are passed straight through, because `waitFor` below
+      // schedules its own and would never poll otherwise. The sign-out delay
+      // is kept, not collapsed: firing it at 0 ms signed the probe out on the
+      // next tick, and the `waitFor` was then racing a session that had
+      // already ended — it usually caught the moment in between and
+      // intermittently did not. This test asserts on the number handed to
+      // `setTimeout`, never on what the timer goes on to do.
+      return realSetTimeout(fn, typeof ms === 'number' && ms > 1000 ? ms : 0);
     }) as typeof window.setTimeout);
 
     localStorage.setItem('n409.token', '1');
@@ -280,7 +287,14 @@ describe('AuthProvider session lifecycle', () => {
     const realSetTimeout = window.setTimeout.bind(window);
     vi.spyOn(window, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
       if (typeof ms === 'number') scheduled.push(ms);
-      return realSetTimeout(fn, 0);
+      // Short delays are passed straight through, because `waitFor` below
+      // schedules its own and would never poll otherwise. The sign-out delay
+      // is kept, not collapsed: firing it at 0 ms signed the probe out on the
+      // next tick, and the `waitFor` was then racing a session that had
+      // already ended — it usually caught the moment in between and
+      // intermittently did not. This test asserts on the number handed to
+      // `setTimeout`, never on what the timer goes on to do.
+      return realSetTimeout(fn, typeof ms === 'number' && ms > 1000 ? ms : 0);
     }) as typeof window.setTimeout);
 
     localStorage.setItem('n409.token', '1');
