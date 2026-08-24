@@ -22,22 +22,38 @@ const atRestKey = () =>
       { message: 'must be 32 bytes (64 hex chars or base64)' },
     );
 
-const Env = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  // Bounded like every other number here, and for a sharper reason than most:
-  // `z.coerce.number()` reads `PORT=` (bare) as 0, and Node reads a port of 0 as
-  // "bind any free one". Unbounded, this schema accepted that and the service
-  // came up healthy on a port nothing dials. 65535 is the other end; -1 and
-  // 70000 used to pass here and die at `listen()` with a bare
-  // ERR_SOCKET_BAD_PORT that names neither the variable nor its value.
-  // `@n409/shared`'s `listenPort` is the same rule for the two services that
-  // have no schema of their own.
-  PORT: z.coerce
+/**
+ * A TCP port from the environment: 1–65535, integral, and named in the message.
+ *
+ * `z.coerce.number()` reads a bare `PORT=` as 0, which Node reads as "any free
+ * one" — unbounded, this schema accepted that and the service came up healthy
+ * on a port nothing dials. -1 and 70000 used to pass here too and die at the
+ * socket with a bare ERR_SOCKET_BAD_PORT that names neither the variable nor
+ * its value. `@n409/shared`'s `listenPort` is the same rule for the two
+ * services that have no schema of their own.
+ *
+ * It is a function rather than a comment on `PORT` because `PORT` was not the
+ * only one: `SMTP_PORT` sat two lines below the comment claiming every number
+ * here is bounded, and was not. Its failure is the quieter of the two — the
+ * port is not dialled until an email is sent, so a mistyped one boots clean,
+ * passes readiness, and then fails every message into the outbox as a delivery
+ * error, for as long as nobody reads the outbox.
+ *
+ * `zeroMeans` is what the operator needs to know and the only part that is not
+ * the same for both: a listen port of 0 binds something, a dial port of 0
+ * reaches nothing.
+ */
+const portParam = (name: string, fallback: number, zeroMeans: string) =>
+  z.coerce
     .number()
     .int()
-    .min(1, 'PORT must be between 1 and 65535 — 0 (or a bare `PORT=`) binds a random ephemeral port')
-    .max(65535, 'PORT must be between 1 and 65535')
-    .default(3001),
+    .min(1, `${name} must be between 1 and 65535 — 0 (or a bare \`${name}=\`) ${zeroMeans}`)
+    .max(65535, `${name} must be between 1 and 65535`)
+    .default(fallback);
+
+const Env = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  PORT: portParam('PORT', 3001, 'binds a random ephemeral port'),
   DATABASE_URL: z.string().min(1).default('postgres://n409:n409_dev@localhost:5432/n409_dev'),
   LOG_LEVEL: z.string().default('info'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 chars'),
@@ -126,7 +142,7 @@ const Env = z.object({
   // only queues. 'smtp' without SMTP_HOST falls back to 'log'.
   EMAIL_MODE: z.enum(['smtp', 'log', 'off']).default('log'),
   SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.coerce.number().int().default(587),
+  SMTP_PORT: portParam('SMTP_PORT', 587, 'is not a relay to dial'),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().default('N409 Valuations <no-reply@n409.local>'),

@@ -241,6 +241,46 @@ describe('loadConfig PORT bounds', () => {
   });
 });
 
+describe('loadConfig SMTP_PORT bounds', () => {
+  const base = { ...PROD_BASE, JWT_SECRET: REAL_SECRET } as const;
+
+  it('defaults to 587', () => {
+    expect(loadConfig(base).SMTP_PORT).toBe(587);
+    expect(loadConfig({ ...base, SMTP_PORT: '25' }).SMTP_PORT).toBe(25);
+  });
+
+  it('refuses the same three values PORT does', () => {
+    // The comment above PORT has always said every number in this file is
+    // bounded. SMTP_PORT, two lines below it, was not: `z.coerce.number()`
+    // read a bare `SMTP_PORT=` as 0, and -1 and 70000 parsed cleanly.
+    expect(() => loadConfig({ ...base, SMTP_PORT: '' })).toThrow(/SMTP_PORT/);
+    expect(() => loadConfig({ ...base, SMTP_PORT: '0' })).toThrow(/SMTP_PORT/);
+    expect(() => loadConfig({ ...base, SMTP_PORT: '-1' })).toThrow(/between 1 and 65535/);
+    expect(() => loadConfig({ ...base, SMTP_PORT: '70000' })).toThrow(/between 1 and 65535/);
+    expect(() => loadConfig({ ...base, SMTP_PORT: '587.5' })).toThrow(/SMTP_PORT/);
+  });
+
+  it('says what is wrong with it, not what is wrong with PORT', () => {
+    // A shared helper that hard-coded one variable's name would answer every
+    // misconfiguration by naming the other one.
+    const message = (() => {
+      try {
+        loadConfig({ ...base, SMTP_PORT: '0' });
+        return '';
+      } catch (err) {
+        return String(err);
+      }
+    })();
+    expect(message).toMatch(/SMTP_PORT/);
+    expect(message).not.toMatch(/ephemeral/);
+  });
+
+  it('accepts the boundaries themselves', () => {
+    expect(loadConfig({ ...base, SMTP_PORT: '1' }).SMTP_PORT).toBe(1);
+    expect(loadConfig({ ...base, SMTP_PORT: '65535' }).SMTP_PORT).toBe(65535);
+  });
+});
+
 /**
  * At-rest key shape, checked at boot.
  *

@@ -76,21 +76,27 @@ function used(): Map<string, string[]> {
     for (const m of text.matchAll(/environ(?:\.get\(|\[)["']([A-Z][A-Z0-9_]{2,})["']/g)) {
       note(m[1]!, rel);
     }
-    // The valuation service's Zod env schema: `  FOO: z.…`
+    // The valuation service's env schema: a key of the `Env` object.
     //
-    // Matches `z` as a word rather than `z.` because prettier breaks a long
-    // declaration after the `z`, putting the first call on the next line:
+    // Matched on the key rather than on what follows it, because what follows
+    // it is not always `z`. Eight declarations use a helper — `atRestKey()` for
+    // the six at-rest keys, `portParam()` for `PORT` and `SMTP_PORT` — and a
+    // pattern anchored to `z\b` saw none of them. The six survived only because
+    // `keyRing` below happens to name four of them a file away; `PORT` and
+    // `SMTP_PORT` had nothing, so factoring the port rule into a helper made
+    // two documented variables look like variables nothing reads.
     //
-    //     VIRUS_SCAN_FAIL_CLOSED: z
-    //       .enum(['true', 'false'])
+    // That is the failure this file exists to prevent, arriving through the
+    // check itself: extracting a repeated schema is an ordinary refactor, and
+    // it must not be able to silently delete a variable from the contract in
+    // either direction. A key at this indentation in this file *is* a variable
+    // the service reads, whatever spelling declares it — 79 of them today, and
+    // the count over the narrow pattern was 71.
     //
-    // Requiring the dot therefore made this check blind to exactly the
-    // variables with the most configuration behind them — the long ones. Two
-    // had already slipped through when this was widened, one of them
-    // undocumented. `\b` still refuses `zip`/`zod`, which is the reason it is
-    // not just `z`.
+    // The indentation is what bounds it: two spaces is a member of the single
+    // top-level `Env` object, and nothing else in the file sits there.
     if (file.endsWith('config.ts')) {
-      for (const m of text.matchAll(/^\s{2}([A-Z][A-Z0-9_]{2,}):\s*z\b/gm)) note(m[1]!, rel);
+      for (const m of text.matchAll(/^\s{2}([A-Z][A-Z0-9_]{2,}):\s*\S/gm)) note(m[1]!, rel);
     }
 
     // ── Indirect reads ────────────────────────────────────────────────────
@@ -236,6 +242,11 @@ describe('.env.example is the deployment contract', () => {
     expect(names.has('MFA_ENCRYPTION_KEY_PREVIOUS')).toBe(true);
     // The inline-array form, `keyRing(env, ['DOCUMENTS_ENCRYPTION_KEY'])`.
     expect(names.has('DOCUMENTS_ENCRYPTION_KEY')).toBe(true);
+    // An `Env` key declared through a helper rather than starting with `z`.
+    // Named because it is the case the config.ts pattern was widened for, and
+    // because nothing else in this list would notice it going missing: SMTP_PORT
+    // is read nowhere else in the codebase.
+    expect(names.has('SMTP_PORT')).toBe(true);
     expect(names.size).toBeGreaterThan(50);
   });
 
