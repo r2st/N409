@@ -129,7 +129,14 @@ function mockApi(
     roles?: typeof ROLE_DEFS;
     partners?: Partner[];
   } = {},
-  opts: { writeStatus?: number; listStatus?: number; exportStatus?: number } = {},
+  opts: {
+    writeStatus?: number;
+    listStatus?: number;
+    exportStatus?: number;
+    /** The two catalogs load separately from the user list; fail them alone. */
+    rolesStatus?: number;
+    partnersStatus?: number;
+  } = {},
 ) {
   const calls: Call[] = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
@@ -142,8 +149,12 @@ function mockApi(
       if (opts.exportStatus) return jsonResponse({ status: opts.exportStatus, detail: 'No' }, 500);
       return new Response('email\n', { status: 200, headers: { 'content-type': 'text/csv' } });
     }
-    if (path.endsWith('/partners')) return jsonResponse({ partners: state.partners ?? PARTNERS });
+    if (path.endsWith('/partners')) {
+      if (opts.partnersStatus) return jsonResponse({ detail: 'No' }, opts.partnersStatus);
+      return jsonResponse({ partners: state.partners ?? PARTNERS });
+    }
     if (path.endsWith('/roles')) {
+      if (opts.rolesStatus) return jsonResponse({ detail: 'No' }, opts.rolesStatus);
       return jsonResponse({ roles: state.roles ?? ROLE_DEFS, capabilities: CAPABILITIES });
     }
     if (path.includes('/users/invitations')) {
@@ -678,5 +689,67 @@ describe('AdminUsersPage — the console', () => {
     await userEvent.click(within(tr).getByRole('button', { name: 'Revoke' }));
 
     expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+  });
+  /*
+   * Both catalogs were fetched with `.catch(() => {})`, and the editor renders
+   * its permission controls *from* them — so an outage left an admin with a
+   * blank Roles box, no way to grant or revoke, and nothing saying why.
+   */
+  describe('when a catalog fails to load', () => {
+    const openEditor = async () => {
+      const tr = (await screen.findByText('ada@acme.com')).closest('tr') as HTMLElement;
+      await userEvent.click(within(tr).getByRole('button', { name: 'Edit' }));
+    };
+
+    it('says the role catalog is missing instead of showing an empty Roles box', async () => {
+      mockApi(undefined, { rolesStatus: 503 });
+      renderPage();
+      await openEditor();
+
+      expect(screen.queryByRole('checkbox', { name: 'Partner' })).toBeNull();
+      await screen.findByText(/role catalog could not be loaded/);
+    });
+
+    it('promises the roles are left alone, and keeps that promise', async () => {
+      /*
+       * The note tells the admin that saving during the outage changes
+       * nothing, so the PATCH has to actually carry the roles the user already
+       * had — `editor.roles` is seeded from the user and is independent of the
+       * catalog, and this pins that it stays so.
+       */
+      const calls = mockApi({ users: [row({ roles: ['valuation_user', 'admin'] })] }, { rolesStatus: 503 });
+      renderPage();
+      await openEditor();
+      await screen.findByText(/role catalog could not be loaded/);
+
+      await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
+      expect(editorBody(calls, 'PATCH')).toMatchObject({ roles: ['valuation_user', 'admin'] });
+    });
+
+    it('does not show an organisation-holding user as having none', async () => {
+      // A controlled select whose value matches no option selects nothing, so
+      // during the outage every partnered account displayed as unpartnered.
+      mockApi({ users: [row({ partner_id: 'p1', partner_name: 'Bellweather Law' })] }, { partnersStatus: 503 });
+      renderPage();
+      await openEditor();
+
+      const select = await screen.findByRole('combobox', { name: /^Partner/ });
+      expect(select).toHaveValue('p1');
+      expect(select).toBeDisabled();
+      await screen.findByText(/Organisations could not be listed/);
+    });
+
+    it('offers neither note when both catalogs load', async () => {
+      // The other half — both messages must be earned.
+      mockApi();
+      renderPage();
+      await openEditor();
+
+      await screen.findByRole('checkbox', { name: 'Partner' });
+      expect(screen.queryByText(/could not be loaded/)).toBeNull();
+      expect(screen.queryByText(/could not be listed/)).toBeNull();
+      expect(screen.getByRole('combobox', { name: /^Partner/ })).not.toBeDisabled();
+    });
   });
 });

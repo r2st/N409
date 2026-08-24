@@ -183,6 +183,16 @@ export function AdminUsersPage() {
   const [qDraft, setQDraft] = useState(params.get('q') ?? '');
   const [roleDefs, setRoleDefs] = useState<RoleDef[]>([]);
   const [capabilities, setCapabilities] = useState<CapabilityDef[]>([]);
+  /*
+   * Both catalogs are fetched separately from the user list and both were
+   * caught with `.catch(() => {})`, so an outage emptied them — and an empty
+   * catalog is not "there are no roles", it is a permission control that has
+   * quietly stopped working. The editor's checkboxes are rendered *from* the
+   * catalog, so with none there is nothing to tick, no way to revoke, and
+   * nothing on screen saying why the box is blank.
+   */
+  const [roleCatalogFailed, setRoleCatalogFailed] = useState(false);
+  const [partnersFailed, setPartnersFailed] = useState(false);
 
   const q = params.get('q') ?? '';
   const role = params.get('role') ?? '';
@@ -212,7 +222,7 @@ export function AdminUsersPage() {
         setPartners(res.partners);
         setPartnersCapped(res.truncated);
       })
-      .catch(() => {});
+      .catch(() => setPartnersFailed(true));
   }, []);
 
   // The role catalog. Fetched rather than hard-coded so a role added on the
@@ -224,7 +234,7 @@ export function AdminUsersPage() {
         setRoleDefs(res.roles);
         setCapabilities(res.capabilities);
       })
-      .catch(() => {});
+      .catch(() => setRoleCatalogFailed(true));
   }, []);
 
   const loadInvitations = useCallback(() => {
@@ -621,8 +631,25 @@ export function AdminUsersPage() {
                 <Select
                   value={editor.partner_id}
                   onChange={(e) => setEditor({ ...editor, partner_id: e.target.value })}
+                  /*
+                   * With no organisations listed the only reachable option is
+                   * "No partner", and this select writes into the editor — so
+                   * an outage turned it into a one-way detach for an account
+                   * whose partner the admin was not editing.
+                   */
+                  disabled={partnersFailed}
                 >
                   <option value="">No partner</option>
+                  {/*
+                   * A controlled select whose value matches no option selects
+                   * nothing, so during the outage a user *with* an organisation
+                   * displayed as one without — the same misreading the roles
+                   * box makes. Carrying the id keeps the control honest about
+                   * what will be saved.
+                   */}
+                  {editor.partner_id && !partners.some((p) => p.id === editor.partner_id) && (
+                    <option value={editor.partner_id}>{editor.partner_id}</option>
+                  )}
                   {partners.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
@@ -630,6 +657,12 @@ export function AdminUsersPage() {
                   ))}
                   <PickerOverflowNote truncated={partnersCapped} />
                 </Select>
+                {partnersFailed && (
+                  <p className="mt-1 text-sm text-ink-400">
+                    Organisations could not be listed, so this cannot be changed here. Saving now leaves it
+                    as it is.
+                  </p>
+                )}
               </Field>
             </div>
             <fieldset aria-describedby={errorFor('roles') ? 'roles-error' : undefined}>
@@ -654,6 +687,24 @@ export function AdminUsersPage() {
                   </label>
                 ))}
               </div>
+              {roleCatalogFailed && (
+                /*
+                 * Saying which roles the account keeps matters more here than
+                 * anywhere else on the page. `editor.roles` is seeded from the
+                 * user and submitted as-is, so a save during the outage is
+                 * genuinely harmless — but a blank Roles box reads as "this
+                 * account has none", and an admin who believes that will act on
+                 * it. The restore path is the case that bites: it drops the
+                 * admin into this editor on purpose, with roles reset to
+                 * `valuation_user`, precisely so the account "doesn't come back
+                 * scoped to nothing" — which is exactly what an unusable
+                 * catalog leaves it as.
+                 */
+                <p className="mt-1 text-sm text-ink-400">
+                  The role catalog could not be loaded, so roles cannot be shown or changed here. Saving
+                  now leaves this account&rsquo;s roles exactly as they are. Reload the page to try again.
+                </p>
+              )}
               {errorFor('roles') && (
                 <p id="roles-error" className="mt-2 text-xs font-medium text-red-600">
                   {errorFor('roles')}
