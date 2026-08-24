@@ -51,6 +51,37 @@ describe('HelpPage (Help Center)', () => {
     expect(screen.queryByText('Board approval')).toBeNull();
   });
 
+  /**
+   * The filter narrows a list the typist is not pointed at, and never moves
+   * focus, so without this the query had no audible effect at all — no count,
+   * no "nothing matched", no difference between eleven hits and none.
+   */
+  it('announces how many articles the query left', async () => {
+    mockArticles();
+    const user = userEvent.setup();
+    renderAt('/help');
+    await screen.findByRole('heading', { name: 'Help Center', level: 1 });
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveAttribute('aria-live', 'polite');
+    const beforeText = status.textContent ?? '';
+    const before = Number(/^(\d+)/.exec(beforeText)?.[1] ?? '0');
+    expect(before).toBeGreaterThan(1);
+
+    await user.type(screen.getByLabelText('Search help articles'), 'volatility');
+    await waitFor(() => expect(status.textContent).toContain('matching “volatility”'));
+    const after = Number(/^(\d+)/.exec(status.textContent ?? '')?.[1] ?? '0');
+    expect(after).toBeLessThan(before);
+
+    // The same element throughout — a live region remounted with its message
+    // already in place is one screen readers commonly do not announce.
+    expect(screen.getByRole('status')).toBe(status);
+
+    await user.clear(screen.getByLabelText('Search help articles'));
+    await user.type(screen.getByLabelText('Search help articles'), 'zzzznothingmatches');
+    await waitFor(() => expect(status).toHaveTextContent('No help articles match “zzzznothingmatches”'));
+  });
+
   it('renders a single article with breadcrumbs and related links', async () => {
     mockArticles();
     renderAt('/help/methodology-opm');

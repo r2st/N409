@@ -12,6 +12,7 @@ import {
   ErrorNote,
   Field,
   PickerOverflowNote,
+  ResultCount,
   Select,
   TableSkeleton,
   TextInput,
@@ -518,6 +519,8 @@ export function AdminUsersPage() {
             onChange={(e) => setQDraft(e.target.value)}
             onBlur={() => setFilter('q', qDraft.trim())}
           />
+          {/* The whole matching set, not the page of it that is rendered. */}
+          <ResultCount count={data ? data.total : null} noun="user" query={q} />
         </div>
         <Select
           aria-label="Filter by role"

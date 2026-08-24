@@ -23,6 +23,7 @@ import {
   KindBadge,
   LoadingBlock,
   PickerOverflowNote,
+  ResultCount,
   Select,
   Skeleton,
   SkeletonTable,
@@ -430,6 +431,10 @@ export function ValuationsPage() {
             onChange={(e) => setQDraft(e.target.value)}
             onBlur={() => setFilter('q', qDraft.trim())}
           />
+          {/* `data.total` rather than the page's row count: the answer to "how
+              many matched" is the whole result set, not the twenty-five of it
+              that fit on this page. Covers every filter beside it too. */}
+          <ResultCount count={data ? data.total : null} noun="valuation" query={params.get('q') ?? ''} />
         </div>
         <Select
           aria-label="Filter by state"

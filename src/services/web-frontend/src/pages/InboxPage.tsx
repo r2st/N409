@@ -4,7 +4,16 @@ import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { displayName, formatDateTime } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Pagination, Spinner, TextInput, pageCountOf } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Pagination,
+  ResultCount,
+  Spinner,
+  TextInput,
+  pageCountOf,
+} from '../components/ui';
 
 /**
  * The shared inbox (409.ai §17) — every engagement thread in one list.
@@ -347,6 +356,7 @@ export function InboxPage() {
           <Button variant="secondary" type="submit">
             Search
           </Button>
+          <ResultCount count={data.total} noun="message" query={query} />
         </form>
       </div>
 

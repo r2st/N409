@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
-import { Button, ErrorNote, Select, Spinner, TextInput } from '../components/ui';
+import { Button, ErrorNote, ResultCount, Select, Spinner, TextInput } from '../components/ui';
 
 interface Policy {
   data_type: string;
@@ -563,6 +563,11 @@ export function AdminRetentionPage() {
           <Button variant="secondary" disabled={busy !== null} onClick={() => void searchRetired()}>
             {busy === 'retired-search' ? 'Searching…' : 'Search'}
           </Button>
+          <ResultCount
+            count={retired ? retired.valuations.length : null}
+            noun="withdrawn engagement"
+            query={retiredQuery}
+          />
         </div>
         {!retired ? (
           <Spinner />

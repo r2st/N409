@@ -6,7 +6,15 @@ import { isOps } from '../lib/rbac';
 import { displayName, formatDate } from '../lib/format';
 import { formatBytes } from '../lib/pipeline';
 import type { SearchResults } from '../lib/types';
-import { EmptyState, ErrorNote, KindBadge, Spinner, StateBadge, TextInput } from '../components/ui';
+import {
+  EmptyState,
+  ErrorNote,
+  KindBadge,
+  ResultCount,
+  Spinner,
+  StateBadge,
+  TextInput,
+} from '../components/ui';
 
 /**
  * Global search (M4) — one box across valuations, documents and, for ops,
@@ -70,6 +78,13 @@ export function SearchPage() {
   const valuationHits = results?.valuations ?? [];
   const documentHits = results?.documents ?? [];
   const userHits = results?.users ?? [];
+  /*
+   * All three collections are one answer to one question, so they are announced
+   * as one count rather than three regions racing each other. `busy` holds it
+   * back until the reply lands: without that, every keystroke announced the
+   * previous query's total as though it were this one's.
+   */
+  const totalHits = valuationHits.length + documentHits.length + userHits.length;
 
   return (
     <div>
@@ -97,6 +112,7 @@ export function SearchPage() {
           }
           aria-label="Search"
         />
+        <ResultCount count={busy || results === null ? null : totalHits} noun="result" query={q} />
       </form>
 
       {error && (

@@ -351,6 +351,68 @@ export function ErrorNote({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * How many rows a search or filter left, announced.
+ *
+ * Typing in a filter box changes a list that the typist is not looking at and
+ * never moves focus, so to a screen reader nothing happened at all: the result
+ * count, the "no matches" state and the difference between a query that found
+ * eleven rows and one that found none were all silent. `Spinner` announces the
+ * *wait* on the surfaces that fetch, which made it worse — the user heard
+ * "Loading…" and then nothing, with no way to tell a finished search from a
+ * stuck one short of leaving the box and reading the table. WCAG 2.2 SC 4.1.3.
+ *
+ * Two details carry the whole thing:
+ *
+ * - It is always mounted, and only its text changes. A live region that is
+ *   inserted into the DOM already holding its message is commonly not
+ *   announced at all — the region has to be observed before the mutation it is
+ *   reporting. So render it unconditionally beside the input, not inside the
+ *   branch that renders results.
+ * - It is `sr-only`. The count is already on screen in the section headings;
+ *   this is the same fact routed to the people the headings do not reach.
+ *
+ * `polite` rather than `assertive`: it must never cut across the character the
+ * user is still typing. Rapid changes coalesce to the latest, which is exactly
+ * the behaviour a per-keystroke filter wants.
+ */
+export function ResultCount({
+  count,
+  noun,
+  plural,
+  query,
+}: {
+  /**
+   * `null` means "no answer yet" — a fetch in flight, or a query too short to
+   * run. The region still renders, empty. Skipping the element instead would
+   * mount it already holding its message, which is the case screen readers
+   * commonly do not announce.
+   */
+  count: number | null;
+  /** Singular, lowercase: "valuation", "help article", "field". */
+  noun: string;
+  /** Override when the plural is not `noun + "s"` — "entries", "people". */
+  plural?: string;
+  /** The query these results are for, quoted back so the answer names its question. */
+  query?: string;
+}) {
+  const many = plural ?? `${noun}s`;
+  const q = query?.trim();
+  let message = '';
+  if (count !== null) {
+    if (count === 0) message = q ? `No ${many} match “${q}”` : `No ${many}`;
+    else {
+      const word = count === 1 ? noun : many;
+      message = q ? `${count} ${word} matching “${q}”` : `${count} ${word}`;
+    }
+  }
+  return (
+    <p role="status" aria-live="polite" className="sr-only">
+      {message}
+    </p>
+  );
+}
+
 export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="rounded-lg border border-dashed border-ink-200 bg-paper-50 px-6 py-14 text-center">

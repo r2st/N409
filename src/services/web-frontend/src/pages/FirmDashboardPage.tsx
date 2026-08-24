@@ -8,6 +8,7 @@ import {
   ErrorNote,
   Pagination,
   pageCountOf,
+  ResultCount,
   Spinner,
   StatCard,
   StateBadge,
@@ -334,6 +335,7 @@ export function FirmDashboardPage() {
                 setPage(1);
               }}
             />
+            <ResultCount count={clients === null ? null : clientTotal} noun="client" query={search} />
           </div>
         </div>
         <div className="mt-3 rounded-lg border border-paper-300 bg-surface p-2 shadow-card">

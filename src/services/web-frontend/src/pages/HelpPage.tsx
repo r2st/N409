@@ -5,7 +5,7 @@ import { formatDate } from '../lib/format';
 import { Markdown } from '../lib/markdown';
 import { sanitizeHtml } from '../lib/m2';
 import { HELP_ARTICLES, HELP_CATEGORIES, type HelpArticleContent } from '../data/helpContent';
-import { EmptyState, ErrorNote, Spinner, TextInput } from '../components/ui';
+import { EmptyState, ErrorNote, ResultCount, Spinner, TextInput } from '../components/ui';
 
 /**
  * Operations-authored knowledge-base article (served by `/help/articles`). The
@@ -283,6 +283,7 @@ export function HelpPage() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <ResultCount count={visible.length} noun="help article" query={query} />
       </div>
 
       <div className="mt-8 gap-8 lg:grid lg:grid-cols-[14rem_1fr]">

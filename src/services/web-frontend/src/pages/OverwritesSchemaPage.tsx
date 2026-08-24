@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { OVERWRITE_CATEGORY_LABELS, type OverwriteSchema } from '../lib/m2';
-import { ErrorNote, Spinner, StatCard, TextInput } from '../components/ui';
+import { ErrorNote, ResultCount, Spinner, StatCard, TextInput } from '../components/ui';
 
 const CLASS_TONES: Record<string, string> = {
   numeric: 'bg-sky-50 text-sky-800 ring-sky-200',
@@ -78,6 +78,7 @@ export function OverwritesSchemaPage() {
           placeholder="Filter by key, label or description…"
           aria-label="Filter fields"
         />
+        <ResultCount count={fields.length} noun="field" query={query} />
       </div>
 
       <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">

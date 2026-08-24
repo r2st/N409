@@ -23,6 +23,7 @@ import {
   Field,
   KindBadge,
   PickerOverflowNote,
+  ResultCount,
   Select,
   StateBadge,
   TableSkeleton,
@@ -170,6 +171,10 @@ function TaskQueue({ options, capped }: { options: UserOption[]; capped: boolean
           ))}
         </Select>
         <span className="tnum ml-auto text-sm text-ink-400">{total} tasks</span>
+        {/* The same figure as the span beside it, in a live region — the span
+            is silent, so changing the status filter changed the list and said
+            nothing. */}
+        <ResultCount count={total} noun="task" />
       </div>
 
       <div className="mt-6">

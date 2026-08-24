@@ -2,7 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { formatDateTime } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Pagination, Spinner, StatCard, pageCountOf } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Pagination,
+  ResultCount,
+  Spinner,
+  StatCard,
+  pageCountOf,
+} from '../components/ui';
 
 /**
  * The background job monitor (409.ai's Published Tasks page).
@@ -348,6 +357,7 @@ export function AdminJobsPage() {
             </option>
           ))}
         </select>
+        <ResultCount count={total} noun="job" />
       </div>
 
       {error && (
