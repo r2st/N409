@@ -69,13 +69,15 @@ const review: ReviewQueueItem = {
   signed_second: false,
 };
 
-function mockApi() {
+function mockApi(opts: { rosterStatus?: number } = {}) {
   const calls: Array<{ url: string; method: string; body?: unknown }> = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
     const method = init?.method ?? 'GET';
     calls.push({ url: path, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     if (path.includes('/users/options')) {
+      // The roster loads on its own; failing it alone is the case under test.
+      if (opts.rosterStatus) return jsonResponse({ detail: 'Nope' }, opts.rosterStatus);
       return jsonResponse({
         options: [
           { id: OPS_ID, email: 'ops@n409.example', first_name: 'Olive', last_name: 'Ops' },
@@ -259,5 +261,103 @@ describe('TasksPage', () => {
     expect(
       screen.queryByText('Say what needs to change — this is the note the analyst gets.'),
     ).not.toBeInTheDocument();
+  });
+  /*
+   * `/users/options` loaded with `.catch(() => {})`, so an outage left
+   * `options` at `[]` — and both tabs read an empty roster as a set of claims
+   * about people rather than as the absent list it is.
+   */
+  describe('when the operations roster fails to load', () => {
+    const ASSIGNED: ReviewTask = { ...task, assignee_id: '01N409OTHER0000000000000AA' };
+
+    function mockWithAssignedTask(rosterStatus: number) {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        const path = String(url);
+        const method = init?.method ?? 'GET';
+        if (path.includes('/users/options')) {
+          if (rosterStatus) return jsonResponse({ detail: 'Nope' }, rosterStatus);
+          return jsonResponse({
+            options: [
+              { id: '01N409OTHER0000000000000AA', email: 'r2@n409.example', first_name: 'Rae', last_name: 'Two' },
+            ],
+            truncated: false,
+          });
+        }
+        if (path.includes('/reviews')) return jsonResponse({ reviews: [review], total: 1 });
+        if (method === 'PATCH' && path.includes('/tasks/')) return jsonResponse({ task: ASSIGNED });
+        if (path.includes('/tasks')) return jsonResponse({ tasks: [ASSIGNED], total: 1 });
+        return jsonResponse({});
+      });
+    }
+
+    it('does not accuse every assignee of having left the roster', async () => {
+      // "(not in list)" is a finding about the person — that they were deleted
+      // or lost the role. With no list to be absent from it is a finding about
+      // the request, and it was being made against the entire queue at once.
+      mockWithAssignedTask(503);
+      renderPage();
+
+      const picker = await screen.findByLabelText(`Assignee of ${ASSIGNED.title}`);
+      expect(picker).toHaveTextContent(ASSIGNED.assignee_id!);
+      expect(picker).not.toHaveTextContent('(not in list)');
+    });
+
+    it('still says so when the roster loaded and the assignee really is absent', async () => {
+      // The other half: the accusation is correct when it is earned. Rae is on
+      // the roster; the task is assigned to somebody who is not.
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        const path = String(url);
+        const method = init?.method ?? 'GET';
+        if (path.includes('/users/options'))
+          return jsonResponse({
+            options: [
+              { id: OPS_ID, email: 'ops@n409.example', first_name: 'Olive', last_name: 'Ops' },
+            ],
+            truncated: false,
+          });
+        if (path.includes('/reviews')) return jsonResponse({ reviews: [review], total: 1 });
+        if (method === 'PATCH' && path.includes('/tasks/')) return jsonResponse({ task: ASSIGNED });
+        if (path.includes('/tasks')) return jsonResponse({ tasks: [ASSIGNED], total: 1 });
+        return jsonResponse({});
+      });
+      renderPage();
+
+      const picker = await screen.findByLabelText(`Assignee of ${ASSIGNED.title}`);
+      await waitFor(() => expect(picker).toHaveTextContent('(not in list)'));
+    });
+
+    it('will not let the picker reassign against a roster it does not have', async () => {
+      /*
+       * The picker writes on change and the only reachable option is
+       * "Unassigned", so while the roster was missing the control was a one-way
+       * unassign button on a queue ops had only opened to read.
+       */
+      mockWithAssignedTask(503);
+      renderPage();
+
+      expect(await screen.findByLabelText(`Assignee of ${ASSIGNED.title}`)).toBeDisabled();
+    });
+
+    it('says the roster is missing on both tabs', async () => {
+      mockApi({ rosterStatus: 503 });
+      const user = userEvent.setup();
+      renderPage();
+
+      await screen.findByText(/list of operations users could not be loaded/);
+      await user.click(screen.getByRole('button', { name: 'Review queue' }));
+      await screen.findByText(/list of operations users could not be loaded/);
+    });
+
+    it('offers no such note when the roster loads', async () => {
+      mockApi();
+      const user = userEvent.setup();
+      renderPage();
+
+      await screen.findByLabelText(`Assignee of ${task.title}`);
+      expect(screen.queryByText(/could not be loaded/)).toBeNull();
+      await user.click(screen.getByRole('button', { name: 'Review queue' }));
+      await screen.findByText('Sendback Inc');
+      expect(screen.queryByText(/could not be loaded/)).toBeNull();
+    });
   });
 });

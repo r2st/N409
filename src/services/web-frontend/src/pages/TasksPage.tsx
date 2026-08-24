@@ -71,6 +71,14 @@ export function TasksPage() {
   const [view, setView] = useState<View>('tasks');
   const [options, setOptions] = useState<UserOption[]>([]);
   const [optionsCapped, setOptionsCapped] = useState(false);
+  /*
+   * The roster failing to load is not the same as the roster being empty, and
+   * both tabs below turn an empty roster into a claim about people: the task
+   * picker labels every assignee it cannot find "(not in list)", and the review
+   * queue prints raw ids where names go. Neither is true of an outage, so the
+   * outage has to say its own name. Mirrors `WorkflowActions`.
+   */
+  const [optionsFailed, setOptionsFailed] = useState(false);
 
   useEffect(() => {
     api<{ options: UserOption[]; truncated: boolean }>('/users/options?group=ops')
@@ -78,7 +86,7 @@ export function TasksPage() {
         setOptions(res.options);
         setOptionsCapped(res.truncated);
       })
-      .catch(() => {});
+      .catch(() => setOptionsFailed(true));
   }, []);
 
   if (!isOps(user)) {
@@ -107,17 +115,39 @@ export function TasksPage() {
         />
       </div>
       {view === 'tasks' ? (
-        <TaskQueue options={options} capped={optionsCapped} />
+        <TaskQueue options={options} capped={optionsCapped} rosterFailed={optionsFailed} />
       ) : (
-        <ReviewQueue options={options} />
+        <ReviewQueue options={options} rosterFailed={optionsFailed} />
       )}
     </div>
   );
 }
 
+/**
+ * Says the roster is missing rather than letting an empty one speak for it.
+ * Both tabs render people from `/users/options`, and both degrade into claims
+ * about those people when the list is absent.
+ */
+function RosterUnavailableNote() {
+  return (
+    <p className="mt-4 text-sm text-ink-400">
+      The list of operations users could not be loaded, so names are shown as ids and assignees cannot
+      be changed here. Reload the page to try again.
+    </p>
+  );
+}
+
 // ── Tasks tab — typed review tasks with inline actions ───────────────────────
 
-function TaskQueue({ options, capped }: { options: UserOption[]; capped: boolean }) {
+function TaskQueue({
+  options,
+  capped,
+  rosterFailed,
+}: {
+  options: UserOption[];
+  capped: boolean;
+  rosterFailed: boolean;
+}) {
   const { user } = useAuth();
   const [scope, setScope] = useState<Scope>('me');
   const [status, setStatus] = useState<'' | ReviewTaskStatus>('');
@@ -179,6 +209,7 @@ function TaskQueue({ options, capped }: { options: UserOption[]; capped: boolean
 
       <div className="mt-6">
         {error && <ErrorNote>{error}</ErrorNote>}
+        {rosterFailed && <RosterUnavailableNote />}
         {!tasks && !error && <TableSkeleton columns={5} rows={6} label="Loading tasks…" />}
         {tasks && tasks.length === 0 && (
           <EmptyState title="Nothing here">
@@ -228,6 +259,13 @@ function TaskQueue({ options, capped }: { options: UserOption[]; capped: boolean
                   value={task.assignee_id ?? ''}
                   onChange={(e) => void patchTask(task, { assignee_id: e.target.value || null })}
                   className="w-44"
+                  /*
+                   * With no roster the only reachable option is "Unassigned",
+                   * and this picker writes on change — so a failed load turned
+                   * the control into a one-way unassign button for a queue ops
+                   * were only trying to read.
+                   */
+                  disabled={rosterFailed}
                 >
                   <option value="">Unassigned</option>
                   {options.map((o) => (
@@ -248,7 +286,17 @@ function TaskQueue({ options, capped }: { options: UserOption[]; capped: boolean
                    * id exactly as `reviewerName` does on the other tab.
                    */}
                   {task.assignee_id && !options.some((o) => o.id === task.assignee_id) && (
-                    <option value={task.assignee_id}>{task.assignee_id} (not in list)</option>
+                    <option value={task.assignee_id}>
+                      {/*
+                       * "(not in list)" is a finding about the person — they
+                       * left, or lost the role. It is only a finding when there
+                       * was a list to be absent from; when the roster failed to
+                       * load *every* assignee is missing from it, and the row
+                       * would accuse the whole queue of having been deleted.
+                       */}
+                      {task.assignee_id}
+                      {rosterFailed ? '' : ' (not in list)'}
+                    </option>
                   )}
                   <PickerOverflowNote truncated={capped} />
                 </Select>
@@ -275,7 +323,7 @@ function TaskQueue({ options, capped }: { options: UserOption[]; capped: boolean
 
 // ── Review queue tab — valuations awaiting approve / request-changes ─────────
 
-function ReviewQueue({ options }: { options: UserOption[] }) {
+function ReviewQueue({ options, rosterFailed }: { options: UserOption[]; rosterFailed: boolean }) {
   const { user } = useAuth();
   const [mine, setMine] = useState<'me' | 'all'>('me');
   const [reviews, setReviews] = useState<ReviewQueueItem[] | null>(null);
@@ -363,6 +411,7 @@ function ReviewQueue({ options }: { options: UserOption[] }) {
 
       <div className="mt-6">
         {error && <ErrorNote>{error}</ErrorNote>}
+        {rosterFailed && <RosterUnavailableNote />}
         {!reviews && !error && <TableSkeleton columns={5} rows={4} label="Loading review queue…" />}
         {reviews && reviews.length === 0 && (
           <EmptyState title="Review queue is clear">
