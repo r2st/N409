@@ -94,6 +94,45 @@ _MAX_DLOM = 0.99
 _SMALL_VAR_T = 1e-4
 
 
+def _variance_time(sigma: float, t: float) -> float:
+    """``σ²T``, or an EngineInputError naming the volatility.
+
+    The volatility's plausible band is a `warn`, not an `error` — `VOLATILITY_BAND`
+    is a review opinion rather than a fact about the arithmetic — so any finite
+    positive sigma clears validation with ``ok: true`` and arrives here. ``σ²``
+    leaves the doubles long before sigma itself does: past sigma ≈ 1.3e154 the
+    product saturates to ``inf``, silently, and every model below then computes
+    ``inf · e^{−inf}``, which is ``nan``.
+
+    The ``nan`` survives every clamp on the way out — comparisons against it are
+    all False, so ``min(max(nan, 0.0), _MAX_DLOM)`` returns it unchanged — and it
+    is `compute._check_discount_range` that finally stops it, several layers up,
+    with "dloc/dlom must be fractions in [0, 1)". That backstop is doing its job
+    and stays; what it cannot do is say what went wrong. It names ``dlom``, which
+    on a model method is not an input at all but the thing these functions were
+    asked to compute, so the caller is pointed at a field they did not fill in
+    and away from the volatility they mistyped.
+
+    `chaffee_dlom` never needed this: it computes through `bs_put`, and `d1_d2`
+    added exactly this guard for exactly this input. So one payload got a 422
+    naming the volatility on one of the four model methods and a 422 blaming a
+    computed discount on the other three, and on a ``dlom_methods`` blend which
+    of the two you got depended on which legs were weighted.
+
+    Raising rather than saturating to each model's limit, which is `d1_d2`'s
+    judgement and the reason it is repeated here: σ²T being unrepresentable is
+    not a modelling opinion about marketability, it is the absence of a number.
+    """
+    var_t = sigma * sigma * t
+    if not math.isfinite(var_t):
+        raise EngineInputError(
+            f"the DLOM variance sigma^2*T is not representable at volatility={sigma:g} "
+            f"over T={t:g} years — check the volatility and the time to exit "
+            "(a volatility is a fraction, so 60% is 0.6)"
+        )
+    return var_t
+
+
 def chaffee_dlom(sigma: float, t: float, r: float) -> float:
     if sigma <= 0 or t <= 0:
         return 0.0
@@ -103,7 +142,7 @@ def chaffee_dlom(sigma: float, t: float, r: float) -> float:
 def finnerty_dlom(sigma: float, t: float) -> float:
     if sigma <= 0 or t <= 0:
         return 0.0
-    var_t = sigma * sigma * t
+    var_t = _variance_time(sigma, t)
 
     # v²T = σ²T + ln(2(e^{σ²T} − σ²T − 1)) − 2 ln(e^{σ²T} − 1)
     #
@@ -174,7 +213,7 @@ def ghaidarov_dlom(sigma: float, t: float) -> float:
     """
     if sigma <= 0 or t <= 0:
         return 0.0
-    var_t = sigma * sigma * t
+    var_t = _variance_time(sigma, t)
     if var_t < _SMALL_VAR_T:
         v_sq_t = var_t / 3.0
     else:
@@ -204,7 +243,7 @@ def longstaff_bound(sigma: float, t: float) -> float:
     """
     if sigma <= 0 or t <= 0:
         return 0.0
-    var_t = sigma * sigma * t
+    var_t = _variance_time(sigma, t)
     a = math.sqrt(var_t)
     expected_max = (2.0 + var_t / 2.0) * norm_cdf(a / 2.0) + a * math.exp(-var_t / 8.0) / math.sqrt(
         2.0 * math.pi

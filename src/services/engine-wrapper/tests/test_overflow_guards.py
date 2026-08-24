@@ -33,6 +33,13 @@ from fastapi.testclient import TestClient
 from app.engine.approaches import asset_value, income_dcf, market_multiples
 from app.engine.bs import bs_call, bs_call_delta, bs_call_terms, discount_factor
 from app.engine.compute import compute
+from app.engine.dlom import (
+    chaffee_dlom,
+    finnerty_dlom,
+    ghaidarov_dlom,
+    longstaff_bound,
+    longstaff_dlom,
+)
 from app.engine.errors import EngineInputError
 from app.engine.waterfall import allocate_waterfall
 from app.engine.volatility import ewma_volatility, historical_volatility, parkinson_volatility
@@ -455,3 +462,112 @@ def test_compute_still_succeeds_on_the_same_payload_with_a_sane_volatility():
     res = client.post("/engine/v1/compute", json=payload)
     assert res.status_code == 200
     assert math.isfinite(res.json()["results"]["fmv_per_share"])
+
+
+# ── the DLOM models, which the volatility reaches by a second road ────────────
+#
+# `d1_d2` above is not the only place a caller-supplied sigma is squared. The
+# four option-based DLOM models take (σ, T) directly, and three of them compute
+# σ²T themselves rather than through Black-Scholes — so the guard `d1_d2` grew
+# for exactly this input covered `chaffee` (which goes through `bs_put`) and
+# none of the other three.
+#
+# Past sigma ≈ 1.3e154 the product saturates to `inf`, and each closed form then
+# evaluates `inf · e^{−inf}` — a NaN, which survives the `_MAX_DLOM` clamp
+# because every comparison against it is False. `compute._check_discount_range`
+# does stop it, so this was never a NaN in a report; what it could not do is say
+# what went wrong. It answers "dloc/dlom must be fractions in [0, 1)", naming a
+# discount that on a model method is the *output* these functions were asked to
+# produce, and pointing the caller away from the volatility they mistyped.
+
+
+def test_the_three_model_dloms_refuse_the_volatility_chaffee_already_refused():
+    """One payload, four methods, and it used to matter which one you picked."""
+    with pytest.raises(EngineInputError) as chaffee:
+        chaffee_dlom(VOL_VARIANCE_OVERFLOW, 3.0, 0.04)
+    assert "volatility" in str(chaffee.value)
+
+    for fn in (finnerty_dlom, ghaidarov_dlom, longstaff_dlom, longstaff_bound):
+        with pytest.raises(EngineInputError) as err:
+            fn(VOL_VARIANCE_OVERFLOW, 3.0)
+        assert "volatility" in str(err.value), fn.__name__
+
+
+def test_the_horizon_reaches_the_same_product_and_is_named_with_it():
+    """σ²T overflows from either side, and `exit_timeline` is the other one."""
+    with pytest.raises(EngineInputError) as err:
+        finnerty_dlom(0.6, math.inf)
+    assert "time to exit" in str(err.value)
+
+
+def test_compute_blames_the_volatility_rather_than_the_discount_it_derived():
+    """End to end, on an allocation that does not itself need a volatility.
+
+    `cvm` is the point: with `opm` the same payload is refused by `bs_call`
+    first, so the DLOM's own guard is never reached and a test through the
+    default allocation would pass without exercising it.
+    """
+    payload = {
+        "params": {
+            "weight_asset": 1.0,
+            "weight_opm": 0.0,
+            "weight_income": 0.0,
+            "weight_market": 0.0,
+            "allocation_method": "cvm",
+            "dlom_method": "finnerty",
+            "dloc": 0.0,
+        },
+        "inputs": {
+            "shares_outstanding_common": 1_000_000,
+            "last_round_post_money": 10_000_000,
+            "volatility": VOL_VARIANCE_OVERFLOW,
+            "asset": {"total_assets": 10_000_000, "total_liabilities": 2_000_000},
+        },
+    }
+    pre = client.post("/engine/v1/validate", json=payload)
+    assert pre.status_code == 200
+    assert pre.json()["ok"] is True
+
+    res = client.post("/engine/v1/compute", json=payload)
+    assert res.status_code == 422
+    detail = res.json()["detail"]
+    assert "volatility" in detail
+    # The message `_check_discount_range` used to answer with, which names a
+    # field the caller never supplied.
+    assert "dloc/dlom must be fractions" not in detail
+
+
+@pytest.mark.parametrize("method", ["finnerty", "ghaidarov", "longstaff"])
+def test_the_same_payload_with_a_sane_volatility_still_concludes(method):
+    payload = {
+        "params": {
+            "weight_asset": 1.0,
+            "weight_opm": 0.0,
+            "weight_income": 0.0,
+            "weight_market": 0.0,
+            "allocation_method": "cvm",
+            "dlom_method": method,
+            "dloc": 0.0,
+        },
+        "inputs": {
+            "shares_outstanding_common": 1_000_000,
+            "last_round_post_money": 10_000_000,
+            "volatility": 0.6,
+            "asset": {"total_assets": 10_000_000, "total_liabilities": 2_000_000},
+        },
+    }
+    res = client.post("/engine/v1/compute", json=payload)
+    assert res.status_code == 200, res.text
+    assert math.isfinite(res.json()["results"]["fmv_per_share"])
+
+
+def test_ordinary_and_merely_large_volatilities_are_untouched():
+    """Pinned to the full double: the healthy path is the same arithmetic it
+    always was, and a volatility far outside the plausible band is still a
+    *number* — the band is a warning, so a large-but-representable sigma must
+    keep producing a discount rather than being swept up by the guard."""
+    assert finnerty_dlom(0.6, 2.0) == 0.18200209692882635
+    assert ghaidarov_dlom(0.6, 2.0) == 0.19927352958814804
+    assert longstaff_bound(0.6, 2.0) == 0.8771578490474592
+    for fn in (finnerty_dlom, ghaidarov_dlom, longstaff_dlom):
+        assert math.isfinite(fn(1e150, 3.0)), fn.__name__
