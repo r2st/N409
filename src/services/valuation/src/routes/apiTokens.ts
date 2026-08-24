@@ -14,6 +14,7 @@ import {
   TOKEN_PAGE_LIMIT,
 } from '../repos/apiTokens.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { flagParam } from '../domain/queryFlag.js';
 
 /**
  * M3 feature 14 — partner API token management. Tokens are scoped to a
@@ -70,7 +71,7 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
     }
     const parsed = z
       .object({
-        revoked: z.enum(['true', 'false']).optional(),
+        revoked: flagParam(false),
         limit: z.coerce.number().int().min(1).max(TOKEN_PAGE_LIMIT).default(TOKEN_PAGE_LIMIT),
       })
       .safeParse(req.query ?? {});
@@ -82,7 +83,7 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // number this list exists to surface: a live credential nobody is using.
     const [{ tokens, truncated }, stats] = await Promise.all([
       listAllApiTokens(deps.pool, {
-        includeRevoked: parsed.data.revoked === 'true',
+        includeRevoked: parsed.data.revoked,
         limit: parsed.data.limit,
       }),
       apiTokenStats(deps.pool, DORMANT_AFTER_MS),

@@ -7,6 +7,7 @@ import { NOTIFICATION_EVENT_TYPES } from '../domain/emailWorkflows.js';
 import { listNotifications, markAllRead, markRead, unreadCount } from '../repos/notifications.js';
 import { getPreferenceMatrix, replacePreferences } from '../repos/notificationPreferences.js';
 import { listOutbox } from '../repos/emailOutbox.js';
+import { flagParam } from '../domain/queryFlag.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -16,7 +17,7 @@ import { requirePrincipal } from '../plugins/auth.js';
  */
 
 const ListQuery = z.object({
-  unread: z.coerce.boolean().optional(),
+  unread: flagParam(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 

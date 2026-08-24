@@ -5,6 +5,7 @@ import { isUlid, problems } from '@n409/shared';
 import { canReadValuation } from '../auth/rbac.js';
 import { COMMENT_KINDS, type CommentKind } from '../domain/operations.js';
 import { pageParam } from '../domain/pagination.js';
+import { flagParam } from '../domain/queryFlag.js';
 import { listInbox, markAllRead, markThreadRead, unreadThreadCount } from '../repos/inbox.js';
 import { findValuationById } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -25,7 +26,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 export function registerInboxRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   const ListQuery = z.object({
     kind: z.enum(COMMENT_KINDS).optional(),
-    unread: z.coerce.boolean().default(false),
+    unread: flagParam(false),
     q: z.string().max(200).optional(),
     page: pageParam(),
     per_page: z.coerce.number().int().min(1).max(100).default(25),

@@ -16,6 +16,7 @@ import { listJobAlertRules, listJobAlerts, updateJobAlertRule } from '../repos/j
 import { runJobAlertScan } from '../hooks/jobAlerts.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { flagParam } from '../domain/queryFlag.js';
 
 /**
  * The background job monitor (409.ai's Published Tasks page).
@@ -104,14 +105,14 @@ export function registerJobRoutes(app: FastifyInstance, deps: { pool: pg.Pool })
     requireOps(req);
     const parsed = z
       .object({
-        open: z.enum(['true', 'false']).default('false'),
+        open: flagParam(false),
         limit: z.coerce.number().int().min(1).max(100).default(50),
       })
       .safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
 
     const [alerts, rules] = await Promise.all([
-      listJobAlerts(deps.pool, { openOnly: parsed.data.open === 'true', limit: parsed.data.limit }),
+      listJobAlerts(deps.pool, { openOnly: parsed.data.open, limit: parsed.data.limit }),
       listJobAlertRules(deps.pool),
     ]);
     return {

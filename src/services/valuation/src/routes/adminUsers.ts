@@ -53,13 +53,14 @@ import type { EmailTransport } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { EmailAddress } from '../domain/email.js';
 import { pageParam } from '../domain/pagination.js';
+import { flagParam } from '../domain/queryFlag.js';
 import { isUniqueViolation } from '../db/pgError.js';
 
 const ListQuery = z.object({
   q: z.string().max(200).optional(),
   role: z.enum(ROLE_KEYS).optional(),
   partner_id: z.string().optional(),
-  include_deleted: z.coerce.boolean().default(false),
+  include_deleted: flagParam(false),
   page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(100).default(25),
 });
@@ -620,7 +621,7 @@ export function registerAdminUserRoutes(
     if (!isOps(principal)) throw problems.forbidden();
     const parsed = z
       .object({
-        include_archived: z.coerce.boolean().default(false),
+        include_archived: flagParam(false),
         q: z.string().trim().min(1).max(200).optional(),
         limit: z.coerce.number().int().min(1).max(PICKER_LIMIT).default(PICKER_LIMIT),
       })

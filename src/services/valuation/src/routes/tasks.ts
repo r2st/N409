@@ -10,6 +10,7 @@ import { userExists } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { pageParam } from '../domain/pagination.js';
+import { flagParam } from '../domain/queryFlag.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 const CreateBody = z.object({
@@ -49,7 +50,7 @@ const ListQuery = z.object({
   valuation_id: z.string().optional(),
   assignee: z.string().optional(), // 'me' or a user id
   status: z.enum(REVIEW_TASK_STATUSES).optional(),
-  overdue: z.coerce.boolean().optional(),
+  overdue: flagParam(),
   page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(100).default(25),
 });

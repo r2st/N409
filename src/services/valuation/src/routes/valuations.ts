@@ -40,6 +40,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { Principal } from '../auth/rbac.js';
 import { pageParam } from '../domain/pagination.js';
+import { flagParam } from '../domain/queryFlag.js';
 import { int4Positive } from '../domain/int4.js';
 import { visibleCommentKinds } from '../auth/operations.js';
 import { loadValuationCounters } from '../repos/valuationCounters.js';
@@ -114,15 +115,9 @@ export const ValuationFilterQuery = z.object({
   user_id: z.string().optional(),
   source: z.enum(VALUATION_SOURCES).optional(),
   paid_status: z.enum(['unpaid', 'paid', 'paid_by_partner']).optional(),
-  waiting_on_client: z
-    .enum(['true', 'false'])
-    .transform((v) => v === 'true')
-    .optional(),
+  waiting_on_client: flagParam(),
   // Unread scope (gap 4) — resolved to the caller's side in the route.
-  unread: z
-    .enum(['true', 'false'])
-    .transform((v) => v === 'true')
-    .optional(),
+  unread: flagParam(),
   created_from: DateOnly.optional(),
   created_to: DateOnly.optional(),
   due_from: DateOnly.optional(),

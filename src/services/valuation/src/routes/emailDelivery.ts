@@ -21,6 +21,7 @@ import {
 } from '../repos/emailDelivery.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { flagParam } from '../domain/queryFlag.js';
 
 /**
  * Delivery reporting, the suppression list, and provider event ingest (0163).
@@ -40,7 +41,7 @@ const StatsQuery = z.object({
 });
 
 const SuppressionsQuery = z.object({
-  include_released: z.coerce.boolean().default(false),
+  include_released: flagParam(false),
   limit: z.coerce.number().int().min(1).max(500).default(100),
 });
 

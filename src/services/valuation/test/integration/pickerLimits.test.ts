@@ -134,4 +134,22 @@ describe.skipIf(!dbUp)('picker limits', () => {
       'Picker Archived',
     ]);
   });
+
+  it('reads include_archived=false as false, and refuses anything that is neither', async () => {
+    // The flag was `z.coerce.boolean()`, which is `Boolean('false')` — true. So
+    // spelling the default out, which is what a caller unsetting the switch
+    // sends and what any client library that serialises `false` sends, turned
+    // archived partners *on*. Nothing in the 200 said so.
+    const id = await seedPartner(ctx, 'Picker Retired');
+    await ctx.pool.query('UPDATE partners SET archived_at = now() WHERE id = $1', [id]);
+
+    const off = await partners('?q=Picker Retired&include_archived=false');
+    expect((off.json() as { partners: unknown[] }).partners).toEqual([]);
+
+    // And the values that were also silently true.
+    for (const value of ['0', 'no', 'banana']) {
+      const res = await partners(`?q=Picker Retired&include_archived=${value}`);
+      expect(res.statusCode, value).toBe(400);
+    }
+  });
 });

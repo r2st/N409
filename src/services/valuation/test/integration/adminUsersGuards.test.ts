@@ -548,6 +548,44 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
       }
     });
 
+    it('reads include_deleted=false as false, and refuses anything that is neither', async () => {
+      // `z.coerce.boolean()` is `Boolean('false')` — true. So the one query a
+      // console sends when the "show deactivated" switch is *off*, and the one
+      // any client library that serialises a boolean sends, listed exactly the
+      // accounts the switch exists to hide. The console itself was safe only by
+      // accident: it omits the key rather than sending `false`.
+      const leaver = await createUser();
+      const del = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/users/${leaver.id}`,
+        headers: auth(),
+      });
+      expect(del.statusCode).toBe(204);
+
+      const hidden = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/users?q=${encodeURIComponent(leaver.email)}&include_deleted=false`,
+        headers: auth(),
+      });
+      expect(hidden.json().total).toBe(0);
+
+      const shown = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/users?q=${encodeURIComponent(leaver.email)}&include_deleted=true`,
+        headers: auth(),
+      });
+      expect(shown.json().total).toBe(1);
+
+      for (const value of ['0', 'no', 'banana', '']) {
+        const res = await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/users?include_deleted=${value}`,
+          headers: auth(),
+        });
+        expect(res.statusCode, value).toBe(400);
+      }
+    });
+
     it('422s a create with a short password or a bad address', async () => {
       for (const payload of [
         { email: email(), password: 'short', roles: ['valuation_user'] },
