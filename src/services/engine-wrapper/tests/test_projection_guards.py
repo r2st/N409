@@ -12,6 +12,8 @@ route maps `EngineInputError` onto a 422 whose detail is this string, so it is
 the only thing telling the caller which of the fourteen assumptions was wrong.
 """
 
+import math
+
 import pytest
 
 from app.engine.errors import EngineInputError
@@ -109,3 +111,75 @@ def test_unrecognised_terminal_method_is_not_silently_none():
 def test_exit_multiple_itself_must_be_positive():
     with pytest.raises(EngineInputError, match="exit multiple must be positive"):
         terminal_value_exit_multiple(100.0, 0.0)
+
+
+# ── the terminal value, which is `None` for two different reasons ─────────────
+#
+# `terminal_value` is `None` when no terminal value was asked for. It was also
+# `None` when one was asked for and overflowed: `round(inf, 2)` is `inf`, which
+# FastAPI serialises as `null`, so the response came back 200 and a consumer
+# could not tell "you did not ask for one" from "the perpetuity left the
+# doubles". `_finite` is applied to the projected revenue and to every free cash
+# flow for exactly this reason; the terminal value is the third computed figure
+# in the function and was the one it stopped short of.
+#
+# Reachable without a single non-finite input: the free cash flows here are
+# ~1.98e307 and finite, and the Gordon denominator of 0.1 is what takes the
+# quotient past the end of the doubles.
+HUGE_FORECAST = {
+    "method": "growth",
+    "years": 2,
+    "base_revenue": 1e308,
+    "revenue_growth": 0.0,
+    "cogs_pct": 0.4,
+    "opex_pct": 0.3,
+    "da_pct": 0.05,
+    "capex_pct": 0.05,
+    "nwc_pct": 0.0,
+}
+
+
+def test_an_overflowing_gordon_terminal_value_is_refused_rather_than_nulled():
+    with pytest.raises(EngineInputError, match="Gordon terminal value overflowed"):
+        project_financials(
+            **HUGE_FORECAST, terminal_method="gordon", discount_rate=0.1, terminal_growth=0.0
+        )
+
+
+def test_an_overflowing_exit_multiple_terminal_value_is_refused_too():
+    with pytest.raises(EngineInputError, match="exit-multiple terminal value overflowed"):
+        project_financials(
+            **HUGE_FORECAST, terminal_method="exit_multiple", exit_multiple=1e10, exit_metric="revenue"
+        )
+
+
+def test_the_message_names_what_to_look_at_rather_than_the_growth_rate():
+    """The inherited hint — "check the growth and margin assumptions" — is right
+    for a runaway forecast line and wrong here: this forecast is flat, and what
+    overflowed is the perpetuity's own denominator."""
+    with pytest.raises(EngineInputError) as err:
+        project_financials(
+            **HUGE_FORECAST, terminal_method="gordon", discount_rate=0.1, terminal_growth=0.0
+        )
+    assert "terminal growth rate" in str(err.value)
+    assert "margin assumptions" not in str(err.value)
+
+
+def test_the_flows_themselves_are_still_finite_on_that_forecast():
+    """Otherwise the test above would be pinning the free-cash-flow guard that
+    already existed rather than the terminal-value one that did not."""
+    out = project_financials(**HUGE_FORECAST)
+    assert all(math.isfinite(f) for f in out["free_cash_flows"])
+    assert out["terminal_value"] is None
+
+
+def test_an_ordinary_forecast_still_reports_both_terminal_values():
+    ordinary = {**HUGE_FORECAST, "base_revenue": 1_000_000.0}
+    gordon = project_financials(
+        **ordinary, terminal_method="gordon", discount_rate=0.1, terminal_growth=0.0
+    )
+    assert gordon["terminal_value"] == pytest.approx(1_975_000.0)
+    exit_mult = project_financials(
+        **ordinary, terminal_method="exit_multiple", exit_multiple=8.0, exit_metric="ebitda"
+    )
+    assert exit_mult["terminal_value"] == pytest.approx(2_400_000.0)

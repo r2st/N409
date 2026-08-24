@@ -72,17 +72,20 @@ def _check_horizon(n: int) -> None:
         )
 
 
-def _finite(value: float, name: str) -> float:
+def _finite(value: float, name: str, hint: str = "check the growth and margin assumptions") -> float:
     """Guard a *computed* figure, where finite inputs can still overflow.
 
     Compounding is the reachable case: fifteen years of a mistyped growth rate
     overflows to inf on its own, and inf − inf is NaN, so the projection ends
     up part astronomical and part null without a single non-finite input.
+
+    `hint` is what the caller should go and look at, and it is not the same for
+    every figure here: a runaway forecast line is the growth and the margins,
+    while a terminal value that overflows on a perfectly ordinary forecast is
+    the perpetuity's own denominator.
     """
     if not math.isfinite(value):
-        raise EngineInputError(
-            f"{name} overflowed to a non-finite value — check the growth and margin assumptions"
-        )
+        raise EngineInputError(f"{name} overflowed to a non-finite value — {hint}")
     return value
 
 
@@ -261,12 +264,29 @@ def project_financials(
             }
         )
 
+    # `None` here means "no terminal value was asked for", and that is the whole
+    # reason both branches below are guarded rather than left to overflow.
+    # `round(inf, 2)` is `inf`, which FastAPI serialises as `null` — so an
+    # overflowed Gordon perpetuity came back on a 200 as the same `null` a
+    # `terminal_method: "none"` run returns, and no consumer can tell the two
+    # apart. `_finite` is already applied to the projected revenue and to every
+    # free cash flow for exactly this reason; the terminal value is the third
+    # computed figure in this function and was the one it stopped short of.
     terminal_value: float | None = None
     if terminal_method == "gordon":
         if discount_rate is None:
             raise EngineInputError("gordon terminal value needs discount_rate")
         terminal_value = round(
-            terminal_value_gordon(free_cash_flows[-1], _num(discount_rate, "discount_rate"), _num(terminal_growth, "terminal_growth")),
+            _finite(
+                terminal_value_gordon(
+                    free_cash_flows[-1],
+                    _num(discount_rate, "discount_rate"),
+                    _num(terminal_growth, "terminal_growth"),
+                ),
+                "the Gordon terminal value",
+                "check the final free cash flow, and that the discount rate is "
+                "far enough above the terminal growth rate",
+            ),
             2,
         )
     elif terminal_method == "exit_multiple":
@@ -281,7 +301,14 @@ def project_financials(
         if exit_metric not in ("ebitda", "revenue"):
             raise EngineInputError(f"exit_metric must be 'ebitda' or 'revenue'; got {exit_metric!r}")
         metric_val = projections[-1]["ebitda"] if exit_metric == "ebitda" else projections[-1]["revenue"]
-        terminal_value = round(terminal_value_exit_multiple(metric_val, _num(exit_multiple, "exit_multiple")), 2)
+        terminal_value = round(
+            _finite(
+                terminal_value_exit_multiple(metric_val, _num(exit_multiple, "exit_multiple")),
+                "the exit-multiple terminal value",
+                "check the exit multiple and the terminal-year metric it is struck on",
+            ),
+            2,
+        )
     elif terminal_method not in (None, "none"):
         raise EngineInputError("terminal_method must be 'gordon', 'exit_multiple' or None")
 
