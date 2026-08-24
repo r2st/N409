@@ -58,6 +58,15 @@ interface AuthContextValue {
   logout: () => void;
 }
 
+/**
+ * The longest session the API will ever issue — the `.max()` on
+ * `JWT_TTL_SECONDS` in the valuation service's config, in milliseconds.
+ *
+ * Used as the ceiling on the sign-out timer, never as its value. Well inside
+ * the 32-bit range a `setTimeout` delay is truncated to.
+ */
+export const MAX_SESSION_MS = 7 * 24 * 60 * 60 * 1000;
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -135,7 +144,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // In-memory token has the exact exp; after a reload only the marker remains.
     const exp = tokenExpiry() ?? storedExpiry();
     if (!exp) return;
-    const ms = exp - Date.now();
+    /*
+     * Clamped, because `exp` is an absolute epoch and `Date.now()` is only the
+     * *client's* opinion of the time.
+     *
+     * A `setTimeout` delay is held as a signed 32-bit integer: hand it more
+     * than 2147483647 ms — a little under 25 days — and it does not schedule
+     * far ahead, it fires on the next tick. So a device whose clock is behind
+     * by a month or more computed a delay that overflowed and signed the user
+     * out about a millisecond after they signed in. What that looks like is a
+     * bounce straight back to the login page carrying no error, repeating for
+     * every attempt, with nothing anywhere pointing at the clock.
+     *
+     * The bound is the server's own ceiling on `JWT_TTL_SECONDS`, so it can
+     * never cut a legitimate session short — no token this app accepts may
+     * outlive it. A delay longer than that is not a long session, it is a
+     * wrong clock, and a wrong clock now costs a sign-out up to a week late
+     * instead of a session that cannot be held at all.
+     */
+    const ms = Math.min(exp - Date.now(), MAX_SESSION_MS);
     if (ms <= 0) {
       logout();
       return;

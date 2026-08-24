@@ -1,8 +1,11 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { AuthProvider, useAuth } from '../src/lib/auth';
+import { AuthProvider, MAX_SESSION_MS, useAuth } from '../src/lib/auth';
 import { UNAUTHORIZED_EVENT, getToken, setToken } from '../src/lib/api';
 import { RequireAuth } from '../src/components/RequireAuth';
 
@@ -232,6 +235,65 @@ describe('AuthProvider session lifecycle', () => {
     expect(screen.getByTestId('status')).toHaveTextContent('anonymous');
   });
 
+  /*
+   * A `setTimeout` delay is held as a signed 32-bit integer. Hand it more than
+   * 2147483647 ms — a little under 25 days — and it does not schedule far
+   * ahead, it fires on the next tick.
+   *
+   * `exp` is an absolute epoch and `Date.now()` is only the client's opinion of
+   * the time, so a device whose clock is behind by a month or more computed
+   * exactly such a delay: the sign-out fired about a millisecond after the
+   * sign-in, bouncing the user back to a login page carrying no error, for
+   * every attempt, with nothing pointing at the clock.
+   *
+   * The assertion is on the delay rather than on the outcome deliberately: fake
+   * timers store the delay as an ordinary number and do not reproduce the
+   * truncation, so a behavioural test here would pass with or without the
+   * clamp. What has to hold is that the number handed to `setTimeout` is one
+   * `setTimeout` can represent.
+   */
+  it('never hands setTimeout a delay it would truncate', async () => {
+    const scheduled: number[] = [];
+    const realSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+      if (typeof ms === 'number') scheduled.push(ms);
+      return realSetTimeout(fn, 0);
+    }) as typeof window.setTimeout);
+
+    localStorage.setItem('n409.token', '1');
+    // A clock 40 days behind: the token is fine, `exp - now` is not.
+    setToken(tokenExpiringIn(40 * 24 * 60 * 60));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ user: me }));
+    renderProbe();
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('authenticated'));
+
+    const signOutDelays = scheduled.filter((ms) => ms > 1000);
+    expect(signOutDelays.length).toBeGreaterThan(0);
+    for (const ms of signOutDelays) {
+      expect(ms).toBeLessThanOrEqual(MAX_SESSION_MS);
+      expect(ms).toBeLessThanOrEqual(2_147_483_647);
+    }
+  });
+
+  it('still schedules the real expiry when the clock is sane', async () => {
+    const scheduled: number[] = [];
+    const realSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+      if (typeof ms === 'number') scheduled.push(ms);
+      return realSetTimeout(fn, 0);
+    }) as typeof window.setTimeout);
+
+    localStorage.setItem('n409.token', '1');
+    setToken(tokenExpiringIn(8 * 60 * 60));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ user: me }));
+    renderProbe();
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('authenticated'));
+
+    // The clamp is a ceiling, not the value: an ordinary 8-hour session is
+    // still scheduled for 8 hours.
+    expect(scheduled.some((ms) => Math.abs(ms - 8 * 60 * 60 * 1000) < 5_000)).toBe(true);
+  });
+
   it('stays signed in when no expiry is known at all', async () => {
     localStorage.setItem('n409.token', '1');
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ user: me }));
@@ -248,5 +310,23 @@ describe('AuthProvider session lifecycle', () => {
     const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(() => render(<Orphan />)).toThrow(/must be used inside <AuthProvider>/);
     quiet.mockRestore();
+  });
+});
+
+/**
+ * The clamp is only safe because it is the server's own ceiling: if the API
+ * could ever issue a session longer than `MAX_SESSION_MS`, the timer would cut
+ * a legitimate one short. The two numbers live in different services, so this
+ * reads the authority rather than restating it.
+ */
+describe('the sign-out ceiling matches the API', () => {
+  it('equals the maximum JWT_TTL_SECONDS the valuation service will accept', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const config = readFileSync(path.resolve(here, '../../valuation/src/config.ts'), 'utf8');
+    const cap = /JWT_TTL_SECONDS[\s\S]*?\.max\((\d+)/.exec(config)?.[1];
+    // Vacuity guard: a renamed variable or a restructured schema must fail
+    // here, not silently stop checking.
+    expect(cap, 'could not find the .max() on JWT_TTL_SECONDS').toBeDefined();
+    expect(MAX_SESSION_MS).toBe(Number(cap) * 1000);
   });
 });
