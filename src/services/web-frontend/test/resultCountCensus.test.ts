@@ -24,6 +24,21 @@ import { describe, expect, it } from 'vitest';
  * census's limitation — a control whose label is assembled at runtime is one it
  * cannot see — but the shape it does see is the shape all ten had, and the
  * shape the eleventh will have, because it will be pasted from one of them.
+ *
+ * **The eleventh was not pasted from one of them (R117).** The census asked
+ * one question — is there a control *labelled* "Search" or "Filter" — and the
+ * activity log's six are labelled after the columns they narrow: Scope, Actor,
+ * Actor type, Event type, From date, To date. Not one of them contains either
+ * word, so the page was never a surface as far as this file was concerned, and
+ * six controls rewrote a fifty-row table in silence with a green tick over
+ * them. A census that recognises an idiom rather than a behaviour is a census
+ * that stops seeing the moment somebody names a control accurately.
+ *
+ * `URL_FILTER_BINDING` is the second detector, and it asks about behaviour: a
+ * control whose `onChange` writes to the query string of a page that reads it
+ * back with `useSearchParams` is a filter, whatever it is called. The two
+ * detectors overlap on the surfaces that have both, which is the point — each
+ * covers what the other cannot see, and each has its own vacuity guard below.
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -53,6 +68,18 @@ const EXEMPT: ReadonlyArray<{ file: string; why: string }> = [
 /** Labels that mean "this control narrows a list of results". */
 const FILTER_LABEL = /(aria-label|placeholder)=["'`](Search|Filter)\b/i;
 
+/**
+ * A control wired to the page's own query string — a filter by what it does
+ * rather than by what it is called.
+ *
+ * Paired with `useSearchParams` in the same file deliberately. A local
+ * `setParams` that holds a *model's* parameters rather than the URL's is a
+ * different thing with the same name (DebtInstrumentsPage has one, and it
+ * narrows nothing), and requiring the hook is what tells them apart.
+ */
+const URL_FILTER_BINDING = /onChange=\{[^}]*set(?:Filter|Params|SearchParams)\(/;
+const READS_URL = /useSearchParams\b/;
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const p = path.join(dir, entry);
@@ -66,19 +93,27 @@ interface Surface {
   file: string;
   labels: string[];
   announces: boolean;
+  /** Which detector saw it. A surface both see is listed under both. */
+  via: Array<'label' | 'url'>;
 }
 
 function filterSurfaces(): Surface[] {
   const found: Surface[] = [];
   for (const file of walk(SRC)) {
     const src = readFileSync(file, 'utf8');
-    const labels = src.split('\n').filter((line) => FILTER_LABEL.test(line));
-    if (labels.length === 0) continue;
+    const lines = src.split('\n');
+    const labelled = lines.filter((line) => FILTER_LABEL.test(line));
+    const bound = READS_URL.test(src) ? lines.filter((line) => URL_FILTER_BINDING.test(line)) : [];
+    if (labelled.length === 0 && bound.length === 0) continue;
+    const via: Array<'label' | 'url'> = [];
+    if (labelled.length > 0) via.push('label');
+    if (bound.length > 0) via.push('url');
     found.push({
       file: path.relative(REPO, file),
-      labels: labels.map((l) => l.trim()),
+      labels: [...labelled, ...bound].map((l) => l.trim()),
       // Either the shared primitive, or a live region this file owns itself.
       announces: /<ResultCount\b/.test(src) || /aria-live=/.test(src),
+      via,
     });
   }
   return found;
@@ -93,7 +128,14 @@ describe('a control that narrows a list says what is left', () => {
     // stops matching — a label moved onto its own line, a helper that builds
     // the placeholder — and a guard that has quietly stopped asking is worse
     // than no guard, because the green tick is what stops anyone looking.
-    expect(surfaces.length).toBeGreaterThanOrEqual(12);
+    expect(surfaces.filter((s) => s.via.includes('label')).length).toBeGreaterThanOrEqual(12);
+  });
+
+  it('finds the url-bound idiom at all', () => {
+    // The same guard for the second detector, which needs its own: the first
+    // one stayed comfortably above its floor for as long as the activity log
+    // was invisible to it, so one number cannot report on two questions.
+    expect(surfaces.filter((s) => s.via.includes('url')).length).toBeGreaterThanOrEqual(3);
   });
 
   it('exempts nothing that no longer exists', () => {

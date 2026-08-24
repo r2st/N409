@@ -421,4 +421,116 @@ describe('ActivityLogPage', () => {
       expect(screen.getByText('admin.prompt.updated')).toBeInTheDocument();
     });
   });
+
+  // ── What the page said to somebody not looking at it (R117) ───────────────
+
+  describe('announcing', () => {
+    it('says how many events six unlabelled-as-filters controls left', async () => {
+      // Scope, Actor, Actor type, Event type, From and To rewrite the table and
+      // never move focus. None of them is *called* a filter, which is why the
+      // source census missed the page for as long as it did.
+      mockApi({
+        events: (query) =>
+          json({
+            events: query.get('scope') === 'admin' ? [machineEvent] : [humanEvent, machineEvent],
+            page: 1,
+            per_page: 50,
+            total: query.get('scope') === 'admin' ? 1 : 2,
+          }),
+      });
+      const user = userEvent.setup();
+      renderPage();
+      await ready();
+
+      const announced = () => screen.getAllByRole('status').map((el) => el.textContent);
+      await waitFor(() => expect(announced()).toContain('2 events'));
+
+      await user.selectOptions(screen.getByLabelText('Scope'), 'admin');
+      await waitFor(() => expect(announced()).toContain('1 event'));
+    });
+
+    it('says so when the filters leave nothing, rather than going quiet', async () => {
+      mockApi({ events: () => json({ events: [], page: 1, per_page: 50, total: 0 }) });
+      renderPage();
+      await screen.findByText('No activity matches these filters');
+      expect(screen.getAllByRole('status').map((el) => el.textContent)).toContain('No events');
+    });
+
+    it('moves to the first appended row instead of dropping focus on the floor', async () => {
+      // "Load more" removes itself on the last page, so focus fell back to
+      // <body> and the next Tab restarted at the top of the document — and the
+      // rows it had just fetched arrived unannounced. The first new row answers
+      // both, and is where a reader working down the list wants to be.
+      const user = userEvent.setup();
+      mockApi({
+        events: (query) =>
+          query.get('page') === '2'
+            ? json({
+                events: [{ ...humanEvent, id: 'e3', type: 'valuation.calculated' }],
+                page: 2,
+                per_page: 50,
+                total: 3,
+              })
+            : json({ events: [humanEvent, machineEvent], page: 1, per_page: 50, total: 3 }),
+      });
+      renderPage();
+      await ready();
+      await user.click(screen.getByRole('button', { name: 'Load more' }));
+
+      const appended = (await screen.findByText('valuation.calculated')).closest('tr');
+      await waitFor(() => expect(document.activeElement).toBe(appended));
+      // The button has now retired; focus is on the log, not on nothing.
+      expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it('falls back to the summary when the next page turns out to be empty', async () => {
+      // The log shrank under the reader: page 2 is empty but the button was
+      // still on screen. There is no new row to move to, and dropping focus is
+      // still not an option.
+      const user = userEvent.setup();
+      mockApi({
+        events: (query) =>
+          query.get('page') === '2'
+            ? json({ events: [], page: 2, per_page: 50, total: 2 })
+            : json({ events: [humanEvent, machineEvent], page: 1, per_page: 50, total: 3 }),
+      });
+      renderPage();
+      await ready();
+      await user.click(screen.getByRole('button', { name: 'Load more' }));
+
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByText('Showing 2 of 2')));
+    });
+
+    it('does not re-announce the same total just because somebody paged', async () => {
+      // Paging appends; it does not change how many events match. Sharing one
+      // loading flag blanked the region and repeated the count, which is a
+      // status message reporting that nothing happened.
+      const user = userEvent.setup();
+      mockApi({
+        events: (query) =>
+          query.get('page') === '2'
+            ? json({ events: [{ ...humanEvent, id: 'e3' }], page: 2, per_page: 50, total: 3 })
+            : json({ events: [humanEvent, machineEvent], page: 1, per_page: 50, total: 3 }),
+      });
+      renderPage();
+      await ready();
+      const region = screen.getAllByRole('status').find((el) => el.textContent === '3 events')!;
+      expect(region).toBeDefined();
+
+      // Watched rather than sampled: a region that blanks and refills is back
+      // to '3 events' by the time the assertion runs, and a screen reader has
+      // already said it twice. Only the mutations show that.
+      const seen: string[] = [];
+      const observer = new MutationObserver(() => seen.push(region.textContent ?? ''));
+      observer.observe(region, { childList: true, characterData: true, subtree: true });
+
+      await user.click(screen.getByRole('button', { name: 'Load more' }));
+      await waitFor(() => expect(screen.getByText('Showing 3 of 3')).toBeInTheDocument());
+      observer.disconnect();
+
+      expect(seen).toEqual([]);
+      expect(region.textContent).toBe('3 events');
+    });
+  });
 });

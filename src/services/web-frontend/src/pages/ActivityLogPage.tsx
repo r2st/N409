@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
@@ -8,6 +8,7 @@ import {
   EmptyState,
   ErrorNote,
   PickerOverflowNote,
+  ResultCount,
   Select,
   Spinner,
   TextInput,
@@ -65,6 +66,15 @@ export function ActivityLogPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  /**
+   * Split from `loading` so the two fetches can say different things.
+   *
+   * They are different events: re-running the filters replaces the list and its
+   * count, while "Load more" leaves both alone and appends. Sharing one flag
+   * made `ResultCount` blank and then re-announce the same total every time
+   * somebody paged, which is a status message reporting that nothing happened.
+   */
+  const [appending, setAppending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actors, setActors] = useState<UserOption[]>([]);
   const [actorsCapped, setActorsCapped] = useState(false);
@@ -126,17 +136,45 @@ export function ActivityLogPage() {
       .catch(() => {});
   }, []);
 
+  /**
+   * Where focus goes once the appended rows have rendered.
+   *
+   * "Load more" is a button that removes itself: the last page satisfies
+   * `events.length < total` for the last time, the branch stops rendering it,
+   * and focus — which was on it — falls back to `<body>`, so the next Tab
+   * restarts at the top of the document. Worse, the fifty rows it just fetched
+   * arrive with no announcement at all: nothing moved, nothing was spoken, and
+   * the only evidence the press did anything is a scrollbar.
+   *
+   * Both are answered by moving focus to the first row that was not there
+   * before, which is also where a reader continuing down the list wants to be.
+   * When the response is empty — the log shrank under us, or a filter now
+   * matches fewer rows than are already on screen — there is no such row, and
+   * the summary line takes it instead.
+   */
+  const focusAfterAppend = useRef<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+  const summaryRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const id = focusAfterAppend.current;
+    if (id === null) return;
+    focusAfterAppend.current = null;
+    (rowRefs.current.get(id) ?? summaryRef.current)?.focus();
+  }, [events]);
+
   const loadMore = async () => {
-    setLoading(true);
+    setAppending(true);
     try {
       const d = await api<ActivityList>(`/admin/events?${buildQuery(page + 1)}`);
+      focusAfterAppend.current = d.events[0]?.id ?? '';
       setEvents((prev) => [...prev, ...d.events]);
       setTotal(d.total);
       setPage(page + 1);
     } catch {
       setError('Could not load more activity.');
     } finally {
-      setLoading(false);
+      setAppending(false);
     }
   };
 
@@ -229,6 +267,15 @@ export function ActivityLogPage() {
         <button type="submit" hidden />
       </form>
 
+      {/*
+       * Six controls that change a table the operator is not looking at, and
+       * until now none of them said anything — the census in
+       * test/resultCountCensus.test.ts only recognised a control *labelled*
+       * "Search" or "Filter", and every control here is labelled after the
+       * column it narrows. See that file's second detector.
+       */}
+      <ResultCount count={loading ? null : total} noun="event" query={type || undefined} />
+
       {error && (
         <div className="mt-6">
           <ErrorNote>{error}</ErrorNote>
@@ -256,7 +303,15 @@ export function ActivityLogPage() {
             </thead>
             <tbody>
               {events.map((e) => (
-                <tr key={e.id} className="border-b border-paper-200 align-top last:border-0">
+                <tr
+                  key={e.id}
+                  ref={(el) => {
+                    if (el) rowRefs.current.set(e.id, el);
+                    else rowRefs.current.delete(e.id);
+                  }}
+                  tabIndex={-1}
+                  className="border-b border-paper-200 align-top last:border-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-bond-500"
+                >
                   <td className="tnum px-5 py-3 whitespace-nowrap text-ink-600">
                     {formatDateTime(e.occurred_at)}
                   </td>
@@ -295,12 +350,12 @@ export function ActivityLogPage() {
 
       {events.length > 0 && (
         <div className="mt-5 flex items-center justify-between text-sm text-ink-600">
-          <span className="tnum">
+          <p ref={summaryRef} tabIndex={-1} className="tnum focus:outline-none">
             Showing {events.length} of {total}
-          </span>
+          </p>
           {events.length < total && (
-            <Button variant="secondary" disabled={loading} onClick={() => void loadMore()}>
-              {loading ? 'Loading…' : 'Load more'}
+            <Button variant="secondary" disabled={appending} onClick={() => void loadMore()}>
+              {appending ? 'Loading…' : 'Load more'}
             </Button>
           )}
         </div>
