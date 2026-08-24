@@ -3629,3 +3629,142 @@
 #            engine returned`. It passes alone and on a second full run; the
 #            report render is the one assertion in that file with a service
 #            offload behind it.
+
+# N409 revision
+# commit:    5fde5ea
+# subject:   the query filters that read "false" as yes, and four guards that
+#            stopped one figure short of the one that mattered
+# previous:  32bed3c (R109). This file has no entry for R110–R118; those rounds
+#            are in `git log` and not here, and this entry does not try to
+#            reconstruct them.
+# includes:  7 commits — R119, a hardening round that began by discovering main
+#            was red.
+#
+#            1e25d3a — the suite had been failing on `main` since ec8ae49
+#              (R117/R118), which gave `POST /api/v1/users` the complexity half
+#              of the password policy and updated the fixtures it knew about.
+#              Two files it did not: nineteen tests across `adminUsersGuards`
+#              and `operations` created users with `correct-horse-battery` and
+#              `a-long-password`, neither carrying a digit.
+#
+#              `inputValidationBounds` was worse than red — it passed. Its two
+#              admin-console cases assert a 422 for an over-long address and an
+#              over-long role list, and once the rule landed the 422 was being
+#              answered by the password instead. The file already had
+#              `REGISTRABLE_PASSWORD` and a comment explaining that exact trap,
+#              one describe block above the two literals that fell into it.
+#
+#            7676b03 — `z.coerce.boolean()` on a query string is
+#              `Boolean('false')`, which is true. Six filters read every
+#              deliberate "no" as yes: `include_deleted` (deactivated accounts),
+#              `include_archived` (retired partner orgs), `include_released`
+#              (lifted suppressions), `unread` on the notification list and on
+#              the shared inbox, and `overdue` on review tasks. A 200 and a
+#              plausible page each time.
+#
+#              `routes/valuations.ts` never had it — it has written
+#              `z.enum(['true','false']).transform(...)` from the start — so this
+#              was drift rather than oversight: two spellings for one wire
+#              format, one of them wrong, and nothing about reading either
+#              telling you which you had. `domain/queryFlag.ts` is that enum
+#              once; the two routes that spelled it correctly but compared
+#              `=== 'true'` at the point of use go through it too, so the census
+#              can state the rule without exceptions.
+#
+#            37d67e7 — `PORT`'s comment says it is "bounded like every other
+#              number here". `SMTP_PORT`, sixteen lines below, was not. Its
+#              failure is the quieter one: an SMTP port is not dialled at boot,
+#              so a bare `SMTP_PORT=` becomes 0 and the unit starts, passes
+#              readiness, and fails every message into the outbox for as long as
+#              nobody reads it.
+#
+#              Extracting `portParam` broke the `.env.example` contract scanner,
+#              which is the more interesting half: it matched `^  FOO: z\b` in
+#              config.ts, so a declaration starting with a helper is invisible —
+#              and both ports promptly became documented variables nothing
+#              appeared to read. Six others (`atRestKey()`) were already in that
+#              position, surviving only because `keyRing`'s bespoke idiom names
+#              four of them a file away.
+#
+#            a7891f9 — `report.pdf` names the download from `company_name`,
+#              which is `z.string().min(1).max(300)` and nothing else. A
+#              trailing backslash is a quoted-pair escaping the closing quote of
+#              `filename="…"`, so the quoted-string never terminates; path
+#              separators reached both forms; and the ASCII fallback *dropped*
+#              quotes while the ext-value percent-encoded them, so the two forms
+#              named different files. `safeFilename`'s character rule is now
+#              `scrubFilename` and both build on it — `safeFilename` keeps its
+#              `basename` (an upload may arrive as a whole Windows path), the
+#              header does not (a firm called "Acme/Beta" keeps both halves).
+#
+#            e5ae2b2 — eight variables the contract could not see, because
+#              nothing named them next to a read: everything testable without
+#              mutating the real environment takes `env` as a parameter, so
+#              `process.env` appears once in a default argument. The six `DB_*`
+#              pool and TLS knobs, `HOST`, and `TRUSTED_PROXIES` — the last
+#              decides whose address every per-IP rate limit and audit row is
+#              keyed on, and the deployed chain is client → Cloudflare → Caddy →
+#              web, so an operator wiring up the edge had no way to learn the
+#              app needed telling.
+#
+#            8163f3c — `d1_d2` grew a guard for a sigma whose square leaves the
+#              doubles. It covered `chaffee_dlom`, which goes through `bs_put`,
+#              and could not cover the other three option DLOMs, which square
+#              sigma themselves and returned NaN.
+#              `compute._check_discount_range` does stop it — so never a NaN in
+#              a report — but it answers "dloc/dlom must be fractions in [0, 1)",
+#              naming the figure those functions were asked to produce rather
+#              than the volatility. One payload, four methods, and it mattered
+#              which one you picked.
+#
+#            5fde5ea — `project_financials` returns `terminal_value: None` when
+#              none was asked for, and returned `None` when one was asked for
+#              and overflowed: `round(inf, 2)` is `inf`, serialised as `null`.
+#              A 200 in which no consumer can tell the two apart, on the figure
+#              that is the majority of a five-year DCF. `_finite` is applied to
+#              the projected revenue and to every free cash flow in the same
+#              function, and stopped one figure short.
+#
+# method:    three of the seven came from asking what a *helper* hides. The
+#            query-flag census, the config scanner and `contentDisposition` are
+#            the same shape from different angles: a rule written once and
+#            applied at N sites, where the interesting site is the one that
+#            never got the rule. Grepping for the correct idiom found the
+#            drift faster than grepping for the incorrect one, because the
+#            correct spelling is the one with a name.
+#
+#            The two engine fixes came from a fuzz rather than from reading:
+#            every float-annotated public function under `app/engine/` called
+#            with a grid of extreme-but-finite arguments, reporting non-finite
+#            returns. `terminal_value_gordon` was the only hit, in 60 of 2,744
+#            combinations. Worth noting for the next sweep:
+#            `from __future__ import annotations` makes `p.annotation` the
+#            *string* `'float'`, so comparing against the `float` type matches
+#            nothing and the run reports a confident zero.
+#
+#            Everything is proved against a deliberate break. Restoring
+#            `z.coerce.boolean()` on two flags fails two behavioural tests and
+#            two census assertions, and restoring the inline enum fails the
+#            third; unbinding `SMTP_PORT` fails two config assertions, and
+#            narrowing the scanner back to `z\b` fails the contract test and its
+#            own vacuity guard; passing a filename through unscrubbed fails four
+#            unit assertions and the header read off a real `report.pdf`;
+#            reverting the three DLOM call sites fails all three refusal tests;
+#            dropping either `_finite` fails its own.
+#
+# gap:       `_check_discount_range` and the `.env.example` contract are both
+#            backstops that were doing their job while the thing in front of
+#            them was wrong, and in both cases the symptom was a *message* that
+#            named the wrong field rather than a wrong number. That is the
+#            cheapest class of bug to leave in and the most expensive to
+#            diagnose from a support ticket; there is no census for it.
+#
+#            The `env.FOO` idiom now matched by the scanner is a regex over
+#            source, so it carries the same limitation as the route scans: a
+#            variable read through a differently-named parameter (`environment`,
+#            `cfg`) is one it cannot see.
+#
+#            `contentDisposition` is now correct at the one place that builds
+#            the header, but six routes still interpolate a filename into the
+#            header themselves. Every one of those values is a number, a ULID, a
+#            timestamp or a slug today — the risk is the seventh.
