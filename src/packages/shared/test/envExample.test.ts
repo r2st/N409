@@ -72,6 +72,29 @@ function used(): Map<string, string[]> {
     const rel = path.relative(repoRoot, file);
     // TypeScript: process.env.FOO
     for (const m of text.matchAll(/process\.env\.([A-Z][A-Z0-9_]{2,})/g)) note(m[1]!, rel);
+    // The injected-environment form: `env.FOO`, where `env` is a parameter.
+    //
+    // Not a stylistic variant. The functions that have to be
+    // testable without mutating the real environment take it as a parameter —
+    // `resolvePoolTuning(url, env)`, `trustedProxies(env)`, `listenHost(env)`,
+    // all defaulting to `process.env` — and `process.env` then appears once, in
+    // a default argument, nowhere near the name being read. Eight variables
+    // were invisible here for that reason: the six `DB_*` pool and TLS knobs,
+    // `HOST`, and `TRUSTED_PROXIES` — the last of which decides whose address
+    // every per-IP rate limit and audit row is keyed on, and which an operator
+    // wiring up the Cloudflare edge had no way to discover.
+    //
+    // A `VITE_`-prefixed name is excluded here because in this position it is
+    // always Vite's build-time substitution rather than the process
+    // environment — the frontend destructures `import.meta.env` and reads
+    // `env.VITE_GA4_ID` off it. The deployment variable behind that is `GA4_ID`,
+    // which vite.config.ts's own idiom below reports. The one place a
+    // `VITE_`-prefixed name *is* read from the process environment,
+    // `process.env.VITE_SITE_URL` in vite.config.ts, is matched by the pattern
+    // above and unaffected.
+    for (const m of text.matchAll(/\benv\.([A-Z][A-Z0-9_]{2,})/g)) {
+      if (!m[1]!.startsWith('VITE_')) note(m[1]!, rel);
+    }
     // Python: os.environ.get("FOO") / os.environ["FOO"], either quote style
     for (const m of text.matchAll(/environ(?:\.get\(|\[)["']([A-Z][A-Z0-9_]{2,})["']/g)) {
       note(m[1]!, rel);
@@ -242,6 +265,16 @@ describe('.env.example is the deployment contract', () => {
     expect(names.has('MFA_ENCRYPTION_KEY_PREVIOUS')).toBe(true);
     // The inline-array form, `keyRing(env, ['DOCUMENTS_ENCRYPTION_KEY'])`.
     expect(names.has('DOCUMENTS_ENCRYPTION_KEY')).toBe(true);
+    // Read off an injected `env` parameter rather than `process.env`, which is
+    // how everything that has to be testable without mutating the real
+    // environment reads its configuration.
+    expect(names.has('TRUSTED_PROXIES')).toBe(true);
+    expect(names.has('DB_POOL_MAX')).toBe(true);
+    expect(names.has('HOST')).toBe(true);
+    // …and the exclusion that idiom needs: `import.meta.env.VITE_GA4_ID` is a
+    // build-time constant, not a deployment variable. `GA4_ID` is.
+    expect(names.has('VITE_GA4_ID')).toBe(false);
+    expect(names.has('GA4_ID')).toBe(true);
     // An `Env` key declared through a helper rather than starting with `z`.
     // Named because it is the case the config.ts pattern was widened for, and
     // because nothing else in this list would notice it going missing: SMTP_PORT
