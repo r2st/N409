@@ -416,7 +416,7 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
         headers: authHeader(ops.token),
         payload: {
           email: 'new.reviewer@n409.test',
-          password: 'a-long-password',
+          password: 'a-long-password1',
           first_name: 'Nia',
           roles: ['reviewer'],
         },
@@ -427,7 +427,7 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
       const login = await ctx.app.inject({
         method: 'POST',
         url: '/api/v1/auth/login',
-        payload: { email: 'new.reviewer@n409.test', password: 'a-long-password' },
+        payload: { email: 'new.reviewer@n409.test', password: 'a-long-password1' },
       });
       expect(login.statusCode).toBe(200);
     });
@@ -437,7 +437,7 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
         method: 'POST',
         url: '/api/v1/users',
         headers: authHeader(ops.token),
-        payload: { email: 'temp.user@n409.test', password: 'a-long-password', roles: ['valuation_user'] },
+        payload: { email: 'temp.user@n409.test', password: 'a-long-password1', roles: ['valuation_user'] },
       });
       const id = created.json().user.id as string;
 
@@ -475,7 +475,7 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
         method: 'POST',
         url: '/api/v1/users',
         headers: authHeader(ops.token),
-        payload: { email: 'leaver@n409.test', password: 'a-long-password', roles: ['valuation_user'] },
+        payload: { email: 'leaver@n409.test', password: 'a-long-password1', roles: ['valuation_user'] },
       });
       const id = created.json().user.id as string;
 
@@ -496,7 +496,7 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
       const login = await ctx.app.inject({
         method: 'POST',
         url: '/api/v1/auth/login',
-        payload: { email: 'leaver@n409.test', password: 'a-long-password' },
+        payload: { email: 'leaver@n409.test', password: 'a-long-password1' },
       });
       expect(login.statusCode).toBe(401);
     });

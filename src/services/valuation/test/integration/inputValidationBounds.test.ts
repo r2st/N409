@@ -36,6 +36,12 @@ describe.skipIf(!dbUp)('input size bounds at the route', () => {
    * a password without a digit answers 422 whatever the address is: the
    * over-long-email case above would have passed on the password rule alone,
    * proving nothing about the bound it names.
+   *
+   * The same is true of `POST /users` further down, which is why that block
+   * uses this constant too rather than a literal of its own. It did not, and
+   * once the admin console learned the complexity rule its two 422s were being
+   * answered by the password rather than by the over-long address and the
+   * over-long role list they are named for.
    */
   const REGISTRABLE_PASSWORD = 'correct-horse-battery-9';
 
@@ -103,7 +109,7 @@ describe.skipIf(!dbUp)('input size bounds at the route', () => {
         headers: admins(),
         payload: {
           email: overLongEmail,
-          password: 'correct-horse-battery',
+          password: REGISTRABLE_PASSWORD,
           roles: ['valuation_user'],
         },
       });
@@ -127,7 +133,7 @@ describe.skipIf(!dbUp)('input size bounds at the route', () => {
         headers: admins(),
         payload: {
           email: 'roles@corp.com',
-          password: 'correct-horse-battery',
+          password: REGISTRABLE_PASSWORD,
           roles: Array.from({ length: 60_000 }, () => 'admin'),
         },
       });
