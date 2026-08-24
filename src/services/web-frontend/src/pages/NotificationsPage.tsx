@@ -1,15 +1,56 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { formatDateTime } from '../lib/format';
 import type { AppNotification } from '../lib/types';
 import { Button, EmptyState, ErrorNote, LoadingBlock, Skeleton } from '../components/ui';
 
-/** In-app notification center (M4). */
+/**
+ * In-app notification centre (M4).
+ *
+ * Three things about this list are only true for someone looking at it, and
+ * each is fixed below.
+ *
+ * **Unread was a colour.** The state of a row was carried by a tinted border, a
+ * tinted background and a 8px dot with no text in it — three spellings of one
+ * fact, all of them visual (WCAG 1.4.1). The nearest thing to a textual cue was
+ * that unread rows have a "Mark read" button and read rows do not, which asks
+ * the reader to infer the state from the absence of a control. The dot is now
+ * `aria-hidden` and carries an `sr-only` word instead, so the row announces
+ * "Unread" before its title.
+ *
+ * **Every row's controls had the same name.** Pulling up the control list of a
+ * screenful gave "Mark read, Mark read, Mark read…" and "Open, Open, Open…",
+ * which is a list of buttons with no way to tell which notification each one is
+ * about. Both now name their row.
+ *
+ * **Pressing either control destroyed the reader's place.** "Mark read" is a
+ * button that removes itself: the row becomes read, the branch that renders the
+ * button stops rendering it, and focus — which was on it — falls back to
+ * `<body>`. The next Tab starts again from the top of the document, so working
+ * down a list of ten and marking them off sent the user back to the skip link
+ * ten times. "Mark all read" does the same at the page level. Focus is now
+ * moved deliberately: to the row that was marked, which still exists and now
+ * reads as read, and to the heading for the bulk action, whose count has just
+ * changed.
+ *
+ * The move alone is silent, though — focusing an element announces *it*, not
+ * what happened — so the outcome is also spoken through a live region that is
+ * always mounted. `ResultCount`'s note in components/ui explains why a region
+ * inserted with its message already in it commonly says nothing at all.
+ */
 export function NotificationsPage() {
   const [notifications, setNotifications] = useState<AppNotification[] | null>(null);
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState('');
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  /**
+   * The rendered `<li>` per notification id. Keyed by `n.id`, which is also the
+   * React key, so the element survives the reload that follows a write and is
+   * still the right thing to focus once the button inside it has gone.
+   */
+  const rowRefs = useRef(new Map<string, HTMLLIElement>());
 
   const load = useCallback(async () => {
     try {
@@ -28,6 +69,11 @@ export function NotificationsPage() {
   const markRead = async (id: string) => {
     try {
       await api(`/notifications/${id}/read`, { method: 'POST' });
+      // Before the reload, not after: the row element is the same either way,
+      // and taking focus while the button is still mounted means there is no
+      // instant in which the document has no focused element at all.
+      rowRefs.current.get(id)?.focus();
+      setNotice('Marked as read.');
       await load();
     } catch {
       /* non-fatal — the row simply stays unread */
@@ -37,6 +83,8 @@ export function NotificationsPage() {
   const markAllRead = async () => {
     try {
       await api('/notifications/read-all', { method: 'POST' });
+      headingRef.current?.focus();
+      setNotice('All notifications marked as read.');
       await load();
     } catch {
       setError('Could not mark notifications as read.');
@@ -48,7 +96,11 @@ export function NotificationsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="overline text-ink-400">Inbox</div>
-          <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">
+          <h1
+            ref={headingRef}
+            tabIndex={-1}
+            className="mt-1 font-display text-3xl font-semibold text-ink-900 focus:outline-none"
+          >
             Notifications{unread > 0 && <span className="ml-2 text-lg text-bond-600">({unread} unread)</span>}
           </h1>
         </div>
@@ -58,6 +110,11 @@ export function NotificationsPage() {
           </Button>
         )}
       </div>
+
+      {/* Always mounted; only the text changes. See the note above. */}
+      <p role="status" aria-live="polite" className="sr-only">
+        {notice}
+      </p>
 
       {error && (
         <div className="mt-6">
@@ -90,14 +147,24 @@ export function NotificationsPage() {
           {notifications.map((n) => (
             <li
               key={n.id}
-              className={`rounded-lg border p-4 shadow-card transition-colors ${
+              ref={(el) => {
+                if (el) rowRefs.current.set(n.id, el);
+                else rowRefs.current.delete(n.id);
+              }}
+              tabIndex={-1}
+              className={`rounded-lg border p-4 shadow-card transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-bond-500 ${
                 n.read_at ? 'border-paper-300 bg-surface' : 'border-bond-200 bg-bond-50/50'
               }`}
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    {!n.read_at && <span className="h-2 w-2 shrink-0 rounded-full bg-bond-600" />}
+                    {!n.read_at && (
+                      <>
+                        <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-bond-600" />
+                        <span className="sr-only">Unread. </span>
+                      </>
+                    )}
                     <span className="text-sm font-semibold text-ink-900">{n.title}</span>
                   </div>
                   {n.body && <p className="mt-1 text-sm text-ink-600">{n.body}</p>}
@@ -107,6 +174,7 @@ export function NotificationsPage() {
                   {n.valuation_id && (
                     <Link
                       to={`/valuations/${n.valuation_id}`}
+                      aria-label={`Open the valuation for “${n.title}”`}
                       onClick={() => void markRead(n.id)}
                       className="text-xs font-semibold text-bond-600 hover:text-bond-700"
                     >
@@ -116,7 +184,8 @@ export function NotificationsPage() {
                   {!n.read_at && (
                     <button
                       onClick={() => void markRead(n.id)}
-                      className="cursor-pointer text-xs font-semibold text-ink-400 hover:text-ink-700"
+                      aria-label={`Mark “${n.title}” as read`}
+                      className="tap-area cursor-pointer text-xs font-semibold text-ink-400 hover:text-ink-700"
                     >
                       Mark read
                     </button>

@@ -27,6 +27,14 @@ const read: AppNotification = {
   created_at: '2026-06-30T09:00:00Z',
 };
 
+/**
+ * The accessible names the row controls carry. Both name their notification —
+ * a screenful of "Mark read" buttons is a control list with nothing in it to
+ * choose between.
+ */
+const markReadName = `Mark “${unread.title}” as read`;
+const openName = `Open the valuation for “${unread.title}”`;
+
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -77,7 +85,7 @@ describe('NotificationsPage', () => {
   it('announces the load before the list arrives', async () => {
     mockApi([unread]);
     renderPage();
-    expect(screen.getByRole('status')).toHaveTextContent('Loading notifications…');
+    expect(screen.getAllByRole('status').map((el) => el.textContent)).toContain('Loading notifications…');
     await screen.findByText(unread.title);
   });
 
@@ -97,7 +105,7 @@ describe('NotificationsPage', () => {
 
     await screen.findByText(unread.title);
     // One unread row → exactly one "Mark read" button, plus the bulk action.
-    expect(screen.getAllByRole('button', { name: 'Mark read' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /as read$/ })).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Mark all read' })).toBeInTheDocument();
   });
 
@@ -106,7 +114,7 @@ describe('NotificationsPage', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Mark read' }));
+    await user.click(await screen.findByRole('button', { name: markReadName }));
 
     await waitFor(() => expect(screen.queryByText(/unread/)).not.toBeInTheDocument());
     expect(calls.some((c) => c.method === 'POST' && c.url.endsWith(`/notifications/${unread.id}/read`))).toBe(
@@ -121,7 +129,7 @@ describe('NotificationsPage', () => {
     const user = userEvent.setup();
     renderPage();
 
-    const link = await screen.findByRole('link', { name: 'Open →' });
+    const link = await screen.findByRole('link', { name: openName });
     expect(link).toHaveAttribute('href', `/valuations/${unread.valuation_id}`);
     await user.click(link);
 
@@ -134,7 +142,7 @@ describe('NotificationsPage', () => {
     mockApi([read]);
     renderPage();
     await screen.findByText(read.title);
-    expect(screen.queryByRole('link', { name: 'Open →' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /^Open the valuation/ })).not.toBeInTheDocument();
   });
 
   it('clears everything with mark-all-read', async () => {
@@ -154,10 +162,10 @@ describe('NotificationsPage', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Mark read' }));
+    await user.click(await screen.findByRole('button', { name: markReadName }));
 
     // Non-fatal by design: no alert, and the row is still actionable.
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Mark read' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: markReadName })).toBeInTheDocument());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -183,5 +191,99 @@ describe('NotificationsPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not load notifications.');
     // The skeleton must give way to the error, not sit underneath it.
     expect(screen.queryByText('Loading notifications…')).not.toBeInTheDocument();
+  });
+
+  // ── What the list said to somebody not looking at it (R117) ───────────────
+
+  it('says which rows are unread in words, not only in colour', () => {
+    // Read/unread was a tinted border, a tinted background and a 8px dot with
+    // no text in it. The dot is decorative and the word is the row's.
+    mockApi([unread, read]);
+    renderPage();
+
+    return waitFor(() => {
+      const unreadRow = screen.getByText(unread.title).closest('li')!;
+      const readRow = screen.getByText(read.title).closest('li')!;
+      expect(unreadRow).toHaveTextContent('Unread.');
+      expect(readRow).not.toHaveTextContent('Unread.');
+    });
+  });
+
+  it('names each row control after the notification it acts on', async () => {
+    // Two unread rows: the names have to tell them apart, which "Mark read"
+    // repeated twice cannot.
+    const second = { ...unread, id: '01N409NOTE00000000000000DD', title: 'Globex needs figures' };
+    mockApi([unread, second]);
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: markReadName })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: `Mark “${second.title}” as read` })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: openName })).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: `Open the valuation for “${second.title}”` }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the reader in the list when the button they pressed removes itself', async () => {
+    // "Mark read" only renders while the row is unread, so pressing it unmounts
+    // the focused element. Focus fell to <body>, and the next Tab restarted at
+    // the top of the document — once per row marked off.
+    const second = { ...unread, id: '01N409NOTE00000000000000DD', title: 'Globex needs figures' };
+    const user = userEvent.setup();
+    mockApi([unread, second]);
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: markReadName }));
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: markReadName })).not.toBeInTheDocument());
+    const row = screen.getByText(unread.title).closest('li')!;
+    expect(document.activeElement).toBe(row);
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('moves focus to the heading when the bulk action retires itself', async () => {
+    const user = userEvent.setup();
+    mockApi([unread]);
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Mark all read' }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Mark all read' })).not.toBeInTheDocument(),
+    );
+    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1 }));
+  });
+
+  it('speaks the outcome of a write, which moving focus alone does not', async () => {
+    const user = userEvent.setup();
+    mockApi([unread]);
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: markReadName }));
+    await waitFor(() =>
+      expect(screen.getAllByRole('status').map((el) => el.textContent)).toContain('Marked as read.'),
+    );
+  });
+
+  it('speaks the outcome of the bulk write too', async () => {
+    const user = userEvent.setup();
+    mockApi([unread]);
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Mark all read' }));
+    await waitFor(() =>
+      expect(screen.getAllByRole('status').map((el) => el.textContent)).toContain(
+        'All notifications marked as read.',
+      ),
+    );
+  });
+
+  it('mounts the outcome region before the write, not with the message in it', async () => {
+    // A live region inserted into the DOM already holding its text is commonly
+    // not announced at all; it has to be observed empty first.
+    mockApi([unread]);
+    renderPage();
+    await screen.findByText(unread.title);
+    expect(screen.getAllByRole('status').some((el) => el.textContent === '')).toBe(true);
   });
 });
