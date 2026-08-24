@@ -119,7 +119,14 @@ interface Call {
 
 function mockApi(
   state: State = {},
-  opts: { loadStatus?: number; writeStatus?: number; runResult?: Run; recalc?: boolean } = {},
+  opts: {
+    loadStatus?: number;
+    writeStatus?: number;
+    runResult?: Run;
+    recalc?: boolean;
+    /** Status for `/bridge-candidates` alone — the panel loads it separately. */
+    candidatesStatus?: number;
+  } = {},
 ) {
   const calls: Call[] = [];
   const body = {
@@ -134,7 +141,12 @@ function mockApi(
     const method = init?.method ?? 'GET';
     calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
 
-    if (path.includes('/bridge-candidates')) return jsonResponse({ candidates: CANDIDATES });
+    if (path.includes('/bridge-candidates')) {
+      if (opts.candidatesStatus) {
+        return jsonResponse({ status: opts.candidatesStatus, detail: 'Nope' }, opts.candidatesStatus);
+      }
+      return jsonResponse({ candidates: CANDIDATES });
+    }
     if (method === 'GET') {
       if (opts.loadStatus) return jsonResponse({ status: opts.loadStatus, detail: 'Nope' }, opts.loadStatus);
       return jsonResponse(body);
@@ -401,6 +413,32 @@ describe('RollforwardPanel', () => {
 
     await screen.findByText(/No other valuation of this company has a completed calculation/);
     expect(screen.getByRole('button', { name: 'Run rollforward' })).toBeDisabled();
+  });
+
+  it('does not read a failed candidate load as the company having no prior 409A', async () => {
+    /*
+     * The failure was `.catch(() => setFetched([]))`, and an empty candidate
+     * list is not a fact about the request — the panel prints it as a
+     * conclusion about the company, and an analyst who reads "no prior
+     * concluded equity value to carry forward" stops looking for the prior
+     * appraisal and values from scratch.
+     */
+    mockApi({}, { candidatesStatus: 503 });
+    renderPanel();
+
+    await screen.findByText(/list of prior valuations could not be loaded/);
+    expect(screen.queryByText(/No other valuation of this company has a completed calculation/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Run rollforward' })).toBeDisabled();
+  });
+
+  it('still says nothing to carry forward when the list really is empty', async () => {
+    // The other half: the sentence above is correct when it is earned, and the
+    // fix must not have made it unreachable.
+    mockApi();
+    renderPanel({ candidates: [] });
+
+    await screen.findByText(/No other valuation of this company has a completed calculation/);
+    expect(screen.queryByText(/could not be loaded/)).toBeNull();
   });
 
   it('reports a roll-forward the service refused', async () => {

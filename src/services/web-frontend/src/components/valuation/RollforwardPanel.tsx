@@ -133,6 +133,8 @@ export function RollforwardPanel({
 }) {
   const [data, setData] = useState<RollforwardResponse | null>(null);
   const [fetched, setFetched] = useState<Candidate[] | null>(null);
+  /** The candidate fetch failed — distinct from it having returned nothing. */
+  const [candidatesFailed, setCandidatesFailed] = useState(false);
   const candidates = given ?? fetched;
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -166,9 +168,18 @@ export function RollforwardPanel({
     if (given !== undefined) return;
     // Soft-failing on its own: without the candidate list the panel can still
     // show the runs already recorded, which is most of what a reader wants.
+    //
+    // `setCandidatesFailed`, not `setFetched([])`. An empty list is a statement
+    // about the company — the panel renders it as "No other valuation of this
+    // company has a completed calculation, so there is no prior concluded
+    // equity value to carry forward" — and a failed request is not evidence for
+    // it. An analyst reading that sentence stops looking for the prior 409A and
+    // values from scratch, which is the one conclusion this panel exists to
+    // prevent them reaching by accident.
+    setCandidatesFailed(false);
     api<{ candidates: Candidate[] }>(`/valuations/${valuationId}/bridge-candidates`)
       .then((r) => setFetched(r.candidates))
-      .catch(() => setFetched([]));
+      .catch(() => setCandidatesFailed(true));
   }, [valuationId, given]);
 
   const run = async (work: () => Promise<unknown>, failure: string) => {
@@ -453,7 +464,7 @@ export function RollforwardPanel({
           )}
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button onClick={rollForward} disabled={busy || !datedForRun || noCandidates}>
+            <Button onClick={rollForward} disabled={busy || !datedForRun || noCandidates || candidatesFailed}>
               Run rollforward
             </Button>
             <Button variant="ghost" onClick={addAdjustment} disabled={adjustments.length >= 10}>
@@ -471,6 +482,13 @@ export function RollforwardPanel({
             <p className="mt-3 text-sm text-ink-400">
               No other valuation of this company has a completed calculation, so there is no prior concluded
               equity value to carry forward.
+            </p>
+          )}
+
+          {candidatesFailed && (
+            <p className="mt-3 text-sm text-ink-400">
+              The list of prior valuations could not be loaded, so there is nothing to choose from here.
+              Reload the page to try again — this says nothing about whether a prior 409A exists.
             </p>
           )}
         </div>

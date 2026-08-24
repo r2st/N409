@@ -1036,6 +1036,38 @@ describe('CapTableTab', () => {
       expect(body.known_people).toEqual(['Ada Lovelace', 'Grace Hopper']);
     });
 
+    it('says the document list failed rather than showing the nothing it shows for none', async () => {
+      /*
+       * `.catch(() => setDocuments([]))` rendered the same nothing an
+       * engagement with no uploads renders — the Documents fieldset is behind
+       * `documents.length > 0`, so the section was simply absent and the
+       * analyst's reasonable conclusion, "there is nothing uploaded to
+       * anonymize", was the wrong one.
+       */
+      mockApi([
+        [/\/documents$/, () => json({ detail: 'nope' }, 503)],
+        capTable({ cap_table: STORED, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      await open();
+
+      await screen.findByText(/uploaded documents could not be listed/);
+    });
+
+    it('offers no such note when the engagement genuinely has no uploads', async () => {
+      mockApi([
+        [/\/documents$/, () => json({ documents: [] })],
+        capTable({ cap_table: STORED, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      await open();
+
+      await screen.findByLabelText(/other names to strike/i);
+      expect(screen.queryByText(/could not be listed/)).toBeNull();
+    });
+
     it('will not run with nothing selected and nothing pasted', async () => {
       mockApi([documents(), capTable({ cap_table: STORED, can_edit: true }), formats()]);
       renderTab();

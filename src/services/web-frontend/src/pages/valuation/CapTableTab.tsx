@@ -675,6 +675,8 @@ const plural = (n: number, [one, many]: [string, string]) => `${n} ${n === 1 ? o
 function AnonymizePanel({ valuationId }: { valuationId: string }) {
   const [open, setOpen] = useState(false);
   const [documents, setDocuments] = useState<ValuationDocument[] | null>(null);
+  /** The document list failed to load — not the same as there being none. */
+  const [documentsFailed, setDocumentsFailed] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [text, setText] = useState('');
   const [names, setNames] = useState('');
@@ -684,11 +686,16 @@ function AnonymizePanel({ valuationId }: { valuationId: string }) {
 
   useEffect(() => {
     if (!open || documents) return;
+    setDocumentsFailed(false);
     api<{ documents: ValuationDocument[] }>(`/valuations/${valuationId}/documents`)
       .then((d) => setDocuments(d.documents))
       // Not fatal: pasted text is a complete way to use this panel, so a
-      // documents outage should cost the list and nothing else.
-      .catch(() => setDocuments([]));
+      // documents outage costs the list and nothing else. But it must cost it
+      // *visibly*: `setDocuments([])` rendered the same nothing an engagement
+      // with no uploads renders, so the section simply was not there, and the
+      // analyst's reasonable conclusion — "there is nothing uploaded to
+      // anonymize" — was the wrong one.
+      .catch(() => setDocumentsFailed(true));
   }, [open, documents, valuationId]);
 
   const toggle = (id: string) =>
@@ -744,6 +751,13 @@ function AnonymizePanel({ valuationId }: { valuationId: string }) {
       {open && (
         <div className="mt-5 space-y-4">
           {error && <ErrorNote>{error}</ErrorNote>}
+
+          {documentsFailed && (
+            <p className="text-sm text-ink-400">
+              The uploaded documents could not be listed, so none are offered here. Paste the text below
+              instead, or reload the page to try again.
+            </p>
+          )}
 
           {documents && documents.length > 0 && (
             <fieldset className="space-y-1.5">
