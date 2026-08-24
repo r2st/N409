@@ -35,6 +35,33 @@ export const mainContentTargetProps = {
   className: 'outline-none',
 } as const;
 
+/**
+ * Put focus on the main landmark, for a control that has just removed itself.
+ *
+ * A button that unmounts as a result of being pressed — "Hide" on a panel that
+ * then returns `null`, "Dismiss" on a banner, the last press of "Load more" —
+ * leaves the browser with nothing focused, and the browser's answer to that is
+ * `<body>`. From `<body>` the next Tab starts again at the top of the document:
+ * past the skip link, past the whole sidebar, back to where the user was
+ * several minutes ago. Nothing is announced either, so to a screen reader the
+ * press did nothing at all.
+ *
+ * Where the control has an obvious survivor near it — the row it acted on, the
+ * box it belongs beside — focus that instead; it keeps the reader in place.
+ * This is for the case where the whole region is gone and there is no such
+ * thing, and the honest answer is "you are now at the top of the page
+ * content". The landmark is the right target because it is the one element
+ * both shells guarantee and already make focusable — see
+ * {@link mainContentTargetProps}, whose `tabIndex` exists for the skip link and
+ * serves exactly as well here.
+ *
+ * A no-op when there is no landmark (a bare-component test, a shell-less
+ * route): losing focus is the status quo, and throwing would be worse.
+ */
+export function focusMainContent(): void {
+  document.getElementById(MAIN_CONTENT_ID)?.focus();
+}
+
 export function SkipLink() {
   return (
     <a

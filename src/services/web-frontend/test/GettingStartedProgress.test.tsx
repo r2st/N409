@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { GettingStarted } from '../src/components/GettingStarted';
+import { mainContentTargetProps } from '../src/components/SkipLink';
 
 /**
  * The checklist used to live entirely in localStorage, so an account with
@@ -12,6 +13,20 @@ import { GettingStarted } from '../src/components/GettingStarted';
 
 function wrap(ui: React.ReactElement) {
   return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
+
+/**
+ * The component inside the landmark both shells put it in. The bare `wrap`
+ * above renders it with no `<main>` at all, which is fine for everything that
+ * only reads the checklist — but dismissal is about where focus goes when the
+ * panel stops existing, and that question has no answer without the landmark.
+ */
+function wrapInShell(ui: React.ReactElement) {
+  return render(
+    <MemoryRouter>
+      <main {...mainContentTargetProps}>{ui}</main>
+    </MemoryRouter>,
+  );
 }
 
 function progressResponse(steps: string[]): Response {
@@ -116,5 +131,35 @@ describe('GettingStarted — progress from the account', () => {
     // Renders rather than erroring, showing what the user ticked themselves.
     expect(await screen.findByText('1/8')).toBeInTheDocument();
     expect(screen.getByText(/step by step/)).toBeInTheDocument();
+  });
+
+  it('does not leave focus on the floor when the panel dismisses itself', async () => {
+    // "Hide" makes the whole component return null: the button that was just
+    // pressed, and the section around it, cease to exist. The browser's answer
+    // to a focused element that vanishes is <body>, from which the next Tab
+    // restarts at the top of the document — past the skip link and the whole
+    // sidebar — and nothing is announced. The main landmark is where the
+    // reader now actually is.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(progressResponse([]));
+    const user = userEvent.setup();
+    wrapInShell(<GettingStarted />);
+
+    await waitFor(() => expect(screen.getByText('0/8')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Hide' }));
+
+    expect(screen.queryByRole('button', { name: 'Hide' })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(document.getElementById(mainContentTargetProps.id));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('dismisses without throwing on a surface that has no landmark', async () => {
+    // The hand-off is a courtesy, not a precondition: a shell-less route (or a
+    // bare-component test) still has to be able to dismiss the checklist.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(progressResponse([]));
+    const user = userEvent.setup();
+    wrap(<GettingStarted />);
+
+    await user.click(screen.getByRole('button', { name: 'Hide' }));
+    expect(screen.queryByRole('button', { name: 'Hide' })).not.toBeInTheDocument();
   });
 });

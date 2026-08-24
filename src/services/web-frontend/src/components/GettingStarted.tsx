@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
+import { focusMainContent } from './SkipLink';
 
 /**
  * Getting Started checklist (dashboard).
@@ -146,6 +147,9 @@ export function GettingStarted() {
   const dismiss = () => {
     localStorage.setItem(DISMISS_KEY, '1');
     setDismissed(true);
+    // This component returns null once dismissed, so the button that was just
+    // pressed — and the panel around it — cease to exist. See focusMainContent.
+    focusMainContent();
   };
 
   return (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, apiDownload, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -216,6 +216,17 @@ export function ValuationsPage() {
     setParams(next, { replace: true });
   };
 
+  /**
+   * "Clear filters" only renders while there are filters to clear, so pressing
+   * it unmounts it — and focus, which was on it, fell to `<body>`. The next Tab
+   * restarted at the top of the document, which for this page means the entire
+   * sidebar before the filter bar comes round again. Focus goes to the search
+   * box instead: it survives, it is the head of the filter set the button just
+   * emptied, and it is where somebody who has cleared their filters is most
+   * likely to type next.
+   */
+  const searchRef = useRef<HTMLInputElement>(null);
+
   const clearFilters = () => {
     const next = new URLSearchParams();
     if (bucket) next.set('bucket', bucket);
@@ -223,6 +234,7 @@ export function ValuationsPage() {
     if (sortParam) next.set('sort', sortParam);
     setQDraft('');
     setParams(next, { replace: true });
+    searchRef.current?.focus();
   };
 
   const hasFilters = FILTER_KEYS.some((k) => params.get(k));
@@ -425,6 +437,7 @@ export function ValuationsPage() {
       >
         <div className="w-full sm:w-72">
           <TextInput
+            ref={searchRef}
             aria-label="Search"
             placeholder="Search id, #number, workflow, company…"
             value={qDraft}

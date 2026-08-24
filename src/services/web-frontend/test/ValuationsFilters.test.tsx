@@ -250,6 +250,22 @@ describe('ValuationsPage — filter bar', () => {
     expect(screen.getByLabelText('Search')).toHaveValue('');
   });
 
+  it('hands focus to the search box, since clearing removes the button (R117)', async () => {
+    // "Clear filters" only renders while there is something to clear, so
+    // pressing it unmounts the element focus was on and the browser drops
+    // focus to <body> — after which Tab restarts at the top of the document,
+    // past the whole sidebar, before the filter bar comes round again.
+    const user = userEvent.setup();
+    mockApi();
+    renderPage('/valuations?state=review&q=acme');
+    await screen.findAllByText('Acme Corp');
+
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear filters' })).toBeNull());
+    expect(document.activeElement).toBe(screen.getByLabelText('Search'));
+  });
+
   it('returns to the first page whenever a filter changes', async () => {
     const calls = mockApi({ total: 60 });
     const user = userEvent.setup();
