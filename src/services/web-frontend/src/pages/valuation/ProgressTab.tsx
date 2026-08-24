@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError, getToken } from '../../lib/api';
-import { downloadPdf } from '../../lib/m2';
+import { api, ApiError } from '../../lib/api';
+import { filenameStem, useDownload } from '../../lib/useDownload';
 import { formatDate, formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { ErrorNote, LoadingBlock, Skeleton, SkeletonStatStrip, SkeletonText } from '../../components/ui';
@@ -168,6 +168,9 @@ export function ProgressTab() {
   const { valuation } = useWorkspace();
   const [progress, setProgress] = useState<ProgressResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Separate from `error`, which replaces the whole tab: a download that failed
+  // is no reason to take the progress the client came here to read away.
+  const download = useDownload();
 
   useEffect(() => {
     void (async () => {
@@ -276,16 +279,21 @@ export function ProgressTab() {
           {progress.report.available && (
             <button
               onClick={() =>
-                void downloadPdf(
+                download.start(
                   `/valuations/${valuation.id}/report.pdf`,
-                  `${valuation.company_name.replace(/[^\w.-]+/g, '_')}_report.pdf`,
-                  getToken(),
-                ).catch(() => {})
+                  `${filenameStem(valuation.company_name)}_report.pdf`,
+                )
               }
-              className="tap-area mt-5 inline-block cursor-pointer rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-bond-fg hover:bg-bond-700"
+              disabled={download.busy}
+              className="tap-area mt-5 inline-block cursor-pointer rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-bond-fg hover:bg-bond-700 disabled:cursor-default disabled:opacity-60"
             >
-              Download your report
+              {download.busy ? 'Preparing your report…' : 'Download your report'}
             </button>
+          )}
+          {download.error && (
+            <p role="alert" className="mt-3 text-sm font-medium text-red-600">
+              {download.error}
+            </p>
           )}
         </section>
 

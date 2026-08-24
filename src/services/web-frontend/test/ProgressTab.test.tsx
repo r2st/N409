@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { ProgressTab } from '../src/pages/valuation/ProgressTab';
 import type { Valuation } from '../src/lib/types';
@@ -224,5 +225,58 @@ describe('ProgressTab (client portal §5.6)', () => {
     renderTab();
     const stats = await screen.findByTestId('progress-stats');
     expect(stats.textContent).toContain('\u2014');
+  });
+  /*
+   * This is the client-facing tab, and the button is why a client opens it: it
+   * renders the 409A on demand, so it can genuinely 5xx. `.catch(() => {})`
+   * rendered that as nothing whatsoever — the page after the click identical to
+   * the page before it, which is also what a broken button looks like. The
+   * client clicks again, and again, and then emails somebody.
+   */
+  it('says so when the report download fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('report.pdf')) return jsonResponse({ detail: 'nope' }, 503);
+      return jsonResponse(PROGRESS);
+    });
+    const user = userEvent.setup();
+    renderTab();
+
+    await user.click(await screen.findByRole('button', { name: 'Download your report' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/download did not start/i);
+  });
+
+  it('keeps the progress it was showing when the download fails', async () => {
+    // `error` replaces the whole tab, so reusing it here would have answered a
+    // failed download by removing the progress the client came to read.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('report.pdf')) return jsonResponse({ detail: 'nope' }, 503);
+      return jsonResponse(PROGRESS);
+    });
+    const user = userEvent.setup();
+    renderTab();
+
+    await user.click(await screen.findByRole('button', { name: 'Download your report' }));
+    await screen.findByRole('alert');
+    expect(screen.getByTestId('progress-stepper')).toBeInTheDocument();
+  });
+
+  it('says nothing when the download succeeds', async () => {
+    // The other half. jsdom defines neither object-URL function, and
+    // `downloadPdf` calls both on the success path — without these the success
+    // case would throw exactly where the failure does and this would pass
+    // against a component that never told them apart.
+    Object.assign(URL, { createObjectURL: () => 'blob:stub', revokeObjectURL: () => {} });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('report.pdf'))
+        return new Response('%PDF-1.4', { status: 200, headers: { 'content-type': 'application/pdf' } });
+      return jsonResponse(PROGRESS);
+    });
+    const user = userEvent.setup();
+    renderTab();
+
+    const button = await screen.findByRole('button', { name: 'Download your report' });
+    await user.click(button);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Download your report/ })).not.toBeDisabled());
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

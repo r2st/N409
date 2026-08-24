@@ -213,4 +213,49 @@ describe('AuditTrailTab', () => {
     await screen.findByTestId('audit-entries');
     expect(screen.getByRole('button', { name: /Download change log/ })).toBeInTheDocument();
   });
+  /*
+   * `downloadPdf` fetches the file itself — the endpoint is bearer-
+   * authenticated, so there is no `<a href>` and no browser failure UI behind
+   * the button — and it threw into `.catch(() => {})`. A click that fails then
+   * leaves the page byte-identical to the one before it, which is also what a
+   * dead button looks like.
+   */
+  it('says so when the CSV export fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('audit-trail.csv')) return jsonResponse({ detail: 'nope' }, 503);
+      return jsonResponse(RESPONSE);
+    });
+    const user = userEvent.setup();
+    renderTab();
+    await screen.findByTestId('audit-entries');
+
+    await user.click(screen.getByRole('button', { name: /Download change log/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/download did not start/i);
+  });
+
+  it('says nothing when the export succeeds', async () => {
+    // The other half — the message must be earned, not permanent.
+    //
+    // jsdom implements neither `URL.createObjectURL` nor `revokeObjectURL`, and
+    // `downloadPdf` calls both on the *success* path — so without these stubs a
+    // successful download throws exactly where a failed one does and this test
+    // would pass against a component that never distinguished them.
+    // Assigned rather than spied: jsdom does not define these at all, and
+    // `vi.spyOn` refuses a property that does not exist.
+    Object.assign(URL, { createObjectURL: () => 'blob:stub', revokeObjectURL: () => {} });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('audit-trail.csv'))
+        return new Response('a,b\n1,2', { status: 200, headers: { 'content-type': 'text/csv' } });
+      return jsonResponse(RESPONSE);
+    });
+    const user = userEvent.setup();
+    renderTab();
+    await screen.findByTestId('audit-entries');
+
+    await user.click(screen.getByRole('button', { name: /Download change log/ }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Download change log/ })).not.toBeDisabled(),
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
 });

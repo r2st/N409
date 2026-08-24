@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, getToken } from '../../lib/api';
-import { downloadPdf } from '../../lib/m2';
+import { api, ApiError } from '../../lib/api';
+import { filenameStem, useDownload } from '../../lib/useDownload';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { ErrorNote, LoadingBlock, Skeleton, SkeletonCardList, SkeletonStatStrip } from '../../components/ui';
@@ -116,6 +116,9 @@ export function AuditTrailTab() {
   const { valuation } = useWorkspace();
   const [data, setData] = useState<AuditResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Not `error`: that one replaces the tab, and a failed export is no reason to
+  // take the change log itself away from whoever was reading it.
+  const download = useDownload();
   const [category, setCategory] = useState('');
   const [severity, setSeverity] = useState('');
   const [page, setPage] = useState(1);
@@ -229,17 +232,23 @@ export function AuditTrailTab() {
         <button
           type="button"
           onClick={() =>
-            void downloadPdf(
+            download.start(
               `/valuations/${valuation.id}/audit-trail.csv`,
-              `change-log-${valuation.company_name.replace(/[^\w.-]+/g, '_')}.csv`,
-              getToken(),
-            ).catch(() => {})
+              `change-log-${filenameStem(valuation.company_name)}.csv`,
+            )
           }
-          className="tap-area ml-auto cursor-pointer rounded-md border border-paper-300 px-3 py-1.5 text-sm font-semibold text-ink-700 hover:bg-paper-100"
+          disabled={download.busy}
+          className="tap-area ml-auto cursor-pointer rounded-md border border-paper-300 px-3 py-1.5 text-sm font-semibold text-ink-700 hover:bg-paper-100 disabled:cursor-default disabled:opacity-60"
         >
-          Download change log (CSV)
+          {download.busy ? 'Preparing…' : 'Download change log (CSV)'}
         </button>
       </div>
+
+      {download.error && (
+        <p role="alert" className="mb-4 text-sm font-medium text-red-600">
+          {download.error}
+        </p>
+      )}
 
       {data.entries.length === 0 ? (
         <p className="text-sm text-ink-400">No events match these filters.</p>
