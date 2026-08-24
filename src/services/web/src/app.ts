@@ -190,6 +190,45 @@ export function manifestKey(url: string): string {
   return pathOnly.replace(/\/+$/, '');
 }
 
+/**
+ * Does this request want a document, or a file that was supposed to be on disk?
+ *
+ * The SPA fallback answers every path the static plugin did not claim, which is
+ * correct for client-side routes — `/valuations/01ARZ…` has no file behind it
+ * and never will. It is wrong for anything that named a file: the fallback
+ * returned `index.html`, as `text/html`, with a **200**.
+ *
+ * That is not a cosmetic mismatch. Vite fingerprints its chunks and the build
+ * empties `dist/` before writing, so the moment a deploy lands, every hashed
+ * URL the *previous* build named is gone. A browser tab that was already open
+ * then navigates to a lazy route, asks for its old chunk, and is handed the
+ * HTML shell with a 200. The module is refused for its MIME type, the dynamic
+ * import rejects, and — because `React.lazy` caches a rejection permanently —
+ * the error boundary's "Try again" can never succeed. The app is bricked until
+ * the user thinks to reload.
+ *
+ * The 200 is the other half of the damage, and it outlives the tab: a missing
+ * font, image, stylesheet or manifest also answers "success", so a half-built
+ * or half-shipped `dist/` looks perfectly healthy to a CDN, an uptime check and
+ * anything reading the access log.
+ *
+ * The rule is the one distinction that matters: a final path segment carrying
+ * an extension is a request for a file. No client-side route in the product has
+ * one — every slug is kebab-case and every id is a ULID — and a prerendered
+ * route is matched from the manifest before this is consulted, so a route that
+ * grew one would still be served.
+ *
+ * Only the *last* segment decides, so `/blog/v1.2-notes/comments` stays a
+ * route. The 12-character bound is what `.webmanifest` needs and is past every
+ * web asset extension in use; it keeps a long dotted slug from being read as a
+ * filename.
+ */
+export function looksLikeAssetRequest(url: string): boolean {
+  const pathOnly = url.split('?')[0]!.split('#')[0]!;
+  const lastSegment = pathOnly.slice(pathOnly.lastIndexOf('/') + 1);
+  return /\.[A-Za-z0-9]{1,12}$/.test(lastSegment);
+}
+
 /** A year, the maximum any cache should be asked to hold something. */
 export const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 /**
@@ -459,6 +498,11 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
     // than letting the filename heuristic decide.
     app.get('/*', (req, reply) => {
       const file = prerendered.get(manifestKey(req.url));
+      if (file === undefined && looksLikeAssetRequest(req.url)) {
+        // A file that is not there. Say so, rather than handing back the shell
+        // under a 200 — see looksLikeAssetRequest.
+        return reply.code(404).type('text/plain; charset=utf-8').send('Not Found');
+      }
       void reply.header('cache-control', HTML_CACHE_CONTROL);
       return reply.sendFile(file ?? 'index.html');
     });
