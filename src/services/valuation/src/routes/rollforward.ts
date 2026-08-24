@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -124,12 +124,18 @@ function engineInputs(params: ValuationParamsRow | null): Record<string, unknown
     : {};
 }
 
-/** The valuation date an engine `inputs` document states, at day resolution. */
+/**
+ * The valuation date an engine `inputs` document states, at day resolution.
+ *
+ * Checked against the calendar rather than the shape, for the same reason as
+ * `domain/rollforward.ts`'s `isoDate`: a stored document is not a validated
+ * one, and `2026-02-31` has the shape of a day without being one.
+ */
 function valuationDateOf(inputs: Record<string, unknown>): string | null {
   const raw = inputs.valuation_date;
   if (typeof raw !== 'string') return null;
   const day = raw.slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null;
+  return isIsoCalendarDate(day) ? day : null;
 }
 
 /** The backsolve anchor the calculation would read today. */

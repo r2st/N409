@@ -23,6 +23,7 @@
  * form goes out, and `complete` is false until it is empty.
  */
 
+import { isIsoCalendarDate } from '@n409/shared';
 import type { ValuationKind } from './valuation.js';
 
 export type HmrcScheme = 'emi' | 'csop';
@@ -125,12 +126,19 @@ function yesNo(value: unknown): string | null {
   return null;
 }
 
-/** A `date` answer as the form wants it, guarding against a junk string. */
+/**
+ * A `date` answer as the form wants it, guarding against a junk string.
+ *
+ * Against the calendar rather than against the shape. These strings are printed
+ * onto a statutory HMRC return, and `2026-02-31` matches `\d{4}-\d{2}-\d{2}`
+ * without being a day — so the shape check let the one value the guard exists
+ * to catch through to the form.
+ */
 function date(value: unknown): string | null {
   const s = str(value);
   if (!s) return null;
   const iso = s.slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : null;
+  return isIsoCalendarDate(iso) ? iso : null;
 }
 
 // ── inputs ───────────────────────────────────────────────────────────────────

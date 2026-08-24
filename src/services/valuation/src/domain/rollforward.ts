@@ -1,3 +1,4 @@
+import { isIsoCalendarDate } from '@n409/shared';
 import type { CalibrationStep, MaterialChange } from '../repos/rollforwardRuns.js';
 
 /**
@@ -53,11 +54,17 @@ function fin(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** An ISO calendar date at day resolution, or null. */
+/**
+ * An ISO calendar date at day resolution, or null.
+ *
+ * The name says calendar, so the check is the calendar's. This reads stored
+ * engine inputs, where a shape-only check would pass `2026-02-31` through to
+ * the roll-forward exhibit as the date a value was measured on.
+ */
 function isoDate(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const day = value.slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null;
+  return isIsoCalendarDate(day) ? day : null;
 }
 
 function record(value: unknown): Record<string, unknown> | null {

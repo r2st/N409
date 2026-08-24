@@ -35,6 +35,7 @@ import type {
   VolatilityExclusion,
   VolatilityMethod,
 } from '../repos/volatilityEstimates.js';
+import { isIsoCalendarDate } from '@n409/shared';
 import { calendarDate, calendarDateOf } from './calendarDate.js';
 
 export class VolatilityInputError extends Error {}
@@ -133,7 +134,12 @@ export function resolveWindow(
   const anchorDay = valuationDate ? calendarDateOf(valuationDate) : '';
   // An unparseable or absent anchor falls back to today, as before. `now` is an
   // instant, so its day is its UTC one.
-  const endDay = /^\d{4}-\d{2}-\d{2}$/.test(anchorDay) ? anchorDay : now.toISOString().slice(0, 10);
+  //
+  // The check is the calendar's, not the shape's: `2026-02-31` matches
+  // `\d{4}-\d{2}-\d{2}` and is not a day, and it would be returned as `end`
+  // while `new Date` rolled it three days forward to compute `start` — a window
+  // whose two ends disagree about which day it closed on.
+  const endDay = isIsoCalendarDate(anchorDay) ? anchorDay : now.toISOString().slice(0, 10);
   const end = new Date(`${endDay}T00:00:00Z`);
   const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
   return { start: start.toISOString().slice(0, 10), end: endDay };
