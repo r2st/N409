@@ -583,6 +583,37 @@ describe('CapTableTab', () => {
       ]);
     });
 
+    it('says the presets are missing rather than offering a blank format', async () => {
+      /*
+       * The presets do two jobs and losing them silently cost both: the select
+       * rendered blank while `format` stayed at its 'generic' default and was
+       * submitted anyway, and every column mapping fell back to "—" — so a form
+       * that normally arrives mostly filled in arrived empty, with nothing to
+       * distinguish that from a file with unfamiliar headers.
+       */
+      mockApi([
+        capTable({ cap_table: null, can_edit: true }),
+        [/\/cap-table\/formats/, () => json({ detail: 'nope' }, 503)],
+      ]);
+      renderTab();
+      await openImporter();
+
+      const select = await screen.findByLabelText('Source format');
+      expect(select).toBeDisabled();
+      expect(select).toHaveValue('generic');
+      await screen.findByText(/format presets could not be loaded/);
+    });
+
+    it('says nothing of the sort when the presets load', async () => {
+      // The other half — the warning must be earned.
+      mockApi([capTable({ cap_table: null, can_edit: true }), formats()]);
+      renderTab();
+      await openImporter();
+
+      expect(await screen.findByLabelText('Source format')).not.toBeDisabled();
+      expect(screen.queryByText(/could not be loaded/)).toBeNull();
+    });
+
     it('preselects the columns a format preset names, when the sheet has them', async () => {
       mockApi([capTable({ cap_table: null, can_edit: true }), formats()]);
       renderTab();

@@ -233,6 +233,15 @@ export function ResearchTab() {
   const { user } = useAuth();
   const ops = isOps(user);
   const [meta, setMeta] = useState<TopicsResponse | null>(null);
+  /*
+   * The topic registry failing is not the same as there being no topics, and
+   * the empty state says the second out loud: "No market research yet — set the
+   * industry on the Company tab, then run a topic." An analyst who follows that
+   * goes to the Company tab, finds the industry already set, and comes back to
+   * the same page with no topic to run. The instruction is unfollowable because
+   * the list it refers to is the one that failed to arrive.
+   */
+  const [topicsFailed, setTopicsFailed] = useState(false);
   const [data, setData] = useState<ResearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState<string | null>(null);
@@ -253,7 +262,7 @@ export function ResearchTab() {
     if (!ops) return;
     api<TopicsResponse>('/research/topics')
       .then(setMeta)
-      .catch(() => {});
+      .catch(() => setTopicsFailed(true));
   }, [ops]);
 
   const run = async (body: Record<string, unknown>) => {
@@ -322,7 +331,14 @@ export function ResearchTab() {
 
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      {topics.length === 0 && data.research.length === 0 && (
+      {topicsFailed && (
+        <p className="text-sm text-ink-400">
+          The list of research topics could not be loaded, so none are offered here. Reload the page to try
+          again — this says nothing about whether research has been run for this engagement.
+        </p>
+      )}
+
+      {topics.length === 0 && data.research.length === 0 && !topicsFailed && (
         <EmptyState title="No market research yet">
           {data.can_run
             ? 'Set the industry on the Company tab, then run a topic.'

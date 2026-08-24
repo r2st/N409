@@ -235,4 +235,45 @@ describe('ResearchTab', () => {
       expect(screen.queryByText('not summarised')).not.toBeInTheDocument();
     });
   });
+  /*
+   * The topic registry is loaded separately from the research itself, and its
+   * failure was discarded — leaving `topics` empty, which the empty state reads
+   * as a fact: "No market research yet — set the industry on the Company tab,
+   * then run a topic." An analyst who follows that finds the industry already
+   * set and comes back to the same page with no topic to run, because the list
+   * the instruction refers to is the one that never arrived.
+   */
+  describe('when the topic registry fails to load', () => {
+    const mockTopicsDown = (research: unknown = { research: [], stale_days: 90, can_run: true }) =>
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const path = String(url);
+        if (path.includes('/research/topics')) return jsonResponse({ detail: 'nope' }, 503);
+        if (path.includes('/research')) return jsonResponse(research);
+        throw new Error(`unexpected fetch ${path}`);
+      });
+
+    it('does not hand out an instruction it has made unfollowable', async () => {
+      mockTopicsDown();
+      renderTab();
+
+      await screen.findByText(/list of research topics could not be loaded/);
+      expect(screen.queryByText('No market research yet')).toBeNull();
+    });
+
+    it('still says there is none when the registry loads and there genuinely is none', async () => {
+      // The other half: the empty state is correct when it is earned, and the
+      // fix must not have made it unreachable.
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const path = String(url);
+        if (path.includes('/research/topics')) return jsonResponse({ topics: [], regions: [] });
+        if (path.includes('/research'))
+          return jsonResponse({ research: [], stale_days: 90, can_run: true });
+        throw new Error(`unexpected fetch ${path}`);
+      });
+      renderTab();
+
+      await screen.findByText('No market research yet');
+      expect(screen.queryByText(/could not be loaded/)).toBeNull();
+    });
+  });
 });

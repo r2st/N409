@@ -136,6 +136,7 @@ function mockApi(
     /** The two catalogs load separately from the user list; fail them alone. */
     rolesStatus?: number;
     partnersStatus?: number;
+    invitationsStatus?: number;
   } = {},
 ) {
   const calls: Call[] = [];
@@ -164,6 +165,7 @@ function mockApi(
         }
         return jsonResponse({ ok: true });
       }
+      if (opts.invitationsStatus) return jsonResponse({ detail: 'No' }, opts.invitationsStatus);
       return jsonResponse({ invitations: state.invitations ?? [] });
     }
     if (method === 'GET' && path.includes('/users?')) {
@@ -738,6 +740,29 @@ describe('AdminUsersPage — the console', () => {
       expect(select).toHaveValue('p1');
       expect(select).toBeDisabled();
       await screen.findByText(/Organisations could not be listed/);
+    });
+
+    it('does not report a failed invitation list as nobody waiting', async () => {
+      /*
+       * The section renders behind `invitations.length > 0`, so an outage was
+       * not a shorter list — it was no section at all, which reads as "nothing
+       * is pending". An admin who believes that sends a second invitation to
+       * somebody who already holds a live link.
+       */
+      mockApi(undefined, { invitationsStatus: 503 });
+      renderPage();
+
+      await screen.findByText(/Pending invitations could not be listed/);
+    });
+
+    it('says nothing about invitations when the list loads empty', async () => {
+      // An engagement genuinely having none is the common case and must stay
+      // silent.
+      mockApi({ invitations: [] });
+      renderPage();
+
+      await screen.findByText('ada@acme.com');
+      expect(screen.queryByText(/could not be listed/)).toBeNull();
     });
 
     it('offers neither note when both catalogs load', async () => {

@@ -248,6 +248,16 @@ export function CapTableTab() {
   const [canEdit, setCanEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [formats, setFormats] = useState<FormatPreset[]>([]);
+  /*
+   * The presets do two jobs, and losing them silently costs both. They fill the
+   * "Source format" select — which renders blank with none, while `format`
+   * stays at its 'generic' default and is submitted anyway — and they carry the
+   * column mapping that pre-selects each field. With no preset every column
+   * defaults to "—", so a form that normally arrives mostly filled in arrives
+   * empty, and the analyst is left guessing whether this file simply has
+   * unfamiliar headers.
+   */
+  const [formatsFailed, setFormatsFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Importer state
@@ -278,7 +288,7 @@ export function CapTableTab() {
     void load();
     void api<{ formats: FormatPreset[] }>('/cap-table/formats')
       .then((r) => setFormats(r.formats))
-      .catch(() => {});
+      .catch(() => setFormatsFailed(true));
   }, [load]);
 
   const sheet = upload?.sheets[sheetIndex] ?? null;
@@ -432,7 +442,14 @@ export function CapTableTab() {
       {importing && (
         <section className="space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Source format">
+            <Field
+              label="Source format"
+              hint={
+                formatsFailed
+                  ? 'The format presets could not be loaded, so the columns below start unmapped and must be set by hand.'
+                  : undefined
+              }
+            >
               <Select
                 value={format}
                 onChange={(e) => {
@@ -440,7 +457,15 @@ export function CapTableTab() {
                   setMapping({});
                   setPreview(null);
                 }}
+                disabled={formatsFailed}
               >
+                {/*
+                 * A select with no options renders blank while `format` is
+                 * still 'generic' and still submitted — so the import ran under
+                 * a preset the analyst was never shown. Naming it keeps the
+                 * control honest about what will be sent.
+                 */}
+                {formatsFailed && <option value={format}>{format}</option>}
                 {formats.map((f) => (
                   <option key={f.key} value={f.key}>
                     {f.label}

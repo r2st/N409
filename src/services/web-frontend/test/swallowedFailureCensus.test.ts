@@ -65,10 +65,6 @@ const SILENT_BY_DESIGN: Record<string, string> = {
 
 /** Each reason says what the user is told that is not true. */
 const KNOWN_UNFIXED: Record<string, string> = {
-  'src/pages/ActivityLogPage.tsx\t/users/options':
-    'The actor filter silently offers nobody — a filter that cannot filter, with no sign why.',
-  'src/pages/AdminUsersPage.tsx\t/users/invitations':
-    'Pending invitations render behind `length > 0`, so an outage reads as "nothing is pending".',
   'src/pages/OnboardingPage.tsx\t/valuations/${valuation.id}/payments/quote':
     'The price disappears from the pay step. Honest — checkout still shows it — but unexplained on a money screen.',
   'src/components/PaymentSection.tsx\t/valuations/${valuation.id}/payments/quote?${query}':
@@ -77,14 +73,8 @@ const KNOWN_UNFIXED: Record<string, string> = {
     "The organisation's own name and branding are silently absent from its portal.",
   'src/pages/ValuationsPage.tsx\t/valuations/counts?buckets=named&${filterQuery}':
     'Tab counts vanish rather than saying they are unknown.',
-  'src/pages/ValuationsPage.tsx\t/partners':
-    'The partner filter silently offers nobody. Same shape as the reviewer filter beside it, which is fixed.',
-  'src/pages/valuation/CapTableTab.tsx\t/cap-table/formats':
-    "The format select renders empty while `format` stays 'generic', so an import runs under a preset nobody saw.",
   'src/pages/valuation/GrantsTab.tsx\t/grant-templates':
     'The vesting select falls back to "Custom…" alone, which is a different grant from the one intended.',
-  'src/pages/valuation/ResearchTab.tsx\t/research/topics':
-    'Renders "No market research yet" and tells the reader to run a topic, from a list it failed to load.',
 };
 
 function walk(dir: string): string[] {

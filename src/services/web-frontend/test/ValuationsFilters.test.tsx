@@ -71,6 +71,8 @@ interface Options {
   listStatus?: number;
   /** Fail the export download. */
   exportStatus?: number;
+  /** Fail the organisation list, which loads separately from the rows. */
+  partnersStatus?: number;
 }
 
 function mockApi(opts: Options = {}) {
@@ -94,6 +96,7 @@ function mockApi(opts: Options = {}) {
       });
     }
     if (path.includes('/partners')) {
+      if (opts.partnersStatus) return jsonResponse({ detail: 'No' }, opts.partnersStatus);
       return jsonResponse({ partners: [{ id: PARTNER_ID, name: 'Wilson Sonsini', slug: 'wsgr' }] });
     }
     if (path.includes('/valuations?')) {
@@ -642,5 +645,24 @@ describe('ValuationsPage — bulk failures', () => {
     await user.click(screen.getByRole('button', { name: 'Clear' }));
     expect(screen.queryByText('2 selected')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull();
+  });
+  /*
+   * The organisation list was loaded with `.catch(() => {})`, so a failure left
+   * the partner filter offering "Any partner" and nothing else — the same
+   * screen a platform with no organisations on it would show.
+   */
+  it('says the organisation list is missing rather than filtering on nobody', async () => {
+    mockApi({ partnersStatus: 503 });
+    renderPage();
+
+    await screen.findByText(/list of organisations could not be loaded/);
+  });
+
+  it('says nothing of the sort when the organisations load', async () => {
+    mockApi();
+    renderPage();
+
+    await screen.findByRole('combobox', { name: 'Filter by partner' });
+    expect(screen.queryByText(/organisations could not be loaded/)).toBeNull();
   });
 });

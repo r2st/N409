@@ -193,6 +193,7 @@ export function AdminUsersPage() {
    */
   const [roleCatalogFailed, setRoleCatalogFailed] = useState(false);
   const [partnersFailed, setPartnersFailed] = useState(false);
+  const [invitationsFailed, setInvitationsFailed] = useState(false);
 
   const q = params.get('q') ?? '';
   const role = params.get('role') ?? '';
@@ -239,8 +240,15 @@ export function AdminUsersPage() {
 
   const loadInvitations = useCallback(() => {
     api<{ invitations: Invitation[] }>('/users/invitations')
-      .then((res) => setInvitations(res.invitations))
-      .catch(() => {});
+      .then((res) => {
+        setInvitations(res.invitations);
+        setInvitationsFailed(false);
+      })
+      // The section renders behind `invitations.length > 0`, so an outage was
+      // not a shorter list — it was no section at all, which reads as "nobody
+      // is waiting on an invitation". An admin who believes that sends a
+      // second one to somebody who already has a live link.
+      .catch(() => setInvitationsFailed(true));
   }, []);
 
   useEffect(() => {
@@ -730,6 +738,12 @@ export function AdminUsersPage() {
       )}
 
       {/* Invitations (feature #9) */}
+      {invitationsFailed && (
+        <p className="mt-6 text-sm text-ink-400">
+          Pending invitations could not be listed. Reload the page before sending another — someone may
+          already have a live invitation.
+        </p>
+      )}
       {invitations.length > 0 && (
         <section className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
           <h2 className="overline border-b border-paper-300 px-5 py-3 text-ink-400">Invitations</h2>

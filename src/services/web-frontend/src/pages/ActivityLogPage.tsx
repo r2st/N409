@@ -78,6 +78,7 @@ export function ActivityLogPage() {
   const [error, setError] = useState<string | null>(null);
   const [actors, setActors] = useState<UserOption[]>([]);
   const [actorsCapped, setActorsCapped] = useState(false);
+  const [actorsFailed, setActorsFailed] = useState(false);
   const [typeDraft, setTypeDraft] = useState(params.get('type') ?? '');
 
   const scope = params.get('scope') ?? 'all';
@@ -133,7 +134,9 @@ export function ActivityLogPage() {
         setActors(d.options);
         setActorsCapped(d.truncated);
       })
-      .catch(() => {});
+      // An empty roster reads as "nobody has done anything here", which is the
+      // opposite of what an activity log is consulted to find out.
+      .catch(() => setActorsFailed(true));
   }, []);
 
   /**
@@ -219,8 +222,15 @@ export function ActivityLogPage() {
           value={actorId}
           onChange={(e) => setFilter('actor', e.target.value)}
           className="!w-auto min-w-44"
+          disabled={actorsFailed}
         >
-          <option value="">Any actor</option>
+          <option value="">{actorsFailed ? 'Actor list unavailable' : 'Any actor'}</option>
+          {/*
+           * A filter offering only "Any actor" is indistinguishable from a log
+           * nobody has ever written to. Saying so in the control itself is what
+           * reaches somebody who is looking at the picker rather than the page.
+           */}
+          {actorsFailed && actorId && <option value={actorId}>{actorId}</option>}
           {actors.map((a) => (
             <option key={a.id} value={a.id}>
               {a.email}

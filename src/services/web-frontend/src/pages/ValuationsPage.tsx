@@ -137,6 +137,8 @@ export function ValuationsPage() {
    * only thing that had actually gone wrong was a GET nobody was told about.
    */
   const [reviewersFailed, setReviewersFailed] = useState(false);
+  /** Same distinction for the organisation list, which only filters. */
+  const [partnersFailed, setPartnersFailed] = useState(false);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnersCapped, setPartnersCapped] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -214,7 +216,7 @@ export function ValuationsPage() {
         setPartners(res.partners);
         setPartnersCapped(res.truncated);
       })
-      .catch(() => {});
+      .catch(() => setPartnersFailed(true));
   }, [ops]);
 
   const setFilter = (key: string, value: string) => {
@@ -694,6 +696,12 @@ export function ValuationsPage() {
         <p className="mt-3 text-sm text-ink-400">
           The reviewer list could not be loaded, so reviewers cannot be filtered on or assigned in bulk
           right now. Reload the page to try again.
+        </p>
+      )}
+      {partnersFailed && (
+        <p className="mt-3 text-sm text-ink-400">
+          The list of organisations could not be loaded, so the partner filter is empty. Reload the page to
+          try again.
         </p>
       )}
       {bulkNote && <div className="mt-3 text-sm text-ink-600">{bulkNote}</div>}

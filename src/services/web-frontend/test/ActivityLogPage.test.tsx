@@ -533,4 +533,41 @@ describe('ActivityLogPage', () => {
       expect(region.textContent).toBe('3 events');
     });
   });
+  /*
+   * The actor roster was loaded with `.catch(() => {})`. A filter offering only
+   * "Any actor" is indistinguishable from a log nobody has ever written to,
+   * which is the opposite of what an activity log is consulted to establish.
+   */
+  describe('when the actor roster fails to load', () => {
+    it('says so in the control itself', async () => {
+      mockApi({ actors: problem(503, 'nope') });
+      renderPage();
+      await ready();
+
+      const select = screen.getByRole('combobox', { name: 'Actor' });
+      expect(select).toBeDisabled();
+      expect(select).toHaveTextContent('Actor list unavailable');
+    });
+
+    it('leaves the log itself readable', async () => {
+      // The roster is a filter, not the page — losing it must not cost the
+      // events somebody opened this page to read.
+      mockApi({ actors: problem(503, 'nope') });
+      renderPage();
+      await ready();
+
+      expect(screen.getByRole('table', { name: 'Activity log' })).toBeInTheDocument();
+    });
+
+    it('offers the ordinary label when the roster loads', async () => {
+      mockApi();
+      renderPage();
+      await ready();
+
+      const select = screen.getByRole('combobox', { name: 'Actor' });
+      expect(select).not.toBeDisabled();
+      expect(select).toHaveTextContent('Any actor');
+      expect(select).not.toHaveTextContent('unavailable');
+    });
+  });
 });
