@@ -976,6 +976,28 @@ export function pageCountOf(total: number, pageSize: number): number {
 /**
  * Shared pagination control (audit F-4 P3). 1-indexed; disables Prev/Next at the
  * ends and renders as a labelled <nav> so it's reachable by assistive tech.
+ *
+ * The control also drags an out-of-range owner back into range, because a list
+ * that shrank under a reader who had paged into it is otherwise a dead end.
+ * Nothing clamps `page` server-side — `domain/pagination.ts` is explicit that a
+ * page past the end "matches nothing and the route answers with an empty list"
+ * — so the only thing standing between a reader and a permanently empty screen
+ * is this component, and until now it failed at that in both directions:
+ *
+ *   - `page` past a *multi-page* count rendered "Page 4 of 4" over a list
+ *     fetched at page 99. The label was clamped; the fetch was not, so the
+ *     control confidently described a page whose rows were never requested.
+ *   - `page` past a count that collapsed to *one* page hid the control
+ *     entirely, which removes the only affordance that could have walked the
+ *     reader back. On a screen that reloads itself — the job monitor polls
+ *     every 15 seconds — that empty page never repairs itself.
+ *
+ * Both are the same missing step: tell the owner. `onPage(clamped)` re-runs the
+ * owner's fetch at a page that exists, so the label and the rows agree again.
+ * It settles in one pass — once the owner adopts `clamped`, `page === clamped`
+ * and the effect stops — and it is safe to run before the early return because
+ * a collapsed list needs the correction *most* precisely when the control is
+ * about to render nothing.
  */
 export function Pagination({
   page,
@@ -988,8 +1010,11 @@ export function Pagination({
   onPage: (page: number) => void;
   className?: string;
 }) {
+  const clamped = Math.min(Math.max(page, 1), Math.max(pageCount, 1));
+  useEffect(() => {
+    if (page !== clamped) onPage(clamped);
+  }, [page, clamped, onPage]);
   if (pageCount <= 1) return null;
-  const clamped = Math.min(Math.max(page, 1), pageCount);
   return (
     <nav aria-label="Pagination" className={`flex items-center justify-between gap-4 text-sm ${className}`}>
       <Button

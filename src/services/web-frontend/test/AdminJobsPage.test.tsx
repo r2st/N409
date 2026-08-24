@@ -394,4 +394,52 @@ describe('AdminJobsPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Check queues now' }));
     await waitFor(() => expect(calls.some((c) => c.includes('/admin/jobs/alerts/scan'))).toBe(true));
   });
+
+  // ── A queue that drains while somebody is reading page 2 ───────────────────
+
+  /**
+   * The job monitor is the sharpest case for an out-of-range page because it
+   * refetches itself every fifteen seconds and its list is the one list in the
+   * product that routinely *shrinks*: jobs settle, sweeps purge them, an
+   * operator retries a batch. A reader who has paged into a backlog is left
+   * asking for a page the queue no longer has, and nothing on the server side
+   * corrects them — `domain/pagination.ts` answers an over-range page with an
+   * empty list on purpose.
+   *
+   * The old failure was total: the empty page rendered no rows *and* no
+   * pagination control, because `pageCount` had collapsed to 1 and the control
+   * hid itself. Every fifteen seconds it refetched page 2 and drew the same
+   * blank table, with nothing to click.
+   */
+  it('recovers when the backlog drains out from under a reader on page 2', async () => {
+    let total = 60; // three pages of 25
+    const pagesAsked: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.includes('/admin/jobs/stats')) return jsonResponse(STATS);
+      if (path.includes('/admin/jobs/alerts')) return jsonResponse(QUIET);
+      if (path.includes('/admin/jobs')) {
+        const page = new URL(path, 'http://x').searchParams.get('page') ?? '1';
+        pagesAsked.push(page);
+        // The queue only ever had rows on page 1; page 2 was reachable because
+        // the backlog was three pages deep when the reader clicked into it.
+        return jsonResponse({ jobs: page === '1' ? JOBS : [], total });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    renderPage();
+    await screen.findByText('upload');
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(screen.getByText('Page 2 of 3')).toBeInTheDocument());
+
+    // The backlog drains: 60 jobs settle down to the three still on page 1.
+    total = JOBS.length;
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    // Previously: an empty table, no Pagination (pageCount 1), and a 15-second
+    // poll that asked for page 2 forever.
+    expect(await screen.findByText('upload')).toBeInTheDocument();
+    expect(pagesAsked.at(-1)).toBe('1');
+  });
 });

@@ -123,3 +123,47 @@ describe('Pagination (F-4 P3)', () => {
     expect(screen.getByText('Page 4 of 4')).toBeInTheDocument();
   });
 });
+
+/**
+ * A list that shrinks under a reader who had paged into it.
+ *
+ * No route clamps `page`: `domain/pagination.ts` states outright that a page
+ * past the end matches nothing and answers with an empty list. So when a
+ * delete, a purge or a 15-second poll drops the total, the owner is left asking
+ * for a page that no longer exists — and the only control that could walk it
+ * back is this one.
+ */
+describe('Pagination — a page the list no longer has', () => {
+  it('asks the owner to come back into range instead of labelling a page it never fetched', () => {
+    const onPage = vi.fn();
+    render(<Pagination page={99} pageCount={4} onPage={onPage} />);
+    // Without this the label read "Page 4 of 4" over rows fetched at page 99.
+    expect(onPage).toHaveBeenCalledWith(4);
+  });
+
+  it('still asks when the list collapsed to a single page and the control renders nothing', () => {
+    const onPage = vi.fn();
+    const { container } = render(<Pagination page={3} pageCount={1} onPage={onPage} />);
+    // This is the dead end: no control to click, and page 3 fetches nothing.
+    expect(container).toBeEmptyDOMElement();
+    expect(onPage).toHaveBeenCalledWith(1);
+  });
+
+  it('leaves an in-range owner alone', () => {
+    const onPage = vi.fn();
+    const { rerender } = render(<Pagination page={2} pageCount={5} onPage={onPage} />);
+    rerender(<Pagination page={1} pageCount={1} onPage={onPage} />);
+    rerender(<Pagination page={5} pageCount={5} onPage={onPage} />);
+    expect(onPage).not.toHaveBeenCalled();
+  });
+
+  it('settles in one pass once the owner adopts the clamped page', () => {
+    const onPage = vi.fn();
+    const { rerender } = render(<Pagination page={9} pageCount={2} onPage={onPage} />);
+    expect(onPage).toHaveBeenCalledTimes(1);
+    // The owner refetched at page 2; the effect must not fire again.
+    rerender(<Pagination page={2} pageCount={2} onPage={onPage} />);
+    rerender(<Pagination page={2} pageCount={2} onPage={onPage} />);
+    expect(onPage).toHaveBeenCalledTimes(1);
+  });
+});
