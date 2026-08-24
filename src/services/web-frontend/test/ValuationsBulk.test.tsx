@@ -52,7 +52,7 @@ const row = (id: string, company: string) => ({
   published_at: null,
 });
 
-function mockApi() {
+function mockApi(opts: { rosterStatus?: number } = {}) {
   const calls: Array<{ url: string; method: string; body?: unknown }> = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
@@ -77,7 +77,11 @@ function mockApi() {
         headers: { 'content-type': 'text/csv', 'content-disposition': 'attachment; filename="sel.csv"' },
       });
     }
-    if (path.includes('/users/options')) return jsonResponse({ options: [] });
+    if (path.includes('/users/options')) {
+      // The roster loads separately; failing it alone is the case under test.
+      if (opts.rosterStatus) return jsonResponse({ detail: 'No' }, opts.rosterStatus);
+      return jsonResponse({ options: [] });
+    }
     if (path.includes('/partners')) return jsonResponse({ partners: [] });
     if (path.includes('/valuations?')) {
       return jsonResponse({
@@ -176,6 +180,65 @@ describe('ValuationsPage bulk operations', () => {
       expect(dl).toBeTruthy();
       expect(decodeURIComponent(dl!.url)).toContain(`ids=${VAL_A}`);
       expect(dl!.url).toContain('format=csv');
+    });
+  });
+  /*
+   * `/users/options` was loaded with `.catch(() => {})`, so a failure left the
+   * roster at `[]` — indistinguishable from a firm with no reviewers, which is
+   * what the test above deliberately exercises. The bulk bar acts on that
+   * difference: `assign_reviewer` sends `bulkReviewer.trim() || null`, and
+   * `null` means *unassign*. With no options to pick, a control labelled
+   * "Assign reviewer" applied a bulk unassignment across every selected
+   * engagement, and the only thing that had gone wrong was an unreported GET.
+   */
+  describe('when the reviewer roster fails to load', () => {
+    it('will not turn a bulk assign into a bulk unassign', async () => {
+      const calls = mockApi({ rosterStatus: 503 });
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.click((await screen.findAllByLabelText('Select Acme Corp'))[0]!);
+      await user.selectOptions(screen.getByLabelText('Bulk action'), 'assign_reviewer');
+
+      expect(screen.getByLabelText('Bulk reviewer')).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+      await screen.findByText(/reviewer list could not be loaded/);
+      expect(calls.some((c) => c.url.includes('/valuations/bulk-action'))).toBe(false);
+    });
+
+    it('leaves the bulk actions that do not read the roster alone', async () => {
+      // The roster is missing, not the whole bar: setting state in bulk never
+      // consulted it and must stay usable.
+      const calls = mockApi({ rosterStatus: 503 });
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.click((await screen.findAllByLabelText('Select Acme Corp'))[0]!);
+      await user.selectOptions(screen.getByLabelText('Bulk action'), 'set_state');
+      await user.click(screen.getByRole('button', { name: 'Apply' }));
+
+      await waitFor(() =>
+        expect(calls.some((c) => c.url.includes('/valuations/bulk-action'))).toBe(true),
+      );
+    });
+
+    it('says nothing and blocks nothing when the roster loads empty', async () => {
+      /*
+       * The other half, and the one that keeps this from being a blanket ban:
+       * a firm really can have no reviewers yet, and "Unassign" is then a
+       * legitimate thing to apply. A 200 with an empty list must behave exactly
+       * as it did before.
+       */
+      mockApi();
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.click((await screen.findAllByLabelText('Select Acme Corp'))[0]!);
+      await user.selectOptions(screen.getByLabelText('Bulk action'), 'assign_reviewer');
+
+      expect(screen.getByLabelText('Bulk reviewer')).not.toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Apply' })).not.toBeDisabled();
+      expect(screen.queryByText(/could not be loaded/)).toBeNull();
     });
   });
 });

@@ -128,6 +128,15 @@ export function ValuationsPage() {
   const [bucketDefs, setBucketDefs] = useState<NamedBucketDef[] | null>(null);
   const [reviewers, setReviewers] = useState<UserOption[]>([]);
   const [reviewersCapped, setReviewersCapped] = useState(false);
+  /*
+   * The roster load failing has to be distinguishable from the roster being
+   * empty, because the bulk bar reads the two the same way and acts on it.
+   * `assign_reviewer` sends `bulkReviewer.trim() || null`, and `null` is
+   * *unassign* — so with no options to choose from, a control labelled "Assign
+   * reviewer" applied a bulk unassignment to every selected engagement, and the
+   * only thing that had actually gone wrong was a GET nobody was told about.
+   */
+  const [reviewersFailed, setReviewersFailed] = useState(false);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnersCapped, setPartnersCapped] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -199,7 +208,7 @@ export function ValuationsPage() {
         setReviewers(res.options);
         setReviewersCapped(res.truncated);
       })
-      .catch(() => {});
+      .catch(() => setReviewersFailed(true));
     api<{ partners: Partner[]; truncated: boolean }>('/partners')
       .then((res) => {
         setPartners(res.partners);
@@ -648,6 +657,7 @@ export function ValuationsPage() {
               value={bulkReviewer}
               onChange={(e) => setBulkReviewer(e.target.value)}
               className="!w-auto min-w-52"
+              disabled={reviewersFailed}
             >
               <option value="">Unassign</option>
               {reviewers.map((r) => (
@@ -658,7 +668,12 @@ export function ValuationsPage() {
               <PickerOverflowNote truncated={reviewersCapped} />
             </Select>
           )}
-          <Button disabled={bulkBusy} onClick={() => void applyBulk()}>
+          <Button
+            // Blocked only for the action the missing roster actually breaks:
+            // setting state in bulk does not read the roster and stays usable.
+            disabled={bulkBusy || (bulkAction === 'assign_reviewer' && reviewersFailed)}
+            onClick={() => void applyBulk()}
+          >
             {bulkBusy ? 'Applying…' : 'Apply'}
           </Button>
           <Button variant="secondary" onClick={() => void exportSelected('csv')}>
@@ -674,6 +689,12 @@ export function ValuationsPage() {
             Clear
           </Button>
         </div>
+      )}
+      {reviewersFailed && (
+        <p className="mt-3 text-sm text-ink-400">
+          The reviewer list could not be loaded, so reviewers cannot be filtered on or assigned in bulk
+          right now. Reload the page to try again.
+        </p>
       )}
       {bulkNote && <div className="mt-3 text-sm text-ink-600">{bulkNote}</div>}
 
