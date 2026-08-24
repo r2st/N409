@@ -158,3 +158,70 @@ describe('Tab returns to the dialog from wherever focus has ended up', () => {
     expect(screen.getByRole('button', { name: 'Create engagement' })).toHaveFocus();
   });
 });
+
+/**
+ * A dialog whose highlight is `aria-activedescendant` rather than DOM focus —
+ * the command palette's shape, and any listbox built the same way. The rows are
+ * `<button tabindex="-1">`: reachable by pointer and by code, never a Tab stop,
+ * because real focus has to stay in the box for the highlight to be announced.
+ * They are also the *last* thing in the dialog, which is what makes the trap
+ * the only thing standing between Tab and the page behind.
+ */
+function ListboxDialog() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button onClick={() => setOpen(true)}>Open</button>
+      <a href="/behind">A link on the page behind</a>
+      <Modal open={open} onClose={() => setOpen(false)} title="Pick a valuation">
+        <TextInput aria-label="Search" />
+        <div>
+          <button type="button" tabIndex={-1}>
+            Northwind Robotics
+          </button>
+          <button type="button" tabIndex={-1}>
+            Acme Holdings
+          </button>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+describe('the trap honours tabindex="-1" on every kind of control', () => {
+  /**
+   * `:not([tabindex="-1"])` used to sit on the `[tabindex]` clause alone, so
+   * the intent was stated but enforced only for elements that had no other
+   * reason to be focusable. A `<button>` matched `button:not([disabled])` and
+   * counted as a Tab stop whatever its tabindex said — which is backwards,
+   * since `tabindex="-1"` exists precisely to say "not a Tab stop".
+   *
+   * The damage is not that Tab visits a row. It is that the trap then believes
+   * its last Tab stop is a row, so when focus is on the real last control it
+   * declines to wrap — and Tab leaves for the page behind the overlay.
+   */
+  it('wraps at the last real control instead of leaking to the page behind', async () => {
+    const user = userEvent.setup();
+    render(<ListboxDialog />);
+    await user.click(screen.getByRole('button', { name: 'Open' }));
+
+    expect(screen.getByLabelText('Search')).toHaveFocus();
+    await user.tab();
+
+    expect(screen.getByLabelText('Search')).toHaveFocus();
+    expect(screen.getByRole('link', { name: 'A link on the page behind' })).not.toHaveFocus();
+  });
+
+  it('does not enter the dialog on a row that opted out', async () => {
+    const user = userEvent.setup();
+    render(<ListboxDialog />);
+    await user.click(screen.getByRole('button', { name: 'Open' }));
+
+    (document.activeElement as HTMLElement).blur();
+    // Shift+Tab from adrift enters at the last Tab stop. A row is not one.
+    await user.tab({ shift: true });
+
+    expect(screen.getByLabelText('Search')).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Acme Holdings' })).not.toHaveFocus();
+  });
+});

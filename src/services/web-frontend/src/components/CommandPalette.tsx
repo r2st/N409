@@ -287,6 +287,18 @@ export function CommandPalette() {
               isOps(user) ? 'Jump to a page, valuation or person…' : 'Jump to a page or valuation…'
             }
             aria-label="Search commands"
+            /*
+             * A box that filters a list it points at is a combobox, and saying
+             * so is what makes the rest of this wiring mean anything: on a
+             * plain textbox some screen readers will not follow
+             * `aria-activedescendant` at all, so the arrow keys moved a
+             * highlight that was never announced. `aria-expanded` is the other
+             * half — it is how the reader knows there is a list to arrow into
+             * rather than an empty search box.
+             */
+            role="combobox"
+            aria-expanded={rows.length > 0}
+            aria-autocomplete="list"
             aria-controls="command-palette-list"
             aria-activedescendant={rows[cursor] ? `cmd-${rowKey(rows[cursor]!)}` : undefined}
             className="w-full bg-transparent py-4 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none"
@@ -331,6 +343,17 @@ export function CommandPalette() {
                   id={`cmd-${rowKey(row)}`}
                   role="option"
                   aria-selected={active}
+                  /*
+                   * Out of the tab order. The highlight is `aria-activedescendant`,
+                   * which requires DOM focus to stay on the input — and a
+                   * <button> is a tab stop by default, so Tab walked into the
+                   * results one row at a time, took real focus off the input,
+                   * and broke the very mechanism announcing the highlight. With
+                   * a live search behind it the strip is as long as the result
+                   * set, so the number of presses to get back out was whatever
+                   * the query happened to match.
+                   */
+                  tabIndex={-1}
                   data-active={active}
                   onMouseMove={() => setCursor(index)}
                   onClick={() => run(row)}

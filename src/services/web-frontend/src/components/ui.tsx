@@ -630,8 +630,29 @@ export function PageSkeleton({ label = 'Loading page…' }: { label?: string }) 
   );
 }
 
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+/**
+ * What Tab stops on inside a trapped overlay.
+ *
+ * `:not([tabindex="-1"])` is on every clause, not only the last. The intent
+ * was always there — the `[tabindex]` clause carried it — but `button`,
+ * `input`, `a[href]` and friends did not, and `tabindex="-1"` is exactly how
+ * an element says "focus me from code, do not stop here on Tab". The command
+ * palette is the case that showed it: its result rows are buttons marked
+ * `tabindex="-1"` because the highlight is `aria-activedescendant` and DOM
+ * focus has to stay in the search box. Tab walked into them anyway, one row
+ * at a time, breaking the mechanism announcing the highlight — and the strip
+ * is as long as the search result set.
+ */
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]',
+]
+  .map((clause) => `${clause}:not([tabindex="-1"])`)
+  .join(', ');
 
 /**
  * Focus-trap for overlays (audit F-3 P2). While `active`, keeps Tab/Shift+Tab

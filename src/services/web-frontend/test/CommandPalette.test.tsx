@@ -97,7 +97,7 @@ describe('CommandPalette', () => {
 
     // Inside the palette's own input, "/" must be a literal character.
     await open();
-    const input = screen.getByRole('textbox', { name: 'Search commands' });
+    const input = screen.getByRole('combobox', { name: 'Search commands' });
     await userEvent.type(input, 'a/b');
     expect(input).toHaveValue('a/b');
   });
@@ -105,7 +105,7 @@ describe('CommandPalette', () => {
   it('filters commands as you type and navigates on Enter', async () => {
     renderPalette(['admin']);
     await open();
-    await userEvent.type(screen.getByRole('textbox', { name: 'Search commands' }), 'sso');
+    await userEvent.type(screen.getByRole('combobox', { name: 'Search commands' }), 'sso');
 
     const option = await screen.findByRole('option', { name: /Enterprise SSO/ });
     expect(option).toHaveAttribute('aria-selected', 'true');
@@ -130,10 +130,54 @@ describe('CommandPalette', () => {
     expect(all[all.length - 1]).toHaveAttribute('aria-selected', 'true');
   });
 
+  it('is a combobox that says whether there is a list to arrow into', async () => {
+    renderPalette(['admin']);
+    await open();
+    const box = screen.getByRole('combobox', { name: 'Search commands' });
+
+    // Without the role, `aria-activedescendant` on a plain textbox is
+    // something several screen readers decline to follow — the arrows moved a
+    // highlight nobody heard.
+    expect(box).toHaveAttribute('aria-expanded', 'true');
+    expect(box).toHaveAttribute('aria-controls', 'command-palette-list');
+
+    await userEvent.type(box, 'zzzznothingmatchesthis');
+    await waitFor(() => expect(box).toHaveAttribute('aria-expanded', 'false'));
+  });
+
+  it('points at the highlighted row and keeps real focus on the box', async () => {
+    renderPalette(['admin']);
+    await open();
+    const box = screen.getByRole('combobox', { name: 'Search commands' });
+    const options = await screen.findAllByRole('option');
+
+    expect(box).toHaveAttribute('aria-activedescendant', options[0]!.id);
+    await userEvent.keyboard('{ArrowDown}');
+    expect(box).toHaveAttribute('aria-activedescendant', screen.getAllByRole('option')[1]!.id);
+    expect(box).toHaveFocus();
+  });
+
+  it('keeps the results out of the tab order', async () => {
+    renderPalette(['admin']);
+    await open();
+    const options = await screen.findAllByRole('option');
+    expect(options.length).toBeGreaterThan(3);
+
+    // A <button> is a tab stop by default, so Tab used to walk into the
+    // results a row at a time — taking DOM focus off the box and breaking the
+    // `aria-activedescendant` that was announcing the highlight. With a live
+    // search behind it, the number of presses to get back out was whatever the
+    // query happened to match.
+    expect(options.every((o) => o.tabIndex === -1)).toBe(true);
+
+    await userEvent.tab();
+    expect(screen.getByRole('combobox', { name: 'Search commands' })).toHaveFocus();
+  });
+
   it('offers the open valuation’s tabs and jumps into one', async () => {
     renderPalette(['admin'], '/valuations/v-9001/params');
     await open();
-    await userEvent.type(screen.getByRole('textbox', { name: 'Search commands' }), 'workbook');
+    await userEvent.type(screen.getByRole('combobox', { name: 'Search commands' }), 'workbook');
     await userEvent.click(await screen.findByRole('option', { name: /Workbook/ }));
     await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/valuations/v-9001/workbook'));
   });
@@ -142,7 +186,7 @@ describe('CommandPalette', () => {
     const seen: string[] = [];
     renderPalette(['admin'], '/dashboard', (u) => seen.push(u));
     await open();
-    await userEvent.type(screen.getByRole('textbox', { name: 'Search commands' }), 'Northwind');
+    await userEvent.type(screen.getByRole('combobox', { name: 'Search commands' }), 'Northwind');
 
     const hit = await screen.findByRole('option', { name: /Northwind Robotics/ });
     expect(seen.some((u) => u.includes('q=Northwind'))).toBe(true);
@@ -155,7 +199,7 @@ describe('CommandPalette', () => {
     const seen: string[] = [];
     renderPalette(['admin'], '/dashboard', (u) => seen.push(u));
     await open();
-    await userEvent.type(screen.getByRole('textbox', { name: 'Search commands' }), 'n');
+    await userEvent.type(screen.getByRole('combobox', { name: 'Search commands' }), 'n');
     await new Promise((r) => setTimeout(r, 350));
     expect(seen).toHaveLength(0);
   });
@@ -163,7 +207,7 @@ describe('CommandPalette', () => {
   it('remembers what you picked and floats it next time', async () => {
     const { unmount } = renderPalette(['admin']);
     await open();
-    await userEvent.type(screen.getByRole('textbox', { name: 'Search commands' }), 'billing');
+    await userEvent.type(screen.getByRole('combobox', { name: 'Search commands' }), 'billing');
     await userEvent.keyboard('{Enter}');
     await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/billing'));
     unmount();
@@ -178,7 +222,7 @@ describe('CommandPalette', () => {
   it('shows a client only what a client may reach', async () => {
     renderPalette(['valuation_user']);
     await open();
-    await userEvent.type(screen.getByRole('textbox', { name: 'Search commands' }), 'users');
+    await userEvent.type(screen.getByRole('combobox', { name: 'Search commands' }), 'users');
     expect(screen.queryByRole('option', { name: /Users & roles/ })).not.toBeInTheDocument();
   });
 });
