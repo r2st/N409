@@ -54,15 +54,20 @@ async function loadAuthorizedValuation(
   return valuation;
 }
 
-/** Strip directories and control characters; keep the name recognizable. */
-export function safeFilename(name: string): string {
-  const base = path.basename(name);
-  // Replace path separators, colons, quotes, and any control char (code < 0x20)
-  // with '_', collapsing consecutive runs. Avoids a control-char regex literal.
+/**
+ * The characters a filename may not contain, wherever the name came from:
+ * path separators, the drive colon, the quote that delimits a header's
+ * quoted-string, and the backslash that escapes it. Replaced with '_' and
+ * collapsed, so a name stays recognizable rather than losing its shape.
+ *
+ * Written as a loop over a set rather than a regex to avoid a control-char
+ * regex literal.
+ */
+function scrubFilename(name: string): string {
   const bad = new Set(['\\', '/', ':', '"']);
   let cleaned = '';
   let prevReplaced = false;
-  for (const ch of base) {
+  for (const ch of name) {
     const isBad = bad.has(ch) || ch.charCodeAt(0) < 0x20;
     if (isBad) {
       if (!prevReplaced) cleaned += '_';
@@ -72,23 +77,61 @@ export function safeFilename(name: string): string {
       prevReplaced = false;
     }
   }
-  cleaned = cleaned.trim();
-  return (cleaned || 'upload').slice(0, 200);
+  return cleaned.trim();
+}
+
+/**
+ * Strip directories and control characters; keep the name recognizable.
+ *
+ * `basename` first, because the name arrives from a browser that may send a
+ * whole path — `C:\Users\me\cap table.xlsx` from an old Windows client — and
+ * `cap table.xlsx` is a better answer than `C__Users_me_cap table.xlsx`.
+ */
+export function safeFilename(name: string): string {
+  return (scrubFilename(path.basename(name)) || 'upload').slice(0, 200);
 }
 
 /**
  * RFC 6266 Content-Disposition header value. Provides an ASCII-safe
  * ``filename`` for legacy clients and ``filename*`` with UTF-8 percent-
  * encoding for modern ones that understand RFC 5987.
+ *
+ * Scrubbed first, which it was not. Two of the callers pass a name that has
+ * already been through {@link safeFilename} — but `report.pdf` builds its
+ * filename out of `valuation.company_name`, which is `z.string().min(1).max(300)`
+ * and nothing else, and that reached the header raw:
+ *
+ *   "Acme\"            → filename="Acme\"; filename*=UTF-8''Acme%5C
+ *   "../../etc/passwd" → filename="../../etc/passwd"
+ *
+ * The first is the one that matters. A trailing backslash is a quoted-pair
+ * escaping the closing quote, so the quoted-string never terminates and a
+ * strict parser reads the rest of the header — the `filename*` parameter
+ * included — as part of the name. The second is what RFC 6266 §4.3 says a
+ * sender must not do; recipients are told to strip path information precisely
+ * because senders like this one did not.
+ *
+ * There was a third, quieter one: the two forms disagreed. The ASCII fallback
+ * *dropped* quotes while the ext-value percent-encoded them, so a client
+ * preferring `filename` and a client preferring `filename*` saved the same
+ * response under different names. Both are now derived from one scrubbed
+ * string, so the ASCII form differs from the UTF-8 one only where it must —
+ * in the characters ASCII cannot spell.
+ *
+ * `basename` is deliberately not applied here: this name is a display name
+ * built by the server, not a path sent by a client, and a company called
+ * "Acme/Beta" should keep both halves rather than lose the first.
  */
 export function contentDisposition(
   name: string,
   disposition: 'attachment' | 'inline' = 'attachment',
 ): string {
-  // ASCII-only fallback: drop non-ASCII and quotes.
-  const ascii = name.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '');
+  const safe = (scrubFilename(name) || 'download').slice(0, 200);
+  // ASCII-only fallback: the quote and backslash are already gone, so what is
+  // left is the characters ASCII has no spelling for.
+  const ascii = safe.replace(/[^\x20-\x7E]/g, '_');
   // RFC 5987 encoding: percent-encode everything outside unreserved chars.
-  const encoded = [...name]
+  const encoded = [...safe]
     .map((ch) => {
       const code = ch.charCodeAt(0);
       if (

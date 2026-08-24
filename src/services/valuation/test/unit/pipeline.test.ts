@@ -156,12 +156,64 @@ describe('contentDisposition', () => {
     expect(val).toContain("filename*=UTF-8''%C3%BC%C3%A9port.pdf");
   });
 
-  it('strips quotes from the ASCII fallback', () => {
-    const val = contentDisposition('file"name.pdf');
-    expect(val).toContain('filename="filename.pdf"');
-  });
-
   it('respects the disposition parameter', () => {
     expect(contentDisposition('x.pdf', 'inline')).toMatch(/^inline;/);
+  });
+
+  /**
+   * The name reaching this function is not always one `safeFilename` has seen.
+   *
+   * `GET /valuations/:id/report.pdf` builds it from `valuation.company_name`,
+   * which the schema constrains to `z.string().min(1).max(300)` and nothing
+   * else — so whatever a client typed into the company field arrived here raw.
+   */
+  it('escapes nothing, because nothing that needs escaping survives', () => {
+    // The sharp one. A trailing backslash is a quoted-pair escaping the closing
+    // quote, so `filename="Acme\"` never terminates and a strict parser reads
+    // the `filename*` parameter that follows as part of the name.
+    const val = contentDisposition('Acme\\');
+    expect(val).toBe(`attachment; filename="Acme_"; filename*=UTF-8''Acme_`);
+    expect(val).not.toContain('\\');
+  });
+
+  it('sends no path information, in either form', () => {
+    // RFC 6266 §4.3: recipients are told to strip path information because
+    // senders do this. Both forms, since `filename*` percent-encodes a slash
+    // rather than removing it and the client decodes it straight back.
+    const val = contentDisposition('../../etc/passwd');
+    expect(val).toContain('filename=".._.._etc_passwd"');
+    expect(val).toContain("filename*=UTF-8''.._.._etc_passwd");
+    expect(val).not.toContain('/etc');
+    expect(val).not.toContain('%2F');
+  });
+
+  it('names the same file in both forms', () => {
+    // The ASCII fallback used to *drop* the quote while the ext-value
+    // percent-encoded it, so a client preferring one saved the response under a
+    // different name than a client preferring the other.
+    const val = contentDisposition('file"name.pdf');
+    expect(val).toContain('filename="file_name.pdf"');
+    expect(val).toContain("filename*=UTF-8''file_name.pdf");
+  });
+
+  it('still differs between the forms only where ASCII cannot spell the name', () => {
+    const val = contentDisposition('Ångström AB.pdf');
+    expect(val).toContain('filename="_ngstr_m AB.pdf"');
+    expect(val).toContain("filename*=UTF-8''%C3%85ngstr%C3%B6m%20AB.pdf");
+  });
+
+  it('never produces an empty name', () => {
+    // Unlike `safeFilename`, a run of separators collapses to `_` rather than
+    // vanishing — there is no `basename` here to reduce `///` to nothing first.
+    expect(contentDisposition('///')).toContain('filename="_"');
+    expect(contentDisposition('')).toContain('filename="download"');
+    expect(contentDisposition('   ')).toContain('filename="download"');
+  });
+
+  it('leaves a name that has already been through safeFilename alone', () => {
+    // The two document routes pass a stored filename, and scrubbing twice must
+    // not keep eating it.
+    const stored = safeFilename('C:\\Users\\me\\cap table.xlsx');
+    expect(contentDisposition(stored)).toContain(`filename="${stored}"`);
   });
 });

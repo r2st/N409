@@ -182,6 +182,35 @@ describe.skipIf(!dbUp)('the draft stamp on a delivered report', () => {
     expect(readable(res.rawPayload)).not.toContain('DRAFT');
   });
 
+  /**
+   * The download's filename is built from the company name, and the company
+   * name is `z.string().min(1).max(300)` — so whatever the client typed reaches
+   * a header parameter. A trailing backslash used to escape the closing quote
+   * of `filename="…"`, leaving the quoted-string unterminated and the
+   * `filename*` parameter after it inside the name.
+   */
+  it('builds a well-formed filename out of whatever the company is called', async () => {
+    const id = await seedReport('Acme\\ / Beta "Holdings"');
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${id}/report.pdf`,
+      headers: authHeader(ops.token),
+    });
+    expect(res.statusCode).toBe(200);
+
+    const header = res.headers['content-disposition'] as string;
+    expect(header).toBe(
+      `inline; filename="Acme_ _ Beta _Holdings__409a_v1.pdf"; ` +
+        `filename*=UTF-8''Acme_%20_%20Beta%20_Holdings__409a_v1.pdf`,
+    );
+    // The three characters that must never reach a quoted-string or a path.
+    expect(header).not.toContain('\\');
+    expect(header).not.toContain('/Beta');
+    expect(header).not.toContain('%2F');
+    // Exactly two quotes: the pair that delimits `filename`.
+    expect(header.split('"')).toHaveLength(3);
+  });
+
   /** A live partner API key for `partnerId`, minted through the admin route. */
   async function mintPartnerKey(partnerId: string): Promise<{ token: string }> {
     const admin = await seedUser(ctx, { roles: ['partner'], partnerId });
