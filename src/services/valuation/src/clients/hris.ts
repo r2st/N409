@@ -6,6 +6,7 @@
  * injectable fetch.
  */
 
+import { isIsoCalendarDate } from '@n409/shared';
 import { clampScheduleMonths } from '../domain/vesting.js';
 import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, readJson, withDeadline } from './deadline.js';
 
@@ -123,10 +124,35 @@ const toNum = (v: unknown): number | null => {
   const n = typeof v === 'string' ? Number(v.replace(/[$,\s]/g, '')) : typeof v === 'number' ? v : NaN;
   return Number.isFinite(n) ? n : null;
 };
+/**
+ * A provider's date, at day resolution, or null when it is not a day.
+ *
+ * `/^\d{4}-\d{2}-\d{2}$/` is a shape check, and the shape admits days that do
+ * not exist: `2026-02-31`, `2026-13-01`, `2026-02-29` in a common year. Every
+ * route that accepts a date pairs the shape with `isIsoCalendarDate` for
+ * exactly this reason — and this path, which takes its dates from a third
+ * party rather than from a form, was the one that did not.
+ *
+ * `grant_date` and `vesting_start_date` are `date NOT NULL` columns, so an
+ * impossible day is not a wrong number that gets stored; it is an error raised
+ * by the driver inside `syncHrisConnection`'s insert loop. That loop has no
+ * catch of its own, so one malformed day from a provider ends the sync with
+ * the grants before it already committed and the ones after it never
+ * attempted — and neither `recordSync` nor `recordSyncError` is reached, so
+ * the connection's next-due is never advanced and no error is shown against
+ * it. The scheduled sweep then finds it due again every pass and fails it
+ * again, silently, forever.
+ *
+ * Rejecting here makes an impossible day behave like an absent one: `mapGrant`
+ * already drops a grant with no usable date, along with one that has no
+ * options or no external id. That is the same move `clampScheduleMonths` makes
+ * just below — hold the import to the rule `POST /grants` enforces, because a
+ * provider's payload is no more trustworthy than a form's.
+ */
 const toDate = (v: unknown): string | null => {
   if (typeof v !== 'string' || !v) return null;
   const d = v.slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
+  return isIsoCalendarDate(d) ? d : null;
 };
 
 export interface RosterEmployee {

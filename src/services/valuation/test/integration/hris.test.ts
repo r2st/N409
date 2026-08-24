@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
 import { listGrants } from '../../src/repos/grants.js';
 import { signCapTableSyncState, signHrisState } from '../../src/auth/jwt.js';
@@ -36,12 +36,15 @@ const ROSTER = {
   ],
 };
 
+/** Swapped per test; the mock reads it at request time. */
+let rosterBody: unknown = ROSTER;
+
 function mockFetch() {
   return vi.fn(async (url: string | URL | Request) => {
     const u = String(url);
     if (u.includes('/token'))
       return jsonResponse({ access_token: 'tok', expires_in: 3600, company_id: 'co1' });
-    if (u.includes('/employees')) return jsonResponse(ROSTER);
+    if (u.includes('/employees')) return jsonResponse(rosterBody);
     throw new Error(`unexpected fetch ${u}`);
   });
 }
@@ -56,6 +59,9 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       { hrisFetch: mockFetch() as unknown as typeof fetch },
     );
     ops = await seedUser(ctx, { roles: ['reviewer'] });
+  });
+  beforeEach(() => {
+    rosterBody = ROSTER;
   });
   afterAll(async () => ctx?.teardown());
 
@@ -139,6 +145,47 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     });
     expect(again.json()).toMatchObject({ grants_created: 0, grants_skipped: 2 });
     expect((await listGrants(ctx.pool, v.id)).grants).toHaveLength(2);
+  });
+
+  /**
+   * One provider row carrying a day that is not a day.
+   *
+   * `grant_date` is `date NOT NULL`, and the insert loop in
+   * `syncHrisConnection` has no catch of its own — so before the mapper held
+   * provider dates to a real calendar, `2026-02-31` reached the driver, raised
+   * `date/time field value out of range`, and took the whole sync with it: the
+   * grants ahead of it in the loop committed, the ones behind it never ran,
+   * and `recordSync` was never reached, so the connection's next-due never
+   * advanced and the scheduled sweep failed it identically on every pass.
+   */
+  it('imports the rest of a roster when one provider grant is dated to a day that does not exist', async () => {
+    rosterBody = {
+      companyName: 'Acme',
+      employees: [
+        {
+          id: 'e1',
+          fullName: 'Ada Lovelace',
+          workEmail: 'ada@acme.com',
+          equityGrants: [
+            { id: 'bad', optionsGranted: 10000, strikePrice: 1, grantDate: '2026-02-31' },
+            { id: 'good', optionsGranted: 5000, strikePrice: 1, grantDate: '2026-03-01' },
+          ],
+        },
+      ],
+    };
+    const v = await connectedValuation();
+
+    const pull = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+      headers: authHeader(ops.token),
+    });
+    // Previously a 500: the impossible day reached a `date NOT NULL` column.
+    expect(pull.statusCode).toBe(200);
+    expect(pull.json()).toMatchObject({ grants_found: 1, grants_created: 1 });
+
+    const { grants } = await listGrants(ctx.pool, v.id);
+    expect(grants.map((g) => g.external_id)).toEqual(['good']);
   });
 
   it('forbids HRIS import for non-ops users', async () => {

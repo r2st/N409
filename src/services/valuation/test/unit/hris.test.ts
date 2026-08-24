@@ -128,3 +128,53 @@ describe('HRIS grant mapping bounds the vesting schedule', () => {
     });
   });
 });
+
+/**
+ * `grant_date` and `vesting_start_date` are `date NOT NULL`. A day that does
+ * not exist is therefore not a wrong value that gets stored — it is a driver
+ * error raised inside `syncHrisConnection`'s uncaught insert loop, which ends
+ * the sync with earlier grants committed, later ones never attempted, and
+ * neither `recordSync` nor `recordSyncError` reached. The connection stays due
+ * and fails the same way on every sweep.
+ */
+describe('HRIS grant mapping holds provider dates to a real calendar', () => {
+  const grantWithDate = (grantDate: unknown, extra: Record<string, unknown> = {}) =>
+    mapEmployees({
+      employees: [
+        {
+          id: 'e1',
+          fullName: 'Ada Lovelace',
+          equityGrants: [{ id: 'g1', optionsGranted: 1000, grantDate, ...extra }],
+        },
+      ],
+    }).grants;
+
+  it('drops a grant dated to a day that does not exist', () => {
+    // The shape check these passed admits all of these; the calendar does not.
+    for (const day of ['2026-02-31', '2026-13-01', '2026-00-10', '2026-04-31', '2026-02-29']) {
+      expect(grantWithDate(day), day).toHaveLength(0);
+    }
+  });
+
+  it('keeps a leap day in a year that has one', () => {
+    expect(grantWithDate('2024-02-29')[0]).toMatchObject({ grant_date: '2024-02-29' });
+  });
+
+  it('still accepts a timestamp and takes the day off it', () => {
+    expect(grantWithDate('2025-03-01T09:30:00Z')[0]).toMatchObject({ grant_date: '2025-03-01' });
+  });
+
+  it('falls back to the grant date when the vesting start is not a real day', () => {
+    // `vesting_start_date` is the second `date NOT NULL` column on the row, so
+    // it needed the same rule; the existing fallback covers the rest.
+    expect(
+      grantWithDate('2025-03-01', { vesting: { startDate: '2025-02-30', months: 48 } })[0],
+    ).toMatchObject({ grant_date: '2025-03-01', vesting_start_date: '2025-03-01' });
+  });
+
+  it('leaves an ordinary vesting start alone', () => {
+    expect(grantWithDate('2025-03-01', { vesting: { startDate: '2025-04-01' } })[0]).toMatchObject({
+      vesting_start_date: '2025-04-01',
+    });
+  });
+});
