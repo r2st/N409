@@ -115,10 +115,19 @@ interface LinkRef {
   target: string;
   /** As written, for the failure message. */
   raw: string;
+  /** Which idiom produced it, so each can be shown to be read. */
+  via: 'attribute' | 'navigate';
 }
 
 /**
- * `to`/`href` targets that are paths within this app.
+ * Link and navigation targets that are paths within this app.
+ *
+ * `to`/`href` covers `<Link>`, `<Navigate>` and plain anchors. `navigate(…)`
+ * is the same journey with no element to inspect — a `useNavigate` call after
+ * a save or a sign-in, which is exactly where a wrong path is least likely to
+ * be clicked during development and most likely to strand somebody mid-flow.
+ * Only literal and templated arguments are read; `navigate(somewhere)` and
+ * `navigate(-1)` say nothing at this remove and are skipped.
  *
  * Skipped: absolute URLs, `mailto:`/`tel:`, bare fragments, and `/api/…` —
  * those are the service's own endpoints, reached by a form post or a full
@@ -134,7 +143,14 @@ function internalLinks(): LinkRef[] {
       .forEach((line, i) => {
         const quoted = [...line.matchAll(/\b(?:to|href)="(\/[^"]*)"/g)].map((m) => m[1]!);
         const templated = [...line.matchAll(/\b(?:to|href)=\{`(\/[^`]*)`\}/g)].map((m) => m[1]!);
-        for (const raw of [...quoted, ...templated]) {
+        const navigated = [...line.matchAll(/\bnavigate\(\s*(?:'(\/[^']*)'|`(\/[^`]*)`)/g)].map(
+          (m) => (m[1] ?? m[2])!,
+        );
+        const tagged = [
+          ...[...quoted, ...templated].map((raw) => ({ raw, via: 'attribute' as const })),
+          ...navigated.map((raw) => ({ raw, via: 'navigate' as const })),
+        ];
+        for (const { raw, via } of tagged) {
           if (raw.startsWith('/api/')) continue;
           const target = raw
             .split(/[?#]/)[0]!
@@ -142,7 +158,7 @@ function internalLinks(): LinkRef[] {
             // An interpolation glued to literal text is still one dynamic
             // segment as far as matching goes.
             .replace(glued, DYNAMIC);
-          out.push({ file: rel, line: i + 1, target, raw });
+          out.push({ file: rel, line: i + 1, target, raw, via });
         }
       });
   }
@@ -172,8 +188,16 @@ describe('internal links land on declared routes', () => {
     // link targets through a helper, silently turns this into a test of two
     // empty lists. It has to fail then, not pass.
     expect(routes.length).toBeGreaterThanOrEqual(80);
-    expect(links.length).toBeGreaterThanOrEqual(60);
+    expect(links.length).toBeGreaterThanOrEqual(200);
     expect(routes).toContain('/valuations');
+  });
+
+  it('reads navigation calls, not only the ones with an element', () => {
+    // Counted separately because `to`/`href` outnumbers `navigate(…)` ten to
+    // one: the call idiom could stop being read entirely — a rename, a wrapper
+    // hook — and the total above would still clear its floor.
+    expect(links.filter((l) => l.via === 'navigate').length).toBeGreaterThanOrEqual(15);
+    expect(links.filter((l) => l.via === 'attribute').length).toBeGreaterThanOrEqual(150);
   });
 
   it('does not route a target that goes nowhere', () => {
