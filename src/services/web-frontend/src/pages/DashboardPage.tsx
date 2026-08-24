@@ -541,7 +541,10 @@ export function DashboardPage() {
               <div className="mt-10 flex items-center justify-between">
                 <h2 className="overline text-ink-400">Recent activity</h2>
                 {isOps(user) && (
-                  <Link to="/activity" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
+                  <Link
+                    to="/admin/activity"
+                    className="text-sm font-semibold text-bond-600 hover:text-bond-700"
+                  >
                     View all →
                   </Link>
                 )}
