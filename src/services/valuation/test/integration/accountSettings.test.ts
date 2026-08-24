@@ -628,6 +628,13 @@ describe.skipIf(!dbUp)('system settings', () => {
   });
 
   it('password_min_length tightens the floor for every password entry point', async () => {
+    // "Every" used to mean two of them. `POST /api/v1/users` — the admin
+    // console's create-user form, whose accounts tend to be the privileged
+    // ones — validated `min(10)` in its zod schema and nothing else, so a
+    // deployment configured to 16 went on accepting ten-character passwords
+    // through it. The two entry points this drove were the two that already
+    // worked. See `passwordEntryPoints.test.ts` for the guard that stops the
+    // list going stale again.
     await put(admin.token, { password_min_length: 16 });
     try {
       const res = await ctx.app.inject({
@@ -645,9 +652,72 @@ describe.skipIf(!dbUp)('system settings', () => {
         payload: { current_password: SEED_PASSWORD, new_password: 'twelve-chars' },
       });
       expect(change.statusCode).toBe(422);
+
+      const created = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/users',
+        headers: authHeader(admin.token),
+        payload: {
+          email: 'shortpw-admin@test.example.com',
+          password: 'twelve-chars1',
+          roles: ['valuation_user'],
+        },
+      });
+      expect(created.statusCode).toBe(422);
+      expect(created.json().detail).toMatch(/at least 16/);
     } finally {
       await put(admin.token, { password_min_length: 10 });
     }
+  });
+
+  it('refuses a password with no letter or no digit at every entry point too', async () => {
+    // The complexity half was missing from the admin console outright, at the
+    // default minimum: '1234567890' was refused at registration, at reset, at
+    // invite acceptance and at change-password, and created here.
+    const complexity = /at least one letter and one number/;
+
+    const registered = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      payload: { email: 'nodigits@test.example.com', password: 'abcdefghij' },
+    });
+    expect(registered.statusCode).toBe(422);
+    expect(registered.json().detail).toMatch(complexity);
+
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/users',
+      headers: authHeader(admin.token),
+      payload: {
+        email: 'nodigits-admin@test.example.com',
+        password: 'abcdefghij',
+        roles: ['valuation_user'],
+      },
+    });
+    expect(created.statusCode).toBe(422);
+    expect(created.json().detail).toMatch(complexity);
+
+    const noLetters = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/users',
+      headers: authHeader(admin.token),
+      payload: {
+        email: 'nolettrs-admin@test.example.com',
+        password: '1234567890',
+        roles: ['valuation_user'],
+      },
+    });
+    expect(noLetters.statusCode).toBe(422);
+    expect(noLetters.json().detail).toMatch(complexity);
+
+    // …and still creates an account whose password satisfies both halves.
+    const ok = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/users',
+      headers: authHeader(admin.token),
+      payload: { email: 'goodpw-admin@test.example.com', password: 'abcdefghij1', roles: ['valuation_user'] },
+    });
+    expect(ok.statusCode).toBe(201);
   });
 
   it('maintenance_mode makes the platform read-only for everyone but ops', async () => {

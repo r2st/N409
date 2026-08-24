@@ -86,6 +86,36 @@ describe('RegisterPage', () => {
     expect(fetchSpy.mock.calls.filter(([u]) => String(u).includes('/auth/register'))).toHaveLength(0);
   });
 
+  it('rejects a long password with no digit in it, which used to need a round trip', async () => {
+    // The server has always required a letter *and* a digit; the form checked
+    // only the length, so "abcdefghij" passed every check the browser made and
+    // came back 422 — as a banner at the top of the form, not beside the box.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(publicSettings(true));
+    renderRegister();
+
+    await userEvent.type(await screen.findByLabelText('Work email'), 'ada@acme.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'abcdefghij');
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    const box = screen.getByLabelText('Password');
+    await waitFor(() => expect(box).toHaveAttribute('aria-invalid', 'true'));
+    expect(document.getElementById(box.getAttribute('aria-describedby')!)).toHaveTextContent(
+      /at least one letter and one number/i,
+    );
+    expect(fetchSpy.mock.calls.filter(([u]) => String(u).includes('/auth/register'))).toHaveLength(0);
+  });
+
+  it('says both halves of the rule under the box, before anything is typed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(publicSettings(true));
+    renderRegister();
+
+    const box = await screen.findByLabelText('Password');
+    const hint = document.getElementById(box.getAttribute('aria-describedby')!);
+    expect(hint).toHaveTextContent(/10 characters/);
+    expect(hint).toHaveTextContent(/letter/i);
+    expect(hint).toHaveTextContent(/number/i);
+  });
+
   it('flags a malformed email on blur, before anything is submitted', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(publicSettings(true));
     renderRegister();

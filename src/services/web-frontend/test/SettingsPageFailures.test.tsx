@@ -145,8 +145,8 @@ describe('SettingsPage — a save the API refuses', () => {
 
     const pw = card('Change password');
     await userEvent.type(within(pw).getByLabelText('Current password'), 'wrong-one');
-    await userEvent.type(within(pw).getByLabelText('New password'), 'a-long-enough-one');
-    await userEvent.type(within(pw).getByLabelText('Confirm new password'), 'a-long-enough-one');
+    await userEvent.type(within(pw).getByLabelText('New password'), 'a-long-enough-one-1');
+    await userEvent.type(within(pw).getByLabelText('Confirm new password'), 'a-long-enough-one-1');
     await userEvent.click(within(pw).getByRole('button', { name: 'Update password' }));
 
     expect(await screen.findByText('Your current password is wrong.')).toBeInTheDocument();

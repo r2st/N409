@@ -674,7 +674,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerCommentRoutes(app, { pool, hub });
   registerInboxRoutes(app, { pool });
   registerNetworkItemRoutes(app, { pool });
-  registerAdminUserRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL });
+  registerAdminUserRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL, settings });
   registerApiTokenRoutes(app, { pool });
   registerOperationsRoutes(app, {
     pool,

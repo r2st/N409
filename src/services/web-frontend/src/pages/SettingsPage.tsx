@@ -4,10 +4,11 @@ import {
   all,
   email as emailRule,
   matches,
-  minLength,
   required,
   useFormValidation,
+  password as passwordRule,
 } from '../lib/useFormValidation';
+import { PASSWORD_HINT } from '../lib/passwordPolicy';
 import { api, ApiError, apiDownload, tokenExpiry } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
@@ -264,7 +265,7 @@ function ChangePasswordCard() {
     { current, next, confirm },
     {
       current: required('current', 'Current password'),
-      next: minLength('next', 10, 'New password'),
+      next: passwordRule('next', 'New password'),
       confirm: all(
         required('confirm', 'Confirmation'),
         matches('confirm', 'next', "New passwords don't match."),
@@ -314,7 +315,7 @@ function ChangePasswordCard() {
             onBlur={blurHandler('current')}
           />
         </Field>
-        <Field label="New password" hint="At least 10 characters." error={errorFor('next')}>
+        <Field label="New password" hint={PASSWORD_HINT} error={errorFor('next')}>
           <TextInput
             type="password"
             autoComplete="new-password"

@@ -42,6 +42,7 @@ import {
   type UserWithRoles,
 } from '../repos/users.js';
 import { EmailAddress } from '../domain/email.js';
+import { PASSWORD_MIN_LENGTH, passwordPolicyError } from '../domain/passwordPolicy.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { SlidingWindowRateLimiter } from '../plugins/rateLimit.js';
 import { findUserById } from '../repos/users.js';
@@ -212,20 +213,15 @@ export function registerAuthRoutes(
    * The route schemas already enforce a 10-character floor; an administrator
    * can only tighten it. Checked at the point of use rather than baked into
    * the zod schema so a settings change takes effect without a restart.
+   *
+   * The rule itself lives in `domain/passwordPolicy.ts` — it has a second
+   * reader now, and a rule with two readers written out once is a rule with
+   * one reader and a copy.
    */
   const assertPasswordStrong = async (password: string) => {
-    const min = (await deps.settings?.get('password_min_length')) ?? 10;
-    if (password.length < min)
-      throw problems.unprocessable(`Password must be at least ${min} characters`, {
-        errors: [{ path: ['password'] }],
-      });
-    // Basic complexity: require at least one letter and one digit so passwords
-    // like "1234567890" or "aaaaaaaaaa" are rejected. Full entropy scoring is
-    // overkill for a B2B SaaS, but this catches the low-hanging fruit.
-    if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password))
-      throw problems.unprocessable('Password must contain at least one letter and one number', {
-        errors: [{ path: ['password'] }],
-      });
+    const min = (await deps.settings?.get('password_min_length')) ?? PASSWORD_MIN_LENGTH;
+    const problem = passwordPolicyError(password, min);
+    if (problem) throw problems.unprocessable(problem, { errors: [{ path: ['password'] }] });
   };
 
   app.post('/api/v1/auth/register', async (req, reply) => {

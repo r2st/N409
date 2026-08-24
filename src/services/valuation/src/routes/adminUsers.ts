@@ -12,6 +12,8 @@ import { listValuations } from '../repos/valuations.js';
 import { VALUATION_STATES } from '../domain/valuation.js';
 import { toCsv } from '../domain/csv.js';
 import { hashPassword } from '../auth/password.js';
+import { PASSWORD_MIN_LENGTH, passwordPolicyError } from '../domain/passwordPolicy.js';
+import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import { bumpSessionEpoch, createUser, findUserByEmail, findUserById } from '../repos/users.js';
 import { createPasswordResetToken } from '../repos/passwordResets.js';
 import {
@@ -64,7 +66,9 @@ const ListQuery = z.object({
 
 const CreateBody = z.object({
   email: EmailAddress,
-  password: z.string().min(10, 'password must be at least 10 characters'),
+  password: z
+    .string()
+    .min(PASSWORD_MIN_LENGTH, `password must be at least ${PASSWORD_MIN_LENGTH} characters`),
   first_name: z.string().min(1).max(100).optional(),
   last_name: z.string().min(1).max(100).optional(),
   partner_id: z.string().nullable().optional(),
@@ -131,7 +135,12 @@ function toInvitation(i: InvitationRow | InvitationListRow) {
 /** M3 feature 13 — user/role admin console (+ feature 16: users CSV export). */
 export function registerAdminUserRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; transport?: EmailTransport; publicBaseUrl?: string },
+  deps: {
+    pool: pg.Pool;
+    transport?: EmailTransport;
+    publicBaseUrl?: string;
+    settings?: SystemSettingsStore;
+  },
 ): void {
   const baseUrl = (deps.publicBaseUrl ?? 'http://localhost:3000').replace(/\/$/, '');
   const requireUserAdmin = (req: Parameters<typeof requirePrincipal>[0]) => {
@@ -343,6 +352,23 @@ export function registerAdminUserRoutes(
     const body = parsed.data;
     assertPartnerScopeConsistent(body.roles, body.partner_id ?? null);
     if (body.partner_id) await assertAssignablePartner(body.partner_id);
+
+    /*
+     * The same policy every other password entry point applies.
+     *
+     * This one applied neither half of it. The schema's `min(10)` is the
+     * *floor*, not the effective minimum — `password_min_length` is a system
+     * setting an administrator may raise, and the integration test asserting it
+     * "tightens the floor for every password entry point" drove two of the five
+     * — so a deployment configured to 16 went on accepting ten-character
+     * passwords through the admin console, which is the one entry point whose
+     * accounts tend to be the privileged ones. The complexity rule was missing
+     * outright: `1234567890` was refused at registration, at reset, at invite
+     * acceptance and at change-password, and created here.
+     */
+    const min = (await deps.settings?.get('password_min_length')) ?? PASSWORD_MIN_LENGTH;
+    const weak = passwordPolicyError(body.password, min);
+    if (weak) throw problems.unprocessable(weak, { errors: [{ path: ['password'] }] });
 
     if (await findUserByEmail(deps.pool, body.email))
       throw problems.conflict('An account with this email already exists');

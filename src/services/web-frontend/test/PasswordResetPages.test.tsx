@@ -64,7 +64,7 @@ describe('ResetPasswordPage', () => {
       if (String(url).endsWith('/auth/reset-password')) {
         expect(JSON.parse(String(init?.body))).toEqual({
           token: 'secret-token',
-          password: 'a-long-new-password',
+          password: 'a-long-new-password-1',
         });
         return jsonResponse({ message: 'ok' });
       }
@@ -72,8 +72,8 @@ describe('ResetPasswordPage', () => {
     });
     renderAt('/reset-password', <ResetPasswordPage />);
     expect(window.location.hash).toBe('');
-    await userEvent.type(screen.getByLabelText(/^New password/), 'a-long-new-password');
-    await userEvent.type(screen.getByLabelText('Confirm new password'), 'a-long-new-password');
+    await userEvent.type(screen.getByLabelText(/^New password/), 'a-long-new-password-1');
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'a-long-new-password-1');
     await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
     expect(await screen.findByText('Password updated')).toBeInTheDocument();
   });
@@ -82,8 +82,8 @@ describe('ResetPasswordPage', () => {
     window.history.replaceState(null, '', '/reset-password#token=secret-token');
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     renderAt('/reset-password', <ResetPasswordPage />);
-    await userEvent.type(screen.getByLabelText(/^New password/), 'a-long-new-password');
-    await userEvent.type(screen.getByLabelText('Confirm new password'), 'different-password');
+    await userEvent.type(screen.getByLabelText(/^New password/), 'a-long-new-password-1');
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'different-password-1');
     await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
     // Beside the confirmation box — the field the user can actually fix —
     // rather than in the banner above the form.
@@ -98,7 +98,7 @@ describe('ResetPasswordPage', () => {
     renderAt('/reset-password', <ResetPasswordPage />);
     await userEvent.type(screen.getByLabelText(/^New password/), 'short');
     await userEvent.tab();
-    expect(await screen.findByText('Password must be at least 10 characters.')).toBeInTheDocument();
+    expect(await screen.findByText('New password must be at least 10 characters.')).toBeInTheDocument();
   });
 
   it('clears the mismatch when the first password is changed to agree', async () => {
@@ -106,13 +106,13 @@ describe('ResetPasswordPage', () => {
     vi.spyOn(globalThis, 'fetch');
     renderAt('/reset-password', <ResetPasswordPage />);
     const first = screen.getByLabelText(/^New password/);
-    await userEvent.type(first, 'a-long-new-password');
-    await userEvent.type(screen.getByLabelText('Confirm new password'), 'different-password');
+    await userEvent.type(first, 'a-long-new-password-1');
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'different-password-1');
     await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
     expect(await screen.findByText("Passwords don't match.")).toBeInTheDocument();
 
     await userEvent.clear(first);
-    await userEvent.type(first, 'different-password');
+    await userEvent.type(first, 'different-password-1');
     expect(screen.queryByText("Passwords don't match.")).not.toBeInTheDocument();
   });
 
@@ -131,8 +131,8 @@ describe('ResetPasswordPage', () => {
       throw new Error(`unexpected fetch ${String(url)}`);
     });
     renderAt('/reset-password', <ResetPasswordPage />);
-    await userEvent.type(screen.getByLabelText(/^New password/), 'a-long-new-password');
-    await userEvent.type(screen.getByLabelText('Confirm new password'), 'a-long-new-password');
+    await userEvent.type(screen.getByLabelText(/^New password/), 'a-long-new-password-1');
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'a-long-new-password-1');
     await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/invalid, expired/);
   });

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { api, apiDownload, ApiError } from '../lib/api';
-import { email as emailRule, minLength, useFormValidation } from '../lib/useFormValidation';
+import { email as emailRule, password as passwordRule, useFormValidation } from '../lib/useFormValidation';
+import { PASSWORD_HINT } from '../lib/passwordPolicy';
 import { useAuth } from '../lib/auth';
 import { canManageUsers } from '../lib/rbac';
 import { displayName, formatDate } from '../lib/format';
@@ -248,7 +249,7 @@ export function AdminUsersPage() {
    */
   const { errorFor, blurHandler, handleSubmit } = useFormValidation(editor ?? CLOSED_EDITOR, {
     email: emailRule('email'),
-    ...(editor?.mode === 'create' ? { password: minLength<EditorState>('password', 10, 'Password') } : {}),
+    ...(editor?.mode === 'create' ? { password: passwordRule<EditorState>('password') } : {}),
     roles: (values) => (values.roles.size > 0 ? null : 'Pick at least one role.'),
   });
 
@@ -589,7 +590,7 @@ export function AdminUsersPage() {
                 />
               </Field>
               {editor.mode === 'create' && (
-                <Field label="Password" hint="At least 10 characters." error={errorFor('password')}>
+                <Field label="Password" hint={PASSWORD_HINT} error={errorFor('password')}>
                   <TextInput
                     type="password"
                     required

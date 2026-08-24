@@ -216,8 +216,8 @@ describe('SettingsPage — password change', () => {
 
     const form = within(card('Change password'));
     await userEvent.type(form.getByLabelText(/^Current password/), 'old-password');
-    await userEvent.type(form.getByLabelText(/^New password/), 'brand-new-password');
-    await userEvent.type(form.getByLabelText(/^Confirm new password/), 'brand-new-password');
+    await userEvent.type(form.getByLabelText(/^New password/), 'brand-new-password-1');
+    await userEvent.type(form.getByLabelText(/^Confirm new password/), 'brand-new-password-1');
     await userEvent.click(form.getByRole('button', { name: 'Update password' }));
 
     await screen.findByText(/Other sessions have been signed out/);
@@ -232,7 +232,7 @@ describe('SettingsPage — password change', () => {
 
     const form = within(card('Change password'));
     await userEvent.type(form.getByLabelText(/^Current password/), 'old-password');
-    await userEvent.type(form.getByLabelText(/^New password/), 'brand-new-password');
+    await userEvent.type(form.getByLabelText(/^New password/), 'brand-new-password-1');
     await userEvent.type(form.getByLabelText(/^Confirm new password/), 'different-password');
     await userEvent.click(form.getByRole('button', { name: 'Update password' }));
 
@@ -453,8 +453,8 @@ describe('SettingsPage — form validation', () => {
 
     const pw = card('Change password');
     await userEvent.type(within(pw).getByLabelText('Current password'), 'oldpassword');
-    await userEvent.type(within(pw).getByLabelText('New password'), 'correcthorse');
-    await userEvent.type(within(pw).getByLabelText('Confirm new password'), 'correcthorsf');
+    await userEvent.type(within(pw).getByLabelText('New password'), 'correcthorse1');
+    await userEvent.type(within(pw).getByLabelText('Confirm new password'), 'correcthorsf1');
     await userEvent.click(within(pw).getByRole('button', { name: 'Update password' }));
 
     const box = within(pw).getByLabelText('Confirm new password');
@@ -472,13 +472,13 @@ describe('SettingsPage — form validation', () => {
 
     const pw = card('Change password');
     await userEvent.type(within(pw).getByLabelText('Current password'), 'oldpassword');
-    await userEvent.type(within(pw).getByLabelText('New password'), 'correcthorse');
-    await userEvent.type(within(pw).getByLabelText('Confirm new password'), 'correcthorsf');
+    await userEvent.type(within(pw).getByLabelText('New password'), 'correcthorse1');
+    await userEvent.type(within(pw).getByLabelText('Confirm new password'), 'correcthorsf1');
     await userEvent.click(within(pw).getByRole('button', { name: 'Update password' }));
     expect(await within(pw).findByText("New passwords don't match.")).toBeInTheDocument();
 
     await userEvent.clear(within(pw).getByLabelText('New password'));
-    await userEvent.type(within(pw).getByLabelText('New password'), 'correcthorsf');
+    await userEvent.type(within(pw).getByLabelText('New password'), 'correcthorsf1');
     expect(within(pw).queryByText("New passwords don't match.")).not.toBeInTheDocument();
   });
 
@@ -491,8 +491,8 @@ describe('SettingsPage — form validation', () => {
 
     const pw = card('Change password');
     await userEvent.type(within(pw).getByLabelText('Current password'), 'oldpassword');
-    await userEvent.type(within(pw).getByLabelText('New password'), 'correcthorse');
-    await userEvent.type(within(pw).getByLabelText('Confirm new password'), 'correcthorse');
+    await userEvent.type(within(pw).getByLabelText('New password'), 'correcthorse1');
+    await userEvent.type(within(pw).getByLabelText('Confirm new password'), 'correcthorse1');
     await userEvent.click(within(pw).getByRole('button', { name: 'Update password' }));
 
     expect(await within(pw).findByText(/Password updated/)).toBeInTheDocument();

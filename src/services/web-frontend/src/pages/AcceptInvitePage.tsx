@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { all, matches, minLength, required, useFormValidation } from '../lib/useFormValidation';
+import {
+  all,
+  matches,
+  required,
+  password as passwordRule,
+  useFormValidation,
+} from '../lib/useFormValidation';
+import { PASSWORD_HINT } from '../lib/passwordPolicy';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import type { User } from '../lib/types';
@@ -51,7 +58,7 @@ export function AcceptInvitePage() {
   const { errorFor, blurHandler, handleSubmit } = useFormValidation(
     { password, confirm },
     {
-      password: minLength('password', 10, 'Password'),
+      password: passwordRule('password'),
       confirm: all(
         required('confirm', 'Confirmation'),
         matches('confirm', 'password', "Passwords don't match."),
@@ -131,7 +138,7 @@ export function AcceptInvitePage() {
             />
           </Field>
         </div>
-        <Field label="Password" hint="At least 10 characters." error={errorFor('password')}>
+        <Field label="Password" hint={PASSWORD_HINT} error={errorFor('password')}>
           <TextInput
             type="password"
             autoComplete="new-password"

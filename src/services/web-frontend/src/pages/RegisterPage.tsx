@@ -6,7 +6,8 @@ import { useAuth } from '../lib/auth';
 import { AuthShell } from '../components/AuthShell';
 import type { PublicSystemSettings } from '../lib/types';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
-import { email, minLength, useFormValidation } from '../lib/useFormValidation';
+import { email, password as passwordRule, useFormValidation } from '../lib/useFormValidation';
+import { PASSWORD_HINT } from '../lib/passwordPolicy';
 
 /** The onboarding funnel is per-valuation; company name collected here seeds the first one. */
 export const COMPANY_HINT_KEY = 'n409.company_hint';
@@ -37,7 +38,7 @@ export function RegisterPage() {
   // Above the early returns below: hooks cannot be called conditionally.
   const { errorFor, blurHandler, handleSubmit } = useFormValidation(form, {
     email: email('email', 'Work email'),
-    password: minLength('password', 10, 'Password'),
+    password: passwordRule('password'),
   });
 
   useEffect(() => {
@@ -141,7 +142,7 @@ export function RegisterPage() {
             placeholder="you@company.com"
           />
         </Field>
-        <Field label="Password" hint="At least 10 characters." error={errorFor('password')}>
+        <Field label="Password" hint={PASSWORD_HINT} error={errorFor('password')}>
           <TextInput
             type="password"
             autoComplete="new-password"

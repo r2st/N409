@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { all, matches, minLength, required, useFormValidation } from '../lib/useFormValidation';
+import {
+  all,
+  matches,
+  required,
+  password as passwordRule,
+  useFormValidation,
+} from '../lib/useFormValidation';
+import { PASSWORD_HINT } from '../lib/passwordPolicy';
 import { api, ApiError } from '../lib/api';
 import { AuthShell } from '../components/AuthShell';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
@@ -39,7 +46,7 @@ export function ResetPasswordPage() {
   const { errorFor, blurHandler, handleSubmit } = useFormValidation(
     { password, confirm },
     {
-      password: minLength('password', 10, 'Password'),
+      password: passwordRule('password', 'New password'),
       confirm: all(
         required('confirm', 'Confirmation'),
         matches('confirm', 'password', "Passwords don't match."),
@@ -94,7 +101,7 @@ export function ResetPasswordPage() {
     <AuthShell title="Choose a new password" subtitle="Reset links work once and expire after an hour.">
       <form onSubmit={submit} className="space-y-5" noValidate>
         <ErrorNote>{error}</ErrorNote>
-        <Field label="New password" hint="At least 10 characters." error={errorFor('password')}>
+        <Field label="New password" hint={PASSWORD_HINT} error={errorFor('password')}>
           <TextInput
             type="password"
             autoComplete="new-password"

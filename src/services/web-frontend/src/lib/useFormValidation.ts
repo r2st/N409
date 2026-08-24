@@ -30,6 +30,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { passwordPolicyError } from './passwordPolicy';
 
 /** Returns a message when the values are wrong for this field, else null. */
 export type Validator<V> = (values: V) => string | null;
@@ -202,6 +203,17 @@ export function minLength<V>(key: keyof V, n: number, label: string): Validator<
     if (!value) return `${label} is required.`;
     return value.length >= n ? null : `${label} must be at least ${n} characters.`;
   };
+}
+
+/**
+ * The platform's password rule, as a validator.
+ *
+ * `minLength(key, 10, 'Password')` was what every password box used, and it is
+ * half the rule: the server also requires a letter and a digit. See
+ * `lib/passwordPolicy.ts` for which half lives where and why.
+ */
+export function password<V>(key: keyof V, label = 'Password'): Validator<V> {
+  return (values) => passwordPolicyError(String(values[key] ?? ''), label);
 }
 
 /** Equal to another field — confirm-password, and nothing else so far. */

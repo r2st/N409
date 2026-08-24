@@ -396,7 +396,7 @@ describe('AdminUsersPage — the console', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'New user with password' }));
     await userEvent.type(screen.getByLabelText('Email'), 'direct@acme.com');
-    await userEvent.type(screen.getByLabelText(/Password/), 'a-long-enough-one');
+    await userEvent.type(screen.getByLabelText(/Password/), 'a-long-enough-one-1');
     await userEvent.type(screen.getByLabelText('First name'), '  Dee  ');
     await userEvent.click(screen.getByRole('button', { name: 'Create user' }));
 
@@ -405,7 +405,7 @@ describe('AdminUsersPage — the console', () => {
     );
     expect(calls.find((c) => c.path.endsWith('/users') && c.method === 'POST')?.body).toMatchObject({
       email: 'direct@acme.com',
-      password: 'a-long-enough-one',
+      password: 'a-long-enough-one-1',
       first_name: 'Dee',
     });
   });
@@ -417,7 +417,7 @@ describe('AdminUsersPage — the console', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'New user with password' }));
     await userEvent.type(screen.getByLabelText('Email'), 'direct@acme.com');
-    await userEvent.type(screen.getByLabelText(/Password/), 'a-long-enough-one');
+    await userEvent.type(screen.getByLabelText(/Password/), 'a-long-enough-one-1');
     await userEvent.click(screen.getByRole('button', { name: 'Create user' }));
 
     await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
