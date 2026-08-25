@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { api, ApiError, apiUpload, ifMatch, type Problem } from '../../lib/api';
+import { csvColumns } from '../../lib/csvColumns';
 import { useAuth } from '../../lib/auth';
 import { formatAmount, formatNumber } from '../../lib/format';
 import { isOps } from '../../lib/rbac';
@@ -112,30 +113,6 @@ const FIELD_LABELS: Record<string, string> = {
   seniority: 'Seniority',
   conversion_ratio: 'Conversion ratio',
 };
-
-/** Split just the header row of a CSV (basic quote handling) for the mapping UI. */
-function csvHeaders(text: string): string[] {
-  const firstLine = text.split(/\r?\n/).find((l) => l.trim() !== '') ?? '';
-  const out: string[] = [];
-  let field = '';
-  let q = false;
-  for (let i = 0; i < firstLine.length; i++) {
-    const c = firstLine[i];
-    if (q) {
-      if (c === '"' && firstLine[i + 1] === '"') {
-        field += '"';
-        i++;
-      } else if (c === '"') q = false;
-      else field += c;
-    } else if (c === '"') q = true;
-    else if (c === ',') {
-      out.push(field.trim());
-      field = '';
-    } else field += c;
-  }
-  out.push(field.trim());
-  return out.filter((h) => h !== '');
-}
 
 const TYPE_TONE: Record<string, string> = {
   common: 'text-ink-700',
@@ -293,7 +270,7 @@ export function CapTableTab() {
   }, [load]);
 
   const sheet = upload?.sheets[sheetIndex] ?? null;
-  const pastedHeaders = useMemo(() => csvHeaders(csv), [csv]);
+  const pastedHeaders = useMemo(() => csvColumns(csv), [csv]);
   // An uploaded file supersedes the textarea; the server already parsed it.
   const headers = sheet ? sheet.headers : pastedHeaders;
   const currentPreset = formats.find((f) => f.key === format);
