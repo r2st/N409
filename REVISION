@@ -4165,6 +4165,9 @@
 #
 #            The `overflow-hidden` containers were not swept: an element that
 #            clips has no scroll to chain, but one that clips *and* is scrolled
-#            programmatically does, and the census cannot tell those apart. Nor
-#            were the two panels that scroll with `scrollTo` rather than a
-#            utility class.
+#            programmatically does, and the census cannot tell those apart. The
+#            four programmatic scrolls in the app were checked by hand and are
+#            not that case — two `scrollIntoView` calls inside containers this
+#            round contained, the skip link, and the intake page returning the
+#            window to the top — so the concern is the next one, not a hole
+#            open today.
