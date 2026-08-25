@@ -52,12 +52,32 @@ const D = (
 ): EventDescriptor => ({ label, category, severity, visibility });
 
 /**
- * Every event type the platform writes to `valuation_events`. Keep in sync with
- * the *_EVENT_TYPES constant maps; `auditTrail.test.ts` asserts the catalog
- * covers all of them so a new event type cannot silently fall through to the
- * unknown-event fallback.
+ * Every event type the platform writes to `valuation_events`, and the only
+ * ones `recordEvent` will accept.
+ *
+ * This used to be a `Record<string, EventDescriptor>` kept in sync by hand,
+ * with a unit test asserting the catalog covered every `*_EVENT_TYPES`
+ * constant map. That test could only see types declared in one of those maps,
+ * and not every writer declares one: `repos/pipelineRuns.ts` picks its type
+ * inline —
+ *
+ *     type: status === 'ready' ? 'auto_pipeline_completed' : 'auto_pipeline_failed'
+ *
+ * — and `auto_pipeline_completed` was never added to the catalog. Its three
+ * siblings were, so nothing looked incomplete; the event that says the
+ * automated pipeline *finished* was the one that fell through to
+ * `UNKNOWN_EVENT` and printed in the change log as "Event recorded", filed
+ * under "other", while "Automated pipeline started" sat above it named.
+ *
+ * The catalog is now the type. `keyof typeof EVENT_CATALOG` is a literal
+ * union because of the `satisfies` below, `recordEvent` takes that union, and
+ * an event type with no descriptor is a compile error at the line that writes
+ * it rather than a label nobody notices is missing. The census test remains,
+ * because the constant maps are still worth checking against the catalog in
+ * the other direction — but it is no longer the only thing standing between a
+ * new event and "Event recorded".
  */
-export const EVENT_CATALOG: Readonly<Record<string, EventDescriptor>> = {
+export const EVENT_CATALOG = {
   // ── Lifecycle ───────────────────────────────────────────────────────────
   valuation_created: D('Valuation created', 'lifecycle', 'notice', 'client'),
   valuation_updated: D('Valuation details updated', 'lifecycle', 'notice', 'client'),
@@ -109,6 +129,10 @@ export const EVENT_CATALOG: Readonly<Record<string, EventDescriptor>> = {
   calculation_completed: D('Calculation completed', 'analysis', 'critical', 'client'),
   ai_job_completed: D('AI job completed', 'analysis', 'info'),
   auto_pipeline_started: D('Automated pipeline started', 'analysis', 'info'),
+  // The one the catalog was missing. `info` like its `started` sibling rather
+  // than `notice` like `failed`: a run that finishes is the expected outcome,
+  // and what it produced is recorded separately as `calculation_completed`.
+  auto_pipeline_completed: D('Automated pipeline completed', 'analysis', 'info'),
   auto_pipeline_failed: D('Automated pipeline failed', 'analysis', 'notice'),
   auto_pipeline_toggled: D('Automated pipeline toggled', 'analysis', 'info'),
   health_checks_run: D('Health checks run', 'analysis', 'info'),
@@ -141,13 +165,25 @@ export const EVENT_CATALOG: Readonly<Record<string, EventDescriptor>> = {
   monitoring_enabled: D('Monitoring enabled', 'integration', 'info', 'client'),
   monitoring_disabled: D('Monitoring disabled', 'integration', 'info', 'client'),
   monitoring_trigger_fired: D('Monitoring trigger fired', 'integration', 'notice', 'client'),
-};
+} satisfies Record<string, EventDescriptor>;
 
+/**
+ * The event types this build knows how to describe. `recordEvent` accepts
+ * nothing else, so every row in `valuation_events` written by this build has a
+ * catalog entry.
+ */
+export type ValuationEventType = keyof typeof EVENT_CATALOG;
+
+/**
+ * Still needed, and not as a formality: the spine is append-only and older
+ * rows carry types this build has since renamed or retired. A trail that
+ * refuses to render them would be worse than one that names them vaguely.
+ */
 const UNKNOWN_EVENT: EventDescriptor = D('Event recorded', 'other', 'info');
 
 /** Catalog lookup that never throws — unknown types degrade to a safe default. */
 export function describeEventType(type: string): EventDescriptor {
-  return EVENT_CATALOG[type] ?? UNKNOWN_EVENT;
+  return (EVENT_CATALOG as Record<string, EventDescriptor>)[type] ?? UNKNOWN_EVENT;
 }
 
 // ── Field-level change extraction ─────────────────────────────────────────

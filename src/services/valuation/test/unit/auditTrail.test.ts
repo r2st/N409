@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   EVENT_CATALOG,
@@ -87,6 +88,42 @@ describe('EVENT_CATALOG', () => {
     for (const type of ['overwrite_applied', 'workbook_updated', 'report_saved', 'params_updated']) {
       expect(EVENT_CATALOG[type]!.visibility, type).toBe('internal');
     }
+  });
+
+  /**
+   * The event the census above could not see.
+   *
+   * `repos/pipelineRuns.ts` chooses its type inline — `status === 'ready' ?
+   * 'auto_pipeline_completed' : 'auto_pipeline_failed'` — so neither literal
+   * appears in a `*_EVENT_TYPES` map and neither was ever compared against the
+   * catalog. Three of the four `auto_pipeline_*` types had been added by hand
+   * and the fourth had not, which is exactly the shape a hand-kept list fails
+   * in: the omission is invisible next to its named siblings.
+   */
+  it('describes the end of an automated pipeline run', () => {
+    for (const type of ['auto_pipeline_started', 'auto_pipeline_completed', 'auto_pipeline_failed']) {
+      expect(describeEventType(type).label, type).not.toBe('Event recorded');
+      expect(describeEventType(type).category, type).toBe('analysis');
+    }
+  });
+
+  /**
+   * What stops the next one, and the only part of it a runtime test can reach.
+   *
+   * `recordEvent` takes `ValuationEventType` — the catalog's own key union —
+   * so a write of an uncatalogued type is a compile error at the line that
+   * writes it. The guarantee lives in the type annotation, and a widening of
+   * that annotation back to `string` would restore the old silence without
+   * failing a single assertion. So the annotation itself is asserted.
+   */
+  it('accepts only catalogued types at the write site', () => {
+    const source = readFileSync(new URL('../../src/events/record.ts', import.meta.url), 'utf8');
+    expect(source).toMatch(/type:\s*ValuationEventType;/);
+    // And the union is a union: annotating the catalog as
+    // `Record<string, EventDescriptor>` would make `keyof` collapse to
+    // `string`, which compiles and checks nothing.
+    const catalog = readFileSync(new URL('../../src/domain/auditTrail.ts', import.meta.url), 'utf8');
+    expect(catalog).toMatch(/\}\s*satisfies Record<string, EventDescriptor>;/);
   });
 });
 

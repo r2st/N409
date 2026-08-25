@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import type { ValuationEventType } from '../domain/auditTrail.js';
 
 /**
  * The audit spine (architecture §1: "everything is an event on the Valuation").
@@ -24,11 +25,20 @@ export interface ValuationEventRow {
   occurred_at: Date;
 }
 
+/**
+ * Append one event.
+ *
+ * `type` is the catalog's key union rather than `string`: the audit trail
+ * describes an event by looking its type up in `EVENT_CATALOG`, and a type with
+ * no entry there renders as "Event recorded" in the change log and the evidence
+ * bundle. Taking the union means the missing descriptor is a compile error here
+ * instead of a vague line in an auditor's export.
+ */
 export async function recordEvent(
   client: pg.PoolClient,
   args: {
     valuationId: string;
-    type: string;
+    type: ValuationEventType;
     actor: EventActor;
     payload?: Record<string, unknown>;
   },
