@@ -4990,3 +4990,135 @@
 #
 #            Nothing here was checked in a browser. Three exhibits now render to
 #            a real PDF under test; the other eight still do not.
+
+# N409 revision
+# commit:    0912abe
+# subject:   the file that opens somewhere other than Excel, and the number a page prints
+# previous:  a5e6cf0 (the two intangible methods nothing had rendered).
+# includes:  7 commits — R138. Two findings, each in a deliverable rather than
+#            in an engine, and each generalised into a guard that would have
+#            found it.
+#
+#            3e8939d — the grant schedule's vested and unvested totals were
+#            written as `{ formula: 'SUM(K3:K4)', value: null }`. `xlsx.ts`
+#            emits `<f>` and omits `<v>` whenever the cached value is not a
+#            finite number, and its own comment says why the field exists:
+#            "cached so viewers that do not recalculate still show it". Those
+#            two cells were the only ones in the export that did not have one.
+#            Excel recalculates; openpyxl's `data_only`, Quick Look and
+#            Numbers' preview do not, and there the options total printed a
+#            number while the two totals beside it printed nothing. A blank in
+#            that column does not read as "not shown", it reads as "nothing
+#            vested". Nothing was missing but the arithmetic — `vestingStatus`
+#            was already being called per grant, inside the row `map`, where
+#            the total line could not reach it.
+#
+#            5c4ac1f — the census that generalises it, and the reason it needed
+#            a saturated fixture. A cacheless formula is *correct* when the
+#            formula's own answer is blank: a YoY row in the first period, a
+#            percentage over a zero denominator. On a half-filled workbook the
+#            two cases are indistinguishable, so the claim is stated on a
+#            workbook where every input row of every sheet is filled in every
+#            column — walked off the sheet definitions, so a row added to the
+#            model is saturated on the day it lands. On that fixture "every
+#            formula has an answer" is a true statement, and the one cell where
+#            it is not is excused by name: burn multiple in the first column,
+#            whose denominator is a change from a prior period that does not
+#            exist. The excuse fails if that cell stops being a formula, and
+#            fails the moment it learns an answer.
+#
+#            dfb02d0 — the larger guard, and the one written because the first
+#            finding showed what nobody was checking. Every derived cell ships
+#            twice: as a formula, for the auditor who changes an input, and as
+#            a cached value, from the TypeScript model in `domain/workbook.ts`.
+#            Two implementations of one rule, written side by side, and nothing
+#            compared them. The existing suite pins about a dozen A1 references
+#            by hand, which is as many as a person will pin; the export emits
+#            over a hundred, and the way they come apart is silent — a row
+#            inserted into a sheet definition shifts every reference below it,
+#            and the workbook still opens, still sums, and divides revenue by
+#            the wrong line.
+#
+#            `test/support/excelEval.ts` evaluates them instead: a calculator
+#            for the subset this codebase writes, which throws on anything
+#            outside it rather than scoring an unrecognised formula as
+#            agreeing. IF and IFERROR take thunks, because the whole point of
+#            `IFERROR(K3/D3,"")` is that the division is allowed to fail. Four
+#            workbook shapes recalculate cell by cell — saturated, half-empty,
+#            no cap table or grants, and one carrying the two optional sheets
+#            (0912abe, which the first fixture was short of). All agree. That
+#            is the outcome: the references were already right, and now
+#            something says so on every commit rather than on the dozen a
+#            person happened to pin.
+#
+#            f1c37a2 — valuation numbers are printed with a `#` on every
+#            surface in this application: the dashboard, the inbox, the billing
+#            page, the firm roster, the admin document list, and the search
+#            results page itself. Global search matched a number only on a bare
+#            digit run, so the most obvious thing anyone can do with a number
+#            they are looking at — copy it, paste it into the box built for
+#            that — returned no valuation at all. The valuations list filter has
+#            stripped the `#` since it was written (`/^#?\d{1,12}$/`), so the
+#            two surfaces had disagreed about the same query all along, and
+#            search was the one refusing the form it prints. The old behaviour
+#            was pinned by an assertion, which is why this replaces one rather
+#            than adding beside it.
+#
+#            87e8a19 — the number pinned to a fixed six-digit value rather than
+#            read off the sequence, which is the detail worth keeping. A fresh
+#            test database hands out `1`, and a one-character query is refused
+#            as too short before it ever reaches the number clause, so a test
+#            that took whatever the sequence gave would have been exercising the
+#            length guard on some runs and the number match on others. That
+#            floor is now asserted in its own right: it is the substring guard —
+#            the number clause is OR'd with `company_name ILIKE '%1%'`, a scan
+#            of everything in scope — and it is the reason a valuation numbered
+#            below 10 is not findable by number. Left as it is; stated rather
+#            than discovered.
+#
+#            7b9cdb2 — DLOM and DLOC method names are spelled twice, once in
+#            the engine that dispatches on them and once here, where the params
+#            route validates a method and the QA gate asks whether one needs a
+#            volatility. `dlom.py`'s docstring already promises the property —
+#            "adding a fifth model cannot miss a check" — and that was true of
+#            the Python callers only. Across the language boundary, where the
+#            callers actually are, nothing held it: a fifth model DLOM added
+#            engine-side and not mirrored here dispatches fine and merely stops
+#            being recognised as volatility-derived, so a payload with no
+#            volatility draws no warning and the discount comes back zero. In a
+#            blend the model leg contributes silently nothing, which is worse,
+#            because the conclusion is then a plausible number that is only too
+#            low. The parser matches the one form these constants are written in
+#            and throws rather than returning an empty set, and that throw is
+#            asserted — a regex that quietly stopped matching would turn the
+#            file into a test that two empty sets are equal.
+#
+#            Deliberate break, each: restoring `value: null` on the two grant
+#            totals fails the census by cell reference and the targeted
+#            assertion beside it; shifting one income-statement reference from
+#            B4 to B5 fails the recalculation; removing the `#` branch fails one
+#            unit and one integration assertion; adding a fifth method to the
+#            engine's MODEL_DLOM_METHODS fails two of five parity assertions.
+#
+# gap:       The recalculation covers the XLSX export and nothing else. The
+#            report PDF states the same figures a second time, from a third
+#            source, and no equivalent check ties the two deliverables to each
+#            other — a workbook and an opinion that disagree about an FMV would
+#            pass everything in this round.
+#
+#            One thing this round got wrong and is worth recording. The
+#            ErrorBoundary is the only file in the frontend written in raw
+#            Tailwind `slate`, which looked like the dark-mode escape
+#            `themeTokens.test.ts` exists to catch, on the one screen shown when
+#            everything else has already failed. It is not: index.css re-points
+#            exactly the five slate steps that file uses, and the existing audit
+#            already covers it. The change was written and reverted. The
+#            standing lesson is that "the only file that does X" is a hypothesis
+#            about a bug, not a bug, and the guard that would have said so was
+#            already in the repository.
+#
+#            `excelEval.ts` supports nine functions because that is what the
+#            export emits. It is a test-only calculator and deliberately not an
+#            Excel implementation, so the first formula shape that outgrows it
+#            will fail loudly rather than be scored as agreeing — which is the
+#            right failure, but it is a failure someone has to then implement.
