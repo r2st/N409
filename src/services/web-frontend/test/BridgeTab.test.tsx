@@ -61,11 +61,14 @@ const problem = (status: number, detail: string) =>
     headers: { 'content-type': 'application/problem+json' },
   });
 
-function mockApi(options: { candidates?: unknown[]; bridge?: () => Response } = {}) {
-  const { candidates = CANDIDATES, bridge = () => jsonResponse(BRIDGE) } = options;
+function mockApi(options: { candidates?: unknown[]; bridge?: () => Response; bridgeable?: boolean } = {}) {
+  const { candidates = CANDIDATES, bridge = () => jsonResponse(BRIDGE), bridgeable } = options;
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
     const path = String(url);
-    if (path.includes('/bridge-candidates')) return jsonResponse({ candidates });
+    // `bridgeable` omitted is a reply from a build that predates the flag.
+    if (path.includes('/bridge-candidates')) {
+      return jsonResponse(bridgeable === undefined ? { candidates } : { candidates, bridgeable });
+    }
     if (path.includes('/bridge/')) return bridge();
     // The roll-forward panel shares this tab and loads itself; it has its own
     // suite (RollforwardPanel.test.tsx), so an empty state is enough here.
@@ -350,5 +353,40 @@ describe('BridgeTab — the comparable that replies late', () => {
 
     await waitFor(() => expect(screen.getAllByText(/V-SELECTED/).length).toBeGreaterThan(0));
     expect(screen.queryByText(/no completed calculation/)).toBeNull();
+  });
+
+  /*
+   * A specialty engine writes its result under `results.specialty` and none of
+   * the four factors the bridge attributes across exist in it — but it does
+   * fill the calculation's typed `fmv_per_share` column, which is what the
+   * candidate list used to qualify on. So the tab offered the run, the click
+   * returned a 500, and the empty state told a firm to wait for a comparable
+   * valuation that would never be offered.
+   */
+  describe('a kind the bridge cannot explain', () => {
+    it('says the kind is the reason, not that none exist yet', async () => {
+      mockApi({ candidates: [], bridgeable: false });
+      renderTab();
+
+      await screen.findByText(/Not what this bridge explains/i);
+      expect(screen.queryByText(/No comparable valuations yet/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Compare against')).not.toBeInTheDocument();
+    });
+
+    it('keeps the "none yet" wording when the server sends no flag', async () => {
+      mockApi({ candidates: [] });
+      renderTab();
+
+      await screen.findByText(/No comparable valuations yet/i);
+      expect(screen.queryByText(/Not what this bridge explains/i)).not.toBeInTheDocument();
+    });
+
+    it('still offers the picker when the kind is bridgeable', async () => {
+      mockApi({ bridgeable: true });
+      renderTab();
+
+      expect(await screen.findByLabelText('Compare against')).toBeInTheDocument();
+      expect(screen.queryByText(/Not what this bridge explains/i)).not.toBeInTheDocument();
+    });
   });
 });

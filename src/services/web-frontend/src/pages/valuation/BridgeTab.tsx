@@ -62,6 +62,13 @@ const driverValue = (key: string, v: number | null): string => {
 export function BridgeTab() {
   const { valuation, retired } = useWorkspace();
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+  /*
+   * Whether a bridge can be drawn for this kind at all. The bridge factorises a
+   * 409A per-share value into equity value, allocation, DLOC and DLOM; a
+   * specialty engine reports none of those. `undefined` is a reply from a build
+   * that predates the flag and keeps the old "none yet" wording.
+   */
+  const [bridgeable, setBridgeable] = useState<boolean | undefined>(undefined);
   const [compareId, setCompareId] = useState('');
   const [data, setData] = useState<BridgeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,8 +77,11 @@ export function BridgeTab() {
   const claim = useLatestOnly();
 
   useEffect(() => {
-    api<{ candidates: Candidate[] }>(`/valuations/${valuation.id}/bridge-candidates`)
-      .then((r) => setCandidates(r.candidates))
+    api<{ candidates: Candidate[]; bridgeable?: boolean }>(`/valuations/${valuation.id}/bridge-candidates`)
+      .then((r) => {
+        setCandidates(r.candidates);
+        setBridgeable(r.bridgeable);
+      })
       .catch(() => setError('Could not load comparable valuations.'));
   }, [valuation.id]);
 
@@ -115,7 +125,14 @@ export function BridgeTab() {
 
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      {candidates && candidates.length === 0 ? (
+      {bridgeable === false ? (
+        // Not "none yet". Waiting will not produce one, so the sentence that
+        // says it might is the wrong one to leave a firm reading.
+        <EmptyState title="Not what this bridge explains">
+          The bridge walks a 409A fair market value per share across its equity value, allocation, DLOC and
+          DLOM. This valuation&rsquo;s engine reports none of those, so there is nothing for it to decompose.
+        </EmptyState>
+      ) : candidates && candidates.length === 0 ? (
         <EmptyState title="No comparable valuations yet">
           Once this company has another completed valuation, you can compare them here.
         </EmptyState>
