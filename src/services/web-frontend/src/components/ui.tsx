@@ -705,6 +705,84 @@ export function PageSkeleton({ label = 'Loading page…' }: { label?: string }) 
  * at a time, breaking the mechanism announcing the highlight — and the strip
  * is as long as the search result set.
  */
+/**
+ * How many overlays currently hold the page still, and how to give it back.
+ *
+ * Module-level rather than per-hook because the lock is a property of the
+ * document, not of any one dialog, and more than one can be open at a time:
+ * the command palette answers ⌘K from anywhere, including from on top of a
+ * `Modal`, and a `HelpIcon` sits next to section headers that live inside
+ * dialogs. Two independent locks that each reset the style on close means the
+ * *first* one to close hands the page back while the second is still covering
+ * it — a bug that only appears when two overlays overlap, which is exactly the
+ * case nobody exercises by hand. Counting is what makes the last one out the
+ * one that unlocks.
+ */
+let scrollLockCount = 0;
+let releaseScrollLock: (() => void) | null = null;
+
+/**
+ * Holds the document still while an overlay covers it.
+ *
+ * Every full-viewport overlay in the product — `Modal`, the help slide-over,
+ * the command palette — paints a backdrop over the page and then lets the page
+ * keep scrolling underneath it. The wheel over the backdrop scrolls the list
+ * behind the dialog; on a touch screen a drag anywhere does, and so does a
+ * flick inside the dialog's own scroll area once it reaches its end, because
+ * scrolling chains to the nearest scrollable ancestor. The reader closes the
+ * dialog and is somewhere else in the list than where they opened it, with
+ * nothing on screen having explained the move.
+ *
+ * The lock is `overflow: hidden` on both the root element and the body. Both,
+ * because which of the two is the viewport's scrolling box depends on the
+ * document, and setting only one leaves engines that chose the other still
+ * scrolling. The previous *inline* values are captured and put back rather
+ * than blanked, so a caller that had set its own `overflow` still has it
+ * afterwards.
+ *
+ * Hiding the scrollbar frees the width it occupied, and the page behind the
+ * backdrop jumps a scrollbar's width wider the moment a dialog opens. The
+ * gutter is measured and held open with matching padding — but only when the
+ * document reports a width at all. Under jsdom `clientWidth` is 0, so the
+ * naive subtraction reads the whole viewport as scrollbar and pads the body by
+ * a thousand pixels; a measurement of zero is not a measurement.
+ *
+ * Containment on the overlays themselves is the other half — the class is on
+ * each scrim and on each scroll area under it: the lock stops the page
+ * scrolling, and containment stops a gesture inside the dialog from being
+ * handed to it in the first place.
+ */
+export function useScrollLock(active: boolean): void {
+  useEffect(() => {
+    if (!active) return;
+    if (scrollLockCount++ === 0) {
+      const root = document.documentElement;
+      const { body } = document;
+      const previous = {
+        rootOverflow: root.style.overflow,
+        bodyOverflow: body.style.overflow,
+        bodyPaddingRight: body.style.paddingRight,
+      };
+      const documentWidth = root.clientWidth;
+      const gutter = documentWidth > 0 ? window.innerWidth - documentWidth : 0;
+      root.style.overflow = 'hidden';
+      body.style.overflow = 'hidden';
+      if (gutter > 0) body.style.paddingRight = `${gutter}px`;
+      releaseScrollLock = () => {
+        root.style.overflow = previous.rootOverflow;
+        body.style.overflow = previous.bodyOverflow;
+        body.style.paddingRight = previous.bodyPaddingRight;
+      };
+    }
+    return () => {
+      if (--scrollLockCount === 0) {
+        releaseScrollLock?.();
+        releaseScrollLock = null;
+      }
+    };
+  }, [active]);
+}
+
 const FOCUSABLE_SELECTOR = [
   'a[href]',
   'button:not([disabled])',
@@ -823,13 +901,14 @@ export function Modal({
   className?: string;
 }) {
   const dialogRef = useFocusTrap<HTMLDivElement>(open, onClose);
+  useScrollLock(open);
   const titleId = useId();
 
   if (!open) return null;
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-chrome-950/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain bg-chrome-950/60 p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -840,7 +919,7 @@ export function Modal({
         aria-modal="true"
         aria-labelledby={labelledBy ?? (title ? titleId : undefined)}
         tabIndex={-1}
-        className={`max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-paper-300 bg-surface shadow-lift focus:outline-none ${className}`}
+        className={`max-h-[85vh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-xl border border-paper-300 bg-surface shadow-lift focus:outline-none ${className}`}
       >
         {title && (
           <h2

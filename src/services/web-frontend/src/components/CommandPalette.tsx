@@ -9,7 +9,7 @@ import { getThemeChoice, setThemeChoice } from '../lib/theme';
 import { buildCommands, pushRecent, rankCommands, readRecent } from '../lib/commands';
 import type { Command } from '../lib/commands';
 import type { SearchResults } from '../lib/types';
-import { KindBadge, StateBadge, useFocusTrap } from './ui';
+import { KindBadge, StateBadge, useFocusTrap, useScrollLock } from './ui';
 
 /**
  * ⌘K command palette (feature-improvements §2, ranked #7).
@@ -95,6 +95,7 @@ export function CommandPalette() {
 
   const close = useCallback(() => setOpen(false), []);
   const dialogRef = useFocusTrap<HTMLDivElement>(open, close);
+  useScrollLock(open);
 
   // ⌘K / Ctrl-K anywhere, and "/" when the user isn't already typing.
   useEffect(() => {
@@ -256,7 +257,7 @@ export function CommandPalette() {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-chrome-950/60 p-4 pt-[12vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center overscroll-contain bg-chrome-950/60 p-4 pt-[12vh]"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) close();
       }}
