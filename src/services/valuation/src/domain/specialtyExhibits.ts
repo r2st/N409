@@ -649,12 +649,46 @@ function fairValue820Exhibit(
         : P('The movements above tie to the measured Level 3 balance.'))
     : null;
 
+  // ASC 820-10-50-2(g) asks, for recurring Level 3 measurements, for a
+  // narrative description of the sensitivity of the measurement to changes in
+  // the significant unobservable inputs. `_sensitivity` computes exactly that
+  // and the module docstring names it as one of the three things this engine
+  // exists to produce; the exhibit printed the table of inputs and dropped the
+  // effect of moving them. R134 made the schedule an analyst run input, so it
+  // is suppliable from the workspace and was still going nowhere.
+  const sensitivity = list(specialty.sensitivity)
+    .map(record)
+    .filter((r): r is Record<string, unknown> => r !== null);
+  const sensitivityTable =
+    sensitivity.length > 0
+      ? P(
+          'The effect on the Level 3 total of a change in each significant unobservable input, ' +
+            'holding the others at the values used in the measurement (ASC 820-10-50-2(g)).',
+        ) +
+        table({
+          head: ['Unobservable input', 'Change', 'Effect on fair value', 'Level 3 total after'],
+          rows: sensitivity.map((r) => {
+            const shift = num(r.shift);
+            return [
+              str(r.input),
+              // Signed, because the direction is the disclosure: "a 5% decrease
+              // in the DLOM would increase fair value by ..." is unreadable
+              // from an unsigned magnitude.
+              shift === null ? '—' : `${shift > 0 ? '+' : ''}${formatPercent(shift)}`,
+              money(r.fair_value_effect, ctx) ?? '—',
+              money(r.fair_value_after, ctx) ?? '—',
+            ];
+          }),
+        })
+      : null;
+
   return section('Exhibit — Fair Value Measurements (ASC 820-10-50)', [
     hierarchy,
     navLine,
     reclassifiedTable,
     unobservableTable,
     rollTable,
+    sensitivityTable,
   ]);
 }
 

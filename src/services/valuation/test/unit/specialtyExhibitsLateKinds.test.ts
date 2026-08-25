@@ -116,6 +116,34 @@ describe('ASC 820 fair value measurement', () => {
     // A zero line reads as a fourth level in the hierarchy.
     expect(only('820', noNav).html).not.toContain('practical expedient');
   });
+
+  /**
+   * ASC 820-10-50-2(g) asks for a narrative description of the sensitivity of
+   * a recurring Level 3 measurement to changes in the significant unobservable
+   * inputs. `fair_value_measurement` computes it — `app/engine/fair_value_820.py`
+   * names it as one of the three things the engine exists to produce — and the
+   * exhibit tabulated the inputs while dropping the effect of moving them.
+   *
+   * R134 declared the schedule an analyst run input, so it is suppliable from
+   * the workspace tab; until now supplying it changed nothing a reader saw.
+   */
+  it('renders the Level 3 sensitivity the disclosure paragraph asks for', () => {
+    const html = exhibit().html;
+    expect(html).toContain('820-10-50-2(g)');
+    expect(html).toContain('Discount for lack of marketability');
+    // Signed: the direction of the move is the disclosure. An unsigned "5.0%"
+    // beside a negative effect is a reader guessing which way the input went.
+    expect(html).toContain('-5.0%');
+    expect(html).toContain('+10.0%');
+    expect(html).toContain('$755,000');
+    expect(html).toContain('$8,305,000');
+  });
+
+  /** No schedule supplied prints no table — not an empty one under a heading. */
+  it('omits the sensitivity table when no schedule was supplied', () => {
+    const none = { ...SAMPLE_820_RESULT, sensitivity: [] };
+    expect(only('820', none).html).not.toContain('820-10-50-2(g)');
+  });
 });
 
 describe('gift & estate', () => {

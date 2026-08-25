@@ -113,6 +113,10 @@ export const SAMPLE_820_INPUTS = {
     realized_gains_losses: 40000,
     unrealized_gains_losses: -290000,
   },
+  sensitivity: [
+    { input: 'Discount for lack of marketability', shift: -0.05 },
+    { input: 'EV / revenue multiple', shift: 0.1 },
+  ],
 } as const;
 
 export const SAMPLE_820_RESULT: SpecialtyResult = {
@@ -246,7 +250,20 @@ export const SAMPLE_820_RESULT: SpecialtyResult = {
     difference: 0.0,
     ties: true,
   },
-  sensitivity: [],
+  sensitivity: [
+    {
+      input: 'Discount for lack of marketability',
+      shift: -0.05,
+      fair_value_effect: -377500.0,
+      fair_value_after: 7172500.0,
+    },
+    {
+      input: 'EV / revenue multiple',
+      shift: 0.1,
+      fair_value_effect: 755000.0,
+      fair_value_after: 8305000.0,
+    },
+  ],
 };
 
 /**
