@@ -182,7 +182,7 @@ describe('report templates', () => {
   });
 
   it('selects a dedicated skeleton for each specialty report type', () => {
-    expect(templateForKind('qsbs').version).toBe('qsbs.v3');
+    expect(templateForKind('qsbs').version).toBe('qsbs.v4');
     expect(templateForKind('ppa').version).toBe('ppa.v3');
     expect(templateForKind('goodwill').version).toBe('impairment.v3');
     expect(templateForKind('esop').version).toBe('esop.v3');
@@ -196,9 +196,29 @@ describe('report templates', () => {
     expect(templateForKind('ifrs2').version).toBe('ifrs2.v3');
   });
 
+  it('states both §1202 regimes in the QSBS skeleton, not just the pre-2025 one', () => {
+    // P.L. 119-21 rewrote the gross-asset ceiling, the per-issuer cap and the
+    // holding period for stock acquired after 4 July 2025, and left them for
+    // everything before. The skeleton is the analyst's instruction sheet, so
+    // naming only one set of figures is how the wrong statute gets written into
+    // a client letter — the deliverable, not a screen.
+    const byKey = new Map(templateForKind('qsbs').sections.map((s) => [s.key, s.html]));
+    const assets = byKey.get('gross_asset_test')!;
+    expect(assets).toContain('$50 million');
+    expect(assets).toContain('$75 million');
+    const holding = byKey.get('issuance_and_holding')!;
+    expect(holding).toContain('five-year date');
+    expect(holding).toContain('three years for 50%');
+    const cap = byKey.get('exclusion_cap')!;
+    expect(cap).toContain('$10 million');
+    expect(cap).toContain('$15 million');
+    // Every one of them is dated, so a reader can tell which stock it governs.
+    for (const html of [assets, holding, cap]) expect(html).toContain('4 July 2025');
+  });
+
   it('registers every specialty skeleton in the registry under its version', () => {
     for (const version of [
-      'qsbs.v3',
+      'qsbs.v4',
       'ppa.v3',
       'impairment.v3',
       'esop.v3',

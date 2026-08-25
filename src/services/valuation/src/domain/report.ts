@@ -1222,7 +1222,7 @@ const TEMPLATE_GENERIC: ReportTemplate = {
  * purpose; it is not that they are harmless.
  */
 const TEMPLATE_QSBS: ReportTemplate = {
-  version: 'qsbs.v3',
+  version: 'qsbs.v4',
   name: 'QSBS Attestation Letter (IRC §1202)',
   sections: [
     {
@@ -1246,7 +1246,7 @@ const TEMPLATE_QSBS: ReportTemplate = {
       heading: 'Gross Asset Test',
       authored: true,
       html: P(
-        'State the aggregate gross assets immediately before and immediately after the issuance against the $50 million ceiling of §1202(d)(1), and the basis for the measurement.',
+        'State the aggregate gross assets immediately before and immediately after the issuance against the ceiling of §1202(d)(1), and the basis for the measurement. Note that the ceiling is $50 million for stock issued on or before 4 July 2025 and $75 million for stock issued after it (Public Law 119-21), with both figures indexed for inflation in tax years beginning after 2026.',
       ),
     },
     {
@@ -1262,7 +1262,7 @@ const TEMPLATE_QSBS: ReportTemplate = {
       heading: 'Original Issuance & Holding Period',
       authored: true,
       html: P(
-        'Confirm the stock was acquired at original issue for money, property or services (§1202(c)(1)(B)), state the acquisition date, the five-year date, and the exclusion percentage the acquisition date fixes.',
+        'Confirm the stock was acquired at original issue for money, property or services (§1202(c)(1)(B)) and state the acquisition date. State the five-year date and the exclusion percentage the acquisition date fixes, for stock acquired on or before 4 July 2025. Set out, for stock acquired after that date, the tiered schedule of Public Law 119-21 — at least three years for 50%, four years for 75%, five years for 100% — with the date each tier is reached and which tier applies at the valuation date.',
       ),
     },
     {
@@ -1270,7 +1270,7 @@ const TEMPLATE_QSBS: ReportTemplate = {
       heading: 'Gain Exclusion Cap',
       authored: true,
       html: P(
-        'State the per-issuer limitation: the greater of $10 million (less previously excluded gain) or ten times the aggregate adjusted basis of stock disposed of in the taxable year (§1202(b)(1)).',
+        'State the per-issuer limitation: the greater of the lifetime dollar cap less previously excluded gain, or ten times the aggregate adjusted basis of stock disposed of in the taxable year (§1202(b)(1)). Note that the dollar cap is $10 million for stock acquired on or before 4 July 2025 and $15 million for stock acquired after it (Public Law 119-21), indexed for inflation in tax years beginning after 2026.',
       ),
     },
     {
