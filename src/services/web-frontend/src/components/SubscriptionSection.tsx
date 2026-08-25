@@ -223,6 +223,14 @@ export function SubscriptionSection() {
           </h3>
           <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[480px] text-sm" aria-labelledby="invoices-heading">
+              <thead>
+                <tr className="sr-only">
+                  <th scope="col">Invoice</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Amount</th>
+                  <th scope="col">Download</th>
+                </tr>
+              </thead>
               <tbody>
                 {mine.invoices.map((inv) => (
                   <tr key={inv.id} className="border-b border-paper-200 last:border-0">

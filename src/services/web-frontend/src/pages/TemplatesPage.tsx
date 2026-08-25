@@ -181,6 +181,15 @@ export function TemplatesPage() {
           <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[640px] text-sm">
               <caption className="sr-only">{`${name} versions`}</caption>
+              <thead>
+                <tr className="sr-only">
+                  <th scope="col">Version</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Valuation type</th>
+                  <th scope="col">Updated</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
               <tbody>
                 {templates
                   .filter((t) => t.name === name)

@@ -526,7 +526,9 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
                 ],
               ].map(([label, value]) => (
                 <tr key={label} className="border-b border-paper-200 last:border-0">
-                  <td className="py-1.5 text-ink-500">{label}</td>
+                  <th scope="row" className="py-1.5 text-left font-normal text-ink-500">
+                    {label}
+                  </th>
                   <td className="tnum py-1.5 text-right font-medium text-ink-900">{value}</td>
                 </tr>
               ))}

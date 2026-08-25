@@ -446,6 +446,14 @@ function PartnerValuations({ partnerId }: { partnerId: string }) {
         <>
           <div className="mt-3 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[620px] text-sm" aria-label="Partner engagements">
+              <thead>
+                <tr className="sr-only">
+                  <th scope="col">Company</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">State</th>
+                  <th scope="col">Created</th>
+                </tr>
+              </thead>
               <tbody>
                 {rows.map((v) => (
                   <tr key={v.id} className="border-b border-paper-200 last:border-0">
@@ -796,6 +804,13 @@ export function PartnerDetailPage() {
         ) : (
           <div className="mt-3 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[560px] text-sm" aria-label="Partner users">
+              <thead>
+                <tr className="sr-only">
+                  <th scope="col">User</th>
+                  <th scope="col">Roles</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
               <tbody>
                 {partner.users.map((u) => (
                   <tr key={u.id} className="border-b border-paper-200 last:border-0">

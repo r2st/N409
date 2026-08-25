@@ -101,7 +101,9 @@ function ResultPanel({ result }: { result: Record<string, unknown> }) {
       <tbody>
         {entries.map(([key, value]) => (
           <tr key={key} className="border-b border-paper-200 last:border-0 align-top">
-            <td className="w-1/3 py-2 pr-4 font-medium text-ink-700">{humanKey(key)}</td>
+            <th scope="row" className="w-1/3 py-2 pr-4 text-left font-medium text-ink-700">
+              {humanKey(key)}
+            </th>
             <td className="py-2">
               <ResultValue value={value} />
             </td>

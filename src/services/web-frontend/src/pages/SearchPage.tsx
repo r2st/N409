@@ -132,6 +132,14 @@ export function SearchPage() {
               <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                 <table className="w-full min-w-[560px] text-sm">
                   <caption className="sr-only">Matching valuations</caption>
+                  <thead>
+                    <tr className="sr-only">
+                      <th scope="col">Valuation</th>
+                      <th scope="col">Type</th>
+                      <th scope="col">State</th>
+                      <th scope="col">Created</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {valuationHits.map((v) => (
                       <tr key={v.id} className="border-b border-paper-200 last:border-0 hover:bg-paper-50">
@@ -167,6 +175,13 @@ export function SearchPage() {
               <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                 <table className="w-full min-w-[560px] text-sm">
                   <caption className="sr-only">Matching documents</caption>
+                  <thead>
+                    <tr className="sr-only">
+                      <th scope="col">Document</th>
+                      <th scope="col">Size</th>
+                      <th scope="col">Created</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {documentHits.map((d) => (
                       <tr key={d.id} className="border-b border-paper-200 last:border-0 hover:bg-paper-50">
@@ -205,6 +220,13 @@ export function SearchPage() {
                 <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                   <table className="w-full min-w-[480px] text-sm">
                     <caption className="sr-only">Matching users</caption>
+                    <thead>
+                      <tr className="sr-only">
+                        <th scope="col">Name</th>
+                        <th scope="col">Email</th>
+                        <th scope="col">User id</th>
+                      </tr>
+                    </thead>
                     <tbody>
                       {userHits.map((u) => (
                         <tr key={u.id} className="border-b border-paper-200 last:border-0">

@@ -75,9 +75,12 @@ function FieldTable({ title, fields }: { title: string; fields: Record<string, s
         <tbody>
           {Object.entries(fields).map(([name, desc]) => (
             <tr key={name} className="border-b border-paper-200 last:border-0">
-              <td className="w-44 py-1.5 pr-4 align-top font-mono text-xs font-semibold text-ink-800">
+              <th
+                scope="row"
+                className="w-44 py-1.5 pr-4 text-left align-top font-mono text-xs font-semibold text-ink-800"
+              >
                 {name}
-              </td>
+              </th>
               <td className="py-1.5 text-ink-600">{desc}</td>
             </tr>
           ))}

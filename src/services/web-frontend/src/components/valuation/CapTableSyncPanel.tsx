@@ -232,7 +232,9 @@ export function CapTableSyncPanel({
               <tbody>
                 {pending.outcome.diff.conflicts.map((c) => (
                   <tr key={c.security_class} className="border-b border-paper-200 last:border-0 align-top">
-                    <td className="px-3 py-2 font-semibold text-ink-800">{c.security_class}</td>
+                    <th scope="row" className="px-3 py-2 text-left font-semibold text-ink-800">
+                      {c.security_class}
+                    </th>
                     <td className="px-3 py-2 text-ink-600">
                       <span className="mr-2 rounded bg-paper-100 px-1.5 py-0.5 text-xs font-semibold">
                         {c.status}

@@ -748,6 +748,14 @@ export function AdminUsersPage() {
         <section className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
           <h2 className="overline border-b border-paper-300 px-5 py-3 text-ink-400">Invitations</h2>
           <table className="w-full min-w-[640px] text-sm" aria-label="Invitations">
+            <thead>
+              <tr className="sr-only">
+                <th scope="col">Invitee</th>
+                <th scope="col">Status</th>
+                <th scope="col">Expires</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
             <tbody>
               {invitations.map((i) => {
                 const status = invitationStatus(i);

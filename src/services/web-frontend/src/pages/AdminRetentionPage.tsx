@@ -465,6 +465,14 @@ export function AdminRetentionPage() {
         </div>
         {holds.length > 0 && (
           <table className="mt-4 w-full text-sm" aria-labelledby="legal-holds-heading">
+            <thead>
+              <tr className="sr-only">
+                <th scope="col">Scope</th>
+                <th scope="col">Reason</th>
+                <th scope="col">Status</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
             <tbody>
               {holds.map((h) => (
                 <tr key={h.id} className="border-b border-paper-200 last:border-0">

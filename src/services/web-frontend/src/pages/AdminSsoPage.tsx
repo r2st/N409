@@ -219,6 +219,14 @@ export function AdminSsoPage() {
         ) : (
           <table className="mt-4 w-full text-sm">
             <caption className="sr-only">SCIM tokens</caption>
+            <thead>
+              <tr className="sr-only">
+                <th scope="col">Label</th>
+                <th scope="col">Created</th>
+                <th scope="col">Status</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
             <tbody>
               {tokens.map((t) => (
                 <tr key={t.id} className="border-b border-paper-200 last:border-0">
