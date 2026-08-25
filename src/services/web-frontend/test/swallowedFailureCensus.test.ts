@@ -67,8 +67,8 @@ const SILENT_BY_DESIGN: Record<string, string> = {
 
 /** Each reason says what the user is told that is not true. */
 const KNOWN_UNFIXED: Record<string, string> = {
-  'src/pages/valuation/GrantsTab.tsx\t/grant-templates':
-    'The vesting select falls back to "Custom…" alone, which is a different grant from the one intended.',
+  // Empty, for now. The list is the point, not its length — the census fails on
+  // a new swallow whether or not anything is currently owed.
 };
 
 function walk(dir: string): string[] {

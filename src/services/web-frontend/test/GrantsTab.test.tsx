@@ -108,6 +108,8 @@ function mockApi(
     detail?: () => Response;
     create?: () => Response;
     remove?: () => Response;
+    /** The schedule catalog loads on its own; failing it alone is the case. */
+    templates?: () => Response;
   } = {},
 ): Call[] {
   const calls: Call[] = [];
@@ -119,7 +121,9 @@ function mockApi(
       method,
       body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
     });
-    if (/\/grant-templates$/.test(url)) return json({ templates: TEMPLATES });
+    if (/\/grant-templates$/.test(url)) {
+      return opts.templates ? opts.templates() : json({ templates: TEMPLATES });
+    }
     if (/\/grants$/.test(url) && method === 'POST') return opts.create ? opts.create() : json({});
     if (/\/grants$/.test(url)) return opts.grants ? opts.grants() : json({ grants: [GRANT] });
     if (/\/grants\/[^/]+$/.test(url) && method === 'DELETE') {
@@ -284,6 +288,48 @@ describe('GrantsTab', () => {
       expect(within(select).getByRole('option', { name: '4 years, 1-year cliff' })).toBeInTheDocument();
       expect(within(select).getByRole('option', { name: '3 years, monthly' })).toBeInTheDocument();
       expect(within(select).getByRole('option', { name: 'Custom…' })).toBeInTheDocument();
+    });
+
+    it('names the schedule it will actually use when the catalog is missing', async () => {
+      /*
+       * `vesting_template` defaults to 'standard_4yr_1yr_cliff' and is
+       * submitted as-is. With the catalog gone the select rendered blank over
+       * that default and offered "Custom…" as the only visible choice — which
+       * is a materially different grant (4-year monthly, no cliff). The wrong
+       * option looked like the only one.
+       */
+      const user = userEvent.setup();
+      const calls = mockApi({ templates: () => json({ detail: 'nope' }, 503) });
+      renderTab();
+      await ready();
+      await openForm(user);
+
+      const select = screen.getByLabelText(/^Vesting schedule/);
+      expect(select).toHaveValue('standard_4yr_1yr_cliff');
+      expect(within(select).getByRole('option', { name: 'standard_4yr_1yr_cliff' })).toBeInTheDocument();
+      expect(screen.getByText(/schedule catalog could not be loaded/)).toBeInTheDocument();
+
+      // And the grant it creates is the one the control now names.
+      await user.type(screen.getByLabelText(/^Grantee name/), 'Ada Lovelace');
+      await user.type(screen.getByLabelText(/^Grant date/), '2026-01-15');
+      await user.type(screen.getByLabelText(/^Number of options/), '1000');
+      await user.click(screen.getByRole('button', { name: 'Issue grant' }));
+      await waitFor(() => {
+        const post = calls.find((c) => c.method === 'POST' && /\/grants$/.test(c.url));
+        expect(post).toBeTruthy();
+        expect(post!.body).toMatchObject({ vesting_template: 'standard_4yr_1yr_cliff' });
+      });
+    });
+
+    it('says nothing of the sort when the catalog loads', async () => {
+      // The other half — the hint must be earned.
+      const user = userEvent.setup();
+      mockApi();
+      renderTab();
+      await ready();
+      await openForm(user);
+
+      expect(screen.queryByText(/schedule catalog could not be loaded/)).toBeNull();
     });
 
     it('explains what custom terms actually do', async () => {

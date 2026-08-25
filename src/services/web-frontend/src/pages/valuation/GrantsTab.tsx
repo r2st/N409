@@ -222,6 +222,14 @@ export function GrantsTab() {
   const ops = isOps(user);
   const [grants, setGrants] = useState<Grant[] | null>(null);
   const [templates, setTemplates] = useState<Template[]>([]);
+  /*
+   * `vesting_template` defaults to 'standard_4yr_1yr_cliff' and is submitted
+   * as-is. With the catalog missing the select renders "Custom…" alone, so it
+   * shows a blank while holding the default — and the only thing an analyst can
+   * pick is Custom, which is a materially different grant (a 4-year monthly
+   * schedule with no cliff) from the one the form is actually about to create.
+   */
+  const [templatesFailed, setTemplatesFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -251,7 +259,7 @@ export function GrantsTab() {
     if (ops) {
       void api<{ templates: Template[] }>('/grant-templates')
         .then((r) => setTemplates(r.templates))
-        .catch(() => {});
+        .catch(() => setTemplatesFailed(true));
     }
   }, [load, ops]);
 
@@ -388,11 +396,27 @@ export function GrantsTab() {
                 required
               />
             </Field>
-            <Field label="Vesting schedule">
+            <Field
+              label="Vesting schedule"
+              hint={
+                templatesFailed
+                  ? 'The schedule catalog could not be loaded. This grant will use the standard 4-year schedule with a 1-year cliff unless you choose Custom.'
+                  : undefined
+              }
+            >
               <Select
                 value={form.vesting_template}
                 onChange={(e) => setForm((f) => ({ ...f, vesting_template: e.target.value }))}
               >
+                {/*
+                 * Name the default rather than letting the select render blank
+                 * over it: the value is submitted either way, and "Custom…"
+                 * being the only visible choice made the wrong one look like
+                 * the only one.
+                 */}
+                {templatesFailed && !custom && (
+                  <option value={form.vesting_template}>{form.vesting_template}</option>
+                )}
                 {templates.map((t) => (
                   <option key={t.key} value={t.key}>
                     {t.label}
