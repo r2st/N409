@@ -162,6 +162,79 @@ export async function api<T>(
   return (await res.json()) as T;
 }
 
+/**
+ * The name the server gave the file, read the way RFC 6266 §4.3 says to.
+ *
+ * A `content-disposition` from this API carries the name twice — once as the
+ * ASCII `filename` a 2005 browser can read, and once as `filename*`, an RFC
+ * 5987 ext-value holding the real UTF-8 bytes. The server builds both from one
+ * string (see `contentDisposition` in the valuation service) and the ASCII half
+ * is deliberately lossy: every character ASCII cannot spell becomes `_`.
+ *
+ * This function used to read only the lossy half. So an uploaded document named
+ * `Ångström-cap-table.xlsx` — the exact case the server writes `filename*` for —
+ * arrived on disk as `_ngstr_m-cap-table.xlsx`, and it did so *while the correct
+ * name was sitting in `fallbackName`*: the Documents panel passes `doc.filename`,
+ * which is the untouched original. Parsing the header made the answer worse than
+ * not parsing it at all, which is why nothing looked broken from the code.
+ *
+ * The spec's rule is the one implemented here: when both forms are present, the
+ * ext-value wins. It is also the only one that can lose — a truncated or
+ * mis-encoded percent sequence makes `decodeURIComponent` throw — so a failure
+ * to decode falls back to the ASCII form rather than to nothing.
+ *
+ * Exported for the test; not part of the module's normal surface.
+ */
+export function dispositionFilename(header: string, fallback: string): string {
+  const ext = /filename\*\s*=\s*([^;]+)/i.exec(header)?.[1]?.trim();
+  if (ext) {
+    // ext-value is charset, apostrophe, language, apostrophe, percent-encoded
+    // bytes. The language part is routinely empty and is not a name; only the
+    // third field is.
+    const parts = ext.split("'");
+    if (parts.length >= 3) {
+      const charset = parts[0]!.toLowerCase();
+      const encoded = parts.slice(2).join("'");
+      try {
+        // Both charsets percent-encode bytes; they differ only in how the bytes
+        // map to characters, and for ISO-8859-1 that map is the code point.
+        const decoded =
+          charset === 'utf-8'
+            ? decodeURIComponent(encoded)
+            : charset === 'iso-8859-1'
+              ? encoded.replace(/%([0-9a-f]{2})/gi, (_, hex: string) =>
+                  String.fromCharCode(parseInt(hex, 16)),
+                )
+              : null;
+        const clean = decoded === null ? null : scrubDownloadName(decoded);
+        if (clean) return clean;
+      } catch {
+        // Malformed percent-encoding — fall through to the ASCII form below.
+      }
+    }
+  }
+  const ascii = /filename\s*=\s*"([^"]*)"/i.exec(header)?.[1];
+  return (ascii === undefined ? null : scrubDownloadName(ascii)) ?? fallback;
+}
+
+/**
+ * Keeps a server-supplied name from being read as a path.
+ *
+ * `a.download` is specified to treat its value as a bare filename, but the
+ * treatment is the browser's and differs between them, and a name that arrives
+ * over the wire is worth one line of not trusting. Directory separators and
+ * control characters go; a name that is nothing but those is no name.
+ */
+function scrubDownloadName(name: string): string | null {
+  let out = '';
+  for (const ch of name) {
+    if (ch === '/' || ch === '\\' || ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f) continue;
+    out += ch;
+  }
+  out = out.trim();
+  return out === '' || out === '.' || out === '..' ? null : out;
+}
+
 /** Fetches a file with auth and triggers a browser download (CSV/PDF/ZIP exports). */
 export async function apiDownload(
   path: string,
@@ -178,7 +251,7 @@ export async function apiDownload(
     throw new ApiError(res.status, problem);
   }
   const disposition = res.headers.get('content-disposition') ?? '';
-  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? fallbackName;
+  const filename = dispositionFilename(disposition, fallbackName);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
