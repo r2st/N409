@@ -217,9 +217,7 @@ describe('ValuationsPage bulk operations', () => {
       await user.selectOptions(screen.getByLabelText('Bulk action'), 'set_state');
       await user.click(screen.getByRole('button', { name: 'Apply' }));
 
-      await waitFor(() =>
-        expect(calls.some((c) => c.url.includes('/valuations/bulk-action'))).toBe(true),
-      );
+      await waitFor(() => expect(calls.some((c) => c.url.includes('/valuations/bulk-action'))).toBe(true));
     });
 
     it('says nothing and blocks nothing when the roster loads empty', async () => {

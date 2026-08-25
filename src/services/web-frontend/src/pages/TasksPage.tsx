@@ -131,8 +131,8 @@ export function TasksPage() {
 function RosterUnavailableNote() {
   return (
     <p className="mt-4 text-sm text-ink-400">
-      The list of operations users could not be loaded, so names are shown as ids and assignees cannot
-      be changed here. Reload the page to try again.
+      The list of operations users could not be loaded, so names are shown as ids and assignees cannot be
+      changed here. Reload the page to try again.
     </p>
   );
 }

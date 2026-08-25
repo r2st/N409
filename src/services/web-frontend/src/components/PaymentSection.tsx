@@ -160,8 +160,8 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
 
       {quoteFailed && (
         <p className="mt-4 border-t border-amber-200 pt-3 text-sm text-amber-900">
-          The price could not be worked out just now, so none is shown. Checkout still quotes it — the
-          amount on the Stripe page is the amount you will be charged.
+          The price could not be worked out just now, so none is shown. Checkout still quotes it — the amount
+          on the Stripe page is the amount you will be charged.
         </p>
       )}
 

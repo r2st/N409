@@ -278,7 +278,12 @@ describe('TasksPage', () => {
           if (rosterStatus) return jsonResponse({ detail: 'Nope' }, rosterStatus);
           return jsonResponse({
             options: [
-              { id: '01N409OTHER0000000000000AA', email: 'r2@n409.example', first_name: 'Rae', last_name: 'Two' },
+              {
+                id: '01N409OTHER0000000000000AA',
+                email: 'r2@n409.example',
+                first_name: 'Rae',
+                last_name: 'Two',
+              },
             ],
             truncated: false,
           });
@@ -310,9 +315,7 @@ describe('TasksPage', () => {
         const method = init?.method ?? 'GET';
         if (path.includes('/users/options'))
           return jsonResponse({
-            options: [
-              { id: OPS_ID, email: 'ops@n409.example', first_name: 'Olive', last_name: 'Ops' },
-            ],
+            options: [{ id: OPS_ID, email: 'ops@n409.example', first_name: 'Olive', last_name: 'Ops' }],
             truncated: false,
           });
         if (path.includes('/reviews')) return jsonResponse({ reviews: [review], total: 1 });

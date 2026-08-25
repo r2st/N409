@@ -717,8 +717,8 @@ export function ValuationsPage() {
       )}
       {reviewersFailed && (
         <p className="mt-3 text-sm text-ink-400">
-          The reviewer list could not be loaded, so reviewers cannot be filtered on or assigned in bulk
-          right now. Reload the page to try again.
+          The reviewer list could not be loaded, so reviewers cannot be filtered on or assigned in bulk right
+          now. Reload the page to try again.
         </p>
       )}
       {partnersFailed && (

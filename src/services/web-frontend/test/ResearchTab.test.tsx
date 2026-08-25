@@ -266,8 +266,7 @@ describe('ResearchTab', () => {
       vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
         const path = String(url);
         if (path.includes('/research/topics')) return jsonResponse({ topics: [], regions: [] });
-        if (path.includes('/research'))
-          return jsonResponse({ research: [], stale_days: 90, can_run: true });
+        if (path.includes('/research')) return jsonResponse({ research: [], stale_days: 90, can_run: true });
         throw new Error(`unexpected fetch ${path}`);
       });
       renderTab();

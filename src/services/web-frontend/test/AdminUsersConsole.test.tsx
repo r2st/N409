@@ -732,7 +732,10 @@ describe('AdminUsersPage — the console', () => {
     it('does not show an organisation-holding user as having none', async () => {
       // A controlled select whose value matches no option selects nothing, so
       // during the outage every partnered account displayed as unpartnered.
-      mockApi({ users: [row({ partner_id: 'p1', partner_name: 'Bellweather Law' })] }, { partnersStatus: 503 });
+      mockApi(
+        { users: [row({ partner_id: 'p1', partner_name: 'Bellweather Law' })] },
+        { partnersStatus: 503 },
+      );
       renderPage();
       await openEditor();
 

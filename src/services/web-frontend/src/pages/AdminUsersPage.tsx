@@ -667,8 +667,8 @@ export function AdminUsersPage() {
                 </Select>
                 {partnersFailed && (
                   <p className="mt-1 text-sm text-ink-400">
-                    Organisations could not be listed, so this cannot be changed here. Saving now leaves it
-                    as it is.
+                    Organisations could not be listed, so this cannot be changed here. Saving now leaves it as
+                    it is.
                   </p>
                 )}
               </Field>
@@ -709,8 +709,8 @@ export function AdminUsersPage() {
                  * catalog leaves it as.
                  */
                 <p className="mt-1 text-sm text-ink-400">
-                  The role catalog could not be loaded, so roles cannot be shown or changed here. Saving
-                  now leaves this account&rsquo;s roles exactly as they are. Reload the page to try again.
+                  The role catalog could not be loaded, so roles cannot be shown or changed here. Saving now
+                  leaves this account&rsquo;s roles exactly as they are. Reload the page to try again.
                 </p>
               )}
               {errorFor('roles') && (

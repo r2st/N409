@@ -276,7 +276,9 @@ describe('ProgressTab (client portal §5.6)', () => {
 
     const button = await screen.findByRole('button', { name: 'Download your report' });
     await user.click(button);
-    await waitFor(() => expect(screen.getByRole('button', { name: /Download your report/ })).not.toBeDisabled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Download your report/ })).not.toBeDisabled(),
+    );
     expect(screen.queryByRole('alert')).toBeNull();
   });
 });
