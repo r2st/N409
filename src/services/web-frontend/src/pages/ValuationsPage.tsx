@@ -16,6 +16,7 @@ import type {
   ValuationList,
 } from '../lib/types';
 import { tabListKeyDown, tabProps } from '../lib/rovingFocus';
+import { useLatestOnly } from '../lib/useLatestOnly';
 import {
   Button,
   EmptyState,
@@ -174,7 +175,17 @@ export function ValuationsPage() {
     return q;
   }, [params]);
 
+  /*
+   * Both loads below are re-issued on every filter, tab, sort and page change,
+   * which is the exact shape `useLatestOnly` exists for: nothing orders the
+   * replies, and a slow reply for the previous filter set repaints the rows
+   * under the current controls with nothing coming to correct it. See the hook.
+   */
+  const claimList = useLatestOnly();
+  const claimCounts = useLatestOnly();
+
   const reload = useCallback(() => {
+    const current = claimList();
     setData(null);
     setError(null);
     const q = new URLSearchParams(filterQuery);
@@ -184,18 +195,20 @@ export function ValuationsPage() {
     q.set('page', String(page));
     q.set('per_page', String(PER_PAGE));
     api<ValuationList>(`/valuations?${q}`)
-      .then(setData)
-      .catch(() => setError('Could not load valuations.'));
-  }, [filterQuery, bucket, group, sortParam, page]);
+      .then((d) => current() && setData(d))
+      .catch(() => current() && setError('Could not load valuations.'));
+  }, [claimList, filterQuery, bucket, group, sortParam, page]);
 
   useEffect(reload, [reload]);
 
   // Live tab counts (M3) — refetched when any non-tab filter changes.
   const loadCounts = useCallback(() => {
+    const current = claimCounts();
     api<{ counts: NamedBucketCounts; buckets: NamedBucketDef[] }>(
       `/valuations/counts?buckets=named&${filterQuery}`,
     )
       .then((res) => {
+        if (!current()) return;
         setCounts(res.counts);
         setBucketDefs(res.buckets);
         setCountsFailed(false);
@@ -212,10 +225,11 @@ export function ValuationsPage() {
        * second copy of the mapping.
        */
       .catch(() => {
+        if (!current()) return;
         setCounts(null);
         setCountsFailed(true);
       });
-  }, [filterQuery]);
+  }, [claimCounts, filterQuery]);
 
   useEffect(loadCounts, [loadCounts]);
 
