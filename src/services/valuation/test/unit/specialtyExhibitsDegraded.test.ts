@@ -183,9 +183,15 @@ describe('SMB on a partial method set', () => {
   it('drops the normalization table and prints unweighted methods', () => {
     const html = only('fmv', { methods: { sde_multiple: {}, market_comps: 'skew' } });
     expect(html).not.toContain('SDE normalization');
-    expect(html).toContain('Sde multiple');
+    // A name the engine dispatches to is spelled out; anything else falls back
+    // to the humanized key, which is what a method this module has not been
+    // told about should look like.
+    expect(html).toContain('SDE multiple');
     expect(html).toContain('Market comps');
     expect(html).toContain('Concluded equity value');
+    // Neither method carries the operands its Basis is built from, so both
+    // cells are em-dashes rather than a half-formed sentence.
+    expect(html).toContain('<td>SDE multiple</td><td>\u2014</td>');
   });
 
   it('renders the normalization with no add-backs or deductions to show', () => {

@@ -22,7 +22,13 @@
 import { describe, expect, it } from 'vitest';
 import { renderReportPdf } from '@n409/report/pdf';
 import { buildSpecialtyExhibits } from '../../src/domain/specialtyExhibits.js';
-import { SAMPLE_820_RESULT, SAMPLE_IP_RESULT } from '../../src/domain/specialtySamples.js';
+import {
+  SAMPLE_820_RESULT,
+  SAMPLE_EMI_RESULT,
+  SAMPLE_FMV_RESULT,
+  SAMPLE_IP_RESULT,
+  SAMPLE_PPA_RESULT,
+} from '../../src/domain/specialtySamples.js';
 import { extractText, pageLines } from '../../../report/test/support/pdfText.js';
 import type { CalculationRow } from '../../src/repos/calculations.js';
 
@@ -169,6 +175,82 @@ describe('specialty exhibits survive the renderer', () => {
     // The TAB factor is drawn as a factor. A multiplier that reached the page
     // as "$1" would be indistinguishable from a rendering fault here.
     expect(text).toContain('1.0805');
+  }, 120_000);
+
+  /**
+   * Five columns, two of which the TAB work added, and the widest method name
+   * any intangible carries ("Multi-period excess earnings") in the second. This
+   * is the table most likely to squeeze of the three added this round.
+   */
+  it('fits the PPA allocation with its TAB columns inside the page', async () => {
+    const pdf = await render('ppa', SAMPLE_PPA_RESULT);
+    const text = extractText(pdf);
+    for (const head of ['Intangible asset', 'Method', 'Before TAB', 'TAB', 'Fair value']) {
+      expect(text, `column "${head}" is not in the PDF`).toContain(head);
+    }
+    expect(text).toContain('Multi-period excess earnings');
+    expect(text).toContain('$3,626,939');
+    expect(text).toContain('1.0826');
+    expect(text).toContain('$37,880,353');
+    expect(brokenAmounts(pdf)).toEqual([]);
+    for (const line of linesOf(pdf)) expect(line.x).toBeLessThan(PAGE_WIDTH - MARGIN);
+  }, 120_000);
+
+  /** The same, at a magnitude a large acquisition reaches. */
+  it('keeps the PPA figures whole at a billion of consideration', async () => {
+    const pdf = await render('ppa', {
+      consideration_transferred: 2_400_000_000,
+      tangible_net_assets: 310_000_000,
+      total_intangible_value: 890_000_000,
+      identifiable_net_assets: 1_200_000_000,
+      goodwill: 1_200_000_000,
+      bargain_purchase_gain: 0,
+      intangibles: [
+        {
+          name: 'Customer relationships',
+          method: 'meem',
+          value_before_tab: 728_400_000,
+          tab_multiplier: 1.0846,
+          fair_value: 790_022_640,
+        },
+        {
+          name: 'Developed technology',
+          method: 'relief_from_royalty',
+          value_before_tab: 92_200_000,
+          tab_multiplier: 1.0805,
+          fair_value: 99_622_100,
+        },
+      ],
+    });
+    expect(brokenAmounts(pdf)).toEqual([]);
+    for (const line of linesOf(pdf)) expect(line.x).toBeLessThan(PAGE_WIDTH - MARGIN);
+  }, 120_000);
+
+  /**
+   * The SMB Basis column carries a whole sentence of arithmetic per row, so it
+   * is the widest cell content any exhibit puts beside three other columns. The
+   * ÷ and × have to survive the font as well as the layout — a multiplier that
+   * reached the page as a box would be worse than no Basis column at all.
+   */
+  it('renders the SMB basis column with its operators intact', async () => {
+    const pdf = await render('fmv', SAMPLE_FMV_RESULT);
+    const text = extractText(pdf);
+    expect(text).toContain('SDE $1,032,000 \u00f7 16.9%');
+    expect(text).toContain('SDE $1,032,000 \u00d7 3.10');
+    expect(text).toContain('Revenue $4,150,000 \u00d7 0.85');
+    expect(text).toContain('build-up discount rate of 19.9%');
+    expect(brokenAmounts(pdf)).toEqual([]);
+    for (const line of linesOf(pdf)) expect(line.x).toBeLessThan(PAGE_WIDTH - MARGIN);
+  }, 120_000);
+
+  /** Sterling in the engine's check details, dollars in the exhibit's own rows. */
+  it('renders both currencies on the EMI exhibit with the note that explains them', async () => {
+    const pdf = await render('emi', SAMPLE_EMI_RESULT);
+    const text = extractText(pdf);
+    expect(text).toContain('\u00a3250,000 limit');
+    expect(text).toContain('$175,500');
+    expect(text).toContain('statutory sterling amounts');
+    for (const line of linesOf(pdf)) expect(line.x).toBeLessThan(PAGE_WIDTH - MARGIN);
   }, 120_000);
 
   it('renders the ASC 820 hierarchy, rollforward and sensitivity together', async () => {

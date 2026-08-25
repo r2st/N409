@@ -185,17 +185,65 @@ function ppaExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): Re
   const intangibles = list(specialty.intangibles)
     .map(record)
     .filter((r): r is Record<string, unknown> => r !== null);
+  /**
+   * `purchase_price_allocation` does not take fair values — it runs the IP
+   * engine per asset and splices the whole method result in beside the name.
+   * So every row carries `value_before_tab`, `tab_multiplier` and a full
+   * year-by-year schedule, and the exhibit read three of those fields:
+   * `name`, `method` and `fair_value`.
+   *
+   * The tax amortization benefit is the one that had to come back. It is a
+   * step the fair value has already been grossed up by — a $2.3m asset
+   * appearing as $2.5m — and an allocation table that states only the grossed
+   * figure gives a reviewer no way to see that the step was taken, let alone
+   * at what rate. It is nested one level inside `intangibles`, which the
+   * result-key census reads as a single covered key.
+   *
+   * The schedules stay off: three assets at five years each is the whole IP
+   * exhibit three times over, and the PPA reader is looking at an allocation,
+   * not at how one asset was priced.
+   */
+  const tabColumns = intangibles.some((i) => num(i.tab_multiplier) !== null);
   return section('Exhibit — Purchase Price Allocation', [
     intangibles.length > 0
       ? table({
-          head: ['Intangible asset', 'Method', 'Fair value'],
-          rows: intangibles.map((i) => [
-            esc(String(i.name ?? '—')),
-            esc(String(i.method ?? '—')),
-            money(i.fair_value, ctx) ?? '—',
-          ]),
-          foot: ['Total identifiable intangibles', '', money(specialty.total_intangible_value, ctx) ?? '—'],
+          head: tabColumns
+            ? ['Intangible asset', 'Method', 'Before TAB', 'TAB', 'Fair value']
+            : ['Intangible asset', 'Method', 'Fair value'],
+          rows: intangibles.map((i) => {
+            const method = typeof i.method === 'string' ? i.method : null;
+            const cells = [
+              str(i.name),
+              // `esc(String(i.method))` printed the engine's own dispatch key —
+              // "relief_from_royalty" and "meem" reached the page as written.
+              method === null ? '—' : esc(IP_METHOD_LABELS[method] ?? label(method)),
+            ];
+            if (!tabColumns) return [...cells, money(i.fair_value, ctx) ?? '—'];
+            const tab = num(i.tab_multiplier);
+            return [
+              ...cells,
+              money(i.value_before_tab, ctx) ?? '—',
+              tab === null ? '—' : esc(tab.toFixed(4)),
+              money(i.fair_value, ctx) ?? '—',
+            ];
+          }),
+          foot: tabColumns
+            ? [
+                'Total identifiable intangibles',
+                '',
+                '',
+                '',
+                money(specialty.total_intangible_value, ctx) ?? '—',
+              ]
+            : ['Total identifiable intangibles', '', money(specialty.total_intangible_value, ctx) ?? '—'],
         })
+      : null,
+    tabColumns
+      ? P(
+          'Each intangible is valued before the tax amortization benefit and then multiplied ' +
+            'by the TAB factor shown, which is the present value of the amortization ' +
+            'deductions a hypothetical buyer would claim on it.',
+        )
       : null,
     table({
       head: ['Allocation', 'Amount'],
@@ -385,6 +433,52 @@ function esopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): R
 
 // ── SMB ──────────────────────────────────────────────────────────────────────
 
+/**
+ * `label()` renders `sde_multiple` as "Sde multiple". The three method names
+ * are fixed by `smb_valuation`'s own dispatch, so they are spelled here.
+ */
+const SMB_METHOD_LABELS: Record<string, string> = {
+  capitalization_of_earnings: 'Capitalization of earnings',
+  sde_multiple: 'SDE multiple',
+  revenue_multiple: 'Revenue multiple',
+};
+
+/**
+ * How each method got from its benefit stream to its indicated value, in the
+ * method's own figures.
+ *
+ * Every SMB method is one arithmetic step — a division by a capitalization
+ * rate or a multiplication by a multiple — and each result object carries both
+ * operands. The exhibit printed neither: three method names, three amounts and
+ * three weights, with no rate and no multiple anywhere on the page. A reader
+ * could not check $1,032,000 against $6,106,509 without being told the 16.9%
+ * in between, and the multiple an SMB conclusion turns on is the single figure
+ * a buyer argues about.
+ *
+ * They are nested one level inside `methods`, which is why the result-key
+ * census never saw them: `methods` itself is read, so the top-level sweep is
+ * satisfied by the name of the block whose contents are dropped.
+ */
+function smbBasis(key: string, m: Record<string, unknown>, ctx: ExhibitContext): string {
+  const value = (v: unknown, digits = 0) => money(v, ctx, digits);
+  if (key === 'capitalization_of_earnings') {
+    const stream = value(m.benefit_stream);
+    const rate = pct(m.cap_rate);
+    return stream !== null && rate !== null ? `SDE ${stream} ÷ ${rate}` : '—';
+  }
+  if (key === 'sde_multiple') {
+    const stream = value(m.sde);
+    const multiple = num(m.multiple);
+    return stream !== null && multiple !== null ? `SDE ${stream} × ${multiple.toFixed(2)}` : '—';
+  }
+  if (key === 'revenue_multiple') {
+    const revenue = value(m.revenue);
+    const multiple = num(m.multiple);
+    return revenue !== null && multiple !== null ? `Revenue ${revenue} × ${multiple.toFixed(2)}` : '—';
+  }
+  return '—';
+}
+
 function smbExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
   const methods = record(specialty.methods);
   if (!methods) return null;
@@ -392,6 +486,13 @@ function smbExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): Re
   const normalization = record(specialty.sde_normalization);
   const addbacks = normalization ? (record(normalization.addbacks) ?? {}) : {};
   const deductions = normalization ? (record(normalization.deductions) ?? {}) : {};
+  // The capitalization rate is a subtraction the Basis column states the result
+  // of but not the derivation of, and the two figures it is built from are the
+  // ones an appraiser is asked to support. Only printed when that method ran.
+  const capitalization = record(methods.capitalization_of_earnings);
+  const discountRate = capitalization ? pct(capitalization.discount_rate) : null;
+  const growth = capitalization ? pct(capitalization.long_term_growth) : null;
+  const capRate = capitalization ? pct(capitalization.cap_rate) : null;
   return section('Exhibit — SMB Valuation Methods', [
     normalization
       ? table({
@@ -409,17 +510,69 @@ function smbExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): Re
         })
       : null,
     table({
-      head: ['Method', 'Indicated equity value', 'Weight'],
+      head: ['Method', 'Basis', 'Indicated equity value', 'Weight'],
       rows: Object.entries(methods).map(([key, value]) => {
         const m = record(value) ?? {};
-        return [label(key), money(m.equity_value, ctx) ?? '—', pct(weights[key], 0) ?? '—'];
+        return [
+          esc(SMB_METHOD_LABELS[key] ?? label(key)),
+          smbBasis(key, m, ctx),
+          money(m.equity_value, ctx) ?? '—',
+          pct(weights[key], 0) ?? '—',
+        ];
       }),
-      foot: ['Concluded equity value', money(specialty.equity_value, ctx) ?? '—', ''],
+      foot: ['Concluded equity value', '', money(specialty.equity_value, ctx) ?? '—', ''],
     }),
+    discountRate !== null && growth !== null && capRate !== null
+      ? P(
+          `The capitalization rate is the build-up discount rate of ${discountRate} less ` +
+            `long-term growth of ${growth}, or ${capRate}.`,
+        )
+      : null,
   ]);
 }
 
 // ── EMI / CSOP ───────────────────────────────────────────────────────────────
+
+/**
+ * `label()` renders `exercise_price_not_below_umv` as "...not below umv". The
+ * check keys come from `emi_qualification` and `csop_grant_check`; only the one
+ * carrying an acronym needs spelling.
+ */
+const SCHEME_CHECK_LABELS: Record<string, string> = {
+  exercise_price_not_below_umv: 'Exercise price not below UMV',
+};
+
+/**
+ * The aggregate UMV of the grant being tested — `grant_umv` — with the figures
+ * that make it, when the engine reports them.
+ *
+ * It was excused from the result-key census as "the concluded UMV per share,
+ * printed as its own row above the checks", which is a different number: the
+ * per-share UMV is £1.95 and `grant_umv` is £175,500. The two coincide nowhere
+ * and the excuse was accepted because no captured payload existed to read it
+ * against. Under EMI it matters most: `individual_total_umv` adds prior grants
+ * to it, so the £235,500 the individual-limit check states is neither the grant
+ * nor the priors, and the grant itself appeared on the exhibit nowhere.
+ */
+function grantRows(qualification: Record<string, unknown>, ctx: ExhibitContext): string[][] {
+  const rows: string[][] = [];
+  const grant = money(qualification.grant_umv, ctx);
+  if (grant !== null) rows.push(['Unrestricted market value of this grant', grant]);
+  const individual = money(qualification.individual_total_umv, ctx);
+  const grantValue = num(qualification.grant_umv);
+  const individualValue = num(qualification.individual_total_umv);
+  // Only when it differs from the grant; where there are no prior grants the
+  // two are the same figure and a second identical row reads as an error.
+  if (
+    individual !== null &&
+    (grantValue === null || individualValue === null || Math.abs(individualValue - grantValue) > 0.005)
+  ) {
+    rows.push(['Counted against the individual limit, with prior grants', individual]);
+  }
+  const company = money(qualification.company_total_umv, ctx);
+  if (company !== null) rows.push(['Counted against the company limit, unexercised', company]);
+  return rows;
+}
 
 function emiCsopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
   const umv = num(specialty.umv_per_share);
@@ -427,6 +580,7 @@ function emiCsopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext)
   const qualification = record(specialty.qualification);
   const checks = qualification ? (record(qualification.checks) ?? {}) : {};
   const scheme = qualification && typeof qualification.scheme === 'string' ? qualification.scheme : null;
+  const grants = qualification ? grantRows(qualification, ctx) : [];
   return section('Exhibit — Share Valuation & Scheme Limits', [
     table({
       head: ['Measure', 'Value'],
@@ -435,6 +589,7 @@ function emiCsopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext)
         [`Minority discount`, pct(specialty.minority_discount) ?? '—'],
         [`Restriction discount`, pct(specialty.restriction_discount) ?? '—'],
         ['Unrestricted market value (UMV) per share', shown(umv, ctx, 4)],
+        ...grants,
       ],
       foot: ['Actual market value (AMV) per share', money(specialty.amv_per_share, ctx, 4) ?? '—'],
     }),
@@ -443,9 +598,27 @@ function emiCsopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext)
           head: [`${scheme === 'csop' ? 'Schedule 4' : 'Schedule 5'} check`, 'Result', 'Basis'],
           rows: Object.entries(checks).map(([key, value]) => {
             const c = record(value) ?? {};
-            return [label(key), passFail(c.passed), esc(String(c.detail ?? ''))];
+            return [
+              esc(SCHEME_CHECK_LABELS[key] ?? label(key)),
+              passFail(c.passed),
+              esc(String(c.detail ?? '')),
+            ];
           }),
         })
+      : null,
+    // The engine writes its check details in sterling, because the EMI and CSOP
+    // limits are statutory sterling amounts. The rows above are in the
+    // engagement's currency — deliberately, so a scheme recorded in the wrong
+    // one is visible rather than hidden behind a £ sign (the same rule
+    // `hmrcForms.ts` states for the VAL231 pack). What was missing was anything
+    // telling the reader that, so a USD engagement printed "$1.9500" in one
+    // table and "£250,000 limit" in the next with nothing between them.
+    Object.keys(checks).length > 0 && ctx.currency && ctx.currency !== 'GBP'
+      ? P(
+          `The scheme limits above are the statutory sterling amounts. The per-share values are ` +
+            `stated in the engagement currency (${esc(ctx.currency)}), which is not sterling; the ` +
+            'two are not converted, and the limits should be tested against sterling figures.',
+        )
       : null,
     qualification
       ? P(
