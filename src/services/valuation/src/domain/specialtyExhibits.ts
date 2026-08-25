@@ -516,21 +516,157 @@ export function hmrcFormExhibit(form: HmrcForm): ReportPdfSection {
 
 // ── IP (single intangible) ───────────────────────────────────────────────────
 
+/**
+ * The columns of each method's cash-flow schedule, in the order the method
+ * builds them. Named per method rather than derived from the row's own keys:
+ * the order is the argument the schedule makes, and iterating an object's keys
+ * would print MEEM's contributory charge before the earnings it is charged
+ * against on any engine that happened to build the dict differently.
+ *
+ * `money` for an amount, `pct` for a rate, plain for a count.
+ */
+const IP_SCHEDULE: Record<string, { key: string; head: string; as: 'money' | 'pct' | 'plain' }[]> = {
+  relief_from_royalty: [
+    { key: 'year', head: 'Year', as: 'plain' },
+    { key: 'revenue', head: 'Revenue', as: 'money' },
+    { key: 'royalty_savings', head: 'Royalty savings', as: 'money' },
+    { key: 'after_tax', head: 'After tax', as: 'money' },
+    { key: 'pv', head: 'Present value', as: 'money' },
+  ],
+  meem: [
+    { key: 'year', head: 'Year', as: 'plain' },
+    { key: 'revenue', head: 'Revenue', as: 'money' },
+    { key: 'survival', head: 'Survival', as: 'pct' },
+    { key: 'attributable_revenue', head: 'Attributable revenue', as: 'money' },
+    { key: 'ebit', head: 'EBIT', as: 'money' },
+    { key: 'after_tax_earnings', head: 'After-tax earnings', as: 'money' },
+    { key: 'contributory_charge', head: 'Contributory charge', as: 'money' },
+    { key: 'excess_earnings', head: 'Excess earnings', as: 'money' },
+    { key: 'pv', head: 'Present value', as: 'money' },
+  ],
+  with_and_without: [
+    { key: 'year', head: 'Year', as: 'plain' },
+    { key: 'with', head: 'With the asset', as: 'money' },
+    { key: 'without', head: 'Without the asset', as: 'money' },
+    { key: 'after_tax_differential', head: 'After-tax differential', as: 'money' },
+    { key: 'pv', head: 'Present value', as: 'money' },
+  ],
+};
+
+const IP_METHOD_LABELS: Record<string, string> = {
+  relief_from_royalty: 'Relief from royalty',
+  meem: 'Multi-period excess earnings',
+  with_and_without: 'With and without',
+  cost_approach: 'Cost approach',
+};
+
+/**
+ * The intangible-asset schedules, per the method the run dispatched to.
+ *
+ * This exhibit used to read `pv_before_tab`, `pv`, `tab`, `discount_rate`,
+ * `royalty_rate` and `tax_rate`. `value_intangible` returns none of those — not
+ * under those names and not under any others, because three of them are inputs
+ * the result does not echo. Every row was therefore dropped, `rows.length > 0`
+ * was false for every IP valuation ever run, and the deliverable for an
+ * engagement priced by a discounted royalty stream was one sentence stating a
+ * number: no schedule, no method named, no step between the cash flows and the
+ * conclusion. The census in `specialtyResultCoverage.test.ts` is what surfaced
+ * it; the exhibit was written against an assumed shape and no sample was ever
+ * captured for this kind to contradict it.
+ */
 function intangibleExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
   const fairValue = num(specialty.fair_value);
   if (fairValue === null) return null;
-  const rows: string[][] = [];
+  const method = typeof specialty.method === 'string' ? specialty.method : null;
+
+  // The cost approach has no cash-flow schedule and no TAB; its argument is the
+  // cost new and the layers taken off it, which compound rather than sum.
+  const obsolescence = record(specialty.obsolescence);
+  const costNew = num(specialty.replacement_cost_new);
+  const costTable =
+    costNew !== null
+      ? table({
+          head: ['Cost approach', 'Amount'],
+          rows: [
+            ['Replacement cost new, including entrepreneurial incentive', shown(costNew, ctx)],
+            ...Object.entries(obsolescence ?? {})
+              .filter(([, v]) => num(v) !== null)
+              .map(([k, v]) => [`Less ${k} obsolescence`, money(v, ctx) ?? '—']),
+          ],
+          foot: ['Concluded fair value', shown(fairValue, ctx)],
+        })
+      : null;
+  // Stated whenever more than one layer was taken, because a reader who reads
+  // them as three percentages of the top line gets a different answer.
+  const compoundingNote =
+    costTable !== null && obsolescence !== null && Object.keys(obsolescence).length > 1
+      ? P(
+          'The obsolescence layers compound: each is taken against the value remaining after ' +
+            'the one above it, not against cost new, so the amounts do not sum to a single ' +
+            'percentage of the top line.',
+        )
+      : null;
+
+  const columns = method === null ? undefined : IP_SCHEDULE[method];
+  const rows = list(specialty.schedule)
+    .map(record)
+    .filter((r): r is Record<string, unknown> => r !== null);
+  const scheduleTable =
+    columns && rows.length > 0
+      ? table({
+          head: columns.map((c) => c.head),
+          rows: rows.map((row) =>
+            columns.map((c) => {
+              if (c.as === 'money') return money(row[c.key], ctx) ?? '—';
+              if (c.as === 'pct') return pct(row[c.key]) ?? '—';
+              return str(row[c.key]);
+            }),
+          ),
+        })
+      : null;
+
+  // The bridge from the discounted cash flows to the conclusion. `pv_explicit`
+  // and `pv_terminal` are the relief-from-royalty split; the other two income
+  // methods report the total only.
+  const bridgeRows: string[][] = [];
   const put = (name: string, value: string | null) => {
-    if (value !== null) rows.push([name, value]);
+    if (value !== null) bridgeRows.push([name, value]);
   };
-  put('Present value before TAB', money(specialty.pv_before_tab ?? specialty.pv, ctx));
-  put('Tax amortization benefit', money(specialty.tab, ctx));
-  put('Discount rate', pct(specialty.discount_rate));
-  put('Royalty rate', pct(specialty.royalty_rate));
-  put('Tax rate', pct(specialty.tax_rate, 0));
+  put('Present value of the explicit forecast', money(specialty.pv_explicit, ctx));
+  put('Present value of the terminal period', money(specialty.pv_terminal, ctx));
+  put('Value before the tax amortization benefit', money(specialty.value_before_tab, ctx));
+  // A multiplier, not an amount: 1.0847 is an 8.5% uplift, and printing it as
+  // currency would put "$1" beside a seven-figure conclusion. Stated as both
+  // the factor and the amount it adds, because the amount is what a reviewer
+  // ties to the conclusion.
+  const tabMultiplier = num(specialty.tab_multiplier);
+  const valueBeforeTab = num(specialty.value_before_tab);
+  if (tabMultiplier !== null) {
+    bridgeRows.push([
+      `Tax amortization benefit (×${tabMultiplier.toFixed(4)})`,
+      valueBeforeTab === null ? '—' : shown(fairValue - valueBeforeTab, ctx),
+    ]);
+  }
+  const bridge =
+    bridgeRows.length > 0
+      ? table({
+          head: ['Measure', 'Amount'],
+          rows: bridgeRows,
+          foot: ['Concluded fair value', shown(fairValue, ctx)],
+        })
+      : null;
+
   return section('Exhibit — Intangible Asset Valuation', [
-    rows.length > 0 ? table({ head: ['Measure', 'Value'], rows }) : null,
-    P(`Concluded fair value: <strong>${shown(fairValue, ctx)}</strong>.`),
+    method === null ? null : P(`Method: <strong>${esc(IP_METHOD_LABELS[method] ?? label(method))}</strong>.`),
+    scheduleTable,
+    bridge,
+    costTable,
+    compoundingNote,
+    // Only when nothing above it printed — otherwise the conclusion is already
+    // the foot of a table and this repeats it.
+    scheduleTable === null && bridge === null && costTable === null
+      ? P(`Concluded fair value: <strong>${shown(fairValue, ctx)}</strong>.`)
+      : null,
   ]);
 }
 

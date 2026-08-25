@@ -250,15 +250,39 @@ describe('intangible on a bare fair value', () => {
     expect(html).not.toContain('Present value before TAB');
   });
 
-  it('falls back to `pv` when the run did not separate the pre-TAB figure', () => {
-    const html = only('ip', { fair_value: 1, pv: 900_000, royalty_rate: 0.05 });
-    expect(html).toContain('Present value before TAB');
+  /**
+   * This case used to assert a fallback from `pv_before_tab` to `pv`. Neither
+   * name is one `value_intangible` returns, so the fallback was between two
+   * fields that do not exist and the assertion held only because the fixture
+   * supplied one of them. What the exhibit actually has to survive is a real
+   * result missing its optional halves.
+   */
+  it('renders the bridge from a run that reported no terminal period', () => {
+    const html = only('ip', {
+      method: 'with_and_without',
+      value_before_tab: 900_000,
+      tab_multiplier: 1.08,
+      fair_value: 972_000,
+    });
+    expect(html).toContain('Value before the tax amortization benefit');
     expect(html).toContain('$900,000');
-    expect(html).toContain('Royalty rate');
+    expect(html).not.toContain('terminal period');
+  });
+
+  it('keeps the schedule when a row is missing the columns the method names', () => {
+    const html = only('ip', {
+      method: 'relief_from_royalty',
+      schedule: [{ year: 1, revenue: 100 }, {}],
+      fair_value: 90,
+    });
+    expect(html).toContain('Royalty savings');
+    expect(html).toContain('—');
+    expect(html).not.toContain('undefined');
+    expect(html).not.toContain('NaN');
   });
 
   it('drops the exhibit without a fair value', () => {
-    expect(buildSpecialtyExhibits(calc('ip', { pv: 1 }), ctx)).toEqual([]);
+    expect(buildSpecialtyExhibits(calc('ip', { value_before_tab: 1 }), ctx)).toEqual([]);
   });
 });
 

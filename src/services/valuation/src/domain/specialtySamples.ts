@@ -464,3 +464,75 @@ export const SAMPLE_IFRS2_RESULT: SpecialtyResult = {
   },
   warnings: [],
 };
+
+/**
+ * A trademark valued by relief from royalty over a five-year forecast with a
+ * terminal period, at a 5% royalty rate and a 17% discount rate, with the tax
+ * amortization benefit included.
+ *
+ * Captured because there was no IP sample, and the absence is what let
+ * `intangibleExhibit` go on reading six field names the engine has never
+ * returned — `pv_before_tab`, `pv`, `tab`, `discount_rate`, `royalty_rate`,
+ * `tax_rate`. Every row it built was dropped, so every IP deliverable printed
+ * a single sentence with a number in it and no schedule at all. A captured
+ * payload contradicts an assumed shape immediately; three of the other kinds
+ * were caught that way when they were written.
+ * `app/engine/intangibles.py: value_intangible`.
+ */
+export const SAMPLE_IP_INPUTS = {
+  method: 'relief_from_royalty',
+  params: {
+    revenues: [8400000, 9240000, 10164000, 10672200, 11205810],
+    royalty_rate: 0.05,
+    discount_rate: 0.17,
+    tax_rate: 0.21,
+    terminal_growth: 0.02,
+    include_tab: true,
+  },
+} as const;
+
+export const SAMPLE_IP_RESULT: SpecialtyResult = {
+  method: 'relief_from_royalty',
+  schedule: [
+    {
+      year: 1,
+      revenue: 8400000.0,
+      royalty_savings: 420000.0,
+      after_tax: 331800.0,
+      pv: 283589.7435897436,
+    },
+    {
+      year: 2,
+      revenue: 9240000.0,
+      royalty_savings: 462000.0,
+      after_tax: 364980.0,
+      pv: 266622.8358536051,
+    },
+    {
+      year: 3,
+      revenue: 10164000.0,
+      royalty_savings: 508200.0,
+      after_tax: 401478.0,
+      pv: 250671.04225552618,
+    },
+    {
+      year: 4,
+      revenue: 10672200.0,
+      royalty_savings: 533610.0,
+      after_tax: 421551.9,
+      pv: 224961.19176777996,
+    },
+    {
+      year: 5,
+      revenue: 11205810.0,
+      royalty_savings: 560290.5,
+      after_tax: 442629.495,
+      pv: 201888.24902236662,
+    },
+  ],
+  pv_explicit: 1227733.0624890216,
+  pv_terminal: 1372840.093352093,
+  value_before_tab: 2600573.1558411145,
+  tab_multiplier: 1.0805421198054161,
+  fair_value: 2810028.8305216185,
+};

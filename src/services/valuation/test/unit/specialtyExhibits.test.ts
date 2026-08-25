@@ -437,32 +437,43 @@ describe('buildSpecialtyExhibits', () => {
     expect(csop!.html).toContain('qualifies');
   });
 
+  /**
+   * This test used to assert `pv_before_tab`, `tab`, `discount_rate`,
+   * `royalty_rate` and `tax_rate` — five names `value_intangible` has never
+   * returned. It passed for as long as it existed, on a payload built to match
+   * the exhibit rather than the engine, while every real IP deliverable
+   * rendered the last case here: one sentence and no schedule.
+   *
+   * The full-shape assertions now live in `specialtyIpExhibit.test.ts`, against
+   * a captured engine result. What is left here is the degradation contract.
+   */
   it('renders the single-intangible exhibit with only the measures that were supplied', () => {
     const [full] = buildSpecialtyExhibits(
       calc('ip', {
+        method: 'relief_from_royalty',
+        pv_explicit: 1_800_000,
+        pv_terminal: 1_800_000,
+        value_before_tab: 3_600_000,
+        tab_multiplier: 1.1667,
         fair_value: 4_200_000,
-        pv_before_tab: 3_600_000,
-        tab: 600_000,
-        discount_rate: 0.18,
-        royalty_rate: 0.05,
-        tax_rate: 0.21,
       }),
       ctx,
     );
     expect(full!.heading).toContain('Intangible Asset');
     expect(full!.html).toContain('Tax amortization benefit');
-    expect(full!.html).toContain('18.0%');
     expect(full!.html).toContain('$4,200,000');
 
-    // `pv` is the fallback name for the same figure, and a run that supplied
-    // neither a rate nor a TAB should print a shorter table, not empty rows.
-    const [sparse] = buildSpecialtyExhibits(calc('ip', { fair_value: 1_000, pv: 900 }), ctx);
-    expect(sparse!.html).toContain('Present value before TAB');
-    expect(sparse!.html).not.toContain('Discount rate');
-    expect(sparse!.html).not.toContain('Royalty rate');
+    // A run that reported the total without splitting it prints a shorter
+    // bridge, not empty rows.
+    const [sparse] = buildSpecialtyExhibits(
+      calc('ip', { method: 'meem', value_before_tab: 900, fair_value: 1_000 }),
+      ctx,
+    );
+    expect(sparse!.html).toContain('Value before the tax amortization benefit');
+    expect(sparse!.html).not.toContain('terminal period');
 
-    // Nothing but the conclusion: the measures table is dropped rather than
-    // printed as a header with no rows under it.
+    // Nothing but the conclusion: the bridge is dropped rather than printed as
+    // a header with no rows under it.
     const [bare] = buildSpecialtyExhibits(calc('ip', { fair_value: 500 }), ctx);
     expect(bare!.html).not.toContain('<table');
     expect(bare!.html).toContain('Concluded fair value');
