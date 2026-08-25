@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
+import { formatCents, formatDate } from '../lib/format';
 import { Button, EmptyState, ErrorNote, Spinner } from './ui';
 
 interface Plan {
@@ -32,6 +33,13 @@ interface Invoice {
   currency: string;
   status: string;
   issued_at: string;
+  /**
+   * Money returned against this invoice (migration 0169). Optional because a
+   * row written before the column existed has neither field, and 0 is the
+   * right reading of that.
+   */
+  refunded_cents?: number | string | null;
+  refunded_at?: string | null;
 }
 interface MySub {
   subscription: Subscription | null;
@@ -44,6 +52,33 @@ interface MySub {
 
 /** Statuses where the subscription needs the customer's attention, not ours. */
 const NEEDS_ATTENTION = new Set(['past_due', 'unpaid', 'incomplete']);
+
+/**
+ * The one line under an invoice that says the money came back.
+ *
+ * A Stripe refund does not move an invoice's status — the invoice stays `paid`
+ * and the money comes off the charge — so `status` alone cannot say it, and
+ * partial refunds are not a status at all. The invoice PDF this same row links
+ * to has stated "Refunded / Net paid" since migration 0169 (domain/billing
+ * .invoiceSections) and both fields already arrive on `/me/subscription`;
+ * nothing here rendered them, so a customer comparing their card statement
+ * against this table read a full charge that had been partly returned. This is
+ * the same omission `settlementNote` closed on the engagement payments table.
+ *
+ * Bounded against the invoice for the reason the SQL rollup and the PDF are:
+ * Stripe's refund total is authoritative, and a screen is the wrong place to
+ * argue with it by printing a negative net.
+ */
+export function invoiceRefundNote(inv: Invoice): string | null {
+  const amount = Number(inv.amount_cents);
+  const raw = Number(inv.refunded_cents ?? 0);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  const refunded = Number.isFinite(amount) ? Math.min(raw, amount) : raw;
+  const full = Number.isFinite(amount) && refunded >= amount;
+  const when = inv.refunded_at ? ` on ${formatDate(inv.refunded_at)}` : '';
+  const net = Number.isFinite(amount) ? ` · net ${formatCents(amount - refunded, inv.currency)}` : '';
+  return `${full ? 'Refunded' : 'Partially refunded'} ${formatCents(refunded, inv.currency)}${when}${net}`;
+}
 
 const money = (cents: number, currency = 'usd') =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100);
@@ -235,7 +270,14 @@ export function SubscriptionSection() {
                 {mine.invoices.map((inv) => (
                   <tr key={inv.id} className="border-b border-paper-200 last:border-0">
                     <td className="px-4 py-2.5 font-semibold text-ink-800">{inv.number}</td>
-                    <td className="px-4 py-2.5 text-ink-500">{inv.status}</td>
+                    <td className="px-4 py-2.5 text-ink-500">
+                      {inv.status}
+                      {invoiceRefundNote(inv) && (
+                        <div className="mt-1 text-xs text-ink-500" data-testid="invoice-refund-note">
+                          {invoiceRefundNote(inv)}
+                        </div>
+                      )}
+                    </td>
                     <td className="tnum px-4 py-2.5 text-right text-ink-900">
                       {money(inv.amount_cents, inv.currency)}
                     </td>

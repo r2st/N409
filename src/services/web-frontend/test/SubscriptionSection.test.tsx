@@ -282,6 +282,111 @@ describe('SubscriptionSection (feature 7)', () => {
     );
   });
 
+  /**
+   * A refund never moves a Stripe invoice's status, so a refunded invoice is
+   * still `paid` and the amount column still reads the gross. Both facts come
+   * back on `/me/subscription` and the PDF linked from the very same row has
+   * stated them since migration 0169; the table said nothing, so a customer
+   * reconciling against their card statement saw a charge they had been given
+   * back.
+   */
+  it('states a full refund on the invoice row', async () => {
+    mockApi(
+      subscribed({
+        invoices: [
+          {
+            id: 'in_1',
+            number: 'INV-0001',
+            status: 'paid',
+            amount_cents: 119000,
+            currency: 'usd',
+            refunded_cents: 119000,
+            refunded_at: '2026-08-14T10:00:00.000Z',
+          },
+        ],
+      }),
+    );
+    render(<SubscriptionSection />);
+    const note = await screen.findByTestId('invoice-refund-note');
+    expect(note).toHaveTextContent('Refunded $1,190.00');
+    expect(note).toHaveTextContent('net $0.00');
+    expect(note).not.toHaveTextContent('Partially');
+  });
+
+  it('distinguishes a partial refund and shows what is left', async () => {
+    mockApi(
+      subscribed({
+        invoices: [
+          {
+            id: 'in_1',
+            number: 'INV-0001',
+            status: 'paid',
+            amount_cents: 119000,
+            currency: 'usd',
+            refunded_cents: 19000,
+            refunded_at: null,
+          },
+        ],
+      }),
+    );
+    render(<SubscriptionSection />);
+    const note = await screen.findByTestId('invoice-refund-note');
+    expect(note).toHaveTextContent('Partially refunded $190.00');
+    expect(note).toHaveTextContent('net $1,000.00');
+  });
+
+  /**
+   * Stripe's refund total is authoritative and this is a customer-facing
+   * screen, not a reconciliation: a total above the invoice reads as a full
+   * refund rather than a negative net.
+   */
+  it('bounds a refund that exceeds the invoice instead of printing a negative net', async () => {
+    mockApi(
+      subscribed({
+        invoices: [
+          {
+            id: 'in_1',
+            number: 'INV-0001',
+            status: 'paid',
+            amount_cents: 119000,
+            currency: 'usd',
+            refunded_cents: 200000,
+            refunded_at: null,
+          },
+        ],
+      }),
+    );
+    render(<SubscriptionSection />);
+    const note = await screen.findByTestId('invoice-refund-note');
+    expect(note).toHaveTextContent('Refunded $1,190.00');
+    expect(note).toHaveTextContent('net $0.00');
+    expect(note.textContent).not.toContain('-');
+    expect(note.textContent).not.toContain('\u2212');
+  });
+
+  /** Rows that predate migration 0169 carry neither field. */
+  it('says nothing about refunds on an invoice that has none', async () => {
+    mockApi(
+      subscribed({
+        invoices: [
+          { id: 'in_1', number: 'INV-0001', status: 'paid', amount_cents: 119000, currency: 'usd' },
+          {
+            id: 'in_2',
+            number: 'INV-0002',
+            status: 'paid',
+            amount_cents: 99000,
+            currency: 'usd',
+            refunded_cents: 0,
+            refunded_at: null,
+          },
+        ],
+      }),
+    );
+    render(<SubscriptionSection />);
+    expect(await screen.findByText('INV-0001')).toBeInTheDocument();
+    expect(screen.queryByTestId('invoice-refund-note')).not.toBeInTheDocument();
+  });
+
   it('omits the invoice table entirely when there is nothing billed yet', async () => {
     mockApi(subscribed());
     render(<SubscriptionSection />);
