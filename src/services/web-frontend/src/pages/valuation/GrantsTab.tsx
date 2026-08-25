@@ -171,9 +171,11 @@ function GrantDetailPanel({ valuationId, grant }: { valuationId: string; grant: 
         <VestingTimeline timeline={detail.timeline} total={grant.options_count} />
       </div>
       <div>
-        <h3 className="overline mb-2 text-ink-400">Exercise scenarios</h3>
+        <h3 id="exercise-scenarios-heading" className="overline mb-2 text-ink-400">
+          Exercise scenarios
+        </h3>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm" aria-labelledby="exercise-scenarios-heading">
             <thead>
               <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
                 <th className="py-1.5 pr-3">Future FMV</th>

@@ -207,6 +207,7 @@ function EntriesTable({ entries, currency }: { entries: Entry[]; currency: strin
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
+        <caption className="sr-only">Cap table</caption>
         <thead>
           <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
             <th className="py-1.5 pr-3">Security</th>

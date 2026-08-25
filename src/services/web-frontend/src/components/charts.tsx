@@ -1,3 +1,5 @@
+import { useId } from 'react';
+
 /** Dependency-free SVG donut chart for the dashboard analytics (M3). */
 
 export interface PieSlice {
@@ -35,6 +37,7 @@ export interface HeatmapProps {
  * the base. Pure SVG-free HTML table so it stays crisp and printable.
  */
 export function Heatmap({ title, rowLabel, colLabel, rowValues, colValues, cells, format }: HeatmapProps) {
+  const titleId = useId();
   const deltas = cells.flat().map((c) => (c.delta === null ? 0 : Math.abs(c.delta)));
   const maxAbs = Math.max(0.0001, ...deltas);
 
@@ -52,9 +55,11 @@ export function Heatmap({ title, rowLabel, colLabel, rowValues, colValues, cells
 
   return (
     <div>
-      <h2 className="mb-2 font-display text-lg font-semibold text-ink-900">{title}</h2>
+      <h2 id={titleId} className="mb-2 font-display text-lg font-semibold text-ink-900">
+        {title}
+      </h2>
       <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
-        <table className="w-full min-w-[560px] text-sm" role="table">
+        <table className="w-full min-w-[560px] text-sm" role="table" aria-labelledby={titleId}>
           <thead>
             <tr className="border-b border-paper-300">
               <th className="overline px-4 py-3 text-left font-semibold text-ink-400">

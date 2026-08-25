@@ -177,6 +177,7 @@ export function EngagementTab() {
         <h3 className="overline mb-3 text-ink-400">Stage timing (expected vs actual)</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
+            <caption className="sr-only">Stage timing</caption>
             <thead>
               <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
                 <th className="py-1.5 pr-3">Stage</th>

@@ -294,14 +294,16 @@ export function PaymentHistory({ valuation }: { valuation: Valuation }) {
 
   return (
     <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
-      <h2 className="overline mb-4 text-ink-400">Payment history</h2>
+      <h2 id="payment-history-heading" className="overline mb-4 text-ink-400">
+        Payment history
+      </h2>
       {/* The status column used to hold one short token, and the table was
           allowlisted as fitting a 375px phone on that measurement. A settlement
           note is a sentence ("Refunded $1,190.00 on 9 Jul · Chargeback upheld"),
           which does not fit that budget — so the table scrolls in its own box
           rather than pushing the page sideways, matching the invoice table. */}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[420px] text-left text-sm">
+        <table className="w-full min-w-[420px] text-left text-sm" aria-labelledby="payment-history-heading">
           <thead>
             <tr className="border-b border-paper-300 text-xs text-ink-400">
               <th className="pb-2 font-semibold">Date</th>

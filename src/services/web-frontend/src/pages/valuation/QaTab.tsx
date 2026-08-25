@@ -193,6 +193,7 @@ export function QaTab() {
           </div>
 
           <table className="w-full text-left text-sm">
+            <caption className="sr-only">Health checks</caption>
             <thead>
               <tr className="border-b border-paper-300 text-xs text-ink-400">
                 <th className="py-2 pr-4 font-semibold">Check</th>

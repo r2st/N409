@@ -833,6 +833,7 @@ export function ValuationsPage() {
       {data && data.valuations.length > 0 && (
         <div className="mt-6 hidden overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card md:block">
           <table className="w-full min-w-[760px] text-sm">
+            <caption className="sr-only">Valuations</caption>
             <thead>
               <tr className="border-b border-paper-300 text-left">
                 {ops && (

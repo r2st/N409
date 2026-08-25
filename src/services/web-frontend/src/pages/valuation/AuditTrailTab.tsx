@@ -92,6 +92,7 @@ function ChangeList({ changes }: { changes: FieldChange[] }) {
   if (changes.length === 0) return null;
   return (
     <table className="mt-2 w-full text-xs" data-testid="change-list">
+      <caption className="sr-only">Field changes in this entry</caption>
       <tbody>
         {changes.map((change, i) => (
           <tr key={`${change.field}-${i}`} className="align-top">

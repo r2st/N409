@@ -176,7 +176,9 @@ export function PartnerPortalPage() {
       {canMint && partnerId && (
         <section className="mt-10 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <div className="mb-1 flex items-center justify-between">
-            <h2 className="overline text-ink-400">API tokens</h2>
+            <h2 id="partner-api-tokens-heading" className="overline text-ink-400">
+              API tokens
+            </h2>
             <Link to="/partner/api-docs" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
               API documentation →
             </Link>
@@ -230,7 +232,7 @@ export function PartnerPortalPage() {
 
           {tokens && tokens.length > 0 && (
             <div className="mt-5 overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm" aria-labelledby="partner-api-tokens-heading">
                 <thead>
                   <tr className="border-b border-paper-300 text-left">
                     <th className="overline py-2 pr-4 font-semibold text-ink-400">Name</th>

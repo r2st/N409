@@ -218,6 +218,7 @@ export function AdminSsoPage() {
           <p className="mt-4 text-sm text-ink-400">No SCIM tokens yet.</p>
         ) : (
           <table className="mt-4 w-full text-sm">
+            <caption className="sr-only">SCIM tokens</caption>
             <tbody>
               {tokens.map((t) => (
                 <tr key={t.id} className="border-b border-paper-200 last:border-0">

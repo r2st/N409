@@ -149,7 +149,9 @@ export function FundingHistory({
       )}
 
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-ink-800">Funding rounds</h3>
+        <h3 id="funding-rounds-heading" className="text-sm font-semibold text-ink-800">
+          Funding rounds
+        </h3>
         {canEdit && (
           <Button variant="ghost" onClick={() => setAddingRound((v) => !v)}>
             {addingRound ? 'Cancel' : '+ Add round'}
@@ -228,7 +230,7 @@ export function FundingHistory({
       )}
       {rounds && rounds.length > 0 && (
         <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-[560px] text-sm">
+          <table className="w-full min-w-[560px] text-sm" aria-labelledby="funding-rounds-heading">
             <thead>
               <tr className="border-b border-paper-300 text-left">
                 <th className="overline py-2 pr-4 font-semibold text-ink-400">Round</th>
@@ -351,6 +353,7 @@ export function FundingHistory({
       {transactions && transactions.length > 0 && (
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[560px] text-sm">
+            <caption className="sr-only">Secondary transactions</caption>
             <thead>
               <tr className="border-b border-paper-300 text-left">
                 <th className="overline py-2 pr-4 font-semibold text-ink-400">Type</th>

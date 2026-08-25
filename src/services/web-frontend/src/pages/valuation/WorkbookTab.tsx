@@ -302,6 +302,7 @@ export function WorkbookTab() {
       <WriteGate closed={retired}>
         <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[40rem] border-collapse text-sm">
+            <caption className="sr-only">{`${sheet.label} worksheet`}</caption>
             <thead>
               <tr className="border-b border-paper-300 bg-paper-50">
                 <th className="px-4 py-2.5 text-left text-xs font-semibold tracking-wide text-ink-400 uppercase">

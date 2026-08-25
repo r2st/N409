@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useId, useEffect, useState } from 'react';
 import { ErrorNote, Spinner } from './ui';
 
 /**
@@ -65,10 +65,13 @@ function MethodChip({ method }: { method: EndpointDoc['method'] }) {
 }
 
 function FieldTable({ title, fields }: { title: string; fields: Record<string, string> }) {
+  const titleId = useId();
   return (
     <div className="mt-3">
-      <div className="overline text-xs text-ink-400">{title}</div>
-      <table className="mt-1 w-full text-sm">
+      <div id={titleId} className="overline text-xs text-ink-400">
+        {title}
+      </div>
+      <table className="mt-1 w-full text-sm" aria-labelledby={titleId}>
         <tbody>
           {Object.entries(fields).map(([name, desc]) => (
             <tr key={name} className="border-b border-paper-200 last:border-0">

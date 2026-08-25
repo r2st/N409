@@ -732,6 +732,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
           </h4>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[380px] text-sm">
+              <caption className="sr-only">Option awards</caption>
               <thead>
                 <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
                   <th className="py-1.5 pr-3">Grant</th>
@@ -759,6 +760,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
           <h4 className="overline mb-2 text-ink-400">ESPP</h4>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[460px] text-sm">
+              <caption className="sr-only">ESPP offerings</caption>
               <thead>
                 <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
                   <th className="py-1.5 pr-3">Offering</th>
@@ -796,6 +798,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
           <h4 className="overline mb-2 text-ink-400">RSUs</h4>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[440px] text-sm">
+              <caption className="sr-only">RSU awards</caption>
               <thead>
                 <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
                   <th className="py-1.5 pr-3">Award</th>
@@ -839,6 +842,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
           </h4>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[440px] text-sm">
+              <caption className="sr-only">Relative TSR awards</caption>
               <thead>
                 <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
                   <th className="py-1.5 pr-3">Award</th>

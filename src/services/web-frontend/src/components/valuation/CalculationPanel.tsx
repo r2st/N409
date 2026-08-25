@@ -255,8 +255,10 @@ export function CalculationPanel({
           </div>
 
           <section className="overflow-x-auto rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
-            <h3 className="overline mb-4 text-ink-400">Approach breakdown</h3>
-            <table className="w-full text-sm">
+            <h3 id="approach-breakdown-heading" className="overline mb-4 text-ink-400">
+              Approach breakdown
+            </h3>
+            <table className="w-full text-sm" aria-labelledby="approach-breakdown-heading">
               <thead>
                 <tr className="text-left text-xs text-ink-400">
                   <th className="py-1 pr-4 font-semibold">Approach</th>

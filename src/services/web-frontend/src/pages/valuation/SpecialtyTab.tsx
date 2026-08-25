@@ -97,6 +97,7 @@ function ResultPanel({ result }: { result: Record<string, unknown> }) {
   if (entries.length === 0) return <p className="text-sm text-ink-400">The engine returned nothing.</p>;
   return (
     <table className="w-full text-left text-sm">
+      <caption className="sr-only">Engine result</caption>
       <tbody>
         {entries.map(([key, value]) => (
           <tr key={key} className="border-b border-paper-200 last:border-0 align-top">

@@ -1042,6 +1042,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[720px] text-sm">
+                <caption className="sr-only">PWERM exit scenarios</caption>
                 <thead>
                   <tr className="border-b border-paper-300 text-xs text-ink-400">
                     <th className="py-2 pr-3 text-left font-semibold">Name</th>

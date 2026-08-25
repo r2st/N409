@@ -140,6 +140,7 @@ export function ModelSensitivityPanel({ valuationId }: { valuationId: string }) 
                     <h3 className="mb-2 font-display text-base font-semibold text-ink-900">{meta.label}</h3>
                     <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                       <table className="w-full text-sm">
+                        <caption className="sr-only">{`${meta.label} sensitivity`}</caption>
                         <thead>
                           <tr className="border-b border-paper-300 text-xs text-ink-400">
                             <th className="px-4 py-2.5 text-left font-semibold">{meta.label}</th>

@@ -218,9 +218,11 @@ export function SubscriptionSection() {
 
       {mine.invoices.length > 0 && (
         <div className="mt-6">
-          <h3 className="overline mb-2 text-ink-400">Invoices</h3>
+          <h3 id="invoices-heading" className="overline mb-2 text-ink-400">
+            Invoices
+          </h3>
           <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
-            <table className="w-full min-w-[480px] text-sm">
+            <table className="w-full min-w-[480px] text-sm" aria-labelledby="invoices-heading">
               <tbody>
                 {mine.invoices.map((inv) => (
                   <tr key={inv.id} className="border-b border-paper-200 last:border-0">
@@ -354,6 +356,7 @@ function AdminBillingDashboard() {
       </div>
       <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[560px] text-sm">
+          <caption className="sr-only">Subscribers</caption>
           <thead>
             <tr className="border-b border-paper-300 text-left">
               <th className="overline px-4 py-3 font-semibold text-ink-400">Customer</th>

@@ -187,9 +187,11 @@ export function MonitoringTab() {
 
           {data.current && data.monitor && (
             <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
-              <h3 className="overline mb-3 text-ink-400">Baseline vs current</h3>
+              <h3 id="baseline-vs-current-heading" className="overline mb-3 text-ink-400">
+                Baseline vs current
+              </h3>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full text-sm" aria-labelledby="baseline-vs-current-heading">
                   <thead>
                     <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
                       <th className="py-1.5 pr-3">Metric</th>

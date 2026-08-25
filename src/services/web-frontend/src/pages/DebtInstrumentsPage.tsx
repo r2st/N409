@@ -442,6 +442,7 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
         <div className="rounded-lg border border-paper-200 bg-surface p-4">
           <h2 className="mb-2 text-sm font-semibold text-ink-700">Sensitivity</h2>
           <table className="w-full text-sm">
+            <caption className="sr-only">Sensitivity to rate shifts</caption>
             <thead>
               <tr className="border-b border-paper-300 text-left text-xs uppercase text-ink-500">
                 <th className="py-1.5">Shift</th>
@@ -469,8 +470,10 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
       {/* Valuation history */}
       {valuations.length > 0 && (
         <div className="rounded-lg border border-paper-200 bg-surface p-4">
-          <h2 className="mb-2 text-sm font-semibold text-ink-700">Valuation history</h2>
-          <table className="w-full text-sm">
+          <h2 id="valuation-history-heading" className="mb-2 text-sm font-semibold text-ink-700">
+            Valuation history
+          </h2>
+          <table className="w-full text-sm" aria-labelledby="valuation-history-heading">
             <thead>
               <tr className="border-b border-paper-300 text-left text-xs uppercase text-ink-500">
                 <th className="py-1.5">Date</th>
@@ -557,11 +560,13 @@ function ResultCard({
 
       {schedule && (
         <div>
-          <h3 className="overline mb-2 text-ink-400">Cash-flow schedule</h3>
+          <h3 id="cash-flow-schedule-heading" className="overline mb-2 text-ink-400">
+            Cash-flow schedule
+          </h3>
           {/* Both axes: six money columns clear a phone's content box by ~140px,
               and the schedule is long enough to want the capped height too. */}
           <div className="max-h-72 overflow-x-auto overflow-y-auto">
-            <table className="w-full min-w-[520px] text-xs">
+            <table className="w-full min-w-[520px] text-xs" aria-labelledby="cash-flow-schedule-heading">
               <thead className="sticky top-0 bg-paper-50">
                 <tr className="border-b border-paper-300 text-left text-ink-500">
                   <th className="py-1">#</th>

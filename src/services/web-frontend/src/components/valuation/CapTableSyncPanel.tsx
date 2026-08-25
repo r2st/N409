@@ -228,6 +228,7 @@ export function CapTableSyncPanel({
           </p>
           <div className="mt-3 max-h-64 overflow-y-auto rounded border border-amber-200 bg-surface">
             <table className="w-full text-sm">
+              <caption className="sr-only">Cap table sync conflicts</caption>
               <tbody>
                 {pending.outcome.diff.conflicts.map((c) => (
                   <tr key={c.security_class} className="border-b border-paper-200 last:border-0 align-top">

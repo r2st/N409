@@ -213,6 +213,7 @@ export function AdminDataRemediationPage() {
         ) : (
           <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full text-left text-sm">
+              <caption className="sr-only">Affected backsolve calculations</caption>
               <thead>
                 <tr className="border-b border-paper-300 text-xs text-ink-400">
                   <th className="w-10 py-2 pl-4" />
@@ -282,7 +283,9 @@ export function AdminDataRemediationPage() {
 
       {/* ── Stale QA reviews ─────────────────────────────────────────────── */}
       <section className="mt-12">
-        <h2 className="font-display text-xl font-semibold text-ink-900">Stale QA reviews</h2>
+        <h2 id="stale-qa-reviews-heading" className="font-display text-xl font-semibold text-ink-900">
+          Stale QA reviews
+        </h2>
         <p className="mt-1 max-w-3xl text-sm text-ink-500">{reviews.description}</p>
 
         {reviews.rows.length === 0 ? (
@@ -293,7 +296,7 @@ export function AdminDataRemediationPage() {
           </div>
         ) : (
           <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
-            <table className="w-full text-left text-sm">
+            <table className="w-full text-left text-sm" aria-labelledby="stale-qa-reviews-heading">
               <thead>
                 <tr className="border-b border-paper-300 text-xs text-ink-400">
                   <th className="py-2 pl-4 pr-4 font-semibold">Engagement</th>

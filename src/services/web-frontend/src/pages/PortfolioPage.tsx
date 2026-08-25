@@ -268,6 +268,7 @@ export function PortfolioPage() {
 
               <section className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                 <table className="w-full min-w-[640px] text-sm">
+                  <caption className="sr-only">Portfolio companies</caption>
                   <thead>
                     <tr className="border-b border-paper-300 text-left">
                       <th className="overline px-4 py-3 font-semibold text-ink-400">Company</th>

@@ -83,6 +83,7 @@ export function OverwritesSchemaPage() {
 
       <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[52rem] border-collapse text-sm">
+          <caption className="sr-only">Override fields</caption>
           <thead>
             <tr className="border-b border-paper-300 bg-paper-50 text-left text-xs font-semibold tracking-wide text-ink-400 uppercase">
               <th className="px-4 py-2.5">Field</th>

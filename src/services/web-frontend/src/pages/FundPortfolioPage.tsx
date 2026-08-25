@@ -341,6 +341,7 @@ function FundDetailView({ fundId }: { fundId: string }) {
           <h2 className="mb-2 text-sm font-semibold text-ink-700">ASC 820 fair-value hierarchy</h2>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[420px] text-sm">
+              <caption className="sr-only">Fair value hierarchy</caption>
               <thead>
                 <tr className="border-b border-paper-300 text-left text-xs uppercase text-ink-500">
                   <th className="py-1.5">Level 1 (quoted)</th>
@@ -609,13 +610,15 @@ function PositionRow({
             </div>
           </form>
           <div>
-            <h3 className="overline mb-1 text-ink-400">Mark history</h3>
+            <h3 id="mark-history-heading" className="overline mb-1 text-ink-400">
+              Mark history
+            </h3>
             {!marks ? (
               <Spinner />
             ) : marks.length === 0 ? (
               <p className="text-xs text-ink-400">No marks yet.</p>
             ) : (
-              <table className="w-full text-xs">
+              <table className="w-full text-xs" aria-labelledby="mark-history-heading">
                 <thead>
                   <tr className="border-b border-paper-200 text-left text-ink-500">
                     <th className="py-1">Date</th>

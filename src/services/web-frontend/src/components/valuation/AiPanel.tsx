@@ -97,6 +97,7 @@ function JobResult({ job }: { job: AiJob }) {
         <p className="mb-2 text-sm text-ink-600">Sector: {result.sector}</p>
       )}
       <table className="w-full text-sm">
+        <caption className="sr-only">Comparable companies</caption>
         <thead>
           <tr className="text-left text-xs text-ink-400">
             <th className="py-1 pr-4 font-semibold">Company</th>

@@ -416,13 +416,19 @@ export function ScenariosTab() {
       {saved && saved.scenarios.length > 0 && (
         <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="overline text-ink-400">Scenario comparison</h2>
+            <h2 id="scenario-comparison-heading" className="overline text-ink-400">
+              Scenario comparison
+            </h2>
             <span className="text-xs text-ink-400">
               {saved.scenarios.length} of {saved.max_scenarios}
             </span>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm" data-testid="scenario-comparison">
+            <table
+              className="w-full text-left text-sm"
+              data-testid="scenario-comparison"
+              aria-labelledby="scenario-comparison-heading"
+            >
               <thead>
                 <tr className="border-b border-paper-300 text-xs text-ink-400">
                   <th className="py-2 pr-4 font-semibold">Scenario</th>

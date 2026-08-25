@@ -335,13 +335,15 @@ export function AdminRetentionPage() {
 
       <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="overline text-ink-400">Retention policies</h2>
+          <h2 id="retention-policies-heading" className="overline text-ink-400">
+            Retention policies
+          </h2>
           <Button variant="secondary" onClick={runSweep} disabled={busy !== null}>
             {busy === 'sweep' ? 'Running sweep…' : 'Run archival sweep'}
           </Button>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[600px] text-sm">
+          <table className="w-full min-w-[600px] text-sm" aria-labelledby="retention-policies-heading">
             <thead>
               <tr className="border-b border-paper-300 text-left">
                 <th className="overline px-3 py-2 font-semibold text-ink-400">Data type</th>
@@ -423,7 +425,9 @@ export function AdminRetentionPage() {
       </section>
 
       <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
-        <h2 className="overline mb-4 text-ink-400">Legal holds</h2>
+        <h2 id="legal-holds-heading" className="overline mb-4 text-ink-400">
+          Legal holds
+        </h2>
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-sm">
             <span className="overline mb-1 block text-ink-400">Scope</span>
@@ -460,7 +464,7 @@ export function AdminRetentionPage() {
           </Button>
         </div>
         {holds.length > 0 && (
-          <table className="mt-4 w-full text-sm">
+          <table className="mt-4 w-full text-sm" aria-labelledby="legal-holds-heading">
             <tbody>
               {holds.map((h) => (
                 <tr key={h.id} className="border-b border-paper-200 last:border-0">

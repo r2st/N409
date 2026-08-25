@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { all, integer, numberMin, numberRange, useFormValidation } from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
@@ -50,13 +50,16 @@ function AxisTableView({
   /** Gap 8 — clean price-only view without the delta-vs-base row. */
   priceOnly?: boolean;
 }) {
+  const titleId = useId();
   const rowMeta = AXIS_META[table.rowAxis];
   const colMeta = AXIS_META[table.colAxis];
   return (
     <div>
-      <h2 className="mb-2 font-display text-lg font-semibold text-ink-900">{title}</h2>
+      <h2 id={titleId} className="mb-2 font-display text-lg font-semibold text-ink-900">
+        {title}
+      </h2>
       <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
-        <table className="w-full min-w-[560px] text-sm">
+        <table className="w-full min-w-[560px] text-sm" aria-labelledby={titleId}>
           <thead>
             <tr className="border-b border-paper-300">
               <th className="overline px-4 py-3 text-left font-semibold text-ink-400">

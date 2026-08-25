@@ -125,6 +125,7 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
       {links && links.length > 0 && (
         <div className="mt-5 overflow-x-auto">
           <table className="w-full min-w-[520px] text-sm">
+            <caption className="sr-only">Auditor access links</caption>
             <thead>
               <tr className="border-b border-paper-300 text-left">
                 <th className="overline px-3 py-2 font-semibold text-ink-400">Label</th>

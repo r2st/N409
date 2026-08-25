@@ -180,6 +180,7 @@ export function TemplatesPage() {
           <h2 className="overline mb-3 text-ink-400">{name}</h2>
           <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[640px] text-sm">
+              <caption className="sr-only">{`${name} versions`}</caption>
               <tbody>
                 {templates
                   .filter((t) => t.name === name)

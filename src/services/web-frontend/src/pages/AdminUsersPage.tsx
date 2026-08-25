@@ -828,6 +828,7 @@ export function AdminUsersPage() {
       {data && data.users.length > 0 && (
         <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[720px] text-sm">
+            <caption className="sr-only">Users</caption>
             <thead>
               <tr className="border-b border-paper-300 text-left">
                 <th className="overline px-5 py-3 font-semibold text-ink-400">User</th>
