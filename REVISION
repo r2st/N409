@@ -3876,3 +3876,157 @@
 #            a word. Form controls and dialogs were swept during the round and
 #            audited clean: 468 controls all reach a name, and no `fixed
 #            inset-0` overlay lacks `role="dialog"`.
+
+# N409 revision
+# commit:    8c5fa97
+# subject:   the icons a screen reader stopped to read, and the controls buried
+#            inside a picture
+# previous:  e37980c (the tables that would not say which table they were).
+#            R123 — the ninety pages that all called themselves the same thing,
+#            the workspace header that named the engagement you just left, and
+#            the navigations no screen reader was told about — shipped between
+#            the two and was never written up; its commits run e9bef1f…ccb6076.
+# includes:  3 commits — R124, which continues R122's question (what does this
+#            announce as) into the structure R122's own gap section named next:
+#            the 51 inline SVGs.
+#
+#            They divide cleanly and the two halves want opposite things. Five
+#            are pictures of data — the throughput trend, the value bridge, the
+#            donut, the cap-table diagram, the calculator's curve — and have to
+#            announce themselves. The other 46 are icons: a chevron beside
+#            "FAQ", a magnifier beside "Jump to…", the seventeen glyphs down
+#            the sidebar beside the words they repeat. Those have to announce
+#            nothing, because the word is already there.
+#
+#            36 of the icons said neither, and 3 of the 5 pictures had left
+#            something inside a leaf.
+#
+#            f7eb957 — the sweep. A bare `<svg>` is not skipped: HTML-AAM maps
+#              it to `graphics-document`, so it is a node in the tree with no
+#              name, and a screen reader enumerating the sidebar met seventeen
+#              of them interleaved with the links they decorate. Where the icon
+#              sits inside a control named from its own content — the FAQ
+#              toggles, the theme radios, every nav link — anything it draws is
+#              part of that control's name.
+#
+#              `aria-hidden="true"` on the tag, all 36. Four were already
+#              inside an `aria-hidden` wrapper and are now marked twice, on
+#              purpose: `AppLayout`'s `icons` map and `ThemeToggle`'s `OPTIONS`
+#              hold the glyph as a value in a table and the wrapper is written
+#              in a different component, so the local claim is the only one a
+#              reviewer can check without opening a second file. Nothing here
+#              was load-bearing — all 36 are decoration beside text or inside a
+#              button that already carries an `aria-label` — so nothing that
+#              was being announced stopped being announced.
+#
+#            346d1d1 — the leaf. ARIA makes `role="img"` a leaf: user agents
+#              must not expose its descendants. Three of the five had content
+#              that existed only there.
+#
+#              The cap-table diagram is the one that matters. Every node inside
+#              it is a `role="button"` with `tabIndex={0}`, an `aria-label`
+#              naming the class and its fully-diluted percentage, and an
+#              Enter/Space handler — controls somebody built carefully, and all
+#              of them pruned before the name could be read. They stayed in the
+#              tab order regardless, because `tabIndex` is not an ARIA
+#              property: the diagram was a run of silent focus stops that
+#              opened a detail panel nothing announced. `role="group"` is a
+#              container, so the buttons survive. Each node also reports
+#              `aria-pressed` now, because focus stays on the node while the
+#              panel it opens is elsewhere on the page, and without it the
+#              press had no observable effect at all.
+#
+#              The donut drew its total in the middle of the ring and nowhere
+#              else — the legend lists the slices and never their sum — so the
+#              figure the design puts at the centre of the panel reached no
+#              screen reader. A leaf has one place to carry a figure and that
+#              is its label.
+#
+#              The vesting timeline announced "Vesting timeline" and not one
+#              number from the schedule. The bar above it gives today's
+#              percentage; which cliff, how much lands when, and when the rest
+#              follows were in the picture only. It gets the same
+#              `ChartDataTable` every other trend chart already had (R98).
+#
+#              The other two were already right, which is the useful half of
+#              the finding: the value bridge hides its SVG and tables the
+#              figures, and the calculator's curve puts p10, the median and p90
+#              in its own label. The pattern existed. It had not been applied
+#              three times.
+#
+#            8c5fa97 — the census. Four rules over every `<svg>`: hidden or
+#              named; a named one declares a role for the name to attach to;
+#              never both hidden and named; nothing interactive inside a
+#              `role="img"`. No allowlist — decoration opts out by saying
+#              `aria-hidden`, which is a claim a reviewer can argue with.
+#
+# method:    the first scan of this was ad hoc and over-reported. It called four
+#            SVGs bare that were hidden by a wrapping `<span aria-hidden>`,
+#            which only reading the call sites revealed. That miss is what
+#            settled the rule: `aria-hidden` on the tag rather than anywhere up
+#            the ancestor chain, because a rule that has to walk out of the file
+#            to answer is a rule a reviewer has to walk out of the file to
+#            check.
+#
+#            Rule 2 was first written as "declares `role="img"`" and failed the
+#            moment it ran, on the cap-table diagram that the commit before it
+#            had deliberately moved to `role="group"`. Cheap, but it is the same
+#            failure as a scan that passes vacuously: a rule can be precise,
+#            green on the day it lands, and still be asking the wrong question.
+#
+#            Deliberate break, both halves. On the fixes: restoring
+#            `role="img"`, dropping `aria-pressed`, reverting the donut label,
+#            and deleting the vesting table each fail the assertion written for
+#            them and nothing else. On the census: stripping one icon's
+#            `aria-hidden`, re-burying the diagram's buttons, dropping a chart's
+#            role, and naming the deliberately-hidden bridge each fail their own
+#            rule.
+#
+# gap:       jsdom does not model `graphics-document`, and testing-library gives
+#            a bare `<svg>` no role at all. So the harm rule 1 exists to prevent
+#            — a nameless node in the tree beside every link in the sidebar — is
+#            reasoned from the HTML-AAM mapping, not photographed. What the
+#            render does show is the other half: an unhidden `<svg>` puts its
+#            text into the accessible name of any control named from content.
+#            It shows it on a fixture, because none of the 36 icons draw text,
+#            so none of them polluted a name today. The tree position they
+#            occupied was real; the name pollution was latent.
+#
+#            The same limit applies to rule 4 and it is worse there, because the
+#            pruning it prevents is the whole bug. testing-library finds the
+#            cap-table buttons either way — it maps roles per element and does
+#            not prune a subtree — so the render asserts the shape (the nodes
+#            are reachable through the labelled container) and the browser
+#            behaviour is taken from the spec. A real AT would settle it; none
+#            of this round's evidence comes from one.
+#
+#            Rule 4 catches a *control* inside a leaf, not a *figure* inside
+#            one. Nothing automatic could have told us the donut's centre total
+#            appears nowhere else, or that the vesting curve was the only copy
+#            of the schedule; both took reading the component and asking what a
+#            leaf leaves. The two charts that were already right are the reason
+#            to think three is the whole list, and that is an argument, not a
+#            scan.
+#
+#            R122's gap named three structures. This round did the SVGs and
+#            swept the other two by hand.
+#
+#            The 16 `<dl>`s audit clean, but only after a correction worth
+#            recording: the first pass looked for `<dt>` and `<dd>` inside each
+#            `<dl>` and reported three without them — the cap-table detail
+#            panel, the valuation header, the auditor portal's assumptions. All
+#            three route their rows through a one-line helper (`Row`, `Meta`,
+#            `Fact`) that renders the pair, and each helper is in the same file
+#            a few hundred lines down. The markup is right. The scan that said
+#            otherwise is the same shape as the `aria-labelledby` rule R122
+#            wrote, in reverse: a structure assembled through an indirection is
+#            invisible to a scan that only reads the call site, and here that
+#            produced a false alarm rather than a false pass.
+#
+#            The badge vocabulary does not carry state as colour alone —
+#            `StateBadge` and `KindBadge` both render the word — and all nine
+#            `<img>` elements carry `alt`, four of them the empty `alt=""` that
+#            means decoration. Nothing in either is open.
+#
+#            None of those three got a census, so what is unguarded is not the
+#            state today but the next one added.
