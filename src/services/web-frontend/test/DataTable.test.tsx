@@ -29,19 +29,42 @@ describe('DataTable (F-4 P3)', () => {
   });
 
   it('shows the empty state spanning all columns when there are no rows', () => {
-    render(<DataTable columns={COLUMNS} rows={[]} rowKey={(r) => r.id} empty="No valuations yet" />);
+    render(
+      <DataTable
+        columns={COLUMNS}
+        rows={[]}
+        rowKey={(r) => r.id}
+        empty="No valuations yet"
+        caption="Valuations"
+      />,
+    );
     const cell = screen.getByText('No valuations yet');
     expect(cell).toHaveAttribute('colspan', String(COLUMNS.length));
   });
 
   it('falls back to String(row[key]) when no render is given', () => {
-    render(<DataTable columns={[{ key: 'company', header: 'Company' }]} rows={ROWS} rowKey={(r) => r.id} />);
+    render(
+      <DataTable
+        columns={[{ key: 'company', header: 'Company' }]}
+        rows={ROWS}
+        rowKey={(r) => r.id}
+        caption="Valuations"
+      />,
+    );
     expect(screen.getByText('Globex')).toBeInTheDocument();
   });
 
   it('invokes onRowClick with the clicked row', async () => {
     const onRowClick = vi.fn();
-    render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} onRowClick={onRowClick} />);
+    render(
+      <DataTable
+        columns={COLUMNS}
+        rows={ROWS}
+        rowKey={(r) => r.id}
+        onRowClick={onRowClick}
+        caption="Valuations"
+      />,
+    );
     await userEvent.click(screen.getByText('Acme'));
     expect(onRowClick).toHaveBeenCalledWith(ROWS[0]);
   });
@@ -60,6 +83,7 @@ describe('DataTable (F-4 P3)', () => {
           rowKey={(r) => r.id}
           onRowClick={vi.fn()}
           rowHref={(r) => `/valuations/${r.id}`}
+          caption="Valuations"
         />
       </MemoryRouter>,
     );
@@ -77,7 +101,7 @@ describe('DataTable (F-4 P3)', () => {
   it('links nothing when the table leads nowhere', () => {
     render(
       <MemoryRouter>
-        <DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} />
+        <DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} caption="Valuations" />
       </MemoryRouter>,
     );
     expect(screen.queryAllByRole('link')).toHaveLength(0);

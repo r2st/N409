@@ -872,7 +872,7 @@ const alignClass = { left: 'text-left', right: 'text-right', center: 'text-cente
 
 /**
  * Shared semantic table primitive (audit F-4 P3): each list page re-implemented
- * its own `<table>`. One accessible table (scoped `<th>`, optional caption, an
+ * its own `<table>`. One accessible table (scoped `<th>`, a required caption, an
  * empty-state row) that scrolls horizontally inside its own container so the
  * page body never scrolls sideways on mobile.
  */
@@ -888,7 +888,13 @@ export function DataTable<T>({
   columns: Array<Column<T>>;
   rows: T[];
   rowKey: (row: T, index: number) => string;
-  caption?: string;
+  /**
+   * The table's accessible name. Required, not optional: this is the one
+   * table on the platform that had a name available and let a caller skip it,
+   * and a screen reader announces the result as "table" — indistinguishable
+   * from the next table on the page.
+   */
+  caption: string;
   empty?: ReactNode;
   onRowClick?: (row: T) => void;
   /**
@@ -905,7 +911,7 @@ export function DataTable<T>({
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm">
-        {caption && <caption className="sr-only">{caption}</caption>}
+        <caption className="sr-only">{caption}</caption>
         <thead>
           <tr className="border-b border-paper-300 text-left">
             {columns.map((col) => (
