@@ -124,9 +124,9 @@ function displayValue(field: IntakeField, value: unknown): string {
   if (field.type === 'select') return String(value).replace(/_/g, ' ');
   if (field.type === 'number') return Number(value).toLocaleString();
   if (field.type === 'date') {
-    // Through `formatDate`, not `new Date(...).toLocaleDateString()`: an intake
-    // date answer is a `YYYY-MM-DD` calendar day, and parsing that as an
-    // instant dates it a day early for every client west of Greenwich.
+    // Through `formatDate` rather than a Date built here: an intake date
+    // answer is a `YYYY-MM-DD` calendar day, and parsing that as an instant
+    // dates it a day early for every client west of Greenwich.
     const shown = formatDate(String(value));
     return shown === '—' ? String(value) : shown;
   }
@@ -434,8 +434,8 @@ export function ClientIntakePage() {
             Thank you — that’s everything
           </h1>
           <p className="mt-2 text-sm text-ink-500">
-            {firm.name} received your answers on {new Date(submittedAt).toLocaleDateString()}. Your valuation
-            team will be in touch if anything needs following up.
+            {firm.name} received your answers on {formatDate(submittedAt)}. Your valuation team will be in
+            touch if anything needs following up.
           </p>
         </div>
         <Review sections={data.sections} answers={answers} />

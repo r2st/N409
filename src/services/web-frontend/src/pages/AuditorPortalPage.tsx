@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AuthShell } from '../components/AuthShell';
 import { HelpIcon } from '../components/HelpIcon';
 import { ErrorNote, Spinner } from '../components/ui';
-import { moneyFormatter } from '../lib/format';
+import { formatDate, moneyFormatter } from '../lib/format';
 import { sanitizeHtml } from '../lib/m2';
 
 interface Section {
@@ -90,9 +90,7 @@ export function AuditorPortalPage() {
       <p className="tnum mt-1 text-sm text-ink-400">
         {bundle.valuation.number} · {bundle.valuation.kind.toUpperCase()} · {bundle.valuation.state}
       </p>
-      <p className="mt-1 text-xs text-ink-400">
-        Access expires {new Date(bundle.access_expires_at).toLocaleDateString()}
-      </p>
+      <p className="mt-1 text-xs text-ink-400">Access expires {formatDate(bundle.access_expires_at)}</p>
 
       {bundle.conclusion && (
         <section className="mt-6 flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">

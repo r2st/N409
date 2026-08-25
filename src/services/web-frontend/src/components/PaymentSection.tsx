@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
-import { formatMoney } from '../lib/format';
+import { formatDate, formatMoney } from '../lib/format';
 import type { Payment, PaymentQuote, Valuation } from '../lib/types';
 import { Button, ErrorNote } from './ui';
 
@@ -245,7 +245,7 @@ function settlementNote(p: Payment): string | null {
     const full = refunded >= toCents(p.amount_cents);
     parts.push(
       `${full ? 'Refunded' : 'Partially refunded'} ${formatMoney(refunded, p.currency)}${
-        p.refunded_at ? ` on ${new Date(p.refunded_at).toLocaleDateString()}` : ''
+        p.refunded_at ? ` on ${formatDate(p.refunded_at)}` : ''
       }`,
     );
   }
@@ -315,13 +315,7 @@ export function PaymentHistory({ valuation }: { valuation: Valuation }) {
           <tbody>
             {payments.map((p) => (
               <tr key={p.id} className="border-b border-paper-200 last:border-0">
-                <td className="tnum py-2.5 text-ink-800">
-                  {new Date(p.created_at).toLocaleDateString(undefined, {
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric',
-                  })}
-                </td>
+                <td className="tnum py-2.5 text-ink-800">{formatDate(p.created_at)}</td>
                 <td className="tnum py-2.5 text-ink-900">{formatMoney(p.amount_cents, p.currency)}</td>
                 <td className="py-2.5">
                   <span

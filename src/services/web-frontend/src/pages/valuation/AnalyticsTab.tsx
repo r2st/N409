@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
-import { ordinal } from '../../lib/format';
+import { formatDate, ordinal } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { CHART_COLORS, LineChart } from '../../components/charts';
 import { EmptyState, ErrorNote, LoadingBlock, Skeleton, SkeletonText } from '../../components/ui';
@@ -31,7 +31,7 @@ interface AnalyticsResponse {
 const money = (v: number) => `$${v.toFixed(2)}`;
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
 const mult = (v: number) => `${v.toFixed(1)}×`;
-const label = (p: Point) => p.valuation_number ?? new Date(p.as_of).toLocaleDateString();
+const label = (p: Point) => p.valuation_number ?? formatDate(p.as_of);
 
 /**
  * Valuation analytics dashboard (feature 5): FMV / DLOM / volatility / revenue-
