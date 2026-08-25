@@ -2,7 +2,7 @@ import type pg from 'pg';
 import { isUlid, newUlid, problems, TtlCache } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { likeContains, userFullNameSql } from '../db/like.js';
-import { diffRecords, eventLabel } from '../domain/auditTrail.js';
+import { CLIENT_VISIBLE_EVENT_TYPES, diffRecords, eventLabel } from '../domain/auditTrail.js';
 import { type Cursor, cursorAtSql, encodeCursor, keysetAfterSql, pageFrom } from '../domain/pagination.js';
 import {
   EVENT_TYPES,
@@ -926,6 +926,14 @@ export async function dashboardActivity(
   pool: pg.Pool,
   scope: ValuationScope,
   limit: number,
+  /**
+   * Whether the reader may see analyst tooling. False drops both halves of the
+   * internal vocabulary: `valuation_events` narrows to the catalog's
+   * client-visible types, and the `admin_events` branch is dropped whole —
+   * every admin type is an ops action on someone's engagement, and the feed
+   * named them to clients by word-splitting the raw type.
+   */
+  includeInternal = true,
 ): Promise<
   Array<{
     id: string;
@@ -947,6 +955,29 @@ export async function dashboardActivity(
 > {
   if (scope.kind === 'none') return [];
   const { whereSql, params } = buildValuationWhere(scope, {}, 'v.');
+  // Both UNION branches reference the same scope placeholders, so the params
+  // are passed once. Appending a second copy would leave the second branch
+  // still pointing at the first — correct by accident, and one edit away from
+  // a partner-scoped feed that silently stops being scoped. Anything added
+  // below is therefore numbered *after* them.
+  const args: unknown[] = [...params];
+
+  let visibleTypes = '';
+  if (!includeInternal) {
+    args.push([...CLIENT_VISIBLE_EVENT_TYPES]);
+    visibleTypes = `${whereSql ? ' AND' : ' WHERE'} e.type = ANY($${args.length})`;
+  }
+  const adminBranch = includeInternal
+    ? `
+         UNION ALL
+         SELECT a.id, 'admin' AS scope, a.type, a.actor_type::text AS actor_type, a.actor_id,
+                v.id AS valuation_id, v.company_name, v.number, a.occurred_at
+           FROM admin_events a
+           JOIN valuations v ON v.id = a.subject_id
+           ${whereSql}${whereSql ? ' AND' : 'WHERE'} a.subject_type = 'valuation'`
+    : '';
+  args.push(limit);
+
   const { rows } = await pool.query(
     `SELECT s.*, u.email AS actor_email
        FROM (
@@ -954,22 +985,12 @@ export async function dashboardActivity(
                 v.id AS valuation_id, v.company_name, v.number, e.occurred_at
            FROM valuation_events e
            JOIN valuations v ON v.id = e.valuation_id
-           ${whereSql}
-         UNION ALL
-         SELECT a.id, 'admin' AS scope, a.type, a.actor_type::text AS actor_type, a.actor_id,
-                v.id AS valuation_id, v.company_name, v.number, a.occurred_at
-           FROM admin_events a
-           JOIN valuations v ON v.id = a.subject_id
-           ${whereSql}${whereSql ? ' AND' : 'WHERE'} a.subject_type = 'valuation'
+           ${whereSql}${visibleTypes}${adminBranch}
        ) s
        LEFT JOIN users u ON u.id = s.actor_id
       ORDER BY s.occurred_at DESC, s.id DESC
-      LIMIT $${params.length + 1}`,
-    // Both UNION branches reference the same scope placeholders, so the params
-    // are passed once. Appending a second copy would leave the second branch
-    // still pointing at the first — correct by accident, and one edit away from
-    // a partner-scoped feed that silently stops being scoped.
-    [...params, limit],
+      LIMIT $${args.length}`,
+    args,
   );
   return rows.map((row) => ({ ...row, label: eventLabel(row.type as string) })) as never;
 }

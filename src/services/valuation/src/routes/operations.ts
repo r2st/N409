@@ -75,7 +75,12 @@ const ACTIVITY_LIMIT = 20;
 async function loadBands(pool: pg.Pool, scope: ReturnType<typeof valuationScope>, side: 'admin' | 'user') {
   const [buckets, activity, throughput, sla] = await Promise.all([
     namedBucketBreakdown(pool, scope, {}, side),
-    dashboardActivity(pool, scope, ACTIVITY_LIMIT),
+    // `side` is already the ops/not-ops split — the same principal fact the
+    // audit trail calls `includeInternal`. This dashboard is not ops-only: a
+    // client with one engagement gets the bands too, and the feed was naming
+    // every analyst event on it, `overwrite_applied` and `review_decision`
+    // included, by word-splitting the raw type.
+    dashboardActivity(pool, scope, ACTIVITY_LIMIT, side === 'admin'),
     publishThroughput(pool, scope, THROUGHPUT_WEEKS),
     slaBreaches(pool, scope),
   ]);

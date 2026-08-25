@@ -81,7 +81,13 @@ export const EVENT_CATALOG = {
   // ── Lifecycle ───────────────────────────────────────────────────────────
   valuation_created: D('Valuation created', 'lifecycle', 'notice', 'client'),
   valuation_updated: D('Valuation details updated', 'lifecycle', 'notice', 'client'),
-  valuation_cloned: D('Valuation cloned', 'lifecycle', 'notice'),
+  // Client-visible for the same reason `valuation_created` is: it is the
+  // creation event of the new engagement, and a client may clone their own.
+  // Marked internal until R128, when pushing the catalog's visibility rule
+  // into the events route made a client unable to see the engagement they had
+  // just created. The payload names only the source they already own — its id,
+  // its number, and how many rows came across.
+  valuation_cloned: D('Valuation cloned', 'lifecycle', 'notice', 'client'),
   valuation_completed: D('Valuation completed', 'lifecycle', 'critical', 'client'),
   state_changed: D('Stage changed', 'lifecycle', 'notice', 'client'),
   engagement_started: D('Engagement started', 'lifecycle', 'info', 'client'),
@@ -180,6 +186,28 @@ export type ValuationEventType = keyof typeof EVENT_CATALOG;
  * refuses to render them would be worse than one that names them vaguely.
  */
 const UNKNOWN_EVENT: EventDescriptor = D('Event recorded', 'other', 'info');
+
+/**
+ * Every event type a reader outside operations may see, derived from the
+ * `visibility` beside each descriptor rather than listed again here.
+ *
+ * The catalog has said which events are analyst tooling since it was written,
+ * and exactly one door applied it: `filterAuditEntries`, for the audit-trail
+ * route. Three other routes read the same spine — the progress timeline with
+ * its own small allow-list, the evidence bundle and the engagement panel behind
+ * ops-only guards — and `GET /valuations/:id/events` with neither. A client who
+ * owned the engagement could read `overwrite_applied`, `review_decision`,
+ * `qa_review_completed` and every internal `comment_added`, payloads included:
+ * 37 of the catalog's 66 types, on a route whose neighbours all gate them.
+ *
+ * Exported as a type list so the rule can be pushed into SQL. Filtering the
+ * rows after a `LIMIT` would hand a client a short page and call it the newest
+ * N; `listEvents({ types })` asks the database the question the reader is
+ * actually allowed to ask, and the (type) index from 0047 serves it.
+ */
+export const CLIENT_VISIBLE_EVENT_TYPES: readonly ValuationEventType[] = Object.entries(EVENT_CATALOG)
+  .filter(([, descriptor]) => descriptor.visibility === 'client')
+  .map(([type]) => type as ValuationEventType);
 
 /** Catalog lookup that never throws — unknown types degrade to a safe default. */
 export function describeEventType(type: string): EventDescriptor {

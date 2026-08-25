@@ -270,6 +270,13 @@ const REVIEWED: Record<string, string[]> = {
     "orderBySql(filters.sort, 'v.')",
     'ownerRef',
     'predicate',
+    // The dashboard feed's two visibility fragments. `visibleTypes` is a
+    // literal `e.type = ANY($n)` whose only variable part is the placeholder
+    // number, and the array itself is bound onto `args`; `adminBranch` is a
+    // constant SQL string chosen by a boolean, interpolating only `whereSql`,
+    // which is reviewed on its own line above.
+    'adminBranch',
+    'visibleTypes',
     'readCol',
     'scopeClause',
     'unreadSql',

@@ -22,7 +22,7 @@ import { STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import { NAMED_BUCKET_KEYS, type NamedBucketKey } from '../domain/workflow.js';
 import { isTagSlug } from '../domain/valuationTags.js';
 import { EVENT_PAGE_LIMIT, listEvents } from '../events/record.js';
-import { eventLabel } from '../domain/auditTrail.js';
+import { CLIENT_VISIBLE_EVENT_TYPES, eventLabel } from '../domain/auditTrail.js';
 import {
   createValuation,
   findValuationById,
@@ -421,7 +421,18 @@ export function registerValuationRoutes(
     // One more than asked for, so "there are older events" is answered by the
     // same query rather than by a second COUNT over the same rows.
     const { limit } = parsed.data;
-    const rows = await listEvents(deps.pool, id, { limit: limit + 1 });
+    // The visibility half of the same question. The catalog marks 37 of its 66
+    // types as analyst tooling, and until now this route was the only door onto
+    // the spine that did not ask: the audit trail filters them for non-ops, the
+    // progress timeline reads a client allow-list, the evidence bundle and the
+    // engagement panel are ops-only, and this one handed a client-owner
+    // `overwrite_applied` and every internal `comment_added` with its payload.
+    // Pushed into the query rather than applied to the page, so `limit` and
+    // `truncated` still describe what the reader is allowed to see.
+    const rows = await listEvents(deps.pool, id, {
+      limit: limit + 1,
+      ...(isOps(principal) ? {} : { types: CLIENT_VISIBLE_EVENT_TYPES }),
+    });
     return {
       // `label` travels with the row: this panel used to name events from a
       // map in the frontend that had drifted from the catalog the change log
