@@ -17,7 +17,7 @@ type InstrumentType = 'bond' | 'term_loan' | 'convertible' | 'safe' | 'credit_sp
 
 const money = (v: number, currency: string) => moneyFormatter(currency, { maximumFractionDigits: 2 })(v);
 
-const TYPE_LABELS: Record<InstrumentType, string> = {
+export const TYPE_LABELS: Record<InstrumentType, string> = {
   bond: 'Bond',
   term_loan: 'Term loan',
   convertible: 'Convertible note',
@@ -28,8 +28,49 @@ const TYPE_LABELS: Record<InstrumentType, string> = {
 const YTM_TIP =
   'Yield to maturity — the annual return the market demands. Every cash flow is discounted at this rate; a yield above the coupon prices the instrument at a discount, below it at a premium.';
 
+/**
+ * The rate each instrument type's fair value actually moves with.
+ *
+ * Every type prices off a different one, and shifting a key the instrument does
+ * not carry does not fail loudly — it reads `undefined`, walks from a base of
+ * zero, and draws five rows of the same number, which is a picture of an
+ * instrument with no rate sensitivity at all. That was the convertible and the
+ * SAFE; the credit-spread note was worse, because its rate lives on the credit
+ * terms rather than in `params`, so the button sent a `market_yield` that
+ * `credit_spread_valuation` — whose arguments are keyword-only — rejected
+ * outright, and "yield sensitivity" was an error message on that type.
+ *
+ * A `Record<InstrumentType, …>` rather than a switch with a default, because a
+ * default is how three types came to draw the flat line: it answers for types
+ * nobody has thought about yet. A sixth type now fails to compile until someone
+ * says which rate it prices off — the same shape `PARAM_FIELDS` above already
+ * has, and for the same reason.
+ */
+export const RATE_KEYS: Record<
+  InstrumentType,
+  (
+    params: Record<string, string>,
+    creditTerms: CreditTerms | null,
+  ) => {
+    key: string;
+    base: number;
+  }
+> = {
+  bond: (params) => ({ key: 'market_yield', base: Number(params.market_yield ?? 0) }),
+  term_loan: (params) => ({ key: 'market_yield', base: Number(params.market_yield ?? 0) }),
+  convertible: (params) => ({ key: 'credit_spread', base: Number(params.credit_spread ?? 0) }),
+  safe: (params) => ({ key: 'discount', base: Number(params.discount ?? 0) }),
+  // The benchmark, not the spread: a rate sensitivity holds the issuer's credit
+  // constant and moves the curve under it. It is stored on the credit terms,
+  // which the engine merges over `params` on every run.
+  credit_spread: (_params, creditTerms) => ({
+    key: 'benchmark_yield',
+    base: Number(creditTerms?.benchmark_yield ?? 0),
+  }),
+};
+
 /** Per-type parameter fields (key, label, default). `tip` shows a field tooltip. */
-const PARAM_FIELDS: Record<
+export const PARAM_FIELDS: Record<
   InstrumentType,
   Array<{ key: string; label: string; def: string; bool?: boolean; tip?: string }>
 > = {
@@ -374,19 +415,9 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
    * call outright. "Yield sensitivity" was an error message on that type.
    */
   const shiftedRate = (): { key: string; base: number } => {
-    switch (instrument?.instrument_type) {
-      case 'convertible':
-        return { key: 'credit_spread', base: Number(params.credit_spread ?? 0) };
-      case 'safe':
-        return { key: 'discount', base: Number(params.discount ?? 0) };
-      case 'credit_spread':
-        // The benchmark, not the spread: a rate sensitivity holds the issuer's
-        // credit constant and moves the curve under it. It is stored on the
-        // credit terms, which the engine merges over `params` on every run.
-        return { key: 'benchmark_yield', base: Number(creditTerms?.benchmark_yield ?? 0) };
-      default:
-        return { key: 'market_yield', base: Number(params.market_yield ?? 0) };
-    }
+    const type = instrument?.instrument_type;
+    if (!type) return { key: 'market_yield', base: Number(params.market_yield ?? 0) };
+    return RATE_KEYS[type](params, creditTerms);
   };
 
   const runSensitivity = async () => {

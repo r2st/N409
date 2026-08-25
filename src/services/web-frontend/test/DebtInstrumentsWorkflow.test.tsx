@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { DebtInstrumentsPage } from '../src/pages/DebtInstrumentsPage';
+import { DebtInstrumentsPage, PARAM_FIELDS, RATE_KEYS, TYPE_LABELS } from '../src/pages/DebtInstrumentsPage';
 
 /**
  * The Debt Instruments workspace end to end (feature: Debt Valuation Engine).
@@ -570,6 +570,35 @@ describe('DebtInstrumentsPage — sensitivity', () => {
     // have produced five identical rows and looked like a flat curve.
     const overrides = calls.filter((c) => c.path.endsWith('/value')).map((c) => c.body?.overrides);
     expect(overrides.every((o) => 'credit_spread' in (o as object))).toBe(true);
+  });
+
+  it('shifts a rate the instrument type actually carries, for every type', () => {
+    // The mapping used to be a switch with a `market_yield` default, which is
+    // how three of the five types came to shift a key they had no field for:
+    // the override read `undefined`, the walk started from a base of zero, and
+    // five identical rows drew a curve going flat. A default answers for types
+    // nobody has thought about yet, so there is none — a sixth type fails to
+    // compile until someone says which rate it prices off.
+    //
+    // `benchmark_yield` is the one legitimate off-params answer: it lives on
+    // the credit terms, which the service merges over `params` on every run.
+    const CREDIT_TERM_KEYS = ['benchmark_yield', 'spread'];
+    expect(Object.keys(RATE_KEYS).sort()).toEqual(Object.keys(TYPE_LABELS).sort());
+    for (const type of Object.keys(TYPE_LABELS) as Array<keyof typeof TYPE_LABELS>) {
+      const { key } = RATE_KEYS[type]({}, null);
+      const carried = PARAM_FIELDS[type].map((f) => f.key);
+      expect([...carried, ...CREDIT_TERM_KEYS], `${type} shifts ${key}`).toContain(key);
+    }
+  });
+
+  it('walks the market yield on a term loan', () => {
+    // The one type that shares the bond's answer, asserted rather than assumed:
+    // it reached `market_yield` through the old switch's default, which is the
+    // same route the broken types took.
+    expect(RATE_KEYS.term_loan({ market_yield: '0.09' }, null)).toEqual({
+      key: 'market_yield',
+      base: 0.09,
+    });
   });
 
   it('shifts the discount on a SAFE', async () => {
