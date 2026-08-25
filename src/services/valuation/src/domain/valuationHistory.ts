@@ -1,3 +1,6 @@
+import { DEFAULT_HEADLINE_LABELS, headlineLabels, isSpecialtyKind } from './specialty.js';
+import { VALUATION_KINDS, type ValuationKind } from './valuation.js';
+
 /**
  * "Every valuation of the same client as this one" — the filter behind the
  * report's FMV trend chart and the analytics time series.
@@ -71,3 +74,49 @@ export function sameCompany(a: CompanyHistoryRef, b: CompanyHistoryRef): boolean
   if (a.partner_id !== b.partner_id) return false;
   return a.partner_id !== null || a.user_id === b.user_id;
 }
+
+/**
+ * Which of a client's engagements belong on one FMV trend line.
+ *
+ * "Same company" is not the whole question. The chart on the summary page is
+ * titled "Fair market value per common share over time" and its note says the
+ * points are each prior valuation's *concluded FMV*, and it draws them from
+ * `calculations.fmv_per_share`. That column is a 409A column by name and every
+ * specialty engine writes into it, because it is the column the row has
+ * (`specialtyHeadline`) — so a UK company running an EMI scheme valuation
+ * alongside its 409A had the EMI's **actual** market value plotted on the same
+ * line. The AMV is the *restricted* figure, below the unrestricted value by the
+ * restriction discount, and it is not a fair market value per common share. The
+ * chart showed a fall the company did not have, on a signed deliverable, under
+ * a note asserting the points were something else.
+ *
+ * Decided by the caption rather than by a hand-written list of kinds: a run
+ * belongs on this line exactly when the figure in that column is the figure the
+ * line is named after, which is what {@link headlineLabels} already records for
+ * every kind and what the exhibits and the exported workbook already print. An
+ * ESOP run is on it — its per-share conclusion is a fair market value per share
+ * — and EMI and CSOP are not, along with every kind that concludes no per-share
+ * figure at all and so has nothing to plot.
+ */
+export const FMV_TREND_KINDS: readonly ValuationKind[] = VALUATION_KINDS.filter(
+  (kind) => headlineLabels(kind).perShare === DEFAULT_HEADLINE_LABELS.perShare,
+);
+
+/**
+ * Which of a client's engagements the analytics series can read at all.
+ *
+ * A different question from {@link FMV_TREND_KINDS} and a different answer, for
+ * a reason worth stating: the trend chart reads the typed *column*, which every
+ * engine populates, so it asks what the column holds. The analytics endpoint
+ * reads the stored `results` **document**, and every series it derives — DLOM,
+ * volatility, the applied market multiple, the comparable set behind the
+ * benchmark — is a 409A key. A specialty run persists `{ kind, specialty }` and
+ * has none of them, so it entered the series as a point with every value null
+ * and, worse, as `latest`: the benchmark block is computed from the most recent
+ * row alone, so a company whose newest engagement was an EMI valuation got an
+ * empty comparable set and a null percentile on its 409A's analytics — a
+ * measurement silently replaced by nothing rather than reported as unavailable.
+ */
+export const ENGINE_409A_KINDS: readonly ValuationKind[] = VALUATION_KINDS.filter(
+  (kind) => !isSpecialtyKind(kind),
+);

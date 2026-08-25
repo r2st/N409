@@ -53,7 +53,7 @@ import { findParams } from '../repos/params.js';
 import { findCurrentVolatilityEstimate } from '../repos/volatilityEstimates.js';
 import { findCurrentProjection } from '../repos/projections.js';
 import { findAppliedRollforwardRun } from '../repos/rollforwardRuns.js';
-import { sameCompanyFilter } from '../domain/valuationHistory.js';
+import { FMV_TREND_KINDS, sameCompanyFilter } from '../domain/valuationHistory.js';
 import { fitsInt4, int4Version } from '../domain/int4.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { findPartnerById } from '../repos/adminUsers.js';
@@ -257,6 +257,12 @@ async function brandingFor(
  * runs strictly before this one count: a report states what was known on the
  * day it was drawn, and a later revision appearing in its own history chart
  * would be a document that changes after signature.
+ *
+ * And only the kinds that conclude the figure this chart is named after —
+ * `FMV_TREND_KINDS`. `fmv_per_share` is a 409A column that every specialty
+ * engine also writes into, so without the restriction an EMI scheme valuation
+ * put its *actual* (restricted) market value on a line labelled "Concluded FMV
+ * of each prior valuation of this company".
  */
 async function historyFor(
   pool: pg.Pool,
@@ -278,8 +284,9 @@ async function historyFor(
           LIMIT 1
        ) c ON true
       WHERE ${scope.clause}
+        AND v.kind = ANY($4)
       ORDER BY c.created_at ASC`,
-    [...scope.params, before],
+    [...scope.params, before, FMV_TREND_KINDS],
   );
   return rows
     .map((r) => ({ as_of: new Date(r.as_of).toISOString(), fmv_per_share: Number(r.fmv_per_share) }))

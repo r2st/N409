@@ -14,6 +14,8 @@ import {
   type ValuationWorkbookInput,
   type WorkbookCalculation,
 } from '../../src/export/valuationWorkbook.js';
+import { ENGINE_409A_KINDS, FMV_TREND_KINDS } from '../../src/domain/valuationHistory.js';
+import { VALUATION_KINDS } from '../../src/domain/valuation.js';
 import { validateCapTable, type CapTableEntry } from '../../src/domain/capTable.js';
 import type { XlsxSheet } from '../../src/export/xlsx.js';
 
@@ -297,5 +299,48 @@ describe('headlineCheckNames', () => {
     expect(headlineCheckNames('ifrs2').equity).toBe('Total expense');
     expect(headlineCheckNames('emi').perShare).toBe('Actual market value (AMV) per share');
     expect(headlineCheckNames('qsbs')).toEqual({ equity: null, perShare: null });
+  });
+});
+
+/**
+ * Which kinds share a trend line, and which share a results vocabulary.
+ *
+ * Two different questions with two different answers, because the two surfaces
+ * read two different things: the report's chart reads the typed
+ * `fmv_per_share` column, which every engine populates, so it asks what the
+ * column *holds*; the analytics endpoint reads the `results` document, so it
+ * asks which engine *wrote* it. Both lists are derived rather than written out,
+ * so a new kind joins the right one by having a caption rather than by
+ * somebody remembering to edit a list.
+ */
+describe('company-history kind scopes', () => {
+  it('puts on the FMV trend line exactly the kinds that conclude an FMV per share', () => {
+    expect([...FMV_TREND_KINDS].sort()).toEqual(['409a', '718', 'debt', 'esop', 'fund'].sort());
+    // The AMV is the restricted figure and is not a fair market value per
+    // common share, whatever column it is stored in.
+    expect(FMV_TREND_KINDS).not.toContain('emi');
+    expect(FMV_TREND_KINDS).not.toContain('csop');
+    // And nothing that concludes no per-share figure at all.
+    for (const kind of ['820', 'gifts', 'ifrs2', 'fmv', 'qsbs', 'ppa', 'goodwill', 'ip'] as const) {
+      expect(FMV_TREND_KINDS, kind).not.toContain(kind);
+    }
+  });
+
+  it('agrees with the vocabulary rather than restating it', () => {
+    for (const kind of VALUATION_KINDS) {
+      expect(FMV_TREND_KINDS.includes(kind), kind).toBe(
+        headlineLabels(kind).perShare === DEFAULT_HEADLINE_LABELS.perShare,
+      );
+      expect(ENGINE_409A_KINDS.includes(kind), kind).toBe(!SPECIALTY_KINDS.includes(kind as never));
+    }
+  });
+
+  it('reads a specialty results document with nothing that can read it', () => {
+    // ESOP is the one kind on the trend line that is *not* on the analytics
+    // list, and that asymmetry is the point: its per-share column is a genuine
+    // FMV, and its results document is `{ kind, specialty }` with no 409A key
+    // in it.
+    expect(FMV_TREND_KINDS).toContain('esop');
+    expect(ENGINE_409A_KINDS).not.toContain('esop');
   });
 });

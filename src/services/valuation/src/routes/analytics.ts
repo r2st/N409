@@ -4,7 +4,7 @@ import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { buildAnalytics, type CalcInput } from '../domain/valuationAnalytics.js';
-import { sameCompanyFilter } from '../domain/valuationHistory.js';
+import { ENGINE_409A_KINDS, sameCompanyFilter } from '../domain/valuationHistory.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -35,6 +35,12 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: { pool: pg.P
     // `sameCompanyFilter` is shared with the report's trend chart: the two are
     // the same question, and answering it twice is how they came to disagree
     // with the firm console about which engagements belong to one client.
+    //
+    // Restricted to the kinds whose `results` this endpoint can actually read
+    // (`ENGINE_409A_KINDS`). Every figure below is a 409A key and a specialty
+    // run has none of them, so one would arrive as an all-null point — and, if
+    // it were the newest, as the row the whole benchmark block is computed
+    // from, emptying the comparable set of a 409A that has one.
     const scope = sameCompanyFilter(valuation);
     const { rows } = await deps.pool.query<{
       calculation_id: string;
@@ -53,8 +59,9 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: { pool: pg.P
             LIMIT 1
          ) c ON true
         WHERE ${scope.clause}
+          AND v.kind = ANY($3)
         ORDER BY c.created_at ASC`,
-      scope.params,
+      [...scope.params, ENGINE_409A_KINDS],
     );
 
     const calcs: CalcInput[] = rows.map((r) => ({
