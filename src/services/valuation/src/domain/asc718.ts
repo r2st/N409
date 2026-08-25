@@ -265,19 +265,78 @@ export function asc718Grant(grant: Asc718Grant): Asc718Result {
   };
 }
 
+export interface Asc718YearExpense {
+  /** The calendar year itself — 2027, not "year 2". */
+  year: number;
+  /** Expense recognized in that year, across every grant in the portfolio. */
+  expense: number;
+  /** Cumulative expense recognized through the end of that year. */
+  cumulative: number;
+}
+
 export interface Asc718Portfolio {
   grants: Asc718Result[];
   /** Grant-date fair value across all grants (net of forfeitures). */
   totalCompensationCost: number;
-  /** Straight-line expense aggregated by fiscal year offset from each grant. */
-  expenseByYear: Array<{ year: number; expense: number; cumulative: number }>;
+  /**
+   * Straight-line expense summed into the calendar years it is recognized in.
+   *
+   * See `asc718Portfolio` for why this is a calendar year rather than a
+   * service year, and `periodByCalendarYear` for how a period that straddles
+   * 31 December is divided.
+   */
+  expenseByCalendarYear: Asc718YearExpense[];
 }
 
 /**
- * Aggregate several grants into a portfolio expense view. `expenseByYear`
- * sums each grant's annual expense into year-from-grant buckets (year 1 = the
- * first twelve months of service), which is what the ASC 718 report note
- * tabulates.
+ * One amortization period's expense, divided among the calendar years its
+ * months fall in.
+ *
+ * Compensation cost accrues ratably over the requisite service period, so a
+ * month is the unit: an annual bucket running 15 July 2026 to 15 July 2027
+ * puts five and a half months in 2026 and six and a half in 2027, and the
+ * split is by whole months from the period's own start date. The last month
+ * absorbs the residual, so the pieces sum to the period exactly and the year
+ * totals still sum to `totalCompensationCost`.
+ *
+ * The year is read from `addMonths`, which clamps the day of month rather than
+ * overflowing it — but clamping only ever moves a date *within* its target
+ * month, so it can never carry a month across a year boundary. The year is
+ * whatever the month arithmetic says it is.
+ */
+function periodByCalendarYear(p: AmortizationPeriod): Array<[year: number, expense: number]> {
+  // `endMonth === startMonth` only for the degenerate zero-month schedule,
+  // whose single period is recognized whole on the grant date.
+  const months = Math.max(1, p.endMonth - p.startMonth);
+  const share = p.expense / months;
+  const out: Array<[number, number]> = [];
+  let assigned = 0;
+  for (let k = 0; k < months; k++) {
+    const slice = k === months - 1 ? round2(p.expense - assigned) : round2(share);
+    assigned = round2(assigned + slice);
+    out.push([Number(addMonths(p.startDate, k).slice(0, 4)), slice]);
+  }
+  return out;
+}
+
+/**
+ * Aggregate several grants into a portfolio expense view.
+ *
+ * `expenseByCalendarYear` is keyed on the calendar year the expense lands in.
+ * It used to be keyed on the service year — `Math.floor(startMonth / 12) + 1`,
+ * counted from each grant's own grant date — which is right for one grant and
+ * wrong for a portfolio, because the offsets are counted from different days.
+ * A company that granted in 2021 and again in 2026 had both first years summed
+ * into a row called "Service year 1", and the resulting four-row table implied
+ * the whole programme was expensed over four years when recognition actually
+ * ran from 2021 to 2030. Nothing in the table said which four. The ASC 718
+ * note discloses expense by reporting period, and a reporting period is a
+ * date range, not an offset.
+ *
+ * Years with no expense are omitted rather than filled with zeroes. Under
+ * service-year keys a gap was invisible and misread as continuity; under
+ * calendar-year keys every row names its own year, so a jump from 2024 to 2030
+ * reads as the gap it is.
  */
 export function asc718Portfolio(grants: Asc718Grant[]): Asc718Portfolio {
   const results = grants.map(asc718Grant);
@@ -286,13 +345,13 @@ export function asc718Portfolio(grants: Asc718Grant[]): Asc718Portfolio {
   const byYear = new Map<number, number>();
   for (const r of results) {
     for (const p of r.schedule) {
-      // Bucket by the service year the period falls in (month 0–11 → year 1).
-      const year = Math.floor(p.startMonth / 12) + 1;
-      byYear.set(year, (byYear.get(year) ?? 0) + p.expense);
+      for (const [year, expense] of periodByCalendarYear(p)) {
+        byYear.set(year, round2((byYear.get(year) ?? 0) + expense));
+      }
     }
   }
   let cumulative = 0;
-  const expenseByYear = [...byYear.keys()]
+  const expenseByCalendarYear = [...byYear.keys()]
     .sort((a, b) => a - b)
     .map((year) => {
       const expense = round2(byYear.get(year) ?? 0);
@@ -300,5 +359,5 @@ export function asc718Portfolio(grants: Asc718Grant[]): Asc718Portfolio {
       return { year, expense, cumulative };
     });
 
-  return { grants: results, totalCompensationCost: totalCost, expenseByYear };
+  return { grants: results, totalCompensationCost: totalCost, expenseByCalendarYear };
 }

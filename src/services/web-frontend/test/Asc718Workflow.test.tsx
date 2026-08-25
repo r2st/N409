@@ -967,7 +967,7 @@ describe('Asc718Tab — results', () => {
             expectedToVestOptions: 16000,
           },
         ],
-        expenseByYear: [],
+        expenseByCalendarYear: [],
       },
     });
 
@@ -1078,7 +1078,7 @@ describe('Asc718Tab — results', () => {
             expectedToVestOptions: 500,
           },
         ],
-        expenseByYear: [],
+        expenseByCalendarYear: [],
       },
     });
 

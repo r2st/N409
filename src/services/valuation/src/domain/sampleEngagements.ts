@@ -1787,10 +1787,13 @@ export function asc718SectionHtml(
     .join('');
 
   const first = portfolio.grants[0];
-  const scheduleRows = portfolio.expenseByYear
+  // The year is the calendar year the expense is recognized in, so the row
+  // names it. It used to read "Year 1", counted from each award's own grant
+  // date — a heading that means two different periods when two awards were
+  // granted on different days. See `asc718Portfolio`.
+  const scheduleRows = portfolio.expenseByCalendarYear
     .map(
-      (y) =>
-        `<tr><td>Year ${y.year}</td><td>${money(y.expense, 0)}</td><td>${money(y.cumulative, 0)}</td></tr>`,
+      (y) => `<tr><td>${y.year}</td><td>${money(y.expense, 0)}</td><td>${money(y.cumulative, 0)}</td></tr>`,
     )
     .join('');
 
@@ -1822,8 +1825,12 @@ export function asc718SectionHtml(
     rows +
     `<tr><td><strong>Total</strong></td><td></td><td></td><td></td><td></td><td></td><td><strong>${money(portfolio.totalCompensationCost, 0)}</strong></td></tr>` +
     '</tbody></table>' +
-    P('Expense is recognized over the requisite service periods as follows:') +
-    '<table><thead><tr><th>Service year</th><th>Expense</th><th>Cumulative</th></tr></thead><tbody>' +
+    P(
+      'Expense is recognized on a straight-line basis over each award’s requisite service period. ' +
+        'Cost accruing across a year end is apportioned to the years it is earned in, so the ' +
+        'amounts below are the expense recognized in each calendar year:',
+    ) +
+    '<table><thead><tr><th>Year</th><th>Expense</th><th>Cumulative</th></tr></thead><tbody>' +
     scheduleRows +
     '</tbody></table>' +
     P(

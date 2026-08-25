@@ -98,7 +98,7 @@ interface Asc718Response {
         totalCompensationCost: number;
         expectedToVestOptions: number;
       }>;
-      expenseByYear: Array<{ year: number; expense: number; cumulative: number }>;
+      expenseByCalendarYear: Array<{ year: number; expense: number; cumulative: number }>;
     } | null;
     espp: Array<{
       label: string | null;

@@ -207,13 +207,154 @@ describe('asc718Portfolio', () => {
     expect(p.grants).toHaveLength(2);
     const sum = p.grants.reduce((s, g) => s + g.totalCompensationCost, 0);
     expect(p.totalCompensationCost).toBeCloseTo(sum, 2);
-    // Years 1 and 2 receive expense from both grants (48- and 24-month vests).
-    expect(p.expenseByYear.length).toBeGreaterThanOrEqual(2);
-    const yearTotal = p.expenseByYear.reduce((s, y) => s + y.expense, 0);
+    const yearTotal = p.expenseByCalendarYear.reduce((s, y) => s + y.expense, 0);
     expect(yearTotal).toBeCloseTo(p.totalCompensationCost, 1);
     // Cumulative is monotonically increasing.
-    for (let i = 1; i < p.expenseByYear.length; i++) {
-      expect(p.expenseByYear[i]!.cumulative).toBeGreaterThanOrEqual(p.expenseByYear[i - 1]!.cumulative);
+    for (let i = 1; i < p.expenseByCalendarYear.length; i++) {
+      expect(p.expenseByCalendarYear[i]!.cumulative).toBeGreaterThanOrEqual(
+        p.expenseByCalendarYear[i - 1]!.cumulative,
+      );
+    }
+  });
+
+  /**
+   * The bucket key used to be `Math.floor(startMonth / 12) + 1` — a service
+   * year counted from each grant's own grant date. That is right for one grant
+   * and wrong for a portfolio: two awards granted five years apart both put
+   * their first twelve months into a row called "Service year 1", and the
+   * table came out four rows long for a programme expensed over ten.
+   */
+  const spacedGrants = [
+    {
+      label: 'old',
+      optionsGranted: 10_000,
+      grantDate: '2021-01-01',
+      vestingMonths: 48,
+      assumptions: {
+        grantDateFairValue: 2,
+        exercisePrice: 2,
+        expectedTermYears: 6,
+        volatility: 0.6,
+        riskFreeRate: 0.04,
+      },
+    },
+    {
+      label: 'new',
+      optionsGranted: 10_000,
+      grantDate: '2026-01-01',
+      vestingMonths: 48,
+      assumptions: {
+        grantDateFairValue: 2,
+        exercisePrice: 2,
+        expectedTermYears: 6,
+        volatility: 0.6,
+        riskFreeRate: 0.04,
+      },
+    },
+  ];
+
+  it('keys the schedule on the calendar year, not on an offset from each grant', () => {
+    const p = asc718Portfolio(spacedGrants);
+    const years = p.expenseByCalendarYear.map((y) => y.year);
+    // Every key is a year, not a 1-based ordinal.
+    expect(years.every((y) => y > 1900)).toBe(true);
+    expect(years[0]).toBe(2021);
+    expect(years[years.length - 1]).toBe(2029);
+    // Recognition runs 2021→2024 and 2026→2029; 2025 has no expense at all and
+    // is omitted rather than filled, because every row names its own year.
+    expect(years).not.toContain(2025);
+    expect(years).toEqual([2021, 2022, 2023, 2024, 2026, 2027, 2028, 2029]);
+  });
+
+  it('still totals to the compensation cost once the years are apart', () => {
+    const p = asc718Portfolio(spacedGrants);
+    const yearTotal = p.expenseByCalendarYear.reduce((s, y) => s + y.expense, 0);
+    expect(yearTotal).toBeCloseTo(p.totalCompensationCost, 2);
+    expect(p.expenseByCalendarYear[p.expenseByCalendarYear.length - 1]!.cumulative).toBeCloseTo(
+      p.totalCompensationCost,
+      2,
+    );
+  });
+
+  /**
+   * An annual bucket only lines up with a calendar year when the grant is
+   * dated 1 January. Every other grant date leaves cost accruing across 31
+   * December, and it belongs to the year it was earned in.
+   */
+  it('apportions a bucket that straddles a year end between both years', () => {
+    const p = asc718Portfolio([
+      {
+        optionsGranted: 12_000,
+        grantDate: '2026-07-01',
+        vestingMonths: 12,
+        amortizationFrequencyMonths: 12,
+        assumptions: {
+          grantDateFairValue: 2,
+          exercisePrice: 2,
+          expectedTermYears: 6,
+          volatility: 0.6,
+          riskFreeRate: 0.04,
+        },
+      },
+    ]);
+    // One annual bucket, 2026-07-01 → 2027-07-01: six months each side.
+    expect(p.expenseByCalendarYear.map((y) => y.year)).toEqual([2026, 2027]);
+    const half = p.totalCompensationCost / 2;
+    expect(p.expenseByCalendarYear[0]!.expense).toBeCloseTo(half, 1);
+    expect(p.expenseByCalendarYear[1]!.expense).toBeCloseTo(half, 1);
+  });
+
+  it('recognizes a zero-month schedule in the year of the grant', () => {
+    const p = asc718Portfolio([
+      {
+        optionsGranted: 1_000,
+        grantDate: '2026-03-09',
+        vestingMonths: 0,
+        assumptions: {
+          grantDateFairValue: 2,
+          exercisePrice: 2,
+          expectedTermYears: 6,
+          volatility: 0.6,
+          riskFreeRate: 0.04,
+        },
+      },
+    ]);
+    expect(p.expenseByCalendarYear).toHaveLength(1);
+    expect(p.expenseByCalendarYear[0]!.year).toBe(2026);
+    expect(p.expenseByCalendarYear[0]!.expense).toBeCloseTo(p.totalCompensationCost, 2);
+  });
+
+  /**
+   * Monthly buckets and annual buckets describe the same accrual, so they have
+   * to agree on what each calendar year holds — the frequency is a disclosure
+   * granularity, not a measurement choice.
+   */
+  it('reaches the same calendar-year totals at every amortization frequency', () => {
+    const base = {
+      optionsGranted: 30_000,
+      grantDate: '2026-05-20',
+      vestingMonths: 36,
+      assumptions: {
+        grantDateFairValue: 3,
+        exercisePrice: 2.5,
+        expectedTermYears: 6,
+        volatility: 0.55,
+        riskFreeRate: 0.04,
+      },
+    };
+    const annual = asc718Portfolio([{ ...base, amortizationFrequencyMonths: 12 }]);
+    for (const freq of [1, 3, 6] as const) {
+      const other = asc718Portfolio([{ ...base, amortizationFrequencyMonths: freq }]);
+      expect(other.expenseByCalendarYear.map((y) => y.year)).toEqual(
+        annual.expenseByCalendarYear.map((y) => y.year),
+      );
+      other.expenseByCalendarYear.forEach((y, i) => {
+        // Within rounding, not to the cent: each schedule's final period
+        // absorbs its own residual, and where that lands moves with the
+        // bucket size. A currency unit on a five-figure year is the artifact;
+        // a different measurement would be a different number.
+        expect(Math.abs(y.expense - annual.expenseByCalendarYear[i]!.expense)).toBeLessThan(1);
+      });
     }
   });
 });
