@@ -1226,3 +1226,147 @@ export const SAMPLE_CSOP_RESULT: SpecialtyResult = {
     failed_checks: ['individual_limit'],
   },
 };
+
+// ── Second payloads, for shapes one run cannot produce ───────────────────────
+
+/**
+ * The cash-settled half of IFRS 2, on a non-market performance condition.
+ *
+ * A second payload for one kind, and the reason is the block R134 found
+ * dropped: `remeasurement` only has contents when the award is a liability, so
+ * the equity-settled sample above carries `{required: false, basis: ...}` and
+ * nothing else. Its four figures — the fair value now, the liability now, the
+ * change through profit or loss — were unswept by any census while being the
+ * exact fields that finding was about. The condition is non-market, so
+ * `true_up` applies as well, which the equity-settled sample does not exercise.
+ * `app/engine/ifrs2.py: ifrs2_valuation`.
+ */
+export const SAMPLE_IFRS2_CASH_INPUTS = {
+  settlement: 'cash_settled',
+  vesting_condition: 'performance_non_market',
+  options_granted: 400000,
+  vesting_years: 3,
+  tranches: 3,
+  grant_date: '2026-03-31',
+  share_price: 1.2242,
+  exercise_price: 1.0,
+  expected_term_years: 5.0,
+  expected_volatility: 0.62,
+  risk_free_rate: 0.0418,
+  expected_forfeiture_rate: 0.06,
+  current_fair_value_per_award: 0.9125,
+} as const;
+
+export const SAMPLE_IFRS2_CASH_RESULT: SpecialtyResult = {
+  grant_date: '2026-03-31',
+  settlement: 'cash_settled',
+  vesting_condition: 'performance_non_market',
+  model: 'black_scholes',
+  fair_value_per_award: 0.7463202437730645,
+  options_granted: 400000,
+  grant_date_fair_value_total: 298528.0975092258,
+  expected_forfeiture_rate: 0.06,
+  forfeiture_determined: true,
+  expected_to_vest: 376000,
+  total_expense: 280616.41165867227,
+  attribution: 'graded',
+  tranches: 3,
+  expense_schedule: [
+    {
+      year: 1,
+      cumulative_pct: 0.611111111111111,
+      cumulative: 171487.80712474414,
+      period: 171487.80712474414,
+    },
+    {
+      year: 2,
+      cumulative_pct: 0.8888888888888888,
+      cumulative: 249436.81036326423,
+      period: 77949.00323852009,
+    },
+    {
+      year: 3,
+      cumulative_pct: 1,
+      cumulative: 280616.41165867227,
+      period: 31179.601295408036,
+    },
+  ],
+  remeasurement: {
+    required: true,
+    current_fair_value_per_award: 0.9125,
+    current_total: 343100,
+    change_in_liability: 62483.58834132773,
+    basis:
+      'cash-settled awards are liabilities remeasured to fair value at each reporting date, with the change recognised in profit or loss (IFRS 2.30-33)',
+  },
+  true_up: {
+    applies: true,
+    condition_in_fair_value: false,
+    basis:
+      'service and non-market performance conditions are not in the fair value (IFRS 2.19); the expense is trued up to the number of awards that actually vest',
+  },
+  warnings: [],
+};
+
+/**
+ * The cost approach, with all three obsolescence layers taken.
+ *
+ * The other IP sample is an income method, so `obsolescence` — named in R135 as
+ * a nested block nothing sweeps — had no payload at all. All three layers are
+ * non-zero because they compound: 10%, then 18% of what is left, then 7% of
+ * what is left after that, which is 31.4% of cost new and not the 35% a reader
+ * gets by adding them. `app/engine/intangibles.py: cost_approach`.
+ */
+export const SAMPLE_IP_COST_INPUTS = {
+  method: 'cost_approach',
+  params: {
+    replacement_cost: 4600000,
+    developer_profit_pct: 0.12,
+    opportunity_cost_pct: 0.05,
+    physical_obsolescence_pct: 0.1,
+    functional_obsolescence_pct: 0.18,
+    economic_obsolescence_pct: 0.07,
+  },
+} as const;
+
+export const SAMPLE_IP_COST_RESULT: SpecialtyResult = {
+  method: 'cost_approach',
+  replacement_cost_new: 5382000.000000001,
+  obsolescence: {
+    physical: 538200.0000000001,
+    functional: 871884.0000000001,
+    economic: 278034.1200000001,
+  },
+  fair_value: 3693881.880000001,
+};
+
+/**
+ * ASC 360-10 on an asset group that fails the recoverability screen.
+ *
+ * The goodwill sample cannot produce `recoverable`,
+ * `undiscounted_cash_flows_total` or `carrying_after` — they belong to the
+ * long-lived test, which is a different function behind the same endpoint and
+ * the same exhibit. Failing the screen on purpose: a group that passes it
+ * reports `impairment_loss: 0` however far fair value is below carrying, and
+ * the exhibit's screen row would read the same either way if it were never
+ * shown the failing case. `app/engine/impairment.py: long_lived_impairment`.
+ */
+export const SAMPLE_IMPAIRMENT_LONG_LIVED_INPUTS = {
+  test: 'long_lived',
+  asset_group: 'Fabrication line — Chandler',
+  carrying_amount: 18200000,
+  undiscounted_cash_flows: [3100000, 3050000, 2900000, 2700000, 2450000, 2100000],
+  fair_value: 14400000,
+} as const;
+
+export const SAMPLE_IMPAIRMENT_LONG_LIVED_RESULT: SpecialtyResult = {
+  standard: 'ASC 360-10',
+  asset_group: 'Fabrication line — Chandler',
+  carrying_amount: 18200000,
+  undiscounted_cash_flows_total: 16300000,
+  recoverable: false,
+  fair_value: 14400000,
+  impaired: true,
+  impairment_loss: 3800000,
+  carrying_after: 14400000,
+};
