@@ -79,7 +79,7 @@ export interface SelectorResult {
 }
 
 /** Display names, in tie-break (commercial likelihood) order. */
-const KIND_LABELS: ReadonlyArray<[ValuationKind, string]> = [
+export const KIND_LABELS: ReadonlyArray<[ValuationKind, string]> = [
   ['409a', 'IRC 409A valuation'],
   ['718', 'ASC 718 stock-based compensation'],
   ['fmv', 'Small-business fair market value'],

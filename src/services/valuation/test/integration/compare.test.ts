@@ -29,10 +29,11 @@ describe.skipIf(!dbUp)('valuation comparison endpoint', () => {
     company: string,
     results: Record<string, unknown> | null,
     currency = 'USD',
+    kind = '409a',
   ): Promise<ValuationRow> {
     const v = await createValuation(
       ctx.pool,
-      { kind: '409a', companyName: company, userId, currency },
+      { kind, companyName: company, userId, currency },
       { ...actor, actorId: userId },
     );
     if (results) {
@@ -164,6 +165,71 @@ describe.skipIf(!dbUp)('valuation comparison endpoint', () => {
     const res = await compare(first.id, sterling.id, owner.token);
     expect(res.statusCode).toBe(422);
     expect(res.json().detail).toMatch(/denominated differently/);
+  });
+
+  /*
+   * A specialty run persists `results = { kind, specialty: … }` and puts its
+   * headline in the calculation's typed columns, so none of the 409A keys the
+   * comparison reads exist on one. Two EMI runs used to come back with no
+   * groups at all, and the view read that as "every metric these two report is
+   * identical" — a claim about two conclusions that in fact differed.
+   */
+  it('compares two specialty runs on the engine payload they actually wrote', async () => {
+    const emiA = await seed(
+      owner.id,
+      'Ashcombe Devices',
+      { kind: 'emi', specialty: { umv_per_share: 2.25, amv_per_share: 1.8 } },
+      'GBP',
+      'emi',
+    );
+    const emiB = await seed(
+      owner.id,
+      'Ashcombe Devices',
+      { kind: 'emi', specialty: { umv_per_share: 2.5, amv_per_share: 2.0 } },
+      'GBP',
+      'emi',
+    );
+
+    const res = await compare(emiA.id, emiB.id, owner.token);
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+
+    expect(body.metric_count).toBeGreaterThan(0);
+    expect(body.changed_count).toBeGreaterThan(0);
+    const rows = new Map(
+      (body.groups as Array<{ rows: Array<{ key: string; delta_display: string | null }> }>)
+        .flatMap((g) => g.rows)
+        .map((r) => [r.key, r]),
+    );
+    expect(rows.get('specialty_amv_per_share')?.delta_display).toBe('+0.2');
+  });
+
+  it('refuses two kinds that measure different things', async () => {
+    const emi = await seed(owner.id, 'Ashcombe Devices', null, 'USD', 'emi');
+    const res = await compare(first.id, emi.id, owner.token);
+    expect(res.statusCode).toBe(422);
+    expect(res.json().detail).toMatch(/measure different things/);
+    // Named as the picker names them, not as raw kind codes.
+    expect(res.json().detail).toMatch(/EMI scheme valuation/);
+  });
+
+  it('compares two kinds that share the 409A engine', async () => {
+    const asc718 = await seed(owner.id, 'Northwind Robotics', { fmv_per_share: 1.6 }, 'USD', '718');
+    expect((await compare(first.id, asc718.id, owner.token)).statusCode).toBe(200);
+  });
+
+  /*
+   * Zero metrics is not zero differences. The view says "nothing to compare"
+   * off this count, because a comparison that read no metric has established
+   * nothing about whether the two agree.
+   */
+  it('reports no metrics rather than no differences when neither side computed', async () => {
+    const other = await seed(owner.id, 'Northwind Robotics', null);
+    const res = await compare(uncomputed.id, other.id, owner.token);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().metric_count).toBe(0);
+    expect(res.json().changed_count).toBe(0);
+    expect(res.json().groups).toEqual([]);
   });
 
   it('requires both ids', async () => {

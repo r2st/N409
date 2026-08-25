@@ -7,11 +7,13 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
 import {
   changedRows,
+  comparableKinds,
   compareValuations,
   comparisonCsv,
   headlineSummary,
   type CompareSide,
 } from '../domain/valuationCompare.js';
+import { KIND_LABELS } from '../domain/valuationSelector.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -53,6 +55,11 @@ function sideFor(valuation: ValuationRow, calculation: CalculationRow | null): C
   };
 }
 
+/** The product's own name for a kind, so the refusal reads as the picker does. */
+function kindLabel(kind: string): string {
+  return KIND_LABELS.find(([k]) => k === kind)?.[1] ?? kind;
+}
+
 export function registerCompareRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   const load = async (principal: Principal, id: string): Promise<ValuationRow> => {
     if (!isUlid(id)) throw problems.notFound();
@@ -83,6 +90,17 @@ export function registerCompareRoutes(app: FastifyInstance, deps: { pool: pg.Poo
     if (left.currency !== right.currency) {
       throw problems.unprocessable(
         `These valuations are denominated differently (${left.currency} and ${right.currency}) and cannot be compared side by side`,
+      );
+    }
+
+    // The same judgement one step further out. Each specialty engine writes its
+    // own result vocabulary (routes/specialty.ts persists it under
+    // `results.specialty`), so an EMI run and an IFRS 2 run share no metric at
+    // all — every row would be a figure against a dash, under a "Change"
+    // column that means "different product", not "the number moved".
+    if (!comparableKinds(left.kind, right.kind)) {
+      throw problems.unprocessable(
+        `A ${kindLabel(left.kind)} and a ${kindLabel(right.kind)} valuation measure different things and cannot be compared side by side`,
       );
     }
 
@@ -118,6 +136,14 @@ export function registerCompareRoutes(app: FastifyInstance, deps: { pool: pg.Poo
       a,
       b,
       groups,
+      /*
+       * How many metrics the comparison could read at all — not how many
+       * moved. Zero is "there was nothing here to compare" (neither side has
+       * computed, or both reported a shape this view does not read), which the
+       * view has to say instead of "nothing differs": a comparator that found
+       * no metrics has not established that the two agree.
+       */
+      metric_count: groups.reduce((n, g) => n + g.rows.length, 0),
       changed_count: changedRows(groups).length,
       summary: headlineSummary(groups),
     };

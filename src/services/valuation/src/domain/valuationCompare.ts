@@ -17,6 +17,8 @@ import {
   num,
 } from './reportSummary.js';
 import { toCsv } from './csv.js';
+import { isSpecialtyKind } from './specialty.js';
+import type { ValuationKind } from './valuation.js';
 
 /**
  * Side-by-side comparison of two valuations.
@@ -40,7 +42,20 @@ import { toCsv } from './csv.js';
  */
 
 /** How a metric's value should be read, and therefore rendered and compared. */
-export type CompareFormat = 'currency' | 'currency_precise' | 'percent' | 'integer' | 'number' | 'text';
+export type CompareFormat =
+  | 'currency'
+  | 'currency_precise'
+  | 'percent'
+  | 'integer'
+  | 'number'
+  | 'text'
+  /**
+   * A number off a specialty engine's own payload, whose unit this module does
+   * not know. Rendered with grouping and up to four decimals and no symbol —
+   * printing a currency symbol we have not established would be a claim, and a
+   * ratio shown as "$0.20" is a worse answer than "0.2".
+   */
+  | 'scalar';
 
 export interface CompareRow {
   key: string;
@@ -71,6 +86,13 @@ export interface CompareGroup {
 }
 
 interface Results {
+  /**
+   * A specialty engine's own payload. Specialty runs persist
+   * `results = { kind, specialty: <engine result> }` (routes/specialty.ts) and
+   * write their headline into the calculation's typed columns instead — so
+   * none of the keys below exist on one, and every 409A row above drops out.
+   */
+  specialty?: unknown;
   fmv_per_share?: unknown;
   equity_value?: unknown;
   common_equity_value?: unknown;
@@ -86,6 +108,33 @@ interface Results {
     time_to_exit_years?: unknown;
     expected_time_to_exit_years?: unknown;
   } | null;
+}
+
+/**
+ * The vocabulary a kind's engine results are written in.
+ *
+ * The 409A engine writes one shape — `fmv_per_share`, `approaches`,
+ * `discounts` — and every kind that runs it shares it, so a 409A and an ASC 718
+ * run of the same company diff metric for metric. Each specialty engine writes
+ * its own instead, and two of them have no key in common: an EMI run's
+ * `amv_per_share` and an IFRS 2 run's expense attribution are not the same
+ * measurement under two names.
+ */
+export function comparisonFamily(kind: string): string {
+  return isSpecialtyKind(kind as ValuationKind) ? kind : '409a-engine';
+}
+
+/**
+ * Whether two kinds can be put in one delta column at all.
+ *
+ * The same judgement the route already makes about currency: a signed number
+ * between two figures that do not measure the same thing is worse than no
+ * number. Two different specialty kinds share no metric, so every row would be
+ * a value against a dash — a table of "changed" that reports only that the two
+ * engagements are different products, which the picker already said.
+ */
+export function comparableKinds(a: string, b: string): boolean {
+  return comparisonFamily(a) === comparisonFamily(b);
 }
 
 /** One side of the comparison: a valuation and the calculation being read. */
@@ -123,9 +172,23 @@ function formatValue(value: number | string | null, format: CompareFormat, curre
       return new Intl.NumberFormat('en-US').format(Math.round(value));
     case 'number':
       return value.toFixed(2);
+    case 'scalar':
+      return formatScalar(value);
     case 'text':
       return String(value);
   }
+}
+
+/**
+ * A number whose unit is unknown, printed as itself.
+ *
+ * Grouped so a share count stays readable, and trailing zeros trimmed so a
+ * boolean-ish 1 does not arrive as "1.0000" — these paths carry discounts,
+ * counts, ratios and per-share figures indiscriminately, and the only honest
+ * rendering is the number the engine reported.
+ */
+function formatScalar(value: number): string {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 4 }).format(value);
 }
 
 /**
@@ -147,6 +210,8 @@ function formatDelta(delta: number, format: CompareFormat, currency: string): st
       return `${sign}${(magnitude * 100).toFixed(1)} pts`;
     case 'integer':
       return `${sign}${new Intl.NumberFormat('en-US').format(Math.round(magnitude))}`;
+    case 'scalar':
+      return `${sign}${formatScalar(magnitude)}`;
     default:
       return `${sign}${magnitude.toFixed(2)}`;
   }
@@ -324,9 +389,123 @@ export function compareValuations(a: CompareSide, b: CompareSide): CompareGroup[
     { key: 'method', title: 'Method & discounts', rows: method.filter(isRow) },
     { key: 'assumptions', title: 'Key assumptions', rows: assumptions.filter(isRow) },
     { key: 'approaches', title: 'Approach weighting', rows: approaches.filter(isRow) },
+    { key: 'specialty', title: 'Specialty result', rows: specialtyRows(ra, rb, currency) },
   ];
 
   return groups.filter((g) => g.rows.length > 0);
+}
+
+/**
+ * The differing leaves of two specialty payloads.
+ *
+ * Every row above reads a key the 409A engine writes. A specialty run reports
+ * a different vocabulary entirely — an EMI run has `amv_per_share` and a
+ * qualification checklist, an ASC 820 measurement has a fair-value hierarchy —
+ * so all of them dropped out and `compareValuations` returned *no groups at
+ * all*. The view then printed "Every metric these two report is identical"
+ * over two runs that had nothing in common but the sentence: the comparator
+ * had not found no differences, it had looked in the wrong place.
+ *
+ * Rather than hand-model eleven engine vocabularies, the payloads are compared
+ * leaf by leaf on the union of their dotted paths — the same shape the
+ * workbook's audit sheets take, and the same shape a re-run's diff wants. A
+ * key one side dropped is a real finding, so the union is taken rather than
+ * the intersection, exactly as approach keys are above.
+ *
+ * Paths are the labels. They are the engine's own words, and inventing prose
+ * for `qualification.checks.individual_limit.passed` would put a name on a
+ * figure that this module cannot actually interpret — the mistake specialty
+ * captions were written to stop.
+ */
+function specialtyRows(ra: Results, rb: Results, currency: string): CompareRow[] {
+  const a = flattenSpecialty(ra.specialty);
+  const b = flattenSpecialty(rb.specialty);
+  if (a.size === 0 && b.size === 0) return [];
+
+  const paths = [...new Set([...a.keys(), ...b.keys()])].sort((x, y) => x.localeCompare(y));
+  return paths
+    .map((path) => {
+      const left = a.get(path) ?? null;
+      const right = b.get(path) ?? null;
+      // Format follows the values, not the path: a leaf is numeric only when
+      // both sides that report it are numbers, so a field that changed type
+      // between engine versions compares as text instead of silently dropping
+      // its delta.
+      const numeric =
+        (typeof left === 'number' || left === null) &&
+        (typeof right === 'number' || right === null) &&
+        (typeof left === 'number' || typeof right === 'number');
+      return row(
+        `specialty_${path}`,
+        path,
+        numeric ? 'scalar' : 'text',
+        numeric ? left : stringify(left),
+        numeric ? right : stringify(right),
+        currency,
+      );
+    })
+    .filter(isRow);
+}
+
+/** Nesting past this is stringified — a malformed blob cannot become a table. */
+const MAX_SPECIALTY_DEPTH = 8;
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** Text form of a scalar leaf; null stays null so a missing side reads as one. */
+function stringify(value: number | string | null): string | null {
+  return value === null ? null : String(value);
+}
+
+/**
+ * A specialty payload as `path → scalar`.
+ *
+ * Arrays of scalars collapse to one joined leaf and arrays of objects keep
+ * indexed paths, matching `flattenForAudit` in the workbook so the same run
+ * addresses the same way in the export and in this diff. Empty objects and
+ * arrays are dropped rather than emitted as null leaves: an absent branch is
+ * not a metric, and a column of dashes buries the rows that moved.
+ */
+function flattenSpecialty(source: unknown): Map<string, number | string | null> {
+  const out = new Map<string, number | string | null>();
+  if (!isPlainObject(source)) return out;
+
+  const walk = (value: unknown, path: string, depth: number): void => {
+    if (value === null || value === undefined) {
+      if (path !== '') out.set(path, null);
+      return;
+    }
+    if (depth >= MAX_SPECIALTY_DEPTH) {
+      out.set(path, JSON.stringify(value) ?? String(value));
+      return;
+    }
+    if (Array.isArray(value)) {
+      if (value.length === 0) return;
+      if (value.every((v) => !isPlainObject(v) && !Array.isArray(v))) {
+        out.set(path, value.map((v) => (v === null || v === undefined ? '' : String(v))).join('; '));
+        return;
+      }
+      value.forEach((v, i) => walk(v, `${path}[${i}]`, depth + 1));
+      return;
+    }
+    if (isPlainObject(value)) {
+      const keys = Object.keys(value);
+      if (keys.length === 0) return;
+      for (const key of keys) walk(value[key], path ? `${path}.${key}` : key, depth + 1);
+      return;
+    }
+    if (typeof value === 'number') {
+      // A non-finite figure is a computation that failed, not a value; kept as
+      // its own text so the row shows "Infinity" instead of comparing as null.
+      out.set(path, Number.isFinite(value) ? value : String(value));
+      return;
+    }
+    out.set(path, typeof value === 'boolean' ? String(value) : String(value));
+  };
+
+  walk(source, '', 0);
+  return out;
 }
 
 function dlomLabel(value: unknown): string | null {
