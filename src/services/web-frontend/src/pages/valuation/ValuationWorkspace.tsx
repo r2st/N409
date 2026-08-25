@@ -18,6 +18,7 @@ import {
 } from '../../components/ui';
 import { HelpIcon } from '../../components/HelpIcon';
 import { ScrollableTabs } from '../../components/ScrollableTabs';
+import { usePageTitleDetail } from '../../components/RouteTitle';
 
 /**
  * Maps each workspace tab (keyed by its sub-path, '' = Overview) to the help
@@ -354,6 +355,15 @@ export function ValuationWorkspace() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  /*
+   * "Cap Table · N409" is the same title on every valuation an analyst has
+   * open. The company name is the only thing that tells the tabs apart, and it
+   * is not known until the aggregate lands — hence a detail registered from
+   * here rather than a wider registry entry. Above the early returns because it
+   * is a hook; `undefined` while loading simply leaves the tab title alone.
+   */
+  usePageTitleDetail(valuation?.company_name);
 
   if (error) {
     return (

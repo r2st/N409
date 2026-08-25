@@ -6,6 +6,7 @@ import { useAuth } from './lib/auth';
 import { canManageUsers, canUseFirmConsole, isFirmAdmin, isOps, isPartner } from './lib/rbac';
 import { MarketingFooter, MarketingHeader, MarketingLayout } from './components/MarketingLayout';
 import { SkipLink, mainContentTargetProps } from './components/SkipLink';
+import { RouteTitleProvider } from './components/RouteTitle';
 import { LandingPage } from './pages/marketing/LandingPage';
 
 /**
@@ -198,155 +199,158 @@ function HomeGate() {
 export default function App() {
   return (
     <Suspense fallback={<PageLoader />}>
-      <Routes>
-        {/* Public marketing site (409.ai §22) */}
-        <Route path="/" element={<HomeGate />} />
-        <Route element={<MarketingLayout />}>
-          <Route path="/pricing" element={<PricingPage />} />
-          <Route path="/which-valuation" element={<WhichValuationPage />} />
-          <Route path="/409a-valuation-guide" element={<ValuationGuidePage />} />
-          <Route path="/when-do-you-need-a-409a" element={<WhenDoYouNeedPage />} />
-          <Route path="/how-much-does-a-409a-cost" element={<ValuationCostPage />} />
-          <Route path="/tools/409a-valuation-calculator" element={<CalculatorPage />} />
-          <Route path="/sample-report" element={<SampleReportPage />} />
-          <Route path="/products/:slug" element={<ProductPage />} />
-          <Route path="/409a-valuation/:stage" element={<StagePage />} />
-          {/* Hub route must precede the :slug catch-all (gap #30) */}
-          <Route path="/compare/409a-valuation-providers" element={<CompareHubPage />} />
-          <Route path="/compare/:slug" element={<ComparePage />} />
-          <Route path="/partners" element={<PartnersPage />} />
-          <Route path="/partners/:segment" element={<PartnerSegmentPage />} />
-          <Route path="/developers" element={<DevelopersPage />} />
-          <Route path="/blog" element={<BlogIndexPage />} />
-          <Route path="/blog/:slug" element={<BlogPostPage />} />
-          <Route path="/about" element={<AboutPage />} />
-          <Route path="/contact" element={<ContactPage />} />
-          <Route path="/terms-of-service" element={<TermsPage />} />
-          <Route path="/privacy-policy" element={<PrivacyPage />} />
-        </Route>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
-        <Route path="/verify-email" element={<VerifyEmailPage />} />
-        <Route path="/accept-invite" element={<AcceptInvitePage />} />
-        <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
-        {/* Public board-member resolution signing (feature 5) */}
-        <Route path="/board-sign" element={<BoardSignPage />} />
-        {/* Public external auditor portal (feature 8), token from link fragment */}
-        <Route path="/auditor" element={<AuditorPortalPage />} />
-        {/* Firm-branded client intake — public, token from the link fragment */}
-        <Route path="/intake" element={<ClientIntakePage />} />
-        {/* White-label partner login (improvement 8) — public, branded per slug */}
-        <Route path="/partner/:slug/login" element={<PartnerLoginPage />} />
-        <Route
-          element={
-            <RequireAuth>
-              <AppLayout />
-            </RequireAuth>
-          }
-        >
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/valuations" element={<ValuationsPage />} />
-          <Route path="/portfolio" element={<PortfolioPage />} />
-          <Route path="/valuations/new" element={<NewValuationPage />} />
-          <Route path="/valuations/compare" element={<ValuationComparePage />} />
-          <Route path="/onboarding" element={<OnboardingPage />} />
-          <Route path="/payment/success" element={<PaymentSuccessPage />} />
-          <Route path="/payment/cancel" element={<PaymentCancelPage />} />
-          <Route path="/valuations/:id" element={<ValuationWorkspace />}>
-            <Route index element={<ValuationDetailPage />} />
-            <Route path="intake" element={<IntakeTab />} />
-            <Route path="company" element={<CompanyTab />} />
-            <Route path="documents" element={<DocumentsTab />} />
-            <Route path="cap-table" element={<CapTableTab />} />
-            <Route path="model" element={<FinancialModelTab />} />
-            <Route path="params" element={<ParamsTab />} />
-            <Route path="ai" element={<AiTab />} />
-            <Route path="tasks" element={<TasksTab />} />
-            <Route path="calculations" element={<CalculationsTab />} />
-            <Route path="progress" element={<ProgressTab />} />
-            <Route path="audit-trail" element={<AuditTrailTab />} />
-            <Route path="network" element={<NetworkTab />} />
-            <Route path="qa" element={<QaTab />} />
-            <Route path="health" element={<HealthTab />} />
-            <Route path="completeness" element={<CompletenessTab />} />
-            <Route path="decisions" element={<DecisionsTab />} />
-            <Route path="scenarios" element={<ScenariosTab />} />
-            <Route path="bridge" element={<BridgeTab />} />
-            <Route path="analytics" element={<AnalyticsTab />} />
-            <Route path="workbook" element={<WorkbookTab />} />
-            <Route path="overwrites" element={<OverwritesTab />} />
-            <Route path="report" element={<ReportTab />} />
-            <Route path="grants" element={<GrantsTab />} />
-            <Route path="asc718" element={<Asc718Tab />} />
-            <Route path="monitoring" element={<MonitoringTab />} />
-            <Route path="engagement" element={<EngagementTab />} />
-            <Route path="package" element={<PackageTab />} />
-            <Route path="specialty" element={<SpecialtyTab />} />
-            <Route path="research" element={<ResearchTab />} />
-            <Route path="comparables" element={<ComparablesTab />} />
+      {/* Every route's `<title>`, from one registry — see lib/pageTitles.ts. */}
+      <RouteTitleProvider>
+        <Routes>
+          {/* Public marketing site (409.ai §22) */}
+          <Route path="/" element={<HomeGate />} />
+          <Route element={<MarketingLayout />}>
+            <Route path="/pricing" element={<PricingPage />} />
+            <Route path="/which-valuation" element={<WhichValuationPage />} />
+            <Route path="/409a-valuation-guide" element={<ValuationGuidePage />} />
+            <Route path="/when-do-you-need-a-409a" element={<WhenDoYouNeedPage />} />
+            <Route path="/how-much-does-a-409a-cost" element={<ValuationCostPage />} />
+            <Route path="/tools/409a-valuation-calculator" element={<CalculatorPage />} />
+            <Route path="/sample-report" element={<SampleReportPage />} />
+            <Route path="/products/:slug" element={<ProductPage />} />
+            <Route path="/409a-valuation/:stage" element={<StagePage />} />
+            {/* Hub route must precede the :slug catch-all (gap #30) */}
+            <Route path="/compare/409a-valuation-providers" element={<CompareHubPage />} />
+            <Route path="/compare/:slug" element={<ComparePage />} />
+            <Route path="/partners" element={<PartnersPage />} />
+            <Route path="/partners/:segment" element={<PartnerSegmentPage />} />
+            <Route path="/developers" element={<DevelopersPage />} />
+            <Route path="/blog" element={<BlogIndexPage />} />
+            <Route path="/blog/:slug" element={<BlogPostPage />} />
+            <Route path="/about" element={<AboutPage />} />
+            <Route path="/contact" element={<ContactPage />} />
+            <Route path="/terms-of-service" element={<TermsPage />} />
+            <Route path="/privacy-policy" element={<PrivacyPage />} />
           </Route>
-          {/* Operations-only surfaces (P1 #5 — route-level role guarding) */}
-          <Route element={<RequireRole allow={isOps} />}>
-            <Route path="/funds" element={<FundPortfolioPage />} />
-            <Route path="/debt" element={<DebtInstrumentsPage />} />
-            <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
-            <Route path="/engagements" element={<EngagementsPage />} />
-            <Route path="/monitors" element={<MonitorsPage />} />
-            <Route path="/tasks" element={<TasksPage />} />
-            <Route path="/templates" element={<TemplatesPage />} />
-            <Route path="/schema/overwrites" element={<OverwritesSchemaPage />} />
-            <Route path="/admin/prompts" element={<BotPromptsPage />} />
-            <Route path="/admin/narrative-prompts" element={<AdminNarrativePromptsPage />} />
-            <Route path="/admin/data-remediation" element={<AdminDataRemediationPage />} />
-            <Route path="/admin/documents" element={<AdminDocumentsPage />} />
-            <Route path="/admin/support" element={<SupportInboxPage />} />
-            <Route path="/admin/outbox" element={<EmailOutboxPage />} />
-            <Route path="/admin/jobs" element={<AdminJobsPage />} />
-            <Route path="/admin/communications" element={<CommunicationsPage />} />
-            <Route path="/admin/activity" element={<ActivityLogPage />} />
-            <Route path="/admin/help" element={<AdminHelpPage />} />
-            <Route path="/admin/blog" element={<AdminBlogPage />} />
-            {/* Ops read the settings; the API rejects writes from non-admins. */}
-            <Route path="/admin/settings" element={<AdminSettingsPage />} />
-          </Route>
-          {/* User-admin surfaces */}
-          <Route element={<RequireRole allow={canManageUsers} />}>
-            <Route path="/admin/users" element={<AdminUsersPage />} />
-            <Route path="/admin/sso" element={<AdminSsoPage />} />
-            <Route path="/admin/retention" element={<AdminRetentionPage />} />
-            <Route path="/admin/partners" element={<AdminPartnersPage />} />
-            <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
-            <Route path="/admin/api-tokens" element={<AdminApiTokensPage />} />
-          </Route>
-          {/* Partner portal */}
-          <Route element={<RequireRole allow={isPartner} />}>
-            <Route path="/partner" element={<PartnerPortalPage />} />
-          </Route>
-          {/* A firm white-labelling itself; the API re-checks the tenant. */}
-          <Route element={<RequireRole allow={isFirmAdmin} />}>
-            <Route path="/settings/branding" element={<BrandingPage />} />
-          </Route>
-          {/* The firm console — everyone inside a firm, ops included. */}
-          <Route element={<RequireRole allow={canUseFirmConsole} />}>
-            <Route path="/firm" element={<FirmDashboardPage />} />
-          </Route>
-          <Route path="/partner/api-docs" element={<ApiDocsPage />} />
-          <Route path="/search" element={<SearchPage />} />
-          <Route path="/notifications" element={<NotificationsPage />} />
-          {/* Not inside the ops guard: a partner firm's staff have an inbox too,
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/verify-email" element={<VerifyEmailPage />} />
+          <Route path="/accept-invite" element={<AcceptInvitePage />} />
+          <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
+          {/* Public board-member resolution signing (feature 5) */}
+          <Route path="/board-sign" element={<BoardSignPage />} />
+          {/* Public external auditor portal (feature 8), token from link fragment */}
+          <Route path="/auditor" element={<AuditorPortalPage />} />
+          {/* Firm-branded client intake — public, token from the link fragment */}
+          <Route path="/intake" element={<ClientIntakePage />} />
+          {/* White-label partner login (improvement 8) — public, branded per slug */}
+          <Route path="/partner/:slug/login" element={<PartnerLoginPage />} />
+          <Route
+            element={
+              <RequireAuth>
+                <AppLayout />
+              </RequireAuth>
+            }
+          >
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/valuations" element={<ValuationsPage />} />
+            <Route path="/portfolio" element={<PortfolioPage />} />
+            <Route path="/valuations/new" element={<NewValuationPage />} />
+            <Route path="/valuations/compare" element={<ValuationComparePage />} />
+            <Route path="/onboarding" element={<OnboardingPage />} />
+            <Route path="/payment/success" element={<PaymentSuccessPage />} />
+            <Route path="/payment/cancel" element={<PaymentCancelPage />} />
+            <Route path="/valuations/:id" element={<ValuationWorkspace />}>
+              <Route index element={<ValuationDetailPage />} />
+              <Route path="intake" element={<IntakeTab />} />
+              <Route path="company" element={<CompanyTab />} />
+              <Route path="documents" element={<DocumentsTab />} />
+              <Route path="cap-table" element={<CapTableTab />} />
+              <Route path="model" element={<FinancialModelTab />} />
+              <Route path="params" element={<ParamsTab />} />
+              <Route path="ai" element={<AiTab />} />
+              <Route path="tasks" element={<TasksTab />} />
+              <Route path="calculations" element={<CalculationsTab />} />
+              <Route path="progress" element={<ProgressTab />} />
+              <Route path="audit-trail" element={<AuditTrailTab />} />
+              <Route path="network" element={<NetworkTab />} />
+              <Route path="qa" element={<QaTab />} />
+              <Route path="health" element={<HealthTab />} />
+              <Route path="completeness" element={<CompletenessTab />} />
+              <Route path="decisions" element={<DecisionsTab />} />
+              <Route path="scenarios" element={<ScenariosTab />} />
+              <Route path="bridge" element={<BridgeTab />} />
+              <Route path="analytics" element={<AnalyticsTab />} />
+              <Route path="workbook" element={<WorkbookTab />} />
+              <Route path="overwrites" element={<OverwritesTab />} />
+              <Route path="report" element={<ReportTab />} />
+              <Route path="grants" element={<GrantsTab />} />
+              <Route path="asc718" element={<Asc718Tab />} />
+              <Route path="monitoring" element={<MonitoringTab />} />
+              <Route path="engagement" element={<EngagementTab />} />
+              <Route path="package" element={<PackageTab />} />
+              <Route path="specialty" element={<SpecialtyTab />} />
+              <Route path="research" element={<ResearchTab />} />
+              <Route path="comparables" element={<ComparablesTab />} />
+            </Route>
+            {/* Operations-only surfaces (P1 #5 — route-level role guarding) */}
+            <Route element={<RequireRole allow={isOps} />}>
+              <Route path="/funds" element={<FundPortfolioPage />} />
+              <Route path="/debt" element={<DebtInstrumentsPage />} />
+              <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
+              <Route path="/engagements" element={<EngagementsPage />} />
+              <Route path="/monitors" element={<MonitorsPage />} />
+              <Route path="/tasks" element={<TasksPage />} />
+              <Route path="/templates" element={<TemplatesPage />} />
+              <Route path="/schema/overwrites" element={<OverwritesSchemaPage />} />
+              <Route path="/admin/prompts" element={<BotPromptsPage />} />
+              <Route path="/admin/narrative-prompts" element={<AdminNarrativePromptsPage />} />
+              <Route path="/admin/data-remediation" element={<AdminDataRemediationPage />} />
+              <Route path="/admin/documents" element={<AdminDocumentsPage />} />
+              <Route path="/admin/support" element={<SupportInboxPage />} />
+              <Route path="/admin/outbox" element={<EmailOutboxPage />} />
+              <Route path="/admin/jobs" element={<AdminJobsPage />} />
+              <Route path="/admin/communications" element={<CommunicationsPage />} />
+              <Route path="/admin/activity" element={<ActivityLogPage />} />
+              <Route path="/admin/help" element={<AdminHelpPage />} />
+              <Route path="/admin/blog" element={<AdminBlogPage />} />
+              {/* Ops read the settings; the API rejects writes from non-admins. */}
+              <Route path="/admin/settings" element={<AdminSettingsPage />} />
+            </Route>
+            {/* User-admin surfaces */}
+            <Route element={<RequireRole allow={canManageUsers} />}>
+              <Route path="/admin/users" element={<AdminUsersPage />} />
+              <Route path="/admin/sso" element={<AdminSsoPage />} />
+              <Route path="/admin/retention" element={<AdminRetentionPage />} />
+              <Route path="/admin/partners" element={<AdminPartnersPage />} />
+              <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
+              <Route path="/admin/api-tokens" element={<AdminApiTokensPage />} />
+            </Route>
+            {/* Partner portal */}
+            <Route element={<RequireRole allow={isPartner} />}>
+              <Route path="/partner" element={<PartnerPortalPage />} />
+            </Route>
+            {/* A firm white-labelling itself; the API re-checks the tenant. */}
+            <Route element={<RequireRole allow={isFirmAdmin} />}>
+              <Route path="/settings/branding" element={<BrandingPage />} />
+            </Route>
+            {/* The firm console — everyone inside a firm, ops included. */}
+            <Route element={<RequireRole allow={canUseFirmConsole} />}>
+              <Route path="/firm" element={<FirmDashboardPage />} />
+            </Route>
+            <Route path="/partner/api-docs" element={<ApiDocsPage />} />
+            <Route path="/search" element={<SearchPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
+            {/* Not inside the ops guard: a partner firm's staff have an inbox too,
               scoped to their own engagements by the API. */}
-          <Route path="/inbox" element={<InboxPage />} />
-          <Route path="/help" element={<HelpPage />} />
-          <Route path="/help/:slug" element={<HelpPage />} />
-          <Route path="/features" element={<FeaturesPage />} />
-          <Route path="/billing" element={<BillingPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Route>
-        {/* Real 404 for unknown URLs instead of a silent redirect home (F-1 P2). */}
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
+            <Route path="/inbox" element={<InboxPage />} />
+            <Route path="/help" element={<HelpPage />} />
+            <Route path="/help/:slug" element={<HelpPage />} />
+            <Route path="/features" element={<FeaturesPage />} />
+            <Route path="/billing" element={<BillingPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Route>
+          {/* Real 404 for unknown URLs instead of a silent redirect home (F-1 P2). */}
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </RouteTitleProvider>
     </Suspense>
   );
 }
