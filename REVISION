@@ -3768,3 +3768,111 @@
 #            the header, but six routes still interpolate a filename into the
 #            header themselves. Every one of those values is a number, a ULID, a
 #            timestamp or a slug today — the risk is the seventh.
+
+# N409 revision
+# commit:    e37980c
+# subject:   the tables that would not say which table they were
+# previous:  5fde5ea (the query filters that read "false" as yes, and four
+#            guards that fail by having nothing left to ask). R120 and R121 —
+#            the swallowed-failure register and the stale-reply census — shipped
+#            between the two and were never written up; their commits run
+#            97a141d…50fd768 and their reasoning is in the messages.
+# includes:  3 commits — R122, a production-readiness round over the one part
+#            of the app a sighted reviewer cannot check by looking at it.
+#
+#            The app is 85 tables. `DataTable` was built as the accessible one
+#            — scoped `<th>`, an optional caption, its own scroll box — and
+#            four screens use it. Everything else is a hand-rolled `<table>`,
+#            and the rules the primitive encodes did not travel with the shape
+#            it encodes them for. 48 of the 85 had no accessible name at all
+#            and 14 had no `<th>` anywhere.
+#
+#            Neither is visible. A table with no name renders identically to
+#            one with an `sr-only` caption; a table with no header row renders
+#            identically to one with an `sr-only` header row. The whole defect
+#            lives in the accessibility tree, which is why it drifted this far
+#            in a codebase that has a focus-trap test, a roving-focus test and
+#            a live-region test — every a11y guard here was written about a
+#            control, and none about the content.
+#
+#            1305f1f — named all 48. Where nothing visible names the table
+#              that is an `sr-only` `<caption>`, the mechanism `DataTable`
+#              already uses. Where a visible heading names it, the table points
+#              at that heading with `aria-labelledby` rather than restating it:
+#              a caption duplicating the `<h3>` above it puts the same string
+#              in the tree twice, and the render tests said so before any
+#              reasoning did — 16 of them broke on an ambiguous text node.
+#              Three of those headings belong to components that render more
+#              than once per page (`Heatmap`, `FieldTable`, `AxisTableCard`),
+#              so their ids come from `useId()` and not from a constant that
+#              would collide with itself.
+#
+#              The cost of the round is concentrated here: the ASC 718 tab
+#              carries four tables, the search page three, the fund portfolio
+#              two. Navigating by table is how a table-heavy app is read
+#              without sight, and it gave the same word every time.
+#
+#            6fa490d — the 14 with no `<th>`, in two shapes. Ten are data grids
+#              whose design carries no visible header row: the SCIM token list
+#              announced "SCIM token, Aug 3 2026, Revoked, Revoke" with nothing
+#              saying which of those is the status. Those get a real `<thead>`
+#              marked `sr-only`, which is layout-neutral *here* precisely
+#              because they had no header to size their columns from — the row
+#              is absolutely positioned and out of flow, and the body already
+#              decided the widths. Four are key/value tables — the WACC
+#              build-up, the engine result panel, the cap-table sync conflicts,
+#              the API field reference — where the first cell *is* the row's
+#              label; those become `<th scope="row">`, which is what associates
+#              "Cost of equity" with the figure beside it.
+#
+#            e37980c — the census. Two source rules over every `<table>`, plus
+#              a third that every static `aria-labelledby` resolves to an id in
+#              the same file — a name by reference is silently nothing once the
+#              reference goes stale, and the first rule counts it as named
+#              regardless. No allowlist: decoration opts out by saying
+#              `role="presentation"` or `aria-hidden` on the tag, which is a
+#              claim a reviewer can see and argue with.
+#
+#              Backed by renders, one per naming mechanism, because a source
+#              scan can only assert that the source says the right thing.
+#              `DataTable.caption` also stops being optional; all four call
+#              sites already passed one, so nothing changed but the guarantee.
+#
+# method:    the scan was written three times before it was right, and the two
+#            wrong versions are the more useful record. The first counted a
+#            `<table>` written in a comment and a `<table>` inside the rich-text
+#            editor's string constant, which put ui.tsx's own prose on the
+#            offender list. The second checked `colSpan` against the column
+#            count and reported a confident zero — it had examined three tables
+#            out of 85, because the shape it keyed on barely exists here. The
+#            vacuity guard that would have caught it was itself vacuous: a
+#            `sed` with `^for` against an indented line, which inserted nothing
+#            and printed nothing, and reads exactly like a clean run.
+#
+#            So `finds the tables at all` is an assertion in the committed
+#            suite, not a thing checked once by hand.
+#
+#            Deliberate break: dropping the documents caption, reverting the
+#            WACC row header to a `<td>`, pointing the heatmap at a missing id,
+#            and deleting the search table's header row each fail the assertion
+#            written for them; the last two fail the render as well as the scan.
+#
+# gap:       the `sr-only` header row is reasoned to be layout-neutral, not
+#            photographed. The compiled rule is `position:absolute` at 1x1 with
+#            `clip-path:inset(50%)`, so the row is out of flow and cannot
+#            contribute a column width, and the ten tables it went into never
+#            had a header to size from in the first place — but appResponsive's
+#            numbers come from a real browser at 375px and these do not.
+#
+#            `aria-labelledby` is checked for resolving to an id in the *same
+#            file*, which is where all 15 of them live today. A heading and its
+#            table in different files would pass by not being checked.
+#
+#            Everything above is about tables. The same question — what does
+#            this announce as — has not been asked of the other content
+#            structures: `<dl>` pairs, the chart SVGs (36 carry no
+#            `aria-hidden`, so a screen reader may enumerate the decoration),
+#            or the badge and pill vocabulary that carries state as colour plus
+#            a word. Form controls and dialogs were swept during the round and
+#            audited clean: 468 controls all reach a name, and no `fixed
+#            inset-0` overlay lacks `role="dialog"`.
