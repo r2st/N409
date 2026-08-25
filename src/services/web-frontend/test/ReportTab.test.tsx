@@ -619,13 +619,78 @@ describe('ReportTab', () => {
       vi.unstubAllGlobals();
     });
 
-    it('reports a failed download using the action name', async () => {
+    /**
+     * And when the server names the file, that name wins over the guess.
+     *
+     * The real route sends `content-disposition` built from the company name,
+     * the engagement kind and the version it actually rendered; the client
+     * builds its own from the version it last *loaded*, which is stale the
+     * moment somebody else saves. The header is the authority, and this button
+     * used to ignore it entirely — it had its own fetch-and-anchor helper that
+     * never read the response's headers.
+     */
+    it("prefers the server's filename when the response carries one", async () => {
       const user = userEvent.setup();
-      mockApi({ pdf: () => new Response('nope', { status: 500 }) });
+      const created: string[] = [];
+      vi.stubGlobal('URL', { ...URL, createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+        this: HTMLAnchorElement,
+      ) {
+        created.push(this.download);
+      });
+      mockApi({
+        pdf: () =>
+          new Response('%PDF-1.4', {
+            status: 200,
+            headers: {
+              'content-disposition':
+                'inline; filename="Acme Robotics, Inc._409a_v4.pdf"; filename*=UTF-8\'\'Acme%20Robotics%2C%20Inc._409a_v4.pdf',
+            },
+          }),
+      });
       renderTab();
       await ready();
       await user.click(screen.getByRole('button', { name: 'Download PDF' }));
-      expect(await screen.findByRole('alert')).toHaveTextContent('Could not download.');
+      await waitFor(() => expect(created).toHaveLength(1));
+      expect(created[0]).toBe('Acme Robotics, Inc._409a_v4.pdf');
+      click.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    /**
+     * A failed download says why, when the server said why.
+     *
+     * The button used to run on a helper that threw a bare
+     * `Error('Download failed (500)')`, so every failure rendered as the same
+     * "Could not download." — including the ones the server had explained. The
+     * one that matters is the 409 the render route answers on a delivered
+     * version: "already been delivered — save a new version" is advice, and
+     * "Could not download." is not.
+     */
+    it("shows the server's explanation when a download fails", async () => {
+      const user = userEvent.setup();
+      mockApi({
+        pdf: () =>
+          new Response(JSON.stringify({ title: 'Not Found', detail: 'No report yet', status: 404 }), {
+            status: 404,
+            headers: { 'content-type': 'application/problem+json' },
+          }),
+      });
+      renderTab();
+      await ready();
+      await user.click(screen.getByRole('button', { name: 'Download PDF' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('No report yet');
+    });
+
+    it('still reports a failure whose body explains nothing', async () => {
+      // A 502 from the edge is HTML, not problem+json. There is nothing to
+      // quote, so the status is the whole of what can honestly be said.
+      const user = userEvent.setup();
+      mockApi({ pdf: () => new Response('<html>bad gateway</html>', { status: 502 }) });
+      renderTab();
+      await ready();
+      await user.click(screen.getByRole('button', { name: 'Download PDF' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Request failed (502)');
     });
   });
 

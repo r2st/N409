@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, getToken, ifMatch } from '../../lib/api';
+import { api, apiDownload, ApiError, ifMatch } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import {
-  downloadPdf,
   sanitizeHtml,
   type Report,
   type ReportContent,
@@ -249,10 +248,9 @@ export function ReportTab() {
 
   const download = () =>
     run('download', () =>
-      downloadPdf(
+      apiDownload(
         `/valuations/${valuation.id}/report.pdf`,
         `${filenameStem(valuation.company_name)}_report_v${report.current_version}.pdf`,
-        getToken(),
       ),
     );
 

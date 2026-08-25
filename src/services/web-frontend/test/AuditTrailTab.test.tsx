@@ -214,7 +214,7 @@ describe('AuditTrailTab', () => {
     expect(screen.getByRole('button', { name: /Download change log/ })).toBeInTheDocument();
   });
   /*
-   * `downloadPdf` fetches the file itself — the endpoint is bearer-
+   * `apiDownload` fetches the file itself — the endpoint is bearer-
    * authenticated, so there is no `<a href>` and no browser failure UI behind
    * the button — and it threw into `.catch(() => {})`. A click that fails then
    * leaves the page byte-identical to the one before it, which is also what a
@@ -237,7 +237,7 @@ describe('AuditTrailTab', () => {
     // The other half — the message must be earned, not permanent.
     //
     // jsdom implements neither `URL.createObjectURL` nor `revokeObjectURL`, and
-    // `downloadPdf` calls both on the *success* path — so without these stubs a
+    // `apiDownload` calls both on the *success* path — so without these stubs a
     // successful download throws exactly where a failed one does and this test
     // would pass against a component that never distinguished them.
     // Assigned rather than spied: jsdom does not define these at all, and
@@ -257,5 +257,44 @@ describe('AuditTrailTab', () => {
       expect(screen.getByRole('button', { name: /Download change log/ })).not.toBeDisabled(),
     );
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  /**
+   * The name the file lands under.
+   *
+   * This button used to run on a second, private fetch-and-anchor helper that
+   * read no headers at all, so `content-disposition` was decided by the server
+   * and then thrown away. The route names the file after the company; the
+   * component's own guess is only a fallback for a response that says nothing.
+   */
+  it('saves the change log under the name the server chose', async () => {
+    Object.assign(URL, { createObjectURL: () => 'blob:stub', revokeObjectURL: () => {} });
+    const saved: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      saved.push(this.download);
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('audit-trail.csv'))
+        return new Response('a,b\n1,2', {
+          status: 200,
+          headers: {
+            'content-type': 'text/csv',
+            'content-disposition':
+              'attachment; filename="change-log-_ngstr_m Robotics.csv"; filename*=UTF-8\'\'change-log-%C3%85ngstr%C3%B6m%20Robotics.csv',
+          },
+        });
+      return jsonResponse(RESPONSE);
+    });
+    const user = userEvent.setup();
+    renderTab();
+    await screen.findByTestId('audit-entries');
+
+    await user.click(screen.getByRole('button', { name: /Download change log/ }));
+    await waitFor(() => expect(saved).toHaveLength(1));
+    // Not the ASCII half, which is the same name with its letters removed.
+    expect(saved[0]).toBe('change-log-Ångström Robotics.csv');
+    click.mockRestore();
   });
 });

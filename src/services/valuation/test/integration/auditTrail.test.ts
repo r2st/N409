@@ -232,6 +232,49 @@ describe.skipIf(!dbUp)('valuation audit trail', () => {
       });
       expect(res.statusCode).toBe(404);
     });
+
+    /**
+     * The filename used to be the valuation's id. An auditor pulling change
+     * logs for six companies in one sitting got six files named after ULIDs,
+     * which is a name only the database recognises.
+     */
+    it('names the file after the company, not the id', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${valuationId}/audit-trail.csv`,
+        headers: authHeader(ops.token),
+      });
+      const disposition = res.headers['content-disposition'] as string;
+      expect(disposition).toContain('filename="change-log-AuditTrailCo.csv"');
+      expect(disposition).not.toContain(valuationId);
+    });
+
+    /**
+     * And it goes through `contentDisposition`, so the UTF-8 half is present
+     * and the ASCII half is the lossy transliteration rather than the only
+     * name on offer. Written as a company whose name is entirely outside
+     * ASCII: the ASCII fallback for it is underscores, so a client reading
+     * only that half saves a file with no name in it — which is what the
+     * `filename*` parameter exists to prevent.
+     */
+    it('writes both halves of the disposition for a non-ASCII company name', async () => {
+      const created = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: '409a', company_name: 'Ångström Robotics' },
+      });
+      expect(created.statusCode).toBe(201);
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${created.json().valuation.id}/audit-trail.csv`,
+        headers: authHeader(client.token),
+      });
+      expect(res.statusCode).toBe(200);
+      const disposition = res.headers['content-disposition'] as string;
+      expect(disposition).toContain("filename*=UTF-8''change-log-%C3%85ngstr%C3%B6m%20Robotics.csv");
+      expect(disposition).toContain('filename="change-log-_ngstr_m Robotics.csv"');
+    });
   });
 
   describe('field history', () => {

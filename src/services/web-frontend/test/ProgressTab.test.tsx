@@ -262,7 +262,7 @@ describe('ProgressTab (client portal §5.6)', () => {
 
   it('says nothing when the download succeeds', async () => {
     // The other half. jsdom defines neither object-URL function, and
-    // `downloadPdf` calls both on the success path — without these the success
+    // `apiDownload` calls both on the success path — without these the success
     // case would throw exactly where the failure does and this would pass
     // against a component that never told them apart.
     Object.assign(URL, { createObjectURL: () => 'blob:stub', revokeObjectURL: () => {} });

@@ -14,6 +14,7 @@ import {
 } from '../domain/auditTrail.js';
 import { listEvents, type EventQuery } from '../events/record.js';
 import { findValuationById } from '../repos/valuations.js';
+import { contentDisposition } from './documents.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
 import { checkWindowOrder, dateWindowFields } from '../domain/dateWindow.js';
@@ -74,6 +75,7 @@ export function registerAuditTrailRoutes(app: FastifyInstance, deps: { pool: pg.
     });
     const truncated = events.length > MAX_TRAIL_EVENTS;
     return {
+      valuation,
       entries: events.slice(-MAX_TRAIL_EVENTS).map(describeEvent),
       includeInternal: isOps(principal),
       truncated,
@@ -118,14 +120,21 @@ export function registerAuditTrailRoutes(app: FastifyInstance, deps: { pool: pg.
   /**
    * The same trail as a flat CSV — one row per changed field, openable in
    * Excel. Same visibility rule as the JSON view.
+   *
+   * The filename was the valuation's id: `change-log-01JQ8ZK7...csv`, twenty-six
+   * characters of Crockford base32 that name nothing a human recognises. An
+   * auditor pulls the change log for several companies in one sitting and the
+   * downloads folder ends up holding files distinguishable only by timestamp.
+   * The company name is what the row is filed under everywhere else in the app,
+   * so it is what the file is called; `contentDisposition` scrubs it and writes
+   * the UTF-8 half, so a name outside ASCII survives the trip.
    */
   app.get('/api/v1/valuations/:id/audit-trail.csv', { preHandler: app.authenticate }, async (req, reply) => {
-    const { entries, includeInternal } = await loadTrail(req);
+    const { valuation, entries, includeInternal } = await loadTrail(req);
     const visible = filterAuditEntries(entries, { includeInternal });
-    const { id } = req.params as { id: string };
     return reply
       .header('content-type', 'text/csv; charset=utf-8')
-      .header('content-disposition', `attachment; filename="change-log-${id}.csv"`)
+      .header('content-disposition', contentDisposition(`change-log-${valuation.company_name}.csv`))
       .send(changeLogCsv(visible));
   });
 

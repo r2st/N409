@@ -1,11 +1,10 @@
 import { useCallback, useState } from 'react';
-import { downloadPdf } from './m2';
-import { getToken } from './api';
+import { apiDownload } from './api';
 
 /**
  * A download button that can say it failed.
  *
- * `downloadPdf` fetches the file itself — it has to, because the endpoints are
+ * `apiDownload` fetches the file itself — it has to, because the endpoints are
  * bearer-authenticated and a plain `<a href>` carries no token — so unlike a
  * real link there is no browser-provided failure UI behind it. It throws on
  * anything but a 2xx, and two of the three call sites caught that with
@@ -25,7 +24,13 @@ import { getToken } from './api';
  * click twice.
  */
 export function useDownload(): {
-  /** Starts a download; never rejects — the failure lands in `error`. */
+  /**
+   * Starts a download; never rejects — the failure lands in `error`.
+   *
+   * `filename` is a fallback: when the response names the file itself, that
+   * name wins, because the server knows the version number and the document's
+   * original name and the caller is guessing at both.
+   */
   start: (path: string, filename: string) => void;
   busy: boolean;
   /** Set when the last attempt failed, cleared when a new one starts. */
@@ -37,7 +42,7 @@ export function useDownload(): {
   const start = useCallback((path: string, filename: string) => {
     setBusy(true);
     setError(null);
-    void downloadPdf(path, filename, getToken())
+    void apiDownload(path, filename)
       .catch(() =>
         // The message deliberately does not repeat the status code: the caller
         // cannot act on a 502 differently from a 503, and "try again" is the

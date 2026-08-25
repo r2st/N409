@@ -349,20 +349,3 @@ function dropJunkTags(source: string): string {
   }
   return out + source.slice(last);
 }
-
-/** Fetches an authenticated binary endpoint and triggers a browser download. */
-export async function downloadPdf(path: string, filename: string, token: string | null): Promise<void> {
-  const res = await fetch(`/api/v1${path}`, {
-    headers: token ? { authorization: `Bearer ${token}` } : {},
-  });
-  if (!res.ok) throw new Error(`Download failed (${res.status})`);
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
