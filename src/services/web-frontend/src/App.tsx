@@ -7,6 +7,7 @@ import { canManageUsers, canUseFirmConsole, isFirmAdmin, isOps, isPartner } from
 import { MarketingFooter, MarketingHeader, MarketingLayout } from './components/MarketingLayout';
 import { SkipLink, mainContentTargetProps } from './components/SkipLink';
 import { RouteTitleProvider } from './components/RouteTitle';
+import { RouteAnnouncer } from './components/RouteAnnouncer';
 import { LandingPage } from './pages/marketing/LandingPage';
 
 /**
@@ -201,6 +202,8 @@ export default function App() {
     <Suspense fallback={<PageLoader />}>
       {/* Every route's `<title>`, from one registry — see lib/pageTitles.ts. */}
       <RouteTitleProvider>
+        {/* Says which page the user just arrived at — see RouteAnnouncer. */}
+        <RouteAnnouncer />
         <Routes>
           {/* Public marketing site (409.ai §22) */}
           <Route path="/" element={<HomeGate />} />
