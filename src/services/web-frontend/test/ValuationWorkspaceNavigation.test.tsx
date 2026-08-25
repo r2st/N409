@@ -156,6 +156,39 @@ describe('ValuationWorkspace — navigating between engagements', () => {
     expect(screen.queryByText(/does not exist or you do not have access/)).toBeNull();
   });
 
+  it('stops naming the engagement the user left while the next one loads', async () => {
+    /*
+     * Ordering the replies fixed which engagement wins the race. It did not
+     * change what is on screen *during* it: `valuation` still holds the
+     * previous row, so for the whole round trip the heading, the number, the
+     * badges and the counter chips are the engagement the analyst navigated
+     * away from, under the new one's URL — and the tab below is handed that
+     * same object through the outlet context.
+     *
+     * It is a stale read that looks exactly like a loaded page: nothing
+     * spins, nothing disagrees with anything else. An analyst who clicks a
+     * bridge candidate and reads the header has been told the wrong company
+     * name, with no cue that a request is outstanding.
+     */
+    const user = userEvent.setup();
+    const pending = deferAggregate();
+    renderAt(null);
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]!.resolve({ valuation: valuation(A, 'First Engagement Inc'), counters: null });
+    await screen.findByText('First Engagement Inc');
+
+    await user.click(screen.getByRole('link', { name: 'Go to the other engagement' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+
+    // B is still in flight. Nothing on screen may claim to be A.
+    expect(screen.queryByText('First Engagement Inc')).toBeNull();
+    expect(screen.queryByTestId('probe')).toBeNull();
+
+    pending[1]!.resolve({ valuation: valuation(B, 'Second Engagement Ltd'), counters: null });
+    await screen.findByText('Second Engagement Ltd');
+  });
+
   it('rebuilds the tab below rather than re-rendering it with a new engagement', async () => {
     // The guard for the whole family: a tab that is torn down cannot have its
     // own slice loads raced, because the late reply writes to state that is

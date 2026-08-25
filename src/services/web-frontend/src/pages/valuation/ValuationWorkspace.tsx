@@ -314,9 +314,28 @@ export function ValuationWorkspace() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const location = useLocation();
-  const [valuation, setValuation] = useState<Valuation | null>(null);
-  const [counters, setCounters] = useState<ValuationCounters | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  /*
+   * Both pieces of loaded state remember *which* engagement they are about.
+   *
+   * Ordering the replies (below) settled which one wins the race; it did not
+   * change what is on screen during it. Held as a bare `Valuation | null`, this
+   * state still contained the previous engagement's row for the whole round
+   * trip after the URL moved, so the heading, the reference, the badges, the
+   * counter chips and the object handed to the tab through the outlet context
+   * were all confidently about the engagement the analyst had just left. It
+   * reads as a loaded page — nothing spins and nothing disagrees with anything
+   * else — which is what makes it worse than a slow one.
+   *
+   * Tagging with the id it was requested for, and deriving below, makes the
+   * mismatch unrepresentable rather than merely short: there is no render in
+   * which a stale row can be read.
+   */
+  const [loaded, setLoaded] = useState<{
+    forId: string;
+    valuation: Valuation;
+    counters: ValuationCounters | null;
+  } | null>(null);
+  const [failure, setFailure] = useState<{ forId: string; message: string } | null>(null);
   const { viewers, commentTick } = useValuationStream(id ?? '');
 
   /*
@@ -340,21 +359,27 @@ export function ValuationWorkspace() {
         counters?: ValuationCounters;
       }>(`/valuations/${id}`);
       if (!current()) return;
-      setValuation(v);
-      setCounters(c ?? null);
+      setLoaded({ forId: id, valuation: v, counters: c ?? null });
     } catch (err) {
       if (!current()) return;
-      setError(
-        err instanceof ApiError && err.status === 404
-          ? 'This valuation does not exist or you do not have access to it.'
-          : 'Could not load the valuation.',
-      );
+      setFailure({
+        forId: id,
+        message:
+          err instanceof ApiError && err.status === 404
+            ? 'This valuation does not exist or you do not have access to it.'
+            : 'Could not load the valuation.',
+      });
     }
   }, [id, claim]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // Loaded state is only this route's while it is about this route's id.
+  const valuation = loaded && loaded.forId === id ? loaded.valuation : null;
+  const counters = loaded && loaded.forId === id ? loaded.counters : null;
+  const error = failure && failure.forId === id ? failure.message : null;
 
   /*
    * "Cap Table · N409" is the same title on every valuation an analyst has
