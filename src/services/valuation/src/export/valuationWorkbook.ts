@@ -408,8 +408,17 @@ function grantsSheet(grants: readonly WorkbookGrant[], asOf: Date, currency: str
     { header: 'Status', width: 11, format: 'text' },
   ];
 
-  const rows: XlsxValue[][] = grants.map((g, i) => {
-    const status = vestingStatus(
+  /*
+   * Resolved once, ahead of the rows, because the Total line needs the same
+   * figures. Computing them inside the `map` left the vested and unvested
+   * totals with a formula and no cached value, which is not the same thing as
+   * a total: `xlsx.ts` writes `<f>` with no `<v>`, and every reader that shows
+   * the cached value rather than recalculating — openpyxl's `data_only`, Quick
+   * Look, Numbers' preview — showed the auditor a blank where the options
+   * total beside it printed a number.
+   */
+  const statuses = grants.map((g) =>
+    vestingStatus(
       {
         totalShares: g.options_count,
         vestingStartDate: g.vesting_start_date,
@@ -418,7 +427,11 @@ function grantsSheet(grants: readonly WorkbookGrant[], asOf: Date, currency: str
         frequencyMonths: g.frequency_months,
       },
       asOf,
-    );
+    ),
+  );
+
+  const rows: XlsxValue[][] = grants.map((g, i) => {
+    const status = statuses[i]!;
     const r = firstDataRow + i;
     return [
       g.grantee_name,
@@ -456,8 +469,14 @@ function grantsSheet(grants: readonly WorkbookGrant[], asOf: Date, currency: str
       null,
       null,
       null,
-      { formula: `SUM(K${firstDataRow}:K${last})`, value: null },
-      { formula: `SUM(L${firstDataRow}:L${last})`, value: null },
+      {
+        formula: `SUM(K${firstDataRow}:K${last})`,
+        value: statuses.reduce((s, st) => s + st.vestedShares, 0),
+      },
+      {
+        formula: `SUM(L${firstDataRow}:L${last})`,
+        value: statuses.reduce((s, st) => s + st.unvestedShares, 0),
+      },
       null,
       null,
     ]);
