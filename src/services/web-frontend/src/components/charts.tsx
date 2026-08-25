@@ -387,7 +387,17 @@ export function DonutChart({ title, slices }: { title: string; slices: PieSlice[
         <p className="mt-4 text-sm text-ink-400">No data in this range.</p>
       ) : (
         <div className="mt-4 flex items-center gap-5">
-          <svg viewBox="0 0 42 42" className="h-28 w-28 shrink-0" role="img" aria-label={title}>
+          {/* The total is drawn in the middle of the ring and nowhere else.
+              `role="img"` is a leaf, so that figure — the one the design puts
+              at the centre of the panel — reached no screen reader at all;
+              the legend beside it lists the slices and never their sum. The
+              label is the only place a leaf can carry it. */}
+          <svg
+            viewBox="0 0 42 42"
+            className="h-28 w-28 shrink-0"
+            role="img"
+            aria-label={`${title}: ${total} in total`}
+          >
             <circle cx="21" cy="21" r={r} fill="none" stroke="var(--color-paper-300)" strokeWidth="7" />
             {shown.map((s, i) => {
               const pct = (s.value / total) * 100;

@@ -14,7 +14,7 @@ import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { useWorkspace } from './ValuationWorkspace';
 import { HrisSyncPanel } from '../../components/valuation/HrisSyncPanel';
-import { CHART_COLORS } from '../../components/charts';
+import { CHART_COLORS, ChartDataTable } from '../../components/charts';
 import {
   Button,
   EmptyState,
@@ -135,6 +135,19 @@ function VestingTimeline({ timeline, total }: { timeline: VestingPoint[]; total:
           />
         ))}
       </svg>
+      {/* `role="img"` above is a leaf: the curve, the points and the axis are
+          all pruned, so "Vesting timeline" was the entire content of this
+          panel for a screen reader. The bar above it gives today's figure;
+          the schedule — which cliff, how much lands when — is only here.
+          Same remedy as every other trend chart on the platform (WCAG 1.1.1). */}
+      <ChartDataTable
+        caption="Vesting timeline"
+        columns={['Date', 'Cumulative vested']}
+        rows={timeline.map((p) => ({
+          label: p.date,
+          value: `${formatNumber(p.cumulativeVested)} of ${formatNumber(total)}`,
+        }))}
+      />
       <div className="tnum flex justify-between text-xs text-ink-400">
         <span>{timeline[0]!.date}</span>
         <span>{timeline[timeline.length - 1]!.date}</span>

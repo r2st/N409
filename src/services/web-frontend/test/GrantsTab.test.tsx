@@ -516,9 +516,9 @@ describe('GrantsTab', () => {
       renderTab();
       await ready();
       await user.click(within(grantCard('Dana Reed')).getByRole('button', { name: 'Detail' }));
-      expect(await screen.findByText('Vesting timeline')).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { name: 'Vesting timeline' })).toBeInTheDocument();
       await user.click(within(grantCard('Dana Reed')).getByRole('button', { name: 'Hide detail' }));
-      expect(screen.queryByText('Vesting timeline')).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Vesting timeline' })).not.toBeInTheDocument();
     });
 
     it('plots the vesting curve between its first and last date', async () => {
@@ -528,8 +528,34 @@ describe('GrantsTab', () => {
       await ready();
       await user.click(within(grantCard('Dana Reed')).getByRole('button', { name: 'Detail' }));
       expect(await screen.findByRole('img', { name: 'Vesting timeline' })).toBeInTheDocument();
-      expect(screen.getByText('2026-01-15')).toBeInTheDocument();
-      expect(screen.getByText('2030-01-15')).toBeInTheDocument();
+      // Both the visible axis ends and the data table's row headers carry
+      // these dates now, so the count is the assertion.
+      expect(screen.getAllByText('2026-01-15').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('2030-01-15').length).toBeGreaterThan(0);
+    });
+
+    /**
+     * `role="img"` makes the `<svg>` a leaf: the polyline, the points and the
+     * axis are all pruned, so the chart announced its own title and not one
+     * figure from the schedule. The bar above it gives today's percentage; how
+     * much lands at the cliff, and when the rest follows, was in the picture
+     * only (WCAG 1.1.1).
+     */
+    it('puts the vesting schedule in a table beside the curve', async () => {
+      const user = userEvent.setup();
+      mockApi();
+      renderTab();
+      await ready();
+      await user.click(within(grantCard('Dana Reed')).getByRole('button', { name: 'Detail' }));
+      const table = await screen.findByRole('table', { name: 'Vesting timeline' });
+      // The cliff, which is the whole shape of a standard schedule: nothing
+      // for a year, then a quarter of the grant at once.
+      const cliff = within(table).getByRole('rowheader', { name: '2027-01-15' });
+      expect(cliff.parentElement).toHaveTextContent('10,000 of 40,000');
+      expect(within(table).getByRole('rowheader', { name: '2026-01-15' }).parentElement).toHaveTextContent(
+        '0 of 40,000',
+      );
+      expect(within(table).getAllByRole('row')).toHaveLength(4); // header + three points
     });
 
     it('draws no curve from a single point', async () => {
@@ -543,8 +569,10 @@ describe('GrantsTab', () => {
       renderTab();
       await ready();
       await user.click(within(grantCard('Dana Reed')).getByRole('button', { name: 'Detail' }));
-      expect(await screen.findByText('Vesting timeline')).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { name: 'Vesting timeline' })).toBeInTheDocument();
       expect(screen.queryByRole('img', { name: 'Vesting timeline' })).not.toBeInTheDocument();
+      // No curve and no table: one point is not a schedule either.
+      expect(screen.queryByRole('table', { name: 'Vesting timeline' })).not.toBeInTheDocument();
     });
 
     it('states the exercise scenario in major units throughout', async () => {
@@ -590,7 +618,7 @@ describe('GrantsTab', () => {
       await user.click(within(grantCard('Dana Reed')).getByRole('button', { name: 'Detail' }));
       expect(await screen.findByRole('status')).toBeInTheDocument();
       release();
-      expect(await screen.findByText('Vesting timeline')).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { name: 'Vesting timeline' })).toBeInTheDocument();
     });
 
     /**

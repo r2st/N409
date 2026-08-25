@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { CapTableGraph, type CapTableGraphData } from '../src/components/CapTableGraph';
 
@@ -69,10 +69,51 @@ const GRAPH: CapTableGraphData = {
 describe('CapTableGraph', () => {
   it('draws a node per security and labels the picture for assistive tech', () => {
     render(<CapTableGraph graph={GRAPH} />);
-    expect(screen.getByRole('img', { name: /liquidation order/i })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: /liquidation order/i })).toBeInTheDocument();
     expect(screen.getByText('Acme Corp')).toBeInTheDocument();
     expect(screen.getByText('Series A')).toBeInTheDocument();
     expect(screen.getByText('Option Pool')).toBeInTheDocument();
+  });
+
+  /**
+   * The drawing used to be a `role="img"`, and ARIA makes an `img` a leaf:
+   * "user agents MUST NOT expose descendants". Every node inside it is a
+   * `role="button"` with `tabIndex={0}` and an `aria-label` — real controls,
+   * carefully named, and all of them pruned out of the tree before the name
+   * could be read. They stayed in the tab order, because `tabIndex` is not an
+   * ARIA property, so the diagram was a run of silent focus stops that opened
+   * a detail panel nobody was told about.
+   *
+   * `group` is a container role, so the buttons survive. The assertion is that
+   * the nodes are reachable *through* the labelled container, which is the
+   * relationship the leaf destroyed.
+   */
+  it('keeps the node buttons inside the diagram reachable and named', () => {
+    render(<CapTableGraph graph={GRAPH} />);
+    const diagram = screen.getByRole('group', { name: /liquidation order/i });
+    const nodes = within(diagram).getAllByRole('button');
+    expect(nodes.length).toBe(GRAPH.nodes.length);
+    expect(nodes.every((n) => (n.getAttribute('aria-label') ?? '').length > 0)).toBe(true);
+    expect(within(diagram).getByRole('button', { name: /^Series A,/ })).toBeInTheDocument();
+  });
+
+  /**
+   * Activating a node opens the detail panel *below* the diagram, and focus
+   * stays on the node. Without a pressed state the press has no observable
+   * effect for a screen reader at all — the panel is somewhere else and
+   * nothing announces it.
+   */
+  it('reports which node is selected as a pressed state', async () => {
+    const user = userEvent.setup();
+    render(<CapTableGraph graph={GRAPH} />);
+    const seriesA = screen.getByRole('button', { name: /^Series A,/ });
+    expect(seriesA).toHaveAttribute('aria-pressed', 'false');
+    await user.click(seriesA);
+    expect(screen.getByRole('button', { name: /^Series A,/ })).toHaveAttribute('aria-pressed', 'true');
+    // Selection is single: choosing another releases the first.
+    await user.click(screen.getByRole('button', { name: /^Series Seed,/ }));
+    expect(screen.getByRole('button', { name: /^Series A,/ })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: /^Series Seed,/ })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('columns nodes by rank, so payment order is left to right', () => {

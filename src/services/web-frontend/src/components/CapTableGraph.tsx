@@ -218,7 +218,13 @@ export function CapTableGraph({ graph }: { graph: CapTableGraphData }) {
           viewBox={`0 0 ${width} ${height}`}
           width={width}
           height={height}
-          role="img"
+          // Not `role="img"`. Every node below is a `role="button"` with a
+          // `tabIndex` of 0, and ARIA makes an `img` a leaf: its descendants
+          // are presentational, so the whole diagram collapsed to its one
+          // label and the nodes became silent tab stops — focusable, named,
+          // and pruned out of the tree before anything could read the name.
+          // `group` is a container, so the buttons survive to be announced.
+          role="group"
           aria-label="Cap table structure: share classes in liquidation order, with conversion paths"
           className="max-w-none"
         >
@@ -271,6 +277,10 @@ export function CapTableGraph({ graph }: { graph: CapTableGraphData }) {
                 onClick={() => setSelected((s) => (s === node.id ? null : node.id))}
                 role="button"
                 tabIndex={0}
+                // The node is a toggle — it opens and closes the detail panel
+                // below the diagram — and the panel is not where focus is, so
+                // pressed state is the only feedback its activation has.
+                aria-pressed={selected === node.id}
                 aria-label={`${node.label}, ${pct(node.ownership)} fully diluted`}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {

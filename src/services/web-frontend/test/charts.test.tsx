@@ -21,6 +21,26 @@ describe('DonutChart', () => {
     expect(screen.getByText('10')).toBeInTheDocument(); // total
   });
 
+  /**
+   * The total is drawn in the middle of the ring and nowhere else — not in the
+   * legend, which lists the slices and never their sum. `role="img"` makes the
+   * `<svg>` a leaf, so that `<text>` is pruned along with everything else
+   * inside it: the figure the design puts at the centre of the panel reached
+   * no screen reader at all. A leaf has exactly one place to carry it.
+   */
+  it('carries the total in the chart label, since the leaf hides the figure', () => {
+    render(
+      <DonutChart
+        title="By product"
+        slices={[
+          { label: 'IRC §409A', value: 7 },
+          { label: 'ESOP', value: 3 },
+        ]}
+      />,
+    );
+    expect(screen.getByRole('img', { name: 'By product: 10 in total' })).toBeInTheDocument();
+  });
+
   it('shows an empty state when everything is zero', () => {
     render(<DonutChart title="By source" slices={[{ label: 'Ads', value: 0 }]} />);
     expect(screen.getByText('No data in this range.')).toBeInTheDocument();
