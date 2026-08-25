@@ -243,21 +243,71 @@ function esopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): R
         .map(record)
         .filter((r): r is Record<string, unknown> => r !== null)
     : [];
+  // Which end of the chain the appraiser started from. `esop_share_value`
+  // accepts the input equity value at either level, and under "minority" the
+  // control figure it reports is a gross-up computed for disclosure — its own
+  // comment says "the conclusion never passes through it". Printed as a plain
+  // three-row ladder the two cases are indistinguishable, and the minority one
+  // reads as a control value that was determined and then discounted by the
+  // DLOC. In an ESOP appraisal that is the specific representation a DOL
+  // reviewer tests, so the direction has to be on the exhibit.
+  const minorityBasis = specialty.value_basis === 'minority';
+  const controlRow: [string, string] = minorityBasis
+    ? [
+        `Control (implied at DLOC ${pct(specialty.dloc) ?? '—'} — not a step in the conclusion)`,
+        money(levels.control, ctx) ?? '—',
+      ]
+    : ['Control', money(levels.control, ctx) ?? '—'];
+  const minorityRow: [string, string] = [
+    minorityBasis
+      ? 'Marketable minority (the appraised equity value)'
+      : `Marketable minority (DLOC ${pct(specialty.dloc) ?? '—'})`,
+    money(levels.marketable_minority, ctx) ?? '—',
+  ];
+  const shares = num(specialty.shares_outstanding);
   return section('Exhibit — ESOP Level of Value', [
+    P(
+      minorityBasis
+        ? 'The equity value supplied for this engagement is stated on a marketable minority ' +
+            'basis. The conclusion applies the discount for lack of marketability to it; no ' +
+            'discount for lack of control is taken. The control figure below is the value ' +
+            'implied by grossing the minority value up at that rate, shown for reference only.'
+        : 'The equity value supplied for this engagement is stated on a control basis. The ' +
+            'conclusion steps down to a marketable minority value at the discount for lack of ' +
+            'control, then to a nonmarketable minority value at the discount for lack of ' +
+            'marketability.',
+    ),
     table({
       head: ['Level of value', 'Amount'],
-      rows: [
-        ['Control', money(levels.control, ctx) ?? '—'],
-        [
-          `Marketable minority (DLOC ${pct(specialty.dloc) ?? '—'})`,
-          money(levels.marketable_minority, ctx) ?? '—',
-        ],
-        [
-          `Nonmarketable minority (DLOM ${pct(specialty.dlom) ?? '—'})`,
-          money(levels.nonmarketable_minority, ctx) ?? '—',
-        ],
+      // Ordered from the appraised input downward, so the row the engagement
+      // started at is the first one under the paragraph that names it.
+      rows: (minorityBasis
+        ? [
+            minorityRow,
+            [
+              `Nonmarketable minority (DLOM ${pct(specialty.dlom) ?? '—'})`,
+              money(levels.nonmarketable_minority, ctx) ?? '—',
+            ] as [string, string],
+            controlRow,
+          ]
+        : [
+            controlRow,
+            minorityRow,
+            [
+              `Nonmarketable minority (DLOM ${pct(specialty.dlom) ?? '—'})`,
+              money(levels.nonmarketable_minority, ctx) ?? '—',
+            ] as [string, string],
+          ]
+      ).map((row) => [row[0], row[1]]),
+      // The per-share conclusion is the nonmarketable minority value over the
+      // share count; printing the divisor makes the division checkable rather
+      // than asserted.
+      foot: [
+        shares === null
+          ? 'Fair market value per share'
+          : `Fair market value per share (${INT.format(Math.round(shares))} shares outstanding)`,
+        money(specialty.fmv_per_share, ctx, 4) ?? '—',
       ],
-      foot: ['Fair market value per share', money(specialty.fmv_per_share, ctx, 4) ?? '—'],
     }),
     num(specialty.esop_stake_value) !== null
       ? P(`Value of the shares held by the ESOP: <strong>${money(specialty.esop_stake_value, ctx)}</strong>.`)

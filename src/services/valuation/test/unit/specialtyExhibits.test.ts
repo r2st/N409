@@ -224,6 +224,84 @@ describe('buildSpecialtyExhibits', () => {
     expect(html).toContain('$1,530,000');
   });
 
+  /**
+   * `esop_share_value` takes the input equity value at either level of value.
+   * Under `value_basis: 'minority'` the input *is* the marketable minority
+   * value, the DLOM alone reaches the conclusion, and the `control` figure the
+   * engine reports is a gross-up it computes for disclosure — the engine's own
+   * comment reads "Step up for disclosure only; the conclusion never passes
+   * through it".
+   *
+   * The exhibit printed the same three-row ladder either way, so the minority
+   * case rendered as a control value that had been determined and then reduced
+   * by a discount for lack of control. Neither happened. `value_basis` is a
+   * required question on the ESOP questionnaire, so this was not a path that
+   * needed an override to reach, and an ESOP appraisal is read by a DOL
+   * reviewer for exactly this representation.
+   */
+  it('states which level of value the ESOP engagement started from', () => {
+    const levels = (basis: string) => ({
+      value_basis: basis,
+      levels: { control: 14_634_146, marketable_minority: 12_000_000, nonmarketable_minority: 9_000_000 },
+      dloc: 0.18,
+      dlom: 0.25,
+      shares_outstanding: 1_000_000,
+      fmv_per_share: 9,
+    });
+
+    const minority = buildSpecialtyExhibits(calc('esop', levels('minority')), ctx)[0]!.html;
+    expect(minority).toContain('stated on a marketable minority basis');
+    expect(minority).toContain('no discount for lack of control is taken');
+    // The DLOC must not be captioned onto the minority row, which is what made
+    // the gross-up read as a discount that had been applied.
+    expect(minority).not.toContain('Marketable minority (DLOC');
+    expect(minority).toContain('Marketable minority (the appraised equity value)');
+    expect(minority).toContain('not a step in the conclusion');
+    // The appraised input leads; the implied control figure comes last.
+    expect(minority.indexOf('the appraised equity value')).toBeLessThan(
+      minority.indexOf('not a step in the conclusion'),
+    );
+
+    const control = buildSpecialtyExhibits(calc('esop', levels('control')), ctx)[0]!.html;
+    expect(control).toContain('stated on a control basis');
+    expect(control).toContain('Marketable minority (DLOC 18.0%)');
+    expect(control).not.toContain('not a step in the conclusion');
+    expect(control.indexOf('>Control<')).toBeLessThan(control.indexOf('Marketable minority'));
+  });
+
+  /**
+   * The per-share conclusion is the nonmarketable minority value divided by the
+   * shares outstanding. The engine returns the divisor and the exhibit dropped
+   * it, so the one division on the exhibit could only be taken on trust.
+   */
+  it('prints the share count the ESOP per-share conclusion divides by', () => {
+    const [esop] = buildSpecialtyExhibits(
+      calc('esop', {
+        value_basis: 'control',
+        levels: { control: 10_000_000, marketable_minority: 9_000_000, nonmarketable_minority: 7_650_000 },
+        dloc: 0.1,
+        dlom: 0.15,
+        shares_outstanding: 1_000_000,
+        fmv_per_share: 7.65,
+      }),
+      ctx,
+    );
+    expect(esop!.html).toContain('1,000,000 shares outstanding');
+  });
+
+  /** A result with no share count still foots, without an empty parenthesis. */
+  it('foots the ESOP chain when no share count came back', () => {
+    const [esop] = buildSpecialtyExhibits(
+      calc('esop', {
+        levels: { control: 10_000_000, marketable_minority: 9_000_000, nonmarketable_minority: 7_650_000 },
+        fmv_per_share: 7.65,
+      }),
+      ctx,
+    );
+    expect(esop!.html).toContain('Fair market value per share');
+    expect(esop!.html).not.toContain('shares outstanding');
+  });
+
   it('renders SMB methods with weights and EMI/CSOP scheme checks', () => {
     const [smb] = buildSpecialtyExhibits(
       calc('fmv', {
