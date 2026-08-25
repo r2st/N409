@@ -324,6 +324,13 @@ def qsbs_eligibility(
     # lifetime dollar cap (less prior exclusions, floored at zero) or 10× the
     # basis of stock disposed of in the year. The attestation reports the
     # ceiling as of the assessment date on the full aggregate basis.
+    #
+    # `prior_1202_exclusions` is one figure for one issuer, so a holder with
+    # both pre- and post-OBBBA stock in the same issuer is modelled as drawing
+    # both from the applicable cap. The statute's treatment of that overlap is
+    # not settled and the input cannot distinguish the two buckets; the
+    # attestation reports `regime` and the components so the reader can see
+    # which cap was applied to what.
     lifetime_cap = per_issuer_cap_floor(acquired)
     lifetime_remaining = max(lifetime_cap - prior_excluded, 0.0)
     cap = max(lifetime_remaining, BASIS_CAP_MULTIPLE * basis)
