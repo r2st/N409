@@ -84,6 +84,7 @@ function Node({
     <details open={defaultOpen} className="group rounded-lg border border-paper-300 bg-surface shadow-card">
       <summary className="flex cursor-pointer items-center gap-3 px-5 py-3.5 select-none">
         <svg
+          aria-hidden="true"
           width="12"
           height="12"
           viewBox="0 0 24 24"

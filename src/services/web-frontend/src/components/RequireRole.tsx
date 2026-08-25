@@ -14,7 +14,15 @@ export function AccessDenied() {
   return (
     <div className="mx-auto max-w-md py-16 text-center" role="alert">
       <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-paper-200 text-ink-400">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <svg
+          aria-hidden="true"
+          width="22"
+          height="22"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+        >
           <rect x="5" y="10.5" width="14" height="10" rx="1.5" />
           <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" strokeLinecap="round" />
         </svg>

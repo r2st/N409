@@ -224,6 +224,7 @@ export function HelpWidget() {
                 className="tap-area rounded-md p-1 text-chrome-dim hover:bg-chrome-800 hover:text-chrome-fg"
               >
                 <svg
+                  aria-hidden="true"
                   width="16"
                   height="16"
                   viewBox="0 0 24 24"
@@ -267,6 +268,7 @@ export function HelpWidget() {
                     >
                       {t.title}
                       <svg
+                        aria-hidden="true"
                         width="12"
                         height="12"
                         viewBox="0 0 24 24"
@@ -343,11 +345,27 @@ export function HelpWidget() {
         className="fixed right-4 bottom-4 z-50 flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-chrome-900 text-chrome-fg shadow-lift transition-transform hover:scale-105"
       >
         {open ? (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg
+            aria-hidden="true"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
             <path d="M6 15l6-6 6 6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         ) : (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg
+            aria-hidden="true"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
             <path d="M9.2 9a2.9 2.9 0 0 1 5.6 1c0 1.8-2.3 2.2-2.8 3.5" strokeLinecap="round" />
             <circle cx="12" cy="17.3" r="0.4" fill="currentColor" />
             <circle cx="12" cy="12" r="9.2" />

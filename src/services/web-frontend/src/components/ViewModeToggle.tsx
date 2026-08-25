@@ -54,7 +54,15 @@ export function ViewModeToggle({ onNavigate }: { onNavigate?: () => void }) {
         }`}
       >
         <span className={normal ? 'text-brass-300' : 'text-chrome-faint'} aria-hidden>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <svg
+            aria-hidden="true"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+          >
             <path
               d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"
               strokeLinejoin="round"

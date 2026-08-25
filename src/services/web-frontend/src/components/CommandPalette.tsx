@@ -57,7 +57,15 @@ export function PaletteTrigger({ onNavigate }: { onNavigate?: () => void }) {
         className="touch:min-h-11 flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-chrome-700 bg-chrome-800/40 px-3 py-2 text-left text-xs font-semibold text-chrome-dim transition-colors hover:border-chrome-600 hover:text-chrome-fg"
       >
         <span aria-hidden>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <svg
+            aria-hidden="true"
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+          >
             <circle cx="11" cy="11" r="6.5" />
             <path d="M15.8 15.8L20.5 20.5" strokeLinecap="round" />
           </svg>
@@ -263,6 +271,7 @@ export function CommandPalette() {
         <div className="flex items-center gap-3 border-b border-paper-200 px-4">
           <span className="text-ink-300" aria-hidden>
             <svg
+              aria-hidden="true"
               width="18"
               height="18"
               viewBox="0 0 24 24"

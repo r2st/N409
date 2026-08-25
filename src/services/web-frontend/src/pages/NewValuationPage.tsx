@@ -109,6 +109,7 @@ export function NewValuationPage() {
                   {kind === k && (
                     <span className="flex h-5 w-5 items-center justify-center rounded-full bg-bond-600 text-bond-fg">
                       <svg
+                        aria-hidden="true"
                         width="11"
                         height="11"
                         viewBox="0 0 24 24"
