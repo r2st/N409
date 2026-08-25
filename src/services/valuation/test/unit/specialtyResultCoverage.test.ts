@@ -303,7 +303,7 @@ const ITERATED: Record<string, string[]> = {
   fmv: ['methods', 'weights', 'sde_normalization.addbacks', 'sde_normalization.deductions'],
   emi: ['qualification.checks'],
   csop: ['qualification.checks'],
-  ip: ['obsolescence'],
+  ip: ['obsolescence', 'assumptions.obsolescence_pct'],
 };
 
 /**
@@ -313,6 +313,20 @@ const ITERATED: Record<string, string[]> = {
  */
 const NESTED_NOT_RENDERED: Record<string, Record<string, string>> = {
   ppa: {
+    // Of the rates the method payload carries, the allocation table prints the
+    // discount rate — the WACC/IRR/WARA reconciliation is what a PPA reviewer
+    // runs and it is a comparison of exactly that figure across the assets. The
+    // rest describe how one asset was priced, which is the IP exhibit's job.
+    'intangibles[].assumptions.royalty_rate':
+      "a rate of the per-asset method, which this exhibit does not restate; the IP exhibit prints it against that asset's own schedule",
+    'intangibles[].assumptions.tax_rate':
+      "a rate of the per-asset method; the allocation prints the rate the assets are compared on, not each one's workings",
+    'intangibles[].assumptions.terminal_growth':
+      'a rate of the per-asset relief-from-royalty method; see the entries above',
+    'intangibles[].assumptions.attrition_rate': 'a rate of the per-asset MEEM; see the entries above',
+    'intangibles[].assumptions.ebit_margin': 'a rate of the per-asset MEEM; see the entries above',
+    'intangibles[].assumptions.contributory_charges_pct':
+      'a rate of the per-asset MEEM; see the entries above',
     'intangibles[].pv_explicit':
       'part of the method payload spliced in per asset; the PPA reader is looking at an allocation, and how one intangible was priced is the IP exhibit',
     'intangibles[].pv_terminal': 'the same, for the terminal half of a relief-from-royalty conclusion',

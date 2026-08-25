@@ -179,17 +179,18 @@ describe('specialty exhibits survive the renderer', () => {
   }, 120_000);
 
   /**
-   * Five columns, two of which the TAB work added, and the widest method name
-   * any intangible carries ("Multi-period excess earnings") in the second. This
-   * is the table most likely to squeeze of the three added this round.
+   * Six columns — two added by the TAB work, one by the discount rate — with
+   * the widest method name any intangible carries ("Multi-period excess
+   * earnings") in the second. This is the table most likely to squeeze.
    */
   it('fits the PPA allocation with its TAB columns inside the page', async () => {
     const pdf = await render('ppa', SAMPLE_PPA_RESULT);
     const text = extractText(pdf);
-    for (const head of ['Intangible asset', 'Method', 'Before TAB', 'TAB', 'Fair value']) {
+    for (const head of ['Intangible asset', 'Method', 'Discount rate', 'Before TAB', 'TAB', 'Fair value']) {
       expect(text, `column "${head}" is not in the PDF`).toContain(head);
     }
     expect(text).toContain('Multi-period excess earnings');
+    expect(text).toContain('16.5%');
     expect(text).toContain('$3,626,939');
     expect(text).toContain('1.0826');
     expect(text).toContain('$37,880,353');
@@ -210,6 +211,7 @@ describe('specialty exhibits survive the renderer', () => {
         {
           name: 'Customer relationships',
           method: 'meem',
+          assumptions: { discount_rate: 0.165 },
           value_before_tab: 728_400_000,
           tab_multiplier: 1.0846,
           fair_value: 790_022_640,
@@ -217,6 +219,7 @@ describe('specialty exhibits survive the renderer', () => {
         {
           name: 'Developed technology',
           method: 'relief_from_royalty',
+          assumptions: { discount_rate: 0.185 },
           value_before_tab: 92_200_000,
           tab_multiplier: 1.0805,
           fair_value: 99_622_100,

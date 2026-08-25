@@ -493,38 +493,44 @@ export const SAMPLE_IP_INPUTS = {
 
 export const SAMPLE_IP_RESULT: SpecialtyResult = {
   method: 'relief_from_royalty',
+  assumptions: {
+    royalty_rate: 0.05,
+    tax_rate: 0.21,
+    discount_rate: 0.17,
+    terminal_growth: 0.02,
+  },
   schedule: [
     {
       year: 1,
-      revenue: 8400000.0,
-      royalty_savings: 420000.0,
-      after_tax: 331800.0,
+      revenue: 8400000,
+      royalty_savings: 420000,
+      after_tax: 331800,
       pv: 283589.7435897436,
     },
     {
       year: 2,
-      revenue: 9240000.0,
-      royalty_savings: 462000.0,
-      after_tax: 364980.0,
+      revenue: 9240000,
+      royalty_savings: 462000,
+      after_tax: 364980,
       pv: 266622.8358536051,
     },
     {
       year: 3,
-      revenue: 10164000.0,
-      royalty_savings: 508200.0,
-      after_tax: 401478.0,
+      revenue: 10164000,
+      royalty_savings: 508200,
+      after_tax: 401478,
       pv: 250671.04225552618,
     },
     {
       year: 4,
-      revenue: 10672200.0,
-      royalty_savings: 533610.0,
+      revenue: 10672200,
+      royalty_savings: 533610,
       after_tax: 421551.9,
       pv: 224961.19176777996,
     },
     {
       year: 5,
-      revenue: 11205810.0,
+      revenue: 11205810,
       royalty_savings: 560290.5,
       after_tax: 442629.495,
       pv: 201888.24902236662,
@@ -704,6 +710,12 @@ export const SAMPLE_PPA_RESULT: SpecialtyResult = {
     {
       name: 'Developed technology',
       method: 'relief_from_royalty',
+      assumptions: {
+        royalty_rate: 0.06,
+        tax_rate: 0.21,
+        discount_rate: 0.185,
+        terminal_growth: null,
+      },
       schedule: [
         {
           year: 1,
@@ -750,6 +762,13 @@ export const SAMPLE_PPA_RESULT: SpecialtyResult = {
     {
       name: 'Customer relationships',
       method: 'meem',
+      assumptions: {
+        attrition_rate: 0.15,
+        ebit_margin: 0.22,
+        contributory_charges_pct: 0.08,
+        tax_rate: 0.21,
+        discount_rate: 0.165,
+      },
       schedule: [
         {
           year: 1,
@@ -814,6 +833,12 @@ export const SAMPLE_PPA_RESULT: SpecialtyResult = {
     {
       name: 'Trade name',
       method: 'relief_from_royalty',
+      assumptions: {
+        royalty_rate: 0.01,
+        tax_rate: 0.21,
+        discount_rate: 0.17,
+        terminal_growth: 0.025,
+      },
       schedule: [
         {
           year: 1,
@@ -1331,6 +1356,15 @@ export const SAMPLE_IP_COST_INPUTS = {
 
 export const SAMPLE_IP_COST_RESULT: SpecialtyResult = {
   method: 'cost_approach',
+  assumptions: {
+    developer_profit_pct: 0.12,
+    opportunity_cost_pct: 0.05,
+    obsolescence_pct: {
+      physical: 0.1,
+      functional: 0.18,
+      economic: 0.07,
+    },
+  },
   replacement_cost_new: 5382000.000000001,
   obsolescence: {
     physical: 538200.0000000001,

@@ -35,6 +35,7 @@ import {
   SAMPLE_IFRS2_CASH_RESULT,
   SAMPLE_IMPAIRMENT_LONG_LIVED_RESULT,
   SAMPLE_IP_COST_RESULT,
+  SAMPLE_IP_RESULT,
   SAMPLE_ESOP_RESULT,
   SAMPLE_FMV_RESULT,
   SAMPLE_GOODWILL_RESULT,
@@ -419,11 +420,13 @@ describe('the intangible cost approach', () => {
   it('takes each obsolescence layer off in turn', () => {
     const c = cells(out());
     expect(c).toContain('$5,382,000'); // replacement cost new with the incentives
-    expect(c).toContain('Less physical obsolescence');
+    // The rate beside the amount: the layers compound, so a reader given only
+    // the amounts cannot recover the percentage any of them was estimated at.
+    expect(c).toContain('Less physical obsolescence (10.0%)');
     expect(c).toContain('$538,200');
-    expect(c).toContain('Less functional obsolescence');
+    expect(c).toContain('Less functional obsolescence (18.0%)');
     expect(c).toContain('$871,884');
-    expect(c).toContain('Less economic obsolescence');
+    expect(c).toContain('Less economic obsolescence (7.0%)');
     expect(c).toContain('$278,034');
     expect(c).toContain('$3,693,882');
   });
@@ -440,6 +443,71 @@ describe('the intangible cost approach', () => {
   it('names the method rather than the dispatch key', () => {
     expect(out()).toContain('<strong>Cost approach</strong>');
     expect(out()).not.toContain('cost_approach');
+  });
+
+  it('prints the incentives that built the replacement cost new', () => {
+    const c = cells(out());
+    expect(c).toContain("Developer's profit");
+    expect(c).toContain('12.0%');
+    expect(c).toContain('Entrepreneurial incentive');
+    expect(c).toContain('5.0%');
+  });
+});
+
+/**
+ * The rates the intangible engines run on.
+ *
+ * They are inputs, and `value_intangible` did not echo them, so nothing in the
+ * result carried them and the exhibit had nothing to read. That left the
+ * discount rate, the royalty rate and the tax rate off the page — the three
+ * figures a reviewer checks a relief-from-royalty conclusion against, absent
+ * from the schedule that was discounted at them. R135 named it and put the fix
+ * on the engine side, which is where it went.
+ */
+describe('the intangible assumptions', () => {
+  it('prints every rate a relief-from-royalty conclusion turns on', () => {
+    const c = cells(html('ip', SAMPLE_IP_RESULT));
+    expect(c).toContain('Royalty rate');
+    expect(c).toContain('5.0%');
+    expect(c).toContain('Tax rate');
+    expect(c).toContain('21.0%');
+    expect(c).toContain('Discount rate');
+    expect(c).toContain('17.0%');
+    expect(c).toContain('Terminal growth rate');
+    expect(c).toContain('2.0%');
+  });
+
+  /** A result stored before the engines echoed them has no table, not an empty one. */
+  it('drops the table for a result computed before the rates were echoed', () => {
+    const { assumptions: _dropped, ...legacy } = SAMPLE_IP_RESULT as Record<string, unknown>;
+    const out = html('ip', legacy);
+    expect(out).not.toContain('Assumption');
+    expect(out).toContain('Royalty savings'); // and the rest of the exhibit is unchanged
+  });
+
+  /**
+   * On a PPA the discount rate is the figure a reviewer reconciles across the
+   * assets — the WACC/IRR/WARA check — so it is a column of the allocation
+   * table rather than a per-asset restatement of the method's workings.
+   */
+  it('carries each asset\u2019s discount rate onto the allocation table', () => {
+    const c = cells(html('ppa', SAMPLE_PPA_RESULT));
+    expect(c).toContain('Discount rate');
+    expect(c).toContain('18.5%'); // developed technology
+    expect(c).toContain('16.5%'); // customer relationships
+    expect(c).toContain('17.0%'); // trade name
+    // And not the rest of the method payload.
+    expect(c).not.toContain('Royalty rate');
+  });
+
+  it('drops the discount-rate column for an allocation with no rates on it', () => {
+    const bare = {
+      ...(SAMPLE_PPA_RESULT as Record<string, unknown>),
+      intangibles: [{ name: 'Trade name', method: 'cost_approach', fair_value: 900_000 }],
+    };
+    const out = html('ppa', bare);
+    expect(out).not.toContain('Discount rate');
+    expect(cells(out)).toContain('$900,000');
   });
 });
 

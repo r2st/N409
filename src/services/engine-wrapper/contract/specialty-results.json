@@ -137,12 +137,14 @@
   },
   "/engine/v1/intangible": {
     "method=cost_approach": [
+      "assumptions",
       "fair_value",
       "method",
       "obsolescence",
       "replacement_cost_new"
     ],
     "method=meem": [
+      "assumptions",
       "fair_value",
       "method",
       "schedule",
@@ -150,6 +152,7 @@
       "value_before_tab"
     ],
     "method=relief_from_royalty": [
+      "assumptions",
       "fair_value",
       "method",
       "pv_explicit",
@@ -159,6 +162,7 @@
       "value_before_tab"
     ],
     "method=with_and_without": [
+      "assumptions",
       "fair_value",
       "method",
       "schedule",

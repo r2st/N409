@@ -221,38 +221,50 @@ function ppaExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): Re
    * not at how one asset was priced.
    */
   const tabColumns = intangibles.some((i) => num(i.tab_multiplier) !== null);
+  /**
+   * The rate each asset was discounted at.
+   *
+   * The one assumption from the spliced-in method payload that belongs on an
+   * allocation rather than in the IP exhibit: the WACC/IRR/WARA reconciliation
+   * a reviewer runs on a PPA compares the acquirer's cost of capital against
+   * the rate charged to each identified asset, and the rates were nowhere on
+   * the page. Present only where the engine echoed assumptions, which is any
+   * result computed since R136.
+   */
+  const rateColumn = intangibles.some((i) => num(record(i.assumptions)?.discount_rate) !== null);
+  const head = [
+    'Intangible asset',
+    'Method',
+    ...(rateColumn ? ['Discount rate'] : []),
+    ...(tabColumns ? ['Before TAB', 'TAB'] : []),
+    'Fair value',
+  ];
   return section('Exhibit — Purchase Price Allocation', [
     intangibles.length > 0
       ? table({
-          head: tabColumns
-            ? ['Intangible asset', 'Method', 'Before TAB', 'TAB', 'Fair value']
-            : ['Intangible asset', 'Method', 'Fair value'],
+          head,
           rows: intangibles.map((i) => {
             const method = typeof i.method === 'string' ? i.method : null;
-            const cells = [
+            const tab = num(i.tab_multiplier);
+            return [
               str(i.name),
               // `esc(String(i.method))` printed the engine's own dispatch key —
               // "relief_from_royalty" and "meem" reached the page as written.
               method === null ? '—' : esc(IP_METHOD_LABELS[method] ?? label(method)),
-            ];
-            if (!tabColumns) return [...cells, money(i.fair_value, ctx) ?? '—'];
-            const tab = num(i.tab_multiplier);
-            return [
-              ...cells,
-              money(i.value_before_tab, ctx) ?? '—',
-              tab === null ? '—' : esc(tab.toFixed(4)),
+              ...(rateColumn ? [pct(record(i.assumptions)?.discount_rate) ?? '—'] : []),
+              ...(tabColumns
+                ? [money(i.value_before_tab, ctx) ?? '—', tab === null ? '—' : esc(tab.toFixed(4))]
+                : []),
               money(i.fair_value, ctx) ?? '—',
             ];
           }),
-          foot: tabColumns
-            ? [
-                'Total identifiable intangibles',
-                '',
-                '',
-                '',
-                money(specialty.total_intangible_value, ctx) ?? '—',
-              ]
-            : ['Total identifiable intangibles', '', money(specialty.total_intangible_value, ctx) ?? '—'],
+          // One blank per column between the caption and the total, whichever
+          // of the optional columns are present.
+          foot: [
+            'Total identifiable intangibles',
+            ...head.slice(2).map(() => ''),
+            money(specialty.total_intangible_value, ctx) ?? '—',
+          ],
         })
       : null,
     tabColumns
@@ -782,6 +794,26 @@ const IP_SCHEDULE: Record<string, { key: string; head: string; as: 'money' | 'pc
   ],
 };
 
+/**
+ * The rates each intangible method ran on, in the order a reviewer reads them
+ * and in the words a report uses. `label()` would render
+ * `contributory_charges_pct` as "Contributory charges pct".
+ *
+ * Every one is a fraction, so the table is a column of percentages; a rate that
+ * arrives as something else is dropped rather than printed as "NaN%".
+ */
+const IP_ASSUMPTION_LABELS: Array<[string, string]> = [
+  ['royalty_rate', 'Royalty rate'],
+  ['ebit_margin', 'EBIT margin'],
+  ['attrition_rate', 'Customer attrition rate'],
+  ['contributory_charges_pct', 'Contributory asset charges, as a share of attributable revenue'],
+  ['tax_rate', 'Tax rate'],
+  ['discount_rate', 'Discount rate'],
+  ['terminal_growth', 'Terminal growth rate'],
+  ['developer_profit_pct', "Developer's profit"],
+  ['opportunity_cost_pct', 'Entrepreneurial incentive'],
+];
+
 const IP_METHOD_LABELS: Record<string, string> = {
   relief_from_royalty: 'Relief from royalty',
   meem: 'Multi-period excess earnings',
@@ -812,6 +844,13 @@ function intangibleExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
   // cost new and the layers taken off it, which compound rather than sum.
   const obsolescence = record(specialty.obsolescence);
   const costNew = num(specialty.replacement_cost_new);
+  // The rates the engine ran on, echoed by every method since R136. Absent from
+  // any result stored before that, which is why nothing here is required.
+  const assumptions = record(specialty.assumptions);
+  // The obsolescence layers reach the exhibit as amounts, and the amounts
+  // compound — so a reader given only the amounts cannot recover the rate any
+  // of them was estimated at, which is the figure the appraisal is arguing.
+  const obsolescencePct = record(assumptions?.obsolescence_pct);
   const costTable =
     costNew !== null
       ? table({
@@ -820,7 +859,10 @@ function intangibleExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
             ['Replacement cost new, including entrepreneurial incentive', shown(costNew, ctx)],
             ...Object.entries(obsolescence ?? {})
               .filter(([, v]) => num(v) !== null)
-              .map(([k, v]) => [`Less ${k} obsolescence`, money(v, ctx) ?? '—']),
+              .map(([k, v]) => {
+                const rate = pct(obsolescencePct?.[k]);
+                return [`Less ${k} obsolescence${rate === null ? '' : ` (${rate})`}`, money(v, ctx) ?? '—'];
+              }),
           ],
           foot: ['Concluded fair value', shown(fairValue, ctx)],
         })
@@ -888,8 +930,25 @@ function intangibleExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
         })
       : null;
 
+  /**
+   * The rates behind the schedule.
+   *
+   * `value_intangible` used not to echo them at all — they are inputs, so
+   * nothing in the result carried them and the exhibit had nothing to read.
+   * That left the discount rate, the royalty rate and the tax rate off the
+   * page: the three figures a reviewer checks a relief-from-royalty conclusion
+   * against, absent from the schedule that was discounted at them.
+   */
+  const assumptionRows = IP_ASSUMPTION_LABELS.flatMap(([key, caption]) => {
+    const rate = pct(assumptions?.[key]);
+    return rate === null ? [] : [[caption, rate]];
+  });
+  const assumptionTable =
+    assumptionRows.length > 0 ? table({ head: ['Assumption', 'Rate'], rows: assumptionRows }) : null;
+
   return section('Exhibit — Intangible Asset Valuation', [
     method === null ? null : P(`Method: <strong>${esc(IP_METHOD_LABELS[method] ?? label(method))}</strong>.`),
+    assumptionTable,
     scheduleTable,
     scheduleTable2,
     bridge,

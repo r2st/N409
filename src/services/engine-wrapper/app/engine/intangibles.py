@@ -22,6 +22,14 @@ of that shield is part of fair value under ASC 805. The TAB multiplier is the
 fixed point  step-up = 1 / (1 − t·A)  where A is the PV of straight-line
 amortization at the discount rate.
 
+Every method echoes the rates it ran on under ``assumptions``. They are inputs,
+so the result had no reason to carry them until a reader needed one: the
+discount rate, the royalty rate and the tax rate are the three figures a
+reviewer checks a relief-from-royalty conclusion against, and the report exhibit
+had nothing to read. They are echoed *after* validation rather than as passed,
+because ``_rate`` and ``_tax`` normalise — 25 and 0.25 are both accepted and the
+figure a reader has to see is the one the arithmetic used.
+
 Pure and deterministic; the FastAPI surface (main.py) wraps these.
 """
 
@@ -155,6 +163,12 @@ def relief_from_royalty(
     tab = tax_amortization_benefit(rate, tax) if include_tab else 1.0
     return {
         "method": "relief_from_royalty",
+        "assumptions": {
+            "royalty_rate": royalty,
+            "tax_rate": tax,
+            "discount_rate": rate,
+            "terminal_growth": growth if terminal_growth is not None else None,
+        },
         "schedule": rows,
         "pv_explicit": _finite(pv_total, "rfr.pv_explicit"),
         "pv_terminal": pv_terminal,
@@ -220,6 +234,13 @@ def meem(
     tab = tax_amortization_benefit(rate, tax) if include_tab else 1.0
     return {
         "method": "meem",
+        "assumptions": {
+            "attrition_rate": attrition,
+            "ebit_margin": margin,
+            "contributory_charges_pct": cac,
+            "tax_rate": tax,
+            "discount_rate": rate,
+        },
         "schedule": rows,
         "value_before_tab": base_value,
         "tab_multiplier": tab,
@@ -266,6 +287,10 @@ def with_and_without(
     tab = tax_amortization_benefit(rate, tax) if include_tab else 1.0
     return {
         "method": "with_and_without",
+        "assumptions": {
+            "tax_rate": tax,
+            "discount_rate": rate,
+        },
         "schedule": rows,
         "value_before_tab": base_value,
         "tab_multiplier": tab,
@@ -305,6 +330,18 @@ def cost_approach(
         remaining -= layers[label]
     return {
         "method": "cost_approach",
+        "assumptions": {
+            "developer_profit_pct": profit,
+            "opportunity_cost_pct": opportunity,
+            "obsolescence_pct": {
+                label: _num(pct, f"cost.{label}_obsolescence_pct", minimum=0.0, maximum=1.0)
+                for label, pct in (
+                    ("physical", physical_obsolescence_pct),
+                    ("functional", functional_obsolescence_pct),
+                    ("economic", economic_obsolescence_pct),
+                )
+            },
+        },
         "replacement_cost_new": _finite(base, "cost.replacement_cost_new"),
         "obsolescence": layers,
         "fair_value": _finite(remaining, "cost.fair_value"),
