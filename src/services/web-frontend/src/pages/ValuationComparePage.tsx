@@ -21,7 +21,15 @@ import { useLatestOnly } from '../lib/useLatestOnly';
  * still — but they are not what the page opens on.
  */
 
-type CompareFormat = 'currency' | 'currency_precise' | 'percent' | 'integer' | 'number' | 'text';
+type CompareFormat =
+  | 'currency'
+  | 'currency_precise'
+  | 'percent'
+  | 'integer'
+  | 'number'
+  | 'text'
+  /** A specialty engine's own figure, whose unit the comparator does not know. */
+  | 'scalar';
 
 interface CompareRow {
   key: string;
@@ -59,6 +67,15 @@ interface Comparison {
   a: CompareSide;
   b: CompareSide;
   groups: CompareGroup[];
+  /**
+   * Metrics the comparison could read at all. Zero means it found nothing to
+   * compare — which is not the same statement as "nothing changed", and saying
+   * the second when the first is true asserts an agreement nobody checked.
+   *
+   * Optional so a reply from a build that predates the count is not read as a
+   * comparison of zero metrics; `undefined` falls back to the old wording.
+   */
+  metric_count?: number;
   changed_count: number;
   summary: string | null;
 }
@@ -141,6 +158,24 @@ function SideHeader({ side, label }: { side: CompareSide; label: string }) {
       </p>
     </div>
   );
+}
+
+/**
+ * Why a comparison came back with no metrics.
+ *
+ * "Every metric these two report is identical" was printed for this case, and
+ * it is a claim about the two runs that nothing established — most often one
+ * of them has simply never computed. Names the side that is missing, because
+ * that is the sentence that tells the user what to do next.
+ */
+function nothingToCompare(c: Comparison): string {
+  const missing = [c.a, c.b].filter((s) => s.calculation_id === null);
+  if (missing.length === 2) return 'Neither of these has produced a calculation yet.';
+  const only = missing[0];
+  if (only) {
+    return `${only.company_name} has not produced a calculation yet, so there is nothing to compare it against.`;
+  }
+  return 'Both have computed, but neither reported any metric this comparison reads.';
 }
 
 export function ValuationComparePage() {
@@ -300,9 +335,14 @@ export function ValuationComparePage() {
               </p>
             )}
             <p className="mt-1 text-sm text-ink-400">
-              {comparison.changed_count === 0
-                ? 'Nothing measured differs between these two.'
-                : `${comparison.changed_count} ${comparison.changed_count === 1 ? 'metric' : 'metrics'} changed.`}
+              {comparison.metric_count === 0
+                ? // The reason is given once, in the empty state below — the
+                  // same sentence in both places is noise, and this line is
+                  // the count, not the explanation.
+                  'No metrics to compare.'
+                : comparison.changed_count === 0
+                  ? 'Nothing measured differs between these two.'
+                  : `${comparison.changed_count} ${comparison.changed_count === 1 ? 'metric' : 'metrics'} changed.`}
             </p>
           </section>
 
@@ -325,7 +365,9 @@ export function ValuationComparePage() {
             </div>
           </div>
 
-          {groups.length === 0 ? (
+          {comparison.metric_count === 0 ? (
+            <EmptyState title="Nothing to compare">{nothingToCompare(comparison)}</EmptyState>
+          ) : groups.length === 0 ? (
             <EmptyState title="No differences">
               Every metric these two report is identical. Switch to “Show all metrics” to see them.
             </EmptyState>

@@ -266,6 +266,117 @@ describe('ValuationComparePage', () => {
     expect(screen.getByText('No differences')).toBeInTheDocument();
   });
 
+  /*
+   * Zero metrics is not zero differences. A comparison that read nothing has
+   * established nothing about whether the two agree, and "every metric these
+   * two report is identical" is a claim it cannot make — the case arises for
+   * two runs whose engine payload this view does not read, and for a side that
+   * has simply never computed.
+   */
+  describe('when there was nothing to compare', () => {
+    const empty = (over: Record<string, unknown> = {}) => ({
+      ...COMPARISON,
+      summary: null,
+      metric_count: 0,
+      changed_count: 0,
+      groups: [],
+      ...over,
+    });
+
+    it('does not claim the two are identical', async () => {
+      mockApi(empty());
+      renderAt(`?a=${VAL_A}&b=${VAL_B}`);
+
+      expect(await screen.findByText('Nothing to compare')).toBeInTheDocument();
+      expect(screen.getByText('No metrics to compare.')).toBeInTheDocument();
+      expect(screen.queryByText('No differences')).not.toBeInTheDocument();
+      expect(screen.queryByText('Nothing measured differs between these two.')).not.toBeInTheDocument();
+    });
+
+    it('names the side that has not computed', async () => {
+      mockApi(
+        empty({
+          b: { ...side(VAL_B, '1.5.0', '2025-11-30'), calculation_id: null, company_name: 'Late Co' },
+        }),
+      );
+      renderAt(`?a=${VAL_A}&b=${VAL_B}`);
+
+      expect(await screen.findByText(/Late Co has not produced a calculation yet/)).toBeInTheDocument();
+    });
+
+    it('says so when neither has computed', async () => {
+      mockApi(
+        empty({
+          a: { ...side(VAL_A, '1.4.0', '2025-05-31'), calculation_id: null },
+          b: { ...side(VAL_B, '1.5.0', '2025-11-30'), calculation_id: null },
+        }),
+      );
+      renderAt(`?a=${VAL_A}&b=${VAL_B}`);
+
+      expect(await screen.findByText(/Neither of these has produced a calculation yet/)).toBeInTheDocument();
+    });
+
+    it('says both computed but reported nothing this view reads', async () => {
+      mockApi(empty());
+      renderAt(`?a=${VAL_A}&b=${VAL_B}`);
+
+      expect(
+        await screen.findByText(/neither reported any metric this comparison reads/),
+      ).toBeInTheDocument();
+    });
+
+    // A reply from a build that predates the count must not be read as a
+    // comparison of zero metrics.
+    it('keeps the old wording when the server sends no count', async () => {
+      mockApi({
+        ...COMPARISON,
+        changed_count: 0,
+        groups: [
+          {
+            key: 'conclusion',
+            title: 'Conclusion',
+            rows: [row('fmv_per_share', 'FMV per common share', { changed: false, delta: 0 })],
+          },
+        ],
+      });
+      renderAt(`?a=${VAL_A}&b=${VAL_B}`);
+
+      expect(await screen.findByText('Nothing measured differs between these two.')).toBeInTheDocument();
+      expect(screen.queryByText('Nothing to compare')).not.toBeInTheDocument();
+    });
+  });
+
+  it('renders a specialty metric under its own group', async () => {
+    mockApi({
+      ...COMPARISON,
+      summary: null,
+      metric_count: 1,
+      changed_count: 1,
+      groups: [
+        {
+          key: 'specialty',
+          title: 'Specialty result',
+          rows: [
+            {
+              ...row('specialty_amv_per_share', 'amv_per_share', {
+                a_display: '1.8',
+                b_display: '2',
+                delta: 0.2,
+                delta_display: '+0.2',
+              }),
+              format: 'scalar' as const,
+            },
+          ],
+        },
+      ],
+    });
+    renderAt(`?a=${VAL_A}&b=${VAL_B}`);
+
+    const group = (await screen.findByRole('table', { name: 'Specialty result' })).closest('table')!;
+    expect(within(group).getByText('amv_per_share')).toBeInTheDocument();
+    expect(within(group).getByText('+0.2')).toBeInTheDocument();
+  });
+
   it('surfaces a refusal from the server', async () => {
     mockApi(null, 422);
     renderAt(`?a=${VAL_A}&b=${VAL_B}`);
