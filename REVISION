@@ -4562,3 +4562,159 @@
 #            read out of the Python rather than provoked: the service test
 #            stubs the engine, so the assertion is on which key the request
 #            carries, not on what the engine does with the wrong one.
+
+# N409 revision
+# commit:    8a3893a
+# subject:   the exclusion nobody had determined, and the questions no engine
+#            was ever asked
+# previous:  1ff268b (say which cap a holder of both vintages is modelled
+#            against).
+# includes:  8 commits — R133. One finding, a guard that generalises it, a
+#            second finding the guard's mirror image turned up one parameter
+#            over, and one type that was already known to be wrong and had been
+#            left as a gap note by R131.
+#
+#            The finding is a gift & estate deliverable overstating the number
+#            on the return. `gift_estate_valuation` has accepted
+#            `annual_exclusion`, `donees` and `split_gift` since it was written,
+#            and its own comment says why the §2503(b) figure is a parameter
+#            rather than a constant: it is indexed for inflation, so an engine
+#            that bakes in one year's figure misstates every other year's. The
+#            assembler in `domain/specialty.ts` sent none of the three, and the
+#            questionnaire asked for none of them. Every gift engagement on the
+#            platform therefore ran on the defaults — one donee, no split
+#            election, no exclusion — and concluded a taxable gift equal to the
+#            full appraised value of the transferred interest. For a 2026
+#            transfer that is $19,000 per donee, doubled on a §2513 election, on
+#            the figure a Form 709 is struck from.
+#
+#            2b6a35b — the default was 0.0, which is the same arithmetic as an
+#            undetermined exclusion and the opposite statement. Zero is "the
+#            exclusion was considered and none is available" — a future-interest
+#            gift really gets none — and absent is "nobody has said what this
+#            year's figure is". The default is `None` now and the result carries
+#            `determined`. No number moves; what moves is what the output claims
+#            about itself.
+#
+#            5b4a400 — the transfer section asks all three questions. An
+#            unanswered exclusion stays off the wire rather than going out as a
+#            0, because `put` drops nulls and a 0 would arrive at the engine as
+#            the determination the analyst has not made. An answered 0 is sent.
+#
+#            c1a873d — the reportable-gift exhibit had two states where the file
+#            has three. It asked whether the exclusion *applies* to the transfer
+#            — an estate inclusion and a GST have none — and printed everything
+#            else as an applied amount, so the undetermined case rendered as
+#            "Less annual exclusion (1 donee(s)) −$0.00" over a cumulative total
+#            struck at the whole appraised value. The third state prints as
+#            itself, and the foot says the total is before any annual exclusion
+#            so a reviewer reading only the last line is not told it is final.
+#            Results stored before the flag existed are read by their per-donee
+#            figure: every one of them ran through a questionnaire with no
+#            exclusion field, so a nil figure is the unanswered case and a real
+#            one came from a run override.
+#
+#            b048860 — what would have caught it. The assembler builds each
+#            engine request field by hand and the engine takes keyword arguments
+#            with defaults, so a forgotten field is not a type error, not a 422
+#            and not a log line. The census asks the question of every specialty
+#            kind by removal rather than by name: drop one answer, reassemble,
+#            and see whether the engine is asked anything different. Removal
+#            survives the renames (`prior_gifts_value` → `prior_taxable_gifts`)
+#            and the derivations (`annual_revenue` × `remaining_life_years` → a
+#            flat `revenues` forecast) that a name comparison would report as
+#            dead fields, and every select is swung through each of its options
+#            because half these forms branch on one — `royalty_rate` is read
+#            only under a relief-from-royalty method.
+#
+#            Twenty-eight fields are exempt and each names the reader that does
+#            use it: the shared company section, the VAL231/VAL230 particulars,
+#            the ASC 820 fund description whose measurement is the position
+#            schedule, and the PPA earn-out that is disclosed inside
+#            consideration rather than added to it. Two guards stop it passing
+#            vacuously — assembling a complete questionnaire must not throw, and
+#            an exemption must still name a field the form asks and the
+#            assembler does not send, so an entry cannot outlive the gap it
+#            excused.
+#
+#            2c15551, 4695ce1, 8a3893a — and then the same bug one parameter
+#            over, found by running the census's mirror image by hand: walk each
+#            specialty engine's signature and ask which of its arguments the
+#            platform can reach. `gift_estate_valuation` takes
+#            `factors_addressed`, the Rev. Rul. 59-60 §4.01 checklist, and
+#            nothing passed it either. `_factors(None)` and `_factors([])`
+#            produce the same eight "no"s and mean opposite things — a caller
+#            who never asked, and an appraiser who worked the checklist and
+#            addressed nothing — so every gift exhibit printed a No against each
+#            of the eight factors and footed "Factors addressed: 0 of 8". The
+#            engine's own comment says an unaddressed factor is a finding rather
+#            than a silence; with no caller, the report filed eight findings
+#            against itself, on the checklist a Rev. Rul. 59-60 appraisal is
+#            graded by.
+#
+#            Same three parts as the exclusion: `stated` on the engine result;
+#            eight boolean questions on the questionnaire, keyed `factor_` plus
+#            the engine's own key so the two lists cannot drift into different
+#            spellings of one factor without the census noticing; and an exhibit
+#            that prints "Not recorded" rather than eight refusals. An untouched
+#            checklist sends nothing, because an empty list asserts the stronger
+#            claim; one answered box — even a "no" — is the appraiser having
+#            worked through it.
+#
+#            a8b37bd — R131 left this as a gap and it is now closed. The Debt
+#            Instruments per-type rate mapping was a switch whose `default`
+#            returned `market_yield`; that default is how three of the five
+#            types came to shift a key they carry no field for, each found and
+#            fixed separately, with the default that produced all three left
+#            answering for whatever comes next. It is a
+#            `Record<InstrumentType, …>` now — the shape `PARAM_FIELDS` two
+#            declarations above has always had — so a sixth type does not
+#            compile until someone says which rate it prices off. The test walks
+#            every type and asserts the key it shifts is one the type actually
+#            carries, which is the invariant all three bugs broke, stated once.
+#
+#            Deliberate break, each: dropping the three `put` lines fails the
+#            census on `gifts` by name; hard-coding the exhibit's `determined`
+#            to true fails two exhibit assertions; pointing the convertible at
+#            `market_yield` fails the rate census with the field list it is not
+#            in.
+#
+# gap:       The census proves a questionnaire's answers reach the engine. The
+#            reverse — that every parameter the engine accepts is asked of
+#            somebody — is the direction both of this round's findings ran, and
+#            it is still done by hand. It was done by hand here: parse each
+#            engine entry point's keyword parameters out of the Python and
+#            subtract what the assembler can send. That found
+#            `factors_addressed` in a minute, and it wants to be a test.
+#
+#            What stopped it becoming one is the three dispatcher endpoints.
+#            `value_intangible`, `run_impairment_test` and `emi_csop_valuation`
+#            take `(method, params)` and hand the params to a different function
+#            per method, so the accepted arguments are not in the signature the
+#            route calls — a naive parse reads the dispatcher's own locals
+#            (`fn`, `rest`, `name`) as parameters and reports nonsense. Getting
+#            it right means following the dispatch, which is a Python job:
+#            `_engine_input_kwargs` already holds the exact function object for
+#            each `inputs`-shaped endpoint, and `inspect.signature` needs no
+#            parsing at all. The half that stays hard is that the other side of
+#            the comparison is TypeScript.
+#
+#            Also unmeasured: ifrs2 accepts `expected_forfeiture_rate`,
+#            `attribution` and `tranches`, and the questionnaire asks for none of
+#            them. Unlike the two fixed here, those have plausible defaults and
+#            no exhibit line claiming a determination, so they are a scope
+#            question rather than a misstatement — but nobody has actually
+#            checked what the deliverable says about them.
+#
+#            `sale_to_grantor_trust` is in `TRANSFER_TYPES` and is treated as
+#            exclusion-eligible alongside a plain gift. A sale for full
+#            consideration is not a gift at all, and a gift in trust is a future
+#            interest that gets no annual exclusion without Crummey rights.
+#            Neither is modelled; the engine reports the whole discounted value
+#            as the taxable gift for that type. Left alone deliberately — it is
+#            a judgement about the transaction, not an arithmetic error, and
+#            changing it needs an answer about what the questionnaire should ask.
+#
+#            Nothing here was checked in a browser. The exhibit assertions read
+#            the generated HTML, not a rendered PDF, and the gifts questionnaire
+#            gained three fields that no test renders through ClientIntakePage.
