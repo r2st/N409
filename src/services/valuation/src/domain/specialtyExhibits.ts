@@ -75,6 +75,18 @@ function str(value: unknown, fallback = '—'): string {
   return fallback;
 }
 
+/**
+ * The four `transfer_type` answers, in the words a return preparer uses.
+ * `label()` would render `sale_to_grantor_trust` as "Sale to grantor trust",
+ * which is close, and `gst` as "Gst", which is not a thing.
+ */
+const TRANSFER_LABELS: Record<string, string> = {
+  gift: 'Gift (§2503)',
+  estate: 'Estate inclusion (§2031)',
+  gst: 'Generation-skipping transfer (§2601)',
+  sale_to_grantor_trust: 'Sale to a grantor trust',
+};
+
 // ── QSBS ─────────────────────────────────────────────────────────────────────
 
 function qsbsExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
@@ -737,6 +749,25 @@ function giftEstateExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
     ],
   });
 
+  // What the transfer was and when. `transfer_type` is a required question
+  // with four answers and it is what decides whether the §2503(b) exclusion is
+  // available at all; `transfer_date` is required too and is, for an estate,
+  // the date of death the whole appraisal is struck at. The exhibit printed
+  // neither, so a gift return and an estate inclusion rendered identically and
+  // the exclusion row below could say "not available for this transfer"
+  // without the reader knowing which transfer that was.
+  const transferType = typeof specialty.transfer_type === 'string' ? specialty.transfer_type : null;
+  const transferDate = typeof specialty.transfer_date === 'string' ? specialty.transfer_date : null;
+  const transferNote =
+    transferType === null
+      ? null
+      : P(
+          `Transfer: <strong>${esc(TRANSFER_LABELS[transferType] ?? label(transferType))}</strong>` +
+            (transferDate === null
+              ? '.'
+              : ` on <strong>${esc(transferDate)}</strong>, the date the interest is valued at.`),
+        );
+
   const exclusion = record(specialty.annual_exclusion);
   const taxable = num(specialty.taxable_gift);
   // Three states, not two. The exclusion may not apply to this transfer (an
@@ -762,7 +793,20 @@ function giftEstateExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
           `−${money(exclusion?.applied, ctx) ?? '—'}`,
         ]
       : ['Less annual exclusion — not determined', 'Not determined']
-    : ['Annual exclusion — not available for this transfer', '—'];
+    : [
+        // The reason, not just the refusal. §2503(b) shelters a present
+        // interest transferred by gift; an estate inclusion under §2031 and a
+        // generation-skipping transfer are not gifts, and saying only "not
+        // available" leaves a preparer to wonder whether it was overlooked.
+        `Annual exclusion — not available for ${
+          transferType === 'estate'
+            ? 'an estate inclusion (§2031)'
+            : transferType === 'gst'
+              ? 'a generation-skipping transfer'
+              : 'this transfer'
+        }`,
+        '—',
+      ];
   const gift =
     taxable === null
       ? null
@@ -810,7 +854,7 @@ function giftEstateExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
         })
       : null;
 
-  return section('Exhibit — Transferred Interest and Discounts', [bridge, gift, checklist]);
+  return section('Exhibit — Transferred Interest and Discounts', [transferNote, bridge, gift, checklist]);
 }
 
 // ── IFRS 2 share-based payment ───────────────────────────────────────────────

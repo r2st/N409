@@ -149,6 +149,64 @@ describe('ASC 820 fair value measurement', () => {
 describe('gift & estate', () => {
   const exhibit = () => only('gifts', SAMPLE_GIFTS_RESULT);
 
+  /**
+   * `transfer_type` and `transfer_date` are both required questions and the
+   * engine returns both. The exhibit read neither, so a Form 709 gift and an
+   * estate inclusion under §2031 rendered as the same document — headed
+   * "Transferred Interest and Discounts", with no statement of what was
+   * transferred or when.
+   *
+   * The date matters most on the estate side, where it is the date of death
+   * the whole appraisal is struck at, and the type is what decides the
+   * annual-exclusion row below it.
+   */
+  it('names the transfer and the date the interest is valued at', () => {
+    const html = exhibit().html;
+    expect(html).toContain('Gift (§2503)');
+    expect(html).toContain('2026-03-31');
+    expect(html).toContain('the date the interest is valued at');
+  });
+
+  it('names an estate inclusion as one, and says why no exclusion is available', () => {
+    const estate = {
+      ...SAMPLE_GIFTS_RESULT,
+      transfer_type: 'estate',
+      annual_exclusion: {
+        ...(SAMPLE_GIFTS_RESULT.annual_exclusion as Record<string, unknown>),
+        applies: false,
+      },
+    };
+    const html = only('gifts', estate).html;
+    expect(html).toContain('Estate inclusion (§2031)');
+    // The reason, not just the refusal — otherwise a preparer cannot tell an
+    // unavailable exclusion from an overlooked one.
+    expect(html).toContain('not available for an estate inclusion (§2031)');
+  });
+
+  it('names a generation-skipping transfer rather than rendering it as "Gst"', () => {
+    const gst = {
+      ...SAMPLE_GIFTS_RESULT,
+      transfer_type: 'gst',
+      annual_exclusion: {
+        ...(SAMPLE_GIFTS_RESULT.annual_exclusion as Record<string, unknown>),
+        applies: false,
+      },
+    };
+    const html = only('gifts', gst).html;
+    expect(html).toContain('Generation-skipping transfer (§2601)');
+    expect(html).toContain('not available for a generation-skipping transfer');
+    expect(html).not.toContain('Gst');
+  });
+
+  /** A result stored before the engine reported the type still renders. */
+  it('drops the transfer line rather than guessing when no type came back', () => {
+    const untyped = { ...SAMPLE_GIFTS_RESULT };
+    delete untyped.transfer_type;
+    const html = only('gifts', untyped).html;
+    expect(html).not.toContain('Transfer:');
+    expect(html).toContain('$2,280,960');
+  });
+
   it('prints the bridge from entity value to the transferred interest', () => {
     const html = exhibit().html;
     expect(html).toContain('$24,000,000'); // entity
@@ -249,7 +307,9 @@ describe('gift & estate', () => {
       },
     };
     const html = only('gifts', estate).html;
-    expect(html).toContain('not available for this transfer');
+    // The row names the transfer it is unavailable for; "this transfer" was
+    // the wording before the exhibit read `transfer_type` at all.
+    expect(html).toContain('not available for an estate inclusion (§2031)');
     expect(html).not.toContain('not determined');
   });
 
