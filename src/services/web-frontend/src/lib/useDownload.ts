@@ -50,7 +50,23 @@ export function useDownload(): {
   return { start, busy, error };
 }
 
-/** Strips a company name down to something safe to use as a filename stem. */
+/**
+ * Strips a company name down to something safe to use as a filename stem.
+ *
+ * `\w` is ASCII — it is `[A-Za-z0-9_]` and nothing else, whatever flags the
+ * regex carries — so the previous class deleted every letter outside that range
+ * as if it were punctuation. "Ångström Robotics" became `_ngstr_m_Robotics`; a
+ * name written in Japanese or Greek or Cyrillic became a row of underscores
+ * with a file extension on the end. These names reach a filesystem, not a
+ * header, and every filesystem the app runs against has been UTF-8 for twenty
+ * years.
+ *
+ * The class is now the same idea written in Unicode: keep letters, digits and
+ * combining marks — the mark class matters, or a decomposed `Å` loses its ring
+ * and keeps its `A` — and collapse the rest. Punctuation still goes, so the
+ * separators and dot-segments a name could otherwise smuggle in still collapse
+ * to `_`.
+ */
 export function filenameStem(companyName: string): string {
-  return companyName.replace(/[^\w.-]+/g, '_');
+  return companyName.replace(/[^\p{L}\p{N}\p{M}._-]+/gu, '_');
 }

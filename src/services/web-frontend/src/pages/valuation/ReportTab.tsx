@@ -11,6 +11,7 @@ import {
   type ReportVersionSummary,
 } from '../../lib/m2';
 import { formatDateTime } from '../../lib/format';
+import { filenameStem } from '../../lib/useDownload';
 import { useUnsavedChanges } from '../../lib/unsavedChanges';
 import { useWorkspace } from './ValuationWorkspace';
 import { RichTextEditor } from '../../components/RichTextEditor';
@@ -250,7 +251,7 @@ export function ReportTab() {
     run('download', () =>
       downloadPdf(
         `/valuations/${valuation.id}/report.pdf`,
-        `${valuation.company_name.replace(/[^\w.-]+/g, '_')}_report_v${report.current_version}.pdf`,
+        `${filenameStem(valuation.company_name)}_report_v${report.current_version}.pdf`,
         getToken(),
       ),
     );
