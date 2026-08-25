@@ -25,6 +25,7 @@ import { buildSpecialtyExhibits } from '../../src/domain/specialtyExhibits.js';
 import {
   SAMPLE_820_RESULT,
   SAMPLE_EMI_RESULT,
+  SAMPLE_ESOP_RESULT,
   SAMPLE_FMV_RESULT,
   SAMPLE_IP_RESULT,
   SAMPLE_PPA_RESULT,
@@ -250,6 +251,56 @@ describe('specialty exhibits survive the renderer', () => {
     expect(text).toContain('\u00a3250,000 limit');
     expect(text).toContain('$175,500');
     expect(text).toContain('statutory sterling amounts');
+    for (const line of linesOf(pdf)) expect(line.x).toBeLessThan(PAGE_WIDTH - MARGIN);
+  }, 120_000);
+
+  /**
+   * Six columns after the present-value one was added, ten rows deep, with a
+   * per-share price at two decimals beside two share counts and three amounts.
+   */
+  it('fits the ESOP repurchase schedule with its present-value column', async () => {
+    const pdf = await render('esop', SAMPLE_ESOP_RESULT);
+    const text = extractText(pdf);
+    for (const head of [
+      'Year',
+      'Share price',
+      'Shares redeemed',
+      'Repurchase cost',
+      'Remaining shares',
+      'Present value',
+    ]) {
+      expect(text, `column "${head}" is not in the PDF`).toContain(head);
+    }
+    expect(text).toContain('$761,471');
+    expect(text).toContain('$4,748,503');
+    expect(brokenAmounts(pdf)).toEqual([]);
+    for (const line of linesOf(pdf)) expect(line.x).toBeLessThan(PAGE_WIDTH - MARGIN);
+  }, 120_000);
+
+  /** The same schedule for a company whose ESOP stake runs to nine figures. */
+  it('keeps the ESOP schedule whole at a billion-dollar equity value', async () => {
+    const pdf = await render('esop', {
+      ...SAMPLE_ESOP_RESULT,
+      levels: {
+        control: 1_400_000_000,
+        marketable_minority: 1_147_540_984,
+        nonmarketable_minority: 1_009_836_066,
+      },
+      repurchase_obligation: {
+        schedule: [1, 2, 3].map((year) => ({
+          year,
+          share_price: 252.4 * year,
+          shares_redeemed: 720_000 / year,
+          repurchase_cost: 181_728_000 / year,
+          remaining_shares: 11_280_000 / year,
+          pv: 163_755_000 / year,
+        })),
+        total_obligation: 333_168_000,
+        pv_of_obligation: 300_218_000,
+        ending_share_balance: 3_760_000,
+      },
+    });
+    expect(brokenAmounts(pdf)).toEqual([]);
     for (const line of linesOf(pdf)) expect(line.x).toBeLessThan(PAGE_WIDTH - MARGIN);
   }, 120_000);
 

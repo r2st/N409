@@ -359,10 +359,14 @@ describe('IFRS 2 share-based payment', () => {
 
   it('prints the grant-date measurement and what it expects to vest', () => {
     const html = exhibit().html;
-    expect(html).toContain('Black scholes');
+    // The standard's own words for the model and the settlement, not the
+    // humanized dispatch keys ("Black scholes", "Performance non market").
+    expect(html).toContain('Black-Scholes');
+    expect(html).toContain('Equity-settled');
     expect(html).toContain('$0.7437'); // fair value per award
-    expect(html).toContain('750000'); // awards granted
-    expect(html).toContain('690000'); // expected to vest after 8% forfeiture
+    // Grouped, like every amount beside them on the same table.
+    expect(html).toContain('750,000'); // awards granted
+    expect(html).toContain('690,000'); // expected to vest after 8% forfeiture
   });
 
   it('labels each schedule row by its year and not by its own amount', () => {

@@ -32,6 +32,9 @@ import { buildSpecialtyExhibits } from '../../src/domain/specialtyExhibits.js';
 import {
   SAMPLE_CSOP_RESULT,
   SAMPLE_EMI_RESULT,
+  SAMPLE_IFRS2_CASH_RESULT,
+  SAMPLE_IMPAIRMENT_LONG_LIVED_RESULT,
+  SAMPLE_IP_COST_RESULT,
   SAMPLE_ESOP_RESULT,
   SAMPLE_FMV_RESULT,
   SAMPLE_GOODWILL_RESULT,
@@ -215,13 +218,44 @@ describe('ESOP level of value', () => {
     expect(cells(out())).toContain('$11.1803');
   });
 
+  /**
+   * The per-year present values are the point of a repurchase study — the
+   * obligation is a funding schedule, and a foot stating one PV for the whole
+   * of it says how much and not when. They were dropped for every ESOP
+   * engagement ever run.
+   */
   it('prints the repurchase projection year by year with its present value', () => {
     const c = cells(out());
+    expect(c).toContain('Present value');
     expect(c).toContain('$845,233'); // year 1 cost
+    expect(c).toContain('$761,471'); // and its present value
     expect(c).toContain('1,128,000'); // year 1 remaining shares
     expect(c).toContain('$751,330'); // year 10 cost
+    expect(c).toContain('$264,607'); // year 10 present value
     expect(c).toContain('$7,974,624'); // total
-    expect(c).toContain('PV $4,748,503');
+    expect(c).toContain('$4,748,503'); // and its present value
+  });
+
+  /** A run with no discount rate has no present values to print. */
+  it('drops the present-value column when the projection was not discounted', () => {
+    const undiscounted = {
+      ...SAMPLE_ESOP_RESULT,
+      repurchase_obligation: {
+        schedule: [
+          {
+            year: 1,
+            share_price: 11.74,
+            shares_redeemed: 72_000,
+            repurchase_cost: 845_233,
+            remaining_shares: 1_128_000,
+          },
+        ],
+        total_obligation: 845_233,
+      },
+    };
+    const out2 = html('esop', undiscounted);
+    expect(out2).not.toContain('Present value');
+    expect(cells(out2)).toContain('$845,233');
   });
 });
 
@@ -328,5 +362,108 @@ describe('EMI and CSOP', () => {
   it('says so when the engagement currency is not the currency of the limits', () => {
     expect(html('emi', SAMPLE_EMI_RESULT, 'USD')).toContain('statutory sterling amounts');
     expect(html('emi', SAMPLE_EMI_RESULT, 'GBP')).not.toContain('statutory sterling amounts');
+  });
+});
+
+/**
+ * Three more payloads, for shapes one run of an engine cannot produce. Each is
+ * a block the census had no way to sweep, because the only sample for its kind
+ * did not contain it:
+ *
+ *   - `remeasurement` has contents only for a cash-settled award, and it is the
+ *     block R134 found dropped in the first place;
+ *   - `obsolescence` belongs to the cost approach, and the IP sample is an
+ *     income method — R135 named it as unswept;
+ *   - `recoverable` and `undiscounted_cash_flows_total` belong to the ASC 360
+ *     test, a different function behind the same exhibit as goodwill.
+ */
+describe('IFRS 2, cash-settled', () => {
+  const out = () => html('ifrs2', SAMPLE_IFRS2_CASH_RESULT);
+
+  it('prints the liability, its grant-date measure and the change between them', () => {
+    const c = cells(out());
+    expect(c).toContain('$0.9125'); // fair value per award at the reporting date
+    expect(c).toContain('$343,100'); // liability carried at fair value
+    expect(c).toContain('$280,616'); // liability at grant-date fair value
+    expect(out()).toContain('$62,484, recognised in profit or loss for the period');
+  });
+
+  it('states the standard the remeasurement follows from', () => {
+    expect(out()).toContain('IFRS 2.30-33');
+  });
+
+  /** Non-market performance, so the expense is trued up to what actually vests. */
+  it('states the true-up rule for the condition this award carries', () => {
+    expect(out()).toContain('IFRS 2.19');
+    expect(out()).toContain('trued up to the number of awards that actually vest');
+  });
+
+  it("names the settlement and the condition in the standard's words", () => {
+    const c = cells(out());
+    expect(c).toContain('Cash-settled');
+    expect(c).toContain('Non-market performance condition');
+    expect(c).not.toContain('Performance non market');
+  });
+
+  it('groups the award counts', () => {
+    const c = cells(out());
+    expect(c).toContain('400,000');
+    expect(c).toContain('376,000');
+    expect(c).not.toContain('400000');
+  });
+});
+
+describe('the intangible cost approach', () => {
+  const out = () => html('ip', SAMPLE_IP_COST_RESULT);
+
+  it('takes each obsolescence layer off in turn', () => {
+    const c = cells(out());
+    expect(c).toContain('$5,382,000'); // replacement cost new with the incentives
+    expect(c).toContain('Less physical obsolescence');
+    expect(c).toContain('$538,200');
+    expect(c).toContain('Less functional obsolescence');
+    expect(c).toContain('$871,884');
+    expect(c).toContain('Less economic obsolescence');
+    expect(c).toContain('$278,034');
+    expect(c).toContain('$3,693,882');
+  });
+
+  /**
+   * 10%, then 18% of what is left, then 7% of what is left after that. A reader
+   * who adds the three percentages gets 35% and the wrong answer, which is what
+   * the note exists to prevent.
+   */
+  it('says the layers compound rather than sum', () => {
+    expect(out()).toContain('The obsolescence layers compound');
+  });
+
+  it('names the method rather than the dispatch key', () => {
+    expect(out()).toContain('<strong>Cost approach</strong>');
+    expect(out()).not.toContain('cost_approach');
+  });
+});
+
+describe('ASC 360 long-lived impairment', () => {
+  const out = () => html('goodwill', SAMPLE_IMPAIRMENT_LONG_LIVED_RESULT);
+
+  /**
+   * The two-step test: undiscounted flows against carrying, and only then a
+   * measurement. Both figures are on the exhibit, so a reader can see which
+   * step produced the loss.
+   */
+  it('prints the recoverability screen and the flows it was run on', () => {
+    const c = cells(out());
+    expect(c).toContain('Undiscounted cash flows (total)');
+    expect(c).toContain('$16,300,000');
+    expect(c).toContain('Not recoverable');
+    expect(c).toContain('$14,400,000'); // fair value, and the carrying amount after
+    expect(c).toContain('$3,800,000');
+  });
+
+  it('names the asset group and the standard it was tested under', () => {
+    expect(out()).toContain('Fabrication line — Chandler');
+    expect(
+      buildSpecialtyExhibits(calc('goodwill', SAMPLE_IMPAIRMENT_LONG_LIVED_RESULT), ctx)[0]!.heading,
+    ).toBe('Exhibit — Impairment Test (ASC 360-10)');
   });
 });

@@ -54,6 +54,23 @@ function shown(value: number, ctx: ExhibitContext, digits = 0): string {
   return formatCurrency(value, ctx.currency, digits);
 }
 
+/**
+ * A share or award count, grouped.
+ *
+ * `String(num(x))` was the idiom on the IFRS 2 exhibit and it put "400000" and
+ * "376000" in a client deliverable beside amounts that were grouped, on the
+ * same table. A non-integer is kept rather than rounded away: the engines
+ * return counts as floats and an expected-to-vest of 375,999.5 is a figure
+ * somebody has to see, not one to silently round into place.
+ */
+function count(value: unknown): string | null {
+  const n = num(value);
+  if (n === null) return null;
+  return Number.isInteger(n)
+    ? INT.format(n)
+    : new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(n);
+}
+
 function pct(value: unknown, digits = 1): string | null {
   const n = num(value);
   return n === null ? null : formatPercent(n, digits);
@@ -360,6 +377,19 @@ function esopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): R
     money(levels.marketable_minority, ctx) ?? '—',
   ];
   const shares = num(specialty.shares_outstanding);
+  /**
+   * Whether the projection was discounted. `repurchase_obligation` returns a
+   * `pv` on every row and a `pv_of_obligation` total only when a discount rate
+   * was supplied; without one the rows carry no present value and a column of
+   * em-dashes would read as a failed calculation rather than a question nobody
+   * asked.
+   *
+   * The per-year present values used to be dropped whether or not they existed.
+   * The foot stated one PV for the whole obligation, so a reader could see the
+   * total and not which years carry it — which in a repurchase study is the
+   * question, because the obligation is a funding schedule and not a number.
+   */
+  const discounted = num(repurchase?.pv_of_obligation) !== null && schedule.some((r) => num(r.pv) !== null);
   return section('Exhibit — ESOP Level of Value', [
     P(
       minorityBasis
@@ -409,23 +439,32 @@ function esopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): R
       : null,
     schedule.length > 0
       ? table({
-          head: ['Year', 'Share price', 'Shares redeemed', 'Repurchase cost', 'Remaining shares'],
+          head: [
+            'Year',
+            'Share price',
+            'Shares redeemed',
+            'Repurchase cost',
+            'Remaining shares',
+            ...(discounted ? ['Present value'] : []),
+          ],
           rows: schedule.map((r) => [
             String(num(r.year) ?? '—'),
             money(r.share_price, ctx, 2) ?? '—',
             INT.format(Math.round(num(r.shares_redeemed) ?? 0)),
             money(r.repurchase_cost, ctx) ?? '—',
             INT.format(Math.round(num(r.remaining_shares) ?? 0)),
+            ...(discounted ? [money(r.pv, ctx) ?? '—'] : []),
           ]),
-          foot: [
-            'Total obligation',
-            '',
-            '',
-            money(repurchase!.total_obligation, ctx) ?? '—',
-            num(repurchase!.pv_of_obligation) !== null
-              ? `PV ${money(repurchase!.pv_of_obligation, ctx)}`
-              : '',
-          ],
+          foot: discounted
+            ? [
+                'Total obligation',
+                '',
+                '',
+                money(repurchase!.total_obligation, ctx) ?? '—',
+                '',
+                money(repurchase!.pv_of_obligation, ctx) ?? '—',
+              ]
+            : ['Total obligation', '', '', money(repurchase!.total_obligation, ctx) ?? '—', ''],
         })
       : null,
   ]);
@@ -1197,6 +1236,30 @@ function giftEstateExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
  * expense schedule with no note of whether it will be trued up is a figure a
  * reviewer cannot check.
  */
+/**
+ * IFRS 2's own vocabulary, where `label()` does not reach it. "Performance non
+ * market" is not what the standard calls a non-market performance condition,
+ * and "Black scholes" is not the name of the model — both were printed on the
+ * grant-date measurement table of a report a reviewer reads.
+ */
+const IFRS2_TERMS: Record<string, string> = {
+  equity_settled: 'Equity-settled',
+  cash_settled: 'Cash-settled',
+  service: 'Service condition',
+  performance_non_market: 'Non-market performance condition',
+  market: 'Market condition',
+  black_scholes: 'Black-Scholes',
+  supplied: 'Supplied (lattice or Monte Carlo, run elsewhere)',
+  graded: 'Graded',
+  straight_line: 'Straight-line',
+};
+
+/** One of IFRS 2's terms, or the humanized key for anything unfamiliar. */
+function term(value: unknown): string {
+  const key = typeof value === 'string' ? value : null;
+  return key === null ? '—' : esc(IFRS2_TERMS[key] ?? label(key));
+}
+
 function ifrs2Exhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
   const totalExpense = num(specialty.total_expense);
   const perAward = num(specialty.fair_value_per_award);
@@ -1226,18 +1289,18 @@ function ifrs2Exhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): 
   const measurement = table({
     head: ['Grant-date measurement', 'Value'],
     rows: [
-      ['Settlement', label(str(specialty.settlement))],
-      ['Vesting condition', label(str(specialty.vesting_condition))],
-      ['Model', label(str(specialty.model))],
+      ['Settlement', term(specialty.settlement)],
+      ['Vesting condition', term(specialty.vesting_condition)],
+      ['Model', term(specialty.model)],
       ['Fair value per award', shown(perAward, ctx, 4)],
-      ['Awards granted', String(num(specialty.options_granted) ?? '—')],
+      ['Awards granted', count(specialty.options_granted) ?? '—'],
       ['Grant-date fair value', money(specialty.grant_date_fair_value_total, ctx) ?? '—'],
       forfeitureRow,
       [
         forfeitureDetermined || marketCondition
           ? 'Expected to vest'
           : 'Expected to vest — every award granted, no estimate made',
-        String(num(specialty.expected_to_vest) ?? '—'),
+        count(specialty.expected_to_vest) ?? '—',
       ],
     ],
     foot: ['Total expense', shown(totalExpense, ctx)],
@@ -1259,12 +1322,7 @@ function ifrs2Exhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): 
             money(p.cumulative, ctx) ?? '—',
             pct(p.cumulative_pct) ?? '—',
           ]),
-          foot: [
-            `Attribution — ${label(str(specialty.attribution))}`,
-            shown(totalExpense, ctx),
-            '',
-            '100.0%',
-          ],
+          foot: [`Attribution — ${term(specialty.attribution)}`, shown(totalExpense, ctx), '', '100.0%'],
         })
       : null;
 
@@ -1287,7 +1345,7 @@ function ifrs2Exhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): 
           head: ['Remeasurement at the reporting date', 'Value'],
           rows: [
             ['Fair value per award', money(remeasurement?.current_fair_value_per_award, ctx, 4) ?? '—'],
-            ['Awards expected to vest', String(num(specialty.expected_to_vest) ?? '—')],
+            ['Awards expected to vest', count(specialty.expected_to_vest) ?? '—'],
             ['Liability at grant-date fair value', shown(totalExpense, ctx)],
           ],
           foot: ['Liability carried at fair value', shown(currentTotal, ctx)],
