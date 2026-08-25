@@ -979,6 +979,57 @@ describe('Asc718Tab — results', () => {
     expect(screen.getByText('Grant 2')).toBeInTheDocument();
   });
 
+  /**
+   * The response has carried this schedule since the endpoint existed, and
+   * this tab declared it in the response type without drawing it. What the
+   * awards cost was on screen; when the expense lands was not.
+   */
+  it('draws the expense schedule by calendar year', async () => {
+    await runWith({
+      options: {
+        totalCompensationCost: 246000,
+        grants: [
+          {
+            label: '2026 pool',
+            fairValuePerOption: 4.5,
+            totalCompensationCost: 246000,
+            expectedToVestOptions: 44000,
+          },
+        ],
+        expenseByCalendarYear: [
+          { year: 2026, expense: 41000, cumulative: 41000 },
+          { year: 2027, expense: 82000, cumulative: 123000 },
+          { year: 2028, expense: 123000, cumulative: 246000 },
+        ],
+      },
+    });
+
+    // The row is named by the year itself, not by an offset from the grant.
+    const row = screen.getByText('2027').closest('tr')!;
+    expect(within(row).getByText('$82,000')).toBeInTheDocument();
+    expect(within(row).getByText('$123,000')).toBeInTheDocument();
+    expect(screen.getByText('Expense recognized by calendar year')).toBeInTheDocument();
+  });
+
+  it('leaves the schedule out when the measurement produced none', async () => {
+    await runWith({
+      options: {
+        totalCompensationCost: 246000,
+        grants: [
+          {
+            label: '2026 pool',
+            fairValuePerOption: 4.5,
+            totalCompensationCost: 246000,
+            expectedToVestOptions: 44000,
+          },
+        ],
+        expenseByCalendarYear: [],
+      },
+    });
+
+    expect(screen.queryByText('Expense recognized by calendar year')).not.toBeInTheDocument();
+  });
+
   it('breaks an ESPP into its discount, call and put components', async () => {
     await runWith({
       espp: [

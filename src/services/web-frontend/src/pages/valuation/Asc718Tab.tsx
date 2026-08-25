@@ -762,6 +762,38 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
               </tbody>
             </table>
           </div>
+          {result.options.expenseByCalendarYear.length > 0 && (
+            /*
+              The schedule the ASC 718 note tabulates. The response has carried
+              it since the endpoint existed and this tab declared it in the
+              response type without ever drawing it, so the analyst could see
+              what the awards cost but not when it lands — the one question the
+              controller asks about this measurement.
+            */
+            <div className="mt-4 overflow-x-auto overscroll-x-contain">
+              <table className="w-full min-w-[280px] text-sm">
+                <caption className="mb-1 text-left text-xs text-ink-500">
+                  Expense recognized by calendar year
+                </caption>
+                <thead>
+                  <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
+                    <th className="py-1.5 pr-3">Year</th>
+                    <th className="py-1.5 pr-3">Expense</th>
+                    <th className="py-1.5">Cumulative</th>
+                  </tr>
+                </thead>
+                <tbody className="tnum">
+                  {result.options.expenseByCalendarYear.map((y) => (
+                    <tr key={y.year} className="border-b border-paper-200 last:border-0">
+                      <td className="py-1.5 pr-3">{y.year}</td>
+                      <td className="py-1.5 pr-3">{formatMoney(y.expense, currency)}</td>
+                      <td className="py-1.5 pr-3 text-ink-500">{formatMoney(y.cumulative, currency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
       {result.espp.length > 0 && (
