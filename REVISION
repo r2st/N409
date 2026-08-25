@@ -4171,3 +4171,131 @@
 #            round contained, the skip link, and the intake page returning the
 #            window to the top — so the concern is the next one, not a hole
 #            open today.
+
+# N409 revision
+# commit:    d686a56
+# subject:   five names the two halves of the system spelled differently
+# previous:  95bacd4 (the programmatic scrolls the census cannot see).
+# includes:  5 commits — R126, a round with one shape. Every finding is a value
+#            the server and the browser both had an opinion about, where the
+#            browser's was wrong and nothing about the call site said so. None
+#            of them throws, and all five render as ordinary text.
+#
+#            a97f2c9 — `apiDownload` reads the filename out of
+#            `content-disposition` rather than trusting the caller, which is
+#            right. It read the wrong half. Every disposition this API writes
+#            carries the name twice — an ASCII `filename` for clients older than
+#            RFC 5987 and `filename*` with the real UTF-8 bytes — and the ASCII
+#            form is lossy *by construction*: `contentDisposition()` replaces
+#            every character ASCII cannot spell with `_`. RFC 6266 §4.3 says a
+#            recipient that understands both takes the ext-value. This one took
+#            the transliteration, so `Ångström-cap-table.xlsx` was saved as
+#            `_ngstr_m-cap-table.xlsx`.
+#
+#            The sharp part is that the correct name was already inside the
+#            function: the Documents panel passes `doc.filename` — untouched —
+#            as the fallback. Parsing the header made the answer strictly worse
+#            than ignoring it, which is why nothing about the call site looked
+#            wrong. The parser now prefers the ext-value, decodes both charsets
+#            RFC 5987 allows (`%E9` is `é` in one and invalid in the other), and
+#            falls back to the ASCII form on anything it cannot decode.
+#
+#            121fd68 — the same idea one layer down. Two download buttons name
+#            their own file from `company_name` through `[^\w.-]`. `\w` is
+#            ASCII whatever flags the regex carries, so that class cannot tell a
+#            letter it has no spelling for from a comma: "Ångström Robotics"
+#            reached disk as `_ngstr_m_Robotics`, and a company named in
+#            Japanese reached it as a row of underscores with `.csv` on the end.
+#            `\p{M}` is in the replacement class for its own reason — a name in
+#            NFD is `A` plus a combining ring, and a class that keeps letters
+#            but not marks turns `Ångström` into `Angstrom` while looking
+#            complete.
+#
+#            651433d — the cap-table importer's paste path builds its mapping
+#            before anything is parsed server-side, so the browser and the
+#            server each name the columns and the mapping is keyed by name.
+#            They disagreed three ways, each a file people have: the delimiter
+#            (the server sniffs `,`/`;`/tab because Excel writes the locale's
+#            list separator; the browser assumed a comma, so a European export
+#            offered one column called `Security Class;Units;Price`), the BOM
+#            (stripped on one side, kept on the other, so the first column was
+#            offered under a name with an invisible character on it), and
+#            repeated names (`Shares` and `Shares (2)` server-side against
+#            `Shares` twice in the browser, both selecting the first). Every one
+#            of them is a column the user can pick and the import cannot find,
+#            and the result is an import that reports zero entries rather than
+#            an error.
+#
+#            The browser's half is a deliberate duplicate — `domain/capTable.ts`
+#            lives in a Node service and there is no shared package the bundle
+#            reaches. What keeps the copies honest is one fixture list asserted
+#            twice: sixteen cases against `csvColumns` in the frontend, the same
+#            sixteen against the real `parseCsvSheet` in the service.
+#
+#            a42aa65 — and the one that is live rather than latent.
+#            `new Date('2026-03-15')` is specified to parse the date-only form
+#            as UTC midnight, so `toLocaleDateString` renders whatever local day
+#            that instant fell on. West of Greenwich that is the day before.
+#            `formatDate` did exactly this, and the valuation service had
+#            already settled the question on its own side — a Postgres `date` is
+#            a day, not an instant, and `calendarDate()` serialises it from
+#            local parts precisely so it survives the wire. The browser undid
+#            that on arrival. A funding round that closed on the 15th displayed
+#            as the 14th; a client's intake date answer came back to them as the
+#            day before they typed it.
+#
+#            Every other date bug in this codebase has been latent — the host
+#            runs America/New_York and the server-side shape only breaks east of
+#            UTC. This one is the mirror image, and its zone is where a 409A
+#            platform's users are. So the test runs in America/Los_Angeles, and
+#            its first assertion is that the offset actually moved: at or east
+#            of UTC the broken expression and the correct one agree on every
+#            input, and the rest of the file would be decorative.
+#
+#            Two smaller things came with it. `new Date(26, 0, 1)` is 1926. And
+#            V8 rolls an impossible day forward rather than refusing it —
+#            `2026-02-30` is March 2nd — which the old path did too, a day early
+#            on top; the parts are now read back so a nonsense date renders as a
+#            dash.
+#
+#            d686a56 — five components formatted a date themselves instead of
+#            calling `formatDate`. All five held a `timestamptz`, so all five
+#            were correct; the rule exists because nothing at a call site says
+#            which kind of string it holds. Two of them also disagreed with the
+#            rest of the app about what a date looks like (`3/15/2026` against
+#            `Mar 15, 2026`) and a third was `formatDate`'s options inlined.
+#
+#            Deliberate break, each: unwiring the disposition parser fails one
+#            assertion and only the one that tests the wiring; the ASCII class
+#            restored fails four of ten; the old comma splitter fails four of
+#            sixteen; the calendar-day parse reverted fails six of nine.
+#
+# gap:       The two census tests added this round both read source text, and
+#            both carry a vacuity guard for the same reason: a scan for an idiom
+#            the tree no longer contains passes whether or not its pattern
+#            works. The date one asks its regex directly about the four shapes
+#            the five sites were written in. The filename one has no equivalent
+#            — it asserts an empty list against a tree that is now empty of the
+#            idiom, and its only protection is the file count.
+#
+#            `csvColumns` is a duplicate held together by a fixture list, which
+#            is weaker than it looks in one direction: the two halves are
+#            asserted against the same *expectations*, not against each other,
+#            so a change to the server's rules that nobody writes a fixture for
+#            leaves both tests green and the two implementations apart. The
+#            honest fix is a package the browser bundle can import, which is a
+#            build change this round did not take.
+#
+#            `downloadPdf` — the other download helper, behind the report and
+#            change-log buttons — still ignores `content-disposition` entirely
+#            and uses the caller's name. That is not the same bug: two of the
+#            routes it calls send an id-based filename that is *worse* than what
+#            the client can build from the company name, so preferring the
+#            server there would be a regression. Closing it properly means
+#            fixing those routes first.
+#
+#            Nothing here was checked in a browser. The filename assertions read
+#            `a.download`, which is what the code sets rather than what a
+#            download manager writes; the date assertions read
+#            `toLocaleDateString` under a shifted `process.env.TZ`, which moves
+#            Node's zone but is not a user's machine.
