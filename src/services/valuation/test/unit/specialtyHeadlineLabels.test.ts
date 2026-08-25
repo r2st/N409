@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_HEADLINE_LABELS,
   SPECIALTY_KINDS,
+  concludes409AFmvPerShare,
   concludesEntityEquity,
   headlineCheckNames,
   headlineLabels,
@@ -396,5 +397,63 @@ describe('concludesEntityEquity', () => {
     // said twice rather than a contradiction.
     expect(headlineLabels('qsbs').equity).toBeNull();
     expect(concludesEntityEquity('qsbs')).toBe(false);
+  });
+});
+
+/**
+ * The per-share column's version of the same question, and the one with the
+ * sharpest consequence.
+ *
+ * `POST /valuations/:id/board` defaults the FMV a board resolution adopts to
+ * `calculations.fmv_per_share`, and that document is a §409A safe-harbor
+ * adoption verbatim — it cites Treasury Regulation §1.409A-1(b)(5)(iv)(B) and
+ * authorises grants at "no less than the fair market value adopted herein",
+ * which `routes/grants.ts` then snapshots as an exercise price. Three specialty
+ * kinds write a genuine per-share figure into that column and none of the three
+ * is a §409A FMV of the common stock.
+ */
+describe('concludes409AFmvPerShare', () => {
+  it('refuses the three real per-share figures that are not a 409A FMV', () => {
+    // Restricted by construction — the UMV is the larger figure.
+    expect(concludes409AFmvPerShare('emi')).toBe(false);
+    expect(concludes409AFmvPerShare('csop')).toBe(false);
+    // ERISA adequate consideration over shares outstanding, off a supplied
+    // equity value; §409A asks for common stock fully diluted.
+    expect(concludes409AFmvPerShare('esop')).toBe(false);
+  });
+
+  it('is stricter than "there is a number in the column"', () => {
+    // The distinguishing property: for these three the column is populated and
+    // plausible, which is why nothing looked broken. A predicate derived from
+    // `specialtyHeadline` producing a non-null figure would have said yes.
+    for (const kind of ['emi', 'csop', 'esop'] as SpecialtyKind[]) {
+      expect(headlineLabels(kind).perShare, kind).not.toBeNull();
+      expect(concludes409AFmvPerShare(kind), kind).toBe(false);
+    }
+  });
+
+  it('accepts every kind that runs the 409A engine', () => {
+    for (const kind of ['409a', '718', 'fund', 'debt']) {
+      expect(concludes409AFmvPerShare(kind), kind).toBe(true);
+    }
+    expect(concludes409AFmvPerShare('unknown-future-kind')).toBe(true);
+  });
+
+  it('has a decision on file for every specialty kind', () => {
+    // Keyed on SpecialtyKind, so a twelfth engine cannot compile without a
+    // decision. The type cannot assert that the answer is a real boolean, nor
+    // that no specialty kind has quietly become adoptable.
+    const answers = SPECIALTY_KINDS.map((kind) => concludes409AFmvPerShare(kind));
+    for (const [i, a] of answers.entries()) expect(typeof a, SPECIALTY_KINDS[i]).toBe('boolean');
+    expect(answers.every((a) => a === false)).toBe(true);
+  });
+
+  it('is not the equity column’s answer under another name', () => {
+    // The two predicates disagree on three kinds, which is the whole reason
+    // this is its own decision rather than a reuse of the other.
+    for (const kind of ['esop', 'emi', 'csop'] as SpecialtyKind[]) {
+      expect(concludesEntityEquity(kind), kind).toBe(true);
+      expect(concludes409AFmvPerShare(kind), kind).toBe(false);
+    }
   });
 });

@@ -6,6 +6,8 @@ import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
+import { concludes409AFmvPerShare, headlineLabels, specialtyRunKind } from '../domain/specialty.js';
+import { kindLabel } from '../domain/valuationSelector.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
@@ -198,8 +200,47 @@ export function registerBoardApprovalRoutes(
     }
 
     const calc = await latestSucceededCalculation(deps.pool, id);
-    const fmv = parsed.data.fmv_conclusion ?? (calc?.fmv_per_share ? Number(calc.fmv_per_share) : null);
+
+    /*
+     * The figure this document adopts has to be a §409A fair market value of
+     * the common stock, because that is what the document says it is: the body
+     * below cites Treasury Regulation §1.409A-1(b)(5)(iv)(B) and authorises
+     * grants "with an exercise price no less than the fair market value adopted
+     * herein", and `routes/grants.ts` then snapshots `fmv_conclusion` as the
+     * exercise price of every option issued against it.
+     *
+     * `calculations.fmv_per_share` is a 409A column by name and every engine
+     * writes into it (domain/specialty.ts). On an EMI or CSOP run what lands
+     * there is the AMV — the *restricted* value, below the unrestricted market
+     * value by the whole restriction discount — so defaulting to the column
+     * adopted a below-FMV price and struck options at it, which is the §409A
+     * failure this resolution exists to prevent. It failed silently: the number
+     * is positive, the document renders, and nothing on the page distinguishes
+     * two per-share values that differ by a discount.
+     *
+     * Asked of the *run* rather than the engagement's kind — `specialtyRunKind`
+     * reads which engine wrote the row — because it is that row's number being
+     * borrowed. An explicit `fmv_conclusion` is still honoured: an analyst
+     * naming the figure has made the judgement themselves, and the API has
+     * always offered that escape hatch.
+     */
+    const runKind = specialtyRunKind(calc?.results ?? null);
+    const adoptable = runKind === null || concludes409AFmvPerShare(runKind);
+    const derived = adoptable && calc?.fmv_per_share ? Number(calc.fmv_per_share) : null;
+    const fmv = parsed.data.fmv_conclusion ?? derived;
     if (fmv === null || !Number.isFinite(fmv) || fmv <= 0) {
+      // Two different situations, and "run a calculation" is a false
+      // instruction in the second: one ran, it succeeded, and it concluded
+      // something this document cannot adopt.
+      if (runKind !== null) {
+        const held = headlineLabels(runKind).perShare;
+        throw problems.unprocessable(
+          `A ${kindLabel(runKind)} does not conclude a §409A fair market value per share` +
+            `${held === null ? '' : ` — it concludes ${held.toLowerCase()}`}` +
+            ', which a board resolution adopting a 409A price may not be generated from. ' +
+            'Pass fmv_conclusion to adopt a figure explicitly.',
+        );
+      }
       throw problems.unprocessable(
         'No concluded fair market value yet — run a calculation or pass fmv_conclusion',
       );

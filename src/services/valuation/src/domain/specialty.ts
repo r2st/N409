@@ -900,3 +900,66 @@ export function concludesEntityEquity(kind: string): boolean {
   // Every kind that runs the 409A engine concludes this entity's equity value.
   return specialty ?? true;
 }
+
+/**
+ * Whether a kind's `fmv_per_share` column holds a **§409A fair market value of
+ * the common stock** — the one figure a board may adopt as the price equity
+ * awards are granted at.
+ *
+ * A fourth question about the second typed column, and again not derivable from
+ * the other three. {@link headlineLabels} says what to *call* the figure;
+ * {@link concludesEntityEquity} answers the equity column's version of "may it
+ * be used as if it were the 409A one". This is the per-share version, and it is
+ * stricter than "is there a number here": EMI, CSOP and ESOP all write a
+ * genuine, carefully derived per-share value, and none of the three is the
+ * figure §409A asks for.
+ *
+ * What went wrong without it: `POST /valuations/:id/board` defaults the adopted
+ * FMV to `calculations.fmv_per_share` of the latest succeeded run, and the
+ * resolution it renders is a §409A safe-harbor adoption verbatim — Treasury
+ * Regulation §1.409A-1(b)(5)(iv)(B), and an authorisation to grant awards "with
+ * an exercise price no less than the fair market value adopted herein".
+ * `routes/grants.ts` then snapshots that number as the exercise price of every
+ * option it issues. On an EMI or CSOP engagement the number it picked up is the
+ * **AMV** — the restricted value, below the unrestricted market value by the
+ * whole restriction discount — so the board adopted, and the options were
+ * struck at, a price under fair market value. That is precisely the §409A
+ * failure the resolution exists to prevent, arrived at silently: every figure
+ * is positive, the document renders, and nothing on the page says which of two
+ * per-share values it is.
+ *
+ * A `Record` over `SpecialtyKind` for the same reason as
+ * {@link concludesEntityEquity}: a twelfth engine cannot compile without
+ * someone deciding, and "it also produces a per-share number" is not the
+ * decision.
+ */
+const SPECIALTY_CONCLUDES_409A_FMV: Record<SpecialtyKind, boolean> = {
+  // The restricted value a UK scheme grants at. The unrestricted market value
+  // — the one comparable to a 409A conclusion — is the larger figure and stays
+  // in `results.specialty.umv_per_share`.
+  emi: false,
+  csop: false,
+  // ERISA adequate consideration for employer securities: a level-of-value
+  // chain over `shares_outstanding`, run off an equity value *supplied* for the
+  // engagement rather than concluded by this platform (hence "Appraised equity
+  // value" in {@link headlineLabels}). §409A asks for the common stock on a
+  // fully diluted basis, which is a different security on a different
+  // denominator.
+  esop: false,
+  // These seven write no per-share figure at all — `false` says so in the place
+  // a reader checks, rather than leaving it to be inferred from a null.
+  fmv: false,
+  '820': false,
+  gifts: false,
+  ifrs2: false,
+  qsbs: false,
+  ppa: false,
+  goodwill: false,
+  ip: false,
+};
+
+export function concludes409AFmvPerShare(kind: string): boolean {
+  const specialty = SPECIALTY_CONCLUDES_409A_FMV[kind as SpecialtyKind];
+  // Every kind that runs the 409A engine concludes exactly this figure.
+  return specialty ?? true;
+}

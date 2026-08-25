@@ -22,6 +22,8 @@ import {
 } from '../domain/asc718Public.js';
 import { findValuationById } from '../repos/valuations.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
+import { concludes409AFmvPerShare, headlineLabels, specialtyRunKind } from '../domain/specialty.js';
+import { kindLabel } from '../domain/valuationSelector.js';
 import { findAsc718Settings, upsertAsc718Settings } from '../repos/asc718Settings.js';
 import { postJson } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -371,7 +373,32 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
       latestSucceededCalculation(deps.pool, id),
       findAsc718Settings(deps.pool, id),
     ]);
-    const fmv = calculation?.fmv_per_share != null ? Number(calculation.fmv_per_share) : null;
+    /*
+     * Same column, same trap as `routes/boardApproval.ts`: every engine writes
+     * its headline into `calculations.fmv_per_share`, so "the concluded 409A
+     * FMV" above is only what that column holds on a 409A run. An EMI or CSOP
+     * run leaves the **AMV** there — restricted, below the unrestricted market
+     * value by the restriction discount — and an ASC 718 charge computed on a
+     * discounted underlying is understated by roughly that same discount, in a
+     * figure that lands in the financial statements.
+     *
+     * Treated as no figure at all, which is a path this route already has and
+     * already refuses on. The refusal is the point: the analyst supplies
+     * `default_grant_date_fair_value` deliberately rather than inheriting a
+     * number that was never this one.
+     */
+    const runKind = specialtyRunKind(calculation?.results ?? null);
+    const fmvIsThisFigure = runKind === null || concludes409AFmvPerShare(runKind);
+    const fmv =
+      fmvIsThisFigure && calculation?.fmv_per_share != null ? Number(calculation.fmv_per_share) : null;
+    // "Run a calculation first" is a false instruction when one ran and
+    // succeeded — it concluded something this note cannot price options off.
+    const noUnderlyingDetail =
+      runKind !== null && !fmvIsThisFigure
+        ? `A ${kindLabel(runKind)} does not conclude a §409A fair market value per share` +
+          `${headlineLabels(runKind).perShare === null ? '' : ` — it concludes ${headlineLabels(runKind).perShare!.toLowerCase()}`}` +
+          '. Supply default_grant_date_fair_value or a per-grant grant_date_fair_value.'
+        : 'No grant-date fair value: run a calculation first or supply grant_date_fair_value';
 
     // Public: resolve the issuer's own market price + historical volatility.
     let market: MarketResolution | null = null;
@@ -403,7 +430,7 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
         throw problems.unprocessable(
           b.company_type === 'public'
             ? 'No underlying: supply a ticker with live prices, default_grant_date_fair_value, or a per-grant grant_date_fair_value'
-            : 'No grant-date fair value: run a calculation first or supply grant_date_fair_value',
+            : noUnderlyingDetail,
         );
       }
       const volatility = g.volatility ?? defaultVolatility;

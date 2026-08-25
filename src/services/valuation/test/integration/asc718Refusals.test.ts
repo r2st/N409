@@ -102,6 +102,47 @@ describe.runIf(dbUp)('ASC 718 — refusals and fallbacks', () => {
       expect(res.statusCode).toBe(422);
     });
 
+    it('refuses to price a private batch off an EMI run’s restricted AMV', async () => {
+      /*
+       * The same 409A-named column, read by a second surface. Every engine
+       * writes its headline into `calculations.fmv_per_share`, and an EMI run
+       * leaves the AMV there — the *restricted* value, below the unrestricted
+       * market value by the whole restriction discount. Inherited as the
+       * private default underlying, it understates the option expense by about
+       * that discount, in a figure that goes into the financial statements.
+       *
+       * The bug is that this path never fails: 0.40 is a perfectly good
+       * Black-Scholes underlying, so the batch prices and the note balances.
+       */
+      const id = await seedValuation('RestrictedCo');
+      await createCalculation(
+        ctx.pool,
+        {
+          valuationId: id,
+          engineVersion: 'test',
+          status: 'succeeded',
+          inputs: {},
+          results: { kind: 'emi', specialty: { amv_per_share: 0.4, umv_per_share: 1.0 } },
+          equityValue: 4_000_000,
+          fmvPerShare: 0.4,
+          createdBy: ops.id,
+        },
+        { actorType: 'human', actorId: ops.id },
+      );
+
+      const res = await price(id, {
+        company_type: 'private',
+        default_volatility: 0.5,
+        grants: [GRANT],
+      });
+      expect(res.statusCode).toBe(422);
+      const detail = String(res.json().detail ?? '');
+      expect(detail).toContain('EMI scheme valuation (UK)');
+      expect(detail.toLowerCase()).toContain('actual market value');
+      // And not the instruction the analyst already followed.
+      expect(detail).not.toMatch(/run a calculation first/);
+    });
+
     it('names the public remedy rather than the private one for a public batch', async () => {
       // Same missing input, different instruction: a public issuer supplies a
       // ticker, and telling them to "run a calculation" would be wrong advice.
