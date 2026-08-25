@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { PARTNER_LOGOS, STATS, TESTIMONIALS } from '../src/lib/marketing';
+import { PARTNER_LOGOS, PRODUCT_CONTENT, STATS, TESTIMONIALS } from '../src/lib/marketing';
 import { allPageMeta } from '../src/lib/pageMeta';
 
 /**
@@ -102,5 +102,34 @@ describe('headline claims are substantiated', () => {
   it('states a delivery promise the pricing page also makes', () => {
     expect(STATS.some((s) => /24h/i.test(s.value))).toBe(true);
     expect(allPageMeta().find((p) => p.path === '/pricing')!.description).toMatch(/24-hour/i);
+  });
+
+  it('quotes no §1202 threshold without the issuance date it belongs to', () => {
+    // The QSBS page promised documentation "that your company met the $50M
+    // gross-asset threshold" — the number for stock issued on or before
+    // 4 July 2025, and the wrong one for anything issued since (Public Law
+    // 119-21 raised it to $75M). The same page's FAQ already told the reader
+    // our analysis reflects the rules for their issuance date, so the page
+    // contradicted itself as well as the statute.
+    //
+    // Written against the whole marketing surface rather than the one page: a
+    // statutory dollar figure quoted bare is a claim that goes stale on a date
+    // nobody is watching for, and the fix is to make it name the date it is
+    // true on.
+    const qsbs = PRODUCT_CONTENT['qsbs-attestation']!;
+    const prose = [
+      ...qsbs.solution.map((s) => s.body),
+      ...qsbs.included,
+      ...qsbs.faq.map((f) => f.a),
+      qsbs.problem.body,
+    ];
+    for (const line of prose) {
+      if (/\$\d+M\b/.test(line)) expect(line, line).toMatch(/2025/);
+    }
+    // Non-vacuity: the threshold is stated somewhere, and states both figures.
+    const thresholds = prose.filter((line) => /\$\d+M\b/.test(line));
+    expect(thresholds.length).toBeGreaterThan(0);
+    expect(thresholds.join(' ')).toContain('$50M');
+    expect(thresholds.join(' ')).toContain('$75M');
   });
 });

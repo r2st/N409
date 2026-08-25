@@ -786,7 +786,9 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
     solution: [
       {
         title: 'Gross-asset test',
-        body: 'Documentation that your company met the $50M gross-asset threshold at issuance.',
+        body:
+          'Documentation that your company met the gross-asset threshold at issuance — $50M for ' +
+          'stock issued on or before 4 July 2025, $75M for stock issued after it.',
       },
       {
         title: 'Active-business analysis',
