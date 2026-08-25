@@ -1,0 +1,202 @@
+{
+  "/engine/v1/emi-csop": {
+    "qualification=csop": [
+      "checks",
+      "failed_checks",
+      "grant_umv",
+      "individual_total_umv",
+      "qualifies",
+      "scheme"
+    ],
+    "qualification=emi": [
+      "checks",
+      "company_total_umv",
+      "failed_checks",
+      "grant_umv",
+      "individual_total_umv",
+      "qualifies",
+      "scheme"
+    ],
+    "result": [
+      "amv_per_share",
+      "minority_discount",
+      "pro_rata_per_share",
+      "qualification",
+      "restriction_discount",
+      "umv_per_share"
+    ]
+  },
+  "/engine/v1/esop": {
+    "repurchase_obligation": [
+      "ending_share_balance",
+      "pv_of_obligation",
+      "schedule",
+      "total_obligation"
+    ],
+    "result": [
+      "dloc",
+      "dlom",
+      "esop_stake_value",
+      "fmv_per_share",
+      "levels",
+      "repurchase_obligation",
+      "shares_outstanding",
+      "value_basis"
+    ]
+  },
+  "/engine/v1/fair-value-820": {
+    "result": [
+      "by_level",
+      "categorized_fair_value",
+      "level_3_pct_of_total",
+      "level_3_rollforward",
+      "measurement_date",
+      "nav_practical_expedient",
+      "positions",
+      "predominant_level",
+      "reclassified_positions",
+      "sensitivity",
+      "total_fair_value",
+      "unobservable_inputs"
+    ]
+  },
+  "/engine/v1/gift-estate": {
+    "result": [
+      "annual_exclusion",
+      "concluded_value",
+      "cumulative_taxable_gifts",
+      "dloc",
+      "dlom",
+      "effective_discount",
+      "entity_value",
+      "percent_interest",
+      "prior_taxable_gifts",
+      "pro_rata_value",
+      "rev_rul_59_60",
+      "taxable_gift",
+      "total_discount_amount",
+      "transfer_date",
+      "transfer_type",
+      "value_after_dloc",
+      "value_bridge"
+    ]
+  },
+  "/engine/v1/ifrs2": {
+    "result": [
+      "attribution",
+      "expected_forfeiture_rate",
+      "expected_to_vest",
+      "expense_schedule",
+      "fair_value_per_award",
+      "forfeiture_determined",
+      "grant_date",
+      "grant_date_fair_value_total",
+      "model",
+      "options_granted",
+      "remeasurement",
+      "settlement",
+      "total_expense",
+      "tranches",
+      "true_up",
+      "vesting_condition",
+      "warnings"
+    ]
+  },
+  "/engine/v1/impairment": {
+    "test=goodwill": [
+      "carrying_amount",
+      "fair_value",
+      "goodwill_after",
+      "headroom",
+      "impaired",
+      "impairment_loss",
+      "qualitative_only",
+      "reporting_unit",
+      "standard"
+    ],
+    "test=indefinite_lived": [
+      "asset",
+      "carrying_after",
+      "carrying_amount",
+      "fair_value",
+      "impaired",
+      "impairment_loss",
+      "standard"
+    ],
+    "test=long_lived": [
+      "asset_group",
+      "carrying_after",
+      "carrying_amount",
+      "fair_value",
+      "impaired",
+      "impairment_loss",
+      "recoverable",
+      "standard",
+      "undiscounted_cash_flows_total"
+    ]
+  },
+  "/engine/v1/intangible": {
+    "method=cost_approach": [
+      "fair_value",
+      "method",
+      "obsolescence",
+      "replacement_cost_new"
+    ],
+    "method=meem": [
+      "fair_value",
+      "method",
+      "schedule",
+      "tab_multiplier",
+      "value_before_tab"
+    ],
+    "method=relief_from_royalty": [
+      "fair_value",
+      "method",
+      "pv_explicit",
+      "pv_terminal",
+      "schedule",
+      "tab_multiplier",
+      "value_before_tab"
+    ],
+    "method=with_and_without": [
+      "fair_value",
+      "method",
+      "schedule",
+      "tab_multiplier",
+      "value_before_tab"
+    ]
+  },
+  "/engine/v1/ppa": {
+    "result": [
+      "bargain_purchase_gain",
+      "consideration_transferred",
+      "goodwill",
+      "identifiable_net_assets",
+      "intangibles",
+      "tangible_net_assets",
+      "total_intangible_value"
+    ]
+  },
+  "/engine/v1/qsbs": {
+    "result": [
+      "cap_components",
+      "eligible",
+      "exclusion_available_now",
+      "exclusion_percentage",
+      "failed_tests",
+      "gain_exclusion_cap",
+      "holding_period",
+      "maximum_exclusion_percentage",
+      "regime",
+      "tests"
+    ]
+  },
+  "/engine/v1/smb": {
+    "result": [
+      "equity_value",
+      "methods",
+      "sde_normalization",
+      "weights"
+    ]
+  }
+}
