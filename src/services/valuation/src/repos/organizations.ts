@@ -321,13 +321,14 @@ export async function listPortfolioEntities(
     entity_type: EntityType;
     parent_valuation_id: string | null;
     state: string;
+    kind: string;
     currency: string;
     equity_value: string | null;
     fmv_per_share: string | null;
     as_of: Date | null;
   }>(
     `SELECT v.id AS valuation_id, v.number, v.company_name, v.entity_type,
-            v.parent_valuation_id, v.state, v.currency,
+            v.parent_valuation_id, v.state, v.kind, v.currency,
             c.equity_value, c.fmv_per_share, c.created_at AS as_of
        FROM valuations v
        LEFT JOIN LATERAL (
@@ -349,6 +350,9 @@ export async function listPortfolioEntities(
       entity_type: r.entity_type,
       parent_valuation_id: r.parent_valuation_id,
       state: r.state,
+      // What the equity figure below *is* — `consolidate` refuses to add a
+      // figure that is not an equity value to one that is.
+      kind: r.kind,
       currency: r.currency,
       equity_value: r.equity_value !== null ? Number(r.equity_value) : null,
       fmv_per_share: r.fmv_per_share !== null ? Number(r.fmv_per_share) : null,

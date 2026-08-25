@@ -11,6 +11,19 @@ import { useLatestOnly } from '../lib/useLatestOnly';
 const usd = (v: number, currency: string) => moneyFormatter(currency, { maximumFractionDigits: 0 })(v);
 const usdPrecise = (v: number, currency: string) => moneyFormatter(currency, { minimumFractionDigits: 2 })(v);
 
+/**
+ * The server's caption dropped into the middle of a sentence.
+ *
+ * `headlineLabels` writes each figure the way an exhibit heads a column
+ * — "Total expense", "Concluded value of the transferred interest" — and those
+ * are the exact words the deliverable uses, so they are kept rather than
+ * paraphrased. Only the leading capital is wrong mid-sentence. An
+ * acronym-initial caption would be spoiled by folding it, so only a word whose
+ * second letter is already lower-case is folded.
+ */
+const lowerFirst = (text: string): string =>
+  /^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text;
+
 interface Organization {
   id: string;
   name: string;
@@ -45,6 +58,18 @@ interface Consolidated {
   mixed_currency?: boolean;
   /** Subsidiaries whose parent is not in this roll-up, so nothing eliminated them. */
   unanchored_subsidiaries?: Array<{ valuation_id: string; company_name: string }>;
+  /**
+   * Entities whose latest run concluded something that is not this entity's
+   * equity — an IFRS 2 total expense, an ASC 820 portfolio total, a gift &
+   * estate transferred-interest value. Excluded from every figure below.
+   * Optional: an older API build does not send it.
+   */
+  non_equity_entities?: Array<{
+    valuation_id: string;
+    company_name: string;
+    kind: string;
+    figure: string | null;
+  }>;
 }
 interface OrgDetail {
   organization: Organization;
@@ -216,6 +241,28 @@ export function PortfolioPage() {
                         .unanchored_subsidiaries!.map((e) => e.company_name)
                         .join(', ')}.`}{' '}
                   Set each one&rsquo;s parent on its engagement to consolidate it.
+                </ErrorNote>
+              )}
+              {/* An engagement can belong to this organization and still
+                  conclude something no roll-up can add up — an IFRS 2 total
+                  expense, an ASC 820 portfolio total, the value of a
+                  transferred interest. Every one of those is positive, so a
+                  total that silently included them looked ordinary — and one
+                  that now excludes them looks equally ordinary. Naming the
+                  entity *and* the figure is what lets a reader tell this from
+                  an engagement nobody has valued yet. */}
+              {(detail.consolidated.non_equity_entities?.length ?? 0) > 0 && (
+                <ErrorNote>
+                  {detail.consolidated.non_equity_entities!.length === 1
+                    ? `${detail.consolidated.non_equity_entities![0]!.company_name} concluded ${lowerFirst(
+                        detail.consolidated.non_equity_entities![0]!.figure ??
+                          'a figure that is not an equity value',
+                      )}, not an equity value, so it is excluded from the totals below.`
+                    : `${detail.consolidated.non_equity_entities!.length} entities concluded figures that are not equity values, so they are excluded from the totals below: ${detail.consolidated
+                        .non_equity_entities!.map(
+                          (e) => `${e.company_name} (${lowerFirst(e.figure ?? 'not an equity value')})`,
+                        )
+                        .join(', ')}.`}
                 </ErrorNote>
               )}
               <div className="flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">

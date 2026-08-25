@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_HEADLINE_LABELS,
   SPECIALTY_KINDS,
+  concludesEntityEquity,
   headlineCheckNames,
   headlineLabels,
   specialtyHeadline,
@@ -342,5 +343,58 @@ describe('company-history kind scopes', () => {
     // in it.
     expect(FMV_TREND_KINDS).toContain('esop');
     expect(ENGINE_409A_KINDS).not.toContain('esop');
+  });
+});
+
+/**
+ * A third question about the same column, asked because a roll-up adds it up.
+ *
+ * `domain/portfolio.consolidate` sums `equity_value` across an organization's
+ * entities. Three kinds put something in that column that is not an equity
+ * value, and all three are positive — so the holding company's consolidated
+ * equity came back overstated rather than obviously wrong.
+ *
+ * Not derivable from {@link headlineLabels}: an ESOP's "Appraised equity value"
+ * is not the *concluded* wording and is unambiguously this company's equity,
+ * while an ASC 820 "Total fair value" is a caption about positions in other
+ * companies. The two axes genuinely disagree, which is why this is its own
+ * decision.
+ */
+describe('concludesEntityEquity', () => {
+  it('refuses the three figures that are not this entity’s equity', () => {
+    expect(concludesEntityEquity('ifrs2')).toBe(false); // a total expense
+    expect(concludesEntityEquity('820')).toBe(false); // positions, not equity
+    expect(concludesEntityEquity('gifts')).toBe(false); // a fraction of the entity
+  });
+
+  it('accepts every kind whose column is this entity’s equity value', () => {
+    for (const kind of ['409a', '718', 'fund', 'debt', 'esop', 'emi', 'csop', 'fmv']) {
+      expect(concludesEntityEquity(kind), kind).toBe(true);
+    }
+    // An unknown future kind runs the 409A engine until it is a specialty one.
+    expect(concludesEntityEquity('unknown-future-kind')).toBe(true);
+  });
+
+  it('has a decision on file for every specialty kind', () => {
+    // The map is keyed on SpecialtyKind, so a twelfth engine cannot compile
+    // without someone choosing a side. This asserts the weaker thing the type
+    // cannot: that the answer is a real boolean for each, and that at least one
+    // kind sits on each side — a map that had quietly become all-true would
+    // type-check and re-open the bug.
+    const answers = SPECIALTY_KINDS.map((kind) => concludesEntityEquity(kind));
+    for (const [i, a] of answers.entries()) expect(typeof a, SPECIALTY_KINDS[i]).toBe('boolean');
+    expect(answers).toContain(true);
+    expect(answers).toContain(false);
+  });
+
+  it('disagrees with the caption exactly where the two axes differ', () => {
+    // ESOP is the case that makes this its own predicate: its equity column is
+    // captioned differently from a 409A's and holds the same *kind* of figure.
+    expect(headlineLabels('esop').equity).not.toBe(DEFAULT_HEADLINE_LABELS.equity);
+    expect(concludesEntityEquity('esop')).toBe(true);
+    // And a kind that writes no column answers false, which is the same thing
+    // said twice rather than a contradiction.
+    expect(headlineLabels('qsbs').equity).toBeNull();
+    expect(concludesEntityEquity('qsbs')).toBe(false);
   });
 });

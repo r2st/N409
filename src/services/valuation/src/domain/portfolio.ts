@@ -4,6 +4,8 @@
  * the aggregation is unit-testable independent of the DB.
  */
 
+import { concludesEntityEquity, headlineLabels } from './specialty.js';
+
 export type EntityType = 'standalone' | 'parent' | 'subsidiary' | 'portfolio_company';
 
 export interface PortfolioEntity {
@@ -13,6 +15,13 @@ export interface PortfolioEntity {
   entity_type: EntityType;
   parent_valuation_id: string | null;
   state: string;
+  /**
+   * Which engine produced the figures below, and so what `equity_value` means.
+   * Every specialty engine writes into that column because it is the column the
+   * row has, and on three kinds what lands there is not an equity value at all
+   * — see {@link concludesEntityEquity}.
+   */
+  kind: string;
   /** Latest successful valuation figures, when one exists. */
   equity_value: number | null;
   fmv_per_share: number | null;
@@ -61,6 +70,24 @@ export interface ConsolidatedReport {
    * subsidiaries it did not exclude.
    */
   unanchored_subsidiaries: Array<{ valuation_id: string; company_name: string }>;
+  /**
+   * Entities whose latest run concluded something that is not this entity's
+   * equity — an IFRS 2 total expense, an ASC 820 portfolio total, a gift &
+   * estate transferred-interest value. Their figure is **excluded** from every
+   * total here, and they are excluded from `valued_count`, because adding it to
+   * an equity value produces a number in no unit at all.
+   *
+   * Reported for the same reason `unanchored_subsidiaries` is: the reader is
+   * looking at a roll-up over fewer entities than the organization holds, and
+   * is entitled to know which ones and what they concluded instead. `figure` is
+   * the caption the deliverable itself uses ({@link headlineLabels}).
+   */
+  non_equity_entities: Array<{
+    valuation_id: string;
+    company_name: string;
+    kind: string;
+    figure: string | null;
+  }>;
 }
 
 const ENTITY_TYPES: EntityType[] = ['standalone', 'parent', 'subsidiary', 'portfolio_company'];
@@ -124,6 +151,7 @@ export function consolidate(entities: PortfolioEntity[]): ConsolidatedReport {
   // the roll-up gives for a parent that is genuinely gone.
   const present = new Set(entities.map((e) => e.valuation_id));
   const unanchored: Array<{ valuation_id: string; company_name: string }> = [];
+  const nonEquity: ConsolidatedReport['non_equity_entities'] = [];
 
   for (const e of entities) {
     byType[e.entity_type].count += 1;
@@ -146,6 +174,29 @@ export function consolidate(entities: PortfolioEntity[]): ConsolidatedReport {
     const eliminated = e.entity_type === 'subsidiary' && anchored;
     if (e.entity_type === 'subsidiary' && !anchored) {
       unanchored.push({ valuation_id: e.valuation_id, company_name: e.company_name });
+    }
+    /*
+     * Only an equity value may be added to an equity value.
+     *
+     * This column is a 409A column that every specialty engine writes into, and
+     * on three kinds it holds something else entirely. Summed anyway, an IFRS 2
+     * memo added its total share-based-payment expense to the holding company's
+     * consolidated equity — a positive number, so the roll-up came back merely
+     * overstated rather than obviously broken.
+     *
+     * The entity still counts in `entity_count` and still appears in the tree:
+     * it is a real entity of this organization. It is what it *concluded* that
+     * cannot be added up, and that is said in `non_equity_entities` rather than
+     * left to be inferred from a total that does not reconcile.
+     */
+    if (e.equity_value !== null && !concludesEntityEquity(e.kind)) {
+      nonEquity.push({
+        valuation_id: e.valuation_id,
+        company_name: e.company_name,
+        kind: e.kind,
+        figure: headlineLabels(e.kind).equity,
+      });
+      continue;
     }
     if (e.equity_value !== null) {
       valued += 1;
@@ -187,6 +238,7 @@ export function consolidate(entities: PortfolioEntity[]): ConsolidatedReport {
     currencies: [...perCurrency.keys()],
     mixed_currency: mixed,
     unanchored_subsidiaries: unanchored,
+    non_equity_entities: nonEquity,
   };
 }
 

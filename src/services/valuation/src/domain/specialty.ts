@@ -847,3 +847,56 @@ export function specialtyRunKind(results: unknown): SpecialtyKind | null {
 export function headlineCheckNames(kind: SpecialtyKind | null): HeadlineLabels {
   return kind === null ? { equity: 'Equity value', perShare: 'FMV per share' } : headlineLabels(kind);
 }
+
+/**
+ * Whether a kind's `equity_value` column holds the **entity's own** equity
+ * value — the only figure a portfolio roll-up may add to another one.
+ *
+ * A third question about the same column, and it needs its own answer rather
+ * than {@link headlineLabels}'s: an ESOP's "Appraised equity value" is not the
+ * *concluded* equity value by caption, but it is unambiguously this company's
+ * equity and belongs in a consolidation, while an ASC 820 "Total fair value" is
+ * a caption about positions in other companies and does not.
+ *
+ * What went wrong without it: `domain/portfolio.consolidate` sums this column
+ * across every valuation in an organization, in the figure that file's own
+ * comments call the one an auditor relies on. A subsidiary's IFRS 2
+ * share-based-payment memo — an ordinary thing for a group to have alongside
+ * its 409A — contributed its **total expense** to the holding company's
+ * consolidated equity. So did a gift & estate appraisal's transferred-interest
+ * value and an ASC 820 measurement's portfolio total. None of the three is an
+ * equity value and all three are positive, so the roll-up came back
+ * plausibly overstated with nothing on the page to say why.
+ *
+ * A `Record` over `SpecialtyKind` rather than a list: a twelfth engine cannot
+ * compile without someone deciding which side of this it falls on, and the
+ * decision is the whole content of the rule.
+ */
+const SPECIALTY_CONCLUDES_ENTITY_EQUITY: Record<SpecialtyKind, boolean> = {
+  // The equity value supplied for the engagement is the company's own — see
+  // the ESOP caption note above.
+  esop: true,
+  // A small-business FMV and a UK scheme valuation both value this entity;
+  // EMI and CSOP carry the equity value the scheme's AMV was struck from.
+  fmv: true,
+  emi: true,
+  csop: true,
+  // Positions, not equity.
+  '820': false,
+  // A fraction of the entity, deliberately reported instead of the whole.
+  gifts: false,
+  // An expense.
+  ifrs2: false,
+  // These four write no equity figure at all; `false` is the same answer said
+  // twice, and says it in the place a reader checks.
+  qsbs: false,
+  ppa: false,
+  goodwill: false,
+  ip: false,
+};
+
+export function concludesEntityEquity(kind: string): boolean {
+  const specialty = SPECIALTY_CONCLUDES_ENTITY_EQUITY[kind as SpecialtyKind];
+  // Every kind that runs the 409A engine concludes this entity's equity value.
+  return specialty ?? true;
+}

@@ -152,6 +152,54 @@ describe('PortfolioPage (feature 6)', () => {
     expect(screen.getByText('Consolidated subsidiaries excluded')).toBeInTheDocument();
   });
 
+  it('names an entity whose conclusion is not an equity value at all', async () => {
+    /*
+     * An IFRS 2 memo belongs to the group and concludes a total share-based
+     * payment *expense*, which the server now keeps out of every total. The
+     * figure is positive, so a roll-up that had quietly included it looked
+     * ordinary — and one that now excludes it looks equally ordinary. The
+     * difference has to be on the page, naming the entity and what it actually
+     * concluded, or the reader cannot tell this from an engagement nobody has
+     * valued yet.
+     */
+    const nonEquity = {
+      ...detail,
+      consolidated: {
+        ...detail.consolidated,
+        non_equity_entities: [
+          {
+            valuation_id: 'v8',
+            company_name: 'Acme UK Ltd',
+            kind: 'ifrs2',
+            figure: 'Total expense',
+          },
+        ],
+      },
+    };
+    mockApi({ 'GET /organizations/org1': () => jsonResponse(nonEquity) });
+    render(
+      <MemoryRouter>
+        <PortfolioPage />
+      </MemoryRouter>,
+    );
+    // The caption is the deliverable's own wording, folded into the sentence.
+    expect(
+      await screen.findByText(/Acme UK Ltd concluded total expense, not an equity value/),
+    ).toBeInTheDocument();
+  });
+
+  it('says nothing about excluded figures when every entity concluded equity', async () => {
+    mockApi();
+    render(
+      <MemoryRouter>
+        <PortfolioPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('Acme Holdings')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Subsidiaries excluded')).toBeInTheDocument());
+    expect(screen.queryByText(/not an equity value/)).not.toBeInTheDocument();
+  });
+
   it('says nothing about anchoring when every subsidiary has its parent', async () => {
     mockApi();
     render(
