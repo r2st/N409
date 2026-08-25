@@ -533,12 +533,29 @@ const IP_SCHEDULE: Record<string, { key: string; head: string; as: 'money' | 'pc
     { key: 'after_tax', head: 'After tax', as: 'money' },
     { key: 'pv', head: 'Present value', as: 'money' },
   ],
+  // MEEM in two tables rather than one. Its chain is nine columns wide, and the
+  // renderer sizes columns in proportion and shrinks them all when they exceed
+  // the page — so nine of them does not overflow, it squeezes, and at ordinary
+  // magnitudes ($10m of revenue) the amounts wrap inside their cells: "$1,007,"
+  // on one line and "543" on the next, down the present-value column of a
+  // valuation exhibit. Measured on a rendered page, not guessed;
+  // `specialtyExhibitsPdf.test.ts` is what holds it.
+  //
+  // The split is at the figure both halves share. The first table builds the
+  // earnings attributable to the asset, the second charges the contributory
+  // assets against them and discounts what is left, and `after_tax_earnings`
+  // is repeated as the second table's opening column so the reader can see
+  // where it picks up.
   meem: [
     { key: 'year', head: 'Year', as: 'plain' },
     { key: 'revenue', head: 'Revenue', as: 'money' },
     { key: 'survival', head: 'Survival', as: 'pct' },
     { key: 'attributable_revenue', head: 'Attributable revenue', as: 'money' },
     { key: 'ebit', head: 'EBIT', as: 'money' },
+    { key: 'after_tax_earnings', head: 'After-tax earnings', as: 'money' },
+  ],
+  meem_excess: [
+    { key: 'year', head: 'Year', as: 'plain' },
     { key: 'after_tax_earnings', head: 'After-tax earnings', as: 'money' },
     { key: 'contributory_charge', head: 'Contributory charge', as: 'money' },
     { key: 'excess_earnings', head: 'Excess earnings', as: 'money' },
@@ -607,23 +624,26 @@ function intangibleExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
         )
       : null;
 
-  const columns = method === null ? undefined : IP_SCHEDULE[method];
   const rows = list(specialty.schedule)
     .map(record)
     .filter((r): r is Record<string, unknown> => r !== null);
-  const scheduleTable =
-    columns && rows.length > 0
-      ? table({
-          head: columns.map((c) => c.head),
-          rows: rows.map((row) =>
-            columns.map((c) => {
-              if (c.as === 'money') return money(row[c.key], ctx) ?? '—';
-              if (c.as === 'pct') return pct(row[c.key]) ?? '—';
-              return str(row[c.key]);
-            }),
-          ),
-        })
-      : null;
+  const scheduleFor = (spec: string): string | null => {
+    const columns = IP_SCHEDULE[spec];
+    if (!columns || rows.length === 0) return null;
+    return table({
+      head: columns.map((c) => c.head),
+      rows: rows.map((row) =>
+        columns.map((c) => {
+          if (c.as === 'money') return money(row[c.key], ctx) ?? '—';
+          if (c.as === 'pct') return pct(row[c.key]) ?? '—';
+          return str(row[c.key]);
+        }),
+      ),
+    });
+  };
+  const scheduleTable = method === null ? null : scheduleFor(method);
+  // Only MEEM has a second half; the key is absent for every other method.
+  const scheduleTable2 = method === null ? null : scheduleFor(`${method}_excess`);
 
   // The bridge from the discounted cash flows to the conclusion. `pv_explicit`
   // and `pv_terminal` are the relief-from-royalty split; the other two income
@@ -659,12 +679,13 @@ function intangibleExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
   return section('Exhibit — Intangible Asset Valuation', [
     method === null ? null : P(`Method: <strong>${esc(IP_METHOD_LABELS[method] ?? label(method))}</strong>.`),
     scheduleTable,
+    scheduleTable2,
     bridge,
     costTable,
     compoundingNote,
     // Only when nothing above it printed — otherwise the conclusion is already
     // the foot of a table and this repeats it.
-    scheduleTable === null && bridge === null && costTable === null
+    scheduleTable === null && scheduleTable2 === null && bridge === null && costTable === null
       ? P(`Concluded fair value: <strong>${shown(fairValue, ctx)}</strong>.`)
       : null,
   ]);
