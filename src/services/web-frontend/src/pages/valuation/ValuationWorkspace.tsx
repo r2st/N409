@@ -6,6 +6,7 @@ import { isOps } from '../../lib/rbac';
 import { REPORT_VISIBLE_STATES } from '../../lib/m2';
 import { useValuationStream, type Viewer } from '../../lib/realtime';
 import type { Valuation } from '../../lib/types';
+import { useLatestOnly } from '../../lib/useLatestOnly';
 import {
   ErrorNote,
   KindBadge,
@@ -317,23 +318,38 @@ export function ValuationWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const { viewers, commentTick } = useValuationStream(id ?? '');
 
+  /*
+   * Navigating from one valuation straight to another — a bridge candidate, a
+   * portfolio entity, the browser's back button — changes `:id` without this
+   * component being torn down, so two aggregates can be in flight at once and
+   * nothing orders their replies. What the late one paints is not a mismatch
+   * anyone can see: the company name, the state badge, the counters and the
+   * `valuation` object every tab below reads all come from this one response,
+   * so the whole workspace agrees with itself about the wrong engagement, under
+   * the other one's URL. See `useLatestOnly`.
+   */
+  const claim = useLatestOnly();
+
   const reload = useCallback(async () => {
     if (!id) return;
+    const current = claim();
     try {
       const { valuation: v, counters: c } = await api<{
         valuation: Valuation;
         counters?: ValuationCounters;
       }>(`/valuations/${id}`);
+      if (!current()) return;
       setValuation(v);
       setCounters(c ?? null);
     } catch (err) {
+      if (!current()) return;
       setError(
         err instanceof ApiError && err.status === 404
           ? 'This valuation does not exist or you do not have access to it.'
           : 'Could not load the valuation.',
       );
     }
-  }, [id]);
+  }, [id, claim]);
 
   useEffect(() => {
     void reload();
@@ -467,7 +483,21 @@ export function ValuationWorkspace() {
          * Catching it at the panel keeps the tab bar interactive throughout.
          */}
         <Suspense fallback={<TabSkeleton />}>
+          {/*
+           * Keyed by the valuation, so the tab below is torn down and rebuilt
+           * when the URL moves to a different engagement rather than being
+           * re-rendered with new props.
+           *
+           * This is the guard for a whole family at once. Every tab and every
+           * panel under it loads its own slice from `/valuations/${id}/…`, and
+           * each one of those is the same race as this component's: two slices
+           * outstanding, the previous engagement's reply landing second. Forty
+           * or so effects, each of which would otherwise need its own ticket.
+           * A remount cannot be raced — the late reply writes to state that no
+           * longer exists, which React discards.
+           */}
           <Outlet
+            key={id}
             context={
               {
                 valuation,
