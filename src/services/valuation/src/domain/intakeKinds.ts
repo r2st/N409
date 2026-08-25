@@ -775,6 +775,68 @@ const GIFTS_SECTIONS: readonly IntakeSection[] = [
       },
     ],
   },
+  {
+    // Rev. Rul. 59-60 §4.01 — the eight factors "to be considered" in valuing
+    // closely held stock, and the checklist the deliverable is graded against.
+    // The engine has always reported which of them the file addresses; nothing
+    // ever told it, so every gift appraisal printed "0 of 8" with a No against
+    // each factor. An unaddressed factor is a finding the analyst resolves
+    // before issuing — but only once somebody has been asked.
+    key: 'rev_rul_59_60',
+    title: 'Revenue Ruling 59-60 factors',
+    description:
+      'Which of the eight §4.01 factors the appraisal addresses. Completed by the appraiser; an unaddressed factor is resolved before the report is issued, not left for the reader to notice.',
+    fields: [
+      {
+        key: 'factor_nature_and_history',
+        label: 'Nature of the business and history of the enterprise',
+        type: 'boolean',
+        required: false,
+      },
+      {
+        key: 'factor_economic_outlook',
+        label: 'Economic outlook generally and the condition of the industry',
+        type: 'boolean',
+        required: false,
+      },
+      {
+        key: 'factor_book_value',
+        label: 'Book value of the stock and the financial condition of the business',
+        type: 'boolean',
+        required: false,
+      },
+      {
+        key: 'factor_earning_capacity',
+        label: 'Earning capacity of the company',
+        type: 'boolean',
+        required: false,
+      },
+      {
+        key: 'factor_dividend_capacity',
+        label: 'Dividend-paying capacity of the company',
+        type: 'boolean',
+        required: false,
+      },
+      {
+        key: 'factor_goodwill',
+        label: 'Goodwill or other intangible value',
+        type: 'boolean',
+        required: false,
+      },
+      {
+        key: 'factor_prior_sales',
+        label: 'Sales of the stock and the size of the block to be valued',
+        type: 'boolean',
+        required: false,
+      },
+      {
+        key: 'factor_comparable_companies',
+        label: 'Market price of comparable listed corporations',
+        type: 'boolean',
+        required: false,
+      },
+    ],
+  },
 ];
 
 const PPA_SECTIONS: readonly IntakeSection[] = [

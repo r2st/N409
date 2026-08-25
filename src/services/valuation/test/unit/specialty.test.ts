@@ -297,6 +297,32 @@ describe('specialtyEngineRequest — gift & estate', () => {
     expect('split_gift' in inputs).toBe(false);
   });
 
+  it('builds the §4.01 factor list from the checklist boxes', () => {
+    const req = specialtyEngineRequest('gifts', {
+      ...answers,
+      entity_value: 10_000_000,
+      factor_book_value: true,
+      factor_earning_capacity: true,
+      factor_goodwill: false,
+    });
+    const inputs = req.body.inputs as Record<string, unknown>;
+    expect(inputs.factors_addressed).toEqual(['book_value', 'earning_capacity']);
+  });
+
+  it('sends an answered-but-empty checklist, which is not the same as silence', () => {
+    // An appraiser who worked through the eight factors and ticked none has
+    // said something; a run that never asked has not.
+    const engaged = specialtyEngineRequest('gifts', {
+      ...answers,
+      entity_value: 10_000_000,
+      factor_book_value: false,
+    });
+    expect((engaged.body.inputs as Record<string, unknown>).factors_addressed).toEqual([]);
+
+    const untouched = specialtyEngineRequest('gifts', { ...answers, entity_value: 10_000_000 });
+    expect('factors_addressed' in (untouched.body.inputs as object)).toBe(false);
+  });
+
   it('sends an answered exclusion of zero, which is not the same as silence', () => {
     const req = specialtyEngineRequest('gifts', {
       ...answers,

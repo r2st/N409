@@ -439,6 +439,26 @@ function fairValue820Request(answers: Answers, overrides: Answers): SpecialtyReq
 }
 
 /**
+ * Rev. Rul. 59-60 §4.01, as the engine's list of factor keys.
+ *
+ * `null` when the checklist has not been touched at all, because the engine
+ * distinguishes an unstated checklist from a completed one that addressed
+ * nothing, and an empty list here would assert the second. A single answered
+ * box — even a "no" — is the appraiser having worked through it, so the list
+ * goes out.
+ *
+ * The keys are `factor_` plus the engine's own key, so the two lists cannot
+ * drift into different spellings of the same factor without the census in
+ * test/unit/specialtyFieldConsumption.test.ts noticing that a question stopped
+ * reaching the engine.
+ */
+function revRul5960Factors(answers: Answers): string[] | null {
+  const keys = Object.keys(answers).filter((k) => k.startsWith('factor_') && typeof answers[k] === 'boolean');
+  if (keys.length === 0) return null;
+  return keys.filter((k) => answers[k] === true).map((k) => k.slice('factor_'.length));
+}
+
+/**
  * Gift & estate. `percent_interest` is a percentage here and in the engine —
  * the questionnaire says "25 for a quarter interest" and converting it to a
  * fraction on the way through would value the interest at a quarter of a
@@ -467,6 +487,7 @@ function giftEstateRequest(answers: Answers, overrides: Answers): SpecialtyReque
   put(inputs, 'annual_exclusion', num(answers, 'annual_exclusion'));
   put(inputs, 'donees', num(answers, 'donees'));
   put(inputs, 'split_gift', bool(answers, 'split_gift'));
+  put(inputs, 'factors_addressed', revRul5960Factors(answers));
   return { path: '/engine/v1/gift-estate', body: { inputs: { ...inputs, ...overrides } } };
 }
 
