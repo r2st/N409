@@ -4720,13 +4720,13 @@
 #            gained three fields that no test renders through ClientIntakePage.
 
 # N409 revision
-# commit:    4507463
+# commit:    e0c4c0e
 # subject:   the method the form offered and no engine had, and the forfeiture
 #            nobody estimated
 # previous:  73ac974 (the questions no engine was ever asked).
-# includes:  3 commits — R134, which is R133's gap note carried out: the census
+# includes:  4 commits — R134, which is R133's gap note carried out: the census
 #            that runs from the engine's parameters back to the questionnaire,
-#            and the two findings that writing it produced.
+#            and the three findings that writing it produced.
 #
 #            db65dab — the intangible questionnaire's method select offered
 #            `cost`, and `value_intangible` looks the method up in `_METHODS`,
@@ -4790,12 +4790,29 @@
 #            `/comparables` is named as an endpoint the peer-set route posts to
 #            and no questionnaire does.
 #
+#            e0c4c0e — the third finding, and the one the census does not see:
+#            `ifrs2_valuation` returns a `remeasurement` block, and for a
+#            cash-settled award that block is the fair value per award at the
+#            reporting date, the liability carried at it, and the change in it
+#            through profit or loss (IFRS 2.30-33). `ifrs2Exhibit` rendered the
+#            grant-date measurement, the schedule and the true-up note, and
+#            dropped the block. So a deliverable for a cash-settled plan — a
+#            settlement the questionnaire has always offered — showed an
+#            expense and gave a reader no sight of the liability the plan
+#            creates, which for that settlement is what the standard is about.
+#            Found while writing the census, not by it: a computed result the
+#            report never reads is invisible to a guard that walks parameters
+#            *into* the engine. The equity-settled case renders its one-line
+#            basis too, because printing nothing there is indistinguishable
+#            from an exhibit that forgot.
+#
 #            Deliberate break, each: dropping the `expected_forfeiture_rate`
 #            line fails the census by name; adding a parameter to
 #            `gift_estate_valuation` fails the pytest as stale and then, once
 #            regenerated, fails the census asking who answers for it; spelling
 #            the method `cost` again fails three IP assertions; re-injecting
-#            the discount rate into `cost_approach` fails three more.
+#            the discount rate into `cost_approach` fails three more; dropping
+#            the three remeasurement nodes from the exhibit fails four.
 #
 # gap:       The census measures whether a parameter can be *sent*. It says
 #            nothing about whether the value sent is the right one, and the two
@@ -4819,11 +4836,12 @@
 #            supplies `sde` directly and the add-back schedule beside it is
 #            empty.
 #
-#            IFRS 2's `current_fair_value_per_award` is declared as a run input
-#            and the remeasurement it drives is not rendered by `ifrs2Exhibit`
-#            at all. For a cash-settled award that is a whole disclosure — the
-#            liability and the change in it (IFRS 2.30-33) — computed by the
-#            engine and dropped on the floor.
+#            The reverse of that class is now known to exist and unswept: a
+#            figure the engine computes that no exhibit reads. The IFRS 2
+#            remeasurement was one and is closed; nothing has looked at the
+#            other ten result shapes for the same thing, and a census in that
+#            direction — engine output keys against exhibit reads — is the
+#            obvious third edge of the triangle.
 #
 #            Nothing here was checked in a browser. The IP questionnaire gained
 #            six fields and the IFRS 2 questionnaire one, and no test renders
