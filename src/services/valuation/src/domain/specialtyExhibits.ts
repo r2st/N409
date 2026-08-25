@@ -219,13 +219,48 @@ function impairmentExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
   put('Goodwill after impairment', money(specialty.goodwill_after, ctx));
   put('Carrying amount after impairment', money(specialty.carrying_after, ctx));
   const unit = specialty.reporting_unit ?? specialty.asset_group ?? specialty.asset;
+  // ASC 350-20-35-3 lets an entity stop at the qualitative ("step zero")
+  // assessment when it concludes it is not more likely than not that fair value
+  // is below carrying amount. `goodwill_impairment` still runs the arithmetic
+  // when the flag is set — deliberately, "so the memo can show the margin that
+  // justified it" — and the exhibit rendered that arithmetic with nothing to
+  // say it had not been the test performed. A reader could not tell a
+  // quantitative conclusion from a headroom figure supporting a qualitative
+  // one, and the election is itself a disclosure.
+  const qualitativeOnly = specialty.qualitative_only === true;
+  // The election and the arithmetic can disagree: an entity may record that it
+  // stopped at step zero over figures whose fair value is below carrying
+  // amount. That is not a case to caption away — it is the one a reviewer most
+  // needs to see, because the qualitative conclusion it rests on is the
+  // opposite of what the measures show.
+  const contradicted = qualitativeOnly && specialty.impaired === true;
   return section(`Exhibit — Impairment Test (${esc(String(specialty.standard))})`, [
     unit ? P(`Unit tested: <strong>${esc(String(unit))}</strong>.`) : null,
+    qualitativeOnly
+      ? P(
+          'The entity elected the qualitative assessment permitted by ASC 350-20-35-3 and did ' +
+            'not perform the quantitative test. The measures below are shown to record the ' +
+            'margin supporting that conclusion; they are not the impairment test.',
+        )
+      : null,
+    contradicted
+      ? P(
+          '<strong>The measures below do not support the qualitative conclusion.</strong> Fair ' +
+            'value is under the carrying amount, which is the circumstance ASC 350-20-35-3 ' +
+            'requires the quantitative test for.',
+        )
+      : null,
     table({
       head: ['Measure', 'Amount'],
       rows,
       foot: [
-        specialty.impaired === true ? 'Impairment loss' : 'Impairment loss (none indicated)',
+        contradicted
+          ? 'Impairment loss indicated by the measures above'
+          : qualitativeOnly
+            ? 'Impairment loss indicated by the qualitative assessment (none)'
+            : specialty.impaired === true
+              ? 'Impairment loss'
+              : 'Impairment loss (none indicated)',
         money(specialty.impairment_loss, ctx) ?? '—',
       ],
     }),

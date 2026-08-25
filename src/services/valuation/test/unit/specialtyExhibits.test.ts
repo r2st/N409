@@ -189,6 +189,78 @@ describe('buildSpecialtyExhibits', () => {
     expect(longLived!.html).toContain('none indicated');
   });
 
+  /**
+   * ASC 350-20-35-3 lets an entity stop at the qualitative ("step zero")
+   * assessment. `goodwill_impairment` takes `qualitative_only` and returns it,
+   * and the questionnaire asks for it ("Stopping at the qualitative (step zero)
+   * assessment?"), so the flag arrives on real results.
+   *
+   * The exhibit dropped it and printed the same carrying-versus-fair-value
+   * table either way. The engine runs the arithmetic even under the election —
+   * deliberately, "so the memo can show the margin that justified it" — so the
+   * deliverable presented a quantitative conclusion for a test the entity had
+   * recorded that it did not perform.
+   */
+  it('says when the impairment conclusion rests on the qualitative assessment', () => {
+    const [step0] = buildSpecialtyExhibits(
+      calc('goodwill', {
+        standard: 'ASC 350-20',
+        reporting_unit: 'Robotics',
+        carrying_amount: 8_000_000,
+        fair_value: 11_000_000,
+        headroom: 3_000_000,
+        impaired: false,
+        impairment_loss: 0,
+        goodwill_after: 2_000_000,
+        qualitative_only: true,
+      }),
+      ctx,
+    );
+    expect(step0!.html).toContain('elected the qualitative assessment permitted by ASC 350-20-35-3');
+    expect(step0!.html).toContain('they are not the impairment test');
+    expect(step0!.html).toContain('indicated by the qualitative assessment');
+
+    const quantitative = buildSpecialtyExhibits(
+      calc('goodwill', {
+        standard: 'ASC 350-20',
+        carrying_amount: 8_000_000,
+        fair_value: 11_000_000,
+        impaired: false,
+        impairment_loss: 0,
+        qualitative_only: false,
+      }),
+      ctx,
+    );
+    expect(quantitative[0]!.html).not.toContain('qualitative assessment');
+    expect(quantitative[0]!.html).toContain('none indicated');
+  });
+
+  /**
+   * The election and the arithmetic can disagree. Captioning the foot "(none)"
+   * off the flag alone would print a nil impairment beside a fair value under
+   * the carrying amount — the exact circumstance the election is not available
+   * for.
+   */
+  it('flags an impairment the qualitative election says should not be there', () => {
+    const [conflict] = buildSpecialtyExhibits(
+      calc('goodwill', {
+        standard: 'ASC 350-20',
+        carrying_amount: 12_000_000,
+        fair_value: 9_000_000,
+        headroom: -3_000_000,
+        impaired: true,
+        impairment_loss: 2_500_000,
+        goodwill_after: 0,
+        qualitative_only: true,
+      }),
+      ctx,
+    );
+    expect(conflict!.html).toContain('do not support the qualitative conclusion');
+    expect(conflict!.html).toContain('indicated by the measures above');
+    expect(conflict!.html).not.toContain('(none)');
+    expect(conflict!.html).toContain('$2,500,000');
+  });
+
   it('renders the ESOP level-of-value chain and repurchase schedule', () => {
     const [esop] = buildSpecialtyExhibits(
       calc('esop', {
