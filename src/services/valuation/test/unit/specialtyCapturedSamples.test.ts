@@ -35,7 +35,9 @@ import {
   SAMPLE_IFRS2_CASH_RESULT,
   SAMPLE_IMPAIRMENT_LONG_LIVED_RESULT,
   SAMPLE_IP_COST_RESULT,
+  SAMPLE_IP_MEEM_RESULT,
   SAMPLE_IP_RESULT,
+  SAMPLE_IP_WWW_RESULT,
   SAMPLE_ESOP_RESULT,
   SAMPLE_FMV_RESULT,
   SAMPLE_GOODWILL_RESULT,
@@ -508,6 +510,91 @@ describe('the intangible assumptions', () => {
     const out = html('ppa', bare);
     expect(out).not.toContain('Discount rate');
     expect(cells(out)).toContain('$900,000');
+  });
+});
+
+/**
+ * MEEM and with-and-without, through the IP exhibit.
+ *
+ * Neither had ever been rendered from real engine output. MEEM's only captured
+ * payload was inside the PPA sample, spliced in beside a name — and the PPA
+ * exhibit deliberately does not restate a per-asset method's workings, so the
+ * three MEEM assumption captions and the nine-column earnings chain were
+ * asserted against nothing. With-and-without had no captured payload at all,
+ * and its columns were pinned only by fixtures built to match the exhibit,
+ * which is precisely how the IP schedule came to read six field names
+ * `value_intangible` has never returned.
+ */
+describe('the other two intangible income methods', () => {
+  describe('multi-period excess earnings', () => {
+    const out = () => html('ip', SAMPLE_IP_MEEM_RESULT);
+
+    it('names the three rates only MEEM has', () => {
+      const c = cells(out());
+      expect(c).toContain('Customer attrition rate');
+      expect(c).toContain('12.0%');
+      expect(c).toContain('EBIT margin');
+      expect(c).toContain('24.0%');
+      expect(c).toContain('Contributory asset charges, as a share of attributable revenue');
+      expect(c).toContain('7.0%');
+      // `label()` would have rendered the engine's key as "Contributory
+      // charges pct" — the caption is written, not derived.
+      expect(out()).not.toContain('contributory_charges_pct');
+    });
+
+    it('builds the earnings and then charges the contributory assets against them', () => {
+      const c = cells(out());
+      // The chain is split across two tables at the figure they share; both
+      // halves have to be on the page or the deduction is unexplained.
+      expect(c).toContain('Attributable revenue');
+      expect(c).toContain('Contributory charge');
+      expect(c).toContain('Excess earnings');
+      expect(c).toContain('$9,292,800'); // year 2 attributable revenue, after 12% attrition
+      expect(c).toContain('88.0%'); // …and the survival that produced it
+      expect(c).toContain('$650,496'); // its contributory charge
+      expect(c).toContain('$1,111,419'); // and what is left as excess earnings
+    });
+
+    it('carries the TAB step-up to the concluded value', () => {
+      const c = cells(out());
+      expect(c).toContain('$3,356,716'); // before the tax amortization benefit
+      expect(c).toContain('$3,620,581'); // after it
+      expect(out()).toContain('<strong>Multi-period excess earnings</strong>');
+    });
+  });
+
+  describe('with and without', () => {
+    const out = () => html('ip', SAMPLE_IP_WWW_RESULT);
+
+    it('sets the two scenarios side by side', () => {
+      const c = cells(out());
+      expect(c).toContain('With the asset');
+      expect(c).toContain('Without the asset');
+      expect(c).toContain('After-tax differential');
+      expect(c).toContain('$4,620,000'); // year 2 with
+      expect(c).toContain('$4,250,000'); // year 2 without
+      expect(c).toContain('$292,300'); // the after-tax differential between them
+    });
+
+    it('prints the two rates the method turns on, and no others', () => {
+      const c = cells(out());
+      expect(c).toContain('Tax rate');
+      expect(c).toContain('21.0%');
+      expect(c).toContain('Discount rate');
+      expect(c).toContain('19.0%');
+      // The method has no royalty, no margin and no attrition; the assumption
+      // table is built from what the result carries, not from the full list.
+      expect(c).not.toContain('Royalty rate');
+      expect(c).not.toContain('EBIT margin');
+    });
+
+    it('concludes on the differential, grossed up by the TAB', () => {
+      const c = cells(out());
+      expect(c).toContain('$751,923');
+      expect(c).toContain('$807,011');
+      expect(out()).toContain('<strong>With and without</strong>');
+      expect(out()).not.toContain('with_and_without');
+    });
   });
 });
 

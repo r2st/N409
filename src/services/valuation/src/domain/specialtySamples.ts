@@ -1375,6 +1375,179 @@ export const SAMPLE_IP_COST_RESULT: SpecialtyResult = {
 };
 
 /**
+ * The multi-period excess earnings method, standing on its own.
+ *
+ * MEEM had a payload only inside the PPA sample, spliced in beside a name —
+ * and the PPA exhibit deliberately does not restate a per-asset method's
+ * workings, so nothing rendered a MEEM result through the IP exhibit. Its
+ * three assumption captions ("EBIT margin", "Customer attrition rate",
+ * "Contributory asset charges") were asserted nowhere, which is the same
+ * position the IP schedule was in before R135: a key that does not match what
+ * the engine returns renders an empty row and no test notices.
+ *
+ * Northwind's customer relationships on their own terms: 12% annual attrition,
+ * a 24% EBIT margin, and contributory asset charges of 7% of the revenue
+ * attributable to the existing book.
+ * `app/engine/intangibles.py: meem`.
+ */
+export const SAMPLE_IP_MEEM_INPUTS = {
+  method: 'meem',
+  params: {
+    revenues: [9600000, 10560000, 11404800, 12089088, 12693542],
+    attrition_rate: 0.12,
+    ebit_margin: 0.24,
+    contributory_charges_pct: 0.07,
+    tax_rate: 0.21,
+    discount_rate: 0.175,
+    include_tab: true,
+  },
+} as const;
+
+export const SAMPLE_IP_MEEM_RESULT: SpecialtyResult = {
+  method: 'meem',
+  assumptions: {
+    attrition_rate: 0.12,
+    ebit_margin: 0.24,
+    contributory_charges_pct: 0.07,
+    tax_rate: 0.21,
+    discount_rate: 0.175,
+  },
+  schedule: [
+    {
+      year: 1,
+      revenue: 9600000,
+      survival: 1,
+      attributable_revenue: 9600000,
+      ebit: 2304000,
+      after_tax_earnings: 1820160,
+      contributory_charge: 672000.0000000001,
+      excess_earnings: 1148160,
+      pv: 977157.4468085106,
+    },
+    {
+      year: 2,
+      revenue: 10560000,
+      survival: 0.88,
+      attributable_revenue: 9292800,
+      ebit: 2230272,
+      after_tax_earnings: 1761914.8800000001,
+      contributory_charge: 650496.0000000001,
+      excess_earnings: 1111418.88,
+      pv: 805011.4114984154,
+    },
+    {
+      year: 3,
+      revenue: 11404800,
+      survival: 0.7744,
+      attributable_revenue: 8831877.12,
+      ebit: 2119650.5088,
+      after_tax_earnings: 1674523.901952,
+      contributory_charge: 618231.3984,
+      excess_earnings: 1056292.503552,
+      pv: 651134.336585612,
+    },
+    {
+      year: 4,
+      revenue: 12089088,
+      survival: 0.681472,
+      attributable_revenue: 8238374.977535999,
+      ebit: 1977209.9946086397,
+      after_tax_earnings: 1561995.8957408255,
+      contributory_charge: 576686.24842752,
+      excess_earnings: 985309.6473133054,
+      pv: 516917.5397166457,
+    },
+    {
+      year: 5,
+      revenue: 12693542,
+      survival: 0.59969536,
+      attributable_revenue: 7612258.23936512,
+      ebit: 1826941.9774476287,
+      after_tax_earnings: 1443284.1621836268,
+      contributory_charge: 532858.0767555585,
+      excess_earnings: 910426.0854280683,
+      pv: 406495.14182723925,
+    },
+  ],
+  value_before_tab: 3356715.8764364226,
+  tab_multiplier: 1.0786082247972764,
+  fair_value: 3620581.3526319233,
+};
+
+/**
+ * With-and-without: the last of the four intangible methods to get a captured
+ * payload, and the reason to capture it is the one the module keeps proving.
+ * Its exhibit columns — `with`, `without`, `after_tax_differential` — were
+ * asserted only against fixtures built to match the exhibit, which is exactly
+ * how the IP schedule came to read six field names the engine has never
+ * returned.
+ *
+ * A non-compete over Northwind's founding engineers: the acquirer's forecast
+ * with the covenants in place against the same forecast without them. The
+ * differential narrows each year as the covenant runs off, which is what makes
+ * the method the right one for the asset.
+ * `app/engine/intangibles.py: with_and_without`.
+ */
+export const SAMPLE_IP_WWW_INPUTS = {
+  method: 'with_and_without',
+  params: {
+    cash_flows_with: [4200000, 4620000, 4989600, 5238000, 5500000],
+    cash_flows_without: [3780000, 4250000, 4690000, 5010000, 5390000],
+    tax_rate: 0.21,
+    discount_rate: 0.19,
+    include_tab: true,
+  },
+} as const;
+
+export const SAMPLE_IP_WWW_RESULT: SpecialtyResult = {
+  method: 'with_and_without',
+  assumptions: {
+    tax_rate: 0.21,
+    discount_rate: 0.19,
+  },
+  schedule: [
+    {
+      year: 1,
+      with: 4200000,
+      without: 3780000,
+      after_tax_differential: 331800,
+      pv: 278823.5294117647,
+    },
+    {
+      year: 2,
+      with: 4620000,
+      without: 4250000,
+      after_tax_differential: 292300,
+      pv: 206411.97655532803,
+    },
+    {
+      year: 3,
+      with: 4989600,
+      without: 4690000,
+      after_tax_differential: 236684,
+      pv: 140452.02856228998,
+    },
+    {
+      year: 4,
+      with: 5238000,
+      without: 5010000,
+      after_tax_differential: 180120,
+      pv: 89820.21550359055,
+    },
+    {
+      year: 5,
+      with: 5500000,
+      without: 5390000,
+      after_tax_differential: 86900,
+      pv: 36415.39033390448,
+    },
+  ],
+  value_before_tab: 751923.1403668777,
+  tab_multiplier: 1.0732631761804994,
+  fair_value: 807011.4178737706,
+};
+
+/**
  * ASC 360-10 on an asset group that fails the recoverability screen.
  *
  * The goodwill sample cannot produce `recoverable`,
