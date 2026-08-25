@@ -552,3 +552,93 @@ describe('PartnerDetailPage', () => {
     });
   });
 });
+
+/**
+ * The pager with two pages outstanding.
+ *
+ * "Next" twice puts two page loads in flight, and nothing orders their replies.
+ * The stale one repaints the earlier page's engagements beneath a pager that
+ * says the later number — and because the pager reads its own state rather than
+ * the response, nothing on screen disagrees with anything else.
+ */
+describe('PartnerDetailPage — the engagement pager', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  const engagement = (id: string, company: string) => ({
+    id,
+    number: '2001',
+    company_name: company,
+    kind: '409a',
+    state: 'published',
+    created_at: '2026-07-01T00:00:00Z',
+  });
+
+  function deferValuationPages() {
+    const pending: Array<{ url: string; resolve: (body: unknown, status?: number) => void }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.includes(`/partners/${PARTNER_ID}/valuations`)) {
+        return new Promise<Response>((res) =>
+          pending.push({ url: path, resolve: (body, status = 200) => res(jsonResponse(body, status)) }),
+        );
+      }
+      if (path.includes(`/partners/${PARTNER_ID}/tokens`)) return jsonResponse({ tokens: [] });
+      if (path.includes(`/partners/${PARTNER_ID}`)) return jsonResponse({ partner: detail });
+      return jsonResponse({});
+    });
+    return pending;
+  }
+
+  const page = (company: string) => ({
+    valuations: [engagement('01N409VALUATION0000000AA1', company)],
+    total: 30,
+  });
+
+  it('lists the page the pager is showing, not the page that replied last', async () => {
+    const user = userEvent.setup();
+    const pending = deferValuationPages();
+    renderPage();
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]!.resolve(page('Page One Co'));
+    await screen.findByText('Page One Co');
+
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(pending).toHaveLength(3));
+
+    expect(pending[1]!.url).toContain('page=2');
+    expect(pending[2]!.url).toContain('page=3');
+
+    pending[2]!.resolve(page('Page Three Co'));
+    await screen.findByText('Page Three Co');
+    pending[1]!.resolve(page('Page Two Co'));
+
+    await waitFor(() => expect(screen.getByText('Page Three Co')).toBeInTheDocument());
+    expect(screen.queryByText('Page Two Co')).toBeNull();
+    expect(screen.getByText(/Page 3 of/)).toBeInTheDocument();
+  });
+
+  it('does not report a failure the abandoned page ran into', async () => {
+    const user = userEvent.setup();
+    const pending = deferValuationPages();
+    renderPage();
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]!.resolve(page('Page One Co'));
+    await screen.findByText('Page One Co');
+
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(pending).toHaveLength(3));
+
+    pending[2]!.resolve(page('Page Three Co'));
+    await screen.findByText('Page Three Co');
+    pending[1]!.resolve({ detail: 'gone' }, 500);
+
+    await waitFor(() => expect(screen.getByText('Page Three Co')).toBeInTheDocument());
+    expect(screen.queryByText(/Could not load this partner/)).toBeNull();
+  });
+});

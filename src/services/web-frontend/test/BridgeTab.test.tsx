@@ -273,3 +273,82 @@ describe('BridgeTab', () => {
     await waitFor(() => expect(screen.queryByTestId('bridge-result')).not.toBeInTheDocument());
   });
 });
+
+/**
+ * Two bridges in flight.
+ *
+ * "Compare against" is a dropdown an analyst flips through, and nothing orders
+ * the replies. The stale one draws the decomposition against the comparable
+ * they just left — from-FMV, to-FMV, every factor contribution — under the
+ * label of the one now selected. A value bridge is a causal claim about which
+ * assumptions moved the number, so attributing it to the wrong prior valuation
+ * is not a cosmetic mismatch.
+ */
+describe('BridgeTab — the comparable that replies late', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  function deferBridges() {
+    const pending: Array<{ url: string; resolve: (res: Response) => void }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.includes('/bridge-candidates')) return jsonResponse({ candidates: CANDIDATES });
+      if (path.includes('/bridge/')) {
+        return new Promise<Response>((res) => pending.push({ url: path, resolve: res }));
+      }
+      if (path.endsWith('/rollforward')) {
+        return jsonResponse({
+          runs: [],
+          applied_anchor: null,
+          new_valuation_date: '2026-07-01',
+          rolling_forward: false,
+          can_edit: true,
+        });
+      }
+      throw new Error(`unexpected fetch ${path}`);
+    });
+    return pending;
+  }
+
+  const bridgeFrom = (number: string) => ({ ...BRIDGE, from: { ...BRIDGE.from, number } });
+
+  it('draws the bridge for the selected comparable, not the one that replied last', async () => {
+    const user = userEvent.setup();
+    const pending = deferBridges();
+    renderTab();
+
+    const select = await screen.findByLabelText('Compare against');
+    await user.selectOptions(select, CANDIDATES[0]!.id);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await user.selectOptions(select, CANDIDATES[1]!.id);
+    await waitFor(() => expect(pending).toHaveLength(2));
+
+    expect(pending[0]!.url).toContain(CANDIDATES[0]!.id);
+    expect(pending[1]!.url).toContain(CANDIDATES[1]!.id);
+
+    pending[1]!.resolve(jsonResponse(bridgeFrom('V-SELECTED')));
+    await screen.findAllByText(/V-SELECTED/);
+    pending[0]!.resolve(jsonResponse(bridgeFrom('V-ABANDONED')));
+
+    await waitFor(() => expect(screen.getAllByText(/V-SELECTED/).length).toBeGreaterThan(0));
+    expect(screen.queryAllByText(/V-ABANDONED/)).toHaveLength(0);
+  });
+
+  it('does not report a failure the abandoned bridge ran into', async () => {
+    const user = userEvent.setup();
+    const pending = deferBridges();
+    renderTab();
+
+    const select = await screen.findByLabelText('Compare against');
+    await user.selectOptions(select, CANDIDATES[0]!.id);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await user.selectOptions(select, CANDIDATES[1]!.id);
+    await waitFor(() => expect(pending).toHaveLength(2));
+
+    pending[1]!.resolve(jsonResponse(bridgeFrom('V-SELECTED')));
+    await screen.findAllByText(/V-SELECTED/);
+    pending[0]!.resolve(problem(409, 'That valuation has no completed calculation.'));
+
+    await waitFor(() => expect(screen.getAllByText(/V-SELECTED/).length).toBeGreaterThan(0));
+    expect(screen.queryByText(/no completed calculation/)).toBeNull();
+  });
+});

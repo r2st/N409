@@ -5,6 +5,7 @@ import { api, ApiError } from '../lib/api';
 import { moneyFormatter } from '../lib/format';
 import { HelpIcon } from '../components/HelpIcon';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+import { useLatestOnly } from '../lib/useLatestOnly';
 
 /** Engine equity/FMV values are in whole currency units (dollars), not cents. */
 const usd = (v: number, currency: string) => moneyFormatter(currency, { maximumFractionDigits: 0 })(v);
@@ -74,6 +75,8 @@ export function PortfolioPage() {
   const [type, setType] = useState('holding_company');
   const [busy, setBusy] = useState(false);
 
+  const claim = useLatestOnly();
+
   const loadOrgs = useCallback(async () => {
     try {
       const r = await api<{ organizations: Organization[] }>('/organizations');
@@ -93,10 +96,15 @@ export function PortfolioPage() {
       setDetail(null);
       return;
     }
+    // The organization list is a click-to-switch sidebar, so two details can be
+    // outstanding at once. A late reply for the previously selected entity
+    // renders its holdings, its subsidiaries and its consolidated figures under
+    // the name of the one now highlighted. See `useLatestOnly`.
+    const current = claim();
     api<OrgDetail>(`/organizations/${selected}`)
-      .then(setDetail)
-      .catch(() => setError('Could not load the organization.'));
-  }, [selected]);
+      .then((d) => current() && setDetail(d))
+      .catch(() => current() && setError('Could not load the organization.'));
+  }, [selected, claim]);
 
   const create = async (e: FormEvent) => {
     e.preventDefault();

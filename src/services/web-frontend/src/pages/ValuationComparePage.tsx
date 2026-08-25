@@ -5,6 +5,7 @@ import { Button, EmptyState, ErrorNote, Field, Select, Spinner } from '../compon
 import { HelpIcon } from '../components/HelpIcon';
 import { KIND_LABELS, formatDate } from '../lib/format';
 import type { Valuation } from '../lib/types';
+import { useLatestOnly } from '../lib/useLatestOnly';
 
 /**
  * Two valuations, side by side.
@@ -181,6 +182,8 @@ export function ValuationComparePage() {
       );
   }, []);
 
+  const claim = useLatestOnly();
+
   const pick = useCallback(
     (side: 'a' | 'b', id: string) => {
       const next = new URLSearchParams(params);
@@ -199,16 +202,23 @@ export function ValuationComparePage() {
       setError(null);
       return;
     }
+    // Both sides are pickers, so a second comparison is one click away while
+    // the first is still in flight — and the two replies are not ordered. A
+    // late reply for the previous pair renders as the comparison of the pair
+    // now named in the dropdowns, which is a table of moved numbers attributed
+    // to the wrong two valuations. See `useLatestOnly`.
+    const current = claim();
     setLoading(true);
     setError(null);
     void api<Comparison>(`/valuations/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`)
-      .then(setComparison)
+      .then((c) => current() && setComparison(c))
       .catch((err: unknown) => {
+        if (!current()) return;
         setComparison(null);
         setError(err instanceof ApiError ? err.message : 'Could not compare these valuations.');
       })
-      .finally(() => setLoading(false));
-  }, [a, b]);
+      .finally(() => current() && setLoading(false));
+  }, [a, b, claim]);
 
   const groups = useMemo(() => {
     if (!comparison) return [];

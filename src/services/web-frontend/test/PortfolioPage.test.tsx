@@ -302,3 +302,78 @@ describe('PortfolioPage — creating an organization', () => {
     expect(await screen.findByText('Could not load the organization.')).toBeInTheDocument();
   });
 });
+
+/**
+ * Two organization details outstanding at once.
+ *
+ * The sidebar is click-to-switch, so the detail for the entity the user just
+ * left can reply after the one they are looking at. What renders is one
+ * organization's subsidiaries, currencies and consolidated equity value under
+ * another organization's name — self-consistent, unexplained, and the figure a
+ * fund reads off this page.
+ */
+describe('PortfolioPage — the detail that replies late', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  const beta = { ...org, id: 'org2', name: 'Beta Fund' };
+  const named = (name: string) => ({
+    ...detail,
+    entities: [{ ...detail.entities[0]!, company_name: name }],
+  });
+
+  function deferDetails() {
+    const pending: Array<{ key: string; resolve: (body: unknown, status?: number) => void }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const key = String(url).replace(/^.*\/api\/v1/, '');
+      if (key === '/organizations') return jsonResponse({ organizations: [org, beta] });
+      return new Promise<Response>((res) =>
+        pending.push({ key, resolve: (body, status = 200) => res(jsonResponse(body, status)) }),
+      );
+    });
+    return pending;
+  }
+
+  it('shows the selected organization, not the one that replied last', async () => {
+    const user = userEvent.setup();
+    const pending = deferDetails();
+    render(
+      <MemoryRouter>
+        <PortfolioPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await user.click(await screen.findByRole('button', { name: 'Beta Fund' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    expect(pending[0]!.key).toBe('/organizations/org1');
+    expect(pending[1]!.key).toBe('/organizations/org2');
+
+    pending[1]!.resolve(named('Beta Subsidiary'));
+    await screen.findByText('Beta Subsidiary');
+    pending[0]!.resolve(named('Acme Subsidiary'));
+
+    await waitFor(() => expect(screen.getByText('Beta Subsidiary')).toBeInTheDocument());
+    expect(screen.queryByText('Acme Subsidiary')).toBeNull();
+  });
+
+  it('does not blame the selected organization for the abandoned one’s failure', async () => {
+    const user = userEvent.setup();
+    const pending = deferDetails();
+    render(
+      <MemoryRouter>
+        <PortfolioPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await user.click(await screen.findByRole('button', { name: 'Beta Fund' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+
+    pending[1]!.resolve(named('Beta Subsidiary'));
+    await screen.findByText('Beta Subsidiary');
+    pending[0]!.resolve({ detail: 'gone' }, 404);
+
+    await waitFor(() => expect(screen.getByText('Beta Subsidiary')).toBeInTheDocument());
+    expect(screen.queryByText('Could not load the organization.')).toBeNull();
+  });
+});

@@ -16,13 +16,14 @@ import { ValuationComparePage } from '../src/pages/ValuationComparePage';
 
 const VAL_A = '01BX5ZZKBKACTAV9WEVGEMMVRZ';
 const VAL_B = '01BX5ZZKBKACTAV9WEVGEMMVS0';
+const VAL_C = '01BX5ZZKBKACTAV9WEVGEMMVS1';
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 const listRow = (id: string, company: string, created: string) => ({
   id,
-  number: id === VAL_A ? '1001' : '1002',
+  number: id === VAL_A ? '1001' : id === VAL_B ? '1002' : '1003',
   kind: '409a',
   state: 'published',
   company_name: company,
@@ -366,6 +367,86 @@ describe('ValuationComparePage', () => {
       // Asked the server for the file rather than serialising the filtered
       // rows the page happens to be showing.
       expect(urls.some((u) => u.includes('format=csv') && u.includes(VAL_A) && u.includes(VAL_B))).toBe(true);
+    });
+  });
+  describe('two comparisons in flight', () => {
+    it('shows the pair the pickers name, not the pair that replied last', async () => {
+      // Both sides are dropdowns, so a second comparison is one click away
+      // while the first is still open, and nothing orders the replies. The
+      // stale one renders a full table of moved numbers — conclusion, DLOM,
+      // the summary sentence — attributed to two valuations that were not
+      // compared to produce it, and no further request comes to correct it.
+      const pending: Array<(body: unknown) => void> = [];
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const path = String(url);
+        if (path.includes('/valuations/compare')) {
+          return new Promise<Response>((res) => pending.push((body) => res(jsonResponse(body))));
+        }
+        if (path.includes('/valuations')) {
+          return jsonResponse({
+            valuations: [
+              listRow(VAL_A, 'Northwind Robotics', '2025-06-01T00:00:00Z'),
+              listRow(VAL_B, 'Northwind Robotics', '2025-12-01T00:00:00Z'),
+              listRow(VAL_C, 'Northwind Robotics', '2026-06-01T00:00:00Z'),
+            ],
+            page: 1,
+            per_page: 100,
+            total: 3,
+          });
+        }
+        throw new Error(`unexpected fetch ${path}`);
+      });
+
+      renderAt(`?a=${VAL_A}&b=${VAL_B}`);
+      await waitFor(() => expect(pending).toHaveLength(1));
+
+      await userEvent.selectOptions(screen.getByLabelText('Compared with (B)'), VAL_C);
+      await waitFor(() => expect(pending).toHaveLength(2));
+
+      // Newest first, then the abandoned one on top of it.
+      pending[1]!({ ...COMPARISON, summary: 'The comparison the pickers name.' });
+      await screen.findByText('The comparison the pickers name.');
+      pending[0]!({ ...COMPARISON, summary: 'The comparison the analyst left.' });
+
+      await waitFor(() => expect(screen.getByText('The comparison the pickers name.')).toBeInTheDocument());
+      expect(screen.queryByText('The comparison the analyst left.')).toBeNull();
+    });
+
+    it('does not report a failure the abandoned comparison ran into', async () => {
+      const pending: Array<(res: Response) => void> = [];
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const path = String(url);
+        if (path.includes('/valuations/compare')) {
+          return new Promise<Response>((res) => pending.push(res));
+        }
+        if (path.includes('/valuations')) {
+          return jsonResponse({
+            valuations: [
+              listRow(VAL_A, 'Northwind Robotics', '2025-06-01T00:00:00Z'),
+              listRow(VAL_B, 'Northwind Robotics', '2025-12-01T00:00:00Z'),
+              listRow(VAL_C, 'Northwind Robotics', '2026-06-01T00:00:00Z'),
+            ],
+            page: 1,
+            per_page: 100,
+            total: 3,
+          });
+        }
+        throw new Error(`unexpected fetch ${path}`);
+      });
+
+      renderAt(`?a=${VAL_A}&b=${VAL_B}`);
+      await waitFor(() => expect(pending).toHaveLength(1));
+      await userEvent.selectOptions(screen.getByLabelText('Compared with (B)'), VAL_C);
+      await waitFor(() => expect(pending).toHaveLength(2));
+
+      pending[1]!(jsonResponse({ ...COMPARISON, summary: 'The comparison the pickers name.' }));
+      await screen.findByText('The comparison the pickers name.');
+      // `.catch` on the abandoned request clears `comparison` as well as
+      // setting the message, so an unguarded failure arm blanks the table too.
+      pending[0]!(jsonResponse({ detail: 'These valuations are denominated differently' }, 422));
+
+      await waitFor(() => expect(screen.getByText('The comparison the pickers name.')).toBeInTheDocument());
+      expect(screen.queryByText(/denominated differently/)).toBeNull();
     });
   });
 });

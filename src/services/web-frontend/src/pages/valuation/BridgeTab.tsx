@@ -5,6 +5,7 @@ import { useWorkspace } from './ValuationWorkspace';
 import { WaterfallChart } from '../../components/charts';
 import { RollforwardPanel } from '../../components/valuation/RollforwardPanel';
 import { EmptyState, ErrorNote, Select, Spinner, WriteGate } from '../../components/ui';
+import { useLatestOnly } from '../../lib/useLatestOnly';
 
 interface Candidate {
   id: string;
@@ -66,6 +67,8 @@ export function BridgeTab() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const claim = useLatestOnly();
+
   useEffect(() => {
     api<{ candidates: Candidate[] }>(`/valuations/${valuation.id}/bridge-candidates`)
       .then((r) => setCandidates(r.candidates))
@@ -77,13 +80,21 @@ export function BridgeTab() {
       setData(null);
       return;
     }
+    // A dropdown the analyst flips through: the reply for the comparable they
+    // just left can land after the one they are looking at, and the bridge is
+    // then a decomposition of a different pair of valuations under the current
+    // label. See `useLatestOnly`.
+    const current = claim();
     setBusy(true);
     setError(null);
     api<BridgeResponse>(`/valuations/${valuation.id}/bridge/${compareId}`)
-      .then(setData)
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not build the value bridge.'))
-      .finally(() => setBusy(false));
-  }, [compareId, valuation.id]);
+      .then((d) => current() && setData(d))
+      .catch(
+        (err) =>
+          current() && setError(err instanceof ApiError ? err.message : 'Could not build the value bridge.'),
+      )
+      .finally(() => current() && setBusy(false));
+  }, [compareId, valuation.id, claim]);
 
   const steps = useMemo(
     () => data?.bridge.factors.map((f) => ({ label: f.label, value: f.contribution })) ?? [],

@@ -11,6 +11,7 @@ import {
 } from '../lib/useFormValidation';
 import { displayName, formatDate, formatDateTime, GROUP_LABELS } from '../lib/format';
 import { NAMED_BUCKETS, PARTNER_EMAIL_TEMPLATE_KEYS } from '../lib/types';
+import { useLatestOnly } from '../lib/useLatestOnly';
 import type { NamedBucketKey, PartnerDetail, ValuationKind, ValuationState } from '../lib/types';
 import {
   Button,
@@ -395,16 +396,23 @@ function PartnerValuations({ partnerId }: { partnerId: string }) {
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
 
+  const claim = useLatestOnly();
+
   useEffect(() => {
+    // Two clicks of the pager put two pages in flight, and the slower one wins
+    // if it replies second: page 2's engagements beneath a pager reading 3,
+    // with nothing coming to correct it. See `useLatestOnly`.
+    const current = claim();
     api<{ valuations: PartnerValuation[]; total: number }>(
       `/partners/${partnerId}/valuations?page=${page}&per_page=10`,
     )
       .then((d) => {
+        if (!current()) return;
         setRows(d.valuations);
         setTotal(d.total);
       })
-      .catch(() => setError('Could not load this partner’s engagements.'));
-  }, [partnerId, page]);
+      .catch(() => current() && setError('Could not load this partner’s engagements.'));
+  }, [partnerId, page, claim]);
 
   return (
     <section className="mt-10">
