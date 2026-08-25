@@ -1,0 +1,195 @@
+{
+  "/engine/v1/comparables": {
+    "inputs": [
+      "sic_code",
+      "revenue",
+      "revenue_growth",
+      "ebitda_margin",
+      "weights",
+      "min_score",
+      "limit",
+      "include_tickers",
+      "exclude_tickers",
+      "live"
+    ]
+  },
+  "/engine/v1/emi-csop": {
+    "scheme=csop": [
+      "equity_value",
+      "exercise_price",
+      "individual_prior_grants_umv",
+      "minority_discount",
+      "options_granted",
+      "restriction_discount",
+      "total_shares"
+    ],
+    "scheme=emi": [
+      "company_unexercised_umv",
+      "employee_count",
+      "equity_value",
+      "gross_assets",
+      "has_qualifying_trade",
+      "individual_prior_grants_umv",
+      "is_independent",
+      "minority_discount",
+      "options_granted",
+      "restriction_discount",
+      "total_shares",
+      "works_25_hours_or_75_pct"
+    ]
+  },
+  "/engine/v1/esop": {
+    "inputs": [
+      "equity_value",
+      "shares_outstanding",
+      "value_basis",
+      "control_premium",
+      "dloc",
+      "dlom",
+      "esop_shares"
+    ],
+    "repurchase": [
+      "esop_share_balance",
+      "share_value_growth",
+      "annual_redemption_rate",
+      "years",
+      "discount_rate"
+    ]
+  },
+  "/engine/v1/fair-value-820": {
+    "inputs": [
+      "positions",
+      "measurement_date",
+      "level_3_rollforward",
+      "sensitivity"
+    ]
+  },
+  "/engine/v1/gift-estate": {
+    "inputs": [
+      "entity_value",
+      "percent_interest",
+      "transfer_type",
+      "dloc",
+      "dlom",
+      "transfer_date",
+      "annual_exclusion",
+      "donees",
+      "split_gift",
+      "prior_taxable_gifts",
+      "factors_addressed"
+    ]
+  },
+  "/engine/v1/ifrs2": {
+    "inputs": [
+      "settlement",
+      "vesting_condition",
+      "options_granted",
+      "vesting_years",
+      "attribution",
+      "tranches",
+      "grant_date",
+      "share_price",
+      "exercise_price",
+      "expected_term_years",
+      "expected_volatility",
+      "risk_free_rate",
+      "dividend_yield",
+      "market_condition_discount",
+      "fair_value_per_award",
+      "expected_forfeiture_rate",
+      "current_fair_value_per_award"
+    ]
+  },
+  "/engine/v1/impairment": {
+    "test=goodwill": [
+      "reporting_unit",
+      "carrying_amount",
+      "fair_value",
+      "goodwill_carrying_amount",
+      "qualitative_only"
+    ],
+    "test=indefinite_lived": [
+      "asset",
+      "carrying_amount",
+      "fair_value"
+    ],
+    "test=long_lived": [
+      "asset_group",
+      "carrying_amount",
+      "undiscounted_cash_flows",
+      "fair_value"
+    ]
+  },
+  "/engine/v1/intangible": {
+    "method=cost_approach": [
+      "replacement_cost",
+      "physical_obsolescence_pct",
+      "functional_obsolescence_pct",
+      "economic_obsolescence_pct",
+      "developer_profit_pct",
+      "opportunity_cost_pct"
+    ],
+    "method=meem": [
+      "revenues",
+      "attrition_rate",
+      "ebit_margin",
+      "contributory_charges_pct",
+      "tax_rate",
+      "discount_rate",
+      "include_tab"
+    ],
+    "method=relief_from_royalty": [
+      "revenues",
+      "royalty_rate",
+      "tax_rate",
+      "discount_rate",
+      "terminal_growth",
+      "include_tab"
+    ],
+    "method=with_and_without": [
+      "cash_flows_with",
+      "cash_flows_without",
+      "tax_rate",
+      "discount_rate",
+      "include_tab"
+    ]
+  },
+  "/engine/v1/ppa": {
+    "inputs": [
+      "consideration_transferred",
+      "net_working_capital",
+      "fixed_assets",
+      "other_tangible_assets",
+      "assumed_liabilities",
+      "deferred_revenue_haircut",
+      "intangibles"
+    ]
+  },
+  "/engine/v1/qsbs": {
+    "inputs": [
+      "entity_type",
+      "is_domestic",
+      "gross_assets_before_issuance",
+      "gross_assets_after_issuance",
+      "industry",
+      "active_business_asset_pct",
+      "acquired_at_original_issue",
+      "acquisition_date",
+      "assessment_date",
+      "aggregate_basis",
+      "prior_1202_exclusions",
+      "redemptions_within_window"
+    ]
+  },
+  "/engine/v1/smb": {
+    "inputs": [
+      "sde_inputs",
+      "sde",
+      "annual_revenue",
+      "cap_rate_inputs",
+      "sde_multiple",
+      "revenue_multiple",
+      "weights"
+    ]
+  }
+}

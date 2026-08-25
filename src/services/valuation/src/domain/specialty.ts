@@ -120,7 +120,13 @@ export const SPECIALTY_ENGINES: Record<SpecialtyKind, SpecialtyEngineDef> = {
     label: 'SMB fair market value',
     path: '/engine/v1/smb',
     produces: 'Seller’s discretionary earnings, the multiples applied, and the concluded equity value.',
-    runInputs: [],
+    runInputs: [
+      {
+        key: 'weights',
+        label: 'Method weights',
+        hint: 'Optional. How the SDE multiple, revenue multiple and capitalised-earnings indications are weighted in the conclusion. Equal weighting across the indications that could be computed, otherwise.',
+      },
+    ],
     hmrcForm: null,
   },
   emi: {
@@ -144,11 +150,50 @@ export const SPECIALTY_ENGINES: Record<SpecialtyKind, SpecialtyEngineDef> = {
     label: 'Intangible asset valuation',
     path: '/engine/v1/intangible',
     produces: 'The asset’s value on the selected method, with its inputs.',
+    // Three of the four methods need a schedule no questionnaire can carry, and
+    // saying so here is the difference between the tab warning before the run
+    // and the engine 422ing after it. Only relief-from-royalty and the cost
+    // approach are answerable from the form alone.
     runInputs: [
       {
         key: 'revenues',
         label: 'Revenue forecast',
-        hint: 'Optional. A per-year list replacing the flat forecast the questionnaire implies, for relief-from-royalty.',
+        hint: 'A per-year list. Required for MEEM; for relief-from-royalty it replaces the flat forecast the questionnaire implies.',
+      },
+      {
+        key: 'ebit_margin',
+        label: 'EBIT margin',
+        hint: 'Required for MEEM. The margin earned on the revenue attributable to the asset.',
+      },
+      {
+        key: 'contributory_charges_pct',
+        label: 'Contributory asset charges',
+        hint: 'Required for MEEM. The charge for the assets that contribute to those earnings, as a fraction of revenue.',
+      },
+      {
+        key: 'attrition_rate',
+        label: 'Attrition rate',
+        hint: 'Optional, MEEM. Decays the share of revenue attributable to the existing asset.',
+      },
+      {
+        key: 'cash_flows_with',
+        label: 'Cash flows — with the asset',
+        hint: 'Required for the with-and-without method. A per-year list.',
+      },
+      {
+        key: 'cash_flows_without',
+        label: 'Cash flows — without the asset',
+        hint: 'Required for the with-and-without method. A per-year list.',
+      },
+      {
+        key: 'terminal_growth',
+        label: 'Terminal growth',
+        hint: 'Optional, relief-from-royalty. Adds a Gordon terminal value beyond the forecast.',
+      },
+      {
+        key: 'include_tab',
+        label: 'Tax amortisation benefit',
+        hint: 'Optional. Included by default in every income-approach method; pass false to conclude before the benefit.',
       },
     ],
     hmrcForm: null,
@@ -163,6 +208,16 @@ export const SPECIALTY_ENGINES: Record<SpecialtyKind, SpecialtyEngineDef> = {
         key: 'positions',
         label: 'Position schedule',
         hint: 'A list of { name, fair_value, level, inputs, measured_at_nav } rows. The questionnaire collects only the fund and its predominant level.',
+      },
+      {
+        key: 'level_3_rollforward',
+        label: 'Level 3 rollforward',
+        hint: 'The ASC 820-10-50-2 reconciliation of opening to closing Level 3 balances. Analyst work product, like the schedule above.',
+      },
+      {
+        key: 'sensitivity',
+        label: 'Level 3 sensitivity',
+        hint: 'The unobservable-input sensitivity disclosure that accompanies the rollforward.',
       },
     ],
     hmrcForm: null,
@@ -180,7 +235,23 @@ export const SPECIALTY_ENGINES: Record<SpecialtyKind, SpecialtyEngineDef> = {
     label: 'IFRS 2 share-based payment',
     path: '/engine/v1/ifrs2',
     produces: 'Grant-date fair value and the expense attribution over the vesting period.',
-    runInputs: [],
+    runInputs: [
+      {
+        key: 'fair_value_per_award',
+        label: 'Fair value per award',
+        hint: 'A value from a lattice or Monte Carlo model run elsewhere, used instead of the Black-Scholes inputs the questionnaire collects.',
+      },
+      {
+        key: 'current_fair_value_per_award',
+        label: 'Fair value per award at the reporting date',
+        hint: 'Cash-settled awards only: the remeasurement value. The grant-date figure is used where none is given, which reports no change in the liability.',
+      },
+      {
+        key: 'market_condition_discount',
+        label: 'Market condition discount',
+        hint: 'The reduction in grant-date fair value for a market condition (IFRS 2.21), where one is not already in a supplied fair value.',
+      },
+    ],
     hmrcForm: null,
   },
 };
