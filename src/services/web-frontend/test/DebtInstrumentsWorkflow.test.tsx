@@ -428,11 +428,17 @@ describe('DebtInstrumentsPage — sensitivity', () => {
       .map((c) => numericOverride(c, 'market_yield'));
     expect(shifted.map((n) => Number(n.toFixed(4)))).toEqual([0.04, 0.05, 0.06, 0.07, 0.08]);
 
+    // A shift of a rate is quoted in basis points, and 0.02 is 200 of them.
+    // The column read "-2 bps×100", which is neither the unit a fixed-income
+    // reader uses nor unambiguous arithmetic: the test and the component agreed
+    // with each other and neither had asked what a basis point is.
     const table = screen.getByRole('heading', { name: 'Sensitivity' }).parentElement!;
-    expect(within(table).getByText('-2 bps×100')).toBeInTheDocument();
-    expect(within(table).getByText('+2 bps×100')).toBeInTheDocument();
+    expect(within(table).getByText('-200 bps')).toBeInTheDocument();
+    expect(within(table).getByText('-100 bps')).toBeInTheDocument();
+    expect(within(table).getByText('+200 bps')).toBeInTheDocument();
+    expect(within(table).queryByText(/bps×100/)).not.toBeInTheDocument();
     // The unshifted row is the base case and is emphasised as such.
-    const base = within(table).getByText('0 bps×100').closest('tr')!;
+    const base = within(table).getByText('0 bps').closest('tr')!;
     expect(base.className).toContain('font-semibold');
   });
 
@@ -449,6 +455,69 @@ describe('DebtInstrumentsPage — sensitivity', () => {
       .filter((c) => c.path.endsWith('/value'))
       .map((c) => numericOverride(c, 'market_yield'));
     expect(Math.min(...shifted)).toBe(0);
+  });
+
+  it('labels a truncated shift by what it applied, and prices each rate once', async () => {
+    // 0.5% cannot be shifted down 100bp, let alone 200. Both requests land on a
+    // yield of zero, so there is one measurement here and not two — and it is a
+    // 50bp shift, not the 100bp or 200bp that were asked for. Printing it under
+    // both labels drew a curve that goes flat below the base rate, which is an
+    // artefact of the floor rather than anything about the instrument.
+    const { calls } = mockServer({
+      instruments: [makeInstrument({ params: { market_yield: 0.005 } })],
+      result: (overrides) => ({ fair_value: 1000 - (overrides.market_yield as number) * 5000 }),
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await awaitDetail(/Bond parameters/);
+
+    await user.click(screen.getByRole('button', { name: 'Yield sensitivity' }));
+    await screen.findByRole('heading', { name: 'Sensitivity' });
+
+    const shifted = calls
+      .filter((c) => c.path.endsWith('/value'))
+      .map((c) => numericOverride(c, 'market_yield'));
+    expect(shifted.map((n) => Number(n.toFixed(4)))).toEqual([0, 0.005, 0.015, 0.025]);
+
+    const table = screen.getByRole('heading', { name: 'Sensitivity' }).parentElement!;
+    expect(within(table).getByText('-50 bps')).toBeInTheDocument();
+    expect(within(table).queryByText('-100 bps')).not.toBeInTheDocument();
+    expect(within(table).queryByText('-200 bps')).not.toBeInTheDocument();
+    expect(within(table).getAllByRole('row')).toHaveLength(5); // header + four
+  });
+
+  it('shifts the benchmark yield on a credit-spread note, not a field it has no room for', async () => {
+    // The credit-spread note is the one type whose rate is not in `params` at
+    // all — it is on the credit terms, which the service merges over the params
+    // on every run. The button sent `market_yield` anyway, which
+    // `credit_spread_valuation` rejects outright because its arguments are
+    // keyword-only: the whole feature was an error message on this type.
+    const { calls } = mockServer({
+      instruments: [makeInstrument({ instrument_type: 'credit_spread', params: { face: 1000 } })],
+      creditTerms: {
+        rating: 'BBB',
+        benchmark_yield: '0.04',
+        spread: '0.02',
+        seniority: 'senior',
+        secured: false,
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await awaitDetail(/Credit-spread bond parameters/);
+
+    await user.click(screen.getByRole('button', { name: 'Yield sensitivity' }));
+    await screen.findByRole('heading', { name: 'Sensitivity' });
+
+    const overrides = calls.filter((c) => c.path.endsWith('/value')).map((c) => c.body?.overrides);
+    expect(overrides.every((o) => 'benchmark_yield' in (o as object))).toBe(true);
+    expect(overrides.some((o) => 'market_yield' in (o as object))).toBe(false);
+    // Walked from the benchmark on the terms, so the five rates are distinct
+    // rather than five copies of a base the page could not find.
+    const shifted = calls
+      .filter((c) => c.path.endsWith('/value'))
+      .map((c) => numericOverride(c, 'benchmark_yield'));
+    expect(shifted.map((n) => Number(n.toFixed(4)))).toEqual([0.02, 0.03, 0.04, 0.05, 0.06]);
   });
 
   it('shifts the credit spread on a convertible, and says so on the button', async () => {

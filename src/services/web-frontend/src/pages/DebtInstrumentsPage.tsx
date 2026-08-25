@@ -351,25 +351,59 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
     }
   };
 
+  /**
+   * The rate this instrument's fair value actually moves with.
+   *
+   * Every type prices off a different one, and shifting a key the instrument
+   * does not carry does not fail loudly — it reads `undefined`, walks from a
+   * base of zero, and draws five rows of the same number, which is a picture of
+   * an instrument with no rate sensitivity at all. That was fixed for the
+   * convertible and the SAFE and left in place for the credit-spread note,
+   * whose rate lives on the credit terms rather than in `params`: it has no
+   * `market_yield` field, so the button sent one anyway and
+   * `credit_spread_valuation` — whose arguments are keyword-only — rejected the
+   * call outright. "Yield sensitivity" was an error message on that type.
+   */
+  const shiftedRate = (): { key: string; base: number } => {
+    switch (instrument?.instrument_type) {
+      case 'convertible':
+        return { key: 'credit_spread', base: Number(params.credit_spread ?? 0) };
+      case 'safe':
+        return { key: 'discount', base: Number(params.discount ?? 0) };
+      case 'credit_spread':
+        // The benchmark, not the spread: a rate sensitivity holds the issuer's
+        // credit constant and moves the curve under it. It is stored on the
+        // credit terms, which the engine merges over `params` on every run.
+        return { key: 'benchmark_yield', base: Number(creditTerms?.benchmark_yield ?? 0) };
+      default:
+        return { key: 'market_yield', base: Number(params.market_yield ?? 0) };
+    }
+  };
+
   const runSensitivity = async () => {
     if (!instrument) return;
     setBusy(true);
     setError(null);
     try {
       await saveParams();
-      const yieldKey =
-        instrument.instrument_type === 'convertible'
-          ? 'credit_spread'
-          : instrument.instrument_type === 'safe'
-            ? 'discount'
-            : 'market_yield';
-      const base = Number(params[yieldKey] ?? 0);
-      const shifts = [-0.02, -0.01, 0, 0.01, 0.02];
+      const { key, base } = shiftedRate();
       const rows: Array<{ shift: number; value: number }> = [];
-      for (const s of shifts) {
-        const r = await runValue({ [yieldKey]: Math.max(base + s, 0) });
+      const priced = new Set<number>();
+      for (const requested of [-0.02, -0.01, 0, 0.01, 0.02]) {
+        // A rate is not asked for below zero, so a shift that would go there is
+        // truncated at it. The row is then labelled with the shift that was
+        // *applied* rather than the one that was asked for, and a truncated
+        // shift that lands on a rate already priced is dropped: a 0.5% yield
+        // shocked down by 100bp and by 200bp is the same instrument priced
+        // twice, and printing it as two rows put a number under "−200 bps" that
+        // nothing measured there — the reader sees a curve going flat where
+        // really it stopped being walked.
+        const applied = Math.max(base + requested, 0);
+        if (priced.has(applied)) continue;
+        priced.add(applied);
+        const r = await runValue({ [key]: applied });
         const fv = (r.fair_value ?? r.dirty_price) as number;
-        rows.push({ shift: s, value: Number(fv) });
+        rows.push({ shift: applied - base, value: Number(fv) });
       }
       setSensitivity(rows);
     } catch (e) {
@@ -457,7 +491,7 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
                 >
                   <td className="py-1.5">
                     {r.shift > 0 ? '+' : ''}
-                    {(r.shift * 100).toFixed(0)} bps×100
+                    {(r.shift * 10000).toFixed(0)} bps
                   </td>
                   <td className="py-1.5">{money(r.value, cur)}</td>
                 </tr>
