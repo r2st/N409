@@ -50,6 +50,26 @@ describe.skipIf(!dbUp)('the leaked-test-database sweep', () => {
     }
   };
 
+  /**
+   * The sweep, with the "it actually ran" half asserted.
+   *
+   * `sweepStaleTestDatabases` never throws — a sweep is a courtesy, and a
+   * Postgres that will not take the connection must not fail a run before it
+   * starts. So it reports `skipped` and drops nothing, and a test that looks
+   * only at whether the database is gone reads that as a broken DROP.
+   *
+   * That is not hypothetical: two full suites against one instance exhaust
+   * `max_connections` (100), the sweep's own connect is refused, and this file
+   * failed with "expected true to be false" — pointing at the DDL, when the
+   * SQL had never been sent. Asserting on the report first makes the two
+   * outcomes say different things.
+   */
+  const sweep = async (options: { olderThanMinutes?: number; all?: boolean } = {}) => {
+    const result = await sweepStaleTestDatabases({ connectionString: BASE_URL, ...options });
+    expect(result.skipped, `the sweep did not run (${result.skipped})`).toBeUndefined();
+    return result;
+  };
+
   const urlFor = (name: string): string => {
     const url = new URL(BASE_URL);
     url.pathname = `/${name}`;
@@ -69,7 +89,10 @@ describe.skipIf(!dbUp)('the leaked-test-database sweep', () => {
     const name = await leak();
     // Threshold 0: everything idle is old enough, which is the state the real
     // sweep reaches an hour later.
-    await sweepStaleTestDatabases({ connectionString: BASE_URL, olderThanMinutes: 0 });
+    const { dropped } = await sweep({ olderThanMinutes: 0 });
+    // Named in the report and gone from the server: the first says the sweep
+    // decided to drop this one, the second that Postgres agreed.
+    expect(dropped).toContain(name);
     expect(await exists(name)).toBe(false);
   });
 
@@ -84,14 +107,17 @@ describe.skipIf(!dbUp)('the leaked-test-database sweep', () => {
     const holder = new pg.Client({ connectionString: urlFor(name) });
     await holder.connect();
     try {
-      await sweepStaleTestDatabases({ connectionString: BASE_URL, olderThanMinutes: 0 });
+      const { dropped } = await sweep({ olderThanMinutes: 0 });
+      // Left alone because the in-use predicate excluded it, not because the
+      // sweep never looked — which is the same observation from outside.
+      expect(dropped).not.toContain(name);
       expect(await exists(name)).toBe(true);
     } finally {
       await holder.end();
     }
 
     // …and once the connection goes, the next sweep collects it.
-    await sweepStaleTestDatabases({ connectionString: BASE_URL, olderThanMinutes: 0 });
+    expect((await sweep({ olderThanMinutes: 0 })).dropped).toContain(name);
     expect(await exists(name)).toBe(false);
   });
 
@@ -99,7 +125,7 @@ describe.skipIf(!dbUp)('the leaked-test-database sweep', () => {
     // The age half, which covers the window between `CREATE DATABASE` and the
     // pool's first connection — during which the in-use check sees nothing.
     const name = await leak();
-    await sweepStaleTestDatabases({ connectionString: BASE_URL, olderThanMinutes: 60 });
+    expect((await sweep({ olderThanMinutes: 60 })).dropped).not.toContain(name);
     expect(await exists(name)).toBe(true);
   });
 
@@ -124,7 +150,7 @@ describe.skipIf(!dbUp)('the leaked-test-database sweep', () => {
   it('never touches a database that is not a test database', async () => {
     // The development database is on this same server, one LIKE pattern away.
     const name = await leak();
-    await sweepStaleTestDatabases({ connectionString: BASE_URL, olderThanMinutes: 0, all: true });
+    expect((await sweep({ olderThanMinutes: 0, all: true })).dropped).toContain(name);
     expect(await exists(name)).toBe(false);
     const admin = new pg.Client({ connectionString: BASE_URL });
     await admin.connect();
