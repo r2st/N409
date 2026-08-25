@@ -20,7 +20,7 @@ import {
   type OrganizationRow,
 } from '../repos/organizations.js';
 import { findValuationById } from '../repos/valuations.js';
-import { buildEntityTree, consolidate } from '../domain/portfolio.js';
+import { buildEntityTree, consolidate, labelEntities } from '../domain/portfolio.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
@@ -132,7 +132,11 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const { entities, truncated } = await loadEntities(org.id, query.data.limit);
     return {
       organization: org,
-      entities,
+      // Labelled on the way out: the table below heads two columns with the
+      // 409A names of these columns, and on a specialty row that is not what
+      // the figure is (`labelEntities`). `consolidate` gets the raw rows — it
+      // asks a different question of the same column.
+      entities: labelEntities(entities),
       consolidated: consolidate(entities),
       tree: buildEntityTree(entities),
       truncated,
@@ -214,7 +218,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
       organization_id: org.id,
       name: org.name,
       consolidated: consolidate(entities),
-      entities,
+      entities: labelEntities(entities),
       truncated,
       entity_page_limit: ORG_ENTITY_PAGE_LIMIT,
     };

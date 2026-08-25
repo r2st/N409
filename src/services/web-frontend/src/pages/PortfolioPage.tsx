@@ -29,6 +29,24 @@ interface Organization {
   name: string;
   entity_type: string;
 }
+/**
+ * What one row's headline figure actually is, shipped by the server.
+ *
+ * The two money columns are headed with the 409A names of the columns behind
+ * them, and every specialty engine writes into those same two columns — so an
+ * IFRS 2 row's figure is a total share-based-payment expense and an EMI row's
+ * per-share figure is the restricted AMV, neither of which the heading names.
+ * The caption travels with the row because a heading cannot vary per row, and
+ * `is_default` is the server's answer rather than a comparison against a
+ * restated copy of the 409A wording here. Optional: an older API build sends
+ * neither, and then the headings are all there is.
+ */
+interface FigureLabel {
+  /** The deliverable's own words, or null when the kind concludes no such figure. */
+  caption: string | null;
+  /** True when the caption is the default 409A wording the column heading carries. */
+  is_default: boolean;
+}
 interface Entity {
   valuation_id: string;
   number: string;
@@ -39,6 +57,8 @@ interface Entity {
   equity_value: number | null;
   fmv_per_share: number | null;
   currency: string;
+  equity_figure?: FigureLabel;
+  per_share_figure?: FigureLabel;
 }
 interface CurrencyTotals {
   currency: string;
@@ -349,12 +369,16 @@ export function PortfolioPage() {
                           </td>
                           <td className="px-4 py-2.5 text-ink-600">{e.entity_type}</td>
                           <td className="px-4 py-2.5 text-ink-600">{e.state}</td>
-                          <td className="tnum px-4 py-2.5 text-right text-ink-900">
-                            {e.equity_value === null ? '—' : usd(e.equity_value, e.currency)}
-                          </td>
-                          <td className="tnum px-4 py-2.5 text-right text-ink-900">
-                            {e.fmv_per_share === null ? '—' : usdPrecise(e.fmv_per_share, e.currency)}
-                          </td>
+                          <FigureCell
+                            value={e.equity_value}
+                            label={e.equity_figure}
+                            format={(v) => usd(v, e.currency)}
+                          />
+                          <FigureCell
+                            value={e.fmv_per_share}
+                            label={e.per_share_figure}
+                            format={(v) => usdPrecise(v, e.currency)}
+                          />
                         </tr>
                       ))
                     )}
@@ -366,6 +390,41 @@ export function PortfolioPage() {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * One money cell under a heading that may not describe it.
+ *
+ * Three cases, and the middle one is the bug this exists for:
+ *
+ *   * `caption === null` — the kind concluded no such figure (a QSBS
+ *     attestation concludes neither). Nothing is printed even if the column
+ *     behind it somehow holds a number, because a figure under a heading that
+ *     was never asked of it is worse than a dash.
+ *   * a caption that is not the default — the figure is real and is *not* what
+ *     the heading says. It is printed with its own words beneath it: "Total
+ *     expense", "Actual market value (AMV) per share".
+ *   * the default caption — the heading is already right, so nothing is added.
+ *     This is every 409A row, which is nearly every row.
+ */
+function FigureCell({
+  value,
+  label,
+  format,
+}: {
+  value: number | null;
+  label?: FigureLabel;
+  format: (v: number) => string;
+}) {
+  const concluded = label ? label.caption !== null : true;
+  return (
+    <td className="tnum px-4 py-2.5 text-right text-ink-900">
+      {value === null || !concluded ? '—' : format(value)}
+      {value !== null && concluded && label && !label.is_default && (
+        <div className="mt-0.5 text-xs font-normal text-ink-400">{label.caption}</div>
+      )}
+    </td>
   );
 }
 

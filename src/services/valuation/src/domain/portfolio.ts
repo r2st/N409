@@ -4,7 +4,7 @@
  * the aggregation is unit-testable independent of the DB.
  */
 
-import { concludesEntityEquity, headlineLabels } from './specialty.js';
+import { concludesEntityEquity, DEFAULT_HEADLINE_LABELS, headlineLabels } from './specialty.js';
 
 export type EntityType = 'standalone' | 'parent' | 'subsidiary' | 'portfolio_company';
 
@@ -240,6 +240,70 @@ export function consolidate(entities: PortfolioEntity[]): ConsolidatedReport {
     unanchored_subsidiaries: unanchored,
     non_equity_entities: nonEquity,
   };
+}
+
+/**
+ * How one row's headline figure must be printed under a heading shared by every
+ * other row.
+ *
+ * The portfolio table heads two columns "Equity value" and "FMV/share" and
+ * prints `equity_value` / `fmv_per_share` under them for every entity. Those
+ * are 409A column names, and every specialty engine writes into the same two
+ * columns because they are the columns the row has ({@link headlineLabels}) —
+ * so a group holding an IFRS 2 share-based-payment memo alongside its 409A saw
+ * that memo's **total expense** printed under "Equity value", directly beneath
+ * a banner naming it as a figure excluded from the totals for not being one.
+ * Two contradictory statements about the same number on the same screen, and
+ * the table is the one a reader adds up.
+ *
+ * The caption cannot go in the heading — the heading is one string for rows of
+ * several kinds — so it ships with the row, the same resolution the event
+ * vocabulary took. `is_default` is computed here rather than left to the
+ * browser to infer by comparing `caption` against a restated copy of the 409A
+ * wording: a rule restated client-side is a rule that drifts, and this one
+ * would drift silently into captioning every 409A row.
+ */
+export interface EntityFigureLabel {
+  /**
+   * The deliverable's own words for the figure, or `null` when the kind
+   * concludes no such figure at all — a QSBS attestation has neither. A surface
+   * must then omit the figure rather than caption an empty cell.
+   */
+  caption: string | null;
+  /** Whether `caption` is the default 409A wording the column heading carries. */
+  is_default: boolean;
+}
+
+/** An entity plus what its two headline figures actually are. */
+export interface LabelledPortfolioEntity extends PortfolioEntity {
+  equity_figure: EntityFigureLabel;
+  per_share_figure: EntityFigureLabel;
+}
+
+/**
+ * Attach each entity's own captions for the two typed columns.
+ *
+ * Applied to the *response* only. `consolidate` is deliberately given the
+ * unlabelled rows: it asks a different question of the same column
+ * ({@link concludesEntityEquity} — may this be added to another equity value?)
+ * and answers it for kinds whose caption is the default one, so deriving either
+ * from the other would be wrong in both directions.
+ */
+export function labelEntities(entities: PortfolioEntity[]): LabelledPortfolioEntity[] {
+  return entities.map((e) => {
+    const labels = headlineLabels(e.kind);
+    return {
+      ...e,
+      equity_figure: {
+        caption: labels.equity,
+        is_default: labels.equity === DEFAULT_HEADLINE_LABELS.equity,
+      },
+      per_share_figure: {
+        caption: labels.perShare,
+        is_default: labels.perShare === DEFAULT_HEADLINE_LABELS.perShare,
+      },
+    };
+  });
 }
 
 /**

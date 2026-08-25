@@ -18,10 +18,10 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
   });
   afterAll(async () => ctx?.teardown());
 
-  async function seedValuation(user: { id: string }, company: string, equity: number | null) {
+  async function seedValuation(user: { id: string }, company: string, equity: number | null, kind = '409a') {
     const v = await createValuation(
       ctx.pool,
-      { kind: '409a', companyName: company, userId: user.id },
+      { kind, companyName: company, userId: user.id },
       { ...actor, actorId: user.id },
     );
     if (equity !== null) {
@@ -89,6 +89,67 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
     expect(body.consolidated.total_equity_value).toBe(13_000_000);
     expect(body.consolidated.consolidated_equity_value).toBe(10_000_000); // sub excluded
     expect(body.tree.childrenOf[parent.id]).toEqual([sub.id]);
+  });
+
+  it('ships each entity’s own caption for the two 409A-named columns', async () => {
+    /*
+     * Both columns are 409A columns by name and every specialty engine writes
+     * into them, so the portfolio table headed "Equity value" / "FMV/share" was
+     * printing an IFRS 2 total share-based-payment *expense* under the first and
+     * an EMI restricted AMV under the second — the latter being exactly the
+     * figure a board must not adopt as a §409A price. A heading cannot vary per
+     * row, so the caption has to arrive on the row.
+     */
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/organizations',
+      headers: authHeader(owner.token),
+      payload: { name: 'Mixed Vocabulary Group', entity_type: 'holding_company' },
+    });
+    const orgId = created.json().organization.id;
+    const parent = await seedValuation(owner, 'Vocab Parent', 10_000_000);
+    const memo = await seedValuation(owner, 'Vocab IFRS2 Ltd', 420_000, 'ifrs2');
+    const emi = await seedValuation(owner, 'Vocab EMI Ltd', 3_000_000, 'emi');
+    for (const [v, type] of [
+      [parent, 'parent'],
+      [memo, 'subsidiary'],
+      [emi, 'subsidiary'],
+    ] as const) {
+      const assign = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/organizations/${orgId}/entities`,
+        headers: authHeader(owner.token),
+        payload: { valuation_id: v.id, entity_type: type },
+      });
+      expect(assign.statusCode).toBe(204);
+    }
+
+    for (const url of [`/api/v1/organizations/${orgId}`, `/api/v1/organizations/${orgId}/consolidated`]) {
+      const res = await ctx.app.inject({ method: 'GET', url, headers: authHeader(owner.token) });
+      expect(res.statusCode, url).toBe(200);
+      const byId = new Map<string, Record<string, unknown>>(
+        res.json().entities.map((e: { valuation_id: string }) => [e.valuation_id, e]),
+      );
+
+      // The 409A row: both headings already say what its figures are.
+      expect(byId.get(parent.id)!.equity_figure, url).toEqual({
+        caption: 'Concluded equity value',
+        is_default: true,
+      });
+
+      // The expense, still carried and no longer captioned as equity.
+      expect(byId.get(memo.id)!.equity_value, url).toBe(420_000);
+      expect(byId.get(memo.id)!.equity_figure, url).toEqual({
+        caption: 'Total expense',
+        is_default: false,
+      });
+
+      // The restricted AMV, named as the one of two per-share figures it is.
+      expect(byId.get(emi.id)!.per_share_figure, url).toEqual({
+        caption: 'Actual market value (AMV) per share',
+        is_default: false,
+      });
+    }
   });
 
   it('counts a subsidiary whose parent never arrived, and names it', async () => {

@@ -188,6 +188,111 @@ describe('PortfolioPage (feature 6)', () => {
     ).toBeInTheDocument();
   });
 
+  /*
+   * The banner above the table already says an IFRS 2 memo's figure is not an
+   * equity value. The table below it went on printing that same figure under a
+   * column headed "Equity value", and an EMI row's restricted AMV under one
+   * headed "FMV/share" — the second of which is the number a board must not
+   * adopt as a §409A price. The heading cannot vary per row, so the caption
+   * rides on the row.
+   */
+  describe('figures printed under a heading that may not describe them', () => {
+    const withKinds = {
+      ...detail,
+      entities: [
+        {
+          ...detail.entities[0]!,
+          equity_figure: { caption: 'Concluded equity value', is_default: true },
+          per_share_figure: { caption: 'Concluded FMV per share', is_default: true },
+        },
+        {
+          valuation_id: 'v8',
+          number: 'VAL-8',
+          company_name: 'Acme UK Ltd',
+          entity_type: 'subsidiary',
+          parent_valuation_id: 'v1',
+          state: 'delivered',
+          equity_value: 420_000,
+          fmv_per_share: null,
+          currency: 'USD',
+          equity_figure: { caption: 'Total expense', is_default: false },
+          per_share_figure: { caption: null, is_default: false },
+        },
+        {
+          valuation_id: 'v7',
+          number: 'VAL-7',
+          company_name: 'Acme EMI Ltd',
+          entity_type: 'portfolio_company',
+          parent_valuation_id: null,
+          state: 'delivered',
+          equity_value: 3_000_000,
+          fmv_per_share: 1.25,
+          currency: 'USD',
+          equity_figure: { caption: 'Concluded equity value', is_default: true },
+          per_share_figure: { caption: 'Actual market value (AMV) per share', is_default: false },
+        },
+      ],
+    };
+
+    const renderWith = async (body: unknown) => {
+      mockApi({ 'GET /organizations/org1': () => jsonResponse(body) });
+      render(
+        <MemoryRouter>
+          <PortfolioPage />
+        </MemoryRouter>,
+      );
+      await screen.findByText('Acme Holdings');
+    };
+
+    it('captions a figure that is not what its column heading says', async () => {
+      await renderWith(withKinds);
+      await waitFor(() => expect(screen.getByText('Acme UK Ltd')).toBeInTheDocument());
+      // The figure is still shown — it is a real conclusion of a real
+      // engagement — but no longer as an equity value.
+      expect(screen.getByText('$420,000')).toBeInTheDocument();
+      expect(screen.getByText('Total expense')).toBeInTheDocument();
+      // And the restricted AMV says which of the two per-share figures it is.
+      expect(screen.getByText('$1.25')).toBeInTheDocument();
+      expect(screen.getByText('Actual market value (AMV) per share')).toBeInTheDocument();
+    });
+
+    it('leaves a 409A row uncaptioned — the heading already says it', async () => {
+      await renderWith(withKinds);
+      await waitFor(() => expect(screen.getByText('Acme Parent')).toBeInTheDocument());
+      expect(screen.queryByText('Concluded equity value')).not.toBeInTheDocument();
+      expect(screen.queryByText('Concluded FMV per share')).not.toBeInTheDocument();
+    });
+
+    it('omits a figure the kind never concluded rather than blanking it', async () => {
+      // `caption: null` means there is no such figure, which is a different
+      // statement from "the column is empty". A QSBS attestation concludes
+      // neither, so nothing is printed even if a figure arrives beside it.
+      await renderWith({
+        ...detail,
+        entities: [
+          {
+            ...detail.entities[0]!,
+            company_name: 'Acme QSBS Co',
+            equity_value: 999,
+            fmv_per_share: 9.99,
+            equity_figure: { caption: null, is_default: false },
+            per_share_figure: { caption: null, is_default: false },
+          },
+        ],
+      });
+      await waitFor(() => expect(screen.getByText('Acme QSBS Co')).toBeInTheDocument());
+      expect(screen.queryByText('$999')).not.toBeInTheDocument();
+      expect(screen.queryByText('$9.99')).not.toBeInTheDocument();
+    });
+
+    it('still draws an older API build that sends no captions', async () => {
+      await renderWith(detail);
+      await waitFor(() => expect(screen.getByText('Acme Parent')).toBeInTheDocument());
+      expect(screen.getAllByText(/\$10,000,000/).length).toBeGreaterThan(0);
+      expect(screen.getByText('$2.50')).toBeInTheDocument();
+    });
+  });
+
   it('says nothing about excluded figures when every entity concluded equity', async () => {
     mockApi();
     render(

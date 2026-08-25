@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { buildEntityTree, consolidate, type PortfolioEntity } from '../../src/domain/portfolio.js';
+import {
+  buildEntityTree,
+  consolidate,
+  labelEntities,
+  type PortfolioEntity,
+} from '../../src/domain/portfolio.js';
+import { SPECIALTY_KINDS } from '../../src/domain/specialty.js';
 
 const entity = (over: Partial<PortfolioEntity> & { valuation_id: string }): PortfolioEntity => ({
   valuation_id: over.valuation_id,
@@ -372,5 +378,105 @@ describe('consolidation adds up only figures that are equity values', () => {
     expect(report.total_equity_value).toBe(50_000_000);
     expect(report.unanchored_subsidiaries).toEqual([]);
     expect(report.non_equity_entities).toHaveLength(1);
+  });
+});
+
+/*
+ * The roll-up refuses to *add* a figure that is not an equity value. The table
+ * printed underneath it went on captioning that same figure "Equity value" —
+ * two contradictory statements about one number on one screen, and the table is
+ * the half a reader adds up by eye. The caption has to travel with the row,
+ * because the heading is one string for rows of several kinds.
+ */
+describe('labelEntities: what each row’s headline figures actually are', () => {
+  it('captions an IFRS 2 total expense as an expense, not as equity', () => {
+    const [row] = labelEntities([entity({ valuation_id: 'e', kind: 'ifrs2', equity_value: 420_000 })]);
+    expect(row!.equity_figure).toEqual({ caption: 'Total expense', is_default: false });
+    // Still carried: the entity is real and so is its figure. What changes is
+    // that the screen can no longer print it under a heading it does not match.
+    expect(row!.equity_value).toBe(420_000);
+  });
+
+  it('captions an EMI per-share figure as the restricted AMV it is', () => {
+    // The one that matters most: a number under a bare "FMV/share" heading is
+    // an invitation to use it as one, and the AMV is below the unrestricted
+    // market value by the whole restriction discount.
+    const [row] = labelEntities([entity({ valuation_id: 'e', kind: 'emi', fmv_per_share: 1.2 })]);
+    expect(row!.per_share_figure).toEqual({
+      caption: 'Actual market value (AMV) per share',
+      is_default: false,
+    });
+    // ...while EMI's *equity* column really is this entity's equity value, so
+    // that half keeps the heading it already had.
+    expect(row!.equity_figure.is_default).toBe(true);
+  });
+
+  it('leaves a 409A row alone', () => {
+    const [row] = labelEntities([
+      entity({ valuation_id: 'e', kind: '409a', equity_value: 10_000_000, fmv_per_share: 2.5 }),
+    ]);
+    expect(row!.equity_figure).toEqual({ caption: 'Concluded equity value', is_default: true });
+    expect(row!.per_share_figure).toEqual({ caption: 'Concluded FMV per share', is_default: true });
+  });
+
+  it('says a kind concludes no such figure rather than leaving the cell to guess', () => {
+    // `caption: null` is not "unlabelled" — it is "there is no such figure
+    // here", which a surface must render as an omission and not as a blank
+    // under a borrowed heading.
+    const [qsbs, asc820] = labelEntities([
+      entity({ valuation_id: 'q', kind: 'qsbs' }),
+      entity({ valuation_id: 'f', kind: '820', equity_value: 8_000_000 }),
+    ]);
+    expect(qsbs!.equity_figure).toEqual({ caption: null, is_default: false });
+    expect(qsbs!.per_share_figure).toEqual({ caption: null, is_default: false });
+    // An ASC 820 measurement values positions: a real equity-column figure with
+    // no per-share figure behind it at all.
+    expect(asc820!.equity_figure).toEqual({ caption: 'Total fair value', is_default: false });
+    expect(asc820!.per_share_figure).toEqual({ caption: null, is_default: false });
+  });
+
+  it('is not `concludesEntityEquity` under another name', () => {
+    // An ESOP's equity value *is* this company's equity and is summed into the
+    // roll-up, yet it is not the *concluded* equity value by caption. A page
+    // deriving the caption from the roll-up's decision would print the wrong
+    // one of those two facts.
+    const [esop] = labelEntities([entity({ valuation_id: 'e', kind: 'esop', equity_value: 30_000_000 })]);
+    expect(esop!.equity_figure).toEqual({ caption: 'Appraised equity value', is_default: false });
+    expect(
+      consolidate([entity({ valuation_id: 'e', kind: 'esop', equity_value: 30_000_000 })]).total_equity_value,
+    ).toBe(30_000_000);
+  });
+
+  it('finds no specialty kind the two 409A headings fully describe', () => {
+    // The census. Every specialty kind disagrees with the default wording in at
+    // least one of the two columns — that is what made the shared headings
+    // wrong in the first place — so a twelfth engine that inherits both of them
+    // silently is a kind nobody decided about.
+    const rows = labelEntities(SPECIALTY_KINDS.map((kind) => entity({ valuation_id: kind, kind })));
+    for (const row of rows) {
+      expect(
+        row.equity_figure.is_default && row.per_share_figure.is_default,
+        `${row.kind} would print under both 409A headings unchallenged`,
+      ).toBe(false);
+    }
+    // And the 409A engine's own kinds are the ones both headings do describe.
+    for (const row of labelEntities(
+      ['409a', '718', 'fund', 'debt'].map((kind) => entity({ valuation_id: kind, kind })),
+    )) {
+      expect(row.equity_figure.is_default, row.kind).toBe(true);
+      expect(row.per_share_figure.is_default, row.kind).toBe(true);
+    }
+  });
+
+  it('preserves every field the table already draws from', () => {
+    const source = entity({
+      valuation_id: 'e',
+      company_name: 'Acme UK Ltd',
+      kind: 'ifrs2',
+      equity_value: 420_000,
+      currency: 'GBP',
+    });
+    const [row] = labelEntities([source]);
+    expect(row).toMatchObject(source);
   });
 });
