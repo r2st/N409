@@ -4846,3 +4846,134 @@
 #            Nothing here was checked in a browser. The IP questionnaire gained
 #            six fields and the IFRS 2 questionnaire one, and no test renders
 #            any of them through ClientIntakePage.
+
+# N409 revision
+# commit:    29fdddc
+# subject:   the figures the engines computed and the deliverables never showed
+# previous:  96a9050 (the census in the direction nothing guarded).
+# includes:  6 commits — R135, which is R134's gap note carried out. R134 closed
+#            the second edge of the triangle (every parameter an engine accepts
+#            is asked of somebody) and named the third: "a figure the engine
+#            computes that no exhibit reads... a census in that direction —
+#            engine output keys against exhibit reads — is the obvious third
+#            edge."
+#
+#            Five findings by hand before the census existed, and a sixth from
+#            the census itself — the largest of the six, and the only one nobody
+#            had found by reading.
+#
+#            5c1040c — `esop_share_value` takes the input equity value at
+#            either level of value, and `value_basis` is a *required* select on
+#            the ESOP questionnaire. Under `minority` the input is the
+#            marketable minority value, the DLOM alone reaches the conclusion,
+#            and the `control` figure the engine returns is a gross-up computed
+#            for disclosure — its own comment reads "Step up for disclosure
+#            only; the conclusion never passes through it". The exhibit printed
+#            one three-row ladder for both bases, so a minority engagement
+#            rendered as a control value determined and then reduced by a DLOC.
+#            Neither happened, and in an ESOP appraisal that is the specific
+#            representation a DOL reviewer tests. `shares_outstanding` went the
+#            same way: the divisor of the one division on the exhibit, returned
+#            to nobody.
+#
+#            a918aaa — ASC 350-20-35-3 lets an entity stop at the qualitative
+#            step-zero assessment. The questionnaire asks ("Stopping at the
+#            qualitative (step zero) assessment?"), the assembler sends it, the
+#            engine returns it, and `impairmentExhibit` read it nowhere. The
+#            engine runs the arithmetic even under the election — deliberately,
+#            "so the memo can show the margin that justified it" — so the
+#            deliverable printed a quantitative table and a foot reading
+#            "Impairment loss (none indicated)" for a test the client had
+#            recorded it did not perform. The contradicted case is called out
+#            rather than captioned: an election recorded over a fair value
+#            *under* carrying amount is the circumstance the election is not
+#            available for, and deriving the foot from the flag alone would have
+#            printed "(none)" beside a real loss.
+#
+#            9fec376 — ASC 820-10-50-2(g) asks for the sensitivity of a
+#            recurring Level 3 measurement to its unobservable inputs.
+#            `fair_value_820.py` names it in its own docstring as one of three
+#            things the engine exists to produce. The exhibit printed the table
+#            of which inputs matter and dropped what happens when they move —
+#            the half of the paragraph that is a disclosure rather than a
+#            schedule. R134 had just made the schedule an analyst run input, so
+#            it was suppliable from the workspace and still going nowhere. The
+#            shift prints signed, because the direction is the disclosure.
+#
+#            f7edd72 — `transfer_type` (four answers, required) and
+#            `transfer_date` ("Date of transfer / death", required) were both
+#            returned and both unread, so a Form 709 gift and an estate
+#            inclusion under §2031 rendered as the same document with no
+#            statement of what was transferred or when. On the estate side that
+#            date is the date of death the appraisal is struck at. The type also
+#            decides the §2503(b) row, which said only "not available for this
+#            transfer" — a refusal with no reason, indistinguishable from an
+#            exclusion someone forgot.
+#
+#            adec094 — the census's own finding, and the one this round exists
+#            for. `intangibleExhibit` read `pv_before_tab`, `pv`, `tab`,
+#            `discount_rate`, `royalty_rate` and `tax_rate`. `value_intangible`
+#            returns none of the six: three under other names, three not at all
+#            because they are inputs the result does not echo. So every row it
+#            built was dropped, `rows.length > 0` was false for every IP
+#            valuation ever run, and the deliverable for an asset priced by a
+#            discounted royalty stream was one sentence with a number in it.
+#            Nothing failed — the section rendered and had a heading — and the
+#            two tests covering it asserted the invented names against fixtures
+#            built to match the exhibit rather than the engine, so both passed
+#            on a payload producing the same output as a correct one. There was
+#            no IP sample; every other kind that got one had its assumed shape
+#            contradicted immediately, three of them on the day they were
+#            written.
+#
+#            29fdddc — the census. Same shape as the parameter contract in the
+#            other direction: the keys are resolved in Python from the dict
+#            literal each engine returns, with an assertion that it *is* a
+#            literal so an engine that starts building its result incrementally
+#            has to say so; published as contract/specialty-results.json; a
+#            pytest keeps the file true to the source and the TypeScript census
+#            keeps the exhibits true to the file.
+#
+#            A key counts as read only with comments stripped. Not fussiness:
+#            four of the six findings are now discussed by name in comments
+#            explaining their own fix, so a raw-source scan would pass on them
+#            the day after the fix landed. Nine excuses are recorded, each with
+#            a reason, and the excuses are themselves checked — an excuse for a
+#            rendered key, or for a key no engine returns, fails.
+#
+#            Deliberate break, each: dropping `pv_terminal` from the IP bridge
+#            fails the census by name; excusing a key the exhibit renders fails
+#            the staleness check; re-flattening the ESOP ladder fails four
+#            assertions; captioning the impairment foot "(none)" off the flag
+#            alone fails on the contradicted case; removing the 820 sensitivity
+#            table fails two.
+#
+# gap:       The census reads top-level keys only. Every finding this round was
+#            a whole block or scalar dropped, which is what that catches, but
+#            `remeasurement`, `level_3_rollforward`, `obsolescence` and the
+#            per-method schedules are nested one deeper and their inner keys are
+#            unswept — an exhibit reading a block and printing three of its five
+#            fields passes today.
+#
+#            Three of the six were only visible because a *sample* existed to
+#            contradict the assumed shape, and IP had none until this round. Six
+#            of the eleven kinds still have no captured payload: qsbs, ppa,
+#            goodwill, esop, fmv, emi/csop. The IP finding is the size it is
+#            because nothing ever compared that exhibit to real output, and
+#            nothing compares those six today either.
+#
+#            The IP exhibit still cannot print the discount rate, the royalty
+#            rate or the tax rate, which are the three figures a reviewer checks
+#            a relief-from-royalty conclusion against. They are inputs and
+#            `value_intangible` does not echo them, so the exhibit has nothing
+#            to read; the fix is on the engine side and is a decision about the
+#            result contract rather than a rendering bug.
+#
+#            MEEM's schedule is nine columns. The renderer shrinks columns
+#            proportionally when they exceed the page, so it will fit rather
+#            than overflow, but nobody has looked at it in a rendered PDF and
+#            the geometry audit that would say is a separate exercise.
+#
+#            Nothing here was checked in a browser, and no test renders any of
+#            these exhibits through a real PDF — the assertions read generated
+#            HTML.
