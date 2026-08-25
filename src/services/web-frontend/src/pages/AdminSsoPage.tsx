@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
-import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+import { Button, ErrorNote, Field, ListTruncationNote, Spinner, TextInput } from '../components/ui';
 
 interface SamlConfig {
   enabled: boolean;
@@ -39,6 +39,7 @@ const empty: SamlConfig = {
 export function AdminSsoPage() {
   const [config, setConfig] = useState<SamlConfig | null>(null);
   const [tokens, setTokens] = useState<ScimToken[]>([]);
+  const [tokensTruncated, setTokensTruncated] = useState(false);
   const [minted, setMinted] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -46,12 +47,15 @@ export function AdminSsoPage() {
 
   const load = useCallback(async () => {
     try {
-      const [{ config: c }, { tokens: t }] = await Promise.all([
+      const [{ config: c }, { tokens: t, truncated }] = await Promise.all([
         api<{ config: SamlConfig | null }>('/admin/sso/saml'),
-        api<{ tokens: ScimToken[] }>('/admin/sso/scim-tokens'),
+        api<{ tokens: ScimToken[]; truncated: boolean }>('/admin/sso/scim-tokens'),
       ]);
       setConfig(c ? { ...empty, ...c } : empty);
       setTokens(t);
+      // A credential that is in force and not on this screen is one nobody
+      // will think to revoke.
+      setTokensTruncated(truncated);
     } catch {
       setError('Could not load SSO settings.');
     }
@@ -248,6 +252,7 @@ export function AdminSsoPage() {
             </tbody>
           </table>
         )}
+        <ListTruncationNote truncated={tokensTruncated} shown={tokens.length} noun="SCIM tokens" />
       </section>
     </div>
   );

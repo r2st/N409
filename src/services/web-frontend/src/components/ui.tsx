@@ -264,6 +264,45 @@ export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
  * Disabled so it cannot be chosen, and rendered last so it does not displace
  * the entry someone is reaching for.
  */
+/**
+ * The line under a list that stopped short of the book.
+ *
+ * Every list endpoint in this API is capped in SQL and reports `truncated`
+ * alongside the rows, precisely so a page is not mistaken for the whole set —
+ * the repos say so in as many words. Ten surfaces dropped the flag on the
+ * floor and rendered the page as if it were everything, which is worse than an
+ * uncapped query rather than better: a missing engagement reads as an
+ * engagement that does not exist, and any figure the page derives from
+ * `rows.length` becomes a wrong number stated with confidence rather than a
+ * short list.
+ *
+ * `shown` is the rendered row count rather than the server's limit, because it
+ * is the only figure that is true whatever the caller asked for, and it makes
+ * no claim about the order the cap fell in.
+ *
+ * {@link PickerOverflowNote} is the same idea inside a `<select>`, where the
+ * note has to be an `<option>` to appear at all.
+ */
+export function ListTruncationNote({
+  truncated,
+  shown,
+  noun,
+  hint,
+}: {
+  truncated: boolean;
+  shown: number;
+  noun: string;
+  /** What the reader can do about it, when there is something. */
+  hint?: string;
+}) {
+  if (!truncated) return null;
+  return (
+    <p className="mt-2 text-xs text-ink-500" data-testid="list-truncated">
+      Showing {shown} {noun}. More exist than are listed{hint ? ` — ${hint}` : ''}.
+    </p>
+  );
+}
+
 export function PickerOverflowNote({ truncated }: { truncated: boolean }) {
   if (!truncated) return null;
   return (

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
-import { KindBadge, EmptyState, ErrorNote, Spinner } from '../components/ui';
+import { KindBadge, EmptyState, ErrorNote, ListTruncationNote, Spinner } from '../components/ui';
 import { SLA_TONE } from './valuation/EngagementTab';
 
 /**
@@ -42,13 +42,15 @@ function hours(h: number): string {
 export function EngagementsPage() {
   const [engagements, setEngagements] = useState<EngagementSummary[] | null>(null);
   const [stages, setStages] = useState<Stage[]>([]);
+  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    void api<{ engagements: EngagementSummary[]; stages: Stage[] }>('/engagements')
+    void api<{ engagements: EngagementSummary[]; stages: Stage[]; truncated: boolean }>('/engagements')
       .then((r) => {
         setEngagements(r.engagements);
         setStages(r.stages.filter((s) => !s.terminal));
+        setTruncated(r.truncated);
       })
       .catch(() => setError('Could not load the engagement pipeline.'));
   }, []);
@@ -69,6 +71,16 @@ export function EngagementsPage() {
           <p className="mt-1 text-sm text-ink-400">
             {engagements.length} active · {overdue} past SLA
           </p>
+          {/* Both figures above, and every per-stage count below, are counted
+              off this page rather than in SQL. Past the cap they stop being
+              answers to "how many" and become "how many we listed", which is
+              only safe if the page says which one it is. */}
+          <ListTruncationNote
+            truncated={truncated}
+            shown={engagements.length}
+            noun="engagements"
+            hint="the counts above cover only these"
+          />
         </div>
       </div>
 

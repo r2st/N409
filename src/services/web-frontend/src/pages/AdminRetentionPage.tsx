@@ -2,7 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
-import { Button, ErrorNote, ResultCount, Select, Spinner, TextInput } from '../components/ui';
+import {
+  Button,
+  ErrorNote,
+  ListTruncationNote,
+  ResultCount,
+  Select,
+  Spinner,
+  TextInput,
+} from '../components/ui';
 
 interface Policy {
   data_type: string;
@@ -62,6 +70,7 @@ interface Action {
 export function AdminRetentionPage() {
   const [policies, setPolicies] = useState<Policy[] | null>(null);
   const [holds, setHolds] = useState<Hold[]>([]);
+  const [holdsTruncated, setHoldsTruncated] = useState(false);
   const [actions, setActions] = useState<Action[]>([]);
   const [retired, setRetired] = useState<{ valuations: RetiredValuation[]; total: number } | null>(null);
   const [retiredQuery, setRetiredQuery] = useState('');
@@ -99,12 +108,16 @@ export function AdminRetentionPage() {
     try {
       const [p, h, a, r] = await Promise.all([
         api<{ policies: Policy[] }>('/admin/retention/policies'),
-        api<{ holds: Hold[] }>('/admin/retention/holds'),
+        api<{ holds: Hold[]; truncated: boolean }>('/admin/retention/holds'),
         api<{ actions: Action[] }>('/admin/retention/actions'),
         api<{ valuations: RetiredValuation[]; total: number }>('/admin/retention/valuations/retired'),
       ]);
       setPolicies(p.policies);
       setHolds(h.holds);
+      // A hold that is not listed reads as a hold that is not in force — the one
+      // wrong conclusion this table must not invite, since it is the screen an
+      // operator checks before letting the sweep run.
+      setHoldsTruncated(h.truncated);
       setActions(a.actions);
       setRetired({ valuations: r.valuations, total: r.total });
     } catch {
@@ -498,6 +511,7 @@ export function AdminRetentionPage() {
             </tbody>
           </table>
         )}
+        <ListTruncationNote truncated={holdsTruncated} shown={holds.length} noun="legal holds" />
       </section>
 
       <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">

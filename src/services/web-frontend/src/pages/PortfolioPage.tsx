@@ -4,7 +4,16 @@ import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { moneyFormatter } from '../lib/format';
 import { HelpIcon } from '../components/HelpIcon';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  ListTruncationNote,
+  Select,
+  Spinner,
+  TextInput,
+} from '../components/ui';
 import { useLatestOnly } from '../lib/useLatestOnly';
 
 /** Engine equity/FMV values are in whole currency units (dollars), not cents. */
@@ -119,13 +128,18 @@ export function PortfolioPage() {
   const [name, setName] = useState('');
   const [type, setType] = useState('holding_company');
   const [busy, setBusy] = useState(false);
+  const [orgsTruncated, setOrgsTruncated] = useState(false);
 
   const claim = useLatestOnly();
 
   const loadOrgs = useCallback(async () => {
     try {
-      const r = await api<{ organizations: Organization[] }>('/organizations');
+      const r = await api<{ organizations: Organization[]; truncated: boolean }>('/organizations');
       setOrgs(r.organizations);
+      // The chips below are the only way into an organization's roll-up, so a
+      // capped list is a portfolio with no route to it — the outer half of the
+      // truncation this page already reports for the entities *within* one.
+      setOrgsTruncated(r.truncated);
       if (r.organizations.length > 0 && !selected) setSelected(r.organizations[0]!.id);
     } catch {
       setError('Could not load organizations.');
@@ -235,6 +249,7 @@ export function PortfolioPage() {
               </button>
             ))}
           </div>
+          <ListTruncationNote truncated={orgsTruncated} shown={orgs.length} noun="organizations" />
 
           {detail && (
             <div className="mt-6 space-y-6">

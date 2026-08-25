@@ -605,12 +605,13 @@ describe('SubscriptionSection (feature 7)', () => {
       render(<SubscriptionSection />);
 
       const panel = await screen.findByTestId('admin-billing');
-      expect(within(panel).getByTestId('truncated-subscribers')).toHaveTextContent(
-        'Showing the 200 most recent subscribers',
-      );
-      expect(within(panel).getByTestId('truncated-invoices')).toHaveTextContent(
-        'Showing the 200 most recent invoices',
-      );
+      const notes = within(panel).getAllByTestId('list-truncated');
+      expect(notes).toHaveLength(2);
+      expect(notes[0]).toHaveTextContent('Showing 2 subscribers. More exist than are listed');
+      // The rows are a page and the metrics above are counted in SQL, so the
+      // note has to say which of the two the reader is looking at.
+      expect(notes[0]).toHaveTextContent('the figures above count them all');
+      expect(notes[1]).toHaveTextContent('Showing 0 invoices. More exist than are listed');
     });
 
     it('says nothing about truncation when both tables are complete', async () => {
@@ -621,8 +622,7 @@ describe('SubscriptionSection (feature 7)', () => {
       // Asserted against the subscribers table actually being drawn, so this
       // cannot pass by the whole panel having failed to render.
       expect(within(panel).getByText('cfo@zorblatt.example')).toBeInTheDocument();
-      expect(within(panel).queryByTestId('truncated-subscribers')).not.toBeInTheDocument();
-      expect(within(panel).queryByTestId('truncated-invoices')).not.toBeInTheDocument();
+      expect(within(panel).queryAllByTestId('list-truncated')).toHaveLength(0);
     });
 
     /**

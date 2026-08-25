@@ -33,6 +33,7 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  ListTruncationNote,
   LoadingBlock,
   Select,
   Skeleton,
@@ -249,6 +250,7 @@ export function GrantsTab() {
   const { user } = useAuth();
   const ops = isOps(user);
   const [grants, setGrants] = useState<Grant[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   /*
    * `vesting_template` defaults to 'standard_4yr_1yr_cliff' and is submitted
@@ -267,8 +269,15 @@ export function GrantsTab() {
 
   const load = useCallback(async () => {
     try {
-      const { grants: g } = await api<{ grants: Grant[] }>(`/valuations/${valuation.id}/grants`);
+      const { grants: g, truncated: capped } = await api<{ grants: Grant[]; truncated: boolean }>(
+        `/valuations/${valuation.id}/grants`,
+      );
       setGrants(g);
+      // The same reason a failed load is not an empty list: a grant that is
+      // not on screen is one somebody issues a second time. The grant export
+      // already refuses rather than shipping a short workbook (repos/grants);
+      // this screen said nothing at all.
+      setTruncated(capped);
       setLoadFailed(false);
     } catch (err) {
       // A failed load is reported, not swallowed into an empty list. Rendering
@@ -540,6 +549,7 @@ export function GrantsTab() {
           ))}
         </ul>
       )}
+      <ListTruncationNote truncated={truncated} shown={grants.length} noun="grants" />
     </div>
   );
 }

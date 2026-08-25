@@ -3,7 +3,7 @@ import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { formatCents, formatDate } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Spinner } from './ui';
+import { Button, EmptyState, ErrorNote, ListTruncationNote, Spinner } from './ui';
 
 interface Plan {
   tier: string;
@@ -448,7 +448,12 @@ function AdminBillingDashboard() {
           </tbody>
         </table>
       </div>
-      <TruncationNote truncated={data.subscriptions_truncated} limit={data.page_limit} noun="subscribers" />
+      <ListTruncationNote
+        truncated={data.subscriptions_truncated}
+        shown={data.subscriptions.length}
+        noun="subscribers"
+        hint="the figures above count them all"
+      />
 
       {/* The ledger behind the two money figures above.
           `listAllInvoices` has shipped this list on `/admin/billing` since
@@ -497,27 +502,13 @@ function AdminBillingDashboard() {
           </tbody>
         </table>
       </div>
-      <TruncationNote truncated={data.invoices_truncated} limit={data.invoice_page_limit} noun="invoices" />
+      <ListTruncationNote
+        truncated={data.invoices_truncated}
+        shown={data.invoices.length}
+        noun="invoices"
+        hint="the figures above count them all"
+      />
     </div>
-  );
-}
-
-/**
- * Says so when a table stopped short of the book.
- *
- * Both lists on this screen are capped in SQL, and `listAllInvoices` was
- * rewritten to report *when the cap bit* precisely so a reader would not take
- * a page for the whole ledger. The flag reached the client and nothing
- * rendered it, so a 201st subscriber was indistinguishable from not existing —
- * on the one screen whose totals are computed separately and would keep
- * disagreeing with the rows beneath them.
- */
-function TruncationNote({ truncated, limit, noun }: { truncated: boolean; limit: number; noun: string }) {
-  if (!truncated) return null;
-  return (
-    <p className="mt-2 text-xs text-ink-500" data-testid={`truncated-${noun}`}>
-      Showing the {limit} most recent {noun}. Older rows are not listed — the figures above count them all.
-    </p>
   );
 }
 

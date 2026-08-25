@@ -247,12 +247,14 @@ export function ReportTab() {
     });
 
   const download = () =>
-    run('download', () =>
-      apiDownload(
+    run('download', async () => {
+      // The report PDF is not a capped list, so `apiDownload`'s truncation
+      // flag has nothing to say here; `run` takes a `Promise<void>`.
+      await apiDownload(
         `/valuations/${valuation.id}/report.pdf`,
         `${filenameStem(valuation.company_name)}_report_v${report.current_version}.pdf`,
-      ),
-    );
+      );
+    });
 
   const restore = (version: number) =>
     run('restore', async () => {

@@ -5,7 +5,16 @@ import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime, KIND_LABELS } from '../lib/format';
 import { VALUATION_KINDS } from '../lib/types';
 import type { ReportTemplate } from '../lib/types';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  ListTruncationNote,
+  Select,
+  Spinner,
+  TextInput,
+} from '../components/ui';
 
 /** Report template management (M4) — versioned templates like 409a.v54. Ops only. */
 
@@ -26,6 +35,7 @@ function StatusPill({ status }: { status: ReportTemplate['status'] }) {
 
 export function TemplatesPage() {
   const [templates, setTemplates] = useState<ReportTemplate[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -35,8 +45,12 @@ export function TemplatesPage() {
 
   const load = useCallback(async () => {
     try {
-      const data = await api<{ templates: ReportTemplate[] }>('/report-templates');
+      const data = await api<{ templates: ReportTemplate[]; truncated: boolean }>('/report-templates');
       setTemplates(data.templates);
+      // The page groups versions under `names`, which is derived from this
+      // list: past the cap a whole template name disappears rather than one of
+      // its versions, and the screen reads as though it was never created.
+      setTruncated(data.truncated);
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 403
@@ -274,6 +288,7 @@ export function TemplatesPage() {
           </div>
         </section>
       ))}
+      <ListTruncationNote truncated={truncated} shown={templates.length} noun="template versions" />
     </div>
   );
 }

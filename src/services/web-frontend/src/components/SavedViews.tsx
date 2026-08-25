@@ -4,7 +4,7 @@ import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import type { SavedView } from '../lib/types';
-import { Button, Modal, Select, TextInput } from './ui';
+import { Button, Modal, PickerOverflowNote, Select, TextInput } from './ui';
 
 /**
  * Saved worklist views (feature-improvements §2, ranked #8).
@@ -56,6 +56,7 @@ export function SavedViews() {
   const ops = isOps(user);
   const [params, setParams] = useSearchParams();
   const [views, setViews] = useState<SavedView[] | null>(null);
+  const [viewsCapped, setViewsCapped] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -69,9 +70,12 @@ export function SavedViews() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api<{ views: SavedView[] }>('/saved-views');
+      const res = await api<{ views: SavedView[]; truncated: boolean }>('/saved-views');
       setLoadFailed(false);
       setViews(res.views);
+      // A picker's cap is only safe if it is visible: a view that is simply not
+      // in the list reads as a view that was never saved.
+      setViewsCapped(res.truncated);
     } catch {
       // A failed picker must not take the worklist with it — that part was
       // always right. What `setViews([])` did on top of that was label the
@@ -191,6 +195,7 @@ export function SavedViews() {
               ))}
           </optgroup>
         )}
+        <PickerOverflowNote truncated={viewsCapped} />
       </Select>
 
       {/* Saving an empty filter set would store "everything", which the

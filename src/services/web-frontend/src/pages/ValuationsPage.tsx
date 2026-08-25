@@ -36,6 +36,14 @@ import { SavedViews } from '../components/SavedViews';
 
 const PER_PAGE = 25;
 
+/**
+ * Said out-of-band because the CSV cannot say it in-band: a note row would be
+ * data to anything parsing the file, and a spreadsheet honours no comment
+ * syntax. The server has flagged this on `x-export-truncated` all along.
+ */
+const EXPORT_CAPPED =
+  'The export hit the row cap — it holds the first rows only. Narrow the filters and export again for the rest.';
+
 /** csv for data pipelines, pdf to circulate, xlsx for auditors who need to foot it. */
 type ExportFormat = 'csv' | 'pdf' | 'xlsx';
 
@@ -145,6 +153,7 @@ export function ValuationsPage() {
   const [partnersCapped, setPartnersCapped] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportNote, setExportNote] = useState<string | null>(null);
   const [qDraft, setQDraft] = useState(params.get('q') ?? '');
 
   // M4 — bulk actions (ops)
@@ -324,13 +333,17 @@ export function ValuationsPage() {
 
   const exportAs = async (format: ExportFormat) => {
     setExportError(null);
+    setExportNote(null);
     try {
       const q = new URLSearchParams(filterQuery);
       if (bucket) q.set('bucket', bucket);
       if (group) q.set('group', group);
       if (sortParam) q.set('sort', sortParam);
       q.set('format', format);
-      await apiDownload(`/valuations/export?${q}`, `valuations.${format}`);
+      const { truncated } = await apiDownload(`/valuations/export?${q}`, `valuations.${format}`);
+      // The XLSX and the PDF say this on their own face; the CSV cannot, so
+      // the only place a capped CSV can be reported is here.
+      if (truncated) setExportNote(EXPORT_CAPPED);
     } catch {
       setExportError('Export failed.');
     }
@@ -341,7 +354,8 @@ export function ValuationsPage() {
     setBulkNote(null);
     try {
       const q = new URLSearchParams({ ids: [...selected].join(','), format });
-      await apiDownload(`/valuations/export?${q}`, `valuations-selected.${format}`);
+      const { truncated } = await apiDownload(`/valuations/export?${q}`, `valuations-selected.${format}`);
+      if (truncated) setBulkNote(EXPORT_CAPPED);
     } catch {
       setBulkNote('Export of selected valuations failed.');
     }
@@ -625,6 +639,11 @@ export function ValuationsPage() {
         <button type="submit" hidden />
       </form>
 
+      {exportNote && (
+        <div className="mt-3 text-sm text-ink-600" data-testid="export-note">
+          {exportNote}
+        </div>
+      )}
       {exportError && (
         <div className="mt-4">
           <ErrorNote>{exportError}</ErrorNote>

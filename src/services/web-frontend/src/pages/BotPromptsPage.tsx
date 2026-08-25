@@ -3,7 +3,16 @@ import { api, ApiError } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { diffLines } from '../lib/diff';
 import { formatDateTime } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput, inputClass } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  ListTruncationNote,
+  Spinner,
+  TextInput,
+  inputClass,
+} from '../components/ui';
 
 export interface BotPrompt {
   id: string;
@@ -98,16 +107,21 @@ function VersionHistory({
   onReverted: (reverted: BotPrompt) => Promise<void> | void;
 }) {
   const [versions, setVersions] = useState<PromptVersion[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openVersion, setOpenVersion] = useState<number | null>(null);
   const [reverting, setReverting] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const { versions: items } = await api<{ versions: PromptVersion[] }>(
-        `/admin/prompts/${prompt.id}/versions`,
-      );
+      const { versions: items, truncated: capped } = await api<{
+        versions: PromptVersion[];
+        truncated: boolean;
+      }>(`/admin/prompts/${prompt.id}/versions`);
       setVersions(items);
+      // The revert control only reaches what is listed, so a cap here is the
+      // difference between "that wording is gone" and "we did not show it".
+      setTruncated(capped);
     } catch {
       setError('Could not load the version history.');
     }
@@ -191,6 +205,7 @@ function VersionHistory({
         {versions?.length === 0 && (
           <p className="text-sm text-ink-400">No versions yet — save a change to start the history.</p>
         )}
+        <ListTruncationNote truncated={truncated} shown={versions?.length ?? 0} noun="versions" />
       </div>
     </details>
   );

@@ -52,7 +52,7 @@ const row = (id: string, company: string) => ({
   published_at: null,
 });
 
-function mockApi(opts: { rosterStatus?: number } = {}) {
+function mockApi(opts: { rosterStatus?: number; exportTruncated?: boolean } = {}) {
   const calls: Array<{ url: string; method: string; body?: unknown }> = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
@@ -74,7 +74,11 @@ function mockApi(opts: { rosterStatus?: number } = {}) {
     if (path.includes('/valuations/export')) {
       return new Response(new Blob(['id\r\n']), {
         status: 200,
-        headers: { 'content-type': 'text/csv', 'content-disposition': 'attachment; filename="sel.csv"' },
+        headers: {
+          'content-type': 'text/csv',
+          'content-disposition': 'attachment; filename="sel.csv"',
+          ...(opts.exportTruncated ? { 'x-export-truncated': 'true' } : {}),
+        },
       });
     }
     if (path.includes('/users/options')) {
@@ -162,6 +166,42 @@ describe('ValuationsPage bulk operations', () => {
     expect(screen.getByText('2 selected')).toBeInTheDocument();
     await user.click(screen.getByLabelText('Select all on page'));
     expect(screen.queryByText('2 selected')).not.toBeInTheDocument();
+  });
+
+  /**
+   * `routes/exports.ts` puts a truncation notice inside the XLSX (above the
+   * header) and the PDF (in its title) and deliberately puts none inside the
+   * CSV — a note row would be data to anything parsing the file. It sets
+   * `x-export-truncated` so the client can say it out of band instead, and
+   * nothing read the header, so a capped CSV downloaded looking complete.
+   */
+  it('says when a CSV export came back capped', async () => {
+    mockApi({ exportTruncated: true });
+    const user = userEvent.setup();
+    globalThis.URL.createObjectURL = vi.fn(() => 'blob:test');
+    globalThis.URL.revokeObjectURL = vi.fn();
+    renderPage();
+
+    await user.click((await screen.findAllByLabelText('Select Acme Corp'))[0]!);
+    await user.click(screen.getByRole('button', { name: 'Export selected CSV' }));
+
+    expect(await screen.findByText(/hit the row cap/i)).toBeInTheDocument();
+  });
+
+  it('says nothing about a cap when the export was whole', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    globalThis.URL.createObjectURL = vi.fn(() => 'blob:test');
+    globalThis.URL.revokeObjectURL = vi.fn();
+    renderPage();
+
+    await user.click((await screen.findAllByLabelText('Select Acme Corp'))[0]!);
+    await user.click(screen.getByRole('button', { name: 'Export selected CSV' }));
+
+    // Against the download actually happening, so this cannot pass by the
+    // export never having run.
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/valuations/export'))).toBe(true));
+    expect(screen.queryByText(/hit the row cap/i)).not.toBeInTheDocument();
   });
 
   it('exports exactly the checked rows via the ids filter', async () => {

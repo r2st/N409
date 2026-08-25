@@ -39,6 +39,33 @@ describe('CommentsSection', () => {
     localStorage.clear();
   });
 
+  /**
+   * The page the API returns is the newest end of the thread. Without saying
+   * so, an older message that was sent and answered reads as one that was
+   * never sent — on the record of what the client was told.
+   */
+  it('says when the thread is longer than the page it was handed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('/comments')) return jsonResponse({ comments: [chat], truncated: true });
+      throw new Error(`unexpected fetch ${String(url)}`);
+    });
+    renderSection();
+    expect(await screen.findByTestId('list-truncated')).toHaveTextContent(
+      'Showing 1 messages. More exist than are listed',
+    );
+  });
+
+  it('says nothing when the whole thread came back', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('/comments')) return jsonResponse({ comments: [chat], truncated: false });
+      throw new Error(`unexpected fetch ${String(url)}`);
+    });
+    renderSection();
+    // Against the message actually rendering, so this cannot pass vacuously.
+    expect(await screen.findByText('When is the draft due?')).toBeInTheDocument();
+    expect(screen.queryByTestId('list-truncated')).not.toBeInTheDocument();
+  });
+
   it('renders the conversation from the API', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       if (String(url).includes('/comments')) return jsonResponse({ comments: [chat] });

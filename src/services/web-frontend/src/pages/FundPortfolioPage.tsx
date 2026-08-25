@@ -18,6 +18,7 @@ import {
   ErrorNote,
   Field,
   InfoTooltip,
+  ListTruncationNote,
   Select,
   Spinner,
   TextInput,
@@ -90,13 +91,18 @@ export function FundPortfolioPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [truncated, setTruncated] = useState(false);
   const [form, setForm] = useState({ name: '', fund_type: 'vc', currency: 'USD', vintage_year: '2024' });
 
   const loadFunds = useCallback(async () => {
     setLoading(true);
     try {
-      const { funds: f } = await api<{ funds: Fund[] }>('/funds');
+      const { funds: f, truncated: capped } = await api<{ funds: Fund[]; truncated: boolean }>('/funds');
       setFunds(f);
+      // These chips are the only route into a fund's mark-to-fair-value view,
+      // so a capped list is a fund with no way to reach it — the same shape
+      // the organization chips on PortfolioPage have.
+      setTruncated(capped);
       if (f.length > 0 && !selected) setSelected(f[0]!.id);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Failed to load funds');
@@ -233,6 +239,7 @@ export function FundPortfolioPage() {
           ))}
         </div>
       )}
+      <ListTruncationNote truncated={truncated} shown={funds.length} noun="funds" />
 
       {selected && <FundDetailView key={selected} fundId={selected} />}
     </div>

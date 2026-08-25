@@ -60,8 +60,8 @@ const stale = {
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-const mockApi = (engagements: unknown[], stages = STAGES) =>
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ engagements, stages }));
+const mockApi = (engagements: unknown[], stages = STAGES, truncated = false) =>
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ engagements, stages, truncated }));
 
 const renderPage = () =>
   render(
@@ -81,6 +81,29 @@ describe('EngagementsPage', () => {
     mockApi([onTrack, late, stale]);
     renderPage();
     expect(await screen.findByText('3 active · 1 past SLA')).toBeInTheDocument();
+  });
+
+  /**
+   * `ENGAGEMENT_PAGE_LIMIT` caps the list in SQL and the route has always
+   * reported when it bit. This page counts "N active", "N past SLA" and every
+   * per-stage tally off the rows it was handed, so past the cap all three stop
+   * being answers to "how many" — and said nothing about it.
+   */
+  it('says when the counts are over a page rather than the whole pipeline', async () => {
+    mockApi([onTrack, late, stale], STAGES, true);
+    renderPage();
+    const note = await screen.findByTestId('list-truncated');
+    expect(note).toHaveTextContent('Showing 3 engagements. More exist than are listed');
+    expect(note).toHaveTextContent('the counts above cover only these');
+  });
+
+  it('says nothing when the pipeline fits', async () => {
+    mockApi([onTrack, late, stale]);
+    renderPage();
+    // Asserted against the header actually rendering, so this cannot pass by
+    // the page having failed to load at all.
+    expect(await screen.findByText('3 active · 1 past SLA')).toBeInTheDocument();
+    expect(screen.queryByTestId('list-truncated')).not.toBeInTheDocument();
   });
 
   it('files each engagement under its current stage', async () => {

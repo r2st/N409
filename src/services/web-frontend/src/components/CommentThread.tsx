@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { formatDateTime } from '../lib/format';
 import type { Comment } from '../lib/types';
-import { Button, ErrorNote, Spinner } from './ui';
+import { Button, ErrorNote, ListTruncationNote, Spinner } from './ui';
 
 /** First few words of a message, for naming the controls that act on it. */
 function excerpt(body: string, max = 40): string {
@@ -28,14 +28,21 @@ export function CommentsSection({
   const { user } = useAuth();
   const ops = isOps(user);
   const [comments, setComments] = useState<Comment[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
-    api<{ comments: Comment[] }>(`/valuations/${valuationId}/comments`)
-      .then((res) => setComments(res.comments))
+    api<{ comments: Comment[]; truncated: boolean }>(`/valuations/${valuationId}/comments`)
+      .then((res) => {
+        setComments(res.comments);
+        // The page is the newest end of the thread. Without saying so, an
+        // older message that was sent and answered reads as one that was
+        // never sent — on the record of what the client was told.
+        setTruncated(res.truncated);
+      })
       .catch(() => setError('Could not load the conversation.'));
   }, [valuationId]);
 
@@ -200,6 +207,7 @@ export function CommentsSection({
             <li className="text-sm text-ink-400">No messages yet — start the conversation below.</li>
           )}
         </ul>
+        <ListTruncationNote truncated={truncated} shown={thread.length} noun="messages" />
 
         <form
           className="mt-5 flex gap-2 border-t border-paper-200 pt-5"

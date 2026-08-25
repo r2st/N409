@@ -235,12 +235,22 @@ function scrubDownloadName(name: string): string | null {
   return out === '' || out === '.' || out === '..' ? null : out;
 }
 
-/** Fetches a file with auth and triggers a browser download (CSV/PDF/ZIP exports). */
+/**
+ * Fetches a file with auth and triggers a browser download (CSV/PDF/ZIP exports).
+ *
+ * Returns whether the server capped the export. `routes/exports.ts` puts a
+ * notice *inside* the XLSX (above the header) and the PDF (in its title), and
+ * deliberately puts none inside the CSV — there is no comment syntax a
+ * spreadsheet honours and a trailing note row would be indistinguishable from
+ * data. `x-export-truncated` exists precisely so the client can say it
+ * out-of-band instead, and nothing read it, so a capped CSV arrived looking
+ * like the whole book.
+ */
 export async function apiDownload(
   path: string,
   fallbackName: string,
   init: { method?: 'GET' | 'POST' } = {},
-): Promise<void> {
+): Promise<{ truncated: boolean }> {
   const headers = new Headers();
   const token = getToken();
   if (token) headers.set('authorization', `Bearer ${token}`);
@@ -261,6 +271,7 @@ export async function apiDownload(
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  return { truncated: res.headers.get('x-export-truncated') === 'true' };
 }
 
 /** Multipart upload (documents) — same auth/problem handling as api(). */

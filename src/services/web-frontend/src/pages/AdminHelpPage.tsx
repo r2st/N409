@@ -3,7 +3,15 @@ import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { all, numberRange, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { formatDate } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  ListTruncationNote,
+  Spinner,
+  TextInput,
+} from '../components/ui';
 import { RichTextEditor } from '../components/RichTextEditor';
 import type { HelpArticle } from './HelpPage';
 
@@ -44,14 +52,21 @@ const SLUG = /[a-z0-9-]+/;
  * widget and /help immediately, no deploy needed. */
 export function AdminHelpPage() {
   const [articles, setArticles] = useState<HelpArticle[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
-    api<{ articles: HelpArticle[] }>('/help/articles')
-      .then((d) => setArticles(d.articles))
+    api<{ articles: HelpArticle[]; truncated: boolean }>('/help/articles')
+      .then((d) => {
+        setArticles(d.articles);
+        // An article missing from the editor's list reads as an article that
+        // was never written, and the next thing that happens is a second one
+        // with the same slug.
+        setTruncated(d.truncated);
+      })
       .catch((err) =>
         setError(
           err instanceof ApiError && err.status === 403
@@ -318,6 +333,7 @@ export function AdminHelpPage() {
           </table>
         </div>
       )}
+      <ListTruncationNote truncated={truncated} shown={articles.length} noun="help articles" />
     </div>
   );
 }
