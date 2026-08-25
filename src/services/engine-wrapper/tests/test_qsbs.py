@@ -5,7 +5,11 @@ import pytest
 from app.engine.errors import EngineInputError
 from app.engine.qsbs import (
     GROSS_ASSET_LIMIT,
+    GROSS_ASSET_LIMIT_OBBBA,
+    PER_ISSUER_CAP_FLOOR,
+    PER_ISSUER_CAP_FLOOR_OBBBA,
     exclusion_percentage,
+    is_obbba_stock,
     qsbs_eligibility,
 )
 from datetime import date
@@ -173,3 +177,116 @@ def test_negative_gross_assets_rejected():
 def test_non_numeric_basis_rejected():
     with pytest.raises(EngineInputError, match="must be a number"):
         qsbs_eligibility(**_base(aggregate_basis="a lot"))
+
+
+# ── OBBBA regime (P.L. 119-21, stock acquired after 4 Jul 2025) ──────────────
+
+
+def _obbba(**overrides) -> dict:
+    """Base kwargs for stock issued the day after enactment."""
+    return _base(acquisition_date="2025-07-05", assessment_date="2030-01-01", **overrides)
+
+
+def test_enactment_day_itself_is_still_the_old_regime():
+    # "acquired after the date of enactment" — the 4th is not after the 4th.
+    assert is_obbba_stock(date(2025, 7, 4)) is False
+    assert is_obbba_stock(date(2025, 7, 5)) is True
+    out = qsbs_eligibility(**_base(acquisition_date="2025-07-04", assessment_date="2031-01-01"))
+    assert out["regime"] == "pre_obbba"
+    assert out["cap_components"]["lifetime_cap"] == pytest.approx(PER_ISSUER_CAP_FLOOR)
+
+
+def test_obbba_stock_uses_the_seventy_five_million_asset_limit():
+    # $60M is over the old limit and under the new one: the same company is
+    # disqualified on 2025-07-04 stock and qualified on 2025-07-05 stock.
+    over_old = dict(gross_assets_after_issuance=60_000_000)
+    legacy = qsbs_eligibility(**_base(acquisition_date="2025-07-04", assessment_date="2031-01-01", **over_old))
+    assert legacy["failed_tests"] == ["gross_asset_test"]
+    new = qsbs_eligibility(**_obbba(**over_old))
+    assert new["failed_tests"] == []
+    assert "limit $75,000,000" in new["tests"]["gross_asset_test"]["detail"]
+
+
+def test_obbba_gross_assets_above_seventy_five_million_still_fail():
+    out = qsbs_eligibility(**_obbba(gross_assets_after_issuance=GROSS_ASSET_LIMIT_OBBBA + 1))
+    assert out["failed_tests"] == ["gross_asset_test"]
+    assert qsbs_eligibility(**_obbba(gross_assets_after_issuance=GROSS_ASSET_LIMIT_OBBBA))["eligible"] is True
+
+
+def test_obbba_lifetime_floor_is_fifteen_million():
+    out = qsbs_eligibility(**_obbba(aggregate_basis=100_000))
+    assert out["cap_components"]["lifetime_cap"] == pytest.approx(PER_ISSUER_CAP_FLOOR_OBBBA)
+    assert out["gain_exclusion_cap"] == pytest.approx(15_000_000)
+    # 10× basis still wins when it is the larger of the two.
+    bigger = qsbs_eligibility(**_obbba(aggregate_basis=4_000_000))
+    assert bigger["gain_exclusion_cap"] == pytest.approx(40_000_000)
+
+
+def test_obbba_tiers_by_holding_period():
+    acquired = "2025-08-01"
+
+    def pct_on(assessment: str) -> float:
+        return qsbs_eligibility(**_base(acquisition_date=acquired, assessment_date=assessment))[
+            "exclusion_percentage"
+        ]
+
+    assert pct_on("2028-07-31") == 0.0  # a day short of three years
+    assert pct_on("2028-08-01") == 0.50  # "at least three years" — the day counts
+    assert pct_on("2029-07-31") == 0.50
+    assert pct_on("2029-08-01") == 0.75
+    assert pct_on("2030-07-31") == 0.75
+    assert pct_on("2030-08-01") == 1.0
+    assert pct_on("2035-01-01") == 1.0
+
+
+def test_obbba_four_year_holder_has_an_exclusion_the_old_rule_denied():
+    # The change with teeth: same holder, same four years, different answer.
+    kwargs = dict(acquisition_date="2025-07-05", assessment_date="2029-07-05")
+    out = qsbs_eligibility(**_base(**kwargs))
+    assert out["exclusion_available_now"] is True
+    assert out["exclusion_percentage"] == 0.75
+    assert out["holding_period"]["required_years"] == 3
+    assert out["holding_period"]["threshold_date"] == "2028-07-05"
+
+    legacy = qsbs_eligibility(**_base(acquisition_date="2021-07-05", assessment_date="2025-07-05"))
+    assert legacy["exclusion_available_now"] is False
+    assert legacy["exclusion_percentage"] == 0.0
+
+
+def test_obbba_tier_schedule_is_reported_in_full():
+    out = qsbs_eligibility(**_base(acquisition_date="2025-09-30", assessment_date="2029-01-01"))
+    assert out["holding_period"]["tiers"] == [
+        {"years": 3, "exclusion_percentage": 0.50, "date": "2028-09-30", "met": True},
+        {"years": 4, "exclusion_percentage": 0.75, "date": "2029-09-30", "met": False},
+        {"years": 5, "exclusion_percentage": 1.00, "date": "2030-09-30", "met": False},
+    ]
+    assert out["holding_period"]["five_year_date"] == "2030-09-30"
+    assert out["maximum_exclusion_percentage"] == 1.0
+
+
+def test_legacy_percentage_is_zero_until_the_holding_period_is_met():
+    # The letter said "available now: no" beside "exclusion percentage 100%".
+    out = qsbs_eligibility(**_base(acquisition_date="2021-01-01", assessment_date="2024-06-30"))
+    assert out["exclusion_available_now"] is False
+    assert out["exclusion_percentage"] == 0.0
+    assert out["maximum_exclusion_percentage"] == 1.0
+    assert out["holding_period"]["tiers"] == [
+        {"years": 5, "exclusion_percentage": 1.0, "date": "2026-01-01", "met": False},
+    ]
+
+
+def test_disqualified_obbba_stock_reports_no_ceiling_either():
+    out = qsbs_eligibility(**_obbba(entity_type="s_corp"))
+    assert out["exclusion_percentage"] == 0.0
+    assert out["maximum_exclusion_percentage"] == 0.0
+    assert out["gain_exclusion_cap"] == 0.0
+
+
+def test_obbba_leap_day_acquisition_rolls_every_tier_to_march_first():
+    out = qsbs_eligibility(**_base(acquisition_date="2028-02-29", assessment_date="2031-03-01"))
+    assert [t["date"] for t in out["holding_period"]["tiers"]] == [
+        "2031-03-01",
+        "2032-03-01",
+        "2033-03-01",
+    ]
+    assert out["exclusion_percentage"] == 0.50
