@@ -284,13 +284,57 @@ function ppaRequest(answers: Answers, overrides: Answers): SpecialtyRequest {
   return { path: '/engine/v1/ppa', body: { inputs: { ...inputs, ...overrides } } };
 }
 
+/**
+ * The engine's own method keys (`intangibles._METHODS`). The questionnaire's
+ * select offers exactly these, because `value_intangible` looks the method up
+ * by name and an unknown one is a 422 no answer can fix — which is what the
+ * option spelled `cost` was: the engine has never had a method by that name.
+ */
+export const IP_METHODS = ['relief_from_royalty', 'meem', 'with_and_without', 'cost_approach'] as const;
+
+/**
+ * Answers saved before the option was spelled the engine's way. Migrating the
+ * stored answer would be the alternative, but a questionnaire answer is what
+ * the client said, and rewriting it to make a downstream lookup succeed is a
+ * worse trade than reading the old spelling here.
+ */
+const IP_METHOD_ALIASES: Record<string, string> = { cost: 'cost_approach' };
+
+/**
+ * The parameters each method actually accepts, as keyword names.
+ *
+ * This exists because the discounted-cash-flow inputs are not universal:
+ * `cost_approach` prices replacement cost less obsolescence and takes neither
+ * a discount rate nor a tax rate, so sending them — which is what an
+ * unconditional `put` did — made every cost-approach run a 422 reading
+ * `unexpected keyword argument 'discount_rate'`.
+ */
+const IP_METHOD_FIELDS: Record<string, readonly string[]> = {
+  relief_from_royalty: ['royalty_rate', 'tax_rate', 'discount_rate'],
+  meem: ['tax_rate', 'discount_rate'],
+  with_and_without: ['tax_rate', 'discount_rate'],
+  cost_approach: [
+    'replacement_cost',
+    'physical_obsolescence_pct',
+    'functional_obsolescence_pct',
+    'economic_obsolescence_pct',
+    'developer_profit_pct',
+    'opportunity_cost_pct',
+  ],
+};
+
 function ipRequest(answers: Answers, overrides: Answers): SpecialtyRequest {
-  const method = require(str(answers, 'valuation_method'), 'Answer the valuation-method question first.');
+  const answered = require(str(answers, 'valuation_method'), 'Answer the valuation-method question first.');
+  const method = IP_METHOD_ALIASES[answered] ?? answered;
+  const fields = IP_METHOD_FIELDS[method];
+  if (!fields) {
+    throw new SpecialtyInputError(
+      `Unknown intangible valuation method ${answered} — expected one of ${IP_METHODS.join(', ')}.`,
+    );
+  }
   const params: Record<string, unknown> = {};
-  put(params, 'discount_rate', num(answers, 'discount_rate'));
-  put(params, 'tax_rate', num(answers, 'tax_rate'));
+  for (const key of fields) put(params, key, num(answers, key));
   if (method === 'relief_from_royalty') {
-    put(params, 'royalty_rate', num(answers, 'royalty_rate'));
     // A flat forecast over the remaining life is the default the questionnaire
     // can support; a real forecast arrives through the run inputs as
     // `revenues` and replaces it.

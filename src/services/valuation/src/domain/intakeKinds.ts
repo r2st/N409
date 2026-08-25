@@ -22,6 +22,7 @@ import {
   type IntakeCrossRule,
   type IntakeSection,
 } from './intake.js';
+import { IP_METHODS } from './specialty.js';
 import type { ValuationKind } from './valuation.js';
 
 /** The shared "who are we valuing" section — INTAKE_SECTIONS[0] by contract. */
@@ -1084,7 +1085,9 @@ const IP_SECTIONS: readonly IntakeSection[] = [
         label: 'Valuation method',
         type: 'select',
         required: true,
-        options: ['relief_from_royalty', 'meem', 'with_and_without', 'cost'],
+        // The engine's own method keys. `cost` used to be offered here and no
+        // engine method has ever been called that, so picking it 422'd.
+        options: [...IP_METHODS],
       },
       {
         key: 'remaining_life_years',
@@ -1110,6 +1113,58 @@ const IP_SECTIONS: readonly IntakeSection[] = [
       },
       { key: 'discount_rate', label: 'Discount rate', type: 'number', required: false, rules: rate },
       { key: 'tax_rate', label: 'Tax rate', type: 'number', required: false, rules: rate },
+      // Cost approach. `replacement_cost` is the one input the method has no
+      // default for, so without it the approach could not be run from the
+      // questionnaire at all; the obsolescence layers compound in the order
+      // listed, each applied to what the previous one left.
+      {
+        key: 'replacement_cost',
+        label: 'Replacement cost new',
+        type: 'number',
+        required: false,
+        hint: 'Cost approach. The cost to recreate the asset today, before obsolescence.',
+        rules: { min: 0 },
+      },
+      {
+        key: 'physical_obsolescence_pct',
+        label: 'Physical obsolescence',
+        type: 'number',
+        required: false,
+        hint: 'Cost approach. A fraction of replacement cost new.',
+        rules: rate,
+      },
+      {
+        key: 'functional_obsolescence_pct',
+        label: 'Functional obsolescence',
+        type: 'number',
+        required: false,
+        hint: 'Cost approach. A fraction of what physical obsolescence left.',
+        rules: rate,
+      },
+      {
+        key: 'economic_obsolescence_pct',
+        label: 'Economic obsolescence',
+        type: 'number',
+        required: false,
+        hint: 'Cost approach. A fraction of what the earlier layers left.',
+        rules: rate,
+      },
+      {
+        key: 'developer_profit_pct',
+        label: 'Developer profit',
+        type: 'number',
+        required: false,
+        hint: 'Cost approach. Entrepreneurial incentive, added to replacement cost.',
+        rules: rate,
+      },
+      {
+        key: 'opportunity_cost_pct',
+        label: 'Opportunity cost',
+        type: 'number',
+        required: false,
+        hint: 'Cost approach. Carrying cost of the development period, added to replacement cost.',
+        rules: rate,
+      },
     ],
   },
 ];
