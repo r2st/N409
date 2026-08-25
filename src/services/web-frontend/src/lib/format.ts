@@ -186,8 +186,19 @@ export function moneyFormatter(
   }
 }
 
-/** Renders integer cents as money, e.g. 250050 → "$2,500.50" (M4). */
-export function formatMoney(
+/**
+ * Renders integer *minor* units as money, e.g. 250050 → "$2,500.50" (M4).
+ *
+ * It was called `formatMoney`, and so is a second, unrelated formatter in
+ * `lib/pipeline.ts` that takes the currency's own units and does not divide.
+ * Two exports of one name with opposite unit contracts is a hundredfold error
+ * that reads as an import line: GrantsTab and Asc718Tab picked this one for
+ * figures that were never in cents, and reported a $2.50 option strike as
+ * $0.03 for as long as they existed. The unit is in the name now — every
+ * caller of this one passes a field spelled `*_cents`, and a call site that
+ * does not is visibly wrong.
+ */
+export function formatCents(
   cents: string | number | null | undefined,
   currency: string | null = 'USD',
 ): string {
@@ -200,10 +211,10 @@ export function formatMoney(
 /**
  * Renders a major-unit amount as money, e.g. 2500.5 → "$2,500.50".
  *
- * Most of the app stores money as integer cents and uses {@link formatMoney}.
+ * Most of the app stores money as integer cents and uses {@link formatCents}.
  * Figures that arrive from a customer's own spreadsheet — cap-table share
  * prices and invested amounts — are dollars as typed, so they need this
- * instead; running them through formatMoney renders them 100× too small.
+ * instead; running them through formatCents renders them 100× too small.
  *
  * Share prices are commonly sub-cent (a $0.0001 common par value), so the
  * fraction digits widen for small amounts rather than flattening them to $0.00.

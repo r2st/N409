@@ -389,6 +389,17 @@ export function formatBytes(bytes: number | string): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * Money in the currency's own units — a `numeric` column or an engine figure,
+ * never cents. See `formatCents` in lib/format for the other one, and the
+ * warning attached to it: these two were both called `formatMoney` and the
+ * difference between them is a factor of a hundred.
+ *
+ * The digits are chosen by magnitude rather than fixed at two, which is what
+ * separates this from `formatAmount`: a per-share FMV of $2.5013 is quoted to
+ * the precision the engine computed it at, and a six-figure total is not
+ * padded with cents nobody reads.
+ */
 export function formatMoney(value: number | string | null | undefined, currency = 'USD'): string {
   const n = Number(value);
   if (value === null || value === undefined || !Number.isFinite(n)) return '—';

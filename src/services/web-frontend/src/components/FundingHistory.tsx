@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { all, integer, numberMin, optional, required, useFormValidation } from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
-import { formatDate, formatMoney, formatNumber } from '../lib/format';
+import { formatDate, formatCents, formatNumber } from '../lib/format';
 import { TRANSACTION_KINDS } from '../lib/types';
 import type { FundingRound, ValuationTransaction } from '../lib/types';
 import { Button, ErrorNote, Field, Select, TextInput } from './ui';
@@ -250,13 +250,13 @@ export function FundingHistory({
                   </td>
                   <td className="tnum py-2.5 pr-4 text-ink-600">{formatDate(r.closed_on)}</td>
                   <td className="tnum py-2.5 pr-4 text-right text-ink-900">
-                    {formatMoney(r.amount_raised_cents, currency)}
+                    {formatCents(r.amount_raised_cents, currency)}
                   </td>
                   <td className="tnum py-2.5 pr-4 text-right text-ink-600">
-                    {formatMoney(r.pre_money_cents, currency)}
+                    {formatCents(r.pre_money_cents, currency)}
                   </td>
                   <td className="tnum py-2.5 pr-4 text-right text-ink-600">
-                    {formatMoney(r.post_money_cents, currency)}
+                    {formatCents(r.post_money_cents, currency)}
                   </td>
                   {canEdit && (
                     <td className="py-2.5 text-right">
@@ -371,7 +371,7 @@ export function FundingHistory({
                   <td className="tnum py-2.5 pr-4 text-ink-600">{formatDate(t.occurred_on)}</td>
                   <td className="tnum py-2.5 pr-4 text-right text-ink-600">{formatNumber(t.shares)}</td>
                   <td className="tnum py-2.5 pr-4 text-right text-ink-600">
-                    {formatMoney(t.price_per_share_cents, currency)}
+                    {formatCents(t.price_per_share_cents, currency)}
                   </td>
                   <td className="py-2.5 pr-4 text-ink-600">{t.counterparty ?? '—'}</td>
                   {canEdit && (

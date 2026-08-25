@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { all, integer, numberMin, numberRange, useFormValidation } from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
-import { formatMoney } from '../lib/format';
+import { formatCents } from '../lib/format';
 import type { AxisTable, SensitivityAxis, SensitivityResult } from '../lib/types';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
 import { ModelSensitivityPanel } from '../components/valuation/ModelSensitivityPanel';
@@ -85,7 +85,7 @@ function AxisTableView({
                       key={j}
                       className={`tnum px-4 py-2.5 text-right ${isBase ? 'bg-bond-50 font-semibold' : ''}`}
                     >
-                      <div className="text-ink-900">{formatMoney(cell.fmvPerShareCents, currency)}</div>
+                      <div className="text-ink-900">{formatCents(cell.fmvPerShareCents, currency)}</div>
                       {!priceOnly && (
                         <div className={`text-xs ${deltaClass(cell.deltaFromBase)}`}>
                           {cell.deltaFromBase > 0 ? '+' : ''}
@@ -282,7 +282,7 @@ export function SensitivityPage() {
         <div className="mt-8 space-y-8">
           <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
             <div className="font-display text-xl font-semibold text-ink-900">
-              Base FMV: {formatMoney(result.base.fmvPerShareCents, result.currency)} / share
+              Base FMV: {formatCents(result.base.fmvPerShareCents, result.currency)} / share
             </div>
             <div className="text-sm text-ink-500">
               σ {(result.base.volatility * 100).toFixed(0)}% · {result.base.termYears}y

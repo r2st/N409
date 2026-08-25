@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { isOps, isPartner } from '../lib/rbac';
-import { formatDateTime, formatMoney } from '../lib/format';
+import { formatDateTime, formatCents } from '../lib/format';
 import { EmptyState, ErrorNote, KindBadge, Spinner, StatCard } from '../components/ui';
 import { SubscriptionSection } from '../components/SubscriptionSection';
 import type { ValuationKind } from '../lib/types';
@@ -94,10 +94,10 @@ export function BillingPage() {
           figure is shown beside it rather than left to be inferred from a
           number that no longer matches the sum of the rows below. */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total paid" value={formatMoney(billing.totals.paid_cents)} accent />
+        <StatCard label="Total paid" value={formatCents(billing.totals.paid_cents)} accent />
         <StatCard label="Completed payments" value={billing.totals.succeeded_count} />
         {billing.totals.refunded_cents > 0 && (
-          <StatCard label="Refunded" value={formatMoney(billing.totals.refunded_cents)} />
+          <StatCard label="Refunded" value={formatCents(billing.totals.refunded_cents)} />
         )}
         <StatCard label="Unpaid engagements" value={billing.unpaid_valuations.length} />
       </div>
@@ -114,7 +114,7 @@ export function BillingPage() {
                   <div className="tnum text-xs text-ink-400">#{v.number}</div>
                 </div>
                 <div className="tnum ml-auto text-sm font-semibold text-ink-800">
-                  {formatMoney(v.amount_cents, v.currency)}
+                  {formatCents(v.amount_cents, v.currency)}
                 </div>
                 <Link
                   to={`/valuations/${v.id}`}
@@ -164,12 +164,12 @@ export function BillingPage() {
                       </span>
                     </td>
                     <td className="tnum px-5 py-3.5 font-semibold text-ink-800">
-                      {formatMoney(p.amount_cents, p.currency)}
+                      {formatCents(p.amount_cents, p.currency)}
                       {/* A partial refund leaves the row 'succeeded', so the
                           amount alone would overstate what was actually kept. */}
                       {p.status !== 'refunded' && num(p.refunded_cents) > 0 && (
                         <div className="text-xs font-normal text-amber-700">
-                          −{formatMoney(num(p.refunded_cents), p.currency)} refunded
+                          −{formatCents(num(p.refunded_cents), p.currency)} refunded
                         </div>
                       )}
                     </td>
