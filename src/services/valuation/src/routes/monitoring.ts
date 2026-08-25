@@ -48,6 +48,7 @@ import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import { calendarDate } from '../domain/calendarDate.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { specialtyRunKind } from '../domain/specialty.js';
 
 /**
  * Real-time valuation monitoring (feature 10). Ops enable monitoring on a
@@ -166,6 +167,13 @@ function assembleSnapshot(valuation: ValuationRow, sources: SnapshotSources): Mo
 
   return {
     valuation_date: valuationDate,
+    // Which engine wrote the run being monitored. `null` is a 409A-engine run,
+    // and it is what decides whether the expiry trigger may call the twelve
+    // months a §409A safe-harbor window (domain/monitoring.ts). Asked of the
+    // run rather than the engagement's kind, for the reason
+    // `POST /valuations/:id/board` asks it that way: it is this row's
+    // conclusion the sentence is about.
+    run_kind: specialtyRunKind(calc?.results ?? null),
     fmv_per_share: calc?.fmv_per_share ? Number(calc.fmv_per_share) : null,
     annual_revenue: annualRevenue,
     fully_diluted_shares: capTable?.validation?.summary?.fully_diluted_shares ?? null,

@@ -5,6 +5,7 @@ import {
   reconcileBaselineShares,
   type MonitorSnapshot,
 } from '../../src/domain/monitoring.js';
+import { SPECIALTY_KINDS } from '../../src/domain/specialty.js';
 
 const baseline: MonitorSnapshot = {
   valuation_date: '2026-01-01',
@@ -35,6 +36,82 @@ describe('monitoring', () => {
       const e = t.find((x) => x.type === 'expiry');
       expect(e?.level).toBe('red');
       expect(overallStatus(t)).toBe('red');
+    });
+  });
+
+  /*
+   * The twelve months are §409A's — Treasury Regulation
+   * §1.409A-1(b)(5)(iv)(B)(1) presumes a valuation reasonable for that long,
+   * and that presumption is the whole content of the words "safe-harbor
+   * window". Every monitored engagement was getting them, and the scan quotes
+   * the sentence verbatim into the alert email that reaches the assigned
+   * reviewer.
+   */
+  describe('the expiry window is only a safe harbor where §409A gives one', () => {
+    const at13Months = new Date('2027-02-01T00:00:00Z');
+    const at11Months = new Date('2026-12-01T00:00:00Z');
+
+    const expiry = (current: MonitorSnapshot, now: Date) =>
+      evaluateTriggers(baseline, current, now).find((t) => t.type === 'expiry');
+
+    it('keeps the safe-harbor wording for a 409A run', () => {
+      // `run_kind: null` is a run of the 409A engine — the overwhelming
+      // majority, and the only case the sentence was ever written for.
+      const e = expiry({ ...same, run_kind: null }, at13Months);
+      expect(e?.message).toContain('12-month safe-harbor window');
+      expect(e?.detail?.safe_harbor).toBe(true);
+    });
+
+    it('keeps it for a monitor whose baseline predates the field entirely', () => {
+      // Stored baselines are JSONB written once when monitoring was enabled and
+      // carry no `run_kind`; the current half is reassembled on every read, so
+      // an absent value must read as "409A" rather than as "unknown".
+      const e = expiry(same, at13Months);
+      expect(e?.message).toContain('12-month safe-harbor window');
+      expect(e?.detail?.safe_harbor).toBe(true);
+    });
+
+    it('drops the claim on a UK scheme valuation, which has no §409A anything', () => {
+      const e = expiry({ ...same, run_kind: 'emi' }, at13Months);
+      expect(e?.level).toBe('red');
+      // The fact still fires — the engagement really is 13 months old.
+      expect(e?.message).toContain('13 months old');
+      expect(e?.message).not.toContain('safe-harbor');
+      expect(e?.detail).toMatchObject({ months: 13, safe_harbor: false, kind: 'emi' });
+    });
+
+    it('drops it on every other kind that concludes no §409A FMV', () => {
+      for (const kind of SPECIALTY_KINDS) {
+        const e = expiry({ ...same, run_kind: kind }, at13Months);
+        expect(e?.message, kind).not.toContain('safe-harbor');
+        expect(e?.detail?.safe_harbor, kind).toBe(false);
+      }
+    });
+
+    it('drops it from the warning as well as the red', () => {
+      // Both arms say it, so fixing one and not the other leaves the claim
+      // being made two months earlier than it used to be.
+      const uk = expiry({ ...same, run_kind: 'csop' }, at11Months);
+      expect(uk?.level).toBe('yellow');
+      expect(uk?.message).not.toContain('safe-harbor');
+      expect(uk?.message).not.toContain('12-month expiry');
+      const us = expiry({ ...same, run_kind: null }, at11Months);
+      expect(us?.level).toBe('yellow');
+      expect(us?.message).toContain('12-month expiry');
+    });
+
+    it('does not re-send an alert that already went out', () => {
+      // `signature` is the dedupe key the scan checks against
+      // `monitoring_alerts`. Rewording the sentence must not change it, or
+      // every monitored specialty engagement past twelve months emails its
+      // reviewer again the first time the fix is deployed.
+      for (const [now, sig] of [
+        [at13Months, 'expiry:12'],
+        [at11Months, 'expiry:10'],
+      ] as const) {
+        expect(expiry({ ...same, run_kind: 'ifrs2' }, now)?.signature).toBe(sig);
+        expect(expiry({ ...same, run_kind: null }, now)?.signature).toBe(sig);
+      }
     });
   });
 

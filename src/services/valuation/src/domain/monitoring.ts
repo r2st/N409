@@ -6,6 +6,8 @@
  * deterministic and testable.
  */
 
+import { concludes409AFmvPerShare, type SpecialtyKind } from './specialty.js';
+
 export const MONITOR_EVENT_TYPES = {
   enabled: 'monitoring_enabled',
   disabled: 'monitoring_disabled',
@@ -26,6 +28,18 @@ export interface MonitorSnapshot {
   annual_revenue: number | null;
   fully_diluted_shares: number | null;
   last_round_date: string | null;
+  /**
+   * Which engine produced the run this snapshot was taken from — `null` for a
+   * run of the 409A engine, which is what every kind that has a §409A safe
+   * harbor produces.
+   *
+   * Read off the *current* snapshot rather than the baseline. A baseline is
+   * JSONB written once when monitoring was enabled and rows predating this
+   * field have no `run_kind` at all, while the current half is reassembled on
+   * every read; and the claim being made is about the conclusion in force now,
+   * not the one that happened to be latest a year ago.
+   */
+  run_kind?: SpecialtyKind | null;
 }
 
 /**
@@ -114,24 +128,56 @@ export function evaluateTriggers(
 ): MonitorTrigger[] {
   const triggers: MonitorTrigger[] = [];
 
-  // 12-month expiry (safe-harbor window).
+  /*
+   * 12-month expiry.
+   *
+   * The window is §409A's: Treasury Regulation §1.409A-1(b)(5)(iv)(B)(1)
+   * presumes a valuation reasonable for twelve months, and that presumption is
+   * the whole content of the words "safe-harbor window". It attaches to a
+   * valuation of common stock *for §409A purposes* — a run that concludes a
+   * §409A fair market value per share, which is exactly what
+   * {@link concludes409AFmvPerShare} answers.
+   *
+   * Every kind was getting those words. A monitored EMI engagement is a UK
+   * scheme valuation agreed with HMRC and has no §409A anything; an IFRS 2
+   * memo measures an award at its grant date; a gift & estate appraisal
+   * concludes as of a transfer that already happened. The alert email quotes
+   * this sentence verbatim to the assigned reviewer, so the platform was
+   * asserting a US tax standard over engagements it does not govern — the same
+   * failure as R142's board resolution, one step downstream: a surface whose
+   * own words claim a standard the run does not meet.
+   *
+   * The *fact* still holds and still fires — the engagement really is a year
+   * old, and that is worth a reviewer's attention on any kind. What changes is
+   * that it is stated as an age rather than as a lapsed presumption, with the
+   * kind and the answer recorded in `detail` for anything reading the alert
+   * rather than the sentence. The signature is deliberately untouched: it is
+   * the dedupe key, and rewording an alert must not re-send one that already
+   * went out.
+   */
   if (baseline.valuation_date) {
     const months = monthsBetween(baseline.valuation_date, now);
+    const kind = current.run_kind ?? null;
+    const safeHarbor = kind === null || concludes409AFmvPerShare(kind);
     if (months >= EXPIRY_MONTHS) {
       triggers.push({
         type: 'expiry',
         level: 'red',
-        message: `The valuation is ${months} months old — past the ${EXPIRY_MONTHS}-month safe-harbor window.`,
+        message: safeHarbor
+          ? `The valuation is ${months} months old — past the ${EXPIRY_MONTHS}-month safe-harbor window.`
+          : `The valuation is ${months} months old — over ${EXPIRY_MONTHS} months since the valuation date.`,
         signature: `expiry:${EXPIRY_MONTHS}`,
-        detail: { months },
+        detail: { months, safe_harbor: safeHarbor, kind },
       });
     } else if (months >= EXPIRY_WARN_MONTHS) {
       triggers.push({
         type: 'expiry',
         level: 'yellow',
-        message: `The valuation is ${months} months old — approaching the ${EXPIRY_MONTHS}-month expiry.`,
+        message: safeHarbor
+          ? `The valuation is ${months} months old — approaching the ${EXPIRY_MONTHS}-month expiry.`
+          : `The valuation is ${months} months old — approaching ${EXPIRY_MONTHS} months since the valuation date.`,
         signature: `expiry:${EXPIRY_WARN_MONTHS}`,
-        detail: { months },
+        detail: { months, safe_harbor: safeHarbor, kind },
       });
     }
   }

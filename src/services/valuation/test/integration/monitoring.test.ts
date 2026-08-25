@@ -99,6 +99,81 @@ describe.skipIf(!dbUp)('feature 10 — valuation monitoring', () => {
     expect(res.json().triggers.some((t: any) => t.type === 'revenue_change' && t.level === 'red')).toBe(true);
   });
 
+  /*
+   * The expiry trigger's twelve months are §409A's, and the sentence it fires
+   * with says so. A specialty run has no §409A safe harbor to lapse, and the
+   * scan quotes this sentence verbatim into the alert email that reaches the
+   * assigned reviewer — so the wording has to come off the run that concluded
+   * the engagement, not off a constant.
+   */
+  describe('the expiry sentence follows the engine that wrote the run', () => {
+    const seedAged = async (kind: string, results: Record<string, unknown>) => {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind, company_name: `Aged ${kind}` },
+      });
+      const id = created.json().valuation.id;
+      await createCalculation(
+        pool,
+        {
+          valuationId: id,
+          engineVersion: 't',
+          status: 'succeeded',
+          inputs: {},
+          results,
+          equityValue: 3_000_000,
+          fmvPerShare: 1.2,
+          createdBy: ops.id,
+        },
+        { actorType: 'human', actorId: ops.id },
+      );
+      // Published two years ago: the safe-harbor clock reads off `published_at`
+      // when there is no board resolution.
+      await pool.query(
+        `UPDATE valuations SET state = 'published', published_at = now() - interval '2 years' WHERE id = $1`,
+        [id],
+      );
+      const enabled = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/monitor`,
+        headers: authHeader(ops.token),
+      });
+      expect(enabled.statusCode).toBe(201);
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${id}/monitor`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json().triggers.find((t: { type: string }) => t.type === 'expiry');
+    };
+
+    it('claims no §409A safe harbor over a UK EMI run', async () => {
+      // What `routes/specialty.ts` persists: the engine result under
+      // `specialty`, with the kind beside it. The typed columns still hold a
+      // figure — that is what made every 409A-shaped reader of this row look
+      // fine — but `fmv_per_share` there is the restricted AMV.
+      const expiry = await seedAged('emi', { kind: 'emi', specialty: { amv_per_share: 1.2 } });
+      expect(expiry.level).toBe('red');
+      expect(expiry.message).not.toContain('safe-harbor');
+      expect(expiry.message).toMatch(/months old — over 12 months since the valuation date/);
+      expect(expiry.detail).toMatchObject({ safe_harbor: false, kind: 'emi' });
+      // Unchanged, because it is the dedupe key against `monitoring_alerts`.
+      expect(expiry.signature).toBe('expiry:12');
+    });
+
+    it('keeps it over a run of the 409A engine', async () => {
+      // The same row shape a 409A run persists: the engine's own document,
+      // which has no `specialty` key at all.
+      const expiry = await seedAged('409a', { fmv_per_share: 1.2, approaches: {} });
+      expect(expiry.level).toBe('red');
+      expect(expiry.message).toContain('12-month safe-harbor window');
+      expect(expiry.detail).toMatchObject({ safe_harbor: true, kind: null });
+    });
+  });
+
   it('scans and emails the reviewer once, then dedupes', async () => {
     const first = await app.inject({
       method: 'POST',
