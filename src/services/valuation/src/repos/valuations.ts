@@ -2,7 +2,7 @@ import type pg from 'pg';
 import { isUlid, newUlid, problems, TtlCache } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { likeContains, userFullNameSql } from '../db/like.js';
-import { diffRecords } from '../domain/auditTrail.js';
+import { diffRecords, eventLabel } from '../domain/auditTrail.js';
 import { type Cursor, cursorAtSql, encodeCursor, keysetAfterSql, pageFrom } from '../domain/pagination.js';
 import {
   EVENT_TYPES,
@@ -931,6 +931,12 @@ export async function dashboardActivity(
     id: string;
     scope: 'valuation' | 'admin';
     type: string;
+    /**
+     * The event type in English, decided here rather than in the browser.
+     * The feed mixes both event tables and the frontend used to name the rows
+     * from a map of its own that disagreed with the change log's.
+     */
+    label: string;
     actor_type: string;
     actor_email: string | null;
     valuation_id: string;
@@ -965,7 +971,7 @@ export async function dashboardActivity(
     // a partner-scoped feed that silently stops being scoped.
     [...params, limit],
   );
-  return rows as never;
+  return rows.map((row) => ({ ...row, label: eventLabel(row.type as string) })) as never;
 }
 
 /** Rows for CSV export — same scope/filters as the list, joined for display, capped. */

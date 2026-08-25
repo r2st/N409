@@ -38,12 +38,12 @@ describe.skipIf(!dbUp)('event spine read bounds', () => {
     expect(res.statusCode).toBe(201);
     valuationId = res.json().valuation.id as string;
 
-    // A long-lived engagement's worth of spine. `note_added` is a real type and
-    // carries a payload, so the rows cost what production rows cost.
+    // A long-lived engagement's worth of spine. `comment_added` is a real type
+    // and carries a payload, so the rows cost what production rows cost.
     for (let i = 0; i < 120; i += 1) {
       await recordEvent(ctx.pool, {
         valuationId,
-        type: 'note_added',
+        type: 'comment_added',
         actor: { actorType: 'human', actorId: ops.id, source: 'api' },
         payload: { n: i },
       });
@@ -81,6 +81,23 @@ describe.skipIf(!dbUp)('event spine read bounds', () => {
     expect(body.truncated).toBe(false);
     expect(body.events.length).toBeGreaterThan(120);
     expect(body.events.length).toBeLessThanOrEqual(EVENT_PAGE_LIMIT);
+  });
+
+  /**
+   * The panel that reads this route named its rows from a map in the browser
+   * that had drifted from the service's own event catalog — the same event was
+   * "State changed" on the timeline and "Stage changed" in the change log. The
+   * name is decided in one place now and travels with the row.
+   */
+  it('names every event it serves', async () => {
+    const body = (await events('?limit=25')).json() as {
+      events: Array<{ type: string; label: string }>;
+    };
+    expect(body.events.every((e) => e.label === 'Comment added')).toBe(true);
+
+    const all = (await events()).json() as { events: Array<{ type: string; label: string }> };
+    const created = all.events.find((e) => e.type === 'valuation_created');
+    expect(created?.label).toBe('Valuation created');
   });
 
   it('refuses a limit past the ceiling rather than honouring it', async () => {

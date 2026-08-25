@@ -152,6 +152,12 @@ export interface ValuationEvent {
   valuation_id: string;
   seq: string;
   type: string;
+  /**
+   * The type in English, from the service's event catalog — the same words the
+   * change log prints. Optional because a cached response from an older build
+   * carries none; `eventLabel` in lib/format is what to fall back to.
+   */
+  label?: string;
   actor_type: string;
   actor_id: string | null;
   source: string | null;
@@ -475,6 +481,8 @@ export interface ActivityRow {
   id: string;
   scope: 'valuation' | 'admin';
   type: string;
+  /** The type in English — see {@link ValuationEvent.label}. */
+  label?: string;
   actor_type: string;
   actor_email: string | null;
   valuation_id: string;

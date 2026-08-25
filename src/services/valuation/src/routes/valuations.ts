@@ -22,6 +22,7 @@ import { STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import { NAMED_BUCKET_KEYS, type NamedBucketKey } from '../domain/workflow.js';
 import { isTagSlug } from '../domain/valuationTags.js';
 import { EVENT_PAGE_LIMIT, listEvents } from '../events/record.js';
+import { eventLabel } from '../domain/auditTrail.js';
 import {
   createValuation,
   findValuationById,
@@ -422,7 +423,10 @@ export function registerValuationRoutes(
     const { limit } = parsed.data;
     const rows = await listEvents(deps.pool, id, { limit: limit + 1 });
     return {
-      events: rows.slice(-limit),
+      // `label` travels with the row: this panel used to name events from a
+      // map in the frontend that had drifted from the catalog the change log
+      // reads, so the same event was called two things two clicks apart.
+      events: rows.slice(-limit).map((row) => ({ ...row, label: eventLabel(row.type) })),
       truncated: rows.length > limit,
       page_limit: EVENT_PAGE_LIMIT,
     };

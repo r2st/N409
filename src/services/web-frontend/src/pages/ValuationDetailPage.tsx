@@ -378,7 +378,7 @@ export function ValuationDetailPage() {
             {events.map((ev) => (
               <li key={ev.id} className="relative">
                 <span className="absolute top-1.5 -left-[1.42rem] h-2.5 w-2.5 rounded-full border-2 border-paper-100 bg-bond-500" />
-                <div className="text-sm font-semibold text-ink-800">{eventLabel(ev.type)}</div>
+                <div className="text-sm font-semibold text-ink-800">{ev.label ?? eventLabel(ev.type)}</div>
                 {ev.type === 'state_changed' && ev.payload && (
                   <div className="mt-0.5 text-xs text-ink-600">
                     {String((ev.payload as { from?: string }).from ?? '')} →{' '}

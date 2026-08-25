@@ -186,6 +186,27 @@ export function describeEventType(type: string): EventDescriptor {
   return (EVENT_CATALOG as Record<string, EventDescriptor>)[type] ?? UNKNOWN_EVENT;
 }
 
+/**
+ * The one place an event type becomes English.
+ *
+ * Three surfaces printed this vocabulary and each had its own copy of it. The
+ * change log read the catalog; the valuation timeline and the dashboard feed
+ * read a hand-written map in the frontend that had drifted — the same row was
+ * "Stage changed" on one screen and "State changed" on the next, "Report
+ * generated" here and "Report PDF rendered" there, "Analyst overwrite applied"
+ * against "Override applied". Nothing was wrong enough to report and all of it
+ * was the same event.
+ *
+ * So the label travels with the row now, from here. `admin_events` share the
+ * dashboard feed and have no catalog of their own, so an uncatalogued type is
+ * word-split rather than flattened to `describeEventType`'s "Event recorded":
+ * "Partner updated" says more than that, and the derivation is the same one
+ * `humanizeField` uses on field names, initialisms included.
+ */
+export function eventLabel(type: string): string {
+  return (EVENT_CATALOG as Record<string, EventDescriptor>)[type]?.label ?? humanizeField(type);
+}
+
 // ── Field-level change extraction ─────────────────────────────────────────
 
 export interface FieldChange {

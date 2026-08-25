@@ -112,8 +112,16 @@ describe('displayName / initials', () => {
 });
 
 describe('eventLabel', () => {
-  it('uses the written label when the type is one it knows', () => {
-    expect(eventLabel('valuation_created')).not.toBe('valuation created');
+  /**
+   * This used to be a map of about twenty hand-written names, and it had
+   * drifted from the valuation service's event catalog: the same row read
+   * "State changed" on the timeline and "Stage changed" in the change log.
+   * The label now travels with the row, and this is only the fallback for a
+   * payload that carries none.
+   */
+  it('derives a name rather than holding a second table of them', () => {
+    expect(eventLabel('valuation_created')).toBe('Valuation created');
+    expect(eventLabel('state_changed')).toBe('State changed');
   });
 
   it('makes an unknown type read as English rather than as a column value', () => {

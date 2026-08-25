@@ -262,51 +262,26 @@ export function initials(u: { first_name: string | null; last_name: string | nul
 /*
  * ── Event labels ────────────────────────────────────────────────────────────
  *
- * The audit trail is append-only and the services add event types faster than
- * any hand-written map keeps up with: they record some fifty distinct types,
- * and the two screens that showed them named twenty between them. The rest
- * reached the reader as `company_profile_updated`.
+ * There used to be a hand-written map here, naming some twenty of the fifty-odd
+ * event types the services record. It had drifted from the catalog the
+ * valuation service reads for the change log, so the same row was "State
+ * changed" on the valuation timeline and "Stage changed" in the change log,
+ * "Report PDF rendered" here and "Report generated" there. Two screens, one
+ * event, two names — a difference nobody would file a bug about and everybody
+ * would notice.
  *
- * So the default is derived rather than declared — snake_case to a sentence —
- * and the map below holds only the ones where that reads wrong: an initialism
- * a sentence-caser would swallow (QA, AI, PDF), or a phrase wanting words the
- * key does not carry ("Cloned from another valuation").
- *
- * A new event type therefore arrives readable with no frontend change, and the
- * map stays short enough to be worth reading.
+ * The label now travels with the row (`domain/auditTrail.ts` decides it, once).
+ * What is left here is the fallback for a payload that carries none — an older
+ * cached response, or an endpoint that has not been given one — and it is the
+ * same derivation the server falls back to: snake_case to a sentence.
  */
-const EVENT_LABELS: Record<string, string> = {
-  valuation_created: 'Valuation created',
-  valuation_updated: 'Details updated',
-  valuation_cloned: 'Cloned from another valuation',
-  state_changed: 'State changed',
-  overwrite_applied: 'Override applied',
-  overwrite_reverted: 'Override reverted',
-  report_saved: 'Report saved',
-  report_reverted: 'Report version restored',
-  report_rendered: 'Report PDF rendered',
-  qa_review_completed: 'QA review completed',
-  ai_job_completed: 'AI job completed',
-  params_updated: 'Methodology updated',
-  cap_table_imported: 'Cap table imported',
-  review_task_created: 'Review task created',
-  review_task_updated: 'Review task updated',
-  health_checks_run: 'Health checks run',
-  auto_pipeline_started: 'Automatic pipeline started',
-  auto_pipeline_completed: 'Automatic pipeline completed',
-  auto_pipeline_failed: 'Automatic pipeline failed',
-  auto_pipeline_toggled: 'Automatic pipeline toggled',
-  engagement_overdue_reminder: 'Overdue reminder sent',
-};
 
 /**
- * A human-readable name for an audit event type. Unknown types are
- * sentence-cased from the key rather than shown raw, so an event this build
- * has never heard of still reads as English.
+ * A human-readable name for an audit event type.
+ *
+ * Prefer the `label` the API sends. This is what to print when there is none.
  */
 export function eventLabel(type: string): string {
-  const known = EVENT_LABELS[type];
-  if (known) return known;
   const words = type.replace(/[._]+/g, ' ').trim();
   if (words === '') return type;
   return words.charAt(0).toUpperCase() + words.slice(1);

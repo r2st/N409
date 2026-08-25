@@ -504,10 +504,16 @@ describe('ValuationDetailPage', () => {
         events: () =>
           jsonResponse({
             events: [
-              event({ id: '01N409EVENT0000000000000A1', type: 'overwrite_applied', payload: {} }),
+              event({
+                id: '01N409EVENT0000000000000A1',
+                type: 'overwrite_applied',
+                label: 'Analyst overwrite applied',
+                payload: {},
+              }),
               event({
                 id: '01N409EVENT0000000000000A2',
                 type: 'overwrite_reverted',
+                label: 'Analyst overwrite reverted',
                 payload: { field_key: 'dlom' },
               }),
             ],
@@ -515,10 +521,40 @@ describe('ValuationDetailPage', () => {
       });
       renderPage();
 
-      expect(await screen.findByText('Override applied')).toBeInTheDocument();
-      expect(screen.getByText('Override reverted')).toBeInTheDocument();
+      expect(await screen.findByText('Analyst overwrite applied')).toBeInTheDocument();
+      expect(screen.getByText('Analyst overwrite reverted')).toBeInTheDocument();
       expect(screen.getByText('dlom')).toBeInTheDocument();
       expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+    });
+
+    /**
+     * The timeline names an event from the row, not from a table of its own.
+     *
+     * It used to hold a map of about twenty types that had drifted from the
+     * catalog the change log reads — this event was "Override applied" here
+     * and "Analyst overwrite applied" one tab across. The map is gone; what
+     * the service sends is what is printed, and a row that carries no label
+     * still reads as English rather than as a column value.
+     */
+    it('prints the label the service sent, and derives one when it sent none', async () => {
+      stubFetches([], {
+        events: () =>
+          jsonResponse({
+            events: [
+              event({
+                id: '01N409EVENT0000000000000B1',
+                type: 'report_rendered',
+                label: 'Report generated',
+              }),
+              event({ id: '01N409EVENT0000000000000B2', type: 'auto_pipeline_completed' }),
+            ],
+          }),
+      });
+      renderPage();
+
+      expect(await screen.findByText('Report generated')).toBeInTheDocument();
+      expect(screen.queryByText('Report PDF rendered')).not.toBeInTheDocument();
+      expect(screen.getByText('Auto pipeline completed')).toBeInTheDocument();
     });
 
     it('shows nothing extra for an event whose payload is null', async () => {

@@ -556,7 +556,9 @@ export function DashboardPage() {
                       to={`/valuations/${row.valuation_id}`}
                       className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-5 py-3 hover:bg-paper-50"
                     >
-                      <span className="text-sm font-medium text-ink-900">{eventLabel(row.type)}</span>
+                      <span className="text-sm font-medium text-ink-900">
+                        {row.label ?? eventLabel(row.type)}
+                      </span>
                       <span className="min-w-0 flex-1 truncate text-sm text-ink-500">
                         {row.company_name} · #{row.number}
                       </span>

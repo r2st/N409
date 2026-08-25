@@ -7,6 +7,7 @@ import {
   changeLogCsv,
   describeEvent,
   describeEventType,
+  eventLabel,
   diffRecords,
   extractChanges,
   fieldHistory,
@@ -138,6 +139,24 @@ describe('describeEventType', () => {
     expect(descriptor.category).toBe('other');
     expect(descriptor.severity).toBe('info');
     expect(descriptor.visibility).toBe('internal');
+  });
+});
+
+describe('eventLabel', () => {
+  it('uses the catalog for a type it knows', () => {
+    expect(eventLabel('state_changed')).toBe('Stage changed');
+    expect(eventLabel('report_rendered')).toBe('Report generated');
+  });
+
+  /**
+   * The dashboard feed mixes `admin_events` in, and those have no catalog.
+   * `describeEventType`'s "Event recorded" would be a step down from the raw
+   * type for those rows, so the fallback here word-splits instead — the same
+   * derivation `humanizeField` applies to field names, initialisms included.
+   */
+  it('word-splits a type the catalog does not carry', () => {
+    expect(eventLabel('partner_created')).toBe('Partner created');
+    expect(eventLabel('ai_prompt_updated')).toBe('AI prompt updated');
   });
 });
 

@@ -24,7 +24,7 @@ describe.skipIf(!dbUp)('dashboard bands', () => {
 
   interface Bands {
     buckets: Record<string, { total: number; unread: number }>;
-    activity: Array<{ type: string; company_name: string; valuation_id: string }>;
+    activity: Array<{ type: string; label: string; company_name: string; valuation_id: string }>;
     throughput: Array<{ week: string; count: number }>;
     sla: { overdue: number; waiting_stale: number; waiting_days: number };
   }
@@ -160,6 +160,21 @@ describe.skipIf(!dbUp)('dashboard bands', () => {
     expect(bands.activity.length).toBeGreaterThan(0);
     expect(bands.activity.every((row) => typeof row.company_name === 'string')).toBe(true);
     expect(bands.activity.some((row) => row.company_name === 'OwnCo')).toBe(true);
+  });
+
+  /**
+   * The feed used to send only the type, and the browser named it from a map
+   * of its own that had drifted from the service's event catalog — the row
+   * read "State changed" here and "Stage changed" in the change log. The
+   * label is decided once, server-side, and travels with the row.
+   */
+  it('names each activity row from the event catalog', async () => {
+    const bands = (await dashboard(ops.token)).json() as Bands;
+    const created = bands.activity.find((row) => row.type === 'valuation_created');
+    expect(created?.label).toBe('Valuation created');
+    // Every row, not just the catalogued ones: the feed mixes in `admin_events`,
+    // which have no catalog, and a row with no name is worse than a derived one.
+    expect(bands.activity.every((row) => (row.label ?? '').length > 0)).toBe(true);
   });
 
   it('never shows a client another client’s engagements in any band', async () => {
