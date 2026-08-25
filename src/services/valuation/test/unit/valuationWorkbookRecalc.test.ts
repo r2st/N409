@@ -295,6 +295,48 @@ describe('the exported workbook agrees with itself when recalculated', () => {
     expect(describeAll(disagreements(workbook({ capTable: null, grants: [] })))).toEqual([]);
   });
 
+  it('recalculates the override and calculation sheets, which only appear when loaded', () => {
+    // Both are optional inputs, so a fixture that omits them walks a workbook
+    // two sheets short of the one an auditor is sent.
+    const sheets = workbook({
+      overwrites: [
+        {
+          category: 'discounts',
+          field_key: 'dlom',
+          class: 'common',
+          value: 0.24,
+          original_value: 0.31,
+          reason: 'Analyst judgement on holding period',
+          created_by: 'analyst@acme.test',
+          updated_by: 'analyst@acme.test',
+          updated_at: new Date('2026-03-01T10:00:00Z'),
+        },
+      ],
+      calculation: {
+        engine_version: '2026.7.1',
+        status: 'succeeded',
+        inputs: { volatility: 0.62, time_to_exit_years: 4 },
+        results: { equity_value: 41_500_000, fmv_per_share: 1.42 },
+        equity_value: 41_500_000,
+        fmv_per_share: 1.42,
+        diagnostics: [
+          {
+            code: 'DLOM_HIGH',
+            field: 'dlom',
+            message: 'Discount above the review threshold',
+            severity: 'warning',
+            hint: null,
+          },
+        ],
+        created_at: new Date('2026-03-01T09:30:00Z'),
+      },
+    });
+    expect(sheets.map((s) => s.name)).toEqual(
+      expect.arrayContaining(['Overrides', 'Calculation', 'Summary']),
+    );
+    expect(describeAll(disagreements(sheets))).toEqual([]);
+  });
+
   it('reaches no uncaught spreadsheet error on any of them', () => {
     // #DIV/0! in a file an auditor opens is a finding, not a rounding
     // difference, so it is called out separately from a value mismatch.
