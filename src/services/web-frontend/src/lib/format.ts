@@ -83,17 +83,64 @@ export const SOURCE_LABELS: Record<string, string> = {
   direct: 'Direct',
 };
 
+/**
+ * A calendar day, spelled `YYYY-MM-DD` and nothing else.
+ *
+ * Anchored at both ends on purpose: a timestamp *starts* with this shape, and
+ * matching it there would take the UTC date parts of a real instant and read
+ * them as local ones — which is the same error in the other direction.
+ */
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * A date string as a Date, with a calendar day kept a calendar day.
+ *
+ * `new Date('2026-03-15')` is specified to parse the date-only form as **UTC
+ * midnight**, and `toLocaleDateString` then renders whatever local day that
+ * instant falls on. West of Greenwich it is the day before: in California the
+ * funding round that closed on the 15th displayed as the 14th, and an intake
+ * date the client typed came back to them as the day before they typed it.
+ *
+ * That is the live half of the bug rather than the theoretical one — a 409A
+ * platform's market is the United States, so the affected zone is the ordinary
+ * case and UTC is the exception. It is also invisible: an off-by-one date looks
+ * exactly like a date.
+ *
+ * The valuation service already refuses to route these through UTC on the way
+ * out (`domain/calendarDate.ts` — a Postgres `date` is a day, not an instant,
+ * and it is serialised from its local parts). This is the same rule on the way
+ * in. Everything else — a `timestamptz`, anything carrying a time or a zone —
+ * is a real instant and is parsed as one, unchanged.
+ */
+function parseDateInput(iso: string): Date | null {
+  const day = DATE_ONLY.exec(iso);
+  if (!day) {
+    const instant = new Date(iso);
+    return Number.isNaN(instant.getTime()) ? null : instant;
+  }
+  const [y, m, d] = [Number(day[1]), Number(day[2]), Number(day[3])];
+  const local = new Date(y, m - 1, d);
+  // Two-digit years are mapped into 1900–1999 by the Date constructor, and the
+  // pattern above admits `0026-01-01`.
+  local.setFullYear(y);
+  // The constructor rolls an out-of-range day forward rather than refusing it,
+  // so `2026-02-30` would render as March 2nd. Reading the parts back is what
+  // keeps a nonsense date looking like one.
+  if (local.getFullYear() !== y || local.getMonth() !== m - 1 || local.getDate() !== d) return null;
+  return local;
+}
+
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
+  const d = parseDateInput(iso);
+  if (!d) return '—';
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
+  const d = parseDateInput(iso);
+  if (!d) return '—';
   return d.toLocaleString(undefined, {
     year: 'numeric',
     month: 'short',

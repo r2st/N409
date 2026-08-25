@@ -124,8 +124,11 @@ function displayValue(field: IntakeField, value: unknown): string {
   if (field.type === 'select') return String(value).replace(/_/g, ' ');
   if (field.type === 'number') return Number(value).toLocaleString();
   if (field.type === 'date') {
-    const d = new Date(String(value));
-    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleDateString();
+    // Through `formatDate`, not `new Date(...).toLocaleDateString()`: an intake
+    // date answer is a `YYYY-MM-DD` calendar day, and parsing that as an
+    // instant dates it a day early for every client west of Greenwich.
+    const shown = formatDate(String(value));
+    return shown === '—' ? String(value) : shown;
   }
   return String(value);
 }
