@@ -536,3 +536,693 @@ export const SAMPLE_IP_RESULT: SpecialtyResult = {
   tab_multiplier: 1.0805421198054161,
   fair_value: 2810028.8305216185,
 };
+
+// ── §1202 QSBS ───────────────────────────────────────────────────────────────
+
+/**
+ * Stock issued 15 September 2025 — after P.L. 119-21 — assessed at 31 March
+ * 2030, four and a half years in.
+ *
+ * Post-enactment on purpose: it is the only regime with a tiered schedule, and
+ * the tier table only renders when there is more than one step. Every figure
+ * the exhibit prints twice is different here — 75% available now against a
+ * 100% ceiling, a $15,000,000 lifetime cap against $12,000,000 remaining
+ * against $24,000,000 of ten-times-basis — so a row wired to the wrong field
+ * prints a wrong number rather than the right one by coincidence.
+ * `app/engine/qsbs.py: qsbs_eligibility`.
+ */
+export const SAMPLE_QSBS_INPUTS = {
+  entity_type: 'c_corp',
+  is_domestic: true,
+  gross_assets_before_issuance: 41000000,
+  gross_assets_after_issuance: 56500000,
+  industry: 'technology',
+  active_business_asset_pct: 0.91,
+  acquired_at_original_issue: true,
+  acquisition_date: '2025-09-15',
+  assessment_date: '2030-03-31',
+  aggregate_basis: 2400000,
+  prior_1202_exclusions: 3000000,
+  redemptions_within_window: false,
+} as const;
+
+export const SAMPLE_QSBS_RESULT: SpecialtyResult = {
+  eligible: true,
+  exclusion_available_now: true,
+  regime: 'obbba',
+  tests: {
+    c_corporation: {
+      passed: true,
+      detail: 'entity_type=c_corp, domestic=True',
+    },
+    gross_asset_test: {
+      passed: true,
+      detail: 'before issuance $41,000,000, immediately after $56,500,000, limit $75,000,000',
+    },
+    qualified_trade_or_business: {
+      passed: true,
+      detail: 'industry=technology',
+    },
+    active_business_test: {
+      passed: true,
+      detail: '91% of assets in active qualified use (threshold 80%)',
+    },
+    original_issuance: {
+      passed: true,
+      detail: 'acquired at original issue',
+    },
+    no_disqualifying_redemptions: {
+      passed: true,
+      detail: 'no significant issuer redemptions in the testing window',
+    },
+  },
+  holding_period: {
+    years_held: 4.5394,
+    required_years: 3,
+    met: true,
+    five_year_date: '2030-09-15',
+    threshold_date: '2028-09-15',
+    exclusion_percentage: 0.75,
+    maximum_exclusion_percentage: 1,
+    tiers: [
+      {
+        years: 3,
+        exclusion_percentage: 0.5,
+        date: '2028-09-15',
+        met: true,
+      },
+      {
+        years: 4,
+        exclusion_percentage: 0.75,
+        date: '2029-09-15',
+        met: true,
+      },
+      {
+        years: 5,
+        exclusion_percentage: 1,
+        date: '2030-09-15',
+        met: false,
+      },
+    ],
+  },
+  exclusion_percentage: 0.75,
+  maximum_exclusion_percentage: 1,
+  gain_exclusion_cap: 24000000,
+  cap_components: {
+    lifetime_cap: 15000000,
+    prior_exclusions: 3000000,
+    lifetime_remaining: 12000000,
+    ten_times_basis: 24000000,
+  },
+  failed_tests: [],
+};
+
+// ── ASC 805 purchase price allocation ────────────────────────────────────────
+
+/**
+ * A $48m acquisition allocated across three intangibles priced by two methods,
+ * with goodwill as the residual.
+ *
+ * `purchase_price_allocation` does not take fair values — it takes each
+ * intangible's method and that method's own parameters, runs the IP engine per
+ * asset and splices the whole result in beside the name. So every row of
+ * `intangibles` carries a full method payload: a year-by-year schedule, the
+ * value before the tax amortization benefit, the TAB multiplier, and for
+ * relief-from-royalty the split between explicit and terminal present value.
+ * Two methods rather than one, because the row shapes differ and an exhibit
+ * that handles only the first would render the second blank.
+ * `app/engine/intangibles.py: purchase_price_allocation`.
+ */
+export const SAMPLE_PPA_INPUTS = {
+  consideration_transferred: 48000000,
+  net_working_capital: 3200000,
+  fixed_assets: 1850000,
+  other_tangible_assets: 400000,
+  assumed_liabilities: 2100000,
+  deferred_revenue_haircut: 650000,
+  intangibles: [
+    {
+      name: 'Developed technology',
+      method: 'relief_from_royalty',
+      params: {
+        revenues: [12400000, 14600000, 16900000, 18800000, 20100000],
+        royalty_rate: 0.06,
+        tax_rate: 0.21,
+        discount_rate: 0.185,
+      },
+    },
+    {
+      name: 'Customer relationships',
+      method: 'meem',
+      params: {
+        revenues: [12400000, 14600000, 16900000, 18800000, 20100000],
+        attrition_rate: 0.15,
+        ebit_margin: 0.22,
+        contributory_charges_pct: 0.08,
+        tax_rate: 0.21,
+        discount_rate: 0.165,
+      },
+    },
+    {
+      name: 'Trade name',
+      method: 'relief_from_royalty',
+      params: {
+        revenues: [12400000, 14600000, 16900000, 18800000, 20100000],
+        royalty_rate: 0.01,
+        tax_rate: 0.21,
+        discount_rate: 0.17,
+        terminal_growth: 0.025,
+      },
+    },
+  ],
+} as const;
+
+export const SAMPLE_PPA_RESULT: SpecialtyResult = {
+  consideration_transferred: 48000000,
+  tangible_net_assets: 2700000,
+  intangibles: [
+    {
+      name: 'Developed technology',
+      method: 'relief_from_royalty',
+      schedule: [
+        {
+          year: 1,
+          revenue: 12400000,
+          royalty_savings: 744000,
+          after_tax: 587760,
+          pv: 496000,
+        },
+        {
+          year: 2,
+          revenue: 14600000,
+          royalty_savings: 876000,
+          after_tax: 692040,
+          pv: 492827.00421940925,
+        },
+        {
+          year: 3,
+          revenue: 16900000,
+          royalty_savings: 1014000,
+          after_tax: 801060,
+          pv: 481404.33335113665,
+        },
+        {
+          year: 4,
+          revenue: 18800000,
+          royalty_savings: 1128000,
+          after_tax: 891120,
+          pv: 451921.2776571727,
+        },
+        {
+          year: 5,
+          revenue: 20100000,
+          royalty_savings: 1206000,
+          after_tax: 952740,
+          pv: 407739.3698226578,
+        },
+      ],
+      pv_explicit: 2329891.9850503765,
+      pv_terminal: 0,
+      value_before_tab: 2329891.9850503765,
+      tab_multiplier: 1.0749728529979823,
+      fair_value: 2504570.6343467357,
+    },
+    {
+      name: 'Customer relationships',
+      method: 'meem',
+      schedule: [
+        {
+          year: 1,
+          revenue: 12400000,
+          survival: 1,
+          attributable_revenue: 12400000,
+          ebit: 2728000,
+          after_tax_earnings: 2155120,
+          contributory_charge: 992000,
+          excess_earnings: 1163120,
+          pv: 998386.2660944206,
+        },
+        {
+          year: 2,
+          revenue: 14600000,
+          survival: 0.85,
+          attributable_revenue: 12410000,
+          ebit: 2730200,
+          after_tax_earnings: 2156858,
+          contributory_charge: 992800,
+          excess_earnings: 1164058,
+          pv: 857675.0354583801,
+        },
+        {
+          year: 3,
+          revenue: 16900000,
+          survival: 0.7224999999999999,
+          attributable_revenue: 12210249.999999998,
+          ebit: 2686254.9999999995,
+          after_tax_earnings: 2122141.4499999997,
+          contributory_charge: 976819.9999999999,
+          excess_earnings: 1145321.4499999997,
+          pv: 724351.9245316966,
+        },
+        {
+          year: 4,
+          revenue: 18800000,
+          survival: 0.6141249999999999,
+          attributable_revenue: 11545549.999999998,
+          ebit: 2540020.9999999995,
+          after_tax_earnings: 2006616.5899999996,
+          contributory_charge: 923643.9999999999,
+          excess_earnings: 1082972.5899999999,
+          pv: 587913.9474320803,
+        },
+        {
+          year: 5,
+          revenue: 20100000,
+          survival: 0.5220062499999999,
+          attributable_revenue: 10492325.624999998,
+          ebit: 2308311.6374999997,
+          after_tax_earnings: 1823566.1936249998,
+          contributory_charge: 839386.0499999998,
+          excess_earnings: 984180.143625,
+          pv: 458611.53282244055,
+        },
+      ],
+      value_before_tab: 3626938.706339018,
+      tab_multiplier: 1.0825594360400963,
+      fair_value: 3926376.720486364,
+    },
+    {
+      name: 'Trade name',
+      method: 'relief_from_royalty',
+      schedule: [
+        {
+          year: 1,
+          revenue: 12400000,
+          royalty_savings: 124000,
+          after_tax: 97960,
+          pv: 83726.49572649573,
+        },
+        {
+          year: 2,
+          revenue: 14600000,
+          royalty_savings: 146000,
+          after_tax: 115340,
+          pv: 84257.4329753817,
+        },
+        {
+          year: 3,
+          revenue: 16900000,
+          royalty_savings: 169000,
+          after_tax: 133510,
+          pv: 83359.71298934263,
+        },
+        {
+          year: 4,
+          revenue: 18800000,
+          royalty_savings: 188000,
+          after_tax: 148520,
+          pv: 79257.70516358882,
+        },
+        {
+          year: 5,
+          revenue: 20100000,
+          royalty_savings: 201000,
+          after_tax: 158790,
+          pv: 72425.88987943878,
+        },
+      ],
+      pv_explicit: 403027.23673424765,
+      pv_terminal: 511976.1181132741,
+      value_before_tab: 915003.3548475218,
+      tab_multiplier: 1.0805421198054161,
+      fair_value: 988699.6646760085,
+    },
+  ],
+  total_intangible_value: 7419647.019509109,
+  identifiable_net_assets: 10119647.019509109,
+  goodwill: 37880352.98049089,
+  bargain_purchase_gain: 0,
+};
+
+// ── ASC 350 goodwill impairment ──────────────────────────────────────────────
+
+/**
+ * A reporting unit carried at $34.5m whose fair value is $31.2m — impaired,
+ * with $12.8m of goodwill to absorb the $3.3m loss.
+ *
+ * Impaired rather than not, because the headroom row and the foot both change
+ * wording on that flag and a passing unit exercises neither branch.
+ * `app/engine/impairment.py: goodwill_impairment`.
+ */
+export const SAMPLE_GOODWILL_INPUTS = {
+  test: 'goodwill',
+  reporting_unit: 'Robotics Systems',
+  carrying_amount: 34500000,
+  fair_value: 31200000,
+  goodwill_carrying_amount: 12800000,
+} as const;
+
+export const SAMPLE_GOODWILL_RESULT: SpecialtyResult = {
+  standard: 'ASC 350-20',
+  reporting_unit: 'Robotics Systems',
+  carrying_amount: 34500000,
+  fair_value: 31200000,
+  headroom: -3300000,
+  impaired: true,
+  impairment_loss: 3300000,
+  goodwill_after: 9500000,
+  qualitative_only: false,
+};
+
+// ── ESOP level of value ──────────────────────────────────────────────────────
+
+/**
+ * A 30% ESOP stake in a $62m company appraised on a control basis, with a
+ * ten-year repurchase projection.
+ *
+ * Control basis rather than minority: it is the direction that steps *down*
+ * through both discounts, so the ladder is a chain rather than a disclosure
+ * gross-up, and the exhibit words all three rows differently between the two.
+ * The DLOC is not supplied — it is derived from a 22% control premium, which is
+ * the input an appraiser actually has — so the 18.03% on the exhibit is an
+ * engine figure and not an echo.
+ * `app/engine/esop.py: esop_share_value` + `repurchase_obligation`.
+ */
+export const SAMPLE_ESOP_INPUTS = {
+  equity_value: 62000000,
+  shares_outstanding: 4000000,
+  value_basis: 'control',
+  control_premium: 0.22,
+  dlom: 0.12,
+  esop_shares: 1200000,
+  repurchase: {
+    esop_share_balance: 1200000,
+    share_value_growth: 0.05,
+    annual_redemption_rate: 0.06,
+    years: 10,
+    discount_rate: 0.11,
+  },
+} as const;
+
+export const SAMPLE_ESOP_RESULT: SpecialtyResult = {
+  value_basis: 'control',
+  levels: {
+    control: 62000000,
+    marketable_minority: 50819672.13114754,
+    nonmarketable_minority: 44721311.475409836,
+  },
+  dloc: 0.180327868852459,
+  dlom: 0.12,
+  shares_outstanding: 4000000,
+  fmv_per_share: 11.180327868852459,
+  esop_stake_value: 13416393.44262295,
+  repurchase_obligation: {
+    schedule: [
+      {
+        year: 1,
+        share_price: 11.739344262295083,
+        shares_redeemed: 72000,
+        repurchase_cost: 845232.7868852459,
+        remaining_shares: 1128000,
+        pv: 761470.9791758972,
+      },
+      {
+        year: 2,
+        share_price: 12.326311475409836,
+        shares_redeemed: 67680,
+        repurchase_cost: 834244.7606557377,
+        remaining_shares: 1060320,
+        pv: 677091.762564514,
+      },
+      {
+        year: 3,
+        share_price: 12.942627049180329,
+        shares_redeemed: 63619.2,
+        repurchase_cost: 823399.5787672132,
+        remaining_shares: 996700.8,
+        pv: 602062.6753614191,
+      },
+      {
+        year: 4,
+        share_price: 13.589758401639346,
+        shares_redeemed: 59802.048,
+        repurchase_cost: 812695.3842432394,
+        remaining_shares: 936898.7520000001,
+        pv: 535347.6221456943,
+      },
+      {
+        year: 5,
+        share_price: 14.269246321721315,
+        shares_redeemed: 56213.92512000001,
+        repurchase_cost: 802130.3442480776,
+        remaining_shares: 880684.8268800001,
+        pv: 476025.3180700904,
+      },
+      {
+        year: 6,
+        share_price: 14.98270863780738,
+        shares_redeemed: 52841.0896128,
+        repurchase_cost: 791702.6497728524,
+        remaining_shares: 827843.7372672,
+        pv: 423276.56660826947,
+      },
+      {
+        year: 7,
+        share_price: 15.73184406969775,
+        shares_redeemed: 49670.624236032,
+        repurchase_cost: 781410.5153258054,
+        remaining_shares: 778173.113031168,
+        pv: 376372.94706519094,
+      },
+      {
+        year: 8,
+        share_price: 16.518436273182637,
+        shares_redeemed: 46690.38678187008,
+        repurchase_cost: 771252.1786265699,
+        remaining_shares: 731482.726249298,
+        pv: 334666.7556336428,
+      },
+      {
+        year: 9,
+        share_price: 17.34435808684177,
+        shares_redeemed: 43888.963574957874,
+        repurchase_cost: 761225.9003044245,
+        remaining_shares: 687593.76267434,
+        pv: 297582.0610904553,
+      },
+      {
+        year: 10,
+        share_price: 18.21157599118386,
+        shares_redeemed: 41255.6257604604,
+        repurchase_cost: 751329.9636004671,
+        remaining_shares: 646338.1369138797,
+        pv: 264606.7516182697,
+      },
+    ],
+    total_obligation: 7974624.062429633,
+    pv_of_obligation: 4748503.439333443,
+    ending_share_balance: 646338.1369138797,
+  },
+};
+
+// ── SMB fair market value ────────────────────────────────────────────────────
+
+/**
+ * A main-street business at $4.15m of revenue, valued by all three SMB methods
+ * and weighted.
+ *
+ * All three run, and every one of them is driven by a rate or a multiple the
+ * result reports in its own sub-object: a 19.9% build-up less 3% growth for the
+ * capitalization method, 3.1x for the SDE multiple, 0.85x on revenue. The
+ * normalization is deliberately not the tidy case either — it carries both
+ * deductions, including the replacement wage for a second working owner, which
+ * is the entry that makes SDE mean what it says.
+ * `app/engine/smb.py: smb_valuation`.
+ */
+export const SAMPLE_FMV_INPUTS = {
+  sde_inputs: {
+    pretax_income: 640000,
+    owner_compensation: 285000,
+    interest_expense: 42000,
+    depreciation_amortization: 114000,
+    one_time_expenses: 38000,
+    discretionary_expenses: 34000,
+    one_time_income: 25000,
+    fair_market_replacement_wage: 96000,
+  },
+  annual_revenue: 4150000,
+  cap_rate_inputs: {
+    risk_free_rate: 0.043,
+    equity_risk_premium: 0.055,
+    size_premium: 0.061,
+    company_specific_premium: 0.04,
+    long_term_growth: 0.03,
+  },
+  sde_multiple: 3.1,
+  revenue_multiple: 0.85,
+  weights: {
+    capitalization_of_earnings: 0.35,
+    sde_multiple: 0.5,
+    revenue_multiple: 0.15,
+  },
+} as const;
+
+export const SAMPLE_FMV_RESULT: SpecialtyResult = {
+  sde_normalization: {
+    pretax_income: 640000,
+    addbacks: {
+      owner_compensation: 285000,
+      interest_expense: 42000,
+      depreciation_amortization: 114000,
+      one_time_expenses: 38000,
+      discretionary_expenses: 34000,
+    },
+    deductions: {
+      one_time_income: 25000,
+      fair_market_replacement_wage: 96000,
+    },
+    sde: 1032000,
+  },
+  methods: {
+    capitalization_of_earnings: {
+      discount_rate: 0.199,
+      long_term_growth: 0.03,
+      cap_rate: 0.169,
+      benefit_stream: 1032000,
+      equity_value: 6106508.875739644,
+    },
+    sde_multiple: {
+      sde: 1032000,
+      multiple: 3.1,
+      equity_value: 3199200,
+    },
+    revenue_multiple: {
+      revenue: 4150000,
+      multiple: 0.85,
+      equity_value: 3527500,
+    },
+  },
+  weights: {
+    capitalization_of_earnings: 0.35,
+    sde_multiple: 0.5,
+    revenue_multiple: 0.15,
+  },
+  equity_value: 4266003.106508875,
+};
+
+// ── EMI / CSOP ───────────────────────────────────────────────────────────────
+
+/**
+ * A 90,000-share EMI grant over a £26m company, qualifying on all seven checks.
+ *
+ * The individual limit is the one worth having real numbers for: £60,000 of
+ * prior grants sit under £175,500 of new grant, so the £235,500 the check tests
+ * is neither of the two figures beside it. An exhibit that printed the grant
+ * and called it the tested total would look right.
+ * `app/engine/emi_csop.py: emi_csop_valuation`.
+ */
+export const SAMPLE_EMI_INPUTS = {
+  scheme: 'emi',
+  equity_value: 26000000,
+  total_shares: 10000000,
+  restriction_discount: 0.1,
+  minority_discount: 0.25,
+  gross_assets: 18400000,
+  employee_count: 84,
+  options_granted: 90000,
+  individual_prior_grants_umv: 60000,
+  company_unexercised_umv: 1400000,
+} as const;
+
+export const SAMPLE_EMI_RESULT: SpecialtyResult = {
+  pro_rata_per_share: 2.6,
+  minority_discount: 0.25,
+  restriction_discount: 0.1,
+  umv_per_share: 1.9500000000000002,
+  amv_per_share: 1.7550000000000001,
+  qualification: {
+    scheme: 'emi',
+    grant_umv: 175500.00000000003,
+    individual_total_umv: 235500.00000000003,
+    company_total_umv: 1575500,
+    checks: {
+      gross_assets: {
+        passed: true,
+        detail: '£18,400,000 against the £30,000,000 limit',
+      },
+      employee_count: {
+        passed: true,
+        detail: '84 FTEs against the fewer-than-250 limit',
+      },
+      company_independence: {
+        passed: true,
+        detail: 'independent',
+      },
+      qualifying_trade: {
+        passed: true,
+        detail: 'qualifying trade',
+      },
+      working_time: {
+        passed: true,
+        detail: 'meets the 25-hours/75% working-time requirement',
+      },
+      individual_limit: {
+        passed: true,
+        detail: '£235,500 UMV in the 3-year window against the £250,000 limit',
+      },
+      company_limit: {
+        passed: true,
+        detail: '£1,575,500 unexercised UMV against the £3,000,000 limit',
+      },
+    },
+    qualifies: true,
+    failed_checks: [],
+  },
+};
+
+/**
+ * The same shares under CSOP, where the grant fails the £60,000 individual
+ * limit.
+ *
+ * A failing sample on purpose, and the only one here: `qualifies: false` with a
+ * populated `failed_checks` is the branch the qualification paragraph and the
+ * Pass/Fail column exist for, and every other captured payload passes
+ * everything. The exercise price is set above UMV so exactly one check fails
+ * and the table is not a column of Fails.
+ * `app/engine/emi_csop.py: emi_csop_valuation`.
+ */
+export const SAMPLE_CSOP_INPUTS = {
+  scheme: 'csop',
+  equity_value: 26000000,
+  total_shares: 10000000,
+  restriction_discount: 0.1,
+  minority_discount: 0.25,
+  options_granted: 90000,
+  exercise_price: 2.1,
+  individual_prior_grants_umv: 0,
+} as const;
+
+export const SAMPLE_CSOP_RESULT: SpecialtyResult = {
+  pro_rata_per_share: 2.6,
+  minority_discount: 0.25,
+  restriction_discount: 0.1,
+  umv_per_share: 1.9500000000000002,
+  amv_per_share: 1.7550000000000001,
+  qualification: {
+    scheme: 'csop',
+    grant_umv: 175500.00000000003,
+    individual_total_umv: 175500.00000000003,
+    checks: {
+      individual_limit: {
+        passed: false,
+        detail: '£175,500 UMV against the £60,000 limit',
+      },
+      exercise_price_not_below_umv: {
+        passed: true,
+        detail: 'exercise price £2.1000 vs UMV £1.9500 at grant',
+      },
+    },
+    qualifies: false,
+    failed_checks: ['individual_limit'],
+  },
+};
