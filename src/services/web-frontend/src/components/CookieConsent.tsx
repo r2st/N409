@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { useConsent } from '../lib/consent';
-import { useFocusTrap } from './ui';
+import { useDialogDismiss } from './ui';
 
 /**
  * GDPR cookie-consent banner (409.ai §25). Shows on first visit only; the
@@ -10,9 +10,13 @@ import { useFocusTrap } from './ui';
  */
 export function CookieConsent(): React.JSX.Element | null {
   const { needsChoice, accept, decline } = useConsent();
-  // Focus trap + Esc-to-decline so the consent gate is keyboard-operable and
-  // dialog semantics are complete (audit F-3 P2).
-  const bannerRef = useFocusTrap<HTMLDivElement>(needsChoice, decline);
+  // Focus moves to the gate and Esc declines, so the choice is keyboard-
+  // operable — but the gate does not claim the site is gone. It is a strip
+  // along the bottom of the page with no scrim: a first-time visitor reads and
+  // scrolls the whole site around it. `aria-modal` (audit F-3 P2, applied for
+  // completeness rather than because the banner is modal) made that same first
+  // visit unreadable to a screen reader until a choice was made.
+  const bannerRef = useDialogDismiss<HTMLDivElement>(needsChoice, decline);
   const descId = useId();
   if (!needsChoice) return null;
 
@@ -20,7 +24,6 @@ export function CookieConsent(): React.JSX.Element | null {
     <div
       ref={bannerRef}
       role="dialog"
-      aria-modal="true"
       aria-label="Cookie consent"
       aria-describedby={descId}
       tabIndex={-1}

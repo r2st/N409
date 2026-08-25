@@ -804,6 +804,44 @@ export function useFocusTrap<T extends HTMLElement>(
   active: boolean,
   onEscape: () => void,
 ): React.RefObject<T | null> {
+  return useDialogBehaviour<T>(active, onEscape, true);
+}
+
+/**
+ * The same dialog behaviour, minus the claim that the rest of the page is gone.
+ *
+ * A dialog that marks itself modal is not decorating itself; it is instructing
+ * assistive technology to drop everything outside the dialog from the virtual
+ * buffer. The Tab trap is the keyboard half of the same claim. Both are
+ * correct for an overlay that paints a scrim over the document — nothing
+ * outside it can be clicked either, so no group loses anything the others
+ * keep.
+ *
+ * They were also on two surfaces that paint no scrim: the help widget, a
+ * corner panel whose entire purpose is to be read *beside* the form it
+ * explains, and the cookie gate, a strip along the bottom of the marketing
+ * site on a first visit. In both, a mouse user goes on using the page — every
+ * control behind is live and clickable — while a screen-reader user is shut
+ * out of the whole application until they close it. The one group that most
+ * needs the reference open next to the work is the only group forbidden to
+ * have it, and on the marketing site the first thing a first visit does is
+ * make the site unreadable.
+ *
+ * So: focus moves in on open, `Esc` dismisses, focus returns to the trigger on
+ * close — and `Tab` walks out into the page, because the page is still there.
+ */
+export function useDialogDismiss<T extends HTMLElement>(
+  active: boolean,
+  onDismiss: () => void,
+): React.RefObject<T | null> {
+  return useDialogBehaviour<T>(active, onDismiss, false);
+}
+
+function useDialogBehaviour<T extends HTMLElement>(
+  active: boolean,
+  onEscape: () => void,
+  trap: boolean,
+): React.RefObject<T | null> {
   const ref = useRef<T>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
 
@@ -838,7 +876,7 @@ export function useFocusTrap<T extends HTMLElement>(
         escapeRef.current();
         return;
       }
-      if (e.key !== 'Tab') return;
+      if (!trap || e.key !== 'Tab') return;
       const items = focusable();
       if (items.length === 0) {
         e.preventDefault();
@@ -875,7 +913,7 @@ export function useFocusTrap<T extends HTMLElement>(
       document.removeEventListener('keydown', onKeyDown, true);
       restoreFocusRef.current?.focus?.();
     };
-  }, [active]);
+  }, [active, trap]);
 
   return ref;
 }

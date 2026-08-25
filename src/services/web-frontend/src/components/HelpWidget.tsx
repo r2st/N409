@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
-import { Button, ErrorNote, Field, TextInput, inputClass, useFocusTrap } from './ui';
+import { Button, ErrorNote, Field, TextInput, inputClass, useDialogDismiss } from './ui';
 
 interface HelpTopic {
   id: string;
@@ -200,7 +200,13 @@ export function HelpWidget() {
     setOpen(false);
     setView('topics');
   }, []);
-  const panelRef = useFocusTrap<HTMLDivElement>(open, closePanel);
+  /*
+   * Non-modal on purpose. The panel is a corner card with no scrim: the form
+   * behind it stays visible and clickable, and reading help *beside* the field
+   * it explains is the whole affordance. Claiming `aria-modal` took that page
+   * away from screen-reader users only.
+   */
+  const panelRef = useDialogDismiss<HTMLDivElement>(open, closePanel);
 
   return (
     <>
@@ -208,7 +214,6 @@ export function HelpWidget() {
         <div
           ref={panelRef}
           role="dialog"
-          aria-modal="true"
           aria-label="Help & support"
           tabIndex={-1}
           className="fixed right-4 bottom-20 z-50 flex max-h-[70vh] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-paper-300 bg-surface shadow-lift focus:outline-none"
