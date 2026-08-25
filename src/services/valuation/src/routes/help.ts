@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
+import type { AdminEventType } from '../domain/auditTrail.js';
 import { conditionalJson, isUlid, problems, TtlCache } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { sanitizeHtml } from '../domain/report.js';
@@ -96,7 +97,7 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     return principal;
   };
 
-  const audit = async (actorId: string, type: string, article: HelpArticleRow) => {
+  const audit = async (actorId: string, type: AdminEventType, article: HelpArticleRow) => {
     await recordAdminEvent(deps.pool, {
       type,
       actor: { actorType: 'human', actorId },

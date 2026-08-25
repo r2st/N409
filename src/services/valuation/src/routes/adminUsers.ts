@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
+import type { AdminEventType } from '../domain/auditTrail.js';
 import { httpsUrl } from '../domain/externalUrl.js';
 import { isUlid, problems } from '@n409/shared';
 import { canManageUsers, isOps } from '../auth/rbac.js';
@@ -174,7 +175,7 @@ export function registerAdminUserRoutes(
   // acting admin as the human actor.
   const audit = async (
     actorId: string,
-    type: string,
+    type: AdminEventType,
     subjectType: 'user' | 'invitation' | 'partner',
     subjectId: string | null,
     subjectLabel: string | null,

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
+import type { AdminEventType } from '../domain/auditTrail.js';
 import { isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { VALUATION_STATES } from '../domain/valuation.js';
@@ -115,7 +116,7 @@ export function registerCommunicationRoutes(
     return principal;
   };
 
-  const auditTemplate = async (actorId: string, type: string, t: CommunicationTemplateRow) =>
+  const auditTemplate = async (actorId: string, type: AdminEventType, t: CommunicationTemplateRow) =>
     recordAdminEvent(deps.pool, {
       type,
       actor: { actorType: 'human', actorId },
@@ -125,7 +126,7 @@ export function registerCommunicationRoutes(
       payload: { channel: t.channel, category: t.category, enabled: t.enabled },
     });
 
-  const auditAutoEmail = async (actorId: string, type: string, a: AutoEmailRow) =>
+  const auditAutoEmail = async (actorId: string, type: AdminEventType, a: AutoEmailRow) =>
     recordAdminEvent(deps.pool, {
       type,
       actor: { actorType: 'human', actorId },

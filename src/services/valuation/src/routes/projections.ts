@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
+import type { AdminEventType } from '../domain/auditTrail.js';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
@@ -269,7 +270,7 @@ export function registerProjectionRoutes(
   const audit = async (
     valuation: ValuationRow,
     principal: Principal,
-    type: string,
+    type: AdminEventType,
     payload: Record<string, unknown>,
   ) =>
     recordAdminEvent(deps.pool, {

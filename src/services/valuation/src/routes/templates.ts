@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
+import type { AdminEventType } from '../domain/auditTrail.js';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { VALUATION_KINDS } from '../domain/valuation.js';
@@ -72,7 +73,7 @@ async function loadTemplate(pool: pg.Pool, id: string): Promise<ReportTemplateRo
 export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   // P2 #12 — template changes land in the admin audit log.
   const audit = async (
-    type: string,
+    type: AdminEventType,
     actorId: string,
     template: ReportTemplateRow,
     payload: Record<string, unknown> = {},

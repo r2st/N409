@@ -571,3 +571,62 @@ describe('ActivityLogPage', () => {
     });
   });
 });
+
+/**
+ * Until R128 this column held the raw type and nothing else, because
+ * `admin_events` had no catalog on the server to name its 64 types from. The
+ * label ships with the row now; the raw string stays under it because the
+ * filter above the table is what takes it, and a reader who cannot see the
+ * vocabulary cannot type it.
+ */
+describe('ActivityLogPage type column', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  const labelled = {
+    ...humanEvent,
+    type: 'overwrite_applied',
+    label: 'Analyst overwrite applied',
+  };
+
+  it('shows the label the server sent, and the raw type beside it', async () => {
+    mockApi({
+      events: () => json({ events: [labelled], page: 1, per_page: 50, total: 1 }),
+    });
+    renderPage();
+    await ready();
+    expect(screen.getByText('Analyst overwrite applied')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'overwrite_applied' })).toBeInTheDocument();
+  });
+
+  it('falls back to the browser derivation when a row carries no label', async () => {
+    // A cached page from before the server shipped labels, or a type retired
+    // out of both catalogs. Naming it badly beats leaving the cell empty.
+    mockApi({
+      events: () =>
+        json({
+          events: [{ ...humanEvent, type: 'some_retired_type', label: undefined }],
+          page: 1,
+          per_page: 50,
+          total: 1,
+        }),
+    });
+    renderPage();
+    await ready();
+    expect(screen.getByText('Some retired type')).toBeInTheDocument();
+  });
+
+  it('filters by the clicked type', async () => {
+    // The chip was inert text next to a free-text box you had to retype it
+    // into. One click is the whole point of showing the raw string at all.
+    const calls = mockApi({
+      events: () => json({ events: [labelled], page: 1, per_page: 50, total: 1 }),
+    });
+    renderPage();
+    await ready();
+    await userEvent.click(screen.getByRole('button', { name: 'overwrite_applied' }));
+    await waitFor(() => expect(lastQuery(calls).get('type')).toBe('overwrite_applied'));
+    // And the box shows what is being filtered on, so the next edit starts
+    // from the filter rather than from empty.
+    expect(screen.getByLabelText('Event type')).toHaveValue('overwrite_applied');
+  });
+});

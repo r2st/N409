@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { eventLabel } from '../domain/auditTrail.js';
 
 /**
  * Global activity listing (P2 #12): valuation_events and admin_events merged
@@ -12,6 +13,14 @@ export interface ActivityEntry {
   id: string;
   scope: 'valuation' | 'admin';
   type: string;
+  /**
+   * The type in English, decided here rather than in the browser — the same
+   * contract the dashboard feed and the per-valuation timeline already ship.
+   * This feed was the last surface printing the raw type: `admin_events` had no
+   * catalog to name them from, so the log rendered `valuation_tags_ai_applied`
+   * in a mono chip and left the reader to parse it.
+   */
+  label: string;
   actor_type: string;
   actor_id: string | null;
   actor_email: string | null;
@@ -85,5 +94,8 @@ export async function listActivity(
     ORDER BY s.occurred_at DESC, s.id DESC
     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
   const { rows } = await pool.query<ActivityEntry>(listSql, pageParams);
-  return { items: rows, total: countRows[0]!.total };
+  return {
+    items: rows.map((row) => ({ ...row, label: eventLabel(row.type) })),
+    total: countRows[0]!.total,
+  };
 }

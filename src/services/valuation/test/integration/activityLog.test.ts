@@ -13,6 +13,7 @@ interface EventJson {
   id: string;
   scope: 'valuation' | 'admin';
   type: string;
+  label: string;
   actor_id: string | null;
   actor_email: string | null;
   subject_type: string;
@@ -172,6 +173,27 @@ describe.skipIf(!dbUp)('activity audit log', () => {
     expect(types).toContain('partner_updated');
     expect(types).toContain('prompt_updated');
     expect(events.find((e) => e.type === 'prompt_updated')!.subject_id).toBe(promptId);
+  });
+
+  it('names every row in English, from both catalogs', async () => {
+    // The log printed the raw type in a mono chip and nothing else, because
+    // `admin_events` had no catalog to name its 64 types from. The label ships
+    // with the row now — the same contract the dashboard feed and the
+    // per-valuation timeline already had — and the raw type stays beside it,
+    // because the filter above the table is what takes it.
+    const events = (await listEvents('per_page=100')).json().events as EventJson[];
+    expect(events.length).toBeGreaterThan(0);
+    for (const event of events) expect(event.label).toMatch(/^[A-Z]/);
+
+    const created = events.find((e) => e.type === 'user_created');
+    expect(created?.label).toBe('User created');
+    // The one that pays for the catalog: word-splitting `prompt_updated`
+    // gives "Prompt updated", which is a different sentence from the one the
+    // change log has always used for the same act.
+    const prompt = events.find((e) => e.type === 'prompt_updated');
+    expect(prompt?.label).toBe('AI prompt updated');
+    const valuationCreated = events.find((e) => e.type === 'valuation_created');
+    expect(valuationCreated?.label).toBe('Valuation created');
   });
 
   it('combines filters and paginates', async () => {

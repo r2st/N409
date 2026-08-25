@@ -181,6 +181,117 @@ export const EVENT_CATALOG = {
 export type ValuationEventType = keyof typeof EVENT_CATALOG;
 
 /**
+ * Every type the platform writes to `admin_events`, and the only ones
+ * `recordAdminEvent` will accept.
+ *
+ * `admin_events` is the second half of the audit spine — the actions that
+ * belong to a user, a partner, a prompt or a template rather than to one
+ * engagement — and it had no catalog at all. `recordAdminEvent` took
+ * `type: string`, and so did the ten route-local `audit(...)` helpers wrapping
+ * it, so a typo travelled all the way to the database and came back out the
+ * other side as a plausible label: `user_deactivted` renders "User deactivted"
+ * through the word-split fallback, sorts beside its correct sibling in the ops
+ * feed, and never matches the filter anyone types.
+
+ * Three surfaces printed this vocabulary and none of them had it: the ops
+ * activity log showed the raw type in a mono chip, the dashboard feed
+ * word-split it, and the same derivation ran a third time in the browser.
+ * With a catalog the labels come from one place, `keyof` makes the missing
+ * descriptor a compile error at the line that writes it, and the severity and
+ * category are available to a feed that has never been able to rank its rows.
+ *
+ * Visibility is not a field here. Every admin type is an operations action and
+ * the feeds that read this table are ops-only — the one exception, the
+ * dashboard band's `subject_type = 'valuation'` branch, is dropped whole for
+ * non-ops readers rather than filtered type by type.
+ */
+export const ADMIN_EVENT_CATALOG = {
+  // ── Identity & access ───────────────────────────────────────────────────
+  user_login: D('User signed in', 'access', 'info'),
+  user_invited: D('User invited', 'access', 'notice'),
+  invitation_resent: D('Invitation resent', 'access', 'info'),
+  invitation_revoked: D('Invitation revoked', 'access', 'notice'),
+  user_created: D('User created', 'access', 'notice'),
+  user_updated: D('User updated', 'access', 'notice'),
+  user_promoted: D('Role granted', 'access', 'critical'),
+  user_demoted: D('Role removed', 'access', 'critical'),
+  user_deactivated: D('User deactivated', 'access', 'critical'),
+  user_restored: D('User restored', 'access', 'notice'),
+  user_password_reset_sent: D('Password reset sent', 'access', 'info'),
+  user_sessions_revoked: D('Sessions revoked', 'access', 'notice'),
+  user_data_exported: D('Personal data exported', 'access', 'critical'),
+  account_closed: D('Account closed', 'access', 'critical'),
+
+  // ── Partners ────────────────────────────────────────────────────────────
+  partner_created: D('Partner created', 'integration', 'notice'),
+  partner_updated: D('Partner updated', 'integration', 'notice'),
+
+  // ── Prompts, templates & branding ───────────────────────────────────────
+  prompt_updated: D('AI prompt updated', 'methodology', 'critical'),
+  prompt_reverted: D('AI prompt reverted', 'methodology', 'critical'),
+  narrative_prompt_updated: D('Narrative prompt updated', 'methodology', 'critical'),
+  narrative_prompt_reset: D('Narrative prompt reset', 'methodology', 'critical'),
+  template_created: D('Report template created', 'output', 'notice'),
+  template_updated: D('Report template updated', 'output', 'critical'),
+  template_activated: D('Report template activated', 'output', 'critical'),
+  template_archived: D('Report template archived', 'output', 'notice'),
+  branding_updated: D('Branding updated', 'output', 'notice'),
+
+  // ── Communications ──────────────────────────────────────────────────────
+  communication_template_created: D('Communication template created', 'integration', 'notice'),
+  communication_template_updated: D('Communication template updated', 'integration', 'notice'),
+  communication_template_deleted: D('Communication template deleted', 'integration', 'notice'),
+  auto_email_created: D('Automated email created', 'integration', 'notice'),
+  auto_email_updated: D('Automated email updated', 'integration', 'notice'),
+  auto_email_deleted: D('Automated email deleted', 'integration', 'notice'),
+  email_address_suppressed: D('Email address suppressed', 'integration', 'notice'),
+  email_suppression_released: D('Email suppression released', 'integration', 'notice'),
+
+  // ── Published content ───────────────────────────────────────────────────
+  blog_post_created: D('Blog post created', 'output', 'info'),
+  blog_post_updated: D('Blog post updated', 'output', 'info'),
+  blog_post_deleted: D('Blog post deleted', 'output', 'notice'),
+  help_article_created: D('Help article created', 'output', 'info'),
+  help_article_updated: D('Help article updated', 'output', 'info'),
+  help_article_deleted: D('Help article deleted', 'output', 'notice'),
+
+  // ── Platform operations ─────────────────────────────────────────────────
+  system_settings_updated: D('System settings updated', 'integration', 'critical'),
+  job_alert_rule_changed: D('Job alert rule changed', 'integration', 'notice'),
+  job_alert_opened: D('Job alert opened', 'integration', 'notice'),
+  job_alert_resolved: D('Job alert resolved', 'integration', 'info'),
+  data_remediation_rerun: D('Data remediation re-run', 'data', 'notice'),
+
+  // ── Analyst actions on one engagement ───────────────────────────────────
+  comparable_added: D('Comparable added', 'analysis', 'critical'),
+  comparable_deleted: D('Comparable deleted', 'analysis', 'critical'),
+  comparable_included: D('Comparable included', 'analysis', 'critical'),
+  comparable_excluded: D('Comparable excluded', 'analysis', 'critical'),
+  comparables_screened: D('Comparable set screened', 'analysis', 'notice'),
+  comparables_refreshed: D('Comparable market data refreshed', 'analysis', 'notice'),
+  comparables_ai_applied: D('AI comparables applied', 'analysis', 'critical'),
+  volatility_estimated: D('Volatility estimated', 'analysis', 'notice'),
+  volatility_applied: D('Volatility applied', 'analysis', 'critical'),
+  projection_run: D('Projection run', 'analysis', 'notice'),
+  projection_applied: D('Projection applied', 'analysis', 'critical'),
+  rollforward_run: D('Roll-forward run', 'analysis', 'notice'),
+  rollforward_applied: D('Roll-forward applied', 'analysis', 'critical'),
+  market_research_run: D('Market research run', 'analysis', 'info'),
+  cap_table_anonymized: D('Cap table anonymised', 'data', 'notice'),
+  documents_refiled: D('Documents re-filed', 'documents', 'notice'),
+  valuation_tagged: D('Valuation tagged', 'other', 'info'),
+  valuation_tag_decided: D('Valuation tag decided', 'other', 'info'),
+  valuation_tag_removed: D('Valuation tag removed', 'other', 'info'),
+  valuation_tags_ai_applied: D('AI tags applied', 'other', 'info'),
+} as const satisfies Record<string, EventDescriptor>;
+
+/**
+ * The admin types this build knows how to describe. `recordAdminEvent` and
+ * every route-local audit helper take this union rather than `string`.
+ */
+export type AdminEventType = keyof typeof ADMIN_EVENT_CATALOG;
+
+/**
  * Still needed, and not as a formality: the spine is append-only and older
  * rows carry types this build has since renamed or retired. A trail that
  * refuses to render them would be worse than one that names them vaguely.
@@ -225,14 +336,21 @@ export function describeEventType(type: string): EventDescriptor {
  * against "Override applied". Nothing was wrong enough to report and all of it
  * was the same event.
  *
- * So the label travels with the row now, from here. `admin_events` share the
- * dashboard feed and have no catalog of their own, so an uncatalogued type is
- * word-split rather than flattened to `describeEventType`'s "Event recorded":
- * "Partner updated" says more than that, and the derivation is the same one
- * `humanizeField` uses on field names, initialisms included.
+ * So the label travels with the row now, from here — for both tables. The
+ * word-split fallback stays, because the spine is append-only and older rows
+ * carry types this build has since renamed: an uncatalogued type is
+ * word-split rather than flattened to `describeEventType`'s "Event recorded",
+ * since "Partner updated" says more than that, and the derivation is the same
+ * one `humanizeField` uses on field names, initialisms included. What it is no
+ * longer doing is naming the *current* vocabulary — `admin_events` had no
+ * catalog until R128, so every one of its 64 types reached a reader through
+ * this line.
  */
 export function eventLabel(type: string): string {
-  return (EVENT_CATALOG as Record<string, EventDescriptor>)[type]?.label ?? humanizeField(type);
+  const described =
+    (EVENT_CATALOG as Record<string, EventDescriptor>)[type] ??
+    (ADMIN_EVENT_CATALOG as Record<string, EventDescriptor>)[type];
+  return described?.label ?? humanizeField(type);
 }
 
 // ── Field-level change extraction ─────────────────────────────────────────

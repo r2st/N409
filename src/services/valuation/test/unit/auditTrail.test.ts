@@ -148,14 +148,24 @@ describe('eventLabel', () => {
     expect(eventLabel('report_rendered')).toBe('Report generated');
   });
 
-  /**
-   * The dashboard feed mixes `admin_events` in, and those have no catalog.
-   * `describeEventType`'s "Event recorded" would be a step down from the raw
-   * type for those rows, so the fallback here word-splits instead — the same
-   * derivation `humanizeField` applies to field names, initialisms included.
-   */
-  it('word-splits a type the catalog does not carry', () => {
+  it('uses the admin catalog for an admin type', () => {
+    // The feeds union both tables and name their rows from one function.
+    // `partner_created` happens to word-split to the same string; the two below
+    // do not, which is what having the catalog buys.
     expect(eventLabel('partner_created')).toBe('Partner created');
+    expect(eventLabel('user_promoted')).toBe('Role granted');
+    expect(eventLabel('comparables_ai_applied')).toBe('AI comparables applied');
+  });
+
+  /**
+   * The spine is append-only and older rows carry types this build has since
+   * renamed. `describeEventType`'s "Event recorded" would be a step down from
+   * the raw type for those rows, so the fallback here word-splits instead —
+   * the same derivation `humanizeField` applies to field names, initialisms
+   * included.
+   */
+  it('word-splits a type neither catalog carries', () => {
+    expect(eventLabel('retired_thing_happened')).toBe('Retired thing happened');
     expect(eventLabel('ai_prompt_updated')).toBe('AI prompt updated');
   });
 });

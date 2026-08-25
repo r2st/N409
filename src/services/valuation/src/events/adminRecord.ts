@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import type { AdminEventType } from '../domain/auditTrail.js';
 import type { EventActor } from './record.js';
 
 /**
@@ -22,10 +23,20 @@ export interface AdminEventRow {
   occurred_at: Date;
 }
 
+/**
+ * Append one admin event.
+ *
+ * `type` is `ADMIN_EVENT_CATALOG`'s key union rather than `string`, for the
+ * reason `recordEvent` takes the valuation catalog's: a type with no descriptor
+ * reaches a reader as a word-split of itself, which is indistinguishable from a
+ * label somebody wrote. The ten route-local `audit(...)` helpers that wrap this
+ * take the same union, so the constraint holds at the call site that names the
+ * type rather than at the one that forwards it.
+ */
 export async function recordAdminEvent(
   db: pg.Pool | pg.PoolClient,
   args: {
-    type: string;
+    type: AdminEventType;
     actor: EventActor;
     subjectType: string;
     subjectId?: string | null;

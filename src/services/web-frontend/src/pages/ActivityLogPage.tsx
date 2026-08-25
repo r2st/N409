@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
-import { formatDateTime } from '../lib/format';
+import { eventLabel, formatDateTime } from '../lib/format';
 import {
   Button,
   EmptyState,
@@ -20,6 +20,12 @@ interface ActivityEvent {
   id: string;
   scope: 'valuation' | 'admin';
   type: string;
+  /**
+   * The type in English, from the server's catalogs. Optional because the
+   * column and the label are separate contracts and a cached page from before
+   * R128 has the row without it; `eventLabel` is the same derivation.
+   */
+  label?: string;
   actor_type: string;
   actor_id: string | null;
   actor_email: string | null;
@@ -329,9 +335,29 @@ export function ActivityLogPage() {
                     <ActorCell e={e} />
                   </td>
                   <td className="px-5 py-3">
-                    <span className="rounded border border-ink-200 bg-paper-50 px-1.5 py-0.5 font-mono text-[0.7rem] font-semibold text-ink-700">
+                    {/*
+                      Both, and in this order. The label is what the row means;
+                      the raw type is what the filter above takes, so hiding it
+                      would leave the reader typing a vocabulary they can no
+                      longer see. Until R128 only the raw type was here.
+
+                      The chip gets `tap-area` rather than padding: it is 17px
+                      drawn, and it sits in a row whose height is set by the
+                      label above it, so growing the box would space the whole
+                      log out to reach one control.
+                    */}
+                    <div className="font-medium text-ink-800">{e.label ?? eventLabel(e.type)}</div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTypeDraft(e.type);
+                        setFilter('type', e.type);
+                      }}
+                      title={`Filter by ${e.type}`}
+                      className="tap-area mt-0.5 cursor-pointer rounded border border-ink-200 bg-paper-50 px-1.5 py-0.5 font-mono text-[0.7rem] font-semibold text-ink-600 hover:border-bond-400 hover:text-bond-700"
+                    >
                       {e.type}
-                    </span>
+                    </button>
                   </td>
                   <td className="px-5 py-3">
                     {e.scope === 'valuation' && e.subject_id ? (
