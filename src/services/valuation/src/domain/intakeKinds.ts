@@ -679,6 +679,20 @@ const IFRS2_SECTIONS: readonly IntakeSection[] = [
         required: false,
         rules: { min: 0, integer: true },
       },
+      // IFRS 2.19-20. The engine has always defaulted this to nil and nothing
+      // ever sent it, so every exhibit printed "Expected forfeiture rate —
+      // 0.0%" and an expense measured on every award granted: the assertion
+      // that not one award would be forfeited, made by a default. Left blank
+      // the exhibit now says the estimate was not made, so the omission reads
+      // as an omission rather than as a conclusion.
+      {
+        key: 'expected_forfeiture_rate',
+        label: 'Expected forfeiture rate',
+        type: 'number',
+        required: false,
+        hint: 'A fraction of the awards granted. Service and non-market performance conditions only — a market condition is already in the grant-date fair value (IFRS 2.21).',
+        rules: rate,
+      },
     ],
   },
   {

@@ -146,13 +146,17 @@ def test_a_straight_line_request_on_a_graded_award_is_answered_and_flagged():
     assert any("IG11" in w for w in out["warnings"])
 
 
+def _attribution_warnings(out: dict) -> list:
+    return [w for w in out["warnings"] if "IG11" in w]
+
+
 def test_graded_attribution_raises_no_warning():
-    assert run(attribution="graded")["warnings"] == []
+    assert _attribution_warnings(run(attribution="graded")) == []
 
 
 def test_a_single_tranche_award_needs_no_warning_either():
     # Cliff vesting: graded and straight-line are the same schedule.
-    assert run(vesting_years=1.0, attribution="straight_line")["warnings"] == []
+    assert _attribution_warnings(run(vesting_years=1.0, attribution="straight_line")) == []
 
 
 # ── remeasurement ────────────────────────────────────────────────────────────
@@ -225,3 +229,57 @@ def test_endpoint_maps_an_input_error_to_422(client: TestClient):
 def test_endpoint_unknown_input_name_is_422(client: TestClient):
     res = client.post("/engine/v1/ifrs2", json={"inputs": {**MODEL, "nonsense": 1}})
     assert res.status_code == 422
+
+
+# ── forfeiture estimate: unmade vs nil ───────────────────────────────────────
+#
+# The exhibit prints "Expected forfeiture rate" and "Expected to vest" as
+# figures. When the parameter defaulted to 0.0 it printed "0.0%" and the full
+# grant for every engagement, because the questionnaire asked for neither and
+# the assembler sent neither — an assertion that no award would ever be
+# forfeited, made by a default rather than by an appraiser. IFRS 2.19-20
+# measures the expense on the number of awards expected to vest, so nil is a
+# real estimate and its absence is not.
+
+
+def test_an_unestimated_forfeiture_rate_is_reported_as_undetermined():
+    out = run()
+    assert out["forfeiture_determined"] is False
+    assert any("no expected forfeiture rate was estimated" in w for w in out["warnings"])
+
+
+def test_an_estimate_of_nil_is_a_determination_and_says_so():
+    out = run(expected_forfeiture_rate=0.0)
+    assert out["forfeiture_determined"] is True
+    assert out["expected_forfeiture_rate"] == 0.0
+    assert not any("no expected forfeiture rate" in w for w in out["warnings"])
+
+
+def test_an_undetermined_rate_still_measures_on_every_award_granted():
+    # The arithmetic has to assume something; what changed is that the result
+    # says the assumption was the engine's, not the appraiser's.
+    unstated = run()
+    nil = run(expected_forfeiture_rate=0.0)
+    assert unstated["expected_to_vest"] == nil["expected_to_vest"] == 100_000
+    assert unstated["total_expense"] == nil["total_expense"]
+
+
+def test_an_estimated_forfeiture_rate_reduces_the_awards_expected_to_vest():
+    out = run(expected_forfeiture_rate=0.15)
+    assert out["forfeiture_determined"] is True
+    assert out["expected_to_vest"] == pytest.approx(85_000)
+    assert out["total_expense"] == pytest.approx(out["fair_value_per_award"] * 85_000)
+
+
+def test_a_market_condition_is_not_nagged_for_a_missing_forfeiture_estimate():
+    # IFRS 2.21 puts the condition in the grant-date fair value, so estimating
+    # a forfeiture for it is the error — the engine refuses that combination
+    # outright, and must not ask for what it would then reject.
+    out = run(vesting_condition="market")
+    assert out["forfeiture_determined"] is False
+    assert not any("no expected forfeiture rate" in w for w in out["warnings"])
+
+
+def test_a_market_condition_still_refuses_an_estimated_forfeiture():
+    with pytest.raises(EngineInputError):
+        run(vesting_condition="market", expected_forfeiture_rate=0.1)

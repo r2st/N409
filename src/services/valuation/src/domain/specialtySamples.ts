@@ -403,6 +403,7 @@ export const SAMPLE_IFRS2_RESULT: SpecialtyResult = {
   options_granted: 750000.0,
   grant_date_fair_value_total: 557737.9105320297,
   expected_forfeiture_rate: 0.08,
+  forfeiture_determined: true,
   expected_to_vest: 690000.0,
   total_expense: 513118.8776894673,
   attribution: 'graded',

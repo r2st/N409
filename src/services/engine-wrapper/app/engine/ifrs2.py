@@ -173,7 +173,13 @@ def ifrs2_valuation(
     # ...or a fair value from a lattice/Monte Carlo model run elsewhere.
     fair_value_per_award: float | None = None,
     # Forfeiture estimate for service / non-market performance conditions only.
-    expected_forfeiture_rate: float = 0.0,
+    # ``None`` is "nobody estimated one", which is not the same claim as an
+    # estimate of nil: IFRS 2.19-20 measures the expense on the number of
+    # awards *expected* to vest, so 0% is the substantive assertion that every
+    # award will. The arithmetic treats the two alike — it has to assume
+    # something — but the result says which one it was, so the deliverable can
+    # stop printing an unmade estimate as a determination.
+    expected_forfeiture_rate: float | None = None,
     # Remeasurement date fair value, for cash-settled awards.
     current_fair_value_per_award: float | None = None,
 ) -> dict:
@@ -226,8 +232,11 @@ def ifrs2_valuation(
     # IFRS 2.21 vs 2.19 — the split that decides whether a failed condition is
     # trued up. A market condition is already paid for in `per_award`.
     market_condition = condition == "market"
-    forfeiture = _num(
-        expected_forfeiture_rate, "ifrs2.expected_forfeiture_rate", minimum=0.0, maximum=1.0
+    forfeiture_determined = expected_forfeiture_rate is not None
+    forfeiture = (
+        _num(expected_forfeiture_rate, "ifrs2.expected_forfeiture_rate", minimum=0.0, maximum=1.0)
+        if forfeiture_determined
+        else 0.0
     )
     if market_condition and forfeiture > 0:
         raise EngineInputError(
@@ -295,6 +304,7 @@ def ifrs2_valuation(
         "options_granted": awards,
         "grant_date_fair_value_total": grant_date_total,
         "expected_forfeiture_rate": forfeiture,
+        "forfeiture_determined": forfeiture_determined,
         "expected_to_vest": expected_to_vest,
         "total_expense": total_expense,
         "attribution": requested,
@@ -315,13 +325,26 @@ def ifrs2_valuation(
                 "actually vest"
             ),
         },
-        "warnings": (
-            [
-                "IFRS 2.IG11 requires graded (accelerated) attribution for awards vesting "
-                "in instalments; the straight-line election available under ASC 718 does "
-                "not exist under IFRS 2"
-            ]
-            if graded_required
-            else []
-        ),
+        "warnings": _warnings(graded_required, forfeiture_determined, market_condition),
     }
+
+
+def _warnings(graded_required: bool, forfeiture_determined: bool, market_condition: bool) -> list:
+    notes = []
+    if graded_required:
+        notes.append(
+            "IFRS 2.IG11 requires graded (accelerated) attribution for awards vesting "
+            "in instalments; the straight-line election available under ASC 718 does "
+            "not exist under IFRS 2"
+        )
+    # Silent for a market condition, where a forfeiture estimate would be the
+    # error rather than the omission — IFRS 2.21 puts that condition in the
+    # grant-date fair value and the call above refuses to double-count it.
+    if not forfeiture_determined and not market_condition:
+        notes.append(
+            "no expected forfeiture rate was estimated, so the expense below is measured "
+            "on every award granted; IFRS 2.19-20 measures it on the number expected to "
+            "vest, which requires an estimate of forfeitures and a true-up to the number "
+            "that actually vest"
+        )
+    return notes

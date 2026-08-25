@@ -300,6 +300,65 @@ describe('IFRS 2 share-based payment', () => {
     const warned = { ...SAMPLE_IFRS2_RESULT, warnings: ['IFRS 2.IG11 requires graded attribution'] };
     expect(only('ifrs2', warned).html).toContain('IG11');
   });
+
+  // IFRS 2.19-20 measures the expense on the awards expected to vest, so a
+  // forfeiture rate of nil is the assertion that none will be forfeited. The
+  // engine defaulted the parameter to nil, the questionnaire asked for it
+  // nowhere and the assembler sent it never — so every exhibit printed that
+  // assertion, at "0.0%", above an expense struck on the whole grant.
+  const undetermined = () => {
+    const { expected_forfeiture_rate: _r, ...rest } = SAMPLE_IFRS2_RESULT as Record<string, unknown>;
+    return {
+      ...rest,
+      expected_forfeiture_rate: 0,
+      forfeiture_determined: false,
+      expected_to_vest: 750000,
+      total_expense: 557737.9105320297,
+      warnings: ['no expected forfeiture rate was estimated'],
+    };
+  };
+
+  it('does not print an unmade forfeiture estimate as nil', () => {
+    const html = only('ifrs2', undetermined()).html;
+    expect(html).toContain('<td>Not estimated</td>');
+    expect(html).toContain('Expected forfeiture rate — not estimated');
+    expect(html).not.toContain('<td>0.0%</td>');
+  });
+
+  it('says the expense was struck on every award when no estimate was made', () => {
+    expect(only('ifrs2', undetermined()).html).toContain('every award granted, no estimate made');
+  });
+
+  it('prints an estimate of nil as the determination it is', () => {
+    const html = only('ifrs2', {
+      ...SAMPLE_IFRS2_RESULT,
+      expected_forfeiture_rate: 0,
+      forfeiture_determined: true,
+      expected_to_vest: 750000,
+    }).html;
+    expect(html).toContain('<td>0.0%</td>');
+    expect(html).not.toContain('not estimated');
+  });
+
+  it('reads a stored result from before the flag by its rate', () => {
+    const { forfeiture_determined: _f, ...legacy } = SAMPLE_IFRS2_RESULT as Record<string, unknown>;
+    const html = only('ifrs2', legacy).html;
+    expect(html).toContain('<td>8.0%</td>');
+    expect(html).not.toContain('not estimated');
+  });
+
+  it('asks for no forfeiture estimate where the condition is in the fair value', () => {
+    // IFRS 2.21: a market condition is priced into the grant-date fair value,
+    // and the engine refuses to also count it as a forfeiture.
+    const html = only('ifrs2', {
+      ...undetermined(),
+      vesting_condition: 'market',
+      warnings: [],
+    }).html;
+    expect(html).toContain('IFRS 2.21');
+    expect(html).not.toContain('not estimated');
+    expect(html).not.toContain('no estimate made');
+  });
 });
 
 describe('degradation', () => {

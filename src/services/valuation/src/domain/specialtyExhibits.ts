@@ -709,6 +709,27 @@ function ifrs2Exhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): 
   const perAward = num(specialty.fair_value_per_award);
   if (totalExpense === null || perAward === null) return null;
 
+  // A forfeiture estimate of nil and no forfeiture estimate produce the same
+  // arithmetic and are not the same statement: IFRS 2.19-20 measures the
+  // expense on the awards *expected to vest*, so 0% asserts that every award
+  // will, and the exhibit printed that assertion for every engagement while
+  // the questionnaire asked nobody. A market condition is the one case where
+  // the absence is correct — IFRS 2.21 puts it in the fair value instead.
+  //
+  // Results stored before the engine reported `forfeiture_determined` carry no
+  // such key; a rate above nil in one of them was necessarily supplied through
+  // a run override, and a nil one was the default nobody chose.
+  const marketCondition = str(specialty.vesting_condition) === 'market';
+  const forfeitureRate = num(specialty.expected_forfeiture_rate) ?? 0;
+  const forfeitureDetermined =
+    specialty.forfeiture_determined === true ||
+    (specialty.forfeiture_determined === undefined && forfeitureRate > 0);
+  const forfeitureRow: [string, string] = marketCondition
+    ? ['Expected forfeiture rate — in the grant-date fair value (IFRS 2.21)', '—']
+    : forfeitureDetermined
+      ? ['Expected forfeiture rate', pct(specialty.expected_forfeiture_rate) ?? '—']
+      : ['Expected forfeiture rate — not estimated', 'Not estimated'];
+
   const measurement = table({
     head: ['Grant-date measurement', 'Value'],
     rows: [
@@ -718,8 +739,13 @@ function ifrs2Exhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): 
       ['Fair value per award', shown(perAward, ctx, 4)],
       ['Awards granted', String(num(specialty.options_granted) ?? '—')],
       ['Grant-date fair value', money(specialty.grant_date_fair_value_total, ctx) ?? '—'],
-      ['Expected forfeiture rate', pct(specialty.expected_forfeiture_rate) ?? '—'],
-      ['Expected to vest', String(num(specialty.expected_to_vest) ?? '—')],
+      forfeitureRow,
+      [
+        forfeitureDetermined || marketCondition
+          ? 'Expected to vest'
+          : 'Expected to vest — every award granted, no estimate made',
+        String(num(specialty.expected_to_vest) ?? '—'),
+      ],
     ],
     foot: ['Total expense', shown(totalExpense, ctx)],
   });

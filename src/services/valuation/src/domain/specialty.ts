@@ -555,6 +555,10 @@ function ifrs2Request(answers: Answers, overrides: Answers): SpecialtyRequest {
   put(inputs, 'expected_volatility', num(answers, 'expected_volatility'));
   put(inputs, 'risk_free_rate', num(answers, 'risk_free_rate'));
   put(inputs, 'dividend_yield', num(answers, 'dividend_yield'));
+  // Absent stays absent. The engine reports an unmade forfeiture estimate
+  // differently from an estimate of nil, and a 0 here would turn a question
+  // nobody answered into "we expect every award to vest".
+  put(inputs, 'expected_forfeiture_rate', num(answers, 'expected_forfeiture_rate'));
   return { path: '/engine/v1/ifrs2', body: { inputs: { ...inputs, ...overrides } } };
 }
 
