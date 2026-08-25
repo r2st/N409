@@ -4030,3 +4030,141 @@
 #
 #            None of those three got a census, so what is unguarded is not the
 #            state today but the next one added.
+
+# N409 revision
+# commit:    a44f57e
+# subject:   the page that kept scrolling under the dialog, and the two panels
+#            that told a screen reader it was gone
+# previous:  8c5fa97 (the icons a screen reader stopped to read).
+# includes:  3 commits — R125, which takes R124's closing note at its word and
+#            finds it was answering the easier question. That note recorded
+#            dialogs as "swept during the round and audited clean: no `fixed
+#            inset-0` overlay lacks `role=\"dialog\"`". True, and it asks
+#            whether each overlay carries the attribute — not whether what the
+#            attribute claims is so.
+#
+#            4bf584c — the page behind the backdrop never stopped scrolling.
+#            Every full-viewport overlay (`Modal`, the help slide-over, the
+#            command palette) paints a scrim over the document and leaves the
+#            document live underneath it: the wheel over the scrim moves the
+#            list behind the dialog, a drag on a phone does, and so does a
+#            flick inside the dialog's own scroll area once it runs out.
+#            Nothing on screen explains the move, so the dialog closes onto a
+#            list that is not where it was left.
+#
+#            `useScrollLock` sets `overflow: hidden` on both the root element
+#            and the body — which of the two is the viewport's scrolling box
+#            depends on the document, and one of them is a guess — captures the
+#            previous *inline* values and puts them back rather than blanking
+#            them, and holds the freed scrollbar gutter open with matching
+#            padding so the page does not jump a scrollbar wider as the dialog
+#            opens. The gutter is measured only when the document reports a
+#            width: under jsdom `clientWidth` is 0 and the naive subtraction
+#            reads the entire viewport as scrollbar, padding the body by a
+#            thousand pixels. A measurement of zero is not a measurement, and
+#            the guard that says so is a test of its own.
+#
+#            The count is module-level because the lock belongs to the
+#            document, not to a dialog, and two can be open at once — ⌘K
+#            answers from on top of a `Modal`, and a `HelpIcon` sits beside
+#            headers that live inside dialogs. Two independent locks means the
+#            first one to close hands the page back while the second is still
+#            covering it: a bug that exists only when two overlays overlap,
+#            which is exactly the case nobody reaches by hand.
+#
+#            01bd0cb — `aria-modal="true"` is a claim about the rest of the
+#            page. It instructs assistive technology to drop everything outside
+#            the dialog from the virtual buffer, and the Tab trap enforces the
+#            same claim for the keyboard. On an overlay with a scrim both are
+#            true for everybody, because nothing behind can be clicked either.
+#
+#            Two surfaces claimed it while painting no scrim at all. The help
+#            widget is a corner card whose whole purpose is to be read *beside*
+#            the form it explains; behind it every field stays visible and
+#            clickable, for a mouse. The cookie gate is a strip along the
+#            bottom of the marketing site on a first visit, which a sighted
+#            visitor reads around and answers whenever they like. In both, the
+#            only group that lost the page was the group using a screen reader
+#            — and on the marketing site that means the first thing a first
+#            visit did was make the product unreadable until a consent choice
+#            was made.
+#
+#            Both keep `role="dialog"`, focus moving in, `Esc`, and focus
+#            returning to the trigger. What they lose is the claim: `Tab` walks
+#            out into the page, because the page is still there.
+#            `useDialogDismiss` is `useFocusTrap` with one flag, so the modal
+#            overlays are untouched. The census states the rule both ways,
+#            because the converse is its own bug — an overlay that really does
+#            cover the page while staying silent leaves a screen reader
+#            offering content nobody can reach.
+#
+#            a44f57e — the same failure one level down, and everywhere. A
+#            scroll that runs out is handed to whatever is behind it; that is
+#            the default and it is almost never what the page means. Reach the
+#            end of the board resolution and the page starts moving under the
+#            panel being read. Scroll past the last item in the mobile
+#            navigation drawer and the workspace behind it moves instead.
+#
+#            Sideways it is worse than a surprise: a horizontal scroll that
+#            reaches a wide table's edge and keeps going is the gesture the
+#            browser reads as "go back", so a trackpad swipe across the cap
+#            table could navigate out of a half-filled form. 99 scroll
+#            containers now contain their own scroll — 9 vertical, 82
+#            horizontal, 8 both — per axis rather than blanket, because
+#            containing an axis the element does not scroll is not free: a
+#            vertical flick over a wide table has to keep scrolling the page.
+#            The census asserts that converse too.
+#
+#            That commit also corrects the first one, which put the containment
+#            class on the three scrims. A scrim has no overflow of its own, so
+#            it is not a scroll container and the class did nothing there; the
+#            elements that needed it — the dialog box, the palette's result
+#            list, the article body — are one level in. The overlay census
+#            asked the *file* whether the token appeared anywhere in it, which
+#            is how a decorative class passed for a fix, in a test written the
+#            same hour to prevent exactly that. Same shape as R122's
+#            `aria-labelledby` rule and R124's `<dl>` false alarm: a scan that
+#            reads the call site cannot see the structure. The rule now asks
+#            each element, and the containment half moved out of the overlay
+#            file entirely, since chaining is not an overlay problem.
+#
+#            Deliberate break, all three. Fourteen reverts were run one at a
+#            time: the lock removed from each of the three overlays, the
+#            refcount flattened, the zero-width guard dropped, the restore
+#            blanked, `aria-modal` put back on each scrimless panel, the trap
+#            put back on each, the modal claim taken off a scrim overlay,
+#            `Esc` disabled, a new un-censused scrim component added, two
+#            containers stripped of containment, and a table over-contained.
+#            Each fails its own assertion and nothing else.
+#
+# gap:       None of this round's evidence comes from a real assistive
+#            technology or a real browser, and the two halves are limited
+#            differently. The modality half is a claim about what an AT does
+#            with `aria-modal`, reasoned from the spec: jsdom does not model a
+#            virtual buffer, so what the render actually shows is the keyboard
+#            half — Tab leaves the panel, and the panel stays open when it
+#            does. The scroll half is worse off. `overflow: hidden` and
+#            `overscroll-behavior` have no effect jsdom can observe at all, so
+#            every assertion here is on the style being *set*, not on a page
+#            declining to move. Whether the lock holds on iOS Safari, where
+#            `overflow: hidden` on the body is famously not enough and the
+#            usual remedy is `position: fixed` with a restored offset, is
+#            untested and unknown. It was not chosen because the heavier fix
+#            has costs of its own; it was not chosen because the containment
+#            class was expected to cover that case, and that expectation is
+#            unverified.
+#
+#            The help widget and the cookie gate keep focus moving into them on
+#            open. For the widget that is right — the user opened it. For the
+#            gate it is focus the visitor did not ask for, on a page they have
+#            just arrived at, and now that the gate no longer traps anything it
+#            is the one remaining thing it does to a page it does not own.
+#            Left alone because it is also the only thing that makes the gate
+#            findable from the keyboard without tabbing the whole page first,
+#            and the trade is a product call, not a bug.
+#
+#            The `overflow-hidden` containers were not swept: an element that
+#            clips has no scroll to chain, but one that clips *and* is scrolled
+#            programmatically does, and the census cannot tell those apart. Nor
+#            were the two panels that scroll with `scrollTo` rather than a
+#            utility class.
