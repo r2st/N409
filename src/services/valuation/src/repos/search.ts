@@ -32,10 +32,20 @@ const MAX_BIGINT = 9223372036854775807n;
  * (`/^#?\d{1,12}$/`); search is the one place that never did. Bounding by the
  * column's actual range rather than a digit count keeps every number that
  * exists findable.
+ *
+ * The leading `#` is optional because `#` is how this application writes a
+ * valuation number — the dashboard, the inbox, the billing page, the firm
+ * roster and the search results page itself all print `#{number}`. Search
+ * accepted only the bare digits, so copying a number off the screen and
+ * pasting it into the one box built for that produced no valuation hit at all;
+ * the list filter, which does strip the `#`, quietly disagreed with it. Nothing
+ * is lost by accepting both: the clause is OR'd with the name matches, so a
+ * company that really is called "#1042" still turns up.
  */
 export function valuationNumberQuery(q: string): string | null {
-  if (!/^\d+$/.test(q)) return null;
-  return BigInt(q) <= MAX_BIGINT ? q : null;
+  const digits = /^#?(\d+)$/.exec(q)?.[1];
+  if (digits === undefined) return null;
+  return BigInt(digits) <= MAX_BIGINT ? digits : null;
 }
 
 export interface UserSearchHit {

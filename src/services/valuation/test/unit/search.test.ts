@@ -43,12 +43,33 @@ describe('valuationNumberQuery', () => {
     expect(valuationNumberQuery('00000000000000000000001')).toBe('00000000000000000000001');
   });
 
-  it('rejects anything that is not all digits', () => {
+  it('accepts the leading # this application prints numbers with', () => {
+    // Every surface writes a valuation number as `#{number}` — the dashboard,
+    // the inbox, the billing page, the firm roster, and the search results
+    // page itself. Rejecting the `#` meant copying a number off the screen and
+    // pasting it into the search box found nothing, while the valuations list
+    // filter, which does strip it, disagreed.
+    expect(valuationNumberQuery('#42')).toBe('42');
+    expect(valuationNumberQuery('#00000000000000000000001')).toBe('00000000000000000000001');
+    // The ceiling still applies with the prefix on: a cast that overflows is a
+    // Postgres range error, and it fails the whole statement rather than the
+    // one clause.
+    expect(valuationNumberQuery('#9223372036854775807')).toBe('9223372036854775807');
+    expect(valuationNumberQuery('#9223372036854775808')).toBeNull();
+  });
+
+  it('rejects anything that is not a digit run, prefixed or not', () => {
     expect(valuationNumberQuery('acme')).toBeNull();
     expect(valuationNumberQuery('12a')).toBeNull();
-    expect(valuationNumberQuery('#12')).toBeNull();
     expect(valuationNumberQuery('-1')).toBeNull();
     expect(valuationNumberQuery('1.5')).toBeNull();
     expect(valuationNumberQuery(' 12 ')).toBeNull();
+    // One `#`, and only at the front — nothing else is a number this
+    // application ever wrote.
+    expect(valuationNumberQuery('##12')).toBeNull();
+    expect(valuationNumberQuery('12#')).toBeNull();
+    expect(valuationNumberQuery('#')).toBeNull();
+    expect(valuationNumberQuery('#-1')).toBeNull();
+    expect(valuationNumberQuery(' #12')).toBeNull();
   });
 });
