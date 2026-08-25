@@ -12,6 +12,8 @@
  */
 
 import { modelDlomMethodsIn, selectsModelDlom } from './dlom.js';
+import { headlineCheckNames, specialtyRunKind } from './specialty.js';
+import { kindLabel } from './valuationSelector.js';
 
 export type HealthCategory = 'methodology' | 'assumptions' | 'completeness' | 'mathematical' | 'temporal';
 
@@ -110,6 +112,25 @@ export function runHealthChecks(args: {
   const market = obj(engineInputs.market);
   const params = args.params ?? {};
 
+  /*
+   * Which engine wrote this row, and therefore which rules below can grade it.
+   *
+   * Every check in this file except the three headline ones is a rule about the
+   * 409A model — approach weights, an allocation method, a fully diluted common
+   * count, a volatility the OPM runs on. A specialty run has none of those
+   * fields, and most of the rules already fall away on their own because the
+   * field they read is absent. Two did not: `common_shares_present` and
+   * `weights_present` are unconditional `error`s, so every specialty run — an
+   * IFRS 2 expense, a gift & estate appraisal, a QSBS attestation — came back
+   * `blocking: true` reporting that its "fully diluted common share count is
+   * missing" and that it had set no approach weights. Neither is a finding: the
+   * deliverable has no such figures. The gate this report feeds
+   * (`routes/healthChecks.ts`) was therefore unsatisfiable for those kinds
+   * permanently, and unsatisfiable for a reason the analyst could not act on.
+   */
+  const specialtyKind = specialtyRunKind(args.calculation.results);
+  const columns = headlineCheckNames(specialtyKind);
+
   const equity = num(args.calculation.equity_value);
   const fmv = num(args.calculation.fmv_per_share);
   const allocationMethod = String(params.allocation_method ?? engineParams.allocation_method ?? 'opm');
@@ -120,6 +141,25 @@ export function runHealthChecks(args: {
     income: num(engineParams.weight_income),
     market: num(engineParams.weight_market),
   };
+
+  // ── Scope ───────────────────────────────────────────────────────────────
+  //
+  // Said out loud rather than left to be inferred from a short list. Once the
+  // 409A rules are skipped a specialty report can hold one check, or — on the
+  // kinds that conclude neither typed column — none at all, and a health report
+  // with nothing in it reads as an all-clear rather than as an examination that
+  // was never applicable.
+  if (specialtyKind !== null) {
+    add(
+      'methodology',
+      'specialty_engine',
+      'Checks match the valuation kind',
+      'info',
+      `${kindLabel(specialtyKind)} runs its own engine — the 409A model rules ` +
+        '(approach weights, allocation method, share counts, DLOM benchmarks) do not apply to it ' +
+        "and are not graded here. Review this kind's own schedules.",
+    );
+  }
 
   // ── Methodology consistency ─────────────────────────────────────────────
   if (allocationMethod === 'pwerm') {
@@ -255,23 +295,27 @@ export function runHealthChecks(args: {
 
   // ── Data completeness ───────────────────────────────────────────────────
   const commonShares = num(engineInputs.shares_outstanding_common);
-  add(
-    'completeness',
-    'common_shares_present',
-    'Common share count is set',
-    commonShares !== null && commonShares > 0 ? 'ok' : 'error',
-    commonShares !== null && commonShares > 0
-      ? `${commonShares.toLocaleString()} common shares`
-      : 'Fully diluted common share count is missing — FMV per share cannot be computed',
-  );
-  const anyWeight = Object.values(weights).some((w) => w !== null);
-  add(
-    'completeness',
-    'weights_present',
-    'Approach weights are set',
-    anyWeight ? 'ok' : 'error',
-    anyWeight ? 'Approach weights are set' : 'No approach weights are set',
-  );
+  // The two unconditional rules, and the only two that a specialty run could
+  // not simply skip by having no field to read — see the note on `specialtyKind`.
+  if (specialtyKind === null) {
+    add(
+      'completeness',
+      'common_shares_present',
+      'Common share count is set',
+      commonShares !== null && commonShares > 0 ? 'ok' : 'error',
+      commonShares !== null && commonShares > 0
+        ? `${commonShares.toLocaleString()} common shares`
+        : 'Fully diluted common share count is missing — FMV per share cannot be computed',
+    );
+    const anyWeight = Object.values(weights).some((w) => w !== null);
+    add(
+      'completeness',
+      'weights_present',
+      'Approach weights are set',
+      anyWeight ? 'ok' : 'error',
+      anyWeight ? 'Approach weights are set' : 'No approach weights are set',
+    );
+  }
   const shareClasses = arr(engineInputs.share_classes);
   if (shareClasses.length > 0 && commonShares !== null) {
     const capCommon = shareClasses
@@ -304,33 +348,64 @@ export function runHealthChecks(args: {
       ok ? 'Weights sum to 100%' : `Weights sum to ${pct(sum)} — must total 100%`,
     );
   }
-  if (equity !== null) {
+  /*
+   * The two typed columns, named for what this run actually put in them.
+   *
+   * `equity_value` and `fmv_per_share` are 409A columns by name and every
+   * specialty engine writes into them because they are the columns the row has
+   * (`specialtyHeadline`). Graded under those names, "Equity value is positive"
+   * passed over an IFRS 2 total share-based-payment expense and "FMV per share
+   * is positive" over an EMI *actual* market value — the restricted figure,
+   * which is not the FMV and is not what HMRC's limits are tested against. The
+   * arithmetic was right and the sentence was about a different number.
+   *
+   * A 409A run keeps the wording these checks have always carried: relabelling
+   * it would change what a stored review says without correcting anything. A
+   * `null` name is a kind that concludes no such figure, and the check is then
+   * omitted rather than run under a borrowed one.
+   */
+  const equityName = columns.equity;
+  const perShareName = columns.perShare;
+  if (equity !== null && equityName !== null) {
     add(
       'mathematical',
       'equity_positive',
-      'Equity value is positive',
+      `${equityName} is positive`,
       equity > 0 ? 'ok' : 'error',
-      equity > 0 ? `Equity value ${equity.toLocaleString()}` : `Equity value ${equity} is not positive`,
+      equity > 0 ? `${equityName} ${equity.toLocaleString()}` : `${equityName} ${equity} is not positive`,
     );
   }
-  if (fmv !== null) {
+  if (fmv !== null && perShareName !== null) {
+    const shown = specialtyKind === null ? 'FMV/share' : perShareName;
     add(
       'mathematical',
       'fmv_positive',
-      'FMV per share is positive',
+      `${perShareName} is positive`,
       fmv > 0 ? 'ok' : 'error',
-      fmv > 0 ? `FMV/share ${fmv}` : `FMV/share ${fmv} is not positive`,
+      fmv > 0 ? `${shown} ${fmv}` : `${shown} ${fmv} is not positive`,
     );
   }
-  if (equity !== null && fmv !== null && equity > 0 && fmv > 0) {
+  if (
+    equity !== null &&
+    fmv !== null &&
+    equity > 0 &&
+    fmv > 0 &&
+    equityName !== null &&
+    perShareName !== null
+  ) {
+    // "total equity value" on a 409A: the point of the comparison is that one
+    // is a per-share figure and the other is the whole. A specialty kind names
+    // its own whole, and "total" would be wrong in front of some of them.
+    const whole = specialtyKind === null ? 'total equity value' : equityName.toLowerCase();
+    const shown = specialtyKind === null ? 'FMV/share' : perShareName;
     add(
       'mathematical',
       'fmv_below_equity',
-      'FMV per share below total equity value',
+      `${perShareName} below ${whole}`,
       fmv <= equity ? 'ok' : 'error',
       fmv <= equity
-        ? 'Per-share value is consistent with total equity value'
-        : `FMV/share ${fmv} exceeds the entire equity value ${equity}`,
+        ? `Per-share value is consistent with ${whole}`
+        : `${shown} ${fmv} exceeds the entire ${whole} ${equity}`,
     );
   }
   // Share-count reconciliation against the basis the engine actually divided

@@ -7,6 +7,8 @@
  */
 
 import { modelDlomMethodsIn, selectsModelDlom } from './dlom.js';
+import { headlineCheckNames, specialtyRunKind } from './specialty.js';
+import { kindLabel } from './valuationSelector.js';
 
 export type QaStatus = 'pass' | 'warn' | 'fail';
 
@@ -106,31 +108,81 @@ export function runQaChecks(args: {
   const equity = num(args.calculation.equity_value);
   const fmv = num(args.calculation.fmv_per_share);
 
+  /*
+   * Which engine wrote this row, and so what its two typed columns hold.
+   *
+   * Every rule below except the three output-sanity ones reads the 409A engine
+   * payload, and on a specialty run the field it wants is simply absent — the
+   * rule drops out on its own. The output-sanity three do not, because
+   * `equity_value` and `fmv_per_share` are populated on a specialty run too:
+   * they are the columns the row has, so `specialtyHeadline` writes each kind's
+   * headline into them. What the column *means* then depends on the kind, and
+   * grading it under the 409A name states a fact about a different figure —
+   * "Equity value is positive" over an IFRS 2 total share-based-payment
+   * expense, "FMV per share is positive" over an EMI *actual* market value,
+   * which is the restricted figure and not the FMV.
+   *
+   * A 409A run keeps the wording it has always had — relabelling it would
+   * change what a stored review says without correcting anything.
+   */
+  const specialtyKind = specialtyRunKind(args.calculation.results);
+  const columns = headlineCheckNames(specialtyKind);
+  if (specialtyKind !== null) {
+    // Said out loud, because once the 409A rules fall away this list is short
+    // and on the kinds that conclude neither column it would otherwise be
+    // empty — and an empty QA review reads as an all-clear rather than as an
+    // examination that never applied.
+    add(
+      'specialty_engine',
+      'Checks match the valuation kind',
+      'pass',
+      `${kindLabel(specialtyKind)} runs its own engine — the 409A reasonableness rules ` +
+        '(approach weights, DLOM and DLOC benchmarks, discount rate against terminal growth) ' +
+        "do not apply to it and are not graded here. Review this kind's own schedules.",
+    );
+  }
+
   // ── Output sanity ───────────────────────────────────────────────────────
-  if (equity !== null) {
+  //
+  // A `null` name is a kind that concludes no such figure at all; the check is
+  // omitted rather than run under a borrowed name.
+  if (equity !== null && columns.equity !== null) {
     add(
       'equity_positive',
-      'Equity value is positive',
+      `${columns.equity} is positive`,
       equity > 0 ? 'pass' : 'fail',
-      equity > 0 ? `Equity value ${equity}` : `Equity value ${equity} is not positive`,
+      equity > 0 ? `${columns.equity} ${equity}` : `${columns.equity} ${equity} is not positive`,
     );
   }
-  if (fmv !== null) {
+  if (fmv !== null && columns.perShare !== null) {
+    const shown = specialtyKind === null ? 'FMV/share' : columns.perShare;
     add(
       'fmv_positive',
-      'FMV per share is positive',
+      `${columns.perShare} is positive`,
       fmv > 0 ? 'pass' : 'fail',
-      fmv > 0 ? `FMV/share ${fmv}` : `FMV/share ${fmv} is not positive`,
+      fmv > 0 ? `${shown} ${fmv}` : `${shown} ${fmv} is not positive`,
     );
   }
-  if (equity !== null && fmv !== null && equity > 0 && fmv > 0) {
+  if (
+    equity !== null &&
+    fmv !== null &&
+    equity > 0 &&
+    fmv > 0 &&
+    columns.equity !== null &&
+    columns.perShare !== null
+  ) {
+    // "total equity value" on a 409A: the comparison's whole point is that one
+    // side is per-share and the other is the whole. A specialty kind names its
+    // own whole, and "total" would be wrong in front of some of them.
+    const whole = specialtyKind === null ? 'total equity value' : columns.equity.toLowerCase();
+    const shown = specialtyKind === null ? 'FMV/share' : columns.perShare;
     add(
       'fmv_vs_equity',
-      'FMV per share below total equity value',
+      `${columns.perShare} below ${whole}`,
       fmv <= equity ? 'pass' : 'fail',
       fmv <= equity
-        ? 'Per-share value is consistent with total equity value'
-        : `FMV/share ${fmv} exceeds the entire equity value ${equity}`,
+        ? `Per-share value is consistent with ${whole}`
+        : `${shown} ${fmv} exceeds the entire ${whole} ${equity}`,
     );
   }
 

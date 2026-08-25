@@ -799,3 +799,51 @@ const SPECIALTY_HEADLINE_LABELS: Record<SpecialtyKind, HeadlineLabels> = {
 export function headlineLabels(kind: string): HeadlineLabels {
   return SPECIALTY_HEADLINE_LABELS[kind as SpecialtyKind] ?? DEFAULT_HEADLINE_LABELS;
 }
+
+/**
+ * The specialty kind a completed calculation was produced by, or `null` for a
+ * run of the 409A engine.
+ *
+ * A specialty run persists `results = { kind, specialty: <engine result> }`
+ * (`routes/specialty.ts`); a 409A run persists the engine's own document, which
+ * has neither key. `buildExhibits` already forks on `results.specialty` for
+ * exactly this reason — it is the only thing on the row that says which engine
+ * wrote it, since the typed columns are the same two columns either way.
+ *
+ * Asked of the *calculation* rather than of the valuation because that is what
+ * the deterministic checks are handed, and because it is the run that has a
+ * vocabulary: the valuation's kind says what was commissioned, this says what
+ * produced the figures being graded.
+ */
+export function specialtyRunKind(results: unknown): SpecialtyKind | null {
+  if (results === null || typeof results !== 'object' || Array.isArray(results)) return null;
+  const row = results as Record<string, unknown>;
+  const specialty = row.specialty;
+  if (specialty === null || typeof specialty !== 'object') return null;
+  const kind = row.kind;
+  if (typeof kind !== 'string') return null;
+  const candidate = kind as ValuationKind;
+  return isSpecialtyKind(candidate) ? candidate : null;
+}
+
+/**
+ * How a reasonableness check should name the two typed columns.
+ *
+ * {@link headlineLabels} gives the *exhibit* wording, which is what a caption
+ * printed beside a figure needs. A check reads as a sentence — "<name> is
+ * positive" — and for every kind that runs the 409A engine the wording these
+ * checks have always used is already what the columns hold, so it stays: a
+ * relabelled 409A check would change what a stored review says without
+ * correcting anything.
+ *
+ * A specialty run is the case that needed correcting. It takes its words from
+ * the same map the exhibits and the exported workbook read, so a reviewer
+ * meets one name for one figure across all three. `null` means the kind
+ * contributes no such figure — a QSBS attestation concludes neither — and the
+ * check must then be **omitted**, not run under a borrowed name: "Equity value
+ * is positive" over an IFRS 2 total share-based-payment expense grades a real
+ * number against a rule written for a different one.
+ */
+export function headlineCheckNames(kind: SpecialtyKind | null): HeadlineLabels {
+  return kind === null ? { equity: 'Equity value', perShare: 'FMV per share' } : headlineLabels(kind);
+}

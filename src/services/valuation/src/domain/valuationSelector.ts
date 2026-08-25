@@ -97,6 +97,16 @@ export const KIND_LABELS: ReadonlyArray<[ValuationKind, string]> = [
   ['debt', 'Debt instrument valuation'],
 ];
 
+/**
+ * The product's own name for a kind, so anything that names one to a reader —
+ * a refusal, a health-check scope note — says it the way the picker does.
+ * Unknown keys echo, which is what a kind added to the enum but not to the map
+ * should look like.
+ */
+export function kindLabel(kind: string): string {
+  return KIND_LABELS.find(([k]) => k === kind)?.[1] ?? kind;
+}
+
 const TIE_ORDER = new Map(KIND_LABELS.map(([kind], i) => [kind, i]));
 
 /** UK Schedule 5: EMI needs fewer than 250 full-time-equivalent employees. */

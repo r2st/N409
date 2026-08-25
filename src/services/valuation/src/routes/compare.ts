@@ -13,7 +13,7 @@ import {
   headlineSummary,
   type CompareSide,
 } from '../domain/valuationCompare.js';
-import { KIND_LABELS } from '../domain/valuationSelector.js';
+import { kindLabel } from '../domain/valuationSelector.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -53,11 +53,6 @@ function sideFor(valuation: ValuationRow, calculation: CalculationRow | null): C
     valuation_date: typeof rawDate === 'string' ? rawDate.slice(0, 10) : null,
     results: calculation?.results ?? null,
   };
-}
-
-/** The product's own name for a kind, so the refusal reads as the picker does. */
-function kindLabel(kind: string): string {
-  return KIND_LABELS.find(([k]) => k === kind)?.[1] ?? kind;
 }
 
 export function registerCompareRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {

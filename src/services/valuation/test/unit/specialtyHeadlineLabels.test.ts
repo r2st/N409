@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_HEADLINE_LABELS,
   SPECIALTY_KINDS,
+  headlineCheckNames,
   headlineLabels,
   specialtyHeadline,
+  specialtyRunKind,
   specialtyEngineRequest,
   type SpecialtyKind,
 } from '../../src/domain/specialty.js';
@@ -239,5 +241,61 @@ describe('the request builders and the captions describe the same engines', () =
       expect(dispatches, kind).toBe(true);
       expect(headlineLabels(kind), kind).toBeDefined();
     }
+  });
+});
+
+/**
+ * Which engine wrote a calculation row, asked of the row itself.
+ *
+ * The typed columns are the same two columns whichever engine ran, so
+ * `results` is the only thing that says which vocabulary they are in: a
+ * specialty run persists `{ kind, specialty }` (routes/specialty.ts) and a
+ * 409A run persists the engine's own document, which has neither key. The
+ * deterministic checks are handed a calculation and nothing else, which is why
+ * they ask here rather than being told a kind.
+ */
+describe('specialtyRunKind', () => {
+  it('reads the kind off a specialty run', () => {
+    for (const kind of SPECIALTY_KINDS) {
+      expect(specialtyRunKind({ kind, specialty: {} }), kind).toBe(kind);
+    }
+  });
+
+  it('is null for a 409A run, however it is shaped', () => {
+    expect(specialtyRunKind({ fmv_per_share: 1.2, equity_value: 5e6, approaches: {} })).toBeNull();
+    expect(specialtyRunKind({})).toBeNull();
+    expect(specialtyRunKind(null)).toBeNull();
+    expect(specialtyRunKind(undefined)).toBeNull();
+  });
+
+  it('needs both halves, and a kind the platform actually runs', () => {
+    // A `kind` with no `specialty` payload is not a specialty run's results,
+    // and a `specialty` payload under a kind that is not one would otherwise
+    // send `headlineLabels` looking for a caption that does not exist.
+    expect(specialtyRunKind({ kind: 'ifrs2' })).toBeNull();
+    expect(specialtyRunKind({ specialty: { total_expense: 1 } })).toBeNull();
+    expect(specialtyRunKind({ kind: '409a', specialty: {} })).toBeNull();
+    expect(specialtyRunKind({ kind: 'not-a-kind', specialty: {} })).toBeNull();
+    expect(specialtyRunKind({ kind: 42, specialty: {} })).toBeNull();
+    // An array is an object to `typeof` and is not a results document.
+    expect(specialtyRunKind([{ kind: 'ifrs2', specialty: {} }])).toBeNull();
+  });
+});
+
+describe('headlineCheckNames', () => {
+  it('keeps the wording the 409A reasonableness checks have always used', () => {
+    // Deliberately *not* DEFAULT_HEADLINE_LABELS: a check reads as a sentence
+    // ("<name> is positive"), and relabelling a 409A check would change what a
+    // stored QA review says without correcting anything.
+    expect(headlineCheckNames(null)).toEqual({ equity: 'Equity value', perShare: 'FMV per share' });
+  });
+
+  it('gives a specialty run the same words as its exhibits and its workbook', () => {
+    for (const kind of SPECIALTY_KINDS) {
+      expect(headlineCheckNames(kind), kind).toEqual(headlineLabels(kind));
+    }
+    expect(headlineCheckNames('ifrs2').equity).toBe('Total expense');
+    expect(headlineCheckNames('emi').perShare).toBe('Actual market value (AMV) per share');
+    expect(headlineCheckNames('qsbs')).toEqual({ equity: null, perShare: null });
   });
 });

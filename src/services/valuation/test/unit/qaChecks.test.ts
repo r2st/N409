@@ -215,3 +215,98 @@ describe('deterministic QA checks', () => {
     expect(result.status).toBe('pass');
   });
 });
+
+/**
+ * The publish gate's reasonableness sweep, run over a specialty calculation.
+ *
+ * `runQaChecks` reads the 409A engine payload for everything except the three
+ * output-sanity rules, and on a specialty run those fields are simply absent —
+ * each rule drops out on its own. The three that do not drop out are the ones
+ * that matter, because `equity_value` and `fmv_per_share` *are* populated on a
+ * specialty run: they are the columns the row has, so `specialtyHeadline`
+ * writes each kind's own headline into them. Graded under the column's 409A
+ * name, the gate stated a fact about a different figure — "Equity value is
+ * positive" over an IFRS 2 total share-based-payment expense, "FMV per share
+ * is positive" over an EMI *actual* (restricted) market value.
+ */
+describe('deterministic QA checks on a specialty run', () => {
+  /** An IFRS 2 run exactly as routes/specialty.ts persists one. */
+  const ifrs2: QaCalculation = {
+    inputs: {
+      endpoint: '/engine/v1/ifrs2',
+      params: { vesting_condition: 'service' },
+      inputs: { grant_date_fair_value: 4.2 },
+    },
+    results: { kind: 'ifrs2', specialty: { total_expense: 420_000 } },
+    equity_value: 420_000,
+    fmv_per_share: null,
+    created_at: '2026-07-01T00:00:00Z',
+  };
+
+  it('names the figure the column actually holds', () => {
+    const check = byKey(runQaChecks({ calculation: ifrs2 }), 'equity_positive');
+    expect(check?.label).toBe('Total expense is positive');
+    expect(check?.detail).toBe('Total expense 420000');
+    expect(check?.status).toBe('pass');
+  });
+
+  it('calls an EMI per-share conclusion the actual market value, not the FMV', () => {
+    const result = runQaChecks({
+      calculation: {
+        inputs: { endpoint: '/engine/v1/emi', params: { equity_value: 6_000_000 }, inputs: {} },
+        results: { kind: 'emi', specialty: { amv_per_share: 0.8, umv_per_share: 1.2 } },
+        equity_value: 6_000_000,
+        fmv_per_share: 0.8,
+        created_at: '2026-07-01T00:00:00Z',
+      },
+    });
+    expect(byKey(result, 'fmv_positive')?.label).toBe('Actual market value (AMV) per share is positive');
+    expect(byKey(result, 'fmv_vs_equity')?.label).toBe(
+      'Actual market value (AMV) per share below concluded equity value',
+    );
+    expect(result.checks.map((c) => `${c.label}|${c.detail}`).join(' ')).not.toContain('FMV');
+  });
+
+  it('says why the review is short instead of reading as an all-clear', () => {
+    // A QSBS attestation writes neither typed column, so the deterministic
+    // sweep has nothing to grade. An empty check list at status 'pass' is an
+    // examination that never applied, presented as one that found nothing.
+    const result = runQaChecks({
+      calculation: {
+        inputs: { endpoint: '/engine/v1/qsbs', params: {}, inputs: {} },
+        results: { kind: 'qsbs', specialty: { qualified: true } },
+        equity_value: null,
+        fmv_per_share: null,
+        created_at: '2026-07-01T00:00:00Z',
+      },
+    });
+    expect(byKey(result, 'equity_positive')).toBeUndefined();
+    const scope = byKey(result, 'specialty_engine');
+    expect(scope?.status).toBe('pass');
+    expect(scope?.detail).toContain('QSBS attestation (IRC §1202)');
+    expect(scope?.detail).toContain('do not apply');
+  });
+
+  it('still fails a specialty headline that is not positive', () => {
+    const result = runQaChecks({ calculation: { ...ifrs2, equity_value: 0 } });
+    const check = byKey(result, 'equity_positive');
+    expect(check?.status).toBe('fail');
+    expect(check?.detail).toBe('Total expense 0 is not positive');
+    expect(result.status).toBe('fail');
+  });
+
+  it('leaves a 409A run reading exactly as it did', () => {
+    const result = runQaChecks({
+      calculation: calc({ params: { dlom: 0.2 }, equity: 20_000_000, fmv: 2 }),
+    });
+    expect(byKey(result, 'specialty_engine')).toBeUndefined();
+    expect(byKey(result, 'equity_positive')?.label).toBe('Equity value is positive');
+    expect(byKey(result, 'equity_positive')?.detail).toBe('Equity value 20000000');
+    expect(byKey(result, 'fmv_positive')?.label).toBe('FMV per share is positive');
+    expect(byKey(result, 'fmv_positive')?.detail).toBe('FMV/share 2');
+    expect(byKey(result, 'fmv_vs_equity')?.label).toBe('FMV per share below total equity value');
+    expect(byKey(result, 'fmv_vs_equity')?.detail).toBe(
+      'Per-share value is consistent with total equity value',
+    );
+  });
+});

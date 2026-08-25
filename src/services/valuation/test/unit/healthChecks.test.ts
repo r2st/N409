@@ -462,3 +462,134 @@ describe('runHealthChecks on sparse and degenerate inputs', () => {
     expect(report.blocking).toBe(true);
   });
 });
+
+/**
+ * A specialty run graded by rules written for the 409A model.
+ *
+ * A specialty calculation (`routes/specialty.ts`) persists
+ * `results = { kind, specialty }` and writes its own headline into the typed
+ * `equity_value` / `fmv_per_share` columns, because those are the columns the
+ * row has. Everything else this file grades — approach weights, an allocation
+ * method, a fully diluted common count — belongs to an engine that never ran,
+ * and most rules dropped out on their own by finding no field to read.
+ *
+ * Two did not. `common_shares_present` and `weights_present` were
+ * unconditional `error`s, so every specialty run came back `blocking: true`
+ * asserting that its "fully diluted common share count is missing" and that no
+ * approach weights were set — findings about figures the deliverable does not
+ * contain, on a gate (`routes/healthChecks.ts` → `gate.satisfied`) that an
+ * analyst could then never clear.
+ *
+ * And the three checks that *do* apply named the columns rather than the
+ * figures: "Equity value is positive" over an IFRS 2 total share-based-payment
+ * expense, "FMV per share is positive" over an EMI *actual* market value —
+ * which is the restricted figure, not the FMV, and not what HMRC's limits are
+ * tested against.
+ */
+describe('runHealthChecks on a specialty run', () => {
+  /** An IFRS 2 run exactly as routes/specialty.ts persists one. */
+  const ifrs2 = {
+    calculation: {
+      inputs: {
+        endpoint: '/engine/v1/ifrs2',
+        params: { vesting_condition: 'service' },
+        inputs: { grant_date_fair_value: 4.2, awards_granted: 100_000 },
+      },
+      results: { kind: 'ifrs2', specialty: { total_expense: 420_000 } },
+      equity_value: 420_000,
+      fmv_per_share: null,
+      created_at: '2026-07-01T00:00:00Z',
+    },
+    params: null,
+    valuation: { currency: 'GBP' },
+  };
+
+  it('does not block on 409A inputs the kind never has', () => {
+    const report = runHealthChecks(ifrs2);
+    expect(byKey(report, 'common_shares_present')).toBeUndefined();
+    expect(byKey(report, 'weights_present')).toBeUndefined();
+    expect(report.blocking).toBe(false);
+    expect(report.counts.error).toBe(0);
+  });
+
+  it('names the figure the column actually holds', () => {
+    const check = byKey(runHealthChecks(ifrs2), 'equity_positive');
+    expect(check?.label).toBe('Total expense is positive');
+    expect(check?.detail).toBe('Total expense 420,000');
+    expect(check?.severity).toBe('ok');
+  });
+
+  it('calls an EMI per-share conclusion the actual market value, not the FMV', () => {
+    const report = runHealthChecks({
+      calculation: {
+        inputs: { endpoint: '/engine/v1/emi', params: { equity_value: 6_000_000 }, inputs: {} },
+        results: { kind: 'emi', specialty: { amv_per_share: 0.8, umv_per_share: 1.2 } },
+        equity_value: 6_000_000,
+        fmv_per_share: 0.8,
+        created_at: '2026-07-01T00:00:00Z',
+      },
+      params: null,
+      valuation: { currency: 'GBP' },
+    });
+    expect(byKey(report, 'fmv_positive')?.label).toBe('Actual market value (AMV) per share is positive');
+    expect(byKey(report, 'fmv_positive')?.detail).toBe('Actual market value (AMV) per share 0.8');
+    expect(byKey(report, 'fmv_below_equity')?.label).toBe(
+      'Actual market value (AMV) per share below concluded equity value',
+    );
+    expect(report.blocking).toBe(false);
+    // The whole report must not say "FMV per share" anywhere about this run.
+    expect(report.checks.map((c) => `${c.label}|${c.detail}`).join(' ')).not.toContain('FMV');
+  });
+
+  it('says why the report is short instead of reading as an all-clear', () => {
+    // A QSBS attestation concludes neither typed column, so without this the
+    // report would be an empty list at severity 'ok' — an examination that
+    // never applied, presented as one that found nothing.
+    const report = runHealthChecks({
+      calculation: {
+        inputs: { endpoint: '/engine/v1/qsbs', params: {}, inputs: {} },
+        results: { kind: 'qsbs', specialty: { qualified: true } },
+        equity_value: null,
+        fmv_per_share: null,
+        created_at: '2026-07-01T00:00:00Z',
+      },
+      params: null,
+      valuation: { currency: 'USD' },
+    });
+    expect(byKey(report, 'equity_positive')).toBeUndefined();
+    const scope = byKey(report, 'specialty_engine');
+    expect(scope?.severity).toBe('info');
+    expect(scope?.detail).toContain('QSBS attestation (IRC §1202)');
+    expect(scope?.detail).toContain('do not apply');
+    expect(report.checks.length).toBeGreaterThan(0);
+    expect(report.blocking).toBe(false);
+  });
+
+  it('leaves a 409A run reading exactly as it did', () => {
+    const report = runHealthChecks(healthy());
+    expect(byKey(report, 'specialty_engine')).toBeUndefined();
+    expect(byKey(report, 'common_shares_present')?.severity).toBe('ok');
+    expect(byKey(report, 'weights_present')?.severity).toBe('ok');
+    expect(byKey(report, 'equity_positive')?.label).toBe('Equity value is positive');
+    expect(byKey(report, 'equity_positive')?.detail).toBe('Equity value 20,000,000');
+    expect(byKey(report, 'fmv_positive')?.label).toBe('FMV per share is positive');
+    expect(byKey(report, 'fmv_positive')?.detail).toBe('FMV/share 1.5');
+    expect(byKey(report, 'fmv_below_equity')?.label).toBe('FMV per share below total equity value');
+    expect(byKey(report, 'fmv_below_equity')?.detail).toBe(
+      'Per-share value is consistent with total equity value',
+    );
+  });
+
+  it('still grades a specialty headline that is not positive', () => {
+    // The rule is not waived, only renamed: an IFRS 2 run that concluded a
+    // negative total expense is still an error, stated as one about an expense.
+    const report = runHealthChecks({
+      ...ifrs2,
+      calculation: { ...ifrs2.calculation, equity_value: -1_000 },
+    });
+    const check = byKey(report, 'equity_positive');
+    expect(check?.severity).toBe('error');
+    expect(check?.detail).toBe('Total expense -1000 is not positive');
+    expect(report.blocking).toBe(true);
+  });
+});
