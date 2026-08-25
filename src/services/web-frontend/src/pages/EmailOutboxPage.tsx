@@ -2,22 +2,48 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { formatDateTime } from '../lib/format';
-import type { OutboxEmail, OutboxStatus } from '../lib/types';
+import type { DeliveryState, OutboxEmail, OutboxStatus } from '../lib/types';
 import { Button, EmptyState, ErrorNote, Spinner } from '../components/ui';
 
-const STATUS_STYLES: Record<OutboxStatus, string> = {
+/**
+ * `sent` is deliberately not green. It means the relay accepted the message,
+ * which is not the same fact as the recipient having it — the distinction
+ * migration 0163 exists to draw. Green is reserved for the states that are
+ * evidence of arrival.
+ */
+const DELIVERY_STYLES: Record<DeliveryState, string> = {
   queued: 'bg-amber-50 text-amber-800 border-amber-200',
-  sent: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  sent: 'bg-sky-50 text-sky-800 border-sky-200',
+  delivered: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  opened: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  bounced: 'bg-red-50 text-red-700 border-red-200',
+  complained: 'bg-red-50 text-red-700 border-red-200',
   failed: 'bg-red-50 text-red-700 border-red-200',
   skipped: 'bg-paper-200 text-ink-600 border-paper-300',
 };
 
-function StatusBadge({ status }: { status: OutboxStatus }) {
+/** What each state is evidence of, for the operator who has to act on it. */
+const DELIVERY_TITLES: Record<DeliveryState, string> = {
+  queued: 'Waiting for the outbox worker.',
+  sent: 'Accepted by the relay. No confirmation of mailbox delivery yet.',
+  delivered: 'Confirmed delivered to the mailbox.',
+  opened: 'Delivered, and the tracking pixel was fetched at least once.',
+  bounced: 'Rejected by the recipient’s mail system.',
+  complained: 'Reported as spam by the recipient. The address is suppressed.',
+  failed: 'The platform could not hand the message to the relay.',
+  skipped: 'Not sent — the address is suppressed.',
+};
+
+function DeliveryBadge({ email }: { email: OutboxEmail }) {
+  // Fall back to the platform status when the field is absent, which is only
+  // a response cached from a build older than the derivation.
+  const state: DeliveryState = email.delivery_state ?? email.status;
   return (
     <span
-      className={`inline-block rounded-full border px-2.5 py-0.5 text-xs font-semibold ${STATUS_STYLES[status]}`}
+      title={DELIVERY_TITLES[state]}
+      className={`inline-block rounded-full border px-2.5 py-0.5 text-xs font-semibold ${DELIVERY_STYLES[state]}`}
     >
-      {status[0]!.toUpperCase() + status.slice(1)}
+      {state[0]!.toUpperCase() + state.slice(1)}
     </span>
   );
 }
@@ -57,7 +83,9 @@ export function EmailOutboxPage() {
           <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Email outbox</h1>
           <p className="mt-1 text-sm text-ink-400">
             Transactional emails queued by workflow events. Failed sends are retried automatically by the
-            outbox worker.
+            outbox worker. The filters below select on what the platform did with a message; the delivery
+            column shows what became of it, which is not the same fact — a message the relay accepted can
+            still bounce.
           </p>
         </div>
         <Button variant="secondary" onClick={() => void load()}>
@@ -102,7 +130,7 @@ export function EmailOutboxPage() {
                 <th className="overline px-5 py-3 font-semibold text-ink-400">Recipient</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Template</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Subject</th>
-                <th className="overline px-4 py-3 font-semibold text-ink-400">Status</th>
+                <th className="overline px-4 py-3 font-semibold text-ink-400">Delivery</th>
                 <th className="overline px-4 py-3 text-right font-semibold text-ink-400">Attempts</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Queued</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Sent</th>
@@ -131,16 +159,49 @@ export function EmailOutboxPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3.5">
-                    <StatusBadge status={e.status} />
+                    <DeliveryBadge email={e} />
                     {e.error && (
                       <div className="mt-1 max-w-52 text-xs text-red-600" title={e.error}>
                         <span className="line-clamp-2">{e.error}</span>
                       </div>
                     )}
+                    {/*
+                      Why it bounced, in the recipient's mail system's own
+                      words. The kind decides what happens next — hard and
+                      complaint suppress the address and end the retry ladder,
+                      soft leaves it running — so it is named, not just colored.
+                    */}
+                    {e.bounce_kind && (
+                      <div className="mt-1 max-w-52 text-xs text-red-600">
+                        <span className="font-semibold">{e.bounce_kind} bounce</span>
+                        {e.bounce_detail && (
+                          <span className="line-clamp-2" title={e.bounce_detail}>
+                            {e.bounce_detail}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td className="tnum px-4 py-3.5 text-right text-ink-600">{e.attempts}</td>
                   <td className="tnum px-4 py-3.5 text-ink-600">{formatDateTime(e.created_at)}</td>
-                  <td className="tnum px-4 py-3.5 text-ink-600">{formatDateTime(e.sent_at)}</td>
+                  <td className="tnum px-4 py-3.5 text-ink-600">
+                    {formatDateTime(e.sent_at)}
+                    {e.delivered_at && (
+                      <div className="mt-1 text-xs text-ink-500">
+                        Delivered {formatDateTime(e.delivered_at)}
+                      </div>
+                    )}
+                    {e.open_count !== undefined && e.open_count > 0 && (
+                      // A floor, not a count: image blockers hide real opens and
+                      // caching proxies invent them. Never a per-person figure.
+                      <div
+                        className="mt-1 text-xs text-ink-500"
+                        title="Tracking-pixel fetches — a floor, not a count of readers."
+                      >
+                        Opened {e.open_count}×
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

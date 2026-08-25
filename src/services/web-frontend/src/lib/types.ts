@@ -329,6 +329,18 @@ export interface Invitation {
 export type OutboxStatus = 'queued' | 'sent' | 'failed' | 'skipped';
 export type CommChannel = 'email' | 'sms';
 
+/**
+ * What became of a message, as the server derives it from the delivery ledger
+ * (migration 0163). A superset of `OutboxStatus`: the four platform outcomes,
+ * plus the four the recipient's mail system reports back afterwards.
+ *
+ * Never computed here. The server owns which fact supersedes which — see
+ * `deliveryStateOf` — because a complaint outranking a delivery is a judgement
+ * about the message, not a formatting choice about the row.
+ */
+export type DeliveryState = OutboxStatus | 'delivered' | 'opened' | 'bounced' | 'complained';
+export type BounceKind = 'hard' | 'soft' | 'complaint';
+
 export interface OutboxEmail {
   id: string;
   valuation_id: string | null;
@@ -339,10 +351,19 @@ export interface OutboxEmail {
   subject: string;
   body: string;
   status: OutboxStatus;
+  /** Server-derived; see DeliveryState. Optional only so older fixtures still type. */
+  delivery_state?: DeliveryState;
   error: string | null;
   attempts: number;
   created_at: string;
   sent_at: string | null;
+  delivered_at?: string | null;
+  bounced_at?: string | null;
+  bounce_kind?: BounceKind | null;
+  bounce_detail?: string | null;
+  first_opened_at?: string | null;
+  last_opened_at?: string | null;
+  open_count?: number;
 }
 
 // §15.5/§15.6 — communication templates + auto email campaigns
