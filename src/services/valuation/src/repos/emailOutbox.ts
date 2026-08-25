@@ -2,7 +2,7 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { EMAIL_JITTER_FLOOR, EMAIL_MAX_ATTEMPTS, EMAIL_RETRY_BACKOFF_MINUTES } from '../domain/emailRetry.js';
 import { isSuppressed } from './emailDelivery.js';
-import { SUPPRESSION_EXEMPT_TEMPLATES } from '../domain/emailDelivery.js';
+import { SUPPRESSION_EXEMPT_TEMPLATES, type BounceKind } from '../domain/emailDelivery.js';
 
 export type EmailStatus = 'queued' | 'sent' | 'failed' | 'skipped';
 
@@ -34,6 +34,24 @@ export interface EmailOutboxRow {
    * ceiling now holds. See domain/emailRetry.ts.
    */
   next_attempt_at: Date | null;
+  /**
+   * Delivery ledger (migration 0163). Every read of this table is `SELECT *`
+   * or `RETURNING *`, so these seven columns have been on the rows since 0163
+   * shipped — the interface simply never learned about them, and a type that
+   * denies a column makes the column unreadable to anything downstream.
+   *
+   * `status` says what the platform did with the message; these say what
+   * happened to it afterwards. Conflating the two is the defect the whole
+   * subsystem exists to remove — see `deliveryStateOf`, which folds them into
+   * the one state an operator should be shown.
+   */
+  delivered_at: Date | null;
+  bounced_at: Date | null;
+  bounce_kind: BounceKind | null;
+  bounce_detail: string | null;
+  first_opened_at: Date | null;
+  last_opened_at: Date | null;
+  open_count: number;
 }
 
 export async function enqueueEmail(

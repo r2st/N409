@@ -7,6 +7,7 @@ import { NOTIFICATION_EVENT_TYPES } from '../domain/emailWorkflows.js';
 import { listNotifications, markAllRead, markRead, unreadCount } from '../repos/notifications.js';
 import { getPreferenceMatrix, replacePreferences } from '../repos/notificationPreferences.js';
 import { listOutbox } from '../repos/emailOutbox.js';
+import { deliveryStateOf } from '../domain/emailDelivery.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
@@ -100,6 +101,10 @@ export function registerNotificationRoutes(app: FastifyInstance, deps: { pool: p
       valuationId: parsed.data.valuation_id,
       limit: parsed.data.limit,
     });
-    return { emails };
+    // `status` is what the platform did with the message; `delivery_state` is
+    // what became of it. Derived here rather than in the browser so the rule
+    // for which fact supersedes which lives in exactly one place — a complaint
+    // outranking a delivery is a judgement, not a formatting choice.
+    return { emails: emails.map((e) => ({ ...e, delivery_state: deliveryStateOf(e) })) };
   });
 }
