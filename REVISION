@@ -4445,3 +4445,120 @@
 #            `toHaveTextContent` against jsdom's `Intl`, which is Node's ICU
 #            rather than a user's; the download assertions still read
 #            `a.download`.
+
+# N409 revision
+# commit:    dd9adf4
+# subject:   a what-if recorded as a mark, and the rate it did not shift
+# previous:  298847c (the green Sent badge over a message that bounced).
+# includes:  3 commits — R131, a round that stayed on one screen. The Debt
+#            Instruments workspace has one button that asks a question five
+#            times, and all three findings are things that button did. Two of
+#            them reached the measurement report, which is the deliverable, so
+#            none of this is confined to the screen it was found on.
+#
+#            ffdae05 — the sensitivity walk shifts a rate in five steps and
+#            tabulates the fair value at each. Which rate depends on the
+#            instrument type, and the mapping had four of five right: the
+#            credit-spread note has no `market_yield` field at all — its rate
+#            lives on the credit terms, which the service merges over the params
+#            on every run — and the button sent one anyway.
+#            `credit_spread_valuation` takes keyword-only arguments, so the
+#            engine rejected the call outright and the entire feature was an
+#            error message on that type. The same shape had been found and fixed
+#            for the convertible and the SAFE in an earlier round, with a
+#            comment in the test saying exactly what it costs ("shifting one
+#            would have produced five identical rows and looked like a flat
+#            curve"); the fifth type was left, and no test asked about it. A
+#            per-type mapping is a list of cases, and a list of cases is a place
+#            for one to be missing.
+#
+#            Two smaller things in the same table, found by reading it rather
+#            than by running it. The shift column read "-2 bps×100", which is
+#            neither the unit a fixed-income reader uses nor unambiguous
+#            arithmetic — and the test asserted the same string, so the two
+#            agreed with each other and neither had ever asked what a basis
+#            point is. That is the R130 fixture shape again: a test written from
+#            the component instead of from the contract can only confirm the
+#            component. And a rate is never requested below zero, so a shift
+#            that would go there is truncated at it — while the row kept the
+#            label of the shift that was *asked for*. A 0.5% yield shocked down
+#            by 100bp and by 200bp is one measurement printed as two rows, the
+#            second under a label nothing measured there, which reads as a curve
+#            going flat below the base rate. It is an artefact of the floor. The
+#            row now names the shift that was applied, and a truncated shift
+#            landing on a rate already priced is dropped rather than repeated.
+#
+#            22b3c2a — the finding that leaves the screen. `POST
+#            /debt/instruments/:id/value` wrote a `debt_valuations` row on every
+#            call, and the walk is five calls, so clicking the button left four
+#            hypothetical prices in the instrument's record beside the real one,
+#            all carrying today's date. `listValuations` is newest-first and
+#            `loadDebtReport` takes its head as "the measurement the report
+#            speaks for" — so the last shock of the walk, the rate 200 basis
+#            points *above* the market, became the instrument's fair value in
+#            the history table and in the measurement report's valuation
+#            exhibit. The worst of the five won because it was priced last.
+#
+#            `ValueBody` now carries `persist`, defaulting to true; the walk
+#            sends false and `valuation` comes back explicitly null rather than
+#            absent, so a caller storing it cannot store `undefined` and never
+#            know. The pattern was not invented here: the fund roll-forward has
+#            taken a `record` flag for exactly this reason since it was written,
+#            one route away. Not writing the row also removes a way for the walk
+#            to fail halfway — `requireStorableFigure` bounds the column, and a
+#            shocked price is what reaches that bound first.
+#
+#            dd9adf4 — and then the order itself. `listValuations` sorted by
+#            `created_at`, which is the same order as by measurement date
+#            exactly while nobody measures out of order. `POST /value` takes
+#            `valuation_date` as a parameter, so backfilling a prior quarter, or
+#            re-running a corrected one, puts the older measurement at the head.
+#            Both readers of that order are then wrong: the history exhibit
+#            prints the `valuation_date` column beneath the sentence "Prior
+#            measurements of this instrument, most recent first", describing a
+#            table it does not match, and the report concludes at whichever
+#            price was entered last. `ORDER BY valuation_date DESC, created_at
+#            DESC` now — the rule `listMarks` already applies to `fund_marks`.
+#            The tiebreak stays, because two measurements bearing one date is a
+#            re-run after a correction and there the later run is the one that
+#            stands; a test asserts that half separately, so dropping it fails
+#            on its own.
+#
+#            Deliberate break, each: reverting the page fails five assertions
+#            across the two behaviours, the label and the two persist flags;
+#            reverting the route fails the service test on the history length;
+#            restoring the old ORDER BY fails the backfill assertion on both the
+#            date sequence and the head's fair value while the same-date
+#            tiebreak keeps passing.
+#
+#            Audited and found sound, recorded so the next round starts further
+#            in. The sweep behind dd9adf4 read every `ORDER BY created_at` in
+#            the repos against the schema's date columns; `debt_valuations` was
+#            the only measurement table with a user-supplied date sorted by
+#            insertion. `rollforward_runs` sorts by `created_at` and by
+#            `applied_at` and both are right — a run is a proposal, ordered by
+#            when it was made and when it was adopted, not by the period it
+#            describes. `calculations` likewise. LIKE escaping, export column
+#            scope and export filter parity were checked and are covered by
+#            existing guards.
+#
+# gap:       `persist` closes the walk, but nothing *checks* that the next
+#            what-if remembers to send it. The flag defaults to true, which is
+#            the right default for an existing contract and the wrong one for a
+#            census: a new scenario endpoint that forgets it writes marks
+#            silently, exactly as this one did. What would close it is a rule
+#            about which routes may reach `createValuation`/`createMark` at all.
+#
+#            The per-type rate mapping is now correct for five types and is
+#            still a switch with no exhaustiveness check reaching it — `key` is
+#            a `string`, not a union of the params each type declares, so a
+#            sixth instrument type would fall to the `market_yield` default and
+#            draw the flat curve again. `PARAM_FIELDS` already knows every
+#            type's fields; the mapping does not consult it.
+#
+#            Nothing here was checked in a browser, and nothing was checked
+#            against the real engine. The credit-spread finding is that
+#            `credit_spread_valuation`'s arguments are keyword-only, which was
+#            read out of the Python rather than provoked: the service test
+#            stubs the engine, so the assertion is on which key the request
+#            carries, not on what the engine does with the wrong one.
