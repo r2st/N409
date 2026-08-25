@@ -575,7 +575,7 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
           })}
           {numField('terminal_growth', 'Terminal growth', { hint: 'Decimal, e.g. 0.02.', step: 0.01 })}
         </div>
-        <div className="mt-5 overflow-x-auto">
+        <div className="mt-5 overflow-x-auto overscroll-x-contain">
           <table className="w-full min-w-[420px] text-sm" aria-label="DCF projections">
             <thead>
               <tr className="border-b border-paper-300 text-left">

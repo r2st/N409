@@ -175,7 +175,7 @@ export function EngagementTab() {
 
       <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h3 className="overline mb-3 text-ink-400">Stage timing (expected vs actual)</h3>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overscroll-x-contain">
           <table className="w-full text-sm">
             <caption className="sr-only">Stage timing</caption>
             <thead>

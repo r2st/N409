@@ -585,7 +585,7 @@ function TemplatesTab() {
           <EmptyState title="No templates yet" />
         </div>
       ) : (
-        <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+        <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[760px] text-sm" aria-label="Communication templates">
             <thead>
               <tr className="border-b border-paper-300 text-left">
@@ -963,7 +963,7 @@ function AutoEmailsTab() {
           <EmptyState title="No auto email campaigns" />
         </div>
       ) : (
-        <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+        <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[820px] text-sm" aria-label="Auto email campaigns">
             <thead>
               <tr className="border-b border-paper-300 text-left">

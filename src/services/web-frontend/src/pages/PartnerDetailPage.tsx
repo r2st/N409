@@ -303,7 +303,7 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
           <p className="mt-0.5 text-xs text-amber-800">
             It is stored as a hash. This is the only time it can be read.
           </p>
-          <code className="mt-2 block overflow-x-auto rounded border border-amber-200 bg-surface px-3 py-2 font-mono text-xs text-ink-900">
+          <code className="mt-2 block overflow-x-auto overscroll-x-contain rounded border border-amber-200 bg-surface px-3 py-2 font-mono text-xs text-ink-900">
             {issued.secret}
           </code>
           <button
@@ -341,7 +341,7 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
       {live.length === 0 ? (
         <p className="mt-4 text-sm text-ink-400">No active tokens.</p>
       ) : (
-        <div className="mt-4 overflow-x-auto">
+        <div className="mt-4 overflow-x-auto overscroll-x-contain">
           <table className="w-full min-w-[560px] text-sm" aria-label="API tokens">
             <thead>
               <tr className="border-b border-paper-300 text-left text-xs text-ink-400 uppercase">
@@ -444,7 +444,7 @@ function PartnerValuations({ partnerId }: { partnerId: string }) {
         <p className="mt-3 text-sm text-ink-400">No engagements yet.</p>
       ) : (
         <>
-          <div className="mt-3 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+          <div className="mt-3 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[620px] text-sm" aria-label="Partner engagements">
               <thead>
                 <tr className="sr-only">
@@ -802,7 +802,7 @@ export function PartnerDetailPage() {
             No users yet — invite one from the users console with this partner selected.
           </p>
         ) : (
-          <div className="mt-3 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+          <div className="mt-3 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[560px] text-sm" aria-label="Partner users">
               <thead>
                 <tr className="sr-only">

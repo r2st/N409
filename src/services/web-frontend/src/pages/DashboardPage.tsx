@@ -394,7 +394,7 @@ export function DashboardPage() {
                   </div>
 
                   {analytics.by_kind.length > 0 && (
-                    <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+                    <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
                       <table className="w-full min-w-[560px] text-sm">
                         {/*
                          * A caption rather than `aria-label`: it is the element
@@ -493,7 +493,7 @@ export function DashboardPage() {
 
                   {/* Per-state detail — surfaces the states the grouped pivot hides. */}
                   {Object.keys(analytics.by_state).length > 0 && (
-                    <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+                    <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
                       <table className="w-full min-w-[360px] text-sm">
                         <caption className="sr-only">
                           Valuations by workflow state — the detail the grouped pivot above collapses.

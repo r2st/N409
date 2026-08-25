@@ -76,7 +76,7 @@ function RoleMatrix({ roles, capabilities }: { roles: RoleDef[]; capabilities: C
         </Button>
       </div>
       {open && (
-        <div className="mt-4 overflow-x-auto">
+        <div className="mt-4 overflow-x-auto overscroll-x-contain">
           <table className="w-full text-sm" aria-label="Role capability matrix">
             <thead>
               <tr className="border-b border-paper-300 text-left">
@@ -745,7 +745,7 @@ export function AdminUsersPage() {
         </p>
       )}
       {invitations.length > 0 && (
-        <section className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+        <section className="mt-6 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
           <h2 className="overline border-b border-paper-300 px-5 py-3 text-ink-400">Invitations</h2>
           <table className="w-full min-w-[640px] text-sm" aria-label="Invitations">
             <thead>
@@ -834,7 +834,7 @@ export function AdminUsersPage() {
       )}
 
       {data && data.users.length > 0 && (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+        <div className="mt-6 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[720px] text-sm">
             <caption className="sr-only">Users</caption>
             <thead>

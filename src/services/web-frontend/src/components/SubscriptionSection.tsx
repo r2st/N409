@@ -221,7 +221,7 @@ export function SubscriptionSection() {
           <h3 id="invoices-heading" className="overline mb-2 text-ink-400">
             Invoices
           </h3>
-          <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+          <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[480px] text-sm" aria-labelledby="invoices-heading">
               <thead>
                 <tr className="sr-only">
@@ -362,7 +362,7 @@ function AdminBillingDashboard() {
           note={monthDelta(data.summary.month_collected_cents, data.summary.prev_month_collected_cents)}
         />
       </div>
-      <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+      <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[560px] text-sm">
           <caption className="sr-only">Subscribers</caption>
           <thead>

@@ -177,7 +177,7 @@ export function PricingPage() {
           <h2 className="font-display text-3xl font-semibold text-ink-900">
             Faster, clearer, and built for founders
           </h2>
-          <div className="mt-8 overflow-x-auto rounded-lg border border-paper-300 shadow-card">
+          <div className="mt-8 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 shadow-card">
             <table className="w-full min-w-[720px] text-sm" aria-label="Provider comparison">
               <thead>
                 <tr className="border-b border-paper-300 bg-paper-50 text-left">

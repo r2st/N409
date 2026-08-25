@@ -302,7 +302,7 @@ export function PaymentHistory({ valuation }: { valuation: Valuation }) {
           note is a sentence ("Refunded $1,190.00 on 9 Jul · Chargeback upheld"),
           which does not fit that budget — so the table scrolls in its own box
           rather than pushing the page sideways, matching the invoice table. */}
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto overscroll-x-contain">
         <table className="w-full min-w-[420px] text-left text-sm" aria-labelledby="payment-history-heading">
           <thead>
             <tr className="border-b border-paper-300 text-xs text-ink-400">

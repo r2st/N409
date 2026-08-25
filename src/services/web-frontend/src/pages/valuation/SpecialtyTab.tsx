@@ -80,7 +80,7 @@ function ResultValue({ value }: { value: unknown }) {
   if (typeof value === 'number') return <span className="tnum">{formatNumber(value)}</span>;
   if (Array.isArray(value) || typeof value === 'object') {
     return (
-      <pre className="max-h-56 overflow-auto rounded border border-paper-200 bg-paper-50 p-2 text-xs whitespace-pre-wrap text-ink-700">
+      <pre className="max-h-56 overflow-auto overscroll-contain rounded border border-paper-200 bg-paper-50 p-2 text-xs whitespace-pre-wrap text-ink-700">
         {JSON.stringify(value, null, 2)}
       </pre>
     );

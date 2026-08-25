@@ -565,7 +565,7 @@ function ResultCard({
           </h3>
           {/* Both axes: six money columns clear a phone's content box by ~140px,
               and the schedule is long enough to want the capped height too. */}
-          <div className="max-h-72 overflow-x-auto overflow-y-auto">
+          <div className="max-h-72 overflow-x-auto overscroll-x-contain overflow-y-auto overscroll-y-contain">
             <table className="w-full min-w-[520px] text-xs" aria-labelledby="cash-flow-schedule-heading">
               <thead className="sticky top-0 bg-paper-50">
                 <tr className="border-b border-paper-300 text-left text-ink-500">

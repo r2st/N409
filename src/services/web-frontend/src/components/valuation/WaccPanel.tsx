@@ -305,7 +305,7 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-paper-300">
+      <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300">
         <table className="w-full min-w-[440px] text-sm" aria-label="Guideline betas">
           <thead>
             <tr className="border-b border-paper-300 text-left">

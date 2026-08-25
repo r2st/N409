@@ -58,7 +58,7 @@ function AxisTableView({
       <h2 id={titleId} className="mb-2 font-display text-lg font-semibold text-ink-900">
         {title}
       </h2>
-      <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+      <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[560px] text-sm" aria-labelledby={titleId}>
           <thead>
             <tr className="border-b border-paper-300">

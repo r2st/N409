@@ -81,7 +81,7 @@ export function OverwritesSchemaPage() {
         <ResultCount count={fields.length} noun="field" query={query} />
       </div>
 
-      <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+      <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[52rem] border-collapse text-sm">
           <caption className="sr-only">Override fields</caption>
           <thead>

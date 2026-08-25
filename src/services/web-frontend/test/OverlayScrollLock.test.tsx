@@ -20,9 +20,12 @@ import { HelpIcon } from '../src/components/HelpIcon';
  * screen explains it — the reader closes the dialog and the list is not where
  * they left it.
  *
- * `useScrollLock` is the fix and these are its edges: it must put back what it
- * found rather than a blank, it must survive two overlays open at once, and it
- * must not invent a scrollbar out of a viewport it cannot measure.
+ * `useScrollLock` is the fix for the page itself, and these are its edges: it
+ * must put back what it found rather than a blank, it must survive two
+ * overlays open at once, and it must not invent a scrollbar out of a viewport
+ * it cannot measure. The other half of the bug — a gesture handed *out* of a
+ * scroll area that has run out of content — is not specific to overlays and is
+ * guarded across the whole app in `scrollContainment.test.ts`.
  */
 
 const bodyOverflow = () => document.body.style.overflow;
@@ -191,18 +194,5 @@ describe('every full-viewport overlay locks the page behind it', () => {
       .filter(({ source }) => !callsScrollLock(source))
       .map(({ file }) => file);
     expect(unlocked).toEqual([]);
-  });
-
-  it('contains the scroll gesture inside the scrim rather than chaining it out', () => {
-    /*
-     * The lock stops the page scrolling; containment stops the gesture being
-     * handed to the page in the first place. They are not the same fix — a
-     * flick that runs past the end of the dialog's own list is handled by the
-     * second, before the first is ever consulted.
-     */
-    const uncontained = overlaySources()
-      .filter(({ source }) => !source.includes('overscroll-contain'))
-      .map(({ file }) => file);
-    expect(uncontained).toEqual([]);
   });
 });

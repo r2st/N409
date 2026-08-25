@@ -516,7 +516,7 @@ export function StatCardSkeleton() {
  */
 export function SkeletonTable({ columns = 5, rows = 6 }: { columns?: number; rows?: number }) {
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto overscroll-x-contain">
       <table role="presentation" aria-hidden className="w-full border-collapse text-sm">
         <tbody>
           <tr className="border-b border-paper-300">
@@ -946,7 +946,7 @@ export function Modal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain bg-chrome-950/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-chrome-950/60 p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -957,7 +957,7 @@ export function Modal({
         aria-modal="true"
         aria-labelledby={labelledBy ?? (title ? titleId : undefined)}
         tabIndex={-1}
-        className={`max-h-[85vh] w-full max-w-lg overflow-y-auto overscroll-contain rounded-xl border border-paper-300 bg-surface shadow-lift focus:outline-none ${className}`}
+        className={`max-h-[85vh] w-full max-w-lg overflow-y-auto overscroll-y-contain rounded-xl border border-paper-300 bg-surface shadow-lift focus:outline-none ${className}`}
       >
         {title && (
           <h2
@@ -1026,7 +1026,7 @@ export function DataTable<T>({
   rowHref?: (row: T) => string;
 }) {
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto overscroll-x-contain">
       <table className="w-full border-collapse text-sm">
         <caption className="sr-only">{caption}</caption>
         <thead>

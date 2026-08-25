@@ -434,7 +434,7 @@ export function ProjectionPanel({
               })}
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overscroll-x-contain">
               <table className="w-full min-w-[560px] text-sm" aria-label="Projection drivers by year">
                 <thead>
                   <tr className="border-b border-paper-300 text-left">
@@ -530,7 +530,7 @@ export function ProjectionPanel({
         </div>
       ) : (
         <>
-          <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300">
+          <div className="mt-6 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300">
             <table className="w-full min-w-[720px] text-sm" aria-label="Projected free cash flow">
               <thead>
                 <tr className="border-b border-paper-300 text-left">
@@ -592,7 +592,7 @@ export function ProjectionPanel({
             )}
           </div>
 
-          <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300">
+          <div className="mt-6 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300">
             <table className="w-full min-w-[560px] text-sm" aria-label="Projection history">
               <thead>
                 <tr className="border-b border-paper-300 text-left">

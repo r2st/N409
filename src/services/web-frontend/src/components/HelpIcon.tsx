@@ -46,7 +46,7 @@ export function HelpIcon({
       {open &&
         createPortal(
           <div
-            className="fixed inset-0 z-50 flex justify-end overscroll-contain bg-chrome-950/60"
+            className="fixed inset-0 z-50 flex justify-end bg-chrome-950/60"
             onMouseDown={(e) => {
               if (e.target === e.currentTarget) close();
             }}
@@ -84,7 +84,7 @@ export function HelpIcon({
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto overscroll-contain px-5 py-5">
+              <div className="flex-1 overflow-y-auto overscroll-y-contain px-5 py-5">
                 {found ? (
                   <Markdown source={found.body} />
                 ) : (

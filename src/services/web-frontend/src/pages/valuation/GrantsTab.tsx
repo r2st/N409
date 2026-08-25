@@ -116,7 +116,7 @@ function VestingTimeline({ timeline, total }: { timeline: VestingPoint[]; total:
   const y = (v: number) => height - pad - (v / total) * (height - 2 * pad);
   const points = timeline.map((p) => `${x(p.monthOffset)},${y(p.cumulativeVested)}`).join(' ');
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto overscroll-x-contain">
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="h-36 w-full min-w-[420px]"
@@ -187,7 +187,7 @@ function GrantDetailPanel({ valuationId, grant }: { valuationId: string; grant: 
         <h3 id="exercise-scenarios-heading" className="overline mb-2 text-ink-400">
           Exercise scenarios
         </h3>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overscroll-x-contain">
           <table className="w-full text-sm" aria-labelledby="exercise-scenarios-heading">
             <thead>
               <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">

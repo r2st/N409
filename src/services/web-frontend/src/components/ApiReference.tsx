@@ -134,7 +134,7 @@ export function ApiReference() {
                 </a>
                 . Import it into Postman or Insomnia, or point a client generator at it:
               </p>
-              <pre className="mt-3 overflow-x-auto rounded bg-ink-900 px-3.5 py-2.5 font-mono text-xs text-paper-50">
+              <pre className="mt-3 overflow-x-auto overscroll-x-contain rounded bg-ink-900 px-3.5 py-2.5 font-mono text-xs text-paper-50">
                 <code>{`npx @openapitools/openapi-generator-cli generate \\\n  -i ${docs.openapi_url} -g typescript-fetch -o ./n409-client`}</code>
               </pre>
             </section>

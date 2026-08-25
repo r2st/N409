@@ -143,7 +143,7 @@ export function AdminApiTokensPage() {
           </EmptyState>
         </div>
       ) : (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+        <div className="mt-6 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[860px] text-left text-sm" aria-label="API tokens">
             <thead>
               <tr className="border-b border-paper-300 text-xs text-ink-400">

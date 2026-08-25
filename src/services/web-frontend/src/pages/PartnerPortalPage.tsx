@@ -231,7 +231,7 @@ export function PartnerPortalPage() {
           </form>
 
           {tokens && tokens.length > 0 && (
-            <div className="mt-5 overflow-x-auto">
+            <div className="mt-5 overflow-x-auto overscroll-x-contain">
               <table className="w-full text-sm" aria-labelledby="partner-api-tokens-heading">
                 <thead>
                   <tr className="border-b border-paper-300 text-left">

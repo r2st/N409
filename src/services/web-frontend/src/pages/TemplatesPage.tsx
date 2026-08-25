@@ -178,7 +178,7 @@ export function TemplatesPage() {
       {names.map((name) => (
         <section key={name} className="mt-8">
           <h2 className="overline mb-3 text-ink-400">{name}</h2>
-          <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+          <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[640px] text-sm">
               <caption className="sr-only">{`${name} versions`}</caption>
               <thead>

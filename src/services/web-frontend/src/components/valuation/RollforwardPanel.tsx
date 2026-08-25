@@ -504,7 +504,7 @@ export function RollforwardPanel({
       ) : (
         <>
           {latest && latest.calibration_steps.length > 0 && (
-            <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+            <div className="mt-6 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
               <table className="w-full min-w-[520px] text-sm" aria-label="Calibration trail">
                 <thead>
                   <tr className="border-b border-paper-300 text-left">
@@ -536,7 +536,7 @@ export function RollforwardPanel({
           )}
 
           {latest && latest.material_changes.length > 0 && (
-            <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+            <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
               <table className="w-full min-w-[520px] text-sm" aria-label="Changes since the prior valuation">
                 <thead>
                   <tr className="border-b border-paper-300 text-left">
@@ -572,7 +572,7 @@ export function RollforwardPanel({
             </div>
           )}
 
-          <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+          <div className="mt-6 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[720px] text-sm" aria-label="Roll-forward history">
               <thead>
                 <tr className="border-b border-paper-300 text-left">

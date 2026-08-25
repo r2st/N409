@@ -145,7 +145,7 @@ export function ScrollableTabs({
         ref={navRef}
         onScroll={measure}
         aria-label={label}
-        className="scrollbar-none flex gap-6 overflow-x-auto border-b border-paper-300"
+        className="scrollbar-none flex gap-6 overflow-x-auto overscroll-x-contain border-b border-paper-300"
       >
         {children}
       </nav>

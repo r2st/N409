@@ -23,7 +23,7 @@ function CodeBlock({ children, label }: { children: string; label?: string }) {
   return (
     <div className="mt-4">
       {label && <div className="overline mb-1.5 text-xs text-ink-400">{label}</div>}
-      <pre className="overflow-x-auto rounded-lg bg-ink-900 px-4 py-3 font-mono text-xs leading-relaxed text-paper-50">
+      <pre className="overflow-x-auto overscroll-x-contain rounded-lg bg-ink-900 px-4 py-3 font-mono text-xs leading-relaxed text-paper-50">
         <code>{children}</code>
       </pre>
     </div>

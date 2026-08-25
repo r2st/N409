@@ -266,7 +266,7 @@ export function PortfolioPage() {
                 </section>
               )}
 
-              <section className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+              <section className="overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
                 <table className="w-full min-w-[640px] text-sm">
                   <caption className="sr-only">Portfolio companies</caption>
                   <thead>

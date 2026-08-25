@@ -226,7 +226,7 @@ export function CapTableSyncPanel({
             {pending.outcome.diff.changed} changed · {pending.outcome.diff.added} added ·{' '}
             {pending.outcome.diff.removed} removed vs. the cap table on file.
           </p>
-          <div className="mt-3 max-h-64 overflow-y-auto rounded border border-amber-200 bg-surface">
+          <div className="mt-3 max-h-64 overflow-y-auto overscroll-y-contain rounded border border-amber-200 bg-surface">
             <table className="w-full text-sm">
               <caption className="sr-only">Cap table sync conflicts</caption>
               <tbody>

@@ -173,7 +173,7 @@ export function BridgeTab() {
             </p>
           )}
 
-          <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+          <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[420px] text-sm">
               <caption className="sr-only">Driver changes</caption>
               <thead>

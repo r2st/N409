@@ -255,7 +255,7 @@ export function HelpWidget() {
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex-1 overflow-y-auto overscroll-y-contain p-4">
             {view === 'topics' && (
               <div className="space-y-1">
                 {topics.length === 0 && (

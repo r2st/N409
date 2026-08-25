@@ -205,7 +205,7 @@ export function AdminSsoPage() {
             <p className="text-sm font-semibold text-bond-800">
               Copy this SCIM token now — it won't be shown again:
             </p>
-            <code className="mt-2 block overflow-x-auto rounded bg-surface px-3 py-2 font-mono text-xs text-ink-700">
+            <code className="mt-2 block overflow-x-auto overscroll-x-contain rounded bg-surface px-3 py-2 font-mono text-xs text-ink-700">
               {minted}
             </code>
             <p className="mt-2 text-xs text-ink-400">

@@ -40,7 +40,7 @@ function Payload({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="min-w-0 flex-1">
       <p className="overline mb-1 text-ink-400">{label}</p>
-      <pre className="max-h-64 overflow-auto rounded-md bg-paper-100 p-2.5 text-[0.7rem] leading-relaxed text-ink-800 ring-1 ring-paper-300 ring-inset">
+      <pre className="max-h-64 overflow-auto overscroll-contain rounded-md bg-paper-100 p-2.5 text-[0.7rem] leading-relaxed text-ink-800 ring-1 ring-paper-300 ring-inset">
         {JSON.stringify(value, null, 2)}
       </pre>
     </div>

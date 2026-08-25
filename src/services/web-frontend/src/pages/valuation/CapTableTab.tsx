@@ -205,7 +205,7 @@ function ValidationBanner({ validation }: { validation: Validation }) {
 
 function EntriesTable({ entries, currency }: { entries: Entry[]; currency: string }) {
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto overscroll-x-contain">
       <table className="w-full text-sm">
         <caption className="sr-only">Cap table</caption>
         <thead>
@@ -841,7 +841,7 @@ function AnonymizePanel({ valuationId }: { valuationId: string }) {
               </p>
 
               {result.text !== '' && (
-                <pre className="max-h-64 overflow-auto rounded-md border border-paper-300 bg-paper-50 p-3 font-mono text-xs whitespace-pre-wrap text-ink-800">
+                <pre className="max-h-64 overflow-auto overscroll-contain rounded-md border border-paper-300 bg-paper-50 p-3 font-mono text-xs whitespace-pre-wrap text-ink-800">
                   {result.text}
                 </pre>
               )}
@@ -854,7 +854,7 @@ function AnonymizePanel({ valuationId }: { valuationId: string }) {
                     <span className="font-semibold text-ink-700">{doc.filename}</span> — from{' '}
                     {doc.original_filename}
                   </p>
-                  <pre className="mt-1 max-h-64 overflow-auto rounded-md border border-paper-300 bg-paper-50 p-3 font-mono text-xs whitespace-pre-wrap text-ink-800">
+                  <pre className="mt-1 max-h-64 overflow-auto overscroll-contain rounded-md border border-paper-300 bg-paper-50 p-3 font-mono text-xs whitespace-pre-wrap text-ink-800">
                     {doc.text}
                   </pre>
                 </div>

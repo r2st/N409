@@ -730,7 +730,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
           <h4 className="overline mb-2 text-ink-400">
             Options — total cost {formatMoney(result.options.totalCompensationCost, currency)}
           </h4>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overscroll-x-contain">
             <table className="w-full min-w-[380px] text-sm">
               <caption className="sr-only">Option awards</caption>
               <thead>
@@ -758,7 +758,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
       {result.espp.length > 0 && (
         <div>
           <h4 className="overline mb-2 text-ink-400">ESPP</h4>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overscroll-x-contain">
             <table className="w-full min-w-[460px] text-sm">
               <caption className="sr-only">ESPP offerings</caption>
               <thead>
@@ -796,7 +796,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
       {result.rsu.length > 0 && (
         <div>
           <h4 className="overline mb-2 text-ink-400">RSUs</h4>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overscroll-x-contain">
             <table className="w-full min-w-[440px] text-sm">
               <caption className="sr-only">RSU awards</caption>
               <thead>
@@ -840,7 +840,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
               text="Market-condition awards that pay out on the company’s total-shareholder-return rank against a TSR peer group. Valued by a Monte Carlo simulation of correlated peer price paths; the fair value is fixed at grant and never trued up."
             />
           </h4>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overscroll-x-contain">
             <table className="w-full min-w-[440px] text-sm">
               <caption className="sr-only">Relative TSR awards</caption>
               <thead>

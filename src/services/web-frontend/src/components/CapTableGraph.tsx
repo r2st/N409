@@ -213,7 +213,7 @@ export function CapTableGraph({ graph }: { graph: CapTableGraphData }) {
         </ul>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface p-2 shadow-card">
+      <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface p-2 shadow-card">
         <svg
           viewBox={`0 0 ${width} ${height}`}
           width={width}

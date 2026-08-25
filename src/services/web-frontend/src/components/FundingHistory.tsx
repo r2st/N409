@@ -229,7 +229,7 @@ export function FundingHistory({
         <p className="mt-2 text-sm text-ink-400">No funding rounds recorded.</p>
       )}
       {rounds && rounds.length > 0 && (
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3 overflow-x-auto overscroll-x-contain">
           <table className="w-full min-w-[560px] text-sm" aria-labelledby="funding-rounds-heading">
             <thead>
               <tr className="border-b border-paper-300 text-left">
@@ -351,7 +351,7 @@ export function FundingHistory({
         <p className="mt-2 text-sm text-ink-400">No transactions recorded.</p>
       )}
       {transactions && transactions.length > 0 && (
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3 overflow-x-auto overscroll-x-contain">
           <table className="w-full min-w-[560px] text-sm">
             <caption className="sr-only">Secondary transactions</caption>
             <thead>

@@ -99,7 +99,7 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
           <p className="text-sm font-semibold text-bond-800">
             Link created — copy it now, it won't be shown again:
           </p>
-          <code className="mt-2 block overflow-x-auto rounded bg-surface px-3 py-2 font-mono text-xs text-ink-700">
+          <code className="mt-2 block overflow-x-auto overscroll-x-contain rounded bg-surface px-3 py-2 font-mono text-xs text-ink-700">
             {minted.url}
           </code>
         </div>
@@ -123,7 +123,7 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
       </div>
 
       {links && links.length > 0 && (
-        <div className="mt-5 overflow-x-auto">
+        <div className="mt-5 overflow-x-auto overscroll-x-contain">
           <table className="w-full min-w-[520px] text-sm">
             <caption className="sr-only">Auditor access links</caption>
             <thead>

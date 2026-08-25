@@ -338,7 +338,7 @@ export function ValuationComparePage() {
                 <h3 className="border-b border-paper-200 bg-paper-50 px-5 py-3 font-display text-sm font-semibold text-ink-800">
                   {group.title}
                 </h3>
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto overscroll-x-contain">
                   <table className="w-full min-w-[36rem] text-sm">
                     <caption className="sr-only">{group.title}</caption>
                     <thead>

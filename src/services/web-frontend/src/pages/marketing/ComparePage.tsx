@@ -18,7 +18,7 @@ export function ComparePage() {
       </h1>
       <p className="mt-4 max-w-2xl text-sm leading-relaxed text-ink-600">{comparison.summary}</p>
 
-      <div className="mt-10 overflow-x-auto rounded-lg border border-paper-300 shadow-card">
+      <div className="mt-10 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 shadow-card">
         <table className="w-full min-w-[640px] text-sm" aria-label={`N409 vs ${comparison.competitor}`}>
           <thead>
             <tr className="border-b border-paper-300 bg-paper-50 text-left">

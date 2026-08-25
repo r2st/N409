@@ -257,7 +257,7 @@ export function CommandPalette() {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overscroll-contain bg-chrome-950/60 p-4 pt-[12vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-chrome-950/60 p-4 pt-[12vh]"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) close();
       }}
@@ -327,7 +327,7 @@ export function CommandPalette() {
           id="command-palette-list"
           ref={listRef}
           role="listbox"
-          className="max-h-[52vh] overflow-y-auto py-2"
+          className="max-h-[52vh] overflow-y-auto overscroll-y-contain py-2"
         >
           {searchFailed && (
             <p role="status" className="px-4 py-3 text-center text-sm text-red-700">

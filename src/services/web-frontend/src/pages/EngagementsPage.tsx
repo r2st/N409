@@ -77,7 +77,7 @@ export function EngagementsPage() {
           Engagements appear here once work starts on a valuation.
         </EmptyState>
       ) : (
-        <div className="flex gap-4 overflow-x-auto pb-4">
+        <div className="flex gap-4 overflow-x-auto overscroll-x-contain pb-4">
           {stages.map((stage) => {
             const inStage = engagements.filter((e) => e.current_stage === stage.key);
             return (

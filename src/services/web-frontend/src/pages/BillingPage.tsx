@@ -135,7 +135,7 @@ export function BillingPage() {
             Payments appear here as soon as a checkout completes.
           </EmptyState>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+          <div className="overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[720px] text-sm" aria-label="Payment history">
               <thead>
                 <tr className="border-b border-paper-300 text-left">

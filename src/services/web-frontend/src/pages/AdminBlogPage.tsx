@@ -326,7 +326,7 @@ export function AdminBlogPage() {
       )}
 
       {posts.length > 0 && (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+        <div className="mt-6 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[760px] text-sm" aria-label="Blog posts">
             <thead>
               <tr className="border-b border-paper-300 text-left">

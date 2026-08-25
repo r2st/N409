@@ -211,7 +211,7 @@ export function AdminDataRemediationPage() {
             </EmptyState>
           </div>
         ) : (
-          <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+          <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full text-left text-sm">
               <caption className="sr-only">Affected backsolve calculations</caption>
               <thead>
@@ -295,7 +295,7 @@ export function AdminDataRemediationPage() {
             </EmptyState>
           </div>
         ) : (
-          <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+          <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full text-left text-sm" aria-labelledby="stale-qa-reviews-heading">
               <thead>
                 <tr className="border-b border-paper-300 text-xs text-ink-400">

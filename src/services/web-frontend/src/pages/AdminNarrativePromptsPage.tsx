@@ -60,7 +60,7 @@ function GuidanceDiff({ from, to }: { from: string; to: string }) {
     return <p className="px-3 py-2 text-xs text-ink-400">Unchanged from the seeded text.</p>;
   }
   return (
-    <pre className="max-h-64 overflow-auto rounded-md border border-paper-300 bg-paper-50 p-3 text-xs leading-relaxed">
+    <pre className="max-h-64 overflow-auto overscroll-contain rounded-md border border-paper-300 bg-paper-50 p-3 text-xs leading-relaxed">
       {lines.map((l, idx) => (
         <div
           key={idx}

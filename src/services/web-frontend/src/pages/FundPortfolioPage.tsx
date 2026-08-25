@@ -339,7 +339,7 @@ function FundDetailView({ fundId }: { fundId: string }) {
       {nav && (
         <div className="rounded-lg border border-paper-200 bg-surface p-4">
           <h2 className="mb-2 text-sm font-semibold text-ink-700">ASC 820 fair-value hierarchy</h2>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overscroll-x-contain">
             <table className="w-full min-w-[420px] text-sm">
               <caption className="sr-only">Fair value hierarchy</caption>
               <thead>

@@ -298,7 +298,7 @@ export function AdminJobsPage() {
         <StatCard label={`Skipped (${stats.since_hours}h)`} value={String(stats.totals.skipped)} />
       </div>
 
-      <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+      <div className="mt-6 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[720px] text-sm" aria-label="Queue health">
           <thead>
             <tr className="border-b border-paper-300 text-left">
@@ -373,7 +373,7 @@ export function AdminJobsPage() {
           </EmptyState>
         </div>
       ) : (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+        <div className="mt-6 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[960px] text-sm" aria-label="Background jobs">
             <thead>
               <tr className="border-b border-paper-300 text-left">

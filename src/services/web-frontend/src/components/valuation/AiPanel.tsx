@@ -92,7 +92,7 @@ function JobResult({ job }: { job: AiJob }) {
         }>
       | undefined) ?? [];
   return (
-    <div className="mt-2 overflow-x-auto">
+    <div className="mt-2 overflow-x-auto overscroll-x-contain">
       {typeof result.sector === 'string' && result.sector && (
         <p className="mb-2 text-sm text-ink-600">Sector: {result.sector}</p>
       )}

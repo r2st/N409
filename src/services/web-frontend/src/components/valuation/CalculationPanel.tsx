@@ -254,7 +254,7 @@ export function CalculationPanel({
             />
           </div>
 
-          <section className="overflow-x-auto rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+          <section className="overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
             <h3 id="approach-breakdown-heading" className="overline mb-4 text-ink-400">
               Approach breakdown
             </h3>

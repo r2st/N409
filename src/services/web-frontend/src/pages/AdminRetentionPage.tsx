@@ -342,7 +342,7 @@ export function AdminRetentionPage() {
             {busy === 'sweep' ? 'Running sweep…' : 'Run archival sweep'}
           </Button>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overscroll-x-contain">
           <table className="w-full min-w-[600px] text-sm" aria-labelledby="retention-policies-heading">
             <thead>
               <tr className="border-b border-paper-300 text-left">

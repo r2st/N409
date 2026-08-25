@@ -423,7 +423,7 @@ export function ScenariosTab() {
               {saved.scenarios.length} of {saved.max_scenarios}
             </span>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overscroll-x-contain">
             <table
               className="w-full text-left text-sm"
               data-testid="scenario-comparison"

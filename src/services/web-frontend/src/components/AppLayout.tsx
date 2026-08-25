@@ -575,7 +575,10 @@ export function AppLayout() {
     // min-h-0 lets this flex child shrink below its content height so
     // overflow-y-auto can take over; without it the nav grows past the fixed
     // sidebar and pushes the user card below the viewport (bottom items hidden).
-    <nav aria-label={label} className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3">
+    <nav
+      aria-label={label}
+      className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-y-contain px-3"
+    >
       <ViewModeToggle onNavigate={close} />
       <PaletteTrigger onNavigate={close} />
       <div className="overline mt-3 mb-2 px-3 text-chrome-faint/80">Workspace</div>
@@ -757,7 +760,7 @@ export function AppLayout() {
       {menuOpen && (
         <div
           id="mobile-nav-drawer"
-          className="ledger-grid fixed inset-x-0 top-[52px] z-20 flex max-h-[calc(100dvh-52px)] flex-col overflow-y-auto bg-chrome-900 pb-2 shadow-lift lg:hidden"
+          className="ledger-grid fixed inset-x-0 top-[52px] z-20 flex max-h-[calc(100dvh-52px)] flex-col overflow-y-auto overscroll-y-contain bg-chrome-900 pb-2 shadow-lift lg:hidden"
         >
           {renderNav('Mobile')}
           {themeRow}

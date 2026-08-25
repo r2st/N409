@@ -1040,7 +1040,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               No scenarios yet — add IPO / acquisition / continuation / liquidation outcomes.
             </p>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overscroll-x-contain">
               <table className="w-full min-w-[720px] text-sm">
                 <caption className="sr-only">PWERM exit scenarios</caption>
                 <thead>
