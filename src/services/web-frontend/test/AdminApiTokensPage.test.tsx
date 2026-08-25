@@ -266,3 +266,78 @@ describe('AdminApiTokensPage', () => {
     await waitFor(() => expect(gets).toHaveLength(2));
   });
 });
+
+/**
+ * The "Include revoked" checkbox with two listings in flight.
+ *
+ * Ticking and unticking issues two requests to two different addresses, and
+ * nothing orders the replies. What the stale one produces is the wrong answer
+ * to the only question this page exists to answer — which credentials still
+ * have access — with a checkbox above it asserting the opposite.
+ */
+describe('AdminApiTokensPage — the listing that replies late', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  function deferListings() {
+    const pending: Array<{ url: string; resolve: (body: unknown, status?: number) => void }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      return new Promise<Response>((res) =>
+        pending.push({ url: path, resolve: (body, status = 200) => res(jsonResponse(body, status)) }),
+      );
+    });
+    return pending;
+  }
+
+  const listing = (tokens: typeof TOKENS) => ({ ...LISTING, tokens, total: tokens.length });
+
+  it('shows the listing the checkbox is asking for, not the one that replied last', async () => {
+    const user = userEvent.setup();
+    const pending = deferListings();
+    renderPage();
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]!.resolve(listing(TOKENS.filter((t) => t.revoked_at === null)));
+    await screen.findByText('nightly sync');
+
+    await user.click(screen.getByLabelText('Include revoked'));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    await user.click(screen.getByLabelText('Include revoked'));
+    await waitFor(() => expect(pending).toHaveLength(3));
+
+    expect(pending[1]!.url).toContain('revoked=true');
+    expect(pending[2]!.url).not.toContain('revoked=true');
+
+    // The unticked listing lands first; the ticked one — the box the admin has
+    // already cleared — lands on top of it.
+    pending[2]!.resolve(listing(TOKENS.filter((t) => t.revoked_at === null)));
+    await screen.findByText('nightly sync');
+    pending[1]!.resolve(listing(TOKENS));
+
+    await waitFor(() => expect(screen.getByText('nightly sync')).toBeInTheDocument());
+    const revoked = TOKENS.find((t) => t.revoked_at !== null)!;
+    expect(screen.queryByText(revoked.name)).toBeNull();
+  });
+
+  it('does not report the abandoned listing’s refusal', async () => {
+    const user = userEvent.setup();
+    const pending = deferListings();
+    renderPage();
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]!.resolve(listing(TOKENS.filter((t) => t.revoked_at === null)));
+    await screen.findByText('nightly sync');
+
+    await user.click(screen.getByLabelText('Include revoked'));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    await user.click(screen.getByLabelText('Include revoked'));
+    await waitFor(() => expect(pending).toHaveLength(3));
+
+    pending[2]!.resolve(listing(TOKENS.filter((t) => t.revoked_at === null)));
+    await screen.findByText('nightly sync');
+    pending[1]!.resolve({ status: 403 }, 403);
+
+    await waitFor(() => expect(screen.getByText('nightly sync')).toBeInTheDocument());
+    expect(screen.queryByText(/administrator-only|Could not load the token listing/)).toBeNull();
+  });
+});

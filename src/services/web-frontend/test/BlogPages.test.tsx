@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HelmetProvider } from 'react-helmet-async';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { BlogIndexPage, BlogPostPage } from '../src/pages/marketing/BlogPages';
 
 /**
@@ -218,5 +218,89 @@ describe('blog post', () => {
     mockApi({ publicStatus: 404 });
     renderPost('gone');
     expect(await screen.findByRole('link', { name: /All posts/ })).toHaveAttribute('href', '/blog');
+  });
+});
+
+/**
+ * Two posts in flight.
+ *
+ * `/blog/:slug` is one route, so following a link from one article to the next
+ * changes the slug without tearing the page down. The abandoned request can
+ * finish last and render the previous article under the current URL — and it
+ * brings its `<Seo>` with it, so the title, the canonical link and the
+ * structured data on the page describe a post that is not the one on screen.
+ * This is the indexable half of the platform, which is the wrong place to be
+ * telling a crawler one thing and a reader another.
+ */
+describe('BlogPostPage — the article that replies late', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    ROLES.current = [];
+  });
+
+  const other = { ...POST, slug: 'second-post', title: 'The post the reader clicked' };
+
+  function deferPosts() {
+    const pending: Array<{ url: string; resolve: (body: unknown, status?: number) => void }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.includes('/blog/posts/')) {
+        return new Promise<Response>((res) =>
+          pending.push({ url: path, resolve: (body, status = 200) => res(jsonResponse(body, status)) }),
+        );
+      }
+      return jsonResponse({}, 404);
+    });
+    return pending;
+  }
+
+  const renderTwoPosts = () =>
+    render(
+      <HelmetProvider>
+        <MemoryRouter initialEntries={[`/blog/${POST.slug}`]}>
+          <Routes>
+            <Route path="/blog/:slug" element={<BlogPostPage />} />
+          </Routes>
+          <Link to={`/blog/${other.slug}`}>Read the next one</Link>
+        </MemoryRouter>
+      </HelmetProvider>,
+    );
+
+  it('renders the post in the URL, not the one that replied last', async () => {
+    const user = userEvent.setup();
+    const pending = deferPosts();
+    renderTwoPosts();
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await user.click(screen.getByRole('link', { name: 'Read the next one' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    expect(pending[0]!.url).toContain(POST.slug);
+    expect(pending[1]!.url).toContain(other.slug);
+
+    pending[1]!.resolve({ post: other });
+    await screen.findByText(other.title);
+    pending[0]!.resolve({ post: POST });
+
+    await waitFor(() => expect(screen.getByText(other.title)).toBeInTheDocument());
+    expect(screen.queryByText(POST.title)).toBeNull();
+  });
+
+  it('does not mark the visible post missing because the abandoned one 404d', async () => {
+    // A 404 is not an error here — it is the unpublished-draft path, and for an
+    // anonymous reader it renders the whole page as "That post has moved on".
+    const user = userEvent.setup();
+    const pending = deferPosts();
+    renderTwoPosts();
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await user.click(screen.getByRole('link', { name: 'Read the next one' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+
+    pending[1]!.resolve({ post: other });
+    await screen.findByText(other.title);
+    pending[0]!.resolve({ status: 404 }, 404);
+
+    await waitFor(() => expect(screen.getByText(other.title)).toBeInTheDocument());
+    expect(screen.queryByText(/moved on|not found/i)).toBeNull();
   });
 });

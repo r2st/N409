@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
+import { useLatestOnly } from '../../lib/useLatestOnly';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { formatDate } from '../../lib/format';
@@ -202,12 +203,29 @@ export function BlogPostPage() {
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /*
+   * Following a link from one post to the next keeps this component mounted and
+   * only changes `:slug`, so two posts can be in flight at once. The stale
+   * reply renders the previous article under the current URL — and carries its
+   * `<Seo>` with it, so the canonical link, the title and the structured data
+   * on the page all describe a post that is not the one being shown. This is
+   * the public, indexable half of the platform; it is the wrong place to be
+   * telling a crawler one thing and a reader another.
+   *
+   * The two-step lookup makes it worse rather than better: an ops writer's
+   * 404-then-preview path is two round trips, so the abandoned request has a
+   * second chance to finish last. See `useLatestOnly`.
+   */
+  const claim = useLatestOnly();
+
   const load = useCallback(async () => {
     if (!slug) return;
+    const current = claim();
     try {
       const res = await api<{ post: Post }>(`/blog/posts/${slug}`);
-      setPost(res.post);
+      if (current()) setPost(res.post);
     } catch (err) {
+      if (!current()) return;
       if (!(err instanceof ApiError) || err.status !== 404) {
         setError('Could not load this post just now.');
         return;
@@ -219,12 +237,12 @@ export function BlogPostPage() {
       }
       try {
         const res = await api<{ post: Post }>(`/admin/blog/posts/${slug}`);
-        setPost(res.post);
+        if (current()) setPost(res.post);
       } catch {
-        setMissing(true);
+        if (current()) setMissing(true);
       }
     }
-  }, [slug, ops]);
+  }, [slug, ops, claim]);
 
   useEffect(() => {
     void load();

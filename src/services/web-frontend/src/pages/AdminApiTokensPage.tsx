@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { useLatestOnly } from '../lib/useLatestOnly';
 import { formatDate, formatDateTime } from '../lib/format';
 import { Button, EmptyState, ErrorNote, Spinner, StatCard } from '../components/ui';
 
@@ -52,18 +53,28 @@ export function AdminApiTokensPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // "Include revoked" is a checkbox, so both listings can be in flight at once
+  // and the reply for the box's previous position can land second. What that
+  // shows is revoked credentials in a list that says it holds live ones, or the
+  // reverse — on the page an administrator uses to decide what still has
+  // access. See `useLatestOnly`.
+  const claim = useLatestOnly();
+
   const load = useCallback(async () => {
+    const current = claim();
     try {
       setError(null);
-      setData(await api<TokenListing>(`/admin/api-tokens${showRevoked ? '?revoked=true' : ''}`));
+      const listing = await api<TokenListing>(`/admin/api-tokens${showRevoked ? '?revoked=true' : ''}`);
+      if (current()) setData(listing);
     } catch (err) {
+      if (!current()) return;
       setError(
         err instanceof ApiError && err.status === 403
           ? 'The platform token listing is administrator-only.'
           : 'Could not load the token listing.',
       );
     }
-  }, [showRevoked]);
+  }, [showRevoked, claim]);
 
   useEffect(() => {
     void load();

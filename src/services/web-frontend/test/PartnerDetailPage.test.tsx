@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { PartnerDetailPage } from '../src/pages/PartnerDetailPage';
 import type { PartnerDetail } from '../src/lib/types';
 
@@ -640,5 +640,94 @@ describe('PartnerDetailPage — the engagement pager', () => {
 
     await waitFor(() => expect(screen.getByText('Page Three Co')).toBeInTheDocument());
     expect(screen.queryByText(/Could not load this partner/)).toBeNull();
+  });
+});
+
+/**
+ * Two firms in flight.
+ *
+ * `/admin/partners/:id` is one route, so moving from one firm to another
+ * changes the id without tearing this page down. The late reply does more than
+ * relabel a heading: this load seeds every form on the page — brand colour,
+ * logo URL, subdomain, the CC list, the email templates — so the boxes fill
+ * with one firm's branding under the other firm's name, and saving writes it
+ * across. The API-token panel below has the same shape and a sharper subject:
+ * one partner's live credentials listed as another's.
+ */
+describe('PartnerDetailPage — navigating between firms', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  const OTHER_ID = '01N409PARTNER00000000000BB';
+
+  const firm = (id: string, name: string, colour: string): PartnerDetail => ({
+    ...detail,
+    id,
+    name,
+    key: name.toLowerCase(),
+    brand_color: colour,
+  });
+
+  function deferFirms() {
+    const pending: Array<{ url: string; resolve: (body: unknown, status?: number) => void }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (/\/partners\/[^/?]+$/.test(path.split('?')[0]!)) {
+        return new Promise<Response>((res) =>
+          pending.push({ url: path, resolve: (body, status = 200) => res(jsonResponse(body, status)) }),
+        );
+      }
+      if (path.includes('/tokens')) return jsonResponse({ tokens: [] });
+      if (path.includes('/valuations')) return jsonResponse({ valuations: [], total: 0 });
+      return jsonResponse({});
+    });
+    return pending;
+  }
+
+  const renderTwoFirms = () =>
+    render(
+      <MemoryRouter initialEntries={[`/admin/partners/${PARTNER_ID}`]}>
+        <Routes>
+          <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
+        </Routes>
+        <Link to={`/admin/partners/${OTHER_ID}`}>Open the other firm</Link>
+      </MemoryRouter>,
+    );
+
+  it('fills the branding forms from the firm in the URL, not the one that replied last', async () => {
+    const user = userEvent.setup();
+    const pending = deferFirms();
+    renderTwoFirms();
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await user.click(screen.getByRole('link', { name: 'Open the other firm' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    expect(pending[0]!.url).toContain(PARTNER_ID);
+    expect(pending[1]!.url).toContain(OTHER_ID);
+
+    pending[1]!.resolve({ partner: firm(OTHER_ID, 'Carta', '#00ff00') });
+    await screen.findAllByText('Carta');
+    pending[0]!.resolve({ partner: firm(PARTNER_ID, 'Vestd', '#ff0000') });
+
+    await waitFor(() => expect(screen.getAllByText('Carta').length).toBeGreaterThan(0));
+    expect(screen.queryAllByText('Vestd')).toHaveLength(0);
+    // The branding box is the half that survives a reload and gets written back.
+    expect(screen.getByLabelText(/brand colour|brand color/i)).toHaveValue('#00ff00');
+  });
+
+  it('does not report the abandoned firm’s 404 against the one on screen', async () => {
+    const user = userEvent.setup();
+    const pending = deferFirms();
+    renderTwoFirms();
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await user.click(screen.getByRole('link', { name: 'Open the other firm' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+
+    pending[1]!.resolve({ partner: firm(OTHER_ID, 'Carta', '#00ff00') });
+    await screen.findAllByText('Carta');
+    pending[0]!.resolve({ detail: 'gone' }, 404);
+
+    await waitFor(() => expect(screen.getAllByText('Carta').length).toBeGreaterThan(0));
+    expect(screen.queryByText('This partner does not exist.')).toBeNull();
   });
 });

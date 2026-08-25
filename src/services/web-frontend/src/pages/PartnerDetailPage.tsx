@@ -228,14 +228,20 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // `:id` changes without this page being torn down — one firm's detail links
+  // straight to another's — so a late reply lists one partner's live API
+  // credentials under a different partner's name. See `useLatestOnly`.
+  const claim = useLatestOnly();
+
   const load = useCallback(async () => {
+    const current = claim();
     try {
       const { tokens: rows } = await api<{ tokens: ApiToken[] }>(`/partners/${partnerId}/tokens`);
-      setTokens(rows);
+      if (current()) setTokens(rows);
     } catch {
-      setError('Could not load API tokens.');
+      if (current()) setError('Could not load API tokens.');
     }
-  }, [partnerId]);
+  }, [partnerId, claim]);
 
   useEffect(() => {
     void load();
@@ -485,9 +491,21 @@ export function PartnerDetailPage() {
   const [subdomain, setSubdomain] = useState('');
   const [ccEmails, setCcEmails] = useState('');
 
+  /*
+   * `:id` changes without this page being torn down, so two firms can be in
+   * flight at once. The late reply does not just relabel a heading: it seeds
+   * every form on this page — brand colour, logo, subdomain, the CC list and
+   * the email templates — from the other firm's record, under this firm's name.
+   * Saving then writes one partner's branding onto another's. See
+   * `useLatestOnly`.
+   */
+  const claim = useLatestOnly();
+
   const load = useCallback(async () => {
+    const current = claim();
     try {
       const { partner: p } = await api<{ partner: PartnerDetail }>(`/partners/${id}`);
+      if (!current()) return;
       setPartner(p);
       setBrandColor(p.brand_color ?? '');
       setLogoUrl(p.logo_url ?? '');
@@ -497,13 +515,14 @@ export function PartnerDetailPage() {
       // comma, and a trailing comma is an empty address the API rejects.
       setCcEmails((p.cc_emails ?? []).join('\n'));
     } catch (err) {
+      if (!current()) return;
       setError(
         err instanceof ApiError && err.status === 404
           ? 'This partner does not exist.'
           : 'Could not load the partner.',
       );
     }
-  }, [id]);
+  }, [id, claim]);
 
   useEffect(() => {
     void load();
