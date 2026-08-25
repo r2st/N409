@@ -718,6 +718,33 @@ const GIFTS_SECTIONS: readonly IntakeSection[] = [
         hint: 'As a percentage — 25 for a quarter interest.',
         rules: { min: 0, max: 100 },
       },
+      // §2503(b). The engine has taken these three since it was written and
+      // nothing ever sent them, so every gift return the deliverable supported
+      // was struck at the full appraised value with the exclusion shown as
+      // nil. The figure is indexed for inflation, so it is asked for rather
+      // than assumed — it belongs to the year of the transfer above.
+      {
+        key: 'donees',
+        label: 'Number of donees receiving the interest',
+        type: 'number',
+        required: false,
+        hint: 'The annual exclusion is per donee. Leave blank for a single donee.',
+        rules: { min: 1, max: 1000 },
+      },
+      {
+        key: 'annual_exclusion',
+        label: 'Annual exclusion per donee for the year of transfer',
+        type: 'number',
+        required: false,
+        hint: 'IRC §2503(b), indexed each year — the figure in force on the transfer date. Leave blank if the exclusion has not been determined; it is not assumed to be nil.',
+        rules: { min: 0 },
+      },
+      {
+        key: 'split_gift',
+        label: 'Is a spousal split-gift election being made (§2513)?',
+        type: 'boolean',
+        required: false,
+      },
     ],
   },
   {

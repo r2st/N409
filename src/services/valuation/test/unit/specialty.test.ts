@@ -269,6 +269,45 @@ describe('specialtyEngineRequest — gift & estate', () => {
     const req = specialtyEngineRequest('gifts', { entity_value: 1_000, percent_interest: 10 });
     expect((req.body.inputs as Record<string, unknown>).transfer_type).toBe('gift');
   });
+
+  it('carries the §2503(b) exclusion facts the engine has always accepted', () => {
+    // The engine has taken `annual_exclusion`, `donees` and `split_gift` since
+    // it was written and the assembler sent none of them, so every gift return
+    // was struck at the full appraised value.
+    const req = specialtyEngineRequest('gifts', {
+      ...answers,
+      entity_value: 10_000_000,
+      annual_exclusion: 19_000,
+      donees: 3,
+      split_gift: true,
+    });
+    const inputs = req.body.inputs as Record<string, unknown>;
+    expect(inputs.annual_exclusion).toBe(19_000);
+    expect(inputs.donees).toBe(3);
+    expect(inputs.split_gift).toBe(true);
+  });
+
+  it('leaves an unanswered exclusion out rather than sending a zero', () => {
+    // A 0 on the wire is a determination that none is available; silence is
+    // the engine's undetermined case, which the exhibit prints differently.
+    const req = specialtyEngineRequest('gifts', { ...answers, entity_value: 10_000_000 });
+    const inputs = req.body.inputs as Record<string, unknown>;
+    expect('annual_exclusion' in inputs).toBe(false);
+    expect('donees' in inputs).toBe(false);
+    expect('split_gift' in inputs).toBe(false);
+  });
+
+  it('sends an answered exclusion of zero, which is not the same as silence', () => {
+    const req = specialtyEngineRequest('gifts', {
+      ...answers,
+      entity_value: 10_000_000,
+      annual_exclusion: 0,
+      split_gift: false,
+    });
+    const inputs = req.body.inputs as Record<string, unknown>;
+    expect(inputs.annual_exclusion).toBe(0);
+    expect(inputs.split_gift).toBe(false);
+  });
 });
 
 describe('specialtyEngineRequest — IFRS 2', () => {

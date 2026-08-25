@@ -461,6 +461,12 @@ function giftEstateRequest(answers: Answers, overrides: Answers): SpecialtyReque
   put(inputs, 'dloc', num(answers, 'dloc'));
   put(inputs, 'dlom', num(answers, 'dlom'));
   put(inputs, 'prior_taxable_gifts', num(answers, 'prior_gifts_value'));
+  // §2503(b). Absent stays absent — the engine reports an undetermined
+  // exclusion differently from a nil one, and putting a 0 here would turn an
+  // unanswered question into a determination on the return.
+  put(inputs, 'annual_exclusion', num(answers, 'annual_exclusion'));
+  put(inputs, 'donees', num(answers, 'donees'));
+  put(inputs, 'split_gift', bool(answers, 'split_gift'));
   return { path: '/engine/v1/gift-estate', body: { inputs: { ...inputs, ...overrides } } };
 }
 
