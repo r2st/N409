@@ -67,6 +67,8 @@ export function OnboardingPage() {
   const [busy, setBusy] = useState(false);
   const [valuation, setValuation] = useState<Valuation | null>(restored?.valuation ?? null);
   const [quote, setQuote] = useState<PaymentQuote | null>(null);
+  /** The price could not be fetched — distinct from there not being one. */
+  const [quoteFailed, setQuoteFailed] = useState(false);
   const [paymentNote, setPaymentNote] = useState<string | null>(restored?.paymentNote ?? null);
   const [uploaded, setUploaded] = useState<Record<string, string[]>>(restored?.uploaded ?? {});
   const [docKind, setDocKind] = useState<DocumentKind>('cap_table');
@@ -98,8 +100,15 @@ export function OnboardingPage() {
     if (!valuation || step !== 1) return;
     let live = true;
     void api<{ quote: PaymentQuote }>(`/valuations/${valuation.id}/payments/quote`)
-      .then(({ quote: q }) => live && setQuote(q))
-      .catch(() => {});
+      .then(({ quote: q }) => {
+        if (!live) return;
+        setQuote(q);
+        setQuoteFailed(false);
+      })
+      // The button below still opens checkout and Stripe still quotes the real
+      // figure, so this is not fatal — but a pay screen that shows no price and
+      // does not say why is asking someone to start a payment blind.
+      .catch(() => live && setQuoteFailed(true));
     return () => {
       live = false;
     };
@@ -296,6 +305,12 @@ export function OnboardingPage() {
               <span className="tnum text-lg font-semibold text-ink-900">
                 {formatMoney(quote.amount_cents, quote.currency)}
               </span>
+            </p>
+          )}
+          {quoteFailed && (
+            <p className="text-sm text-ink-500">
+              The price could not be worked out just now, so none is shown here. Checkout still quotes it —
+              the amount on the payment page is the amount you will be charged.
             </p>
           )}
           <div className="flex flex-wrap gap-3">

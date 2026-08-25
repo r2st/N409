@@ -524,4 +524,53 @@ describe('OnboardingPage — uploading documents', () => {
     expect(await screen.findByText(/Your request is in/)).toBeInTheDocument();
     expect(screen.getByText(/1 document received/)).toBeInTheDocument();
   });
+  /*
+   * The quote was loaded with `.catch(() => {})`. It is not fatal — the button
+   * still opens checkout and Stripe still quotes the real figure — but a pay
+   * step showing no price and giving no reason asks somebody to start a payment
+   * blind, and the button's own label silently loses its amount too.
+   */
+  it('says why the price is missing rather than showing a pay step with none', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/valuations') && init?.method === 'POST') {
+        return jsonResponse({ valuation: VALUATION }, 201);
+      }
+      if (url.includes('/payments/quote')) return jsonResponse({ detail: 'nope' }, 503);
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    renderPage();
+
+    await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme Robotics, Inc.');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    await screen.findByText(/price could not be worked out/i);
+    expect(screen.queryByTestId('onboarding-quote')).toBeNull();
+    // Still payable — the fix explains the absence, it does not block checkout.
+    expect(screen.getByRole('button', { name: /with card/i })).not.toBeDisabled();
+  });
+
+  it('says nothing of the sort when the quote arrives', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/valuations') && init?.method === 'POST') {
+        return jsonResponse({ valuation: VALUATION }, 201);
+      }
+      if (url.includes('/payments/quote')) {
+        return jsonResponse({
+          quote: { amount_cents: 119_000, currency: 'USD', kind: '409a', configured: true },
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    renderPage();
+
+    await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme Robotics, Inc.');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    await waitFor(() => expect(screen.getByTestId('onboarding-quote')).toHaveTextContent('$1,190.00'));
+    expect(screen.queryByText(/price could not be worked out/i)).toBeNull();
+  });
 });

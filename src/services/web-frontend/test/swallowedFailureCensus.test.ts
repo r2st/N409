@@ -61,18 +61,12 @@ const SILENT_BY_DESIGN: Record<string, string> = {
     'Falls back to the built-in topic list, so the widget still answers the questions it shipped with.',
   'src/pages/CommunicationsPage.tsx\t/admin/communication-templates/variables':
     'A palette of insertable variables. Without it they are typed by hand, which is what the page did before.',
+  'src/pages/PartnerPortalPage.tsx\t/partners/mine':
+    'Branding only. The heading falls back to "Your portfolio", which is true of every partner and claims nothing.',
 };
 
 /** Each reason says what the user is told that is not true. */
 const KNOWN_UNFIXED: Record<string, string> = {
-  'src/pages/OnboardingPage.tsx\t/valuations/${valuation.id}/payments/quote':
-    'The price disappears from the pay step. Honest — checkout still shows it — but unexplained on a money screen.',
-  'src/components/PaymentSection.tsx\t/valuations/${valuation.id}/payments/quote?${query}':
-    'The same missing price as the onboarding pay step, on the in-app one. Both should say why, or neither.',
-  'src/pages/PartnerPortalPage.tsx\t/partners/mine':
-    "The organisation's own name and branding are silently absent from its portal.",
-  'src/pages/ValuationsPage.tsx\t/valuations/counts?buckets=named&${filterQuery}':
-    'Tab counts vanish rather than saying they are unknown.',
   'src/pages/valuation/GrantsTab.tsx\t/grant-templates':
     'The vesting select falls back to "Custom…" alone, which is a different grant from the one intended.',
 };

@@ -73,6 +73,8 @@ interface Options {
   exportStatus?: number;
   /** Fail the organisation list, which loads separately from the rows. */
   partnersStatus?: number;
+  /** Fail the counts+buckets load, which also drives the scope tab bar. */
+  countsStatus?: number;
 }
 
 function mockApi(opts: Options = {}) {
@@ -81,7 +83,20 @@ function mockApi(opts: Options = {}) {
     const path = String(url);
     calls.push({ url: path, method: init?.method ?? 'GET' });
     if (path.includes('/valuations/counts')) {
-      return jsonResponse({ counts: { all: 2, open: 0, in_review: 0, drafted: 0, published: 0, closed: 2 } });
+      if (opts.countsStatus) return jsonResponse({ detail: 'No' }, opts.countsStatus);
+      // `buckets` is served alongside the counts and drives the tab bar; the
+      // mock omitted it, so no test here had ever rendered a tab.
+      return jsonResponse({
+        counts: { all: 2, open: 0, in_review: 0, drafted: 0, published: 0, closed: 2 },
+        buckets: [
+          { key: 'all', label: 'All' },
+          { key: 'open', label: 'Open' },
+          { key: 'in_review', label: 'In review' },
+          { key: 'drafted', label: 'Drafted' },
+          { key: 'published', label: 'Published' },
+          { key: 'closed', label: 'Closed' },
+        ],
+      });
     }
     if (path.includes('/valuations/export')) {
       if (opts.exportStatus) return jsonResponse({ status: opts.exportStatus }, opts.exportStatus);
@@ -664,5 +679,37 @@ describe('ValuationsPage — bulk failures', () => {
 
     await screen.findByRole('combobox', { name: 'Filter by partner' });
     expect(screen.queryByText(/organisations could not be loaded/)).toBeNull();
+  });
+  /*
+   * `setCounts(null)` was the honest half — the badges then render as absent
+   * rather than as zero. What it missed is that `bucketDefs` comes from the
+   * same response and drives the tab bar itself, so a first-load failure left
+   * All / Open / In review / Drafted / Published / Closed simply not there,
+   * with nothing saying why.
+   */
+  it('says the scope tabs are missing rather than rendering no navigation', async () => {
+    mockApi({ countsStatus: 503 });
+    renderPage();
+
+    await screen.findByText(/scope tabs could not be loaded/);
+    expect(screen.queryByRole('tab', { name: /In review/ })).toBeNull();
+  });
+
+  it('still lists the rows when the scope tabs fail', async () => {
+    // The tabs are one load; the list is another. Losing the first must not
+    // cost the second.
+    mockApi({ countsStatus: 503 });
+    renderPage();
+
+    await screen.findByText(/scope tabs could not be loaded/);
+    expect(await screen.findByRole('table')).toBeInTheDocument();
+  });
+
+  it('renders the tabs and no such note when the counts load', async () => {
+    mockApi();
+    renderPage();
+
+    await screen.findByRole('tab', { name: /In review/ });
+    expect(screen.queryByText(/scope tabs could not be loaded/)).toBeNull();
   });
 });

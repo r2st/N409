@@ -241,6 +241,49 @@ describe('PaymentSection add-ons and the itemised quote', () => {
     expect(screen.getByTestId('quote-lines')).toHaveTextContent('1 business day');
   });
 
+  it('drops the stale price when a re-quote fails, rather than showing the old one', async () => {
+    /*
+     * The catch here said "price stays hidden", which is true of the first load
+     * and false of every one after it. The quote is re-fetched whenever an
+     * add-on is toggled, so a failed *re*-quote left the previous total on
+     * screen — itemised, labelled Total — beside checkboxes that no longer
+     * matched it. Showing a client the wrong figure on the panel they are about
+     * to pay from is the one outcome worth being loud about.
+     */
+    const user = userEvent.setup();
+    let failNext = false;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/payments/quote')) {
+        if (failNext) return jsonResponse({ detail: 'nope' }, 503);
+        return jsonResponse({ quote: QUOTE });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    render(<PaymentSection valuation={VALUATION} />);
+    await waitFor(() => expect(screen.getByTestId('payment-quote')).toHaveTextContent('$1,190.00'));
+
+    failNext = true;
+    await user.click(screen.getByTestId('addon-express'));
+
+    await screen.findByText(/price could not be worked out/i);
+    expect(screen.queryByTestId('payment-quote')).toBeNull();
+    expect(screen.queryByText('$1,190.00')).toBeNull();
+  });
+
+  it('says nothing about a missing price while quoting works', async () => {
+    // The other half — toggling an add-on against a healthy server must not
+    // flash the warning.
+    const user = userEvent.setup();
+    pricingServer();
+    render(<PaymentSection valuation={VALUATION} />);
+    await waitFor(() => expect(screen.getByTestId('payment-quote')).toHaveTextContent('$2,290.00'));
+
+    await user.click(screen.getByTestId('addon-express'));
+    await waitFor(() => expect(screen.getByTestId('payment-quote')).toHaveTextContent('$2,790.00'));
+    expect(screen.queryByText(/price could not be worked out/i)).toBeNull();
+  });
+
   it('posts the flags, never a total — the browser must not be able to set the price', async () => {
     const user = userEvent.setup();
     const calls = pricingServer();

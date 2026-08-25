@@ -14,6 +14,16 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [quote, setQuote] = useState<PaymentQuote | null>(null);
+  /*
+   * The catch here used to say "price stays hidden", which is true of the first
+   * load and false of every one after it. This quote is re-fetched whenever an
+   * add-on is toggled, so a failed *re*-quote did not hide the price — it left
+   * the previous one on screen, itemised and labelled Total, beside checkboxes
+   * that no longer matched it. Showing a client the wrong figure on the panel
+   * they are about to pay from is the one outcome worth being loud about, so
+   * the stale quote is dropped and the absence is explained.
+   */
+  const [quoteFailed, setQuoteFailed] = useState(false);
   const [express, setExpress] = useState(false);
   const [qsbsLetter, setQsbsLetter] = useState(false);
 
@@ -32,10 +42,14 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
     });
     void api<{ quote: PaymentQuote }>(`/valuations/${valuation.id}/payments/quote?${query}`)
       .then((res) => {
-        if (!cancelled) setQuote(res.quote);
+        if (cancelled) return;
+        setQuote(res.quote);
+        setQuoteFailed(false);
       })
       .catch(() => {
-        // Price stays hidden; the checkout button still works.
+        if (cancelled) return;
+        setQuote(null);
+        setQuoteFailed(true);
       });
     return () => {
       cancelled = true;
@@ -142,6 +156,13 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
             </p>
           )}
         </dl>
+      )}
+
+      {quoteFailed && (
+        <p className="mt-4 border-t border-amber-200 pt-3 text-sm text-amber-900">
+          The price could not be worked out just now, so none is shown. Checkout still quotes it — the
+          amount on the Stripe page is the amount you will be charged.
+        </p>
       )}
 
       {/* Only ops ever see this: the API sends `test_mode` to nobody else, and

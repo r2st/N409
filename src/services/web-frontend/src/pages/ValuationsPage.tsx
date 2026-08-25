@@ -126,6 +126,7 @@ export function ValuationsPage() {
   const [data, setData] = useState<ValuationList | null>(null);
   const [counts, setCounts] = useState<NamedBucketCounts | null>(null);
   const [bucketDefs, setBucketDefs] = useState<NamedBucketDef[] | null>(null);
+  const [countsFailed, setCountsFailed] = useState(false);
   const [reviewers, setReviewers] = useState<UserOption[]>([]);
   const [reviewersCapped, setReviewersCapped] = useState(false);
   /*
@@ -197,8 +198,23 @@ export function ValuationsPage() {
       .then((res) => {
         setCounts(res.counts);
         setBucketDefs(res.buckets);
+        setCountsFailed(false);
       })
-      .catch(() => setCounts(null));
+      /*
+       * `setCounts(null)` is the honest half — the badges then render as absent
+       * rather than as zero, which they never should. What it does not cover is
+       * `bucketDefs`, which comes from the same response and drives the scope
+       * tab bar itself. On a first-load failure that stays null and `tabs` is
+       * empty, so All / Open / In review / Drafted / Published / Closed — the
+       * primary navigation of this page — simply is not there, and nothing says
+       * why. The tabs are deliberately served rather than restated (see `tabs`
+       * below), so the answer is to report the outage, not to hard-code a
+       * second copy of the mapping.
+       */
+      .catch(() => {
+        setCounts(null);
+        setCountsFailed(true);
+      });
   }, [filterQuery]);
 
   useEffect(loadCounts, [loadCounts]);
@@ -387,6 +403,13 @@ export function ValuationsPage() {
             Clear scope
           </button>
         </div>
+      )}
+
+      {countsFailed && tabs.length === 0 && (
+        <p className="mt-6 text-sm text-ink-400">
+          The scope tabs could not be loaded, so this list is unfiltered. The filters below still work, and
+          reloading the page will try again.
+        </p>
       )}
 
       {/* Tabbed scopes with live counts (M3 feature 15) */}
