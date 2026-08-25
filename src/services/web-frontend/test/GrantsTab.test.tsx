@@ -10,10 +10,19 @@ import type { User, Valuation } from '../src/lib/types';
  * eventually exercises against, so the two things worth pinning hardest are
  * units and permissions.
  *
- * Units: `exercise_price` and every scenario figure are *minor* units, and
- * `formatMoney` divides by 100. A grant priced at 250 is $2.50 a share, not
- * $250 — the same number is defensible either way on screen, and nothing else
- * in the frontend re-checks it.
+ * Units: `option_grants.exercise_price` is a `numeric` column holding the
+ * board-adopted FMV per share in the currency's own units — 2.5 is $2.50 —
+ * and every scenario figure is derived from it (`domain/vesting.ts`, no
+ * conversion anywhere in between). `grants.test.ts` in the valuation service
+ * pins the same thing from the other end.
+ *
+ * This file used to assert the opposite. Its fixture priced the grant at 250
+ * and expected "$2.50", which is what `lib/format`'s `formatMoney` — the one
+ * that divides by 100 — produced, and the tab imported that one. So a real
+ * $2.50 strike rendered as $0.03 and a $100,000 exercise cost as $1,000, on
+ * the tab where an employee is told what their options are worth. The test
+ * was green throughout: it and the component agreed with each other and
+ * neither had ever asked the server.
  *
  * Permissions: `isOps` decides whether the issue and cancel controls exist at
  * all. A non-ops viewer seeing a cancel button is a support incident; the
@@ -46,8 +55,8 @@ const GRANT = {
   grantee_email: 'dana@example.com',
   grant_date: '2026-01-15',
   options_count: 40_000,
-  // Minor units: $2.50 a share.
-  exercise_price: '250',
+  // The currency's own units: $2.50 a share, as `numeric` sends it.
+  exercise_price: '2.5',
   currency: 'USD',
   vesting_template: 'standard_4yr_1yr_cliff',
   vesting_start_date: '2026-01-15',
@@ -74,12 +83,16 @@ const DETAIL = {
     { monthOffset: 12, date: '2027-01-15', cumulativeVested: 10_000 },
     { monthOffset: 48, date: '2030-01-15', cumulativeVested: 40_000 },
   ],
+  // 40,000 options struck at $2.50, valued at twice that: the spread is $2.50
+  // a share, and both the cost of exercising and the gross proceeds are
+  // $100,000. Same units as the grant, because `exerciseScenarios` does no
+  // conversion.
   scenarios: [
     {
-      fmv: 500,
-      spreadPerShare: 250,
-      grossValue: 10_000_000,
-      exerciseCost: 10_000_000,
+      fmv: 5,
+      spreadPerShare: 2.5,
+      grossValue: 100_000,
+      exerciseCost: 100_000,
       multipleOfCurrent: 2,
     },
   ],
@@ -169,9 +182,10 @@ describe('GrantsTab', () => {
       expect(screen.queryByText('Loading grants…')).not.toBeInTheDocument();
     });
 
-    it('prices the grant in major units', async () => {
-      // 250 minor units is $2.50 a share. Printing "$250.00" here would
-      // misstate the strike by 100× on every grant in the list.
+    it('prices the grant in the units the column carries', async () => {
+      // `exercise_price` of 2.5 is $2.50 a share. Printing "$0.03" here — the
+      // dividing formatter's answer — understates the strike by 100× on every
+      // grant in the list.
       mockApi();
       renderTab();
       await ready();
@@ -585,7 +599,10 @@ describe('GrantsTab', () => {
       const row = screen.getByText('2×').closest('tr') as HTMLElement;
       expect(row).toHaveTextContent('$5.00');
       expect(row).toHaveTextContent('$2.50');
-      expect(row).toHaveTextContent('$100,000.00');
+      expect(row).toHaveTextContent('$100,000');
+      // The reason to check the row rather than the page: the dividing
+      // formatter's answers — $0.05, $0.03, $1,000 — are all plausible money.
+      expect(row).not.toHaveTextContent('$1,000.00');
     });
 
     it('says the scenarios are illustrative and not tax advice', async () => {

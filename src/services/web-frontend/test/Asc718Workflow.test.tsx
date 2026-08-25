@@ -1,3 +1,21 @@
+/*
+ * Units, once, for the whole file.
+ *
+ * Every money figure the ASC 718 endpoint returns is in the currency's own
+ * units, not minor ones. The chain is unbroken and does no conversion: the
+ * underlying is either the concluded 409A FMV (`fmv_per_share`, equity value
+ * over shares) or a market close read straight off the feed; `domain/asc718.ts`
+ * runs Black-Scholes over that and a strike in the same units; and the ESPP,
+ * RSU and TSR blocks in `domain/asc718Public.ts` all measure against the same
+ * underlying.
+ *
+ * The fixtures here used to be minor units — an underlying of 2500 for a $25
+ * share — because the tab imported `lib/format`'s `formatMoney`, which divides
+ * by 100. Component and test agreed with each other and neither agreed with
+ * the service, so the tab reported a $4.50 grant-date fair value as $0.04 for
+ * as long as it existed.
+ */
+
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -897,7 +915,7 @@ describe('Asc718Tab — results', () => {
     await runWith({
       market: {
         ticker: 'ACME',
-        underlying: 2500,
+        underlying: 25,
         volatility: 0.375,
         source: 'stooq',
         as_of: '2026-06-30',
@@ -934,18 +952,18 @@ describe('Asc718Tab — results', () => {
   it('tabulates the option grants and their total cost', async () => {
     await runWith({
       options: {
-        totalCompensationCost: 250000,
+        totalCompensationCost: 246000,
         grants: [
           {
             label: '2026 pool',
-            fairValuePerOption: 450,
-            totalCompensationCost: 200000,
+            fairValuePerOption: 4.5,
+            totalCompensationCost: 198000,
             expectedToVestOptions: 44000,
           },
           {
             label: null,
-            fairValuePerOption: 300,
-            totalCompensationCost: 50000,
+            fairValuePerOption: 3,
+            totalCompensationCost: 48000,
             expectedToVestOptions: 16000,
           },
         ],
@@ -953,7 +971,7 @@ describe('Asc718Tab — results', () => {
       },
     });
 
-    expect(screen.getByRole('heading', { name: /Options — total cost \$2,500\.00/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Options — total cost \$246,000/ })).toBeInTheDocument();
     const row = screen.getByText('2026 pool').closest('tr')!;
     expect(within(row).getByText('$4.50')).toBeInTheDocument();
     expect(within(row).getByText('44,000')).toBeInTheDocument();
@@ -967,9 +985,9 @@ describe('Asc718Tab — results', () => {
         {
           label: null,
           shares_enrolled: 50000,
-          fair_value_per_share: 900,
-          total_fair_value: 4500000,
-          components: { purchaseDiscount: 450, callComponent: 350, putComponent: 100 },
+          fair_value_per_share: 9,
+          total_fair_value: 450000,
+          components: { purchaseDiscount: 4.5, callComponent: 3.5, putComponent: 1 },
         },
       ],
     });
@@ -979,7 +997,7 @@ describe('Asc718Tab — results', () => {
     expect(within(row).getByText('$4.50')).toBeInTheDocument();
     expect(within(row).getByText('$3.50')).toBeInTheDocument();
     expect(within(row).getByText('$1.00')).toBeInTheDocument();
-    expect(within(row).getByText('$45,000.00')).toBeInTheDocument();
+    expect(within(row).getByText('$450,000')).toBeInTheDocument();
   });
 
   it('shows each RSU condition with the ratio that belongs to it', async () => {
@@ -989,16 +1007,16 @@ describe('Asc718Tab — results', () => {
           label: 'Service grant',
           condition: 'service',
           units: 1000,
-          fairValuePerUnit: 2500,
-          totalFairValue: 2500000,
+          fairValuePerUnit: 25,
+          totalFairValue: 25000,
         },
         {
           label: 'PSU',
           condition: 'performance',
           units: 500,
-          fairValuePerUnit: 2500,
+          fairValuePerUnit: 25,
           expectedPayoutRatio: 0.8,
-          totalFairValue: 1000000,
+          totalFairValue: 10000,
         },
         {
           label: 'Market PSU',
@@ -1026,10 +1044,10 @@ describe('Asc718Tab — results', () => {
         {
           label: null,
           target_units: 10000,
-          fairValuePerUnit: 3200,
+          fairValuePerUnit: 32,
           expectedPayoutRatio: 1.15,
           expectedPercentile: 62,
-          totalFairValue: 36800000,
+          totalFairValue: 368000,
         },
       ],
     });
@@ -1051,12 +1069,12 @@ describe('Asc718Tab — results', () => {
     await runWith({
       currency: 'GBP',
       options: {
-        totalCompensationCost: 100000,
+        totalCompensationCost: 1000,
         grants: [
           {
             label: 'UK pool',
-            fairValuePerOption: 200,
-            totalCompensationCost: 100000,
+            fairValuePerOption: 2,
+            totalCompensationCost: 1000,
             expectedToVestOptions: 500,
           },
         ],
@@ -1064,6 +1082,6 @@ describe('Asc718Tab — results', () => {
       },
     });
 
-    expect(screen.getByRole('heading', { name: /Options — total cost £1,000\.00/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Options — total cost £1,000/ })).toBeInTheDocument();
   });
 });

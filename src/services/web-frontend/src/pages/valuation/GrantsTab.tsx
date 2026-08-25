@@ -9,10 +9,23 @@ import {
   useFormValidation,
 } from '../../lib/useFormValidation';
 import { api, ApiError } from '../../lib/api';
-import { formatMoney, formatNumber } from '../../lib/format';
+import { formatNumber } from '../../lib/format';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { useWorkspace } from './ValuationWorkspace';
+/**
+ * The *major-unit* money formatter, not `lib/format`'s.
+ *
+ * Two modules export a `formatMoney` and they take different units:
+ * `lib/format`'s takes minor units and divides by 100, this one takes the
+ * currency's own units and does not. Everything on this tab is a `numeric`
+ * column or a figure derived from one — `option_grants.exercise_price` is the
+ * board-adopted FMV per share, 2.50 for $2.50 — so the dividing one rendered
+ * every price on the tab a hundredfold small: a $2.50 strike as $0.03, a
+ * $100,000 exercise cost as $1,000. Nothing threw, and the numbers all still
+ * looked like money.
+ */
+import { formatMoney } from '../../lib/pipeline';
 import { HrisSyncPanel } from '../../components/valuation/HrisSyncPanel';
 import { CHART_COLORS, ChartDataTable } from '../../components/charts';
 import {

@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
-import { formatMoney, formatNumber } from '../../lib/format';
+import { formatNumber } from '../../lib/format';
+/**
+ * `lib/pipeline`'s `formatMoney`, which takes the currency's own units —
+ * `lib/format` exports one of the same name that takes minor units and divides
+ * by 100. Every figure on this tab comes out of `domain/asc718.ts`, where a
+ * fair value per option is Black-Scholes over a strike and an underlying in
+ * major units. The dividing one was rendering a $4.31 grant-date fair value as
+ * $0.04 and a $431,000 compensation cost as $4,310.
+ */
+import { formatMoney } from '../../lib/pipeline';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { useWorkspace } from './ValuationWorkspace';
