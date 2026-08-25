@@ -4969,11 +4969,24 @@
 #            to read; the fix is on the engine side and is a decision about the
 #            result contract rather than a rendering bug.
 #
-#            MEEM's schedule is nine columns. The renderer shrinks columns
-#            proportionally when they exceed the page, so it will fit rather
-#            than overflow, but nobody has looked at it in a rendered PDF and
-#            the geometry audit that would say is a separate exercise.
+#            8afc1fe — written as a gap in this entry and closed before the
+#            round ended, which is the note worth keeping. The claim was that
+#            MEEM's nine columns "will fit rather than overflow" and that nobody
+#            had looked. Looking took one render: they fit, and at $10m of
+#            revenue the amounts wrapped *inside* their cells — "$1,007," on one
+#            drawn line and "543" on the next, down the present-value column.
+#            Both halves of the guess were right and the conclusion was wrong,
+#            because the failure mode was never overflow. MEEM is two tables
+#            now, split at the figure they share; widest drawn line 493.2pt
+#            against a 540pt boundary, no amount broken from $10m to $1bn on any
+#            income method.
 #
-#            Nothing here was checked in a browser, and no test renders any of
-#            these exhibits through a real PDF — the assertions read generated
-#            HTML.
+#            No specialty exhibit had ever been through `renderReportPdf` —
+#            `reportPdfAllKinds` renders the fifteen skeletons with no exhibits
+#            under them, and every specialty assertion in the repo reads
+#            generated HTML. specialtyExhibitsPdf.test.ts is the first, and it
+#            reads line geometry rather than text: nothing outside the type
+#            area, no amount split across two lines.
+#
+#            Nothing here was checked in a browser. Three exhibits now render to
+#            a real PDF under test; the other eight still do not.
