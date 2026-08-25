@@ -4299,3 +4299,149 @@
 #            download manager writes; the date assertions read
 #            `toLocaleDateString` under a shifted `process.env.TZ`, which moves
 #            Node's zone but is not a user's machine.
+
+# N409 revision
+# commit:    da9e13d
+# subject:   two functions named the same thing, and a hundredfold on the strike
+# previous:  9250110 (five names the two halves spelled differently).
+# includes:  5 commits — R127. R126 closed five drifted client/server pairs and
+#            left a note about where to look next; this round took it, and the
+#            two things it found are both a *name* that meant two things at
+#            once. Neither throws. Both render as ordinary money or ordinary
+#            English.
+#
+#            23810c7 — R126's own closing gap. `downloadPdf` — the helper behind
+#            the report PDF and the change-log CSV — was a second, private
+#            fetch-and-anchor in `lib/m2.ts` that read no response headers at
+#            all, so `content-disposition` was computed by the server, sent, and
+#            discarded. The client's guess won, and that guess is stale by
+#            construction: it carries the report version the tab last *loaded*,
+#            not the one the route just rendered.
+#
+#            R126 could not close it because the change log's own filename was
+#            worse than the guess — `change-log-01JQ8ZK7….csv`, twenty-six
+#            characters of base32 naming nothing a human recognises, which an
+#            auditor pulling six companies in one sitting receives six of. So
+#            the route was fixed first: the company name, through
+#            `contentDisposition`, which scrubs it and writes the UTF-8 half.
+#            Then the helper was deleted and both buttons moved onto
+#            `apiDownload`, which has parsed the header correctly since R126.
+#            Two things arrived with the consolidation rather than being aimed
+#            at: a 401 on a download now ends the session like every other 401
+#            (this path went through `noteUnauthorized` nowhere), and a failed
+#            download quotes the server's problem detail — "No report yet"
+#            instead of "Could not download."
+#
+#            94d2172 — `EVENT_CATALOG` maps an event type to the label,
+#            category and severity that the change log, the evidence bundle and
+#            the client portal print. It was a hand-kept `Record<string, …>`
+#            guarded by a census test comparing it against the `*_EVENT_TYPES`
+#            constant maps — and `repos/pipelineRuns.ts` declares no map, it
+#            picks its type inline: `status === 'ready' ?
+#            'auto_pipeline_completed' : 'auto_pipeline_failed'`. Neither
+#            literal was ever in a map, so neither was ever compared, and
+#            `auto_pipeline_completed` had no descriptor. Its three siblings
+#            did. The trail read "Automated pipeline started", then a row filed
+#            under "other" saying "Event recorded" — the fallback for a type
+#            this build has never heard of — for the event that says the run
+#            finished.
+#
+#            The catalog is the type now: `satisfies` keeps the keys literal and
+#            `recordEvent` takes `keyof typeof EVENT_CATALOG`, so an
+#            uncatalogued type is a compile error at the line that writes it.
+#            The compiler found exactly one, which is the one above. The census
+#            stays — the constant maps are still worth checking the other way —
+#            and `describeEventType` still degrades, because the spine is
+#            append-only and holds rows written by builds that spelled things
+#            differently.
+#
+#            0e66c3b — the same vocabulary, printed by three surfaces from two
+#            sources. The change log read the catalog; the valuation timeline
+#            and the dashboard feed read a hand-written map of about twenty
+#            types in `lib/format.ts`, copied from the catalog and since drifted
+#            from it: "Stage changed" against "State changed", "Report
+#            generated" against "Report PDF rendered", "Analyst overwrite
+#            applied" against "Override applied", "Automated" against
+#            "Automatic". Same row, different name, one tab across — nothing
+#            anyone files a bug about and everything they notice. The label
+#            travels with the row now. What is left in the browser is the
+#            snake_case-to-sentence fallback, which the dashboard feed still
+#            needs: it mixes `admin_events` in and those have no catalog, so the
+#            fallback word-splits rather than reusing the catalog's "Event
+#            recorded" — "Partner created" says more than that.
+#
+#            10f76bf — the sharp one. Two modules export a `formatMoney`.
+#            `lib/format`'s takes minor units and divides by 100; `lib/pipeline`'s
+#            takes the currency's own units and does not. GrantsTab and Asc718Tab
+#            imported the dividing one and fed it figures that were never in
+#            cents. `option_grants.exercise_price` is a `numeric` column holding
+#            the board-adopted FMV per share — 2.5 is $2.50 — every scenario
+#            figure is derived from it without conversion, and every ASC 718
+#            figure is Black-Scholes over an underlying that is either the
+#            concluded `fmv_per_share` or a market close read off the feed. So a
+#            $2.50 strike rendered $0.03, a $100,000 cost of exercising rendered
+#            $1,000, a $4.50 grant-date fair value rendered $0.04 — on the two
+#            tabs that tell an employee what their options are worth and a
+#            controller what the expense is.
+#
+#            The tests were green throughout, and that is the part worth
+#            keeping. Both files' fixtures were written in minor units, with a
+#            header comment in `GrantsTab.test.tsx` stating that as the
+#            contract. Component and test agreed with each other; neither had
+#            ever asked the service, which has pinned 2.5 in
+#            `integration/grants.test.ts` all along. A fixture is an assumption
+#            about somebody else's contract, and a test that only checks the
+#            component against its own fixture cannot see the assumption at all.
+#
+#            da9e13d — so the name was the bug, not the call site. The dividing
+#            one is `formatCents`; its parameter was already named `cents` and
+#            every caller passes a `*_cents` field, so the rename costs nothing
+#            and puts a wrong call site in the diff that introduces it. One
+#            number — 250 — is now formatted through all three formatters in one
+#            test, because the contrast is what needs pinning: $2.50, $250.00,
+#            $250.
+#
+#            Deliberate break, each: unwiring the disposition parse fails the
+#            two new wiring assertions and nothing else; widening `recordEvent`
+#            back to `string` (or annotating the catalog so `keyof` collapses to
+#            `string`) fails one; restoring either money import fails eight
+#            assertions across two files, none of them by throwing.
+#
+#            Audited and found sound, recorded so the next round starts further
+#            in. `ErrorBoundary.tsx` is the only file in the frontend naming a
+#            stock Tailwind palette step, which looked like the one screen that
+#            would be unreadable in dark mode — the five steps it uses are all
+#            re-pointed in the dark block, deliberately, and `themeTokens.test.ts`
+#            is what keeps that true. `PackageTab`'s `amount_raised_cents / 100`
+#            reads like the same unit bug and is correct: it imports the
+#            non-dividing formatter. `toCsv` already prefixes formula-leading
+#            cells and shares one encoder with `domain/csv.ts`. Input money is
+#            bounded at both ends by `domain/finite.ts`, so `Infinity` cannot
+#            reach a `toFixed` from a request body.
+#
+# gap:       The catalog now constrains `recordEvent`, but the valuation
+#            service's tsconfig includes `src` only, so test files are not
+#            typechecked — `eventSpineBounds.test.ts` was writing a
+#            `note_added` event that no code writes and no catalog holds, with a
+#            comment calling it "a real type". Corrected to `comment_added`,
+#            but nothing stops the next one: a fixture can still name an event
+#            type that does not exist.
+#
+#            `admin_events` have no catalog at all. The dashboard feed reaches
+#            them through the word-split fallback, which is adequate, and the
+#            ops activity log prints their type raw in a mono chip beside a
+#            filter you type the raw type into — defensible, and still a third
+#            rendering of one vocabulary.
+#
+#            The unit fix was made by switching which `formatMoney` two files
+#            import, and the rename makes the next such call site visible, but
+#            neither is a *check*. Nothing asserts that a component rendering
+#            `exercise_price` uses a major-unit formatter; the guard is that
+#            three fixtures now match the server and one test formats 250 three
+#            ways. A shared contract — units declared once, next to the field —
+#            is what would actually close it.
+#
+#            Nothing here was checked in a browser. The money assertions read
+#            `toHaveTextContent` against jsdom's `Intl`, which is Node's ICU
+#            rather than a user's; the download assertions still read
+#            `a.download`.
