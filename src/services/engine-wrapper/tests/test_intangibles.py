@@ -320,3 +320,139 @@ def test_ppa_results_all_finite():
     out = purchase_price_allocation(**_ppa_inputs())
     for key in ("goodwill", "total_intangible_value", "identifiable_net_assets"):
         assert math.isfinite(out[key])
+
+
+# ── A negative conclusion is not a valuation ─────────────────────────────────
+#
+# Two of the income methods could reach one, and neither said so. What made it
+# worth a guard rather than a note is where the number went next: it is
+# multiplied by the tax amortization benefit, so the step-up that grosses an
+# asset *up* made the deficit larger; and in an allocation it is subtracted
+# from identifiable net assets, so the goodwill residual absorbed it silently
+# and the balance still tied out.
+
+
+def test_www_swapped_scenarios_rejected():
+    """A "without" forecast above the "with" forecast is the inputs reversed."""
+    with pytest.raises(EngineInputError, match="entered the wrong way round"):
+        with_and_without(
+            cash_flows_with=[1_000_000.0, 1_100_000.0],
+            cash_flows_without=[1_400_000.0, 1_500_000.0],
+            tax_rate=0.21,
+            discount_rate=0.15,
+        )
+
+
+def test_www_negative_year_is_still_allowed():
+    """The guard is on the conclusion, not on any one year.
+
+    A non-compete can cost more than it saves in an early year and still be
+    worth something; only the total has to be an asset.
+    """
+    out = with_and_without(
+        cash_flows_with=[100.0, 900.0],
+        cash_flows_without=[300.0, 400.0],
+        tax_rate=0.25,
+        discount_rate=0.10,
+        include_tab=False,
+    )
+    assert out["schedule"][0]["after_tax_differential"] < 0
+    assert out["fair_value"] > 0
+
+
+def test_meem_charges_above_earnings_rejected():
+    with pytest.raises(EngineInputError, match="contributory asset charges exceed"):
+        meem(
+            revenues=[10_000_000.0] * 5,
+            attrition_rate=0.15,
+            ebit_margin=0.05,
+            contributory_charges_pct=0.20,
+            tax_rate=0.21,
+            discount_rate=0.16,
+        )
+
+
+def test_negative_conclusion_does_not_reach_the_tab():
+    """The step-up must never be applied to a deficit.
+
+    Pinning the failure *before* the multiply, because a guard placed after it
+    would report a number 8% further from zero than the arithmetic produced.
+    """
+    with pytest.raises(EngineInputError, match=r"-513,724\.01"):
+        with_and_without(
+            cash_flows_with=[1_000_000.0, 1_100_000.0],
+            cash_flows_without=[1_400_000.0, 1_500_000.0],
+            tax_rate=0.21,
+            discount_rate=0.15,
+        )
+
+
+def test_ppa_negative_intangible_does_not_inflate_goodwill():
+    """The consequence that made this material.
+
+    A $560k scenario error came back as $9.56m of goodwill against $9.0m of
+    consideration — an overstatement of exactly the mis-specified asset, with
+    nothing on the allocation to say so, because the residual is a subtraction
+    and a negative subtrahend adds.
+    """
+    with pytest.raises(EngineInputError, match="entered the wrong way round"):
+        purchase_price_allocation(
+            consideration_transferred=10_000_000.0,
+            net_working_capital=1_000_000.0,
+            intangibles=[
+                {
+                    "name": "Non-compete",
+                    "method": "with_and_without",
+                    "params": {
+                        "cash_flows_with": [1_000_000.0, 1_100_000.0],
+                        "cash_flows_without": [1_400_000.0, 1_500_000.0],
+                        "tax_rate": 0.21,
+                        "discount_rate": 0.15,
+                    },
+                }
+            ],
+        )
+
+
+def test_rfr_negative_revenue_rejected():
+    with pytest.raises(EngineInputError, match=r"rfr\.revenues\[1\] must be >= 0"):
+        relief_from_royalty(
+            revenues=[100.0, -100.0], royalty_rate=0.05, tax_rate=0.21, discount_rate=0.17
+        )
+
+
+def test_meem_negative_revenue_rejected():
+    with pytest.raises(EngineInputError, match=r"meem\.revenues\[0\] must be >= 0"):
+        meem(
+            revenues=[-1.0],
+            ebit_margin=0.25,
+            contributory_charges_pct=0.06,
+            tax_rate=0.25,
+            discount_rate=0.17,
+        )
+
+
+def test_rfr_terminal_growth_below_minus_one_rejected():
+    """(1 + growth) goes negative, and the terminal value with it."""
+    with pytest.raises(EngineInputError, match=r"rfr\.terminal_growth must be >= -1"):
+        relief_from_royalty(
+            revenues=[100.0],
+            royalty_rate=0.05,
+            tax_rate=0.21,
+            discount_rate=0.17,
+            terminal_growth=-1.5,
+        )
+
+
+def test_rfr_terminal_growth_of_exactly_minus_one_is_a_zero_tail():
+    """The legitimate floor: the flow stops after the forecast."""
+    out = relief_from_royalty(
+        revenues=[100.0],
+        royalty_rate=0.05,
+        tax_rate=0.21,
+        discount_rate=0.17,
+        terminal_growth=-1.0,
+        include_tab=False,
+    )
+    assert out["pv_terminal"] == 0.0
+    assert out["fair_value"] == pytest.approx(out["pv_explicit"])

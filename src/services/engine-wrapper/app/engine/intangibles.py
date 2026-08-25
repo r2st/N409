@@ -71,12 +71,43 @@ def _finite(value: float, name: str) -> float:
     return value
 
 
-def _flows(values, name: str) -> list[float]:
+def _flows(values, name: str, *, minimum: float | None = None) -> list[float]:
     if not isinstance(values, list) or not values:
         raise EngineInputError(f"{name} must be a non-empty list")
     if len(values) > MAX_SCHEDULE_YEARS:
         raise EngineInputError(f"{name} accepts at most {MAX_SCHEDULE_YEARS} years; got {len(values)}")
-    return [_num(v, f"{name}[{i}]") for i, v in enumerate(values)]
+    return [_num(v, f"{name}[{i}]", minimum=minimum) for i, v in enumerate(values)]
+
+
+def _asset_value(value: float, name: str, cause: str) -> float:
+    """The concluded value of an *asset*, which cannot be negative.
+
+    Two of the income methods can arrive at one. MEEM subtracts contributory
+    asset charges from the subject asset's earnings, and a charge larger than
+    the earnings drives every year of excess earnings below zero; with-and-
+    without takes a scenario differential, and a "without" forecast above the
+    "with" forecast is the two scenarios entered the wrong way round.
+
+    Neither is a valuation. A negative number here is a mis-specified input,
+    and reporting it as a conclusion does material damage in both places it
+    lands: it is multiplied by the tax amortization benefit, so the step-up
+    that grosses an asset *up* makes the deficit larger; and in an ASC 805
+    allocation it is subtracted from identifiable net assets, so the goodwill
+    residual silently absorbs it and the balance still ties out. A $560k
+    scenario error came back as $9.56m of goodwill against $9.0m, with nothing
+    on the page to say so.
+
+    Raising rather than flooring at zero is the point. A zero is also a claim —
+    an identified intangible carried at nil in an allocation — and the analyst
+    is the one who has to decide whether the scenarios were swapped or the
+    asset does not belong in the allocation at all.
+    """
+    if value < 0:
+        raise EngineInputError(
+            f"{name} concluded a negative value ({value:,.2f}); an asset cannot be worth "
+            f"less than nothing — {cause}"
+        )
+    return value
 
 
 def _rate(value, name: str) -> float:
@@ -127,7 +158,7 @@ def relief_from_royalty(
     include_tab: bool = True,
 ) -> dict:
     """PV of after-tax avoided royalties, optionally with a Gordon terminal value."""
-    revs = _flows(revenues, "rfr.revenues")
+    revs = _flows(revenues, "rfr.revenues", minimum=0.0)
     royalty = _num(royalty_rate, "rfr.royalty_rate", minimum=0.0, maximum=1.0)
     tax = _tax(tax_rate)
     rate = _rate(discount_rate, "rfr.discount_rate")
@@ -151,8 +182,16 @@ def relief_from_royalty(
         )
 
     pv_terminal = 0.0
+    # Bound outside the branch: it is echoed under `assumptions` either way, and
+    # reading it there off a name only the branch binds is a latent NameError.
+    growth: float | None = None
     if terminal_growth is not None:
-        growth = _num(terminal_growth, "rfr.terminal_growth")
+        # A perpetuity shrinking by more than 100% a year is not a decline, it
+        # is a sign flip: (1 + growth) goes negative and the terminal value
+        # comes back as a negative number the discount rate happily discounts.
+        # -1 exactly is the legitimate floor — the flow stops after the
+        # forecast — and it makes the terminal value zero.
+        growth = _num(terminal_growth, "rfr.terminal_growth", minimum=-1.0)
         if rate <= growth:
             raise EngineInputError("rfr.discount_rate must exceed terminal_growth")
         last_after_tax = revs[-1] * royalty * (1.0 - tax)
@@ -167,7 +206,7 @@ def relief_from_royalty(
             "royalty_rate": royalty,
             "tax_rate": tax,
             "discount_rate": rate,
-            "terminal_growth": growth if terminal_growth is not None else None,
+            "terminal_growth": growth,
         },
         "schedule": rows,
         "pv_explicit": _finite(pv_total, "rfr.pv_explicit"),
@@ -198,7 +237,7 @@ def meem(
     returns), the form the analyst worksheet reduces its asset-by-asset charges
     to.
     """
-    revs = _flows(revenues, "meem.revenues")
+    revs = _flows(revenues, "meem.revenues", minimum=0.0)
     attrition = _num(attrition_rate, "meem.attrition_rate", minimum=0.0, maximum=1.0)
     margin = _num(ebit_margin, "meem.ebit_margin", minimum=-1.0, maximum=1.0)
     cac = _num(contributory_charges_pct, "meem.contributory_charges_pct", minimum=0.0, maximum=1.0)
@@ -230,7 +269,11 @@ def meem(
             }
         )
 
-    base_value = _finite(pv_total, "meem.value")
+    base_value = _asset_value(
+        _finite(pv_total, "meem.value"),
+        "meem",
+        "the contributory asset charges exceed the earnings attributable to the asset",
+    )
     tab = tax_amortization_benefit(rate, tax) if include_tab else 1.0
     return {
         "method": "meem",
@@ -283,7 +326,12 @@ def with_and_without(
             }
         )
 
-    base_value = _finite(pv_total, "www.value")
+    base_value = _asset_value(
+        _finite(pv_total, "www.value"),
+        "with_and_without",
+        "the 'without' forecast exceeds the 'with' forecast, which is the two scenarios "
+        "entered the wrong way round",
+    )
     tab = tax_amortization_benefit(rate, tax) if include_tab else 1.0
     return {
         "method": "with_and_without",
