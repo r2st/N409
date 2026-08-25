@@ -115,7 +115,14 @@ def gift_estate_valuation(
     # §2503(b) — per donee, per year. Supplied rather than hard-coded: it is
     # indexed for inflation, and an engine that bakes in one year's figure
     # silently misstates every other year's return.
-    annual_exclusion: float = 0.0,
+    #
+    # `None`, not 0.0, when it is absent. The two are the same arithmetic and
+    # opposite statements: zero is "the exclusion was considered and none is
+    # available", absent is "nobody has said what this year's figure is". The
+    # default used to be 0.0, so a caller that never asked the question got a
+    # return line reading "less annual exclusion — $0" and a taxable gift equal
+    # to the whole appraised value, presented as a determination.
+    annual_exclusion: float | None = None,
     donees: int = 1,
     split_gift: bool = False,
     prior_taxable_gifts: float = 0.0,
@@ -142,7 +149,10 @@ def gift_estate_valuation(
     after_dlom = after_dloc * (1.0 - discount_marketability)
     effective = combined_discount(discount_lack_control, discount_marketability)
 
-    exclusion_per_donee = _num(annual_exclusion, "gifts.annual_exclusion", minimum=0.0)
+    determined = annual_exclusion is not None
+    exclusion_per_donee = (
+        _num(annual_exclusion, "gifts.annual_exclusion", minimum=0.0) if determined else 0.0
+    )
     donee_count = int(_num(donees, "gifts.donees", minimum=1, maximum=1000))
     # A split gift (§2513) is treated as made half by each spouse, which in
     # practice doubles the exclusion available against the transfer.
@@ -188,6 +198,10 @@ def gift_estate_valuation(
         "effective_discount": effective,
         "total_discount_amount": pro_rata - after_dlom,
         "annual_exclusion": {
+            # Whether this year's §2503(b) figure was supplied at all. A reader
+            # cannot tell that from a zero, and the exhibit must not print an
+            # unanswered question as a nil determination.
+            "determined": determined,
             "per_donee": exclusion_per_donee,
             "donees": donee_count,
             "split_gift": bool(split_gift),

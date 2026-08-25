@@ -203,3 +203,38 @@ def test_endpoint_unknown_input_name_is_422(client: TestClient):
         json={"inputs": {"entity_value": 1_000, "percent_interest": 10, "nonsense": 1}},
     )
     assert res.status_code == 422
+
+
+def test_an_unsupplied_exclusion_is_reported_as_undetermined_not_as_nil():
+    """The default is the unanswered question, not a nil determination.
+
+    Nothing in the platform sent `annual_exclusion` until the questionnaire
+    grew a field for it, so every gift ran with the default — and a default of
+    0.0 is indistinguishable from an analyst who determined that none was
+    available. The return line and the cumulative total both read as
+    conclusions the file had not reached.
+    """
+    out = run()
+    assert out["annual_exclusion"]["determined"] is False
+    assert out["annual_exclusion"]["per_donee"] == 0.0
+    assert out["annual_exclusion"]["available"] == 0.0
+    assert out["annual_exclusion"]["applied"] == 0.0
+    # The arithmetic is unchanged — only what it claims about itself.
+    assert out["taxable_gift"] == pytest.approx(out["concluded_value"])
+
+
+def test_a_supplied_exclusion_of_zero_is_a_determination():
+    """A future-interest gift gets no exclusion, and saying so is an answer."""
+    out = run(annual_exclusion=0)
+    assert out["annual_exclusion"]["determined"] is True
+    assert out["annual_exclusion"]["applied"] == 0.0
+
+
+def test_a_supplied_exclusion_is_determined():
+    out = run(annual_exclusion=19_000)
+    assert out["annual_exclusion"]["determined"] is True
+
+
+def test_an_undetermined_exclusion_still_refuses_a_bad_one():
+    with pytest.raises(EngineInputError, match="gifts.annual_exclusion"):
+        run(annual_exclusion=-1)

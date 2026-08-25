@@ -309,6 +309,7 @@ export const SAMPLE_GIFTS_RESULT: SpecialtyResult = {
   effective_discount: 0.36640000000000006,
   total_discount_amount: 1319040.0,
   annual_exclusion: {
+    determined: true,
     per_donee: 19000.0,
     donees: 2,
     split_gift: false,
