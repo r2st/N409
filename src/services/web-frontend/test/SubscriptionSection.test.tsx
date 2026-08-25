@@ -464,6 +464,10 @@ describe('SubscriptionSection (feature 7)', () => {
         },
       ],
       invoices: [],
+      subscriptions_truncated: false,
+      invoices_truncated: false,
+      page_limit: 200,
+      invoice_page_limit: 200,
     };
 
     it('is not fetched at all for a non-ops reader', async () => {
@@ -530,6 +534,95 @@ describe('SubscriptionSection (feature 7)', () => {
       // no longer appears anywhere passes for the wrong reason.
       expect(within(panel).queryByText('Served')).not.toBeInTheDocument();
       expect(within(panel).queryByText('MRR (active + trialing)')).not.toBeInTheDocument();
+    });
+
+    /**
+     * `/admin/billing` has shipped the invoice ledger since feature 7 and the
+     * screen drew only the subscribers table, so the two all-time money
+     * figures above it were the whole invoice view ops had. They can say
+     * collected went down and never which invoice did it — which is the one
+     * question the Refunded metric beside them exists to raise.
+     */
+    it('lists the invoice ledger behind the money figures', async () => {
+      flags.ops = true;
+      mockApi(subscribed(), undefined, {
+        '/admin/billing': {
+          body: {
+            ...adminBilling,
+            invoices: [
+              {
+                id: 'in_1',
+                number: 'INV-0007',
+                email: 'cfo@zorblatt.example',
+                amount_cents: 2000000,
+                currency: 'usd',
+                status: 'paid',
+                issued_at: '2026-08-02T00:00:00.000Z',
+                refunded_cents: 250000,
+                refunded_at: '2026-08-19T00:00:00.000Z',
+              },
+            ],
+          },
+        },
+      });
+      render(<SubscriptionSection />);
+
+      const panel = await screen.findByTestId('admin-billing');
+      // Scoped to the invoice's own row: the customer's address is also in the
+      // subscribers table above, so a panel-wide match would not say which
+      // table drew it.
+      const row = within(panel).getByText('INV-0007').closest('tr') as HTMLElement;
+      expect(within(row).getByText('cfo@zorblatt.example')).toBeInTheDocument();
+      expect(within(row).getByText('$20,000.00')).toBeInTheDocument();
+      // Which invoice the Refunded metric is made of, on the same row.
+      expect(within(row).getByTestId('admin-invoice-refund-note')).toHaveTextContent(
+        'Partially refunded $2,500.00',
+      );
+    });
+
+    it('says the ledger is empty rather than drawing a headed table with no rows', async () => {
+      flags.ops = true;
+      mockApi(subscribed(), undefined, { '/admin/billing': { body: adminBilling } });
+      render(<SubscriptionSection />);
+      const panel = await screen.findByTestId('admin-billing');
+      expect(within(panel).getByText('Nothing invoiced yet.')).toBeInTheDocument();
+    });
+
+    /**
+     * Both lists are capped in SQL. `listAllInvoices` was rewritten to report
+     * *when* the cap bit for exactly this reason: the summary counts in SQL
+     * and the rows do not, so a capped table reads as a book that disagrees
+     * with the totals above it. The flags reached the client and nothing drew
+     * them, which is the silent truncation the cap was supposed to stop being.
+     */
+    it('says so when either table stopped short of the book', async () => {
+      flags.ops = true;
+      mockApi(subscribed(), undefined, {
+        '/admin/billing': {
+          body: { ...adminBilling, subscriptions_truncated: true, invoices_truncated: true },
+        },
+      });
+      render(<SubscriptionSection />);
+
+      const panel = await screen.findByTestId('admin-billing');
+      expect(within(panel).getByTestId('truncated-subscribers')).toHaveTextContent(
+        'Showing the 200 most recent subscribers',
+      );
+      expect(within(panel).getByTestId('truncated-invoices')).toHaveTextContent(
+        'Showing the 200 most recent invoices',
+      );
+    });
+
+    it('says nothing about truncation when both tables are complete', async () => {
+      flags.ops = true;
+      mockApi(subscribed(), undefined, { '/admin/billing': { body: adminBilling } });
+      render(<SubscriptionSection />);
+      const panel = await screen.findByTestId('admin-billing');
+      // Asserted against the subscribers table actually being drawn, so this
+      // cannot pass by the whole panel having failed to render.
+      expect(within(panel).getByText('cfo@zorblatt.example')).toBeInTheDocument();
+      expect(within(panel).queryByTestId('truncated-subscribers')).not.toBeInTheDocument();
+      expect(within(panel).queryByTestId('truncated-invoices')).not.toBeInTheDocument();
     });
 
     /**

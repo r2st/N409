@@ -69,15 +69,25 @@ const NEEDS_ATTENTION = new Set(['past_due', 'unpaid', 'incomplete']);
  * Stripe's refund total is authoritative, and a screen is the wrong place to
  * argue with it by printing a negative net.
  */
-export function invoiceRefundNote(inv: Invoice): string | null {
-  const amount = Number(inv.amount_cents);
-  const raw = Number(inv.refunded_cents ?? 0);
-  if (!Number.isFinite(raw) || raw <= 0) return null;
-  const refunded = Number.isFinite(amount) ? Math.min(raw, amount) : raw;
-  const full = Number.isFinite(amount) && refunded >= amount;
+export function invoiceRefundNote(inv: {
+  amount_cents: number;
+  currency: string;
+  refunded_cents?: number | string | null;
+  refunded_at?: string | null;
+}): string | null {
+  const amountCents = Number(inv.amount_cents);
+  const claimedCents = Number(inv.refunded_cents ?? 0);
+  if (!Number.isFinite(claimedCents) || claimedCents <= 0) return null;
+  const bounded = Number.isFinite(amountCents);
+  // Named for their unit, which the money-unit census (R127) requires of every
+  // argument reaching a `*Cents` formatter — the check that stops a figure in
+  // dollars being rendered a hundredfold small.
+  const refundedCents = bounded ? Math.min(claimedCents, amountCents) : claimedCents;
+  const netCents = amountCents - refundedCents;
+  const full = bounded && refundedCents >= amountCents;
   const when = inv.refunded_at ? ` on ${formatDate(inv.refunded_at)}` : '';
-  const net = Number.isFinite(amount) ? ` · net ${formatCents(amount - refunded, inv.currency)}` : '';
-  return `${full ? 'Refunded' : 'Partially refunded'} ${formatCents(refunded, inv.currency)}${when}${net}`;
+  const net = bounded ? ` · net ${formatCents(netCents, inv.currency)}` : '';
+  return `${full ? 'Refunded' : 'Partially refunded'} ${formatCents(refundedCents, inv.currency)}${when}${net}`;
 }
 
 const money = (cents: number, currency = 'usd') =>
@@ -310,16 +320,24 @@ interface AdminSub {
   valuations_used: number;
   valuation_limit: number | null;
 }
+interface AdminInvoice {
+  id: string;
+  number: string;
+  email: string;
+  amount_cents: number;
+  currency: string;
+  status: string;
+  issued_at: string;
+  refunded_cents?: number | string | null;
+  refunded_at?: string | null;
+}
 interface AdminBilling {
   subscriptions: AdminSub[];
-  invoices: Array<{
-    id: string;
-    number: string;
-    email: string;
-    amount_cents: number;
-    currency: string;
-    status: string;
-  }>;
+  subscriptions_truncated: boolean;
+  invoices: AdminInvoice[];
+  invoices_truncated: boolean;
+  page_limit: number;
+  invoice_page_limit: number;
   summary: {
     active: number;
     trialing: number;
@@ -430,7 +448,76 @@ function AdminBillingDashboard() {
           </tbody>
         </table>
       </div>
+      <TruncationNote truncated={data.subscriptions_truncated} limit={data.page_limit} noun="subscribers" />
+
+      {/* The ledger behind the two money figures above.
+          `listAllInvoices` has shipped this list on `/admin/billing` since
+          feature 7 and nothing ever drew it, so the only invoice view ops had
+          was the pair of all-time totals — which can say collected went down
+          and never which invoice did it. That is the question the Refunded
+          metric exists to raise, and it had no answer on this screen. */}
+      <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
+        <table className="w-full min-w-[560px] text-sm">
+          <caption className="sr-only">Invoices</caption>
+          <thead>
+            <tr className="border-b border-paper-300 text-left">
+              <th className="overline px-4 py-3 font-semibold text-ink-400">Invoice</th>
+              <th className="overline px-4 py-3 font-semibold text-ink-400">Customer</th>
+              <th className="overline px-4 py-3 font-semibold text-ink-400">Issued</th>
+              <th className="overline px-4 py-3 font-semibold text-ink-400">Status</th>
+              <th className="overline px-4 py-3 text-right font-semibold text-ink-400">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.invoices.length === 0 && (
+              <tr>
+                <td className="px-4 py-3 text-ink-500" colSpan={5}>
+                  Nothing invoiced yet.
+                </td>
+              </tr>
+            )}
+            {data.invoices.map((inv) => (
+              <tr key={inv.id} className="border-b border-paper-200 last:border-0">
+                <td className="px-4 py-2.5 font-semibold text-ink-800">{inv.number}</td>
+                <td className="px-4 py-2.5 text-ink-600">{inv.email}</td>
+                <td className="px-4 py-2.5 text-ink-600">{formatDate(inv.issued_at)}</td>
+                <td className="px-4 py-2.5 text-ink-600">
+                  {inv.status}
+                  {invoiceRefundNote(inv) && (
+                    <div className="mt-1 text-xs text-ink-500" data-testid="admin-invoice-refund-note">
+                      {invoiceRefundNote(inv)}
+                    </div>
+                  )}
+                </td>
+                <td className="tnum px-4 py-2.5 text-right text-ink-900">
+                  {money(inv.amount_cents, inv.currency)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <TruncationNote truncated={data.invoices_truncated} limit={data.invoice_page_limit} noun="invoices" />
     </div>
+  );
+}
+
+/**
+ * Says so when a table stopped short of the book.
+ *
+ * Both lists on this screen are capped in SQL, and `listAllInvoices` was
+ * rewritten to report *when the cap bit* precisely so a reader would not take
+ * a page for the whole ledger. The flag reached the client and nothing
+ * rendered it, so a 201st subscriber was indistinguishable from not existing —
+ * on the one screen whose totals are computed separately and would keep
+ * disagreeing with the rows beneath them.
+ */
+function TruncationNote({ truncated, limit, noun }: { truncated: boolean; limit: number; noun: string }) {
+  if (!truncated) return null;
+  return (
+    <p className="mt-2 text-xs text-ink-500" data-testid={`truncated-${noun}`}>
+      Showing the {limit} most recent {noun}. Older rows are not listed — the figures above count them all.
+    </p>
   );
 }
 
