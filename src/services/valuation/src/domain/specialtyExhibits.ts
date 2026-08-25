@@ -777,6 +777,39 @@ function ifrs2Exhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): 
 
   const trueUp = record(specialty.true_up);
   const trueUpNote = trueUp ? P(str(trueUp.basis, '')) : null;
+
+  // The remeasurement the engine computes and this exhibit used to drop. For a
+  // cash-settled award that is a disclosure in its own right — the award is a
+  // liability carried at fair value, and the change in it goes through profit
+  // or loss each period (IFRS 2.30-33) — so an exhibit that printed only the
+  // grant-date expense left a reader with no sight of the liability at all.
+  // The equity-settled case renders too: "measured once and not remeasured" is
+  // the statement a reviewer checks the absence of the table against.
+  const remeasurement = record(specialty.remeasurement);
+  const remeasured = remeasurement?.required === true;
+  const currentTotal = num(remeasurement?.current_total);
+  const remeasurementTable =
+    remeasured && currentTotal !== null
+      ? table({
+          head: ['Remeasurement at the reporting date', 'Value'],
+          rows: [
+            ['Fair value per award', money(remeasurement?.current_fair_value_per_award, ctx, 4) ?? '—'],
+            ['Awards expected to vest', String(num(specialty.expected_to_vest) ?? '—')],
+            ['Liability at grant-date fair value', shown(totalExpense, ctx)],
+          ],
+          foot: ['Liability carried at fair value', shown(currentTotal, ctx)],
+        })
+      : null;
+  const changeNote =
+    remeasured && currentTotal !== null
+      ? P(
+          `<strong>Change in the liability.</strong> ${esc(
+            money(remeasurement?.change_in_liability, ctx) ?? '—',
+          )}, recognised in profit or loss for the period.`,
+        )
+      : null;
+  const remeasurementNote = remeasurement ? P(str(remeasurement.basis, '')) : null;
+
   const warnings = list(specialty.warnings).filter((w): w is string => typeof w === 'string');
   const warningNote =
     warnings.length > 0 ? warnings.map((w) => P(`<strong>Note.</strong> ${esc(w)}`)).join('') : null;
@@ -785,6 +818,9 @@ function ifrs2Exhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): 
     measurement,
     scheduleTable,
     trueUpNote,
+    remeasurementTable,
+    changeNote,
+    remeasurementNote,
     warningNote,
   ]);
 }

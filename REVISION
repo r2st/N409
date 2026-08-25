@@ -4718,3 +4718,113 @@
 #            Nothing here was checked in a browser. The exhibit assertions read
 #            the generated HTML, not a rendered PDF, and the gifts questionnaire
 #            gained three fields that no test renders through ClientIntakePage.
+
+# N409 revision
+# commit:    4507463
+# subject:   the method the form offered and no engine had, and the forfeiture
+#            nobody estimated
+# previous:  73ac974 (the questions no engine was ever asked).
+# includes:  3 commits — R134, which is R133's gap note carried out: the census
+#            that runs from the engine's parameters back to the questionnaire,
+#            and the two findings that writing it produced.
+#
+#            db65dab — the intangible questionnaire's method select offered
+#            `cost`, and `value_intangible` looks the method up in `_METHODS`,
+#            whose key is `cost_approach`. One of four methods on the form was
+#            an unconditional 422 that no answer and no run input could get
+#            past. Renaming it would have moved the failure rather than closed
+#            it, twice: the assembler `put` a discount rate and a tax rate into
+#            the params for every method and `cost_approach` accepts neither,
+#            and past that, `replacement_cost` is the method's one parameter
+#            with no default and the form asked for nothing that maps to it.
+#            So the parameters are a per-method list now, the select renders
+#            from the engine's own keys, and the form asks for replacement cost
+#            and the five percentages. `cost` still assembles, read as the old
+#            spelling — a saved answer is what the client said.
+#
+#            9269862 — IFRS 2.19-20 measures the expense on the awards
+#            *expected to vest*, so a forfeiture rate of nil asserts that not
+#            one award will be forfeited. The parameter defaulted to 0.0, the
+#            questionnaire asked for it nowhere and the assembler sent it
+#            never, so every exhibit printed that assertion at "0.0%" above an
+#            expense struck on the whole grant. Same shape as last round's
+#            §2503(b) exclusion and the same remedy: the parameter is `None`,
+#            the result carries `forfeiture_determined`, and the arithmetic is
+#            unchanged because it still has to assume something — what changed
+#            is that the deliverable says whose assumption it was. A market
+#            condition is the one place the absence is right (IFRS 2.21 puts
+#            the condition in the fair value, and the engine already refuses to
+#            also count it as a forfeiture), so neither the warning nor the
+#            "not estimated" row appears there.
+#
+#            4507463 — the census, in the direction nothing guarded. R133 left
+#            it as a gap because the engine's answer is a Python signature and
+#            three endpoints do not have a usable one: `/intangible`,
+#            `/impairment` and `/emi-csop` take `(method, params)` and unpack
+#            into a different function per method, so parsing the route reads
+#            `fn`, `rest` and `params` as parameters. Resolved in Python, where
+#            the dispatch can be followed — a pytest builds the accepted names
+#            with `inspect.signature` and publishes
+#            `contract/specialty-params.json`, keyed by endpoint and call
+#            variant. That test fails when the file drifts from the source; the
+#            TypeScript census fails when the assembler cannot reach something
+#            the file lists.
+#
+#            "Asked of somebody" had to be narrow. Overrides merge over the
+#            assembled body, so any key can be sent by an analyst who knows it
+#            is there, and counting that would make the census pass
+#            unconditionally — there is a test asserting exactly that property.
+#            A parameter counts only if the questionnaire produces it or if
+#            `SPECIALTY_ENGINES[kind].runInputs` declares it, which is what the
+#            workspace tab reads to say so before the run rather than surface a
+#            422 after. That is what turned up the fourteen analyst inputs now
+#            declared: MEEM and with-and-without could not be run at all
+#            without a schedule nothing named, and ASC 820's Level 3
+#            rollforward and sensitivity had the same shape as the position
+#            schedule sitting beside them.
+#
+#            Two parameters are excused with reasons rather than wired: IFRS 2's
+#            `attribution` (IG11 offers no straight-line election, so graded is
+#            the standard's answer and not the appraiser's) and `tranches`
+#            (derived from the vesting period already asked for).
+#            `/comparables` is named as an endpoint the peer-set route posts to
+#            and no questionnaire does.
+#
+#            Deliberate break, each: dropping the `expected_forfeiture_rate`
+#            line fails the census by name; adding a parameter to
+#            `gift_estate_valuation` fails the pytest as stale and then, once
+#            regenerated, fails the census asking who answers for it; spelling
+#            the method `cost` again fails three IP assertions; re-injecting
+#            the discount rate into `cost_approach` fails three more.
+#
+# gap:       The census measures whether a parameter can be *sent*. It says
+#            nothing about whether the value sent is the right one, and the two
+#            findings this round were both of the sendable-at-all kind. The
+#            harder class is a parameter that is wired and wrong — `dloc` and
+#            `dlom` are questionnaire percentages passed straight through, and
+#            nothing checks that the form's units are the engine's. R133 found
+#            `percent_interest` had exactly that hazard and it was already
+#            right; nobody has swept the rest.
+#
+#            The IP run inputs are declared per kind, not per method, so the
+#            tab shows an analyst valuing a trademark by relief-from-royalty
+#            the MEEM and with-and-without schedules too. `runInputs` has no
+#            place to say "only under this answer", and adding one means the
+#            frontend reading the questionnaire's method answer, which it does
+#            not do today.
+#
+#            `smb`'s `sde` is excused as the same figure the add-backs already
+#            build, which is true of the engine and unverified of the report:
+#            nobody checked what the SMB exhibit prints when a run override
+#            supplies `sde` directly and the add-back schedule beside it is
+#            empty.
+#
+#            IFRS 2's `current_fair_value_per_award` is declared as a run input
+#            and the remeasurement it drives is not rendered by `ifrs2Exhibit`
+#            at all. For a cash-settled award that is a whole disclosure — the
+#            liability and the change in it (IFRS 2.30-33) — computed by the
+#            engine and dropped on the floor.
+#
+#            Nothing here was checked in a browser. The IP questionnaire gained
+#            six fields and the IFRS 2 questionnaire one, and no test renders
+#            any of them through ClientIntakePage.

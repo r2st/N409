@@ -347,6 +347,51 @@ describe('IFRS 2 share-based payment', () => {
     expect(html).not.toContain('not estimated');
   });
 
+  // A cash-settled award is a liability carried at fair value, remeasured each
+  // reporting date with the change through profit or loss (IFRS 2.30-33). The
+  // engine computed all of it and the exhibit rendered none of it, so the
+  // deliverable for a cash-settled plan showed a grant-date expense and no
+  // sight of the liability it actually creates.
+  const cashSettled = () => ({
+    ...SAMPLE_IFRS2_RESULT,
+    settlement: 'cash_settled',
+    remeasurement: {
+      required: true,
+      current_fair_value_per_award: 0.9,
+      current_total: 621000,
+      change_in_liability: 107881.12,
+      basis:
+        'cash-settled awards are liabilities remeasured to fair value at each reporting date (IFRS 2.30-33)',
+    },
+  });
+
+  it('renders the liability a cash-settled award is carried at', () => {
+    const html = only('ifrs2', cashSettled()).html;
+    expect(html).toContain('Remeasurement at the reporting date');
+    expect(html).toContain('$0.9000');
+    expect(html).toContain('$621,000');
+  });
+
+  it('states the change in the liability and where it is recognised', () => {
+    const html = only('ifrs2', cashSettled()).html;
+    expect(html).toContain('Change in the liability');
+    expect(html).toContain('$107,881');
+    expect(html).toContain('profit or loss');
+  });
+
+  it('says an equity-settled award is not remeasured, rather than saying nothing', () => {
+    const html = exhibit().html;
+    expect(html).toContain('not subsequently remeasured');
+    expect(html).not.toContain('Remeasurement at the reporting date');
+  });
+
+  it('drops the remeasurement table when the engine reported no liability figure', () => {
+    const { current_total: _t, ...partial } = cashSettled().remeasurement as Record<string, unknown>;
+    const html = only('ifrs2', { ...cashSettled(), remeasurement: partial }).html;
+    expect(html).not.toContain('Remeasurement at the reporting date');
+    expect(html).toContain('IFRS 2.30-33'); // the basis still states the rule
+  });
+
   it('asks for no forfeiture estimate where the condition is in the fair value', () => {
     // IFRS 2.21: a market condition is priced into the grant-date fair value,
     // and the engine refuses to also count it as a forfeiture.
