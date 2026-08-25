@@ -239,12 +239,12 @@ const toCents = (value: string | number): number => {
  * their refund was a table that still read "succeeded".
  */
 function settlementNote(p: Payment): string | null {
-  const refunded = toCents(p.refunded_cents);
+  const refundedCents = toCents(p.refunded_cents);
   const parts: string[] = [];
-  if (refunded > 0) {
-    const full = refunded >= toCents(p.amount_cents);
+  if (refundedCents > 0) {
+    const full = refundedCents >= toCents(p.amount_cents);
     parts.push(
-      `${full ? 'Refunded' : 'Partially refunded'} ${formatCents(refunded, p.currency)}${
+      `${full ? 'Refunded' : 'Partially refunded'} ${formatCents(refundedCents, p.currency)}${
         p.refunded_at ? ` on ${formatDate(p.refunded_at)}` : ''
       }`,
     );

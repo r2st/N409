@@ -31,7 +31,7 @@ export function LandingPage() {
     return () => clearInterval(t);
   }, []);
 
-  const minPrice = Math.min(...PRODUCTS.map((p) => p.priceCents));
+  const minPriceCents = Math.min(...PRODUCTS.map((p) => p.priceCents));
 
   return (
     <div>
@@ -58,7 +58,7 @@ export function LandingPage() {
           </h1>
           <p className="mt-7 max-w-xl text-lg leading-relaxed text-chrome-dim">
             An independent, audit-defensible 409A valuation — first draft in 24 hours, signed by two
-            credentialed analysts, from {formatUsd(minPrice)} flat.
+            credentialed analysts, from {formatUsd(minPriceCents)} flat.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-4">
             <Link
