@@ -321,6 +321,7 @@ export const SAMPLE_GIFTS_RESULT: SpecialtyResult = {
   taxable_gift: 2242960.0,
   cumulative_taxable_gifts: 3492960.0,
   rev_rul_59_60: {
+    stated: true,
     factors: [
       {
         key: 'nature_and_history',

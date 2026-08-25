@@ -238,3 +238,29 @@ def test_a_supplied_exclusion_is_determined():
 def test_an_undetermined_exclusion_still_refuses_a_bad_one():
     with pytest.raises(EngineInputError, match="gifts.annual_exclusion"):
         run(annual_exclusion=-1)
+
+
+def test_an_unstated_factor_checklist_is_unstated_not_eight_refusals():
+    """`None` and `[]` are the same eight "no"s and opposite statements.
+
+    Nothing in the platform passed `factors_addressed`, so every gift exhibit
+    printed the Rev. Rul. 59-60 checklist as "0 of 8" with a No against each
+    factor — an appraisal reporting that it addressed none of the eight factors
+    it is graded on.
+    """
+    out = run()["rev_rul_59_60"]
+    assert out["stated"] is False
+    assert out["addressed_count"] == 0
+    assert len(out["unaddressed"]) == len(REV_RUL_59_60_FACTORS)
+
+
+def test_an_empty_checklist_is_a_statement():
+    out = run(factors_addressed=[])["rev_rul_59_60"]
+    assert out["stated"] is True
+    assert out["addressed_count"] == 0
+
+
+def test_a_completed_checklist_is_stated():
+    out = run(factors_addressed=["book_value", "earning_capacity"])["rev_rul_59_60"]
+    assert out["stated"] is True
+    assert out["addressed_count"] == 2

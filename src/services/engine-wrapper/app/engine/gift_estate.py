@@ -92,6 +92,13 @@ def _factors(addressed) -> dict:
             f"gifts.factors_addressed has unknown factor(s): {', '.join(unknown)}"
         )
     return {
+        # Whether the file said anything at all. `None` and `[]` produce the
+        # same eight "no"s and mean opposite things: an appraiser who worked
+        # through the checklist and addressed none of it, versus a caller who
+        # never passed the argument. Printing the second as the first puts "0 of
+        # 8 factors addressed" in a Rev. Rul. 59-60 appraisal, which is the worst
+        # sentence such a report can contain about itself.
+        "stated": addressed is not None,
         "factors": [
             {"key": key, "label": label, "addressed": key in keys}
             for key, label in REV_RUL_59_60_FACTORS
