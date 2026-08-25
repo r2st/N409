@@ -351,7 +351,17 @@ export function exerciseScenarios(
   });
 }
 
-/** Default what-if ladder: 1×, 2×, 5×, 10× the current 409A FMV. */
+/**
+ * Default what-if ladder: 1×, 2×, 5×, 10× the current 409A FMV.
+ *
+ * "409A FMV" is load-bearing, not decoration. `multipleOfCurrent` above divides
+ * by the same figure, so whatever anchors this ladder scales the whole panel —
+ * and `calculations.fmv_per_share` is a 409A column by name that every
+ * specialty engine writes into. `routes/grants.ts` gates the read on
+ * `concludes409AFmvPerShare` for that reason and falls back to the grant's own
+ * exercise price; a caller passing anything else here is choosing what
+ * "current" means.
+ */
 /**
  * How many what-if FMVs one grant panel may be asked for. The default ladder
  * below is four; twenty is well past any ladder a person reads, and keeps a

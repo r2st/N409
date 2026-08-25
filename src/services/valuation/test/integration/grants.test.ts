@@ -221,6 +221,140 @@ describe.skipIf(!dbUp)('feature 6 — grant management', () => {
     expect(none.json().scenarios).toHaveLength(4);
   });
 
+  /*
+   * The default ladder is 1×/2×/5×/10× *the current 409A FMV* and the panel's
+   * "×current" column divides by it. Both were read straight off
+   * `calculations.fmv_per_share`, a 409A column by name that every specialty
+   * engine writes into: on an EMI run it holds the restricted AMV, which is
+   * below fair market value by the whole restriction discount, so every
+   * multiple on the panel came back overstated and the whole table was scaled
+   * off the wrong number. R142 stopped a board *adopting* this column as a
+   * §409A price; this is the same column being read as one, one screen over.
+   */
+  describe('the what-if ladder is only struck off a figure that is a 409A FMV', () => {
+    const seedGranted = async (
+      companyKind: string,
+      results: Record<string, unknown>,
+      columnFmv: number,
+      adoptedFmv: number,
+      /** Struck away from the adopted FMV, when the test needs the two to differ. */
+      exercisePrice?: number,
+    ) => {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: companyKind, company_name: `Ladder ${companyKind}` },
+      });
+      const id = created.json().valuation.id as string;
+      await createCalculation(
+        ctx.pool,
+        {
+          valuationId: id,
+          engineVersion: 'test',
+          status: 'succeeded',
+          inputs: {},
+          results,
+          equityValue: 10_000_000,
+          fmvPerShare: columnFmv,
+          createdBy: ops.id,
+        },
+        { actorType: 'human', actorId: ops.id },
+      );
+      // Named explicitly, because on a specialty run `POST /board` refuses to
+      // derive one from this column at all (R142).
+      const board = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/board`,
+        headers: authHeader(ops.token),
+        payload: { fmv_conclusion: adoptedFmv },
+      });
+      expect(board.statusCode, JSON.stringify(board.json())).toBe(201);
+      const add = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/board/members`,
+        headers: authHeader(ops.token),
+        payload: { name: 'Chair', email: `chair-${companyKind}@board.example` },
+      });
+      await app.inject({
+        method: 'POST',
+        url: '/api/v1/board/sign',
+        payload: { token: add.json().sign_token, decision: 'signed' },
+      });
+      const grant = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/grants`,
+        headers: authHeader(ops.token),
+        payload: {
+          grantee_name: 'Dana',
+          grant_date: '2024-01-01',
+          options_count: 1000,
+          ...(exercisePrice === undefined ? {} : { exercise_price: exercisePrice }),
+        },
+      });
+      expect(grant.statusCode, JSON.stringify(grant.json())).toBe(201);
+      return { id, grantId: grant.json().grant.id as string };
+    };
+
+    const detail = async (id: string, grantId: string, query = '') => {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${id}/grants/${grantId}${query}`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json();
+    };
+
+    it('never anchors an EMI panel on the restricted AMV', async () => {
+      // AMV 1.00 in the column; the board adopted 1.50 explicitly and the grant
+      // was struck there.
+      const { id, grantId } = await seedGranted(
+        'emi',
+        { kind: 'emi', specialty: { amv_per_share: 1, umv_per_share: 1.5 } },
+        1,
+        1.5,
+      );
+      const body = await detail(id, grantId);
+      // The ladder is 1×/2×/5×/10× of 1.50, not of the AMV.
+      expect(body.scenarios.map((s: { fmv: number }) => s.fmv)).toEqual([1.5, 3, 7.5, 15]);
+
+      // And the multiple divides by the same thing: 3.00 is 2× what this option
+      // costs, not the 3× a division by the AMV reported.
+      const one = await detail(id, grantId, '?fmvs=3');
+      expect(one.scenarios[0]).toMatchObject({ fmv: 3, multipleOfCurrent: 2 });
+    });
+
+    it('still uses the concluded FMV on a 409A run, not the strike', async () => {
+      /*
+       * The control, and it has to discriminate in the other direction: the
+       * column (2.50) and the exercise price (1.00) are deliberately different
+       * numbers, so a "fix" that simply stopped reading the column would fail
+       * here. An early grant struck below a later 409A is the ordinary way the
+       * two come apart, and the panel's whole point is the spread between them.
+       */
+      const { id, grantId } = await seedGranted('409a', { fmv_per_share: 2.5, approaches: {} }, 2.5, 2.5, 1);
+      const body = await detail(id, grantId);
+      expect(body.scenarios.map((s: { fmv: number }) => s.fmv)).toEqual([2.5, 5, 12.5, 25]);
+      const one = await detail(id, grantId, '?fmvs=5');
+      expect(one.scenarios[0]).toMatchObject({ fmv: 5, multipleOfCurrent: 2 });
+    });
+
+    it('falls back to the strike on an ESOP run too', async () => {
+      // Not only the UK schemes: an ESOP's per-share figure is ERISA adequate
+      // consideration over shares outstanding, off a *supplied* equity value.
+      // A real number, carefully derived, and not the one §409A asks for.
+      const { id, grantId } = await seedGranted(
+        'esop',
+        { kind: 'esop', specialty: { fmv_per_share: 4 } },
+        4,
+        2,
+      );
+      const body = await detail(id, grantId);
+      expect(body.scenarios.map((s: { fmv: number }) => s.fmv)).toEqual([2, 4, 10, 20]);
+    });
+  });
+
   it('lists grants for the owning client but not other clients', async () => {
     const mine = await app.inject({
       method: 'GET',

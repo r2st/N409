@@ -6,6 +6,7 @@ import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { findResolutionByValuation } from '../repos/boardApprovals.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
+import { concludes409AFmvPerShare, specialtyRunKind } from '../domain/specialty.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import {
   cancelGrant,
@@ -215,7 +216,30 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     // Custom what-if FMVs via ?fmvs=1,2,5 else default ladder from current FMV.
     const currentFmv = Number(grant.exercise_price);
     const latest = await latestSucceededCalculation(deps.pool, id);
-    const baseFmv = latest?.fmv_per_share ? Number(latest.fmv_per_share) : currentFmv;
+    /*
+     * The ladder and the "×current" column are both struck off *the current
+     * 409A FMV* — `defaultScenarioFmvs` says so in its own doc comment, and
+     * `multipleOfCurrent` divides by it.
+     *
+     * `calculations.fmv_per_share` is a 409A column by name that every
+     * specialty engine writes into (domain/specialty.ts). On an EMI or CSOP run
+     * what lands there is the AMV — the *restricted* value, below the
+     * unrestricted market value by the whole restriction discount — and on an
+     * ESOP run it is ERISA adequate consideration over shares outstanding, off
+     * a supplied equity value. Dividing by a figure that is below fair market
+     * value overstates every multiple on the panel, and anchoring the default
+     * 1×/2×/5×/10× ladder on it scales the whole table off the restricted
+     * number. R142 stopped a board adopting this same column as a §409A price;
+     * this is the same column being read as one, one screen over.
+     *
+     * The fallback is the grant's own exercise price — already what this line
+     * did when no calculation existed, and on a specialty engagement it is a
+     * figure a human named explicitly, since `POST /valuations/:id/board`
+     * refuses to derive one there.
+     */
+    const runKind = specialtyRunKind(latest?.results ?? null);
+    const adoptable = runKind === null || concludes409AFmvPerShare(runKind);
+    const baseFmv = adoptable && latest?.fmv_per_share ? Number(latest.fmv_per_share) : currentFmv;
     const q = (req.query as { fmvs?: string }).fmvs;
     // Bounded like `sort` is (MAX_SORT_TERMS, repos/valuations): the ladder is a
     // handful of what-if prices for one panel — the default is four — and every
