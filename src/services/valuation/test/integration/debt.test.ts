@@ -126,6 +126,77 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
     expect(hist.json().valuations).toHaveLength(1);
   });
 
+  it('prices a what-if without recording it as a measurement', async () => {
+    const id = await createInstrument('bond', {
+      face: 1000,
+      coupon_rate: 0.05,
+      frequency: 2,
+      maturity_years: 5,
+      market_yield: 0.06,
+    });
+    // The measurement. One row, and the fair value the instrument is worth.
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/debt/instruments/${id}/value`,
+      headers: authHeader(ops.token),
+      payload: { valuation_date: '2026-06-30' },
+    });
+
+    // The sensitivity walk: the same instrument at four shocked yields, priced
+    // to draw a curve. `face` is what this stub scales the price by, so a
+    // shocked run is given a different one — the point is that a run returning
+    // a *different* number still leaves the record alone.
+    for (const face of [900, 950, 1050, 1100]) {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/debt/instruments/${id}/value`,
+        headers: authHeader(ops.token),
+        payload: { overrides: { face }, persist: false },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().result.dirty_price).toBeCloseTo(face * 0.9805);
+      // Answered, and explicitly not a row: a caller that stored `valuation`
+      // would otherwise store `undefined` and never know.
+      expect(res.json().valuation).toBeNull();
+    }
+
+    const hist = await app.inject({
+      method: 'GET',
+      url: `/api/v1/debt/instruments/${id}/valuations`,
+      headers: authHeader(ops.token),
+    });
+    // `listValuations` is newest-first and `loadDebtReport` takes its head for
+    // the measurement the report is about. Before the flag, that head was the
+    // last shock of the walk.
+    expect(hist.json().valuations).toHaveLength(1);
+    expect(Number(hist.json().valuations[0].fair_value)).toBeCloseTo(980.5);
+  });
+
+  it('records the run when nothing says otherwise', async () => {
+    const id = await createInstrument('bond', {
+      face: 1000,
+      coupon_rate: 0.05,
+      frequency: 2,
+      maturity_years: 5,
+      market_yield: 0.06,
+    });
+    // The vacuity guard on the test above: `persist` defaults to true, so an
+    // older client that has never heard of it still writes its measurement.
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/debt/instruments/${id}/value`,
+      headers: authHeader(ops.token),
+      payload: { overrides: { face: 1100 } },
+    });
+    expect(res.json().valuation).not.toBeNull();
+    const hist = await app.inject({
+      method: 'GET',
+      url: `/api/v1/debt/instruments/${id}/valuations`,
+      headers: authHeader(ops.token),
+    });
+    expect(hist.json().valuations).toHaveLength(1);
+  });
+
   it('merges credit terms into a credit_spread valuation', async () => {
     const id = await createInstrument('credit_spread', {
       face: 1000,

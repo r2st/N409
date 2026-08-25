@@ -326,12 +326,21 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
     await load();
   };
 
-  const runValue = async (overrides: Record<string, unknown> = {}) => {
+  /**
+   * Price the instrument. `persist` says whether the answer is a measurement.
+   *
+   * The sensitivity walk asks five questions and records none of them. Every
+   * run used to write a row, so a walk left four hypothetical prices in the
+   * instrument's history carrying today's date — and the newest of them, the
+   * rate 200bp above the market, is what the history table showed first and
+   * what the measurement report took for the instrument's fair value.
+   */
+  const runValue = async (overrides: Record<string, unknown> = {}, persist = true) => {
     const { result: r } = await api<{ result: Record<string, unknown> }>(
       `/debt/instruments/${instrumentId}/value`,
       {
         method: 'POST',
-        body: { overrides },
+        body: { overrides, persist },
       },
     );
     return r;
@@ -401,7 +410,7 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
         const applied = Math.max(base + requested, 0);
         if (priced.has(applied)) continue;
         priced.add(applied);
-        const r = await runValue({ [key]: applied });
+        const r = await runValue({ [key]: applied }, false);
         const fv = (r.fair_value ?? r.dirty_price) as number;
         rows.push({ shift: applied - base, value: Number(fv) });
       }

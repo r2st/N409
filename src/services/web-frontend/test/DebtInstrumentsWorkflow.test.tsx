@@ -457,6 +457,42 @@ describe('DebtInstrumentsPage — sensitivity', () => {
     expect(Math.min(...shifted)).toBe(0);
   });
 
+  it('asks its five questions without recording any of them as a measurement', async () => {
+    // Every run used to write a `debt_valuations` row, and the walk is five
+    // runs: four hypothetical prices landed in the instrument's record beside
+    // the real one, all carrying today's date. The history table is newest
+    // first and the measurement report takes its head, so the last shock of the
+    // walk — the rate 200bp above the market — became the fair value the
+    // instrument was reported at.
+    const { calls } = mockServer({ instruments: [makeInstrument({ params: { market_yield: 0.06 } })] });
+    const user = userEvent.setup();
+    renderPage();
+    await awaitDetail(/Bond parameters/);
+
+    await user.click(screen.getByRole('button', { name: 'Yield sensitivity' }));
+    await screen.findByRole('heading', { name: 'Sensitivity' });
+
+    const runs = calls.filter((c) => c.path.endsWith('/value'));
+    expect(runs).toHaveLength(5);
+    expect(runs.every((c) => bodyObject(c, 'overrides') && c.body?.persist === false)).toBe(true);
+  });
+
+  it('records the run behind the Value instrument button', async () => {
+    // The other half, and the reason the flag is per-request rather than a
+    // property of the endpoint: the button beside it is a measurement.
+    const { calls } = mockServer();
+    const user = userEvent.setup();
+    renderPage();
+    await awaitDetail(/Bond parameters/);
+
+    await user.click(screen.getByRole('button', { name: 'Value instrument' }));
+    await screen.findByRole('heading', { name: 'Valuation result' });
+
+    const runs = calls.filter((c) => c.path.endsWith('/value'));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.body?.persist).toBe(true);
+  });
+
   it('labels a truncated shift by what it applied, and prices each rate once', async () => {
     // 0.5% cannot be shifted down 100bp, let alone 200. Both requests land on a
     // yield of zero, so there is one measurement here and not two — and it is a

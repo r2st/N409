@@ -65,6 +65,25 @@ const ValueBody = z.object({
   // Per-run overrides merged over the stored params (e.g. a fresh market_yield,
   // benchmark_yield, stock_price or next-round assumptions).
   overrides: z.record(z.unknown()).default({}),
+  /**
+   * Whether the run is a measurement or a question.
+   *
+   * Every call used to write a `debt_valuations` row, and the sensitivity
+   * walk is five calls: shocking a yield by ±100bp and ±200bp left four
+   * hypothetical prices in the instrument's record beside the real one, all
+   * carrying today's date. `listValuations` is newest-first and
+   * `loadDebtReport` takes its head as the measurement the report is about,
+   * so the last shock of the walk — the rate 200bp *above* the market —
+   * became the instrument's fair value, on the page, in the history table and
+   * in the measurement report. A what-if is not a mark.
+   *
+   * Defaults to true, so the flag is only ever asserted by a caller that
+   * knows it is asking a question. The row a scenario would have written is
+   * also the one most likely to be unstorable — `requireStorableFigure`
+   * bounds the column, and a shocked price is what reaches the bound first —
+   * so not writing it removes a way for the walk to fail halfway.
+   */
+  persist: z.boolean().default(true),
 });
 
 function requireOps(principal: Principal): void {
@@ -214,6 +233,8 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       instrument_type: instrument.instrument_type,
       params,
     });
+
+    if (!parsed.data.persist) return { valuation: null, result };
 
     const valuation = await createValuation(deps.pool, {
       instrumentId: id,
