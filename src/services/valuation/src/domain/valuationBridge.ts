@@ -21,6 +21,33 @@
  * multiple) for context.
  */
 
+import { isSpecialtyKind } from './specialty.js';
+import type { ValuationKind } from './valuation.js';
+
+/**
+ * A pair the bridge cannot be drawn over — an input condition, not a fault.
+ *
+ * `buildBridge` threw a bare `Error` for a calculation with no top-level
+ * `fmv_per_share`, which reached the HTTP layer as a 500. Typed so the route
+ * can answer 422 and say which pair it was asked about: an ordinary click
+ * should not read as the server having broken.
+ */
+export class BridgeInputError extends Error {}
+
+/**
+ * Whether a kind's calculations are written in the vocabulary this bridge
+ * factorises.
+ *
+ * The decomposition above is the 409A engine's: equity value, the allocation
+ * that turns it into a per-share figure, DLOC, DLOM. A specialty engine writes
+ * its own result shape under `results.specialty` (routes/specialty.ts) and none
+ * of those four terms exist in it — an EMI run's actual market value moves
+ * because the restriction discount moved, which is not a factor here.
+ */
+export function bridgeableKind(kind: string): boolean {
+  return !isSpecialtyKind(kind as ValuationKind);
+}
+
 export interface BridgeFactor {
   key: 'company_value' | 'allocation_dilution' | 'dloc' | 'dlom';
   label: string;
@@ -107,7 +134,9 @@ export function buildBridge(from: Results, to: Results): ValuationBridge {
   const fromFmv = num(from.fmv_per_share);
   const toFmv = num(to.fmv_per_share);
   if (fromFmv === null || toFmv === null) {
-    throw new Error('both calculations must have an fmv_per_share to build a bridge');
+    throw new BridgeInputError(
+      'Both calculations need a per-share fair market value before a bridge can be drawn between them',
+    );
   }
 
   const fromD = discounts(from);

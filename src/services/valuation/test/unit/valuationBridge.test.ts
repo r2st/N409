@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { buildBridge, renderBridgeSection } from '../../src/domain/valuationBridge.js';
+import {
+  BridgeInputError,
+  bridgeableKind,
+  buildBridge,
+  renderBridgeSection,
+} from '../../src/domain/valuationBridge.js';
 import { sanitizeHtml } from '../../src/domain/report.js';
+import { SPECIALTY_KINDS } from '../../src/domain/specialty.js';
+import { VALUATION_KINDS } from '../../src/domain/valuation.js';
 
 /** A minimal engine `results` object with the fields the bridge reads. */
 function results(over: {
@@ -81,7 +88,7 @@ describe('valuation bridge (feature 3)', () => {
   });
 
   it('throws when an FMV is missing', () => {
-    expect(() => buildBridge({ equity_value: 1 }, results({ fmv: 1, equity: 1 }))).toThrow();
+    expect(() => buildBridge({ equity_value: 1 }, results({ fmv: 1, equity: 1 }))).toThrow(BridgeInputError);
   });
 
   it('renders an optional report section with only whitelisted HTML', () => {
@@ -215,8 +222,33 @@ describe('valuation bridge (feature 3)', () => {
     expect(bridge.pct_change).toBeNull();
   });
 
-  it('throws when the later calculation has no FMV', () => {
-    expect(() => buildBridge(results({ fmv: 1, equity: 1 }), { equity_value: 1 })).toThrow(/fmv_per_share/);
+  /*
+   * Typed rather than a bare Error: the route answers 422 off this, and the
+   * message is the sentence the user reads. A pair the bridge cannot be drawn
+   * over is an input condition, not the server having broken.
+   */
+  it('throws a typed input error when the later calculation has no FMV', () => {
+    expect(() => buildBridge(results({ fmv: 1, equity: 1 }), { equity_value: 1 })).toThrow(BridgeInputError);
+    expect(() => buildBridge(results({ fmv: 1, equity: 1 }), { equity_value: 1 })).toThrow(
+      /per-share fair market value/,
+    );
+  });
+
+  describe('bridgeableKind', () => {
+    it('accepts every kind that runs the 409A engine', () => {
+      const shared = VALUATION_KINDS.filter((k) => !(SPECIALTY_KINDS as readonly string[]).includes(k));
+      expect(shared.every(bridgeableKind)).toBe(true);
+    });
+
+    /*
+     * The census: a specialty engine writes its result under
+     * `results.specialty`, so none of the four factors this bridge attributes
+     * across exist on one. A new specialty kind must not quietly become
+     * bridgeable.
+     */
+    it('rejects every specialty kind', () => {
+      expect(SPECIALTY_KINDS.some(bridgeableKind)).toBe(false);
+    });
   });
 });
 

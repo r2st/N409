@@ -111,6 +111,132 @@ describe.skipIf(!dbUp)('value bridge endpoint (feature 3)', () => {
    * members was offered nothing to bridge to, and answered "Both valuations
    * must be for the same company" if it named last year's directly.
    */
+
+  /*
+   * The bridge decomposes a 409A per-share value into equity value,
+   * allocation, DLOC and DLOM. A specialty run writes none of those — its
+   * engine result lives under `results.specialty` — but it *does* fill the
+   * calculation's typed `fmv_per_share` column, which is what the candidate
+   * list qualified on. So an EMI run was offered as a candidate with its
+   * per-share figure beside it, and the click that followed returned a 500.
+   */
+  describe('a kind the bridge cannot explain', () => {
+    async function seedSpecialty(company: string, amv: number, kind = 'emi') {
+      const v = await createValuation(
+        ctx.pool,
+        { kind, companyName: company, userId: ops.id },
+        { ...actor, actorId: ops.id },
+      );
+      await createCalculation(
+        ctx.pool,
+        {
+          valuationId: v.id,
+          engineVersion: 'test',
+          status: 'succeeded',
+          inputs: { endpoint: `/engine/v1/${kind}` },
+          results: { kind, specialty: { amv_per_share: amv, umv_per_share: amv * 1.25 } },
+          equityValue: 5_000_000,
+          fmvPerShare: amv,
+          createdBy: ops.id,
+        },
+        { ...actor, actorId: ops.id },
+      );
+      return v;
+    }
+
+    it('is not offered as a candidate', async () => {
+      const emi = await seedSpecialty('Ashcombe Devices', 1.8);
+      const nineA = await seedValuation('Ashcombe Devices', 3.0, 12_000_000, 0.2);
+
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${nineA.id}/bridge-candidates`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().candidates.map((c: { id: string }) => c.id)).not.toContain(emi.id);
+    });
+
+    it('offers nothing to bridge from, rather than a list that cannot be clicked', async () => {
+      const emi = await seedSpecialty('Barrow Instruments', 1.8);
+      await seedValuation('Barrow Instruments', 3.0, 12_000_000, 0.2);
+
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${emi.id}/bridge-candidates`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().candidates).toEqual([]);
+    });
+
+    it('explains the refusal instead of returning a 500', async () => {
+      const older = await seedSpecialty('Calder Systems', 1.8);
+      const newer = await seedSpecialty('Calder Systems', 2.0);
+
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${newer.id}/bridge/${older.id}`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().detail).toMatch(/not measured in the terms this bridge explains/);
+    });
+
+    it('refuses a mixed pair from either side', async () => {
+      const emi = await seedSpecialty('Dunmore Optics', 1.8);
+      const nineA = await seedValuation('Dunmore Optics', 3.0, 12_000_000, 0.2);
+
+      for (const [a, b] of [
+        [nineA.id, emi.id],
+        [emi.id, nineA.id],
+      ]) {
+        const res = await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/valuations/${a}/bridge/${b}`,
+          headers: authHeader(ops.token),
+        });
+        expect(res.statusCode).toBe(422);
+      }
+    });
+  });
+
+  /*
+   * The residual case the typed error exists for: a 409A calculation stored
+   * without a per-share figure in its payload. Reachable for engine payloads
+   * that predate the field, and a 500 either way before this.
+   */
+  it('refuses a stored calculation the bridge cannot read', async () => {
+    const older = await seedValuation('Eastgate Metals', 2.0, 10_000_000, 0.25);
+    const newer = await createValuation(
+      ctx.pool,
+      { kind: '409a', companyName: 'Eastgate Metals', userId: ops.id },
+      { ...actor, actorId: ops.id },
+    );
+    await createCalculation(
+      ctx.pool,
+      {
+        valuationId: newer.id,
+        engineVersion: 'test',
+        status: 'succeeded',
+        inputs: {},
+        results: { equity_value: 11_000_000 },
+        equityValue: 11_000_000,
+        fmvPerShare: 2.4,
+        createdBy: ops.id,
+      },
+      { ...actor, actorId: ops.id },
+    );
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${newer.id}/bridge/${older.id}`,
+      headers: authHeader(ops.token),
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().detail).toMatch(/per-share fair market value/);
+  });
+
   describe("a firm's client, across two of its members", () => {
     let firmId: string;
     let alice: Awaited<ReturnType<typeof seedUser>>;

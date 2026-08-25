@@ -4,7 +4,8 @@ import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
-import { buildBridge } from '../domain/valuationBridge.js';
+import { BridgeInputError, bridgeableKind, buildBridge } from '../domain/valuationBridge.js';
+import { SPECIALTY_KINDS } from '../domain/specialty.js';
 import { sameCompany, sameCompanyFilter } from '../domain/valuationHistory.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
@@ -45,6 +46,19 @@ export function registerBridgeRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await load(principal, id);
+    /*
+     * A candidate list offering a valuation the bridge then cannot draw is the
+     * same defect `sameCompanyFilter` was written to stop, one level up. The
+     * list qualified candidates on the calculation's typed `fmv_per_share`
+     * column, which a specialty run *does* populate; the bridge factorises
+     * `results.fmv_per_share`, which it does not — so an EMI run was offered
+     * with its per-share figure beside it and answered the click with a 500.
+     * Both ends of the pair are filtered on the vocabulary the bridge reads.
+     */
+    // `bridgeable: false` is not "none yet" — it is "not this kind, ever". The
+    // view says the two differently: telling a firm to wait for a comparable
+    // valuation that will never be offered is worse than an empty list.
+    if (!bridgeableKind(valuation.kind)) return { candidates: [], bridgeable: false };
     const scope = sameCompanyFilter(valuation);
     const { rows } = await deps.pool.query<{
       id: string;
@@ -59,13 +73,14 @@ export function registerBridgeRoutes(app: FastifyInstance, deps: { pool: pg.Pool
          FROM valuations v
         WHERE ${scope.clause}
           AND v.id <> $3
+          AND NOT (v.kind = ANY($4))
           AND EXISTS (SELECT 1 FROM calculations c
                         WHERE c.valuation_id = v.id AND c.status = 'succeeded')
         ORDER BY v.created_at DESC
         LIMIT 50`,
-      [...scope.params, id],
+      [...scope.params, id, [...SPECIALTY_KINDS]],
     );
-    return { candidates: rows };
+    return { candidates: rows, bridgeable: true };
   });
 
   app.get('/api/v1/valuations/:id/bridge/:compareId', { preHandler: app.authenticate }, async (req) => {
@@ -81,6 +96,16 @@ export function registerBridgeRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       throw problems.unprocessable('Both valuations must be for the same company');
     }
 
+    // Refused rather than attempted: the four factors the bridge attributes
+    // Δfmv across are the 409A engine's, and a specialty run reports none of
+    // them. Named so the answer is about the product, not about the data.
+    const unbridgeable = [to, from].find((v) => !bridgeableKind(v.kind));
+    if (unbridgeable) {
+      throw problems.unprocessable(
+        `A ${unbridgeable.kind} valuation is not measured in the terms this bridge explains — it decomposes a 409A per-share value into equity value, allocation, DLOC and DLOM`,
+      );
+    }
+
     const [toCalc, fromCalc] = await Promise.all([
       latestSucceededCalculation(deps.pool, id),
       latestSucceededCalculation(deps.pool, compareId),
@@ -91,7 +116,15 @@ export function registerBridgeRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       );
     }
 
-    const bridge = buildBridge(fromCalc.results, toCalc.results);
+    let bridge;
+    try {
+      bridge = buildBridge(fromCalc.results, toCalc.results);
+    } catch (err) {
+      // A stored calculation the bridge cannot read is an input condition —
+      // an engine payload predating the per-share figure, say — not a fault.
+      if (err instanceof BridgeInputError) throw problems.unprocessable(err.message);
+      throw err;
+    }
     return {
       bridge,
       from: {
