@@ -24,7 +24,24 @@ interface Bundle {
     dlom_method: string | null;
     exit_timeline: string | null;
   } | null;
-  conclusion: { equity_value: string | null; fmv_per_share: string | null; engine_version: string } | null;
+  conclusion: {
+    equity_value: string | null;
+    fmv_per_share: string | null;
+    engine_version: string;
+    /*
+     * What each figure is, in this valuation kind's own words — the server
+     * sends the caption with the number (see domain/specialty.ts). A specialty
+     * engine writes its headline into the 409A-named columns, so the fixed
+     * captions this page used to print called an IFRS 2 total expense an
+     * "Equity value". `null` is the kind contributing no such figure, and the
+     * metric is then omitted rather than shown as an em-dash.
+     *
+     * Optional because a bundle served by an older build carries neither key;
+     * those fall back to the 409A wording, which is what they held.
+     */
+    equity_label?: string | null;
+    fmv_per_share_label?: string | null;
+  } | null;
   qa: Array<{ id: string; status: string; checks: Array<{ label: string; status: string; detail: string }> }>;
   evidence_summary: {
     has_report: boolean;
@@ -78,6 +95,15 @@ export function AuditorPortalPage() {
     );
   }
 
+  // `undefined` is a bundle from a build that predates the captions; `null` is
+  // this kind having no such figure. Only the first falls back.
+  const perShareLabel =
+    bundle.conclusion?.fmv_per_share_label === undefined
+      ? 'Concluded FMV / share'
+      : bundle.conclusion.fmv_per_share_label;
+  const equityLabel =
+    bundle.conclusion?.equity_label === undefined ? 'Equity value' : bundle.conclusion.equity_label;
+
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
       <div className="overline flex items-center gap-1.5 text-ink-400">
@@ -94,16 +120,20 @@ export function AuditorPortalPage() {
 
       {bundle.conclusion && (
         <section className="mt-6 flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
-          <Metric
-            label="Concluded FMV / share"
-            value={bundle.conclusion.fmv_per_share ?? '—'}
-            currency={bundle.valuation.currency}
-          />
-          <Metric
-            label="Equity value"
-            value={bundle.conclusion.equity_value ?? '—'}
-            currency={bundle.valuation.currency}
-          />
+          {perShareLabel !== null && (
+            <Metric
+              label={perShareLabel}
+              value={bundle.conclusion.fmv_per_share ?? '—'}
+              currency={bundle.valuation.currency}
+            />
+          )}
+          {equityLabel !== null && (
+            <Metric
+              label={equityLabel}
+              value={bundle.conclusion.equity_value ?? '—'}
+              currency={bundle.valuation.currency}
+            />
+          )}
           <Metric label="Engine version" value={bundle.conclusion.engine_version} />
         </section>
       )}

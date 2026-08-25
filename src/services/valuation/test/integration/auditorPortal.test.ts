@@ -67,6 +67,45 @@ describe.skipIf(!dbUp)('external auditor portal (feature 8)', () => {
     expect(body.valuation.company_name).toBe('Auditee Inc');
     expect(body.conclusion.fmv_per_share).toBe('3.25');
     expect(body.evidence_summary.has_conclusion).toBe(true);
+    // The captions travel with the figures. A 409A takes the default wording;
+    // the portal has no other context to give an outside auditor, so what a
+    // number is called is the whole of what they are told.
+    expect(body.conclusion.fmv_per_share_label).toBe('Concluded FMV per share');
+    expect(body.conclusion.equity_label).toBe('Concluded equity value');
+  });
+
+  it('captions a specialty conclusion as the figure it actually is', async () => {
+    /*
+     * An IFRS 2 run writes its total share-based-payment expense into the
+     * `equity_value` column, because that is the column the calculation row
+     * has (domain/specialty.ts). The portal used to caption it "Equity value",
+     * which is off by orders of magnitude from anything a reader would check
+     * it against, and there is no per-share figure at all — the fair value per
+     * *award* is not one, and would be read as one.
+     */
+    const v = await createValuation(
+      ctx.pool,
+      { kind: 'ifrs2', companyName: 'Awards Ltd', userId: owner.id },
+      { ...actor, actorId: owner.id },
+    );
+    await createCalculation(
+      ctx.pool,
+      {
+        valuationId: v.id,
+        engineVersion: 'py-1.0.0',
+        status: 'succeeded',
+        inputs: {},
+        results: { kind: 'ifrs2', specialty: { total_expense: 480_000 } },
+        equityValue: 480_000,
+        fmvPerShare: null,
+        createdBy: owner.id,
+      },
+      { ...actor, actorId: owner.id },
+    );
+    const { token } = (await createLink(owner.token, v.id)).json();
+    const body = (await redeem(token)).json();
+    expect(body.conclusion.equity_label).toBe('Total expense');
+    expect(body.conclusion.fmv_per_share_label).toBeNull();
   });
 
   it('rejects an expired link', async () => {

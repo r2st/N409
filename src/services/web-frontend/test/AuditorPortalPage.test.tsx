@@ -192,6 +192,51 @@ describe('AuditorPortalPage bundle', () => {
     expect(screen.getAllByText('—')).toHaveLength(2);
   });
 
+  /*
+   * The two figures are captioned by the server, because what they hold depends
+   * on the valuation kind: a specialty engine writes its headline into the
+   * 409A-named calculation columns (domain/specialty.ts). This page had the
+   * captions hardcoded, so an IFRS 2 total share-based-payment expense was
+   * labelled "Equity value" for the one reader with no other context.
+   */
+  it('captions the figures with what the server says they are', async () => {
+    mountBundle({
+      valuation: {
+        number: '2051',
+        company_name: 'Awards Ltd',
+        kind: 'ifrs2',
+        state: 'delivered',
+        currency: 'USD',
+      },
+      conclusion: {
+        equity_value: '480000',
+        fmv_per_share: null,
+        engine_version: 'engine/v1.4.2',
+        equity_label: 'Total expense',
+        fmv_per_share_label: null,
+      },
+    });
+    expect(await screen.findByText('Total expense')).toBeInTheDocument();
+    expect(screen.getByText('$480,000.00')).toBeInTheDocument();
+    expect(screen.queryByText('Equity value')).not.toBeInTheDocument();
+    // A null caption is the kind having no such figure. Rendering it as an
+    // em-dash under a caption that promises a per-share number reads as a
+    // calculation that failed rather than one nobody asked for.
+    expect(screen.queryByText('Concluded FMV / share')).not.toBeInTheDocument();
+    expect(screen.queryByText('—')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the 409A wording for a bundle served without captions', async () => {
+    // A page loaded against an older build carries neither key; `undefined` is
+    // that, and `null` is the kind having no such figure. Only the first falls
+    // back, and the two must not be conflated.
+    mountBundle({
+      conclusion: { equity_value: '48250000', fmv_per_share: '3.47', engine_version: 'engine/v1.4.2' },
+    });
+    expect(await screen.findByText('Concluded FMV / share')).toBeInTheDocument();
+    expect(screen.getByText('Equity value')).toBeInTheDocument();
+  });
+
   it('omits the conclusion block entirely when nothing has been concluded', async () => {
     mountBundle({ conclusion: null });
     await screen.findByText('Acme Robotics, Inc.');

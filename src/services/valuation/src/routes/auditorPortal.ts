@@ -9,6 +9,7 @@ import { findParams } from '../repos/params.js';
 import { findReportByValuation, getVersion } from '../repos/reports.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { listQaReviews } from '../repos/qaReviews.js';
+import { headlineLabels } from '../domain/specialty.js';
 import {
   createAuditorAccess,
   listAuditorAccess,
@@ -212,6 +213,20 @@ export function registerAuditorPortalRoutes(
             equity_value: calc.equity_value,
             fmv_per_share: calc.fmv_per_share,
             engine_version: calc.engine_version,
+            /*
+             * What those two columns hold on this kind, captioned here rather
+             * than in the page.
+             *
+             * A specialty engine writes its headline into the 409A-named
+             * columns (domain/specialty.ts), so the portal was captioning an
+             * IFRS 2 total expense "Equity value" and an EMI actual market
+             * value "Concluded FMV / share" — the two figures an outside
+             * auditor reads first, and the only context they are given. Sent
+             * with the figures so the portal and the exported workbook cannot
+             * disagree about what a number is called.
+             */
+            equity_label: headlineLabels(valuation.kind).equity,
+            fmv_per_share_label: headlineLabels(valuation.kind).perShare,
           }
         : null,
       qa: qa.map((q) => ({ id: q.id, status: q.status, checks: q.checks, created_at: q.created_at })),

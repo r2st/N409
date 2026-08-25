@@ -727,3 +727,75 @@ export function specialtyHeadline(
       return { equityValue: null, fmvPerShare: null };
   }
 }
+
+/**
+ * What the two typed columns actually hold, in the words the deliverable uses.
+ *
+ * `calculations.equity_value` and `calculations.fmv_per_share` are 409A columns
+ * by name, and every specialty engine writes into them ({@link
+ * specialtyHeadline}) because they are the columns the row has. What each one
+ * *means* then depends on the kind, and on four of them it is not what the
+ * column is called:
+ *
+ *   * EMI and CSOP put the **actual** market value per share there — the
+ *     restricted figure a scheme grants at. The unrestricted value (UMV) is the
+ *     larger number and the one HMRC's limits are tested against, so a workbook
+ *     calling the AMV "FMV per share" beside a cap table is stating the wrong
+ *     one of two figures that differ by the restriction discount.
+ *   * An ASC 820 measurement values positions, not equity: the column holds the
+ *     total fair value of the portfolio.
+ *   * A gift & estate appraisal concludes on the *transferred interest* —
+ *     `specialtyHeadline` picks it over the entity value deliberately, for
+ *     exactly the reason this label matters.
+ *   * An IFRS 2 run concludes a total share-based payment **expense**. Printed
+ *     under "Concluded equity value" it is off by orders of magnitude from
+ *     anything a reader would check it against.
+ *
+ * The exported workbook and the auditor portal both state these figures with a
+ * caption and no other context, which makes the caption the whole of what the
+ * reader is told. The wording here is the exhibits' own (see
+ * `domain/specialtyExhibits.ts` — "Actual market value (AMV) per share", "Total
+ * fair value", "Concluded value of the transferred interest", "Total expense"),
+ * so the workbook and the report name the same figure the same way.
+ *
+ * `null` means the kind contributes no such figure at all, and a surface should
+ * omit the row rather than caption an empty cell — an unlabelled blank reads as
+ * a number that failed to compute rather than one that was never asked for.
+ */
+export interface HeadlineLabels {
+  equity: string | null;
+  perShare: string | null;
+}
+
+/** The 409A wording, and the wording for every kind that runs the 409A engine. */
+export const DEFAULT_HEADLINE_LABELS: HeadlineLabels = {
+  equity: 'Concluded equity value',
+  perShare: 'Concluded FMV per share',
+};
+
+const SPECIALTY_HEADLINE_LABELS: Record<SpecialtyKind, HeadlineLabels> = {
+  // No dispatch and no headline: these three write neither column.
+  qsbs: { equity: null, perShare: null },
+  ppa: { equity: null, perShare: null },
+  goodwill: { equity: null, perShare: null },
+  ip: { equity: null, perShare: null },
+  // The equity value an ESOP run carries is the one *supplied* for the
+  // engagement, at whichever level of value the appraiser started from — the
+  // exhibit's opening sentence is "The equity value supplied for this
+  // engagement". Calling it concluded credits the run with deriving it.
+  esop: { equity: 'Appraised equity value', perShare: 'Concluded FMV per share' },
+  fmv: { equity: 'Concluded equity value', perShare: null },
+  emi: { equity: 'Concluded equity value', perShare: 'Actual market value (AMV) per share' },
+  csop: { equity: 'Concluded equity value', perShare: 'Actual market value (AMV) per share' },
+  '820': { equity: 'Total fair value', perShare: null },
+  gifts: { equity: 'Concluded value of the transferred interest', perShare: null },
+  ifrs2: { equity: 'Total expense', perShare: null },
+};
+
+/**
+ * The captions for a valuation kind. Non-specialty kinds — every 409A-engine
+ * product — take the default wording, which is what their columns hold.
+ */
+export function headlineLabels(kind: string): HeadlineLabels {
+  return SPECIALTY_HEADLINE_LABELS[kind as SpecialtyKind] ?? DEFAULT_HEADLINE_LABELS;
+}

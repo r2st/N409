@@ -28,6 +28,7 @@ import {
   type CapTableValidation,
 } from '../domain/capTable.js';
 import { OVERWRITE_FIELDS_BY_KEY } from '../domain/overwrites.js';
+import { headlineLabels, type HeadlineLabels } from '../domain/specialty.js';
 import { toIsoDate, vestingStatus } from '../domain/vesting.js';
 import { cellRef, type XlsxColumn, type XlsxSheet, type XlsxValue } from './xlsx.js';
 
@@ -312,7 +313,12 @@ function capTableSheet(entries: CapTableEntry[], currency: string): XlsxSheet {
  * The preference stack in seniority order — the input to any liquidation
  * analysis, and the sheet an auditor reaches for first.
  */
-function waterfallSheet(entries: CapTableEntry[], currency: string, fmvPerShare: number | null): XlsxSheet {
+function waterfallSheet(
+  entries: CapTableEntry[],
+  currency: string,
+  fmvPerShare: number | null,
+  labels: HeadlineLabels,
+): XlsxSheet {
   const inputs = toWaterfallInputs(entries);
   const bySeniority = [...inputs.preferred].sort((a, b) => a.seniority - b.seniority);
 
@@ -378,9 +384,9 @@ function waterfallSheet(entries: CapTableEntry[], currency: string, fmvPerShare:
   rows.push([]);
   rows.push([null, 'Common (incl. warrants)', inputs.common_shares]);
   rows.push([null, 'Option pool', inputs.option_pool_shares]);
-  if (fmvPerShare !== null) {
+  if (fmvPerShare !== null && labels.perShare !== null) {
     rows.push([]);
-    rows.push([null, `Concluded FMV per share (${currency})`, null, perShare(fmvPerShare)]);
+    rows.push([null, `${labels.perShare} (${currency})`, null, perShare(fmvPerShare)]);
   }
 
   return { name: 'Waterfall', titleLines, columns, rows };
@@ -677,13 +683,21 @@ function overridesSheet(overwrites: readonly WorkbookOverwrite[]): XlsxSheet {
  * carry review warnings, and a workbook that shows only the conclusion hides
  * exactly the thing an auditor is looking for.
  */
-function calculationSheet(calculation: WorkbookCalculation, currency: string): XlsxSheet {
+function calculationSheet(
+  calculation: WorkbookCalculation,
+  currency: string,
+  labels: HeadlineLabels,
+): XlsxSheet {
   const rows: XlsxValue[][] = [
     ['Engine version', calculation.engine_version],
     ['Status', calculation.status],
     ['Run at', asDate(calculation.created_at)],
-    [`Concluded equity value (${currency})`, num(calculation.equity_value)],
-    [`Concluded FMV per share (${currency})`, perShare(num(calculation.fmv_per_share))],
+    ...(labels.equity === null
+      ? []
+      : [[`${labels.equity} (${currency})`, num(calculation.equity_value)] as XlsxValue[]]),
+    ...(labels.perShare === null
+      ? []
+      : [[`${labels.perShare} (${currency})`, perShare(num(calculation.fmv_per_share))] as XlsxValue[]]),
   ];
 
   const results = flattenForAudit(calculation.results);
@@ -711,7 +725,7 @@ function calculationSheet(calculation: WorkbookCalculation, currency: string): X
 }
 
 /** Cover sheet: what this file is, and what it was generated from. */
-function summarySheet(input: ValuationWorkbookInput): XlsxSheet {
+function summarySheet(input: ValuationWorkbookInput, labels: HeadlineLabels): XlsxSheet {
   const { valuation: v } = input;
   const rows: XlsxValue[][] = [
     ['Valuation number', v.number],
@@ -721,7 +735,7 @@ function summarySheet(input: ValuationWorkbookInput): XlsxSheet {
     ['Currency', v.currency],
     ['Created', asDate(v.created_at)],
     ['Published', asDate(v.published_at)],
-    ['Concluded FMV per share', perShare(input.fmvPerShare)],
+    ...(labels.perShare === null ? [] : [[labels.perShare, perShare(input.fmvPerShare)] as XlsxValue[]]),
     ['Generated at', input.generatedAt],
   ];
 
@@ -766,7 +780,10 @@ function summarySheet(input: ValuationWorkbookInput): XlsxSheet {
  * than emitted empty — a blank "Waterfall" tab reads as a bug.
  */
 export function valuationWorkbookSheets(input: ValuationWorkbookInput): XlsxSheet[] {
-  const sheets: XlsxSheet[] = [summarySheet(input)];
+  // What the two headline columns hold, in this kind's own words — a specialty
+  // engine writes into 409A-named columns (domain/specialty.ts).
+  const labels = headlineLabels(input.valuation.kind);
+  const sheets: XlsxSheet[] = [summarySheet(input, labels)];
 
   const overwrites = input.overwrites ?? [];
 
@@ -775,7 +792,7 @@ export function valuationWorkbookSheets(input: ValuationWorkbookInput): XlsxShee
   if (input.calculation) {
     sheets.push(
       assumptionsSheet(input.calculation, overwrites),
-      calculationSheet(input.calculation, input.valuation.currency),
+      calculationSheet(input.calculation, input.valuation.currency, labels),
     );
   }
 
@@ -790,7 +807,7 @@ export function valuationWorkbookSheets(input: ValuationWorkbookInput): XlsxShee
   if (input.capTable && input.capTable.entries.length > 0) {
     sheets.push(
       capTableSheet(input.capTable.entries, input.valuation.currency),
-      waterfallSheet(input.capTable.entries, input.valuation.currency, input.fmvPerShare),
+      waterfallSheet(input.capTable.entries, input.valuation.currency, input.fmvPerShare, labels),
     );
   }
 

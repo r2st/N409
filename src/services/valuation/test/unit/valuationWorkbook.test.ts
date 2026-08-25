@@ -791,7 +791,11 @@ describe('audit sheets', () => {
       }),
     );
     const labels = sheet(sheets, 'Calculation').rows.map((r) => String(r[0]));
-    expect(labels).toContain('Concluded FMV per share (GBP)');
+    // EMI, so the per-share caption is the scheme's own — the currency is what
+    // this case is about, and it is appended to whichever caption the kind
+    // takes. See specialtyHeadlineLabels.test.ts for the captions themselves.
+    expect(labels).toContain('Actual market value (AMV) per share (GBP)');
+    expect(labels).toContain('Concluded equity value (GBP)');
   });
 });
 
