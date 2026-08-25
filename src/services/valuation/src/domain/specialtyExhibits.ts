@@ -620,6 +620,30 @@ function giftEstateExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
 
   const exclusion = record(specialty.annual_exclusion);
   const taxable = num(specialty.taxable_gift);
+  // Three states, not two. The exclusion may not apply to this transfer (an
+  // estate inclusion, a GST), it may apply and have been determined, or it may
+  // apply and nobody have said what the year's §2503(b) figure is. The third
+  // used to print as the second with a nil amount — "less annual exclusion —
+  // $0" beside a cumulative total struck at the whole appraised value, which
+  // is a determination the file had not made.
+  //
+  // Results stored before the engine reported `determined` carry no such key,
+  // and every one of them was run through a questionnaire with no exclusion
+  // field — so an absent flag over a nil per-donee figure is the unanswered
+  // case, and an absent flag over a real one came from a run override.
+  const applies = exclusion?.applies === true;
+  const determined =
+    exclusion?.determined === true ||
+    (exclusion?.determined === undefined && (num(exclusion?.per_donee) ?? 0) > 0);
+  const exclusionRow: [string, string] = applies
+    ? determined
+      ? [
+          `Less annual exclusion (${String(num(exclusion?.donees) ?? 1)} donee(s)` +
+            `${exclusion?.split_gift === true ? ', split gift' : ''})`,
+          `−${money(exclusion?.applied, ctx) ?? '—'}`,
+        ]
+      : ['Less annual exclusion — not determined', 'Not determined']
+    : ['Annual exclusion — not available for this transfer', '—'];
   const gift =
     taxable === null
       ? null
@@ -627,16 +651,15 @@ function giftEstateExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
           head: ['Reportable gift', 'Amount'],
           rows: [
             ['Value of the transferred interest', shown(concluded, ctx)],
-            [
-              exclusion?.applies === true
-                ? `Less annual exclusion (${String(num(exclusion.donees) ?? 1)} donee(s)` +
-                  `${exclusion.split_gift === true ? ', split gift' : ''})`
-                : 'Annual exclusion — not available for this transfer',
-              exclusion?.applies === true ? `−${money(exclusion.applied, ctx) ?? '—'}` : '—',
-            ],
+            exclusionRow,
             ['Prior taxable gifts', money(specialty.prior_taxable_gifts, ctx) ?? '—'],
           ],
-          foot: ['Cumulative taxable gifts', money(specialty.cumulative_taxable_gifts, ctx) ?? '—'],
+          foot: [
+            applies && !determined
+              ? 'Cumulative taxable gifts, before any annual exclusion'
+              : 'Cumulative taxable gifts',
+            money(specialty.cumulative_taxable_gifts, ctx) ?? '—',
+          ],
         });
 
   const factors = record(specialty.rev_rul_59_60);

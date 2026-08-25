@@ -151,6 +151,80 @@ describe('gift & estate', () => {
     expect(html).toContain('$3,492,960'); // cumulative
   });
 
+  it('says an undetermined annual exclusion is undetermined, not nil', () => {
+    // Nothing sent `annual_exclusion` until the questionnaire grew a field for
+    // it, so every gift exhibit printed "less annual exclusion — $0.00" over a
+    // cumulative total struck at the whole appraised value. That is a
+    // determination on a Form 709 the file had never made.
+    const undetermined = {
+      ...SAMPLE_GIFTS_RESULT,
+      annual_exclusion: {
+        determined: false,
+        per_donee: 0,
+        donees: 1,
+        split_gift: false,
+        available: 0,
+        applied: 0,
+        applies: true,
+      },
+      taxable_gift: 2280960.0,
+      cumulative_taxable_gifts: 3530960.0,
+    };
+    const html = only('gifts', undetermined).html;
+    expect(html).toContain('not determined');
+    expect(html).toContain('Not determined');
+    expect(html).toContain('before any annual exclusion');
+    expect(html).not.toContain('−$0.00');
+  });
+
+  it('reads a result stored before the flag existed by its per-donee figure', () => {
+    // Every result stored before this ran through a questionnaire with no
+    // exclusion field, so an absent flag over a nil per-donee figure is the
+    // unanswered case; an absent flag over a real one came from an override.
+    const legacyNil = {
+      ...SAMPLE_GIFTS_RESULT,
+      annual_exclusion: {
+        per_donee: 0,
+        donees: 1,
+        split_gift: false,
+        available: 0,
+        applied: 0,
+        applies: true,
+      },
+    };
+    expect(only('gifts', legacyNil).html).toContain('not determined');
+    // The sample carries a real $19,000 figure and no flag — still a
+    // determination.
+    const { determined: _flag, ...legacyReal } = SAMPLE_GIFTS_RESULT.annual_exclusion as Record<
+      string,
+      unknown
+    >;
+    const html = only('gifts', { ...SAMPLE_GIFTS_RESULT, annual_exclusion: legacyReal }).html;
+    expect(html).toContain('$38,000');
+    expect(html).not.toContain('not determined');
+  });
+
+  it('keeps saying the exclusion is unavailable on an estate inclusion', () => {
+    // Not the same statement as "undetermined": §2031 has no annual exclusion
+    // to determine.
+    const estate = {
+      ...SAMPLE_GIFTS_RESULT,
+      transfer_type: 'estate',
+      annual_exclusion: {
+        determined: false,
+        per_donee: 0,
+        donees: 1,
+        split_gift: false,
+        available: 0,
+        applied: 0,
+        applies: false,
+      },
+    };
+    const html = only('gifts', estate).html;
+    expect(html).toContain('not available for this transfer');
+    expect(html).not.toContain('not determined');
+  });
+
   it('prints the Revenue Ruling 59-60 checklist with what is still unaddressed', () => {
     const html = exhibit().html;
     expect(html).toContain('The earning capacity of the company');
