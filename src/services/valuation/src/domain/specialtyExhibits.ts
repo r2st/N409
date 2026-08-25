@@ -666,15 +666,28 @@ function giftEstateExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
   const factorRows = list(factors?.factors)
     .map(record)
     .filter((r): r is Record<string, unknown> => r !== null);
+  // An unstated checklist is not a checklist of eight refusals. Nothing sent
+  // `factors_addressed` until the questionnaire grew the section, so every gift
+  // appraisal printed a No against each §4.01 factor and footed "0 of 8" — a
+  // Rev. Rul. 59-60 report stating it addressed none of the eight factors it is
+  // graded on. Results stored before the engine reported `stated` are read by
+  // their count, the same way the annual exclusion above is.
+  const stated =
+    factors?.stated === true || (factors?.stated === undefined && (num(factors?.addressed_count) ?? 0) > 0);
   const checklist =
     factorRows.length > 0
       ? table({
           head: ['Revenue Ruling 59-60 factor', 'Addressed'],
-          rows: factorRows.map((f) => [str(f.label ?? f.key), f.addressed === true ? 'Yes' : 'No']),
-          foot: [
-            'Factors addressed',
-            `${String(num(factors?.addressed_count) ?? 0)} of ${String(num(factors?.total_count) ?? factorRows.length)}`,
-          ],
+          rows: factorRows.map((f) => [
+            str(f.label ?? f.key),
+            stated ? (f.addressed === true ? 'Yes' : 'No') : 'Not recorded',
+          ]),
+          foot: stated
+            ? [
+                'Factors addressed',
+                `${String(num(factors?.addressed_count) ?? 0)} of ${String(num(factors?.total_count) ?? factorRows.length)}`,
+              ]
+            : ['Factors addressed', 'Not recorded'],
         })
       : null;
 

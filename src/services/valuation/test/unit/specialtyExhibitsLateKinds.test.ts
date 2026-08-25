@@ -231,6 +231,39 @@ describe('gift & estate', () => {
     expect(html).toContain('7 of 8');
     expect(html).toContain('No'); // the unaddressed factor
   });
+
+  it('does not print an unstated §4.01 checklist as eight refusals', () => {
+    // Nothing sent `factors_addressed` until the questionnaire grew the
+    // section, so every gift appraisal footed "0 of 8" with a No against each
+    // factor — a Rev. Rul. 59-60 report saying it addressed none of the eight
+    // factors it is graded on.
+    const unstated = {
+      ...SAMPLE_GIFTS_RESULT,
+      rev_rul_59_60: {
+        stated: false,
+        factors: (SAMPLE_GIFTS_RESULT.rev_rul_59_60 as { factors: unknown[] }).factors.map((f) => ({
+          ...(f as Record<string, unknown>),
+          addressed: false,
+        })),
+        addressed_count: 0,
+        total_count: 8,
+        unaddressed: [],
+      },
+    };
+    const html = only('gifts', unstated).html;
+    expect(html).toContain('Not recorded');
+    expect(html).not.toContain('0 of 8');
+    // The factor labels still print — the checklist is the exhibit, and what
+    // changed is what it claims about the file.
+    expect(html).toContain('The earning capacity of the company');
+  });
+
+  it('reads a stored checklist from before the flag by its addressed count', () => {
+    const { stated: _flag, ...legacy } = SAMPLE_GIFTS_RESULT.rev_rul_59_60 as Record<string, unknown>;
+    const html = only('gifts', { ...SAMPLE_GIFTS_RESULT, rev_rul_59_60: legacy }).html;
+    expect(html).toContain('7 of 8');
+    expect(html).not.toContain('Not recorded');
+  });
 });
 
 describe('IFRS 2 share-based payment', () => {
