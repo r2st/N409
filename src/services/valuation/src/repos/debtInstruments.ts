@@ -164,9 +164,27 @@ export async function upsertCreditTerms(
   return rows[0]!;
 }
 
+/**
+ * An instrument's measurements, most recent measurement first.
+ *
+ * By `valuation_date`, not by `created_at`. The two agree only while nobody
+ * measures out of order, and `POST /value` takes the date as a parameter, so
+ * anything backfilled — a prior quarter entered after the current one, a
+ * correction re-run — sorted by when it was typed. Two readers depend on this
+ * order and both were wrong when it drifted: the history exhibit prints the
+ * `valuation_date` column under the sentence "most recent first", which then
+ * describes a table it does not match, and `loadDebtReport` takes the head for
+ * the measurement the whole report speaks for, so the report concluded at
+ * whichever price was entered last rather than the one that is current.
+ *
+ * `created_at` stays as the tiebreak, which is what decides two measurements
+ * bearing the same date — a re-run after a correction, where the later run is
+ * the one that stands. Same rule, same order, as `listMarks` on fund_marks.
+ */
 export async function listValuations(pool: pg.Pool, instrumentId: string): Promise<DebtValuationRow[]> {
   const { rows } = await pool.query<DebtValuationRow>(
-    'SELECT * FROM debt_valuations WHERE instrument_id = $1 ORDER BY created_at DESC LIMIT 50',
+    `SELECT * FROM debt_valuations WHERE instrument_id = $1
+      ORDER BY valuation_date DESC, created_at DESC LIMIT 50`,
     [instrumentId],
   );
   return rows.map(debtValuation);

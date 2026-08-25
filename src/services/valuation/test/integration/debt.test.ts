@@ -197,6 +197,72 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
     expect(hist.json().valuations).toHaveLength(1);
   });
 
+  it('orders history by the date measured, not the date typed', async () => {
+    const id = await createInstrument('bond', {
+      face: 1000,
+      coupon_rate: 0.05,
+      frequency: 2,
+      maturity_years: 5,
+      market_yield: 0.06,
+    });
+    // Q2 is measured first and Q1 backfilled after it — a correction, or a
+    // prior quarter entered late. `valuation_date` is a request parameter, so
+    // this is an ordinary thing for an analyst to do.
+    for (const [date, face] of [
+      ['2026-06-30', 1000],
+      ['2026-03-31', 900],
+      ['2026-09-30', 1100],
+    ] as const) {
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/debt/instruments/${id}/value`,
+        headers: authHeader(ops.token),
+        payload: { valuation_date: date, overrides: { face } },
+      });
+    }
+
+    const hist = await app.inject({
+      method: 'GET',
+      url: `/api/v1/debt/instruments/${id}/valuations`,
+      headers: authHeader(ops.token),
+    });
+    const dates = (hist.json().valuations as Array<{ valuation_date: string }>).map((v) => v.valuation_date);
+    expect(dates).toEqual(['2026-09-30', '2026-06-30', '2026-03-31']);
+    // The head is what `loadDebtReport` hands the report as the measurement it
+    // speaks for, and what the history exhibit prints first under a sentence
+    // promising "most recent first". Ordered by `created_at` it was the March
+    // backfill, because that is the one that had been typed most recently.
+    expect(Number(hist.json().valuations[0].fair_value)).toBeCloseTo(1100 * 0.9805);
+  });
+
+  it('breaks a same-date tie on the later run', async () => {
+    const id = await createInstrument('bond', {
+      face: 1000,
+      coupon_rate: 0.05,
+      frequency: 2,
+      maturity_years: 5,
+      market_yield: 0.06,
+    });
+    // Two measurements bearing one date is a re-run after a correction, and
+    // there the later one is the one that stands — which is why `created_at`
+    // remains the tiebreak rather than being dropped.
+    for (const face of [1000, 1200]) {
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/debt/instruments/${id}/value`,
+        headers: authHeader(ops.token),
+        payload: { valuation_date: '2026-06-30', overrides: { face } },
+      });
+    }
+    const hist = await app.inject({
+      method: 'GET',
+      url: `/api/v1/debt/instruments/${id}/valuations`,
+      headers: authHeader(ops.token),
+    });
+    expect(hist.json().valuations).toHaveLength(2);
+    expect(Number(hist.json().valuations[0].fair_value)).toBeCloseTo(1200 * 0.9805);
+  });
+
   it('merges credit terms into a credit_spread valuation', async () => {
     const id = await createInstrument('credit_spread', {
       face: 1000,
