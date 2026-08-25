@@ -86,22 +86,69 @@ function qsbsExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): R
   });
   const holding = record(specialty.holding_period);
   const capParts = record(specialty.cap_components);
+  // Under §1202 as amended by P.L. 119-21 the requirement is three years, not
+  // five, so the schedule's own `required_years` names the milestone and the
+  // paragraph is worded from it. It used to say "five-year date" regardless,
+  // which on a tiered result contradicted the requirement in the same sentence.
+  // Falling back to five keeps a result stored before the amendment readable.
+  const requiredYears = num(holding?.required_years) ?? 5;
+  const thresholdDate = str(holding?.threshold_date ?? holding?.five_year_date);
+  // A whole number of years reads as a milestone; `years_held` is a raw
+  // fraction ("3.2519") and needs a scale a sentence can carry.
+  const heldYears = num(holding?.years_held);
+  const tiers = list(holding?.tiers)
+    .map(record)
+    .filter((t): t is Record<string, unknown> => t !== null);
+  const nowPct = pct(specialty.exclusion_percentage, 0);
+  const maxPct = pct(specialty.maximum_exclusion_percentage, 0);
   return section('Exhibit — Section 1202 Test Results', [
     table({ head: ['Requirement', 'Result', 'Basis'], rows }),
     holding
       ? P(
-          `Holding period: ${String(num(holding.years_held) ?? '—')} years held against the ` +
-            `${String(num(holding.required_years) ?? 5)}-year requirement — ` +
-            `${holding.met === true ? 'met' : 'not yet met'} (five-year date ${esc(
-              String(holding.five_year_date ?? '—'),
-            )}).`,
+          `Holding period: ${heldYears === null ? '—' : esc(heldYears.toFixed(1))} years held ` +
+            `against the ${esc(String(requiredYears))}-year requirement — ` +
+            `${holding.met === true ? 'met' : 'not yet met'} ` +
+            `(${esc(String(requiredYears))}-year date ${thresholdDate}).`,
         )
+      : null,
+    // Only the tiered regime has a schedule worth a table; the pre-amendment
+    // result is one step and the paragraph above already states it.
+    tiers.length > 1
+      ? table({
+          head: ['Holding period', 'Date reached', 'Exclusion', 'Status'],
+          rows: tiers.map((t) => [
+            `${str(t.years)} years`,
+            str(t.date),
+            pct(t.exclusion_percentage, 0) ?? '—',
+            t.met === true ? 'Reached' : 'Not yet',
+          ]),
+        })
       : null,
     P(
       `Stock qualification: <strong>${specialty.eligible === true ? 'qualifies' : 'does not qualify'}</strong>; ` +
         `exclusion available now: <strong>${specialty.exclusion_available_now === true ? 'yes' : 'no'}</strong>; ` +
-        `exclusion percentage ${pct(specialty.exclusion_percentage, 0) ?? '—'}.`,
+        `exclusion percentage ${nowPct ?? '—'}` +
+        // Two figures rather than one: the percentage as of the valuation date
+        // and the ceiling the stock reaches when fully held. Printing only the
+        // ceiling put "100%" beside "available now: no".
+        (maxPct !== null && maxPct !== nowPct ? `, rising to ${maxPct} once fully held` : '') +
+        '.',
     ),
+    specialty.regime === 'obbba'
+      ? P(
+          'Evaluated under §1202 as amended by P.L. 119-21 (enacted 4 July 2025), which applies ' +
+            'to stock acquired after that date: a $75,000,000 aggregate gross assets limit, a ' +
+            '$15,000,000 per-issuer lifetime cap, and a tiered exclusion over the holding period. ' +
+            'Both dollar figures are indexed for inflation in tax years beginning after 2026; the ' +
+            'statutory base amounts are used here.',
+        )
+      : specialty.regime === 'pre_obbba'
+        ? P(
+            'Evaluated under §1202 as it stood before P.L. 119-21, which governs stock acquired ' +
+              'on or before 4 July 2025: a $50,000,000 aggregate gross assets limit, a ' +
+              '$10,000,000 per-issuer lifetime cap, and a single five-year holding period.',
+          )
+        : null,
     capParts
       ? table({
           head: ['Gain exclusion cap component', 'Amount'],

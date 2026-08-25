@@ -59,11 +59,13 @@ describe('QSBS on a partial §1202 result', () => {
 
   it('states the holding period from the defaults when the run reported none of it', () => {
     const html = only('qsbs', { tests: {}, holding_period: { met: true } });
-    // The five-year requirement is statutory, so it prints even unsupplied;
-    // the years held and the five-year date are facts about this holder and
-    // print as em-dashes rather than as zero.
+    // Five years is the requirement for stock acquired on or before 4 Jul 2025
+    // and is the safe default for a result that did not say; the years held and
+    // the milestone date are facts about this holder and print as em-dashes
+    // rather than as zero. The milestone is named after whatever requirement
+    // was applied, so it moves with it rather than always reading "five-year".
     expect(html).toContain('— years held against the 5-year requirement');
-    expect(html).toContain('met (five-year date —)');
+    expect(html).toContain('met (5-year date —)');
   });
 
   it('prints an unqualified, currently-available position with no percentage', () => {

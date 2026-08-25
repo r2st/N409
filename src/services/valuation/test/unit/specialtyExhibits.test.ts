@@ -52,6 +52,84 @@ describe('buildSpecialtyExhibits', () => {
     expect(html).toContain('Fail');
     expect(html).toContain('2028-03-01');
     expect(html).toContain('$10,000,000');
+    // The milestone is named after the requirement it belongs to.
+    expect(html).toContain('5-year requirement');
+    expect(html).toContain('5-year date 2028-03-01');
+    // `years_held` is a raw fraction from the engine; the sentence carries a
+    // scale rather than however many digits the division happened to produce.
+    expect(html).toContain('3.2 years held');
+  });
+
+  it('names the §1202 milestone after the tier that governs, not always five years', () => {
+    // Stock acquired after 4 Jul 2025 has a three-year requirement. The
+    // paragraph used to say "five-year date" regardless, contradicting the
+    // requirement stated in the same sentence.
+    const [qsbs] = buildSpecialtyExhibits(
+      calc('qsbs', {
+        eligible: true,
+        exclusion_available_now: true,
+        exclusion_percentage: 0.5,
+        maximum_exclusion_percentage: 1,
+        regime: 'obbba',
+        tests: { c_corporation: { passed: true, detail: 'entity_type=c_corp' } },
+        holding_period: {
+          years_held: 3.4041,
+          required_years: 3,
+          met: true,
+          five_year_date: '2030-09-30',
+          threshold_date: '2028-09-30',
+          tiers: [
+            { years: 3, exclusion_percentage: 0.5, date: '2028-09-30', met: true },
+            { years: 4, exclusion_percentage: 0.75, date: '2029-09-30', met: false },
+            { years: 5, exclusion_percentage: 1, date: '2030-09-30', met: false },
+          ],
+        },
+      }),
+      ctx,
+    );
+    const html = qsbs!.html;
+    expect(html).toContain('3-year requirement');
+    expect(html).toContain('3-year date 2028-09-30');
+    expect(html).not.toContain('five-year date');
+    // The whole schedule, so a reader can see what the next two years are worth.
+    expect(html).toContain('Date reached');
+    expect(html).toContain('2029-09-30');
+    expect(html).toContain('75%');
+    expect(html).toContain('Not yet');
+    // Two figures, not one: available now, and the ceiling.
+    expect(html).toContain('exclusion percentage 50%, rising to 100% once fully held');
+    expect(html).toContain('P.L. 119-21');
+    expect(html).toContain('$75,000,000');
+  });
+
+  it('drops the tier table and names the pre-amendment regime for older stock', () => {
+    const [qsbs] = buildSpecialtyExhibits(
+      calc('qsbs', {
+        eligible: true,
+        exclusion_available_now: true,
+        exclusion_percentage: 1,
+        maximum_exclusion_percentage: 1,
+        regime: 'pre_obbba',
+        tests: { c_corporation: { passed: true, detail: 'entity_type=c_corp' } },
+        holding_period: {
+          years_held: 6.3,
+          required_years: 5,
+          met: true,
+          five_year_date: '2023-03-15',
+          threshold_date: '2023-03-15',
+          tiers: [{ years: 5, exclusion_percentage: 1, date: '2023-03-15', met: true }],
+        },
+      }),
+      ctx,
+    );
+    const html = qsbs!.html;
+    // One step is already stated in the paragraph; a one-row schedule adds nothing.
+    expect(html).not.toContain('Date reached');
+    expect(html).toContain('single five-year holding period');
+    expect(html).toContain('$50,000,000');
+    // Ceiling equals the available figure — no misleading second number.
+    expect(html).toContain('exclusion percentage 100%.');
+    expect(html).not.toContain('rising to');
   });
 
   it('renders the PPA allocation with goodwill as the residual, or a bargain purchase', () => {
