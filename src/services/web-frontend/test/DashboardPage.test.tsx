@@ -264,6 +264,49 @@ describe('DashboardPage', () => {
   });
 
   /**
+   * The pivot keeps the previous range's figures through a range change, on
+   * purpose: the reader is comparing against what the section said a moment
+   * ago, and blanking it would discard the comparison. The catch arm states
+   * that rule and its condition — the figures have to be labelled as not
+   * current — and only the failure path kept the second half. On the ordinary
+   * path one range's numbers sat under another range's dates with nothing to
+   * distinguish that from a finished load.
+   */
+  it('says the figures are the previous range’s while the new one loads', async () => {
+    let release: ((body: unknown) => void) | null = null;
+    let pivotCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.includes('/valuations?'))
+        return jsonResponse({ valuations, page: 1, per_page: 100, total: 1 });
+      if (path.includes('/stats/dashboard')) {
+        pivotCalls += 1;
+        if (pivotCalls === 1) return jsonResponse(analytics);
+        return new Promise<Response>((res) => {
+          release = (body) => res(jsonResponse(body));
+        });
+      }
+      throw new Error(`unexpected fetch ${path}`);
+    });
+
+    renderPage();
+    const from = (await screen.findByLabelText('Analytics from')) as HTMLInputElement;
+    await waitFor(() => expect(pivotCalls).toBe(1));
+
+    await userEvent.type(from, '2026-06-01');
+    await waitFor(() => expect(release).toBeTruthy());
+
+    // The figures are still on screen — that is the deliberate part — and they
+    // now say which range they belong to.
+    const note = await screen.findByText(/still the previous one/i);
+    expect(note).toBeInTheDocument();
+    expect(screen.getByText('By product')).toBeInTheDocument();
+
+    release!(analytics);
+    await waitFor(() => expect(screen.queryByText(/still the previous one/i)).toBeNull());
+  });
+
+  /**
    * The analytics pivot is the half of this page that can fail on its own — the
    * valuation list has its own fetch and its own error line. A failed pivot set
    * `analytics` to null and stopped, which renders neither the loading skeleton

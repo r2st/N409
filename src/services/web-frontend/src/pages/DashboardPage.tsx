@@ -361,8 +361,30 @@ export function DashboardPage() {
                 </LoadingBlock>
               )}
 
+              {/*
+               * The other half of the rule the catch arm above states. Keeping
+               * the previous range's figures through a range change is the
+               * deliberate choice here — the reader is comparing against what
+               * the section said a moment ago — but that choice was only
+               * honest on the failure path, which is the one that labelled
+               * them. On the ordinary path the pivot simply went on showing
+               * one range's numbers under another range's dates, with nothing
+               * to distinguish it from a finished load. Same figures, same
+               * decision, now said out loud.
+               */}
+              {analyticsLoading && analytics && (
+                <div className="mt-4">
+                  <p
+                    role="status"
+                    className="rounded-md border border-paper-300 bg-paper-50 px-3.5 py-2.5 text-sm text-ink-500"
+                  >
+                    Loading the new range — the figures below are still the previous one&rsquo;s.
+                  </p>
+                </div>
+              )}
+
               {analytics && (
-                <>
+                <div aria-busy={analyticsLoading || undefined}>
                   {analytics.throughput?.length > 0 && (
                     <div className="mt-4">
                       <LineChart
@@ -528,7 +550,7 @@ export function DashboardPage() {
                       </table>
                     </div>
                   )}
-                </>
+                </div>
               )}
             </>
           )}
