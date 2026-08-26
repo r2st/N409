@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
+import { useClearOnChange } from '../lib/useClearOnChange';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { displayName, formatDateTime } from '../lib/format';
@@ -9,8 +10,10 @@ import {
   Button,
   EmptyState,
   ErrorNote,
+  LoadingBlock,
   Pagination,
   ResultCount,
+  SkeletonDividedList,
   Spinner,
   TextInput,
   pageCountOf,
@@ -306,8 +309,15 @@ export function InboxPage() {
     }
   };
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
-  if (!data) return <Spinner />;
+  /*
+   * Kind, unread-only, the committed search and the page number are all the
+   * question this list answers, and none of them used to drop the previous
+   * answer: ticking "unread only" left the read messages beneath it, and page 3
+   * showed page 2's rows under a pager reading 3. Returning a `<Spinner />` for
+   * the wait is no good either — it took the kind chips, the checkbox and the
+   * search box with it. See `useClearOnChange`.
+   */
+  useClearOnChange(`${kind}|${unreadOnly}|${query}|${page}`, () => setData(null));
 
   return (
     <div>
@@ -317,14 +327,21 @@ export function InboxPage() {
           <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Inbox</h1>
           <p className="mt-1 text-sm text-ink-400">
             Every engagement thread in one list.{' '}
-            {data.unread_total > 0 ? `${data.unread_total} unread.` : 'Nothing unread.'}
+            {/* Silent rather than "Nothing unread." while the count is unknown:
+                that sentence is a claim about the account, and a load in flight
+                is not evidence for it. */}
+            {data && (data.unread_total > 0 ? `${data.unread_total} unread.` : 'Nothing unread.')}
           </p>
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" onClick={() => void load()}>
             Refresh
           </Button>
-          <Button variant="secondary" disabled={busy || data.unread_total === 0} onClick={markAllRead}>
+          <Button
+            variant="secondary"
+            disabled={busy || !data || data.unread_total === 0}
+            onClick={markAllRead}
+          >
             Mark all read
           </Button>
         </div>
@@ -371,7 +388,7 @@ export function InboxPage() {
           <Button variant="secondary" type="submit">
             Search
           </Button>
-          <ResultCount count={data.total} noun="message" query={query} />
+          <ResultCount count={data ? data.total : null} noun="message" query={query} />
         </form>
       </div>
 
@@ -381,7 +398,15 @@ export function InboxPage() {
         </div>
       )}
 
-      {data.items.length === 0 ? (
+      {!data ? (
+        !error && (
+          <div className="mt-6">
+            <LoadingBlock label={unreadOnly ? 'Loading unread messages…' : 'Loading messages…'}>
+              <SkeletonDividedList rows={5} />
+            </LoadingBlock>
+          </div>
+        )
+      ) : data.items.length === 0 ? (
         <div className="mt-6">
           <EmptyState title={unreadOnly ? 'Nothing unread' : 'No messages'}>
             Client chat, internal notes and threaded email appear here as they arrive.
@@ -455,12 +480,17 @@ export function InboxPage() {
         </ul>
       )}
 
-      <Pagination
-        page={data.page}
-        pageCount={pageCountOf(data.total, data.per_page)}
-        onPage={setPage}
-        className="mt-6"
-      />
+      {/* Held back until the page it describes has arrived — the same rule the
+          user listing follows. A pager showing the previous filter's page count
+          is the pager lying about how much there is. */}
+      {data && (
+        <Pagination
+          page={data.page}
+          pageCount={pageCountOf(data.total, data.per_page)}
+          onPage={setPage}
+          className="mt-6"
+        />
+      )}
     </div>
   );
 }

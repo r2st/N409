@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { api, apiDownload, ApiError } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
+import { useClearOnChange } from '../lib/useClearOnChange';
 import { email as emailRule, password as passwordRule, useFormValidation } from '../lib/useFormValidation';
 import { PASSWORD_HINT } from '../lib/passwordPolicy';
 import { useAuth } from '../lib/auth';
@@ -229,6 +230,16 @@ export function AdminUsersPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /*
+   * The listing already renders its own placeholder for a null `data`, so the
+   * controls survive the wait — what it did not do is empty `data` when the
+   * question changed. Filtering to a role, ticking "include deleted" or paging
+   * left the previous set of people on screen underneath the new controls, with
+   * the row actions live against every one of them, on the screen whose whole
+   * purpose is deciding who has access. See `useClearOnChange`.
+   */
+  useClearOnChange(`${q}|${role}|${partner}|${showDeleted}|${page}`, () => setData(null));
 
   useEffect(() => {
     api<{ partners: Partner[]; truncated: boolean }>('/partners')

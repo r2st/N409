@@ -2,13 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
+import { useClearOnChange } from '../lib/useClearOnChange';
 import { formatDateTime } from '../lib/format';
 import {
   Button,
   EmptyState,
   ErrorNote,
+  LoadingBlock,
   Pagination,
   ResultCount,
+  SkeletonTable,
   Spinner,
   StatCard,
   pageCountOf,
@@ -226,8 +229,19 @@ export function AdminJobsPage() {
     return () => clearInterval(timer);
   }, [load]);
 
-  if (error && !jobs) return <ErrorNote>{error}</ErrorNote>;
-  if (!jobs || !stats) return <Spinner />;
+  /*
+   * Keyed on the question rather than folded into `load`, because `load` is
+   * also the 15-second poll and the Refresh button: blanking the feed every
+   * fifteen seconds to prove it is fresh would be worse than the bug. Only the
+   * job list is scoped by these filters — the counters above come from
+   * `/admin/jobs/stats`, which is asked over the whole queue either way, so
+   * they stay put.
+   */
+  useClearOnChange(`${source}|${status}|${page}`, () => setJobs(null));
+
+  // The wait replaces the feed, not the page: a bare `<Spinner />` here took
+  // the status chips and the source picker with it.
+  if (!stats) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
 
   return (
     <div>
@@ -372,7 +386,11 @@ export function AdminJobsPage() {
             </option>
           ))}
         </select>
-        <ResultCount count={total} noun="job" />
+        {/* `null` while the filtered feed is in flight: `total` is still the
+            previous filter's figure, and announcing it here would answer the
+            new question with the old answer in the one place a screen-reader
+            user is relying on for the count. */}
+        <ResultCount count={jobs ? total : null} noun="job" />
       </div>
 
       {error && (
@@ -381,7 +399,15 @@ export function AdminJobsPage() {
         </div>
       )}
 
-      {jobs.length === 0 ? (
+      {!jobs ? (
+        !error && (
+          <div className="mt-6">
+            <LoadingBlock label="Loading jobs…">
+              <SkeletonTable columns={8} rows={6} />
+            </LoadingBlock>
+          </div>
+        )
+      ) : jobs.length === 0 ? (
         <div className="mt-6">
           <EmptyState title="No matching jobs">
             Background work appears here as it is queued, run and finished.

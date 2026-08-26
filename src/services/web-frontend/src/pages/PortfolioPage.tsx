@@ -10,7 +10,10 @@ import {
   ErrorNote,
   Field,
   ListTruncationNote,
+  LoadingBlock,
   Select,
+  SkeletonStatStrip,
+  SkeletonTable,
   Spinner,
   TextInput,
 } from '../components/ui';
@@ -159,6 +162,15 @@ export function PortfolioPage() {
     // outstanding at once. A late reply for the previously selected entity
     // renders its holdings, its subsidiaries and its consolidated figures under
     // the name of the one now highlighted. See `useLatestOnly`.
+    /*
+     * The sidebar is the question and this panel is the answer to it. Without
+     * dropping the previous organization's detail here, switching entity left
+     * its holdings, its subsidiaries and its consolidated equity figure sitting
+     * under the newly highlighted name for a whole round trip — a total someone
+     * reads off this screen and puts in a board pack, filed under the wrong
+     * portfolio. `useLatestOnly` below orders the replies; this covers the wait.
+     */
+    setDetail(null);
     const current = claim();
     api<OrgDetail>(`/organizations/${selected}`)
       .then((d) => current() && setDetail(d))
@@ -250,6 +262,13 @@ export function PortfolioPage() {
             ))}
           </div>
           <ListTruncationNote truncated={orgsTruncated} shown={orgs.length} noun="organizations" />
+
+          {!detail && !error && (
+            <LoadingBlock label="Loading organization…" className="mt-6">
+              <SkeletonStatStrip count={4} />
+              <SkeletonTable columns={5} rows={4} />
+            </LoadingBlock>
+          )}
 
           {detail && (
             <div className="mt-6 space-y-6">

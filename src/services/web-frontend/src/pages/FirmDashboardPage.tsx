@@ -191,7 +191,18 @@ export function FirmDashboardPage() {
 
   // Debounced so typing a client name is one request per pause, not per key.
   useEffect(() => {
-    const timer = setTimeout(() => void loadClients(page, search), 250);
+    const timer = setTimeout(() => {
+      /*
+       * Dropped at the moment the new question is actually asked, rather than
+       * on the keystroke that composed it. The book stays readable through the
+       * typing pause and goes blank only for the round trip — where previously
+       * the previous search's clients sat under the new term for the whole of
+       * it, and the pager counted them. Clearing on `search` itself would blank
+       * the table on every character instead.
+       */
+      setClients(null);
+      void loadClients(page, search);
+    }, 250);
     return () => clearTimeout(timer);
   }, [page, search, loadClients]);
 

@@ -10,6 +10,7 @@ import {
 } from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
+import { useClearOnChange } from '../lib/useClearOnChange';
 import {
   TEMPLATE_CATEGORIES,
   TEMPLATE_CATEGORY_LABELS,
@@ -27,7 +28,9 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  LoadingBlock,
   Select,
+  SkeletonTable,
   Spinner,
   TextInput,
   inputClass,
@@ -541,8 +544,10 @@ function TemplatesTab() {
     }
   };
 
-  if (error && !templates) return <ErrorNote>{error}</ErrorNote>;
-  if (!templates) return <Spinner />;
+  // The category chips are the question the table answers, so the previous
+  // category's templates must not sit under a newly pressed chip; and the wait
+  // must not take the chips with it. See `useClearOnChange`.
+  useClearOnChange(category, () => setTemplates(null));
 
   return (
     <div>
@@ -590,7 +595,21 @@ function TemplatesTab() {
           onCancel={() => setEditing(undefined)}
         />
       )}
-      {templates.length === 0 ? (
+      {!templates ? (
+        !error && (
+          <div className="mt-4">
+            <LoadingBlock
+              label={
+                category === 'all'
+                  ? 'Loading templates…'
+                  : `Loading ${TEMPLATE_CATEGORY_LABELS[category].toLowerCase()} templates…`
+              }
+            >
+              <SkeletonTable columns={7} rows={5} />
+            </LoadingBlock>
+          </div>
+        )
+      ) : templates.length === 0 ? (
         <div className="mt-6">
           <EmptyState title="No templates yet" />
         </div>
