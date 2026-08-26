@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { nonOverlapping } from '../src/scheduler.js';
+import { nonOverlapping, sweepFailed } from '../src/scheduler.js';
 
 /** A promise plus the handles to settle it, so a tick can be held open. */
 function deferred<T = void>() {
@@ -225,5 +225,66 @@ describe('Scheduler.whenIdle', () => {
     gate.resolve();
     await flush();
     expect(settled.sort()).toEqual([1, 2, 3]);
+  });
+});
+
+describe('sweepFailed', () => {
+  function recorder() {
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const errors: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    return {
+      warns,
+      errors,
+      log: {
+        warn: (obj: Record<string, unknown>, msg: string) => void warns.push({ obj, msg }),
+        error: (obj: Record<string, unknown>, msg: string) => void errors.push({ obj, msg }),
+      },
+    };
+  }
+
+  /** A transport failure, in the shape the classifier reads it from. */
+  function syscallError(code: string): Error {
+    return Object.assign(new Error(code), { code });
+  }
+
+  it('names the sweep in a field, not only in the message', () => {
+    // The saturation gauges beside these schedulers label by `sweep`; the
+    // failure line has to answer with the same key or "which sweep is failing"
+    // stays a substring match against prose.
+    const { log, errors } = recorder();
+    sweepFailed(log, 'hris-sync')(new TypeError('x is not a function'));
+    expect(errors[0]!.obj).toMatchObject({ sweep: 'hris-sync' });
+  });
+
+  it('flags a permanent failure for alerting', () => {
+    const { log, errors, warns } = recorder();
+    sweepFailed(log, 'retention')(new TypeError('cannot read properties of undefined'));
+    expect(warns).toHaveLength(0);
+    expect(errors[0]!.obj).toMatchObject({ sweep: 'retention', failure_kind: 'permanent', alert: true });
+  });
+
+  it('does not alert on a transient failure — the next tick is the retry', () => {
+    // A sweep that lost the database during a deploy used to log identically to
+    // one with a bug in it, which is how a level stops carrying information.
+    const { log, errors, warns } = recorder();
+    sweepFailed(log, 'email-retry')(syscallError('ECONNREFUSED'));
+    expect(errors).toHaveLength(0);
+    expect(warns[0]!.obj).toMatchObject({ sweep: 'email-retry', failure_kind: 'transient' });
+    expect(warns[0]!.obj.alert).toBeUndefined();
+  });
+
+  it('alerts on an unrecognised failure rather than quietly downgrading it', () => {
+    const { log, errors } = recorder();
+    sweepFailed(log, 'housekeeping')('a bare string nobody classified');
+    expect(errors[0]!.obj).toMatchObject({ failure_reason: 'unclassified', alert: true });
+  });
+
+  it('is what nonOverlapping calls, so a rejected tick is reported and the schedule survives', async () => {
+    const { log, errors } = recorder();
+    const s = nonOverlapping(() => Promise.reject(new TypeError('boom')), sweepFailed(log, 'job-alerts'));
+    s.run();
+    await flush();
+    expect(errors[0]!.obj).toMatchObject({ sweep: 'job-alerts', alert: true });
+    expect(s.running).toBe(false);
   });
 });

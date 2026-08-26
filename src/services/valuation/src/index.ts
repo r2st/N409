@@ -8,6 +8,7 @@ import {
   listenHost,
   nonOverlapping,
   quiesceAndLog,
+  sweepFailed,
   type NamedScheduler,
   flagOverrides,
   flagSnapshot,
@@ -282,6 +283,24 @@ const track = <T extends { running: boolean; whenIdle(): Promise<void>; skipped:
   return scheduler;
 };
 
+/**
+ * A tracked, non-overlapping sweep whose failures are classified and alertable.
+ *
+ * The name is supplied once and reaches all three places that report on this
+ * sweep — the two saturation gauges above and the failure line from
+ * `sweepFailed` — so the `sweep` label in the metrics and the `sweep` field in
+ * the log are the same string by construction. They were not before: the name
+ * went to `track` as a value and into the failure handler as prose inside a
+ * message ('HRIS sync scan failed' against a gauge labelled `hris-sync`), which
+ * is two vocabularies for one thing and no way to notice they had drifted.
+ *
+ * Registering a sweep any other way is what this exists to prevent: every
+ * background tick in this process now gets the alerting contract by
+ * construction rather than by the next person remembering it.
+ */
+const scheduleSweep = (name: string, tick: () => Promise<unknown>) =>
+  track(name, nonOverlapping(tick, sweepFailed(app.log, name)));
+
 // A scheduler that is routinely skipping ticks is one whose interval is too
 // short for its work — `nonOverlapping` counts them precisely so that is
 // visible from outside, and until now nothing read the count.
@@ -304,21 +323,15 @@ app.metrics.gauge(
 // logs and waits for the next tick.
 let autoEmailTimer: NodeJS.Timeout | undefined;
 if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
-  const scan = track(
-    'auto-email',
-    nonOverlapping(
-      async () => {
-        const r = await runDueAutoEmails({
-          pool,
-          ...emailTransports,
-          publicBaseUrl: config.PUBLIC_BASE_URL,
-          log: app.log,
-        });
-        if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');
-      },
-      (err) => app.log.error({ err }, 'auto email scan failed'),
-    ),
-  );
+  const scan = scheduleSweep('auto-email', async () => {
+    const r = await runDueAutoEmails({
+      pool,
+      ...emailTransports,
+      publicBaseUrl: config.PUBLIC_BASE_URL,
+      log: app.log,
+    });
+    if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');
+  });
   autoEmailTimer = setInterval(() => scan.run(), config.AUTO_EMAIL_SCAN_MINUTES * 60_000);
 }
 
@@ -326,21 +339,15 @@ if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
 // 'failed' forever with nothing else revisiting them (see hooks/emailRetry.ts).
 let emailRetryTimer: NodeJS.Timeout | undefined;
 if (config.EMAIL_RETRY_SCAN_MINUTES > 0) {
-  const sweep = track(
-    'email-retry',
-    nonOverlapping(
-      async () => {
-        const r = await retryFailedEmails({
-          pool,
-          ...emailTransports,
-          log: app.log,
-          maxAttempts: config.EMAIL_RETRY_MAX_ATTEMPTS,
-        });
-        if (r.attempted > 0) app.log.info(r, 'email retry sweep');
-      },
-      (err) => app.log.error({ err }, 'email retry sweep failed'),
-    ),
-  );
+  const sweep = scheduleSweep('email-retry', async () => {
+    const r = await retryFailedEmails({
+      pool,
+      ...emailTransports,
+      log: app.log,
+      maxAttempts: config.EMAIL_RETRY_MAX_ATTEMPTS,
+    });
+    if (r.attempted > 0) app.log.info(r, 'email retry sweep');
+  });
   emailRetryTimer = setInterval(() => sweep.run(), config.EMAIL_RETRY_SCAN_MINUTES * 60_000);
 }
 
@@ -348,18 +355,12 @@ if (config.EMAIL_RETRY_SCAN_MINUTES > 0) {
 // 'pending' with a backoff stamped on it; this is what comes back for it.
 let webhookRetryTimer: NodeJS.Timeout | undefined;
 if (config.WEBHOOK_RETRY_SCAN_MINUTES > 0) {
-  const sweep = track(
-    'webhook-retry',
-    nonOverlapping(
-      async () => {
-        const r = await retryDueDeliveries({ pool, log: app.log });
-        // `reaped` too, not just `attempted`: a pass that settled abandoned
-        // deliveries and delivered nothing did the work this line reports on.
-        if (r.attempted > 0 || r.reaped > 0) app.log.info(r, 'webhook retry sweep');
-      },
-      (err) => app.log.error({ err }, 'webhook retry sweep failed'),
-    ),
-  );
+  const sweep = scheduleSweep('webhook-retry', async () => {
+    const r = await retryDueDeliveries({ pool, log: app.log });
+    // `reaped` too, not just `attempted`: a pass that settled abandoned
+    // deliveries and delivered nothing did the work this line reports on.
+    if (r.attempted > 0 || r.reaped > 0) app.log.info(r, 'webhook retry sweep');
+  });
   webhookRetryTimer = setInterval(() => sweep.run(), config.WEBHOOK_RETRY_SCAN_MINUTES * 60_000);
 }
 
@@ -374,21 +375,12 @@ if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
   // when runs are wedged, which is the one time it runs at all. It used to be
   // the only scheduler here without the non-overlap guard, despite a comment
   // claiming it followed its siblings.
-  const sweep = track(
-    'pipeline-reaper',
-    nonOverlapping(
-      async () => {
-        const reaped = await reapStalePipelineRuns(pool, { olderThanMs, actor: reaperActor });
-        if (reaped.length > 0) {
-          app.log.warn(
-            { count: reaped.length, runIds: reaped.map((r) => r.id) },
-            'reaped stale pipeline runs',
-          );
-        }
-      },
-      (err) => app.log.error({ err }, 'pipeline reaper failed'),
-    ),
-  );
+  const sweep = scheduleSweep('pipeline-reaper', async () => {
+    const reaped = await reapStalePipelineRuns(pool, { olderThanMs, actor: reaperActor });
+    if (reaped.length > 0) {
+      app.log.warn({ count: reaped.length, runIds: reaped.map((r) => r.id) }, 'reaped stale pipeline runs');
+    }
+  });
   sweep.run();
   reaperTimer = setInterval(() => sweep.run(), Math.min(olderThanMs, 5 * 60_000));
 }
@@ -398,32 +390,20 @@ if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
 // errors are recorded on the row and don't stop the scan.
 let capTableSyncTimer: NodeJS.Timeout | undefined;
 {
-  const tick = track(
-    'cap-table-sync',
-    nonOverlapping(
-      async () => {
-        const n = await runDueCapTableSyncs({ pool, log: app.log });
-        if (n > 0) app.log.info({ processed: n }, 'cap-table sync scan');
-      },
-      (err) => app.log.error({ err }, 'cap-table sync scan failed'),
-    ),
-  );
+  const tick = scheduleSweep('cap-table-sync', async () => {
+    const n = await runDueCapTableSyncs({ pool, log: app.log });
+    if (n > 0) app.log.info({ processed: n }, 'cap-table sync scan');
+  });
   capTableSyncTimer = setInterval(() => tick.run(), 15 * 60_000);
 }
 
 // HRIS/payroll sync scheduler (feature 11): pull due roster/grant connections.
 let hrisSyncTimer: NodeJS.Timeout | undefined;
 {
-  const tick = track(
-    'hris-sync',
-    nonOverlapping(
-      async () => {
-        const n = await runDueHrisSyncs({ pool, log: app.log });
-        if (n > 0) app.log.info({ processed: n }, 'HRIS sync scan');
-      },
-      (err) => app.log.error({ err }, 'HRIS sync scan failed'),
-    ),
-  );
+  const tick = scheduleSweep('hris-sync', async () => {
+    const n = await runDueHrisSyncs({ pool, log: app.log });
+    if (n > 0) app.log.info({ processed: n }, 'HRIS sync scan');
+  });
   hrisSyncTimer = setInterval(() => tick.run(), 15 * 60_000);
 }
 
@@ -433,18 +413,12 @@ let hrisSyncTimer: NodeJS.Timeout | undefined;
 // exactly the case worth catching immediately — then every five minutes.
 let jobAlertTimer: NodeJS.Timeout | undefined;
 if (config.JOB_ALERT_SCAN_MINUTES > 0) {
-  const sweep = track(
-    'job-alerts',
-    nonOverlapping(
-      async () => {
-        const r = await runJobAlertScan({ pool, log: app.log });
-        if (r.opened.length > 0 || r.resolved.length > 0) {
-          app.log.info({ opened: r.opened.length, resolved: r.resolved.length }, 'job alert sweep');
-        }
-      },
-      (err) => app.log.error({ err }, 'job alert sweep failed'),
-    ),
-  );
+  const sweep = scheduleSweep('job-alerts', async () => {
+    const r = await runJobAlertScan({ pool, log: app.log });
+    if (r.opened.length > 0 || r.resolved.length > 0) {
+      app.log.info({ opened: r.opened.length, resolved: r.resolved.length }, 'job alert sweep');
+    }
+  });
   sweep.run();
   jobAlertTimer = setInterval(() => sweep.run(), config.JOB_ALERT_SCAN_MINUTES * 60_000);
 }
@@ -453,16 +427,10 @@ if (config.JOB_ALERT_SCAN_MINUTES > 0) {
 // unless a legal hold freezes them. Runs at boot, then every 6 hours.
 let retentionTimer: NodeJS.Timeout | undefined;
 {
-  const sweep = track(
-    'retention',
-    nonOverlapping(
-      async () => {
-        const r = await runRetentionSweep(pool, { log: app.log });
-        if (r.archived > 0 || r.skipped_hold > 0) app.log.info(r, 'retention sweep');
-      },
-      (err) => app.log.error({ err }, 'retention sweep failed'),
-    ),
-  );
+  const sweep = scheduleSweep('retention', async () => {
+    const r = await runRetentionSweep(pool, { log: app.log });
+    if (r.archived > 0 || r.skipped_hold > 0) app.log.info(r, 'retention sweep');
+  });
   sweep.run();
   retentionTimer = setInterval(() => sweep.run(), 6 * 60 * 60_000);
 }
@@ -497,16 +465,10 @@ if (config.PIPELINE_RETRY_SCAN_MINUTES > 0) {
     enabled: config.AUTO_PIPELINE === 'on',
     log: app.log,
   };
-  const sweep = track(
-    'pipeline-retry',
-    nonOverlapping(
-      async () => {
-        const r = await retryFailedPipelineRuns({ pool, autoPipeline: autoPipelineDeps });
-        if (r.claimed > 0) app.log.info(r, 'auto-pipeline retry sweep');
-      },
-      (err) => app.log.error({ err }, 'auto-pipeline retry sweep failed'),
-    ),
-  );
+  const sweep = scheduleSweep('pipeline-retry', async () => {
+    const r = await retryFailedPipelineRuns({ pool, autoPipeline: autoPipelineDeps });
+    if (r.claimed > 0) app.log.info(r, 'auto-pipeline retry sweep');
+  });
   sweep.run();
   pipelineRetryTimer = setInterval(() => sweep.run(), config.PIPELINE_RETRY_SCAN_MINUTES * 60_000);
 }
@@ -518,16 +480,10 @@ if (config.PIPELINE_RETRY_SCAN_MINUTES > 0) {
 // nothing) and a deploy is when the database is least free to spend on it.
 let housekeepingTimer: NodeJS.Timeout | undefined;
 {
-  const sweep = track(
-    'housekeeping',
-    nonOverlapping(
-      async () => {
-        const r = await runHousekeepingSweep({ pool, log: app.log });
-        if (r.total > 0) app.log.info(r, 'housekeeping sweep');
-      },
-      (err) => app.log.error({ err }, 'housekeeping sweep failed'),
-    ),
-  );
+  const sweep = scheduleSweep('housekeeping', async () => {
+    const r = await runHousekeepingSweep({ pool, log: app.log });
+    if (r.total > 0) app.log.info(r, 'housekeeping sweep');
+  });
   housekeepingTimer = setInterval(() => sweep.run(), 60 * 60_000);
 }
 

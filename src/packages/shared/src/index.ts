@@ -97,6 +97,7 @@ export {
   nonOverlapping,
   quiesce,
   quiesceAndLog,
+  sweepFailed,
   type NamedScheduler,
   type QuiesceLogger,
   type QuiesceResult,

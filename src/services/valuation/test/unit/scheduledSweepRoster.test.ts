@@ -91,9 +91,18 @@ const DECIDED: Record<string, Verdict> = {
   },
 };
 
-/** `track('name', …)` is how index.ts registers a sweep with the drain. */
+/**
+ * `scheduleSweep('name', …)` is how index.ts registers a sweep.
+ *
+ * It used to be `track('name', …)`, and R155 moved the literal one call deeper:
+ * `scheduleSweep` is what now calls `track`, passing the name as a *variable*
+ * so the drain roster, the two saturation gauges and the failure line all get
+ * the same string by construction. This regex followed it, and the vacuity
+ * guard below is what forced the follow — with the old pattern still here every
+ * assertion in this file passed against an empty set.
+ */
 function sweepNames(source: string): string[] {
-  return [...source.matchAll(/\btrack\(\s*\n?\s*'([a-z0-9-]+)'/g)].map((m) => m[1]!);
+  return [...source.matchAll(/\bscheduleSweep\(\s*\n?\s*'([a-z0-9-]+)'/g)].map((m) => m[1]!);
 }
 
 describe('the scheduled sweeps', () => {
@@ -121,6 +130,24 @@ describe('the scheduled sweeps', () => {
     // describing the system and starts being folklore.
     const stale = Object.keys(DECIDED).filter((name) => !found.includes(name));
     expect(stale).toEqual([]);
+  });
+
+  it('registers every sweep through the one helper that carries the alert contract', () => {
+    // R155. `sweepFailed` classifies a failed tick and stamps `alert: true` on
+    // the permanent ones — the only alerting contract this codebase declares,
+    // and until R155 it had no production callers at all while the ten sweeps
+    // here each hand-wrote `log.error({ err }, '<name> sweep failed')`.
+    //
+    // `scheduleSweep` is what supplies it. A sweep built by calling
+    // `nonOverlapping` directly would still run, still be tracked if somebody
+    // remembered `track`, and still log — with no `sweep` field, no
+    // classification, and nothing an alert rule can match. So the guard is on
+    // the construction rather than on the roster: there is exactly one
+    // `nonOverlapping` call in this file and it is inside `scheduleSweep`.
+    const code = INDEX.replace(/\/\*[\s\S]*?\*\//g, '').replace(/([^:])\/\/[^\n]*/g, '$1');
+    const calls = [...code.matchAll(/\bnonOverlapping\(/g)];
+    expect(calls).toHaveLength(1);
+    expect(code).toMatch(/const scheduleSweep = [^;]*nonOverlapping\(tick, sweepFailed\(app\.log, name\)\)/);
   });
 
   it('says how each valuation-writing sweep is guarded', () => {

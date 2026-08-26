@@ -64,6 +64,7 @@
  * tick must not hold the process past its deadline. Overrunning is reported and
  * not fatal — the exit code stays with the shutdown handler that owns it.
  */
+import { logFailure, type FailureLogger } from './failure.js';
 
 export interface Scheduler {
   /** Run one tick now, unless one is already in flight. */
@@ -153,6 +154,42 @@ export function nonOverlapping(tick: () => Promise<unknown>, onError: (err: unkn
         // reset by then, so the schedule survives.
         .catch(() => {});
     },
+  };
+}
+
+/**
+ * `onError` for a named background sweep.
+ *
+ * Every scheduled sweep in the estate had its own hand-written handler, and all
+ * of them were the same line: `log.error({ err }, '<name> sweep failed')`. Three
+ * things were wrong with that shape, and none of them are visible from any one
+ * call site.
+ *
+ * **Nothing could group them.** The sweep's name lived only in the message
+ * string, so "which sweep is failing" was a substring match rather than a
+ * field — while the saturation gauges beside these same schedulers had been
+ * labelling by `sweep` all along. This emits the same key, so the log and the
+ * metrics answer with one vocabulary.
+ *
+ * **Nothing could alert on them.** {@link logFailure} exists precisely to stamp
+ * `alert: true` on a failure that no retry is coming for, and it is the only
+ * alerting contract this codebase declares. It had no production callers at
+ * all: the six places carrying `alert: true` had each written the field out by
+ * hand, and the whole background tier — ten sweeps covering email, webhooks,
+ * the pipeline reaper, both syncs, retention and housekeeping — carried none.
+ *
+ * **Everything was `error`.** A sweep whose tick lost the database during a
+ * deploy logged identically to one whose tick has a bug in it, so the level
+ * carried no information and the only sustainable response was to stop reading
+ * it. Classifying drops the first case to `warn` — the next tick is the retry,
+ * which is what a schedule *is* — and leaves `error` meaning a person is
+ * needed. Note the direction that matters: the classifier's default is
+ * `permanent`, so an unrecognised failure alerts rather than being quietly
+ * downgraded.
+ */
+export function sweepFailed(log: FailureLogger, name: string): (err: unknown) => void {
+  return (err) => {
+    logFailure(log, err, { sweep: name }, `${name} sweep failed`);
   };
 }
 
