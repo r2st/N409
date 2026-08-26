@@ -76,6 +76,15 @@ describe('parseNumericCell — the decimal separator', () => {
     expect(parseNumericCell('$1,234.50')).toBe(1234.5);
   });
 
+  it('reads the Indian grouping, which stripping every comma got right', () => {
+    // Groups of two above the last three. Unambiguous, and a rule that knew
+    // only the three-digit grouping would turn these into null — refusing a
+    // figure the parser used to read correctly.
+    expect(parseNumericCell('1,00,000')).toBe(100000);
+    expect(parseNumericCell('12,34,567')).toBe(1234567);
+    expect(parseNumericCell('1,23,45,678')).toBe(12345678);
+  });
+
   it('carries the sign through the grouping test', () => {
     expect(parseNumericCell('-1,234')).toBe(-1234);
     expect(parseNumericCell('-1,5')).toBe(-1.5);

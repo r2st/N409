@@ -110,6 +110,19 @@ export function presetByKey(key: string): FormatPreset | undefined {
 const COMMA_GROUPED = /^\d{1,3}(?:,\d{3})+$/;
 
 /**
+ * The Indian grouping — `1,00,000`, `12,34,567`: groups of two above the last
+ * three, which is what a spreadsheet set to en-IN writes and what an Indian
+ * subsidiary's cap table arrives as.
+ *
+ * Listed because stripping every comma read these correctly, and a rule that
+ * only knows the three-digit grouping turns them into `null`. Refusing a figure
+ * the parser used to get right is a regression however sound the reasoning
+ * behind the new rule; the grouping is unambiguous, so it is recognised rather
+ * than lost.
+ */
+const COMMA_GROUPED_INDIAN = /^\d{1,2}(?:,\d{2})+,\d{3}$/;
+
+/**
  * Resolve `.` and `,` into the one decimal point JS `Number` understands.
  *
  * The comma used to be stripped outright, on the reading that it is always a
@@ -130,11 +143,12 @@ const COMMA_GROUPED = /^\d{1,3}(?:,\d{3})+$/;
  *  - **Both separators present.** The last one is the decimal point and the
  *    other is grouping, whichever way round they fall. This settles
  *    `1,234.56` and `1.234,56` without knowing the locale.
- *  - **Commas only, grouped in threes** (`1,234`, `12,345,678`). Read as
- *    grouping, which keeps every US file parsing exactly as it did. `1,234` is
- *    genuinely ambiguous — it is 1.234 to a German spreadsheet — and this is
- *    the reading the platform's own exports use.
- *  - **Commas only, not grouped in threes** (`1,00`, `1,5`, `12,345,6`). Not a
+ *  - **Commas only, in a grouping pattern** — threes (`1,234`, `12,345,678`) or
+ *    the Indian twos-above-three (`1,00,000`). Read as grouping, which keeps
+ *    every such file parsing exactly as it did. `1,234` is genuinely ambiguous
+ *    — it is 1.234 to a German spreadsheet — and this is the reading the
+ *    platform's own exports use.
+ *  - **Commas only, in no grouping pattern** (`1,00`, `1,5`, `12,345,6`). Not a
  *    thousands separator, because no thousands separator produces those. The
  *    first two are a decimal comma; the third is not a number, and turning it
  *    into `12.345.6` makes it unparseable, which is the honest answer.
@@ -148,7 +162,8 @@ function normalizeDecimalSeparator(digits: string): string {
     return lastComma > lastDot ? digits.replace(/\./g, '').replace(',', '.') : digits.replace(/,/g, '');
   }
   if (lastComma === -1) return digits;
-  return COMMA_GROUPED.test(digits) ? digits.replace(/,/g, '') : digits.replace(/,/g, '.');
+  const grouped = COMMA_GROUPED.test(digits) || COMMA_GROUPED_INDIAN.test(digits);
+  return grouped ? digits.replace(/,/g, '') : digits.replace(/,/g, '.');
 }
 
 /**
