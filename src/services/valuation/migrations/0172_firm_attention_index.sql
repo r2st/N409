@@ -1,3 +1,12 @@
+-- Numbered 0172, not 0171. It was written as 0171 alongside another migration
+-- that had already taken that number, which `migrationHistory.test.ts` refuses:
+-- a third file at a duplicated prefix sorts *between* the pair, so a migration
+-- written to run after both can silently run before one. Renumbering rather
+-- than grandfathering is only safe because the statement below is `IF NOT
+-- EXISTS` — any database that applied this file under its old name re-runs it
+-- here as a no-op and records 0172, leaving the 0171 row behind as bookkeeping
+-- the runner ignores.
+--
 -- The firm console's attention band read the whole platform to show twenty rows.
 --
 -- `attentionCandidates` (repos/firmDashboard.ts) is:
