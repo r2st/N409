@@ -1,7 +1,6 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hardDeletedTables } from '../support/hardDeletes.js';
 import { isDbAvailable, setupTestDb, type TestDb } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -39,50 +38,6 @@ const SRC = fileURLToPath(new URL('../../src/', import.meta.url));
  * closed with an index in migration 0171 rather than an entry here.
  */
 const EXEMPT: ReadonlyMap<string, string> = new Map();
-
-/** Every `.ts` under the service's `src/`. */
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const p = path.join(dir, entry);
-    if (statSync(p).isDirectory()) out.push(...sourceFiles(p));
-    else if (p.endsWith('.ts')) out.push(p);
-  }
-  return out;
-}
-
-/**
- * The tables this service deletes rows from, and where.
- *
- * Literal `DELETE FROM <table>` covers all but one caller. The exception is
- * `runHousekeepingSweep`, which interpolates `${target.table}` from
- * `HOUSEKEEPING_TARGETS` — a frozen list in this repository's own source, so
- * the names are read from there rather than lost to the interpolation. A census
- * that could not see them would be reporting five fewer deleted tables than
- * there are, which is the vacuous-check shape ([[n409-vacuous-checks]]).
- */
-function hardDeletedTables(): Map<string, Set<string>> {
-  const found = new Map<string, Set<string>>();
-  const note = (table: string, where: string): void => {
-    const at = found.get(table) ?? new Set<string>();
-    at.add(where);
-    found.set(table, at);
-  };
-
-  for (const file of sourceFiles(SRC)) {
-    const rel = path.relative(SRC, file);
-    for (const m of readFileSync(file, 'utf8').matchAll(/DELETE\s+FROM\s+([a-z_][a-z0-9_]*)/gi)) {
-      note(m[1]!.toLowerCase(), rel);
-    }
-  }
-
-  const housekeeping = readFileSync(path.join(SRC, 'domain/housekeeping.ts'), 'utf8');
-  const targets = housekeeping.slice(housekeeping.indexOf('HOUSEKEEPING_TARGETS'));
-  for (const m of targets.matchAll(/table:\s*'([a-z_]+)'/g)) {
-    note(m[1]!, 'domain/housekeeping.ts (sweep)');
-  }
-  return found;
-}
 
 interface UnindexedFk {
   tgt_table: string;
@@ -128,7 +83,7 @@ describe.skipIf(!dbUp)('an unindexed foreign key never points at a deleted table
   beforeAll(async () => {
     db = await setupTestDb();
     unindexed = (await db.pool.query<UnindexedFk>(UNINDEXED_FK_SQL)).rows;
-    deleted = hardDeletedTables();
+    deleted = hardDeletedTables(SRC);
   });
   afterAll(async () => db?.teardown());
 
