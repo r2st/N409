@@ -4,6 +4,8 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
+import { PARTNER_API_ENDPOINTS, PARTNER_API_PREFIX } from '../../src/routes/partnerApi.js';
+import { recordDelivery } from '../../src/repos/partnerWebhooks.js';
 import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -11,12 +13,22 @@ const dbUp = await isDbAvailable();
 /**
  * The Partner API's two remaining promises, neither of which the main suite
  * pins: that *every* route scoped by `{id}` answers 404 for another firm's
- * valuation rather than serving it, and that the paging contract holds.
+ * row rather than serving it, and that the paging contract holds.
  *
- * The scoping one is worth a sweep rather than a case, because `loadScoped` is
- * a helper each handler has to remember to call. A new route that reads
- * `req.params.id` and goes straight to a repo is not a compile error and not a
- * test failure anywhere else — it is one partner reading another's cap table.
+ * The scoping one is worth a sweep rather than a case, because `loadScoped` and
+ * `findWebhook` are helpers each handler has to remember to call. A new route
+ * that reads `req.params.id` and goes straight to a repo is not a compile error
+ * and not a test failure anywhere else — it is one partner reading another's
+ * cap table.
+ *
+ * R157: the sweep used to be four hand-written lines under a docstring that
+ * said "every". The API had grown to ten `{id}`-scoped operations by then — the
+ * two valuation *writes* and all five webhook routes had never been asked the
+ * question, and the list could not notice an eleventh. It is now driven off
+ * `PARTNER_API_ENDPOINTS`, the same registry the routes are registered from, so
+ * an operation added tomorrow is swept the day it is declared or fails here for
+ * want of a fixture. A list of endpoints maintained by hand is maintained by
+ * the same person who forgot the scope check.
  */
 describe.skipIf(!dbUp)('partner API scoping and paging', () => {
   let ctx: TestApp;
@@ -27,6 +39,8 @@ describe.skipIf(!dbUp)('partner API scoping and paging', () => {
   let rivalKey: string;
   let ownValuationId: string;
   let rivalValuationId: string;
+  let rivalWebhookId: string;
+  let rivalDeliveryId: string;
 
   const keyHeader = (key: string) => ({ authorization: `Bearer ${key}` });
 
@@ -53,6 +67,34 @@ describe.skipIf(!dbUp)('partner API scoping and paging', () => {
     return res.json().valuation.id as string;
   };
 
+  /**
+   * A webhook and one delivery under it.
+   *
+   * The delivery is inserted through the repo rather than produced by
+   * `POST /webhooks/{id}/test`, which would attempt a real HTTP request. What
+   * the sweep needs from it is an id another firm can name, and the row is the
+   * same row either way.
+   */
+  const createWebhookWithDelivery = async (
+    key: string,
+    url: string,
+  ): Promise<{ webhookId: string; deliveryId: string }> => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/partner/v1/webhooks',
+      headers: keyHeader(key),
+      payload: { url, events: ['valuation.state_changed'] },
+    });
+    expect(res.statusCode, JSON.stringify(res.json())).toBe(201);
+    const webhookId = res.json().webhook.id as string;
+    const delivery = await recordDelivery(ctx.pool, {
+      webhookId,
+      eventType: 'valuation.state_changed',
+      payload: { probe: true },
+    });
+    return { webhookId, deliveryId: delivery.id };
+  };
+
   beforeAll(async () => {
     const docsDir = await mkdtemp(path.join(tmpdir(), 'n409-partner-scope-'));
     ctx = await setupTestApp(
@@ -67,35 +109,149 @@ describe.skipIf(!dbUp)('partner API scoping and paging', () => {
 
     ownValuationId = await createValuation(apiKey, 'Own Co');
     rivalValuationId = await createValuation(rivalKey, 'Rival Co');
+
+    const rivalHook = await createWebhookWithDelivery(rivalKey, 'https://rival-sink.invalid/hook');
+    rivalWebhookId = rivalHook.webhookId;
+    rivalDeliveryId = rivalHook.deliveryId;
   }, 60_000);
 
   afterAll(async () => {
     await ctx?.teardown();
   });
 
-  it('404s every id-scoped route for another firm’s valuation', async () => {
+  /**
+   * A body for each operation good enough to reach its handler.
+   *
+   * Keyed by `METHOD /path` from the registry, so an operation that gains a
+   * required field and stops reaching its handler shows up as the own-side
+   * probe failing rather than as a rival-side 404 nobody earned — that is the
+   * R89 lesson, restated for this API: a one-sided probe is satisfied by a 422.
+   */
+  const PAYLOADS: Record<string, unknown> = {
+    'PUT /valuations/{id}': { company_name: 'Renamed By Sweep' },
+    'POST /valuations/{id}/submit': {},
+    'POST /valuations/{id}/documents': {
+      filename: 'cap-table.csv',
+      kind: 'cap_table',
+      content_type: 'text/csv',
+      content_base64: Buffer.from('holder,shares\nFounder,1000\n').toString('base64'),
+    },
+    'POST /webhooks/{id}/deliveries/{deliveryId}/retry': {},
+    'POST /webhooks/{id}/test': {},
+  };
+
+  /**
+   * Operations whose own-side probe legitimately answers 404, and why.
+   *
+   * Same contract as `PUBLIC_ROUTES` and the privileged sweep's exemptions: an
+   * entry has to say what makes the 404 correct, so a reviewer can check the
+   * claim rather than trust the list. These are still swept on the rival side —
+   * only the anti-vacuity probe skips them.
+   */
+  const OWN_SIDE_404_BY_DESIGN = new Map<string, string>([
+    [
+      'GET /valuations/{id}/report.pdf',
+      'a freshly created engagement has no report yet, so 404 is the right answer for the owner too; ' +
+        'partnerApi.test.ts drives this route against a published engagement',
+    ],
+  ]);
+
+  /** Every `{…}`-scoped operation the partner API declares, from its registry. */
+  const idScoped = () => PARTNER_API_ENDPOINTS.filter((e) => e.auth === 'api_key' && e.path.includes('{'));
+
+  const fill = (endpointPath: string, ids: Record<string, string>): string =>
+    PARTNER_API_PREFIX +
+    endpointPath.replace(/\{(\w+)\}/g, (_, name: string) => {
+      const value = ids[name];
+      // A parameter the sweep has no fixture for is a coverage hole, not a
+      // route to skip: without this, adding `{investorId}` to the registry
+      // would quietly stop asking the scoping question for that operation.
+      if (!value) throw new Error(`No fixture for {${name}} — add one to the scoping sweep`);
+      return value;
+    });
+
+  it('404s every id-scoped partner operation for another firm’s row', async () => {
+    const endpoints = idScoped();
+    // Vacuity guard. "Nothing left over" is satisfied by having found nothing,
+    // and the registry is populated as a side effect of building the app.
+    expect(endpoints.length).toBeGreaterThanOrEqual(10);
+    expect(endpoints.map((e) => `${e.method} ${e.path}`)).toEqual(
+      expect.arrayContaining([
+        'PUT /valuations/{id}',
+        'POST /valuations/{id}/submit',
+        'DELETE /webhooks/{id}',
+        'POST /webhooks/{id}/deliveries/{deliveryId}/retry',
+      ]),
+    );
+
     // Not 403: whether that id exists at all is not something to disclose to a
     // firm with no claim on it.
-    const reads: Array<[string, string]> = [
-      ['GET', `/api/partner/v1/valuations/${rivalValuationId}`],
-      ['GET', `/api/partner/v1/valuations/${rivalValuationId}/results`],
-      ['GET', `/api/partner/v1/valuations/${rivalValuationId}/report.pdf`],
-    ];
-    for (const [method, url] of reads) {
-      const res = await app.inject({ method: method as 'GET', url, headers: keyHeader(apiKey) });
-      expect(res.statusCode, `${method} ${url}`).toBe(404);
+    const rivalIds = {
+      id: '',
+      deliveryId: rivalDeliveryId,
+    };
+    const served: string[] = [];
+    for (const endpoint of endpoints) {
+      rivalIds.id = endpoint.path.startsWith('/webhooks/') ? rivalWebhookId : rivalValuationId;
+      const url = fill(endpoint.path, rivalIds);
+      const res = await app.inject({
+        method: endpoint.method,
+        url,
+        headers: keyHeader(apiKey),
+        payload: PAYLOADS[`${endpoint.method} ${endpoint.path}`] ?? {},
+      });
+      if (res.statusCode !== 404) {
+        served.push(`${endpoint.method} ${endpoint.path} -> ${res.statusCode}`);
+      }
     }
+    expect(served).toEqual([]);
+  }, 120_000);
 
-    const upload = await app.inject({
-      method: 'POST',
-      url: `/api/partner/v1/valuations/${rivalValuationId}/documents`,
-      headers: keyHeader(apiKey),
-      payload: { filename: 'x.pdf', content_base64: Buffer.from('%PDF-1.4 x').toString('base64') },
-    });
-    expect(upload.statusCode).toBe(404);
+  /**
+   * The other half, without which the 404s above are worth nothing: the same
+   * request aimed at the caller's *own* row must not 404. A route that is
+   * simply broken, or a fixture that never existed, answers 404 for both firms
+   * and passes the sweep above while asking no question at all.
+   *
+   * Own fixtures are minted per operation, because two of these are
+   * destructive — `DELETE /webhooks/{id}` and `POST /valuations/{id}/submit`
+   * both change what the next probe would find.
+   *
+   * And they are minted under a *third* firm, not under `apiKey`: the paging
+   * case below counts firm A's whole book, and a sweep that grows with the
+   * registry would silently rewrite that arithmetic every time an operation is
+   * added. A probe that changes what another test measures is a probe that will
+   * eventually be deleted for being flaky.
+   */
+  it('serves the caller’s own row on every one of them', async () => {
+    const probeKey = await mintKey(await seedPartner(ctx, 'Scoping Probes'), 'scope-probe');
+    const notFound: string[] = [];
+    for (const endpoint of idScoped()) {
+      if (OWN_SIDE_404_BY_DESIGN.has(`${endpoint.method} ${endpoint.path}`)) continue;
+      const ids = endpoint.path.startsWith('/webhooks/')
+        ? await (async () => {
+            const hook = await createWebhookWithDelivery(probeKey, 'https://own-sink.invalid/hook');
+            return { id: hook.webhookId, deliveryId: hook.deliveryId };
+          })()
+        : {
+            id: await createValuation(probeKey, `Probe ${endpoint.method} ${endpoint.path}`),
+            deliveryId: '',
+          };
 
-    // …and the owner still reaches its own, so the 404s above are scoping and
-    // not the routes being broken.
+      const res = await app.inject({
+        method: endpoint.method,
+        url: fill(endpoint.path, ids),
+        headers: keyHeader(probeKey),
+        payload: PAYLOADS[`${endpoint.method} ${endpoint.path}`] ?? {},
+      });
+      if (res.statusCode === 404) {
+        notFound.push(`${endpoint.method} ${endpoint.path} -> ${JSON.stringify(res.json()).slice(0, 120)}`);
+      }
+    }
+    expect(notFound).toEqual([]);
+  }, 180_000);
+
+  it('serves the owner its own valuation by id', async () => {
     const own = await app.inject({
       method: 'GET',
       url: `/api/partner/v1/valuations/${ownValuationId}`,
