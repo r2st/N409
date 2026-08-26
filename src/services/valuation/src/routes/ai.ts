@@ -161,15 +161,38 @@ function actorFor(principal: Principal): EventActor {
   return { actorType: 'ai', actorId: principal.id, source: 'ai-service' };
 }
 
-async function encodeDocuments(
+/**
+ * Reads the eligible documents and base64s them for the AI service.
+ *
+ * A blob that will not read is skipped rather than failing the run, which is
+ * right — one unreadable upload should not cost a firm its whole analysis — and
+ * was silent, which is not. The skip changes what the model is reasoning from:
+ * the run goes ahead on fewer documents than the firm uploaded and produces a
+ * confident answer from the smaller set, with nothing anywhere recording that
+ * the set was smaller. That is the same shape as a false empty state, one tier
+ * down — a discarded failure re-presented as a fact about the data.
+ *
+ * It also hides the failure that is worth waking up for. `decodeFromStorage`
+ * is envelope decryption, so a key that has gone wrong does not drop one
+ * document, it drops every document on every run, and the only outward sign
+ * would have been analyses that had quietly stopped citing anything.
+ *
+ * Logged per document (so the cause is on the line) and tallied (so a
+ * one-off is visibly different from all of them). The filename is deliberately
+ * not logged: this platform's uploads are offer letters and board consents, and
+ * their names carry the people in them.
+ */
+export async function encodeDocuments(
   documentsDir: string,
   docs: DocumentRow[],
+  log?: FastifyBaseLogger,
 ): Promise<Array<Record<string, unknown>>> {
   const eligible = docs
     .filter((d) => EXTRACTABLE_EXTENSIONS.has(path.extname(d.filename).toLowerCase()))
     .filter((d) => Number(d.size_bytes) <= MAX_AI_DOCUMENT_BYTES)
     .slice(0, MAX_AI_DOCUMENTS);
   const encoded: Array<Record<string, unknown>> = [];
+  const unreadable: string[] = [];
   for (const doc of eligible) {
     try {
       const stored = await readFile(path.join(documentsDir, doc.storage_path));
@@ -181,9 +204,16 @@ async function encodeDocuments(
         content_type: doc.content_type,
         content_base64: buf.toString('base64'),
       });
-    } catch {
-      // A missing blob shouldn't sink the whole pipeline run.
+    } catch (err) {
+      unreadable.push(doc.id);
+      log?.warn({ err, documentId: doc.id, kind: doc.kind }, 'document unreadable — excluded from AI input');
     }
+  }
+  if (unreadable.length > 0) {
+    log?.warn(
+      { unreadable: unreadable.length, eligible: eligible.length, sent: encoded.length },
+      'AI input is missing documents',
+    );
   }
   return encoded;
 }
@@ -284,7 +314,8 @@ export async function runAiPipeline(
       service_countries: valuation.service_countries,
     },
     params,
-    documents: args.includeDocuments === false ? [] : await encodeDocuments(deps.documentsDir, documents),
+    documents:
+      args.includeDocuments === false ? [] : await encodeDocuments(deps.documentsDir, documents, deps.log),
     prompt: promptRow ? { system: promptRow.system_prompt, model: promptRow.model } : null,
     ...(narrativeSections ? { narrative_sections: narrativeSections } : {}),
     ...(researchPayload ? { market_research: researchPayload } : {}),
@@ -749,7 +780,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       }
       documents = documentIds.map((docId) => byId.get(docId)!);
     }
-    const encoded = await encodeDocuments(deps.documentsDir, documents);
+    const encoded = await encodeDocuments(deps.documentsDir, documents, deps.log);
     if (documents.length > 0 && encoded.length === 0) {
       throw problems.unprocessable(
         'None of the selected documents are in a text-extractable format under the size limit',

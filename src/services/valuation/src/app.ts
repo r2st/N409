@@ -148,6 +148,7 @@ import type { PoolHealth } from './db/poolHealth.js';
 import { clamdScanner, type ScanPolicy } from './documents/virusScan.js';
 import { probeReady, setNetworkSink } from './clients/internal.js';
 import { configureReportRenderer, registerReportRenderMetrics } from './clients/reportRender.js';
+import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 
 export interface AppDeps {
@@ -315,6 +316,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // with nothing to remember; `REPORT_URL=` in the environment file takes it
   // back out of the path without a build. See clients/reportRender.ts.
   configureReportRenderer(config.REPORT_URL, app.log);
+
+  // Say why a white-labelled report came out without the firm's mark on it.
+  // Set here for the same reason the line above is — the only caller is five
+  // frames below a route handler — and the nine ways that fetch can fail were
+  // one silent `return null` until R155. See clients/partnerLogo.ts.
+  configurePartnerLogoLogging(app.log);
 
   // Persist every engagement-scoped engine/AI call (409.ai §11, migration
   // 0127). Set here rather than passed through the twelve route modules that

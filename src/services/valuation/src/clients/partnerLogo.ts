@@ -98,17 +98,58 @@ export async function isPublicHttpUrl(url: URL, resolve: HostResolver): Promise<
   return addresses.every((a) => !isPrivateAddress(a));
 }
 
+/** Somewhere to say why a logo did not load. Structurally `FastifyBaseLogger`. */
+export interface LogoLogger {
+  warn: (obj: Record<string, unknown>, msg: string) => void;
+}
+
+/**
+ * Why a fetch produced no logo. Stable slugs, written to be grepped.
+ *
+ * There are nine ways out of {@link fetchPartnerLogo} and every one of them was
+ * `return null`, which is correct — a missing logo must never block a render —
+ * and was indistinguishable from the partner not having configured one. A firm
+ * whose mark had silently stopped appearing on its own client-facing 409A
+ * reports produced no line anywhere, and support had nothing to look at: the
+ * URL is stored and looks fine, the render succeeds, the PDF is just missing
+ * the logo. The nine reasons answer completely different questions —
+ * `blocked_destination` is the SSRF guard doing its job on a URL somebody
+ * should be asked about, `unsupported_format` is a partner who uploaded an SVG
+ * and needs telling, `http_error` is their CDN — and collapsing them lost all
+ * of it.
+ */
+export type LogoFailure =
+  | 'invalid_url'
+  | 'blocked_destination'
+  | 'redirect_without_location'
+  | 'redirect_target_invalid'
+  | 'too_many_redirects'
+  | 'http_error'
+  | 'too_large'
+  | 'empty_body'
+  | 'unsupported_format'
+  | 'transport_error';
+
 export async function fetchPartnerLogo(
   logoUrl: string | null,
   fetchImpl: typeof fetch = fetch,
   resolve: HostResolver = defaultResolver,
+  log?: LogoLogger,
 ): Promise<Buffer | null> {
   if (!logoUrl) return null;
+  // The URL is the partner's own configured value, not a person's data, and it
+  // is the single most useful thing on the line — `scrubUrl` still runs over
+  // free text in the serializer if one ever carries a query string.
+  const give = (reason: LogoFailure, extra: Record<string, unknown> = {}): null => {
+    log?.warn({ reason, logoUrl, ...extra }, 'partner logo not loaded — rendering without it');
+    return null;
+  };
+
   let url: URL;
   try {
     url = new URL(logoUrl);
   } catch {
-    return null;
+    return give('invalid_url');
   }
 
   try {
@@ -117,27 +158,34 @@ export async function fetchPartnerLogo(
     const signal = AbortSignal.timeout(TIMEOUT_MS);
     let res: Response | null = null;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-      if (!(await isPublicHttpUrl(url, resolve))) return null;
+      if (!(await isPublicHttpUrl(url, resolve))) {
+        // `hop` matters here: at 0 the stored URL itself is the problem, and
+        // past it somebody redirected this process at the private network.
+        return give('blocked_destination', { hop, host: url.hostname });
+      }
       res = await fetchImpl(url, { signal, redirect: 'manual' });
       if (res.status < 300 || res.status >= 400) break;
       const location = res.headers.get('location');
-      if (!location) return null;
+      if (!location) return give('redirect_without_location', { status: res.status });
       // Relative Locations are legal and resolve against the hop that sent them.
       try {
         url = new URL(location, url);
       } catch {
-        return null;
+        return give('redirect_target_invalid');
       }
       res = null;
     }
-    if (!res) return null; // ran out of hops still being redirected
-    if (!res.ok) return null;
+    if (!res) return give('too_many_redirects');
+    if (!res.ok) return give('http_error', { status: res.status });
     const length = Number(res.headers.get('content-length') ?? '0');
-    if (length > MAX_LOGO_BYTES) return null;
+    if (length > MAX_LOGO_BYTES) return give('too_large', { bytes: length });
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length === 0 || buf.length > MAX_LOGO_BYTES) return null;
-    return sniffImageKind(buf) ? buf : null;
-  } catch {
-    return null;
+    if (buf.length === 0) return give('empty_body');
+    if (buf.length > MAX_LOGO_BYTES) return give('too_large', { bytes: buf.length });
+    // PNG and JPEG are the only formats PDFKit can embed, so an SVG or a WebP
+    // is a partner who needs telling rather than a fault.
+    return sniffImageKind(buf) ? buf : give('unsupported_format', { bytes: buf.length });
+  } catch (err) {
+    return give('transport_error', { err });
   }
 }

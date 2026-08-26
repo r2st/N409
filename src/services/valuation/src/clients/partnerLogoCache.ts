@@ -22,7 +22,7 @@
  * disagreeing for under a minute about an image.
  */
 
-import { fetchPartnerLogo } from './partnerLogo.js';
+import { fetchPartnerLogo, type LogoLogger } from './partnerLogo.js';
 
 const HIT_TTL_MS = 60_000;
 const MISS_TTL_MS = 10_000;
@@ -97,20 +97,43 @@ function store(key: string, entry: Entry, at: number): void {
   }
 }
 
+/**
+ * Where a failed logo fetch is reported, or null to report nowhere.
+ *
+ * A module-level sink rather than a parameter, for the reason
+ * `configureReportRenderer` gives about the renderer it sits beside: the caller
+ * is `brandingFor` in routes/reports.ts, which is reached through
+ * `renderVersionPdf` and `deliverablePdf` from five more places, and widening
+ * all of them to carry a logger would be a lot of plumbing to reach one call.
+ *
+ * Unset in tests, so a suite asserting on nulls stays quiet.
+ */
+let logoLog: LogoLogger | null = null;
+
+export function configurePartnerLogoLogging(log: LogoLogger | null): void {
+  logoLog = log;
+}
+
 export async function fetchPartnerLogoCached(
   logoUrl: string | null,
   now: () => number = Date.now,
   fetchLogo: typeof fetchPartnerLogo = fetchPartnerLogo,
+  log: LogoLogger | null = logoLog,
 ): Promise<Buffer | null> {
   if (!logoUrl) return null;
   const at = now();
   const hit = cache.get(logoUrl);
+  // A cached miss is deliberately silent. The negative TTL exists so a dead
+  // logo host is dialled once rather than once per render, and re-reporting the
+  // same failure off a cache entry would turn one broken partner into a line
+  // per report — the shape that gets a log muted. The line is written by the
+  // fetch that discovered it, once per MISS_TTL_MS.
   if (hit && hit.expiresAt > at) return hit.logo;
 
   const pending = inflight.get(logoUrl);
   if (pending) return pending;
 
-  const load = fetchLogo(logoUrl).then(
+  const load = fetchLogo(logoUrl, undefined, undefined, log ?? undefined).then(
     (logo) => {
       inflight.delete(logoUrl);
       // `now()` again rather than `at`: the fetch took time, and a TTL counted
