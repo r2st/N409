@@ -280,7 +280,10 @@ describe('buildReportSummary', () => {
     });
     // Share counts are whole shares, thousands-separated.
     expect(byLabel['Fully diluted common']!.value).toBe('13,123,456');
-    expect(byLabel['Key assumptions']!.value).toBe('σ 55% · T 3.50y');
+    // One decimal, as the body's ASC 718 assumptions table, Exhibit F and
+    // Exhibit H-1 all state σ. Rounded to the whole percent this page named a
+    // volatility no other page in the document did.
+    expect(byLabel['Key assumptions']!.value).toBe('σ 55.0% · T 3.50y');
     // Nothing about a second σ where the calculation records only one.
     expect(byLabel['Discount for lack of marketability']!.note).not.toContain('struck on');
 
@@ -314,7 +317,7 @@ describe('buildReportSummary', () => {
     it('names the class volatility beside the discount that used it', () => {
       const note = noteFor({ dlom_volatility: 0.741875, dlom_volatility_basis: 'class' });
       expect(note).toContain('Finnerty average-strike put model');
-      expect(note).toContain('σ 74%');
+      expect(note).toContain('σ 74.2%');
       expect(note).toContain("common's own");
     });
 

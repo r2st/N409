@@ -11,7 +11,7 @@ import { resolveExhibitReferences } from './reportExhibitIndex.js';
 import { resolveSignatures } from './reportSignatures.js';
 import { SCHEDULE } from './reportExhibits.js';
 import { fillFigures, reportFigures } from './reportFigures.js';
-import { formatCurrency, formatPercent } from './reportSummary.js';
+import { formatCurrency, formatExactPercent, formatPercent } from './reportSummary.js';
 import { esc, table } from './exhibitHtml.js';
 import type { CalculationRow } from '../repos/calculations.js';
 import type { ValuationKind } from './valuation.js';
@@ -222,8 +222,25 @@ export const SAMPLE_FIGURES: readonly SampleFigure[] = [
   { label: 'Preferred', value: `−${money(PREFERRED_VALUE)}`, note: 'Liquidation preference, Series A and B' },
   { label: 'Option pool', value: `−${money(POOL_VALUE)}`, note: 'Allocated by the option-pricing model' },
   { label: 'Common', value: money(COMMON_VALUE), note: `Across ${INT.format(COMMON_SHARES)} shares` },
-  { label: 'DLOM', value: `−${formatPercent(DLOM)}`, note: 'Finnerty put-option model' },
-  { label: 'FMV / share', value: formatCurrency(FMV_PER_SHARE, SAMPLE_CURRENCY, 2), note: 'Common stock' },
+  { label: 'DLOM', value: `−${formatExactPercent(DLOM)}`, note: 'Finnerty put-option model' },
+  /*
+   * Four decimals, because a concluded FMV per share is a four-decimal figure
+   * everywhere else in this document and everywhere else in the platform. This
+   * row struck it at two, so the sample's own summary page printed the headline
+   * "$4.0958" and, three inches below it, "FMV / share  $4.10" — with Exhibit H
+   * and the conclusion chapter both at $4.0958. The same list is served to the
+   * public sample page (`GET /sample-report`), so the two-decimal version was
+   * also the figure a prospect read on the marketing site.
+   *
+   * A grant priced off a $4.0958 conclusion is not priced off $4.10; the sample
+   * exists to show the real document and does not get to state the conclusion
+   * to a different precision than the real document does.
+   */
+  {
+    label: 'FMV / share',
+    value: formatCurrency(FMV_PER_SHARE, SAMPLE_CURRENCY, 4),
+    note: 'Common stock',
+  },
 ];
 
 /**
@@ -881,8 +898,14 @@ function sampleExhibits(): ReportPdfSection[] {
           'Before discounts',
           formatCurrency(MARKETABLE_PER_SHARE, SAMPLE_CURRENCY, 4),
         ],
-        ['Discount for lack of control', 'Not applied — minority interest appraised', formatPercent(DLOC)],
-        ['Discount for lack of marketability', 'Finnerty put-option model', `−${formatPercent(DLOM)}`],
+        // Exactly, as `discountExhibit` states the concluded discounts on a real
+        // engagement's Exhibit H — the sample shows the real document.
+        [
+          'Discount for lack of control',
+          'Not applied — minority interest appraised',
+          formatExactPercent(DLOC),
+        ],
+        ['Discount for lack of marketability', 'Finnerty put-option model', `−${formatExactPercent(DLOM)}`],
       ],
       foot: [
         'Fair market value per common share',

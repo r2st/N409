@@ -2525,13 +2525,17 @@ describe('dlomDerivationExhibit', () => {
   };
 
   it('states the inputs the model was struck on', () => {
-    // A bare 24.5% is not reviewable: the model is arithmetic nobody disputes,
+    // A bare 24.4969% is not reviewable: the model is arithmetic nobody disputes,
     // and the volatility and holding period *are* the argument.
     const text = plain(dlomDerivationExhibit(MODEL, CONTEXT)!.html);
     expect(text).toContain('Finnerty average-strike put model');
     expect(text).toContain('62.0%');
     expect(text).toContain('4.00 years');
-    expect(text).toContain('24.5%');
+    // Exactly, and to the digit Exhibit H prints beside the money it took out:
+    // the foot of this table says "Carried into Exhibit H", which is a claim
+    // about one number and not about a rounding of it.
+    expect(text).toContain('24.4969%');
+    expect(text).not.toContain('24.5%');
   });
 
   it('shows each class carrying its own volatility, above the enterprise for common', () => {
@@ -3076,18 +3080,20 @@ describe('a DLOM concluded by weighting several methods', () => {
     expect(out).toContain('Finnerty average-strike put model');
     expect(out).toContain('Restricted-stock studies');
     expect(out).toContain('50.00%'); // both weights
-    expect(out).toContain('24.5%'); // Finnerty indicated
+    expect(out).toContain('24.4803%'); // Finnerty indicated, exactly
     expect(out).toContain('13.0%'); // studies indicated
   });
 
   it('states the weighted contribution rather than leaving it to be multiplied out', () => {
     // The concluded figure has to be visibly the sum of the column above it;
     // otherwise the table shows the ingredients of an answer without showing
-    // that it is the answer.
+    // that it is the answer. Which means the column has to *add up*: rounded to
+    // a tenth it did not, and the exhibit printed 12.2% + 6.5% under a total of
+    // 18.7%.
     const out = text();
-    expect(out).toContain('12.2%'); // 24.48% × 50%
+    expect(out).toContain('12.2402%'); // 24.48% × 50%
     expect(out).toContain('6.5%'); // 13.0% × 50%
-    expect(out).toContain('18.7%'); // and the concluded total
+    expect(out).toContain('18.7402%'); // and the concluded total, exactly the sum
   });
 
   it('carries each leg’s own derivation under it', () => {

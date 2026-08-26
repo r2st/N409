@@ -33,7 +33,7 @@ const OUTLINE = {
   },
   figures: [
     { label: 'Equity value', value: '$31,910,519', note: 'Weighted across three approaches' },
-    { label: 'FMV / share', value: '$4.10', note: 'Common stock' },
+    { label: 'FMV / share', value: '$4.0958', note: 'Common stock' },
   ],
   pdf: { available: true },
 };
@@ -107,7 +107,10 @@ describe('SampleReportPage', () => {
     // page that contradicts the document it is advertising the first time an
     // input to the sample changes.
     expect(strip.textContent).toMatch(/\$31,910,519/);
-    expect(strip.textContent).toMatch(/\$4\.10/);
+    // Four decimals, as the server strikes it (`SAMPLE_FIGURES`): the sample's
+    // own summary headline and Exhibit H both quote the concluded FMV per share
+    // to the cent-fraction, and this row used to quote it to the cent.
+    expect(strip.textContent).toMatch(/\$4\.0958/);
     expect(strip.textContent).toMatch(/Weighted across three approaches/);
   });
 

@@ -404,8 +404,27 @@ export function buildReportSummary(
     label: 'Allocation method',
     value: ALLOCATION_LABELS[allocation] ?? allocation.toUpperCase(),
   });
+  /*
+   * Both concluded discounts, exactly — the same rate the body's conclusion
+   * chapter and Exhibit H state, not a tenth-of-a-percent version of it.
+   *
+   * This page and Exhibit H are read together: the board member reads the
+   * headline, the reviewer turns to the schedule, and the two are the same
+   * document. `reportFigures` and `discountExhibit` were moved onto
+   * `formatExactPercent` when the body was found stating a rate the conclusion
+   * could not be reproduced from; the summary page was not, so a 409A
+   * concluding a 31.42% DLOM printed "31.4%" on the page a board adopts the
+   * value from and "31.42%" five pages later on the schedule that derives it.
+   * Nothing reconciled the two, and only one of them is the rate that was
+   * applied.
+   *
+   * The waterfall chart lower down this same page has labelled its steps
+   * exactly all along, so the drift was visible within one page: "Discount for
+   * lack of marketability 31.4%" in the figures and "Less DLOM 31.42%" in the
+   * chart beneath them.
+   */
   if (dloc !== null) {
-    figures.push({ label: 'Discount for lack of control', value: formatPercent(dloc) });
+    figures.push({ label: 'Discount for lack of control', value: formatExactPercent(dloc) });
   }
   if (dlom !== null) {
     const method = results.discounts?.dlom_method;
@@ -426,11 +445,11 @@ export function buildReportSummary(
       results.assumptions?.dlom_volatility_basis === 'class' &&
       dlomVol !== null &&
       (volatility === null || Math.abs(dlomVol - volatility) > 0.0005)
-        ? `struck on σ ${formatPercent(dlomVol, 0)} — common's own, not the enterprise's`
+        ? `struck on σ ${formatPercent(dlomVol)} — common's own, not the enterprise's`
         : null;
     figures.push({
       label: 'Discount for lack of marketability',
-      value: formatPercent(dlom),
+      value: formatExactPercent(dlom),
       note: [label, struckOn].filter(Boolean).join(' · ') || undefined,
     });
   }
@@ -456,7 +475,12 @@ export function buildReportSummary(
 
   if (volatility !== null || timeToExit !== null) {
     const parts: string[] = [];
-    if (volatility !== null) parts.push(`σ ${formatPercent(volatility, 0)}`);
+    // One decimal, which is how the body's ASC 718 assumptions table, Exhibit F
+    // and Exhibit H-1 all state σ. Rounded to the whole percent this page named
+    // a volatility no other page in the document did — "σ 62%" against a
+    // 62.4% that the allocation actually ran on, on the summary of a report
+    // whose reviewer checks one against the other.
+    if (volatility !== null) parts.push(`σ ${formatPercent(volatility)}`);
     if (timeToExit !== null) parts.push(`T ${timeToExit.toFixed(2)}y`);
     // Where sigma came from, on the one page a board member reads. A summary
     // that states the assumption without its basis is asking to be taken on

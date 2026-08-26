@@ -253,6 +253,28 @@ function ratio(value: number, digits = 4): string {
   return `${value.toFixed(digits)}x`;
 }
 
+/**
+ * A multiple stated to the precision it was actually applied at.
+ *
+ * `ratio` at two places is right for a multiple a reader only has to read, and
+ * wrong for one the schedule invites them to multiply. Exhibit D's bridge does
+ * exactly that — "Indicated enterprise value … Metric × multiple" — and the
+ * engine's selected multiple is an unrounded median of the guideline set, so an
+ * even-sized set lands on a half step and a three-decimal figure printed as two.
+ * A reviewer redoing `$4,000,000 × 6.48` against an indication struck on 6.4835
+ * misses by $14,000 and cannot tell whether the exhibit is rounded or wrong.
+ *
+ * The same shape as `formatExactPercent`: trailing zeros trimmed to a minimum of
+ * two, so an ordinary 6.5 still reads "6.50x" and only a multiple that needs the
+ * digits carries them.
+ */
+function exactRatio(value: number, minDigits = 2, maxDigits = 4): string {
+  for (let d = minDigits; d < maxDigits; d += 1) {
+    if (Math.abs(Number(value.toFixed(d)) - value) < 1e-9) return `${value.toFixed(d)}x`;
+  }
+  return `${value.toFixed(maxDigits)}x`;
+}
+
 /** The `{ params, inputs }` document the engine was called with. */
 interface Payload {
   params?: Record<string, unknown> | null;
@@ -726,7 +748,7 @@ export function levelOfValueExhibit(
   if (detail?.double_counts_minority === true) {
     parts.push(
       P(
-        `<strong>A discount for lack of control of ${formatPercent(dloc)} has been applied to a ` +
+        `<strong>A discount for lack of control of ${formatExactPercent(dloc)} has been applied to a ` +
           `value that is ${formatPercent(minority, 0)} minority-based.</strong> ` +
           (text(detail.note) ??
             'A discount for lack of control applied to that portion discounts a second time for a ' +
@@ -762,7 +784,7 @@ export function levelOfValueExhibit(
     parts.push(
       P(
         `${formatPercent(control, 0)} of the weighted equity value arrived at a control level, so ` +
-          `the discount for lack of control of ${formatPercent(dloc)} in Exhibit H is taken ` +
+          `the discount for lack of control of ${formatExactPercent(dloc)} in Exhibit H is taken ` +
           'predominantly against value that stood at that level. The remainder was already at a ' +
           'marketable minority level and is disclosed above rather than adjusted for separately.',
       ),
@@ -1366,10 +1388,13 @@ export function marketExhibit(
           rows: multiples
             .slice()
             .sort((a, b) => a - b)
-            .map((m, i) => [`Comparable ${i + 1}`, ratio(m, 2)]),
+            // Exactly, because the foot of this table is the median of the
+            // column above it and the bridge below multiplies the subject's
+            // metric by that median. Both are arithmetic a reviewer redoes.
+            .map((m, i) => [`Comparable ${i + 1}`, exactRatio(m)]),
           foot: [
             `Selected ${label ? esc(label) : 'multiple'} (median)`,
-            selected === null ? '—' : ratio(selected, 2),
+            selected === null ? '—' : exactRatio(selected),
           ],
         })
       : null;
@@ -1379,7 +1404,7 @@ export function marketExhibit(
   if (selected !== null)
     bridge.push([
       `Selected ${label ? esc(label) : 'multiple'}`,
-      ratio(selected, 2),
+      exactRatio(selected),
       'Median of the guideline set',
     ]);
   const ev = num(approach.enterprise_value);
@@ -2588,31 +2613,44 @@ function dlocDerivationBlock(detail: Record<string, unknown> | null, dloc: numbe
   if (!detail) return [];
   const rows: string[][] = [];
 
+  /*
+   * Every rate in this table is exact, because the table is an arithmetic chain
+   * and each row states the note that tells the reader how to redo it: the
+   * observed premium less the synergy share is the applied premium, and the
+   * applied premium inverts to the discount. Rounded to a tenth it did not redo.
+   *
+   * Worse, the last row restated the concluded DLOC that the step table six
+   * rows above it — on the same page, in the same exhibit — had already printed
+   * exactly. Exhibit H said "Less: discount for lack of control — 12.34%" and
+   * then "Discount for lack of control  12.3%", and a reviewer reconciling the
+   * schedule to the conclusion had two rates and no way to tell which was
+   * applied.
+   */
   const observed = num(detail.observed_control_premium);
   const applied = num(detail.control_premium_applied);
   if (observed !== null) {
-    rows.push(['Control premium observed', formatPercent(observed), 'As stated or blended']);
+    rows.push(['Control premium observed', formatExactPercent(observed), 'As stated or blended']);
   }
   const synergy = num(detail.synergy_share);
   if (synergy !== null && applied !== null) {
     rows.push(
       [
         'Less: share attributed to synergies',
-        formatPercent(synergy),
+        formatExactPercent(synergy),
         'An acquisition premium impounds what the buyer expected to do with the target as ' +
           'well as the value of control itself',
       ],
-      ['Control premium applied', formatPercent(applied), ''],
+      ['Control premium applied', formatExactPercent(applied), ''],
     );
   }
   const implied = num(detail.implied_control_premium);
   if (implied !== null) {
-    rows.push(['Control premium implied by the discount', formatPercent(implied), 'CP = d ÷ (1 − d)']);
+    rows.push(['Control premium implied by the discount', formatExactPercent(implied), 'CP = d ÷ (1 − d)']);
   }
   if (observed !== null || implied !== null) {
     rows.push([
       'Discount for lack of control',
-      formatPercent(dloc),
+      formatExactPercent(dloc),
       'DLOC = 1 − 1 ÷ (1 + CP). The premium and the discount are the same fact from ' +
         'opposite sides, and the conversion is not symmetric',
     ]);
@@ -2640,7 +2678,9 @@ function dlocDerivationBlock(detail: Record<string, unknown> | null, dloc: numbe
           return [
             text(s.study) ?? '—',
             from !== null && to !== null ? `${from}–${to}` : '—',
-            premium === null ? '—' : formatPercent(premium),
+            // The observed premium above is the blend of this column; at a
+            // tenth of a percent the blend does not come out of the rows.
+            premium === null ? '—' : formatExactPercent(premium),
           ];
         }),
       }),
@@ -2894,7 +2934,11 @@ function studyBlock(detail: Record<string, unknown>): string[] {
           text(s.study) ?? '—',
           from !== null && to !== null ? `${from}–${to}` : '—',
           text(s.statistic) ?? '—',
-          value === null ? '—' : formatPercent(value),
+          // The concluded discount is the median (or mean) of this column and
+          // is now stated exactly, so the column it is taken from is too —
+          // otherwise the statistic the prose names cannot be recomputed from
+          // the rows the prose points at.
+          value === null ? '—' : formatExactPercent(value),
         ];
       }),
     }),
@@ -2933,7 +2977,7 @@ function studyBlock(detail: Record<string, unknown>): string[] {
   const high = num(detail.high);
   if (low !== null && high !== null) {
     caveats.push(
-      `The selected studies range from ${formatPercent(low)} to ${formatPercent(high)}; the ` +
+      `The selected studies range from ${formatExactPercent(low)} to ${formatExactPercent(high)}; the ` +
         `concluded figure is their ${esc(statistic)}, not the midpoint of that range.`,
     );
   }
@@ -3001,15 +3045,21 @@ function methodWeightingBlock(
           // "33.3%" thrice under a total of 100.00% invites the reader to check
           // an addition that was never done in one decimal place.
           weight === null ? '—' : formatPercent(weight, 2),
-          indicated === null ? '—' : formatPercent(indicated),
-          weighted === null ? '—' : formatPercent(weighted),
+          // The last two columns exactly, because the docstring's claim is an
+          // arithmetic one: the concluded figure is *visibly* the sum of the
+          // weighted column. At a tenth of a percent it was not — three legs
+          // weighted 9.3733%, 11.1367% and 7.15% printed 9.4%, 11.1% and 7.1%
+          // under a total of 27.7%, and the column the exhibit exists to be
+          // checked against added to 27.6%.
+          indicated === null ? '—' : formatExactPercent(indicated),
+          weighted === null ? '—' : formatExactPercent(weighted),
         ];
       }),
       foot: [
         'Selected discount for lack of marketability',
         '100.00%',
         '',
-        concluded === null ? '—' : formatPercent(concluded),
+        concluded === null ? '—' : formatExactPercent(concluded),
       ],
     }),
   ];
@@ -3154,8 +3204,11 @@ export function dlomDerivationExhibit(
         head: ['Derivation', 'Value', 'Note'],
         rows: derivationRows(detail, discounts),
         foot: [
+          // "Carried into Exhibit H" is a claim about a specific number, and
+          // Exhibit H prints that number exactly. Rounded here the two
+          // schedules stated the same discount as two different rates.
           'Concluded discount for lack of marketability',
-          concluded === null ? '—' : formatPercent(concluded),
+          concluded === null ? '—' : formatExactPercent(concluded),
           'Carried into Exhibit H',
         ],
       }),
