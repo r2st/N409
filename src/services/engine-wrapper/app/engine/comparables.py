@@ -152,7 +152,22 @@ def score_company(
     if sic_code:
         breakdown["industry"] = sic_similarity(sic_code, company.sic_code)
         applicable["industry"] = w["industry"]
-    if revenue is not None:
+    # `revenue > 0`, not `is not None`: the size score is a distance in log10,
+    # which has no value at zero. A pre-revenue target reached `_log_proximity`
+    # with `target <= 0` and took its `return 0.0` — the same return a comp that
+    # is genuinely a decade away gets — so every candidate in the universe
+    # scored zero on size and the whole 0.25 weight became a flat penalty. That
+    # is precisely the "penalise every candidate equally on an axis nobody
+    # measured" case this function's docstring rules out, and unlike the
+    # docstring's example it does change the outcome: it drags every total below
+    # `min_score`, so screening a $0-revenue biotech returned 7 comparables
+    # where the identical target with revenue left unset returned 12, and the
+    # five it dropped were listed as "scale too far from the target" — a
+    # judgement about a dimension the screen could not evaluate at all.
+    #
+    # A comp with no revenue against a target that has some still scores zero;
+    # that is a real difference and `_log_proximity` still says so.
+    if revenue is not None and revenue > 0:
         breakdown["size"] = _log_proximity(revenue, company.revenue, _SIZE_DECADES)
         applicable["size"] = w["size"]
     if revenue_growth is not None:
@@ -452,8 +467,27 @@ def comparable_analysis(
         revenue * ebitda_margin if revenue is not None and ebitda_margin is not None else None
     )
     multiple = stats.get("trimmed_median")
+    # `denominator > 0`, not `is not None`. A multiple struck on a zero or
+    # negative metric is not a small value, it is not a value: 11.3 x $0 came
+    # back as `indicated_enterprise_value: 0.0`, shaped exactly like a real
+    # indication and distinguishable from one only by knowing the target's
+    # revenue. Every other market-approach path in the engine already refuses
+    # the same thing out loud — `approaches.market_multiples` with "market.metric
+    # must be positive", `compute._market_metric` with "must be positive to
+    # strike a multiple against it" — and this was the one that answered with a
+    # number instead. It is reachable without a typo: `revenue: 0` is what the
+    # `ltm_revenue` overwrite holds for a pre-revenue company, and the screen
+    # route forwards it.
+    #
+    # `None` rather than an error, because that is what this field already means
+    # when there is nothing to indicate (an absent revenue returns it), and the
+    # screen itself is still useful — the peer set is the reason this endpoint
+    # is called. `indicated_basis.denominator` carries the zero so a reader can
+    # see why.
     indicated = (
-        denominator * multiple if denominator is not None and multiple is not None else None
+        denominator * multiple
+        if denominator is not None and denominator > 0 and multiple is not None
+        else None
     )
 
     return {
