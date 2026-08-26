@@ -62,10 +62,18 @@ export async function createHealthCheck(
   });
 }
 
-export async function listHealthChecks(pool: pg.Pool, valuationId: string): Promise<HealthCheckRow[]> {
+/** Ceiling on one page of the data-health run history. */
+export const HEALTH_CHECK_PAGE_LIMIT = 20;
+
+export async function listHealthChecks(
+  pool: pg.Pool,
+  valuationId: string,
+  opts: { limit?: number } = {},
+): Promise<{ runs: HealthCheckRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? HEALTH_CHECK_PAGE_LIMIT, 1), HEALTH_CHECK_PAGE_LIMIT);
   const { rows } = await pool.query<HealthCheckRow>(
-    'SELECT * FROM valuation_health_checks WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT 20',
-    [valuationId],
+    'SELECT * FROM valuation_health_checks WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [valuationId, limit + 1],
   );
-  return rows;
+  return { runs: rows.slice(0, limit), truncated: rows.length > limit };
 }

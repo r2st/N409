@@ -207,7 +207,8 @@ export function registerSpecialtyRoutes(
     // Failed runs belong in the history as much as successful ones: an analyst
     // reading "why did nothing happen" is looking for the 422 the engine gave
     // back, and a list of only the successes cannot show it.
-    const history = (await listCalculations(deps.pool, id))
+    const historyPage = await listCalculations(deps.pool, id);
+    const history = historyPage.calculations
       .filter((c) => {
         const endpoint = (c.inputs as { endpoint?: unknown } | null)?.endpoint;
         return typeof endpoint === 'string' && endpoint.startsWith('/engine/v1/');
@@ -229,6 +230,10 @@ export function registerSpecialtyRoutes(
       calculation: specialty ? latest : null,
       result: specialty,
       history,
+      // The window this history was filtered out of, not the filtered list: a
+      // run that fell off the twenty is one this tab cannot show whether or not
+      // it was a specialty run, and the reader has no other way to learn that.
+      truncated: historyPage.truncated,
     };
   });
 

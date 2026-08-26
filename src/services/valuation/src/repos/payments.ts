@@ -331,23 +331,39 @@ function scopeWhere(scope: ValuationScope, params: unknown[]): string {
   }
 }
 
+/**
+ * Ceiling on one page of the payment ledger.
+ *
+ * Five hundred was already the cap; what it lacked was a way to say so. This
+ * list is not only drawn as a table — `collectedTotals` sums it into the
+ * "collected to date" figure on the billing page — so past the cap the page
+ * did not merely show a short history, it stated a total that was less money
+ * than the customer has actually paid us, with no indication anything was
+ * missing. An ops principal's scope is every payment on the platform, which is
+ * the scope that reaches five hundred first.
+ */
+export const BILLING_PAYMENT_PAGE_LIMIT = 500;
+
 /** Every payment across the scope's valuations, newest first. */
 export async function listPaymentsForScope(
   pool: pg.Pool,
   scope: ValuationScope,
-): Promise<BillingPaymentRow[]> {
+  opts: { limit?: number } = {},
+): Promise<{ payments: BillingPaymentRow[]; truncated: boolean }> {
   const params: unknown[] = [];
   const where = scopeWhere(scope, params);
+  const limit = Math.min(Math.max(opts.limit ?? BILLING_PAYMENT_PAGE_LIMIT, 1), BILLING_PAYMENT_PAGE_LIMIT);
+  params.push(limit + 1);
   const { rows } = await pool.query<BillingPaymentRow>(
     `SELECT p.*, v.number::text AS valuation_number, v.company_name, v.kind::text AS kind
      FROM payments p
      JOIN valuations v ON v.id = p.valuation_id
      WHERE ${where}
      ORDER BY p.created_at DESC
-     LIMIT 500`,
+     LIMIT $${params.length}`,
     params,
   );
-  return rows;
+  return { payments: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 /**
@@ -366,12 +382,24 @@ export async function listPaymentsForScope(
  * retired. Dropping settled payments from their own history to match this list
  * would be the more serious bug of the two.
  */
+/**
+ * Ceiling on one page of the pay-now list.
+ *
+ * A hundred, and worth saying out loud because of what falls off it: an unpaid
+ * engagement past the cap has no button anywhere in the product that starts
+ * its checkout, and reads to the payer as work that has already been settled.
+ */
+export const UNPAID_VALUATION_PAGE_LIMIT = 100;
+
 export async function listUnpaidValuationsForScope(
   pool: pg.Pool,
   scope: ValuationScope,
-): Promise<UnpaidValuationRow[]> {
+  opts: { limit?: number } = {},
+): Promise<{ unpaid: UnpaidValuationRow[]; truncated: boolean }> {
   const params: unknown[] = [];
   const where = scopeWhere(scope, params);
+  const limit = Math.min(Math.max(opts.limit ?? UNPAID_VALUATION_PAGE_LIMIT, 1), UNPAID_VALUATION_PAGE_LIMIT);
+  params.push(limit + 1);
   const { rows } = await pool.query<UnpaidValuationRow>(
     `SELECT v.id, v.number::text AS number, v.company_name, v.kind::text AS kind, v.currency,
             v.amount_raised_cents::text AS amount_raised_cents
@@ -379,8 +407,8 @@ export async function listUnpaidValuationsForScope(
      WHERE ${where} AND v.archived_at IS NULL
        AND v.paid_status = 'unpaid' AND v.state NOT IN ('cancelled', 'timeout')
      ORDER BY v.created_at DESC
-     LIMIT 100`,
+     LIMIT $${params.length}`,
     params,
   );
-  return rows;
+  return { unpaid: rows.slice(0, limit), truncated: rows.length > limit };
 }

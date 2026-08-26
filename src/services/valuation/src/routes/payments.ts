@@ -432,13 +432,19 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
   app.get('/api/v1/me/billing', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const scope = valuationScope(principal);
-    const [payments, unpaid] = await Promise.all([
-      listPaymentsForScope(deps.pool, scope),
-      listUnpaidValuationsForScope(deps.pool, scope),
-    ]);
+    const [{ payments, truncated: paymentsTruncated }, { unpaid, truncated: unpaidTruncated }] =
+      await Promise.all([
+        listPaymentsForScope(deps.pool, scope),
+        listUnpaidValuationsForScope(deps.pool, scope),
+      ]);
     return {
       billing: {
         payments,
+        // Both caps are reported rather than assumed unreachable, because the
+        // page derives figures from these rows and not only rows from them —
+        // see `collectedTotals` below and BILLING_PAYMENT_PAGE_LIMIT.
+        payments_truncated: paymentsTruncated,
+        unpaid_truncated: unpaidTruncated,
         // Quoted at the band, so the pay-now call-to-action shows the price
         // the checkout will actually open with rather than the entry price.
         unpaid_valuations: unpaid.map((v) => ({

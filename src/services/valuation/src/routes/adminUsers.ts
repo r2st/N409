@@ -245,7 +245,8 @@ export function registerAdminUserRoutes(
 
   app.get('/api/v1/users/invitations', { preHandler: app.authenticate }, async (req) => {
     requireUserAdmin(req);
-    return { invitations: (await listInvitations(deps.pool)).map(toInvitation) };
+    const { invitations, truncated } = await listInvitations(deps.pool);
+    return { invitations: invitations.map(toInvitation), truncated };
   });
 
   app.post('/api/v1/users/invitations/:id/resend', { preHandler: app.authenticate }, async (req) => {

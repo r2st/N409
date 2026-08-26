@@ -91,6 +91,42 @@ const CONSUMERS: Record<string, { renders?: string[]; why?: string }> = {
   '/api/v1/valuations/:id/workbook.xlsx': {
     why: 'Same cells and same bound as `/workbook`. The grant schedule inside this workbook is the one list here that could truncate, and `routes/exports.ts` refuses the whole export rather than shipping a short schedule — a refusal the caller cannot miss.',
   },
+  // ── R162: caps that existed but never said so ────────────────────────────
+  // Every entry below was a hard-coded `LIMIT n` in a repo with no flag beside
+  // it — invisible to this census by construction, because it keys on the
+  // presence of the flag. See the `a capped list carries a flag` suite in
+  // ../../valuation/test/unit/silentCapCensus.test.ts, which asks the other
+  // question: which capped queries are *not* reporting themselves.
+  '/api/v1/users/invitations': { renders: ['src/pages/AdminUsersPage.tsx'] },
+  '/api/v1/support/messages': { renders: ['src/pages/SupportInboxPage.tsx'] },
+  '/api/v1/contact/submissions': { renders: ['src/pages/SupportInboxPage.tsx'] },
+  '/api/v1/me/billing': { renders: ['src/pages/BillingPage.tsx'] },
+  '/api/v1/valuations/:id/calculations': {
+    renders: ['src/components/valuation/CalculationPanel.tsx'],
+  },
+  '/api/v1/valuations/:id/ai': { renders: ['src/components/valuation/AiPanel.tsx'] },
+  '/api/v1/valuations/:id/qa': { renders: ['src/pages/valuation/QaTab.tsx'] },
+  '/api/v1/valuations/:id/health-checks': { renders: ['src/pages/valuation/HealthTab.tsx'] },
+  '/api/v1/valuations/:id/specialty': { renders: ['src/pages/valuation/SpecialtyTab.tsx'] },
+  '/api/v1/valuations/:id/package': { renders: ['src/pages/valuation/PackageTab.tsx'] },
+  '/api/v1/auditor/portal': { renders: ['src/pages/AuditorPortalPage.tsx'] },
+  '/api/v1/debt/instruments': { renders: ['src/pages/DebtInstrumentsPage.tsx'] },
+  '/api/v1/debt/instruments/:id': { renders: ['src/pages/DebtInstrumentsPage.tsx'] },
+  '/api/v1/funds/:id': { renders: ['src/pages/FundPortfolioPage.tsx'] },
+  '/api/v1/funds/:id/nav': { renders: ['src/pages/FundPortfolioPage.tsx'] },
+  '/api/v1/funds/:id/positions/:pid/marks': { renders: ['src/pages/FundPortfolioPage.tsx'] },
+  '/api/v1/debt/instruments/:id/valuations': {
+    why: 'The same page of measurements as `/debt/instruments/:id`, which is the one the page actually loads — the standalone list exists for API callers. Mapping it to the page would claim a notice is drawn for a response the page never reads.',
+  },
+  '/api/v1/funds/:id/positions/:pid/rollforward': {
+    why: 'Not a list. It calls `listMarks` for the single prior mark it rolls forward from — the head of the page — and returns one new mark. The census attributes the flag here because the repo function carries it, not because the response does.',
+  },
+  '/api/v1/valuations': {
+    why: "A name collision in the detector, not a cap: `repos/debtInstruments.ts` exports a `listValuations` that truncates, and `repos/valuations.ts` exports a different `listValuations` that pages with `{ items, total }`. The census matches repo functions by bare name, so the debt one's flag is attributed to every handler calling the other. This endpoint's own paging is `total`, which ValuationsPage already renders.",
+  },
+  '/api/v1/partners/:id/valuations': {
+    why: 'Same `listValuations` name collision as `/api/v1/valuations` above.',
+  },
   '/api/v1/valuations/:id/evidence-bundle': {
     why: 'Not a screen. The bundle carries its caps as a `truncated` object inside the manifest written into the archive, which is the artefact an auditor reads; there is no rendered list to annotate.',
   },

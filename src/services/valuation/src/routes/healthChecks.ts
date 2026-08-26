@@ -64,13 +64,14 @@ export function registerHealthCheckRoutes(app: FastifyInstance, deps: { pool: pg
     requireOps(principal);
     const { id } = req.params as { id: string };
     await loadValuation(id);
-    const [runs, calculation] = await Promise.all([
+    const [{ runs, truncated }, calculation] = await Promise.all([
       listHealthChecks(deps.pool, id),
       latestSucceededCalculation(deps.pool, id),
     ]);
     const current = calculation ? (runs.find((r) => r.calculation_id === calculation.id) ?? null) : null;
     return {
       health_checks: runs,
+      truncated,
       latest_calculation_id: calculation?.id ?? null,
       gate: {
         // Finalization is clear when the latest calculation has a non-blocking

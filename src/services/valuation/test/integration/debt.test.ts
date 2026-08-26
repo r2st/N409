@@ -426,4 +426,134 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
     });
     expect(notFound.statusCode).toBe(404);
   });
+  /**
+   * R162 — an instrument could be created, read and repriced, never removed.
+   *
+   * The book grows with the practice and is never pruned, so a mis-typed
+   * instrument stayed in the picker beside the real ones for good.
+   */
+  describe('removing an instrument', () => {
+    const newInstrument = async (name: string): Promise<string> => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/debt/instruments',
+        headers: authHeader(ops.token),
+        payload: {
+          name,
+          instrument_type: 'bond',
+          currency: 'USD',
+          params: { face: 1000, coupon_rate: 0.05, maturity_years: 5, market_yield: 0.06 },
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      return res.json().instrument.id as string;
+    };
+
+    it('deletes an instrument with its terms and measurement history', async () => {
+      const id = await newInstrument('Retired Note');
+      await app.inject({
+        method: 'PUT',
+        url: `/api/v1/debt/instruments/${id}/credit-terms`,
+        headers: authHeader(ops.token),
+        payload: { rating: 'BBB', seniority: 'senior', secured: false },
+      });
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/debt/instruments/${id}/value`,
+        headers: authHeader(ops.token),
+        payload: {},
+      });
+
+      const deleted = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/debt/instruments/${id}`,
+        headers: authHeader(ops.token),
+      });
+      expect(deleted.statusCode).toBe(204);
+      const gone = await app.inject({
+        method: 'GET',
+        url: `/api/v1/debt/instruments/${id}`,
+        headers: authHeader(ops.token),
+      });
+      expect(gone.statusCode).toBe(404);
+      // 0087's cascades take both dependent tables with the instrument.
+      const rows = await pool.query(
+        'SELECT count(*)::int AS n FROM debt_valuations WHERE instrument_id = $1',
+        [id],
+      );
+      expect(rows.rows[0].n).toBe(0);
+    });
+
+    it('refuses to delete an instrument an engagement is priced against', async () => {
+      const id = await newInstrument('Linked Note');
+      const engagement = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: 'debt', company_name: 'Linked Note Co' },
+      });
+      expect(engagement.statusCode).toBe(201);
+      await app.inject({
+        method: 'PUT',
+        url: `/api/v1/debt/instruments/${id}/valuation`,
+        headers: authHeader(ops.token),
+        payload: { valuation_id: engagement.json().valuation.id },
+      });
+      const refused = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/debt/instruments/${id}`,
+        headers: authHeader(ops.token),
+      });
+      expect(refused.statusCode).toBe(409);
+      expect(refused.json().detail).toMatch(/detach/i);
+    });
+
+    it('is operations-only', async () => {
+      const id = await newInstrument('RBAC Note');
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/debt/instruments/${id}`,
+        headers: authHeader(client.token),
+      });
+      expect(res.statusCode).toBe(403);
+    });
+  });
+
+  /**
+   * The instrument book had no `LIMIT` at all, and the measurement history had
+   * `LIMIT 50` with no way for a caller to learn the cap had bitten — the shape
+   * `test/unit/silentCapCensus.test.ts` now guards against.
+   */
+  it('reports whether each list was capped', async () => {
+    const list = await app.inject({
+      method: 'GET',
+      url: '/api/v1/debt/instruments',
+      headers: authHeader(ops.token),
+    });
+    expect(list.json()).toHaveProperty('truncated', false);
+    expect(Array.isArray(list.json().instruments)).toBe(true);
+
+    const id = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/v1/debt/instruments',
+        headers: authHeader(ops.token),
+        payload: {
+          name: 'Cap Note',
+          instrument_type: 'bond',
+          currency: 'USD',
+          params: { face: 1000, coupon_rate: 0.05, maturity_years: 5, market_yield: 0.06 },
+        },
+      })
+    ).json().instrument.id as string;
+
+    // The flag has to be on the detail response too: that is the one the page
+    // loads, and its `valuations` array is what the history table draws.
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/debt/instruments/${id}`,
+      headers: authHeader(ops.token),
+    });
+    expect(detail.json()).toMatchObject({ valuations: [], truncated: false });
+  });
 });

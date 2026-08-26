@@ -29,7 +29,10 @@ export async function loadFundReport(pool: pg.Pool, valuation: ValuationRow): Pr
 
   return {
     fund,
-    positions: positions.map((position) => ({ position, mark: marks.get(position.id) ?? null })),
+    positions: positions.positions.map((position) => ({
+      position,
+      mark: marks.get(position.id) ?? null,
+    })),
     lpTerms,
   };
 }
@@ -47,5 +50,15 @@ export async function loadDebtReport(pool: pg.Pool, valuation: ValuationRow): Pr
   // listValuations is newest-first, so the head is the measurement the report
   // speaks for. An instrument linked but never priced yields no result exhibit
   // and no cash-flow schedule, but still prints its terms.
-  return { instrument, creditTerms, valuation: history[0] ?? null, history };
+  //
+  // The page cap is not carried onto the report: the exhibit prints the history
+  // it was handed, and DEBT_VALUATION_PAGE_LIMIT is fifty measurements of one
+  // instrument. What the report must never do is take a *different* head from
+  // the one the screen shows, which is why both read the same ordered query.
+  return {
+    instrument,
+    creditTerms,
+    valuation: history.valuations[0] ?? null,
+    history: history.valuations,
+  };
 }

@@ -46,11 +46,27 @@ export interface DebtValuationRow {
 /** See the note on `DebtValuationRow.valuation_date`. */
 const debtValuation = (row: DebtValuationRow): DebtValuationRow => calendarDateRow(row, 'valuation_date');
 
-export async function listInstruments(pool: pg.Pool): Promise<DebtInstrumentRow[]> {
+/**
+ * Ceiling on one page of the instrument book.
+ *
+ * This query had no `LIMIT` at all: it read the whole table on every load of
+ * the instruments page, for a table that grows with the practice and is never
+ * pruned. Bounded here at the same 200 the fund book uses, and reported, so the
+ * page that draws it can say a book is longer than the page rather than
+ * silently becoming a shorter book.
+ */
+export const DEBT_INSTRUMENT_PAGE_LIMIT = 200;
+
+export async function listInstruments(
+  pool: pg.Pool,
+  opts: { limit?: number } = {},
+): Promise<{ instruments: DebtInstrumentRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? DEBT_INSTRUMENT_PAGE_LIMIT, 1), DEBT_INSTRUMENT_PAGE_LIMIT);
   const { rows } = await pool.query<DebtInstrumentRow>(
-    'SELECT * FROM debt_instruments ORDER BY created_at DESC',
+    'SELECT * FROM debt_instruments ORDER BY created_at DESC LIMIT $1',
+    [limit + 1],
   );
-  return rows;
+  return { instruments: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 export async function findInstrument(pool: pg.Pool, id: string): Promise<DebtInstrumentRow | null> {
@@ -130,6 +146,20 @@ export async function updateInstrument(
   return rows[0] ?? null;
 }
 
+/**
+ * Remove an instrument and everything keyed to it.
+ *
+ * `credit_terms` and `debt_valuations` both cascade from this row (0087), so
+ * the measurement history goes with the instrument — which is why the route
+ * above refuses to delete one that is linked to an engagement: those marks are
+ * the evidence behind a report we have issued. Returns false when the id is
+ * already gone, so a double-submitted delete is a 404 rather than a 500.
+ */
+export async function deleteInstrument(pool: pg.Pool, id: string): Promise<boolean> {
+  const { rowCount } = await pool.query('DELETE FROM debt_instruments WHERE id = $1', [id]);
+  return (rowCount ?? 0) > 0;
+}
+
 export async function findCreditTerms(pool: pg.Pool, instrumentId: string): Promise<CreditTermsRow | null> {
   const { rows } = await pool.query<CreditTermsRow>('SELECT * FROM credit_terms WHERE instrument_id = $1', [
     instrumentId,
@@ -181,13 +211,27 @@ export async function upsertCreditTerms(
  * bearing the same date — a re-run after a correction, where the later run is
  * the one that stands. Same rule, same order, as `listMarks` on fund_marks.
  */
-export async function listValuations(pool: pg.Pool, instrumentId: string): Promise<DebtValuationRow[]> {
+/**
+ * Ceiling on one page of an instrument's measurement history.
+ *
+ * Fifty, and the ordering above is what makes saying so matter: the head of
+ * this list is the measurement the whole report speaks for, so the reader has
+ * every reason to treat the tail as the complete record behind it.
+ */
+export const DEBT_VALUATION_PAGE_LIMIT = 50;
+
+export async function listValuations(
+  pool: pg.Pool,
+  instrumentId: string,
+  opts: { limit?: number } = {},
+): Promise<{ valuations: DebtValuationRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? DEBT_VALUATION_PAGE_LIMIT, 1), DEBT_VALUATION_PAGE_LIMIT);
   const { rows } = await pool.query<DebtValuationRow>(
     `SELECT * FROM debt_valuations WHERE instrument_id = $1
-      ORDER BY valuation_date DESC, created_at DESC LIMIT 50`,
-    [instrumentId],
+      ORDER BY valuation_date DESC, created_at DESC LIMIT $2`,
+    [instrumentId, limit + 1],
   );
-  return rows.map(debtValuation);
+  return { valuations: rows.slice(0, limit).map(debtValuation), truncated: rows.length > limit };
 }
 
 export async function createValuation(

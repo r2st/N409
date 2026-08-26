@@ -325,4 +325,239 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings', () => {
     });
     expect(notFound.statusCode).toBe(404);
   });
+  /**
+   * R162 — the measurement domains had a C and an R and nothing else.
+   *
+   * A portfolio created with a typo'd name kept it for good, and a holding
+   * added to the wrong fund stayed in that fund's NAV permanently. The route
+   * file's own docstring claimed "the valuation service owns the CRUD"; two of
+   * the four letters had never been written.
+   */
+  describe('correcting a portfolio', () => {
+    const newFund = async (name: string): Promise<string> => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/funds',
+        headers: authHeader(ops.token),
+        payload: { name, fund_type: 'vc', currency: 'USD' },
+      });
+      expect(res.statusCode).toBe(201);
+      return res.json().fund.id as string;
+    };
+
+    it('renames a fund and leaves the fields it was not given alone', async () => {
+      const id = await newFund('Tpyo Ventures I');
+      const patched = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/funds/${id}`,
+        headers: authHeader(ops.token),
+        payload: { name: 'Typo Ventures I' },
+      });
+      expect(patched.statusCode).toBe(200);
+      expect(patched.json().fund.name).toBe('Typo Ventures I');
+      // The omitted fields keep their values rather than being nulled — the
+      // whole point of a PATCH over the PUT this domain otherwise uses.
+      expect(patched.json().fund.fund_type).toBe('vc');
+      expect(patched.json().fund.currency).toBe('USD');
+    });
+
+    it('refuses an unknown field rather than silently changing nothing', async () => {
+      const id = await newFund('Strict Fund');
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/funds/${id}`,
+        headers: authHeader(ops.token),
+        // `valuation_id` is the engagement link's own route, not a field of the
+        // fund's identity; accepting it here would be two ways to do one thing.
+        payload: { valuation_id: '01ARZ3NDEKTSV4RRFFQ69G5FAV' },
+      });
+      expect(res.statusCode).toBe(422);
+    });
+
+    it('deletes a fund with its holdings and marks', async () => {
+      const id = await newFund('Wound Down I');
+      const pos = await app.inject({
+        method: 'POST',
+        url: `/api/v1/funds/${id}/positions`,
+        headers: authHeader(ops.token),
+        payload: { company_name: 'Acme', quantity: 100, cost_basis: 1000, mark_method: 'cost' },
+      });
+      expect(pos.statusCode).toBe(201);
+      const pid = pos.json().position.id as string;
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/funds/${id}/positions/${pid}/marks`,
+        headers: authHeader(ops.token),
+        payload: { measurement_date: '2026-03-31', method: 'cost' },
+      });
+
+      const deleted = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/funds/${id}`,
+        headers: authHeader(ops.token),
+      });
+      expect(deleted.statusCode).toBe(204);
+      const gone = await app.inject({
+        method: 'GET',
+        url: `/api/v1/funds/${id}`,
+        headers: authHeader(ops.token),
+      });
+      expect(gone.statusCode).toBe(404);
+      // The cascades in 0086 are what carry the holdings and marks out with it.
+      const marks = await pool.query('SELECT count(*)::int AS n FROM fund_marks WHERE position_id = $1', [
+        pid,
+      ]);
+      expect(marks.rows[0].n).toBe(0);
+      // A repeated delete is a 404, not a 500.
+      const again = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/funds/${id}`,
+        headers: authHeader(ops.token),
+      });
+      expect(again.statusCode).toBe(404);
+    });
+
+    it('refuses to delete a portfolio an engagement is measured against', async () => {
+      const id = await newFund('Linked Fund I');
+      const engagement = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: 'fund', company_name: 'Linked Fund I' },
+      });
+      expect(engagement.statusCode).toBe(201);
+      const linked = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/funds/${id}/valuation`,
+        headers: authHeader(ops.token),
+        payload: { valuation_id: engagement.json().valuation.id },
+      });
+      expect(linked.statusCode).toBe(200);
+
+      // These marks are the NAV a report we have issued speaks for; 0110 chose
+      // ON DELETE SET NULL in the other direction on exactly this ground.
+      const refused = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/funds/${id}`,
+        headers: authHeader(ops.token),
+      });
+      expect(refused.statusCode).toBe(409);
+      expect(refused.json().detail).toMatch(/detach/i);
+
+      // Detaching is the deliberate second act that makes it deletable.
+      await app.inject({
+        method: 'PUT',
+        url: `/api/v1/funds/${id}/valuation`,
+        headers: authHeader(ops.token),
+        payload: { valuation_id: null },
+      });
+      const now = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/funds/${id}`,
+        headers: authHeader(ops.token),
+      });
+      expect(now.statusCode).toBe(204);
+    });
+
+    it('edits and removes a holding, and scopes both by fund', async () => {
+      const id = await newFund('Holdings Fund');
+      const other = await newFund('Other Fund');
+      const pos = await app.inject({
+        method: 'POST',
+        url: `/api/v1/funds/${id}/positions`,
+        headers: authHeader(ops.token),
+        payload: { company_name: 'Acme Ic', quantity: 100, cost_basis: 1000 },
+      });
+      const pid = pos.json().position.id as string;
+
+      const patched = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/funds/${id}/positions/${pid}`,
+        headers: authHeader(ops.token),
+        payload: { company_name: 'Acme Inc', quantity: 150 },
+      });
+      expect(patched.statusCode).toBe(200);
+      expect(patched.json().position.company_name).toBe('Acme Inc');
+      expect(Number(patched.json().position.quantity)).toBe(150);
+      expect(Number(patched.json().position.cost_basis)).toBe(1000);
+
+      // A position id from one fund must not reach through another fund's URL.
+      const crossFund = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/funds/${other}/positions/${pid}`,
+        headers: authHeader(ops.token),
+      });
+      expect(crossFund.statusCode).toBe(404);
+
+      const removed = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/funds/${id}/positions/${pid}`,
+        headers: authHeader(ops.token),
+      });
+      expect(removed.statusCode).toBe(204);
+      const detail = await app.inject({
+        method: 'GET',
+        url: `/api/v1/funds/${id}`,
+        headers: authHeader(ops.token),
+      });
+      expect(detail.json().positions).toEqual([]);
+    });
+
+    it('is operations-only, like the rest of the measurement surface', async () => {
+      const id = await newFund('RBAC Fund');
+      for (const [method, url] of [
+        ['PATCH', `/api/v1/funds/${id}`],
+        ['DELETE', `/api/v1/funds/${id}`],
+      ] as const) {
+        const res = await app.inject({
+          method,
+          url,
+          headers: authHeader(client.token),
+          payload: method === 'PATCH' ? { name: 'nope' } : undefined,
+        });
+        expect(res.statusCode, `${method} ${url}`).toBe(403);
+      }
+    });
+  });
+
+  /**
+   * The caps these lists have always had, now said out loud.
+   *
+   * `listPositions` and `listMarks` had no `LIMIT` at all before R162 and the
+   * fund detail carries the flag for the first, because NAV is a *sum* over
+   * those rows — a silently short page is an understated NAV, not a short
+   * table.
+   */
+  it('reports whether the holdings page was capped', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/funds',
+      headers: authHeader(ops.token),
+      payload: { name: 'Cap Fund', fund_type: 'vc', currency: 'USD' },
+    });
+    const id = res.json().fund.id as string;
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/funds/${id}/positions`,
+      headers: authHeader(ops.token),
+      payload: { company_name: 'Only Holding', quantity: 1, cost_basis: 1 },
+    });
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/funds/${id}`,
+      headers: authHeader(ops.token),
+    });
+    expect(detail.json().truncated).toBe(false);
+    expect(detail.json().positions).toHaveLength(1);
+
+    const pid = detail.json().positions[0].id as string;
+    const marks = await app.inject({
+      method: 'GET',
+      url: `/api/v1/funds/${id}/positions/${pid}/marks`,
+      headers: authHeader(ops.token),
+    });
+    // The shape matters as much as the value: a client that reads `marks` off
+    // this response has to find `truncated` beside it.
+    expect(marks.json()).toMatchObject({ marks: [], truncated: false });
+  });
 });

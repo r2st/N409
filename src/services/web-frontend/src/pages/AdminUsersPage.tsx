@@ -14,6 +14,7 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  ListTruncationNote,
   PickerOverflowNote,
   ResultCount,
   Select,
@@ -196,6 +197,7 @@ export function AdminUsersPage() {
   const [roleCatalogFailed, setRoleCatalogFailed] = useState(false);
   const [partnersFailed, setPartnersFailed] = useState(false);
   const [invitationsFailed, setInvitationsFailed] = useState(false);
+  const [invitationsCapped, setInvitationsCapped] = useState(false);
 
   const q = params.get('q') ?? '';
   const role = params.get('role') ?? '';
@@ -263,9 +265,10 @@ export function AdminUsersPage() {
   }, []);
 
   const loadInvitations = useCallback(() => {
-    api<{ invitations: Invitation[] }>('/users/invitations')
+    api<{ invitations: Invitation[]; truncated: boolean }>('/users/invitations')
       .then((res) => {
         setInvitations(res.invitations);
+        setInvitationsCapped(res.truncated);
         setInvitationsFailed(false);
       })
       // The section renders behind `invitations.length > 0`, so an outage was
@@ -829,6 +832,18 @@ export function AdminUsersPage() {
               })}
             </tbody>
           </table>
+          {/* The ledger keeps accepted and revoked invitations too, so this cap
+              is reached by tenure rather than by backlog — and a pending
+              invitation past it reads as an address nobody has invited, which
+              is the same wrong answer the outage note above exists for. */}
+          <div className="px-5 pb-4">
+            <ListTruncationNote
+              truncated={invitationsCapped}
+              shown={invitations.length}
+              noun="invitations"
+              hint="the oldest are not listed"
+            />
+          </div>
         </section>
       )}
 

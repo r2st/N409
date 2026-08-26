@@ -81,12 +81,27 @@ export async function createQaReview(
   });
 }
 
-export async function listQaReviews(pool: pg.Pool, valuationId: string): Promise<QaReviewRow[]> {
+/**
+ * Ceiling on one page of the QA review history.
+ *
+ * The auditor portal draws this list as the review record behind an opinion we
+ * have issued; a review that falls off the end is evidence an auditor asked
+ * for and was not shown, which is materially different from evidence that does
+ * not exist.
+ */
+export const QA_REVIEW_PAGE_LIMIT = 20;
+
+export async function listQaReviews(
+  pool: pg.Pool,
+  valuationId: string,
+  opts: { limit?: number } = {},
+): Promise<{ reviews: QaReviewRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? QA_REVIEW_PAGE_LIMIT, 1), QA_REVIEW_PAGE_LIMIT);
   const { rows } = await pool.query<QaReviewRow>(
-    'SELECT * FROM qa_reviews WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT 20',
-    [valuationId],
+    'SELECT * FROM qa_reviews WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [valuationId, limit + 1],
   );
-  return rows;
+  return { reviews: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 /** The publish gate consults the newest review of a specific calculation. */

@@ -12,6 +12,8 @@ import {
   createFund,
   createMark,
   createPosition,
+  deleteFund,
+  deletePosition,
   findFund,
   findLpTerms,
   findPosition,
@@ -21,6 +23,8 @@ import {
   listFunds,
   listMarks,
   listPositions,
+  updateFund,
+  updatePosition,
   upsertLpTerms,
   type MarkMethod,
 } from '../repos/funds.js';
@@ -56,6 +60,34 @@ const PositionBody = z.object({
   cost_basis: z.number().min(0).max(1e15).default(0),
   mark_method: z.enum(['market', 'last_round', 'calibrated_opm', 'cost']).default('cost'),
 });
+
+/**
+ * Every field optional, and `.strict()` so a typo'd key is a 422 rather than a
+ * silent no-op: a PATCH that quietly changes nothing looks exactly like one
+ * that worked. `.strict()` also rejects `valuation_id` here, which is the
+ * engagement link's own route and not a property of the fund's identity.
+ */
+const FundPatchBody = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    fund_type: z.enum(['vc', 'pe', 'credit', 'growth', 'other']),
+    currency: CurrencyCode,
+    vintage_year: z.number().int().min(1970).max(2100).nullable(),
+  })
+  .partial()
+  .strict();
+
+/** Same rule as {@link FundPatchBody}, over the holding's own fields. */
+const PositionPatchBody = z
+  .object({
+    company_name: z.string().trim().min(1).max(200),
+    security_type: z.enum(['common', 'preferred', 'safe', 'note', 'warrant', 'other']),
+    quantity: z.number().min(0).max(1e15),
+    cost_basis: z.number().min(0).max(1e15),
+    mark_method: z.enum(['market', 'last_round', 'calibrated_opm', 'cost']),
+  })
+  .partial()
+  .strict();
 
 const MarkBody = z.object({
   measurement_date: DateStr,
@@ -187,14 +219,55 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
     const fund = await loadFund(id);
-    const positions = await listPositions(deps.pool, id);
+    const { positions, truncated } = await listPositions(deps.pool, id);
     const marks = await latestMarks(deps.pool, id);
     const lpTerms = await findLpTerms(deps.pool, id);
     return {
       fund,
       lp_terms: lpTerms,
       positions: positions.map((p) => ({ ...p, latest_mark: marks.get(p.id) ?? null })),
+      truncated,
     };
+  });
+
+  app.patch('/api/v1/funds/:id', { preHandler: app.authenticate }, async (req) => {
+    requireOps(requirePrincipal(req));
+    const { id } = req.params as { id: string };
+    await loadFund(id);
+    const parsed = FundPatchBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid fund', { errors: parsed.error.issues });
+    const b = parsed.data;
+    const fund = await updateFund(deps.pool, id, {
+      name: b.name,
+      fundType: b.fund_type,
+      currency: b.currency?.toUpperCase(),
+      vintageYear: b.vintage_year,
+    });
+    if (!fund) throw problems.notFound();
+    return { fund };
+  });
+
+  /**
+   * Delete a portfolio, its holdings and their whole mark trail.
+   *
+   * Refused while the portfolio is linked to an engagement. The marks under a
+   * linked fund are the NAV a report we have issued speaks for, and 0110 chose
+   * `ON DELETE SET NULL` on that link in the other direction for the same
+   * reason — retiring the engagement must not take the measurements with it.
+   * Unlink first if the intent really is to discard the work; that is a
+   * deliberate second act rather than a cascade nobody asked for.
+   */
+  app.delete('/api/v1/funds/:id', { preHandler: app.authenticate }, async (req, reply) => {
+    requireOps(requirePrincipal(req));
+    const { id } = req.params as { id: string };
+    const fund = await loadFund(id);
+    if (fund.valuation_id !== null) {
+      throw problems.conflict(
+        'This portfolio is linked to an engagement — detach it from the engagement before deleting',
+      );
+    }
+    if (!(await deleteFund(deps.pool, id))) throw problems.notFound();
+    return reply.status(204).send();
   });
 
   // ── Positions ────────────────────────────────────────────────────────────
@@ -216,6 +289,42 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     return reply.status(201).send({ position });
   });
 
+  app.patch('/api/v1/funds/:id/positions/:pid', { preHandler: app.authenticate }, async (req) => {
+    requireOps(requirePrincipal(req));
+    const { id, pid } = req.params as { id: string; pid: string };
+    await loadFund(id);
+    if (!isUlid(pid) || !(await findPosition(deps.pool, id, pid))) throw problems.notFound();
+    const parsed = PositionPatchBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid position', { errors: parsed.error.issues });
+    const b = parsed.data;
+    const position = await updatePosition(deps.pool, id, pid, {
+      companyName: b.company_name,
+      securityType: b.security_type,
+      quantity: b.quantity,
+      costBasis: b.cost_basis,
+      markMethod: b.mark_method,
+    });
+    if (!position) throw problems.notFound();
+    return { position };
+  });
+
+  /**
+   * Remove a holding and its marks.
+   *
+   * Not refused for a linked fund, unlike deleting the portfolio itself: a
+   * position entered against the wrong fund is the ordinary correction this
+   * exists for, and refusing it would leave the NAV of a linked engagement
+   * permanently wrong with no way to fix it. The engagement link is the fund's,
+   * and the fund survives.
+   */
+  app.delete('/api/v1/funds/:id/positions/:pid', { preHandler: app.authenticate }, async (req, reply) => {
+    requireOps(requirePrincipal(req));
+    const { id, pid } = req.params as { id: string; pid: string };
+    await loadFund(id);
+    if (!isUlid(pid) || !(await deletePosition(deps.pool, id, pid))) throw problems.notFound();
+    return reply.status(204).send();
+  });
+
   // ── Marks ────────────────────────────────────────────────────────────────
   app.get('/api/v1/funds/:id/positions/:pid/marks', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
@@ -223,7 +332,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     await loadFund(id);
     const position = await findPosition(deps.pool, id, pid);
     if (!position) throw problems.notFound();
-    return { marks: await listMarks(deps.pool, pid) };
+    return listMarks(deps.pool, pid);
   });
 
   app.post('/api/v1/funds/:id/positions/:pid/marks', { preHandler: app.authenticate }, async (req, reply) => {
@@ -283,7 +392,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       if (!parsed.success)
         throw problems.unprocessable('Invalid roll-forward', { errors: parsed.error.issues });
       const b = parsed.data;
-      const marks = await listMarks(deps.pool, pid);
+      const { marks } = await listMarks(deps.pool, pid);
       const prior = marks[0];
       if (!prior) throw problems.unprocessable('No prior mark to roll forward — record a mark first');
 
@@ -325,7 +434,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
     const fund = await loadFund(id);
-    const positions = await listPositions(deps.pool, id);
+    const { positions, truncated } = await listPositions(deps.pool, id);
     if (positions.length === 0) throw problems.unprocessable('The fund has no positions to value');
     const marks = await latestMarks(deps.pool, id);
     const enginePositions = positions.map((p) => {
@@ -339,7 +448,10 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       positions: enginePositions,
       liabilities: 0,
     });
-    return { fund_id: fund.id, currency: fund.currency, nav };
+    // NAV is a sum over the page, so a capped page is a NAV that is missing
+    // holdings. Reported rather than silently under-stated; see
+    // FUND_POSITION_PAGE_LIMIT.
+    return { fund_id: fund.id, currency: fund.currency, nav, truncated };
   });
 
   // ── Engagement link ───────────────────────────────────────────────────────

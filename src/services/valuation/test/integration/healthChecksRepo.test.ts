@@ -170,7 +170,7 @@ describe.skipIf(!dbUp)('health checks repo', () => {
       const first = await create();
       const second = await create({ severity: 'warning', blocking: false });
       expect(second.id).not.toBe(first.id);
-      expect(await listHealthChecks(pool, valuationId)).toHaveLength(2);
+      expect((await listHealthChecks(pool, valuationId)).runs).toHaveLength(2);
     });
 
     it('refuses a severity outside the graded set, writing neither row nor event', async () => {
@@ -178,7 +178,7 @@ describe.skipIf(!dbUp)('health checks repo', () => {
       const before = await eventCount();
       await expect(create({ severity: 'catastrophic' as HealthSeverity })).rejects.toThrow();
 
-      expect(await listHealthChecks(pool, valuationId)).toEqual([]);
+      expect((await listHealthChecks(pool, valuationId)).runs).toEqual([]);
       // The whole thing is one transaction — a rejected row leaves no event
       // claiming a run that never happened.
       expect(await eventCount()).toBe(before);
@@ -188,7 +188,7 @@ describe.skipIf(!dbUp)('health checks repo', () => {
       await clear();
       const before = await eventCount();
       await expect(create({ calculationId: newUlid() })).rejects.toThrow();
-      expect(await listHealthChecks(pool, valuationId)).toEqual([]);
+      expect((await listHealthChecks(pool, valuationId)).runs).toEqual([]);
       expect(await eventCount()).toBe(before);
     });
 
@@ -209,8 +209,8 @@ describe.skipIf(!dbUp)('health checks repo', () => {
   describe('listHealthChecks', () => {
     it('returns nothing for a valuation that has never been checked', async () => {
       await clear();
-      expect(await listHealthChecks(pool, valuationId)).toEqual([]);
-      expect(await listHealthChecks(pool, newUlid())).toEqual([]);
+      expect((await listHealthChecks(pool, valuationId)).runs).toEqual([]);
+      expect((await listHealthChecks(pool, newUlid())).runs).toEqual([]);
     });
 
     it('returns the newest run first', async () => {
@@ -224,7 +224,7 @@ describe.skipIf(!dbUp)('health checks repo', () => {
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
 
-      const rows = await listHealthChecks(pool, valuationId);
+      const { runs: rows } = await listHealthChecks(pool, valuationId);
       expect(rows.map((r) => r.id)).toEqual([...ids].reverse());
     });
 
@@ -234,7 +234,7 @@ describe.skipIf(!dbUp)('health checks repo', () => {
         await create({ severity: 'ok', blocking: false });
         await new Promise((resolve) => setTimeout(resolve, 2));
       }
-      const rows = await listHealthChecks(pool, valuationId);
+      const { runs: rows } = await listHealthChecks(pool, valuationId);
       expect(rows).toHaveLength(20);
     });
 
@@ -249,8 +249,10 @@ describe.skipIf(!dbUp)('health checks repo', () => {
       ).id;
       await create();
 
-      expect(await listHealthChecks(pool, otherValuation)).toEqual([]);
-      expect((await listHealthChecks(pool, valuationId)).map((r) => r.valuation_id)).toEqual([valuationId]);
+      expect((await listHealthChecks(pool, otherValuation)).runs).toEqual([]);
+      expect((await listHealthChecks(pool, valuationId)).runs.map((r) => r.valuation_id)).toEqual([
+        valuationId,
+      ]);
     });
 
     it('carries the calculation id the gate keys on', async () => {
@@ -263,7 +265,7 @@ describe.skipIf(!dbUp)('health checks repo', () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
       const newer = await create({ calculationId: newerCalculation, severity: 'ok', blocking: false });
 
-      const rows = await listHealthChecks(pool, valuationId);
+      const { runs: rows } = await listHealthChecks(pool, valuationId);
       expect(rows.find((r) => r.calculation_id === newerCalculation)!.id).toBe(newer.id);
       expect(rows.find((r) => r.calculation_id === calculationId)!.id).toBe(older.id);
     });

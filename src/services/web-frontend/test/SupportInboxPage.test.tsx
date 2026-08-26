@@ -44,7 +44,14 @@ interface Call {
   body: unknown;
 }
 
-function mockApi(opts: { list?: SupportMessage[]; listFails?: Response; patchFails?: Response } = {}) {
+function mockApi(
+  opts: {
+    list?: SupportMessage[];
+    listFails?: Response;
+    patchFails?: Response;
+    truncated?: boolean;
+  } = {},
+) {
   const calls: Call[] = [];
   let items = opts.list ?? [open];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
@@ -62,7 +69,10 @@ function mockApi(opts: { list?: SupportMessage[]; listFails?: Response; patchFai
     }
     if (opts.listFails) return opts.listFails;
     const scope = new URL(path, 'http://x').searchParams.get('status');
-    return jsonResponse({ messages: scope ? items.filter((m) => m.status === scope) : items });
+    return jsonResponse({
+      messages: scope ? items.filter((m) => m.status === scope) : items,
+      truncated: opts.truncated ?? false,
+    });
   });
   return calls;
 }
@@ -172,5 +182,126 @@ describe('SupportInboxPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Already resolved by another operator.');
     expect(screen.getByText(open.subject)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark resolved' })).toBeEnabled();
+  });
+});
+
+/**
+ * R162 — the contact form's inbox, which had no page at all.
+ *
+ * `POST /api/v1/contact` has been writing rows since the marketing site
+ * shipped, and the ops list and status PATCH beside it existed for as long with
+ * nothing in the product calling either: every enquiry from the website landed
+ * in a table only a `psql` session could read. It is the second queue on this
+ * page now, because it is the same triage.
+ */
+const enquiry = {
+  id: '01N409CONTACT0000000000AA',
+  name: 'Dana Reed',
+  email: 'dana@reedcapital.example',
+  company: 'Reed Capital',
+  phone: '+15550100',
+  message: 'We need a 409A for our Series A.',
+  status: 'new' as const,
+  handled_at: null,
+  created_at: '2026-07-02T09:00:00Z',
+};
+
+function mockContactApi(opts: { list?: Array<typeof enquiry>; truncated?: boolean } = {}) {
+  const calls: Call[] = [];
+  let items = opts.list ?? [enquiry];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    const path = String(url);
+    const method = init?.method ?? 'GET';
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    calls.push({ url: path, method, body });
+    if (path.startsWith('/api/v1/support/messages')) return jsonResponse({ messages: [], truncated: false });
+    if (method === 'PATCH') {
+      const id = path.split('/').at(-1);
+      items = items.map((c) =>
+        c.id === id ? { ...c, status: (body as { status: typeof enquiry.status }).status } : c,
+      );
+      return jsonResponse({ submission: items.find((c) => c.id === id) });
+    }
+    const scope = new URL(path, 'http://x').searchParams.get('status');
+    return jsonResponse({
+      submissions: scope ? items.filter((c) => c.status === scope) : items,
+      truncated: opts.truncated ?? false,
+    });
+  });
+  return calls;
+}
+
+const openContactQueue = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole('button', { name: 'Contact form' }));
+};
+
+describe('the contact-form queue', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('is not loaded until its tab is chosen, then reads the new queue', async () => {
+    const calls = mockContactApi();
+    const user = userEvent.setup();
+    render(<SupportInboxPage />);
+
+    // The support queue is what the page opens on; switching is what fetches.
+    await waitFor(() => expect(calls.some((c) => c.url.startsWith('/api/v1/support'))).toBe(true));
+    expect(calls.some((c) => c.url.startsWith('/api/v1/contact'))).toBe(false);
+
+    await openContactQueue(user);
+    expect(await screen.findByText(enquiry.name)).toBeInTheDocument();
+    expect(calls.at(-1)!.url).toBe('/api/v1/contact/submissions?status=new');
+  });
+
+  it('shows the details an enquiry from a stranger carries', async () => {
+    mockContactApi();
+    const user = userEvent.setup();
+    render(<SupportInboxPage />);
+    await openContactQueue(user);
+
+    expect(await screen.findByText(enquiry.message)).toBeInTheDocument();
+    // The sender has no account, so the address is the whole of the reply path
+    // — a mailto rather than plain text.
+    const mail = screen.getByRole('link', { name: enquiry.email });
+    expect(mail).toHaveAttribute('href', `mailto:${enquiry.email}`);
+  });
+
+  it('marks an enquiry handled and drops it out of the new queue', async () => {
+    const calls = mockContactApi();
+    const user = userEvent.setup();
+    render(<SupportInboxPage />);
+    await openContactQueue(user);
+
+    await user.click(await screen.findByRole('button', { name: 'Mark handled' }));
+
+    await waitFor(() => expect(screen.queryByText(enquiry.name)).not.toBeInTheDocument());
+    const patch = calls.find((c) => c.method === 'PATCH');
+    expect(patch?.url).toBe(`/api/v1/contact/submissions/${enquiry.id}`);
+    expect(patch?.body).toEqual({ status: 'handled' });
+  });
+
+  /**
+   * Ordered by status before date, so the row that falls off this cap is the
+   * oldest enquiry of the lowest-priority status — the one an operator would
+   * assume had been dealt with.
+   */
+  it('says so when the queue was capped', async () => {
+    mockContactApi({ truncated: true });
+    const user = userEvent.setup();
+    render(<SupportInboxPage />);
+    await openContactQueue(user);
+
+    const note = await screen.findByTestId('list-truncated');
+    expect(note).toHaveTextContent(/Showing 1 enquiries/);
+    expect(note).toHaveTextContent(/status filter/);
+  });
+
+  it('draws no notice when the queue is complete', async () => {
+    mockContactApi();
+    const user = userEvent.setup();
+    render(<SupportInboxPage />);
+    await openContactQueue(user);
+
+    expect(await screen.findByText(enquiry.name)).toBeInTheDocument();
+    expect(screen.queryByTestId('list-truncated')).not.toBeInTheDocument();
   });
 });

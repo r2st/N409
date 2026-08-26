@@ -8,16 +8,16 @@ import { changeLogCsv, describeEvent, summarizeAuditTrail } from '../domain/audi
 import { listEvents, recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import { findValuationById } from '../repos/valuations.js';
-import { listCalculations, listCalculationTraces } from '../repos/calculations.js';
+import { CALCULATION_PAGE_LIMIT, listCalculations, listCalculationTraces } from '../repos/calculations.js';
 import { listWorkbookCells, WORKBOOK_CELL_LIMIT } from '../repos/workbook.js';
 import { computeWorkbook } from '../domain/workbook.js';
 import { detectFinancialAnomalies } from '../domain/financialAnomalies.js';
 import { listDocuments } from '../repos/documents.js';
 import { COMMENT_PAGE_LIMIT, listComments } from '../repos/comments.js';
 import { listSignatures } from '../repos/signatures.js';
-import { listAiJobs } from '../repos/aiJobs.js';
+import { AI_JOB_PAGE_LIMIT, listAiJobs } from '../repos/aiJobs.js';
 import { listDecisions } from '../repos/methodologyDecisions.js';
-import { listQaReviews } from '../repos/qaReviews.js';
+import { QA_REVIEW_PAGE_LIMIT, listQaReviews } from '../repos/qaReviews.js';
 import { deliverablePdf } from './reports.js';
 import { listScenarios } from '../repos/scenarios.js';
 import { listComparableItems } from '../repos/comparableItems.js';
@@ -57,7 +57,7 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // guards draw.
     refuseIfRetired(valuation, 'producing evidence bundles');
 
-    const [events, calculations, documents, commentPage, signatures, aiJobs, report, generator] =
+    const [events, calculationPage, documents, commentPage, signatures, aiJobPage, report, generator] =
       await Promise.all([
         listEvents(deps.pool, id),
         listCalculations(deps.pool, id),
@@ -70,33 +70,31 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
       ]);
     // Audit-defense additions (IMPROVEMENTS_RESEARCH §5.3/§4.3/§5.7): the
     // methodology decision log, QA review history, and saved scenarios.
-    const [decisions, qaReviews, scenarios, research, comparables, traces, workbookCells] = await Promise.all(
-      [
-        listDecisions(deps.pool, id),
-        listQaReviews(deps.pool, id),
-        listScenarios(deps.pool, id),
-        // Every research row including superseded ones (migration 0116). An
-        // auditor asking "what did you read, and what did you read before that"
-        // is asking exactly what the supersede chain records; a bundle that
-        // shipped only the live rows would answer half the question.
-        listMarketResearch(deps.pool, id, { includeSuperseded: true }),
-        // The peer set behind the market approach (migration 0119), included and
-        // excluded rows alike. The excluded ones are the half an auditor asks
-        // about, so a bundle carrying only the retained comps would be answering
-        // the easy question.
-        listComparableItems(deps.pool, id),
-        // The engine's own step record for each run (migration 0126). It is the
-        // only artifact that answers "how" rather than "what", and it says the
-        // two things `results` structurally cannot: which approaches were
-        // skipped, and which carried a figure reused from an earlier run.
-        listCalculationTraces(deps.pool, id),
-        // The entered workbook. `calculations.inputs` holds the engine payload
-        // derived from it, not the grid an analyst typed and Appendix II prints
-        // — an auditor reconciling the report to the source has been given the
-        // derived figures and never the ones they were derived from.
-        listWorkbookCells(deps.pool, id),
-      ],
-    );
+    const [decisions, qaPage, scenarios, research, comparables, traces, workbookCells] = await Promise.all([
+      listDecisions(deps.pool, id),
+      listQaReviews(deps.pool, id),
+      listScenarios(deps.pool, id),
+      // Every research row including superseded ones (migration 0116). An
+      // auditor asking "what did you read, and what did you read before that"
+      // is asking exactly what the supersede chain records; a bundle that
+      // shipped only the live rows would answer half the question.
+      listMarketResearch(deps.pool, id, { includeSuperseded: true }),
+      // The peer set behind the market approach (migration 0119), included and
+      // excluded rows alike. The excluded ones are the half an auditor asks
+      // about, so a bundle carrying only the retained comps would be answering
+      // the easy question.
+      listComparableItems(deps.pool, id),
+      // The engine's own step record for each run (migration 0126). It is the
+      // only artifact that answers "how" rather than "what", and it says the
+      // two things `results` structurally cannot: which approaches were
+      // skipped, and which carried a figure reused from an earlier run.
+      listCalculationTraces(deps.pool, id),
+      // The entered workbook. `calculations.inputs` holds the engine payload
+      // derived from it, not the grid an analyst typed and Appendix II prints
+      // — an auditor reconciling the report to the source has been given the
+      // derived figures and never the ones they were derived from.
+      listWorkbookCells(deps.pool, id),
+    ]);
 
     // Review tasks carry the approve / request-changes workflow; decisions
     // themselves are `review_decision` events (already in events.json).
@@ -154,6 +152,9 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // quietly. Reaching COMMENT_PAGE_LIMIT on one engagement takes an email
     // loop, and this is what tells the auditor that is what they are looking at.
     const { comments, truncated: commentsTruncated } = commentPage;
+    const { calculations, truncated: calculationsTruncated } = calculationPage;
+    const { jobs: aiJobs, truncated: aiJobsTruncated } = aiJobPage;
+    const { reviews: qaReviews, truncated: qaReviewsTruncated } = qaPage;
     const documentManifest = documents.map((d) => ({
       id: d.id,
       kind: d.kind,
@@ -271,6 +272,14 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         // with rows the auditor is not being shown, and a bundle that says
         // nothing about it reads as complete.
         ...(workbookCells.truncated ? { workbook_cells: WORKBOOK_CELL_LIMIT } : {}),
+        // The three run histories. Each is a short window over a log that grows
+        // with the work — twenty engine runs, fifty agent runs, twenty QA
+        // reviews — and each is the kind of list an auditor counts. The traces
+        // deliberately share the calculation window (see CALCULATION_PAGE_LIMIT)
+        // so one flag speaks for both.
+        ...(calculationsTruncated ? { calculations: CALCULATION_PAGE_LIMIT } : {}),
+        ...(aiJobsTruncated ? { ai_jobs: AI_JOB_PAGE_LIMIT } : {}),
+        ...(qaReviewsTruncated ? { qa_reviews: QA_REVIEW_PAGE_LIMIT } : {}),
       },
       files: ['manifest.json', ...entries.map((e) => e.name)],
     };

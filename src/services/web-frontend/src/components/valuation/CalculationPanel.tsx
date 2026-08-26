@@ -8,7 +8,7 @@ import {
   type EngineIssue,
   type PreflightResult,
 } from '../../lib/pipeline';
-import { Button, EmptyState, ErrorNote, Spinner, StatCard, WriteGate } from '../ui';
+import { Button, EmptyState, ErrorNote, ListTruncationNote, Spinner, StatCard, WriteGate } from '../ui';
 import { CalculationInspector } from './CalculationInspector';
 
 interface ApproachRow {
@@ -95,6 +95,7 @@ export function CalculationPanel({
   readOnly?: boolean;
 }) {
   const [calculations, setCalculations] = useState<Calculation[] | null>(null);
+  const [capped, setCapped] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'full' | RecalcApproach | null>(null);
   const [checking, setChecking] = useState(false);
@@ -106,10 +107,12 @@ export function CalculationPanel({
 
   const load = useCallback(async () => {
     try {
-      const { calculations: items } = await api<{ calculations: Calculation[] }>(
-        `/valuations/${valuationId}/calculations`,
-      );
+      const { calculations: items, truncated } = await api<{
+        calculations: Calculation[];
+        truncated: boolean;
+      }>(`/valuations/${valuationId}/calculations`);
       setCalculations(items);
+      setCapped(truncated);
     } catch {
       setError('Could not load calculations.');
     }
@@ -378,6 +381,10 @@ export function CalculationPanel({
               </li>
             ))}
           </ul>
+          {/* `latest` above is a `find` over this same page, so on a busy
+              engagement the twenty-run window is what decides which run the
+              approach breakdown at the top of this panel is describing. */}
+          <ListTruncationNote truncated={capped} shown={calculations.length} noun="runs" />
         </section>
       )}
     </div>

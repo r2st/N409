@@ -90,12 +90,27 @@ export async function completeAiJob(
   });
 }
 
-export async function listAiJobs(pool: pg.Pool, valuationId: string): Promise<AiJobRow[]> {
+/**
+ * Ceiling on one page of a valuation's agent-run history.
+ *
+ * Fifty is one busy afternoon: every narrative draft, comp screen and research
+ * pass appends a row, and a failed run appends one too. The AI tab reads this
+ * list to say what has been run and what it cost, so past the cap it reports a
+ * spend and a run count for a subset of the runs while looking complete.
+ */
+export const AI_JOB_PAGE_LIMIT = 50;
+
+export async function listAiJobs(
+  pool: pg.Pool,
+  valuationId: string,
+  opts: { limit?: number } = {},
+): Promise<{ jobs: AiJobRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? AI_JOB_PAGE_LIMIT, 1), AI_JOB_PAGE_LIMIT);
   const { rows } = await pool.query<AiJobRow>(
-    'SELECT * FROM ai_jobs WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT 50',
-    [valuationId],
+    'SELECT * FROM ai_jobs WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [valuationId, limit + 1],
   );
-  return rows;
+  return { jobs: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 /** Most recent successful run of a pipeline — used to seed calculation inputs. */

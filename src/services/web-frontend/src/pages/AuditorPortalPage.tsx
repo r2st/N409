@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AuthShell } from '../components/AuthShell';
 import { HelpIcon } from '../components/HelpIcon';
-import { ErrorNote, Spinner } from '../components/ui';
+import { ErrorNote, ListTruncationNote, Spinner } from '../components/ui';
 import { formatDate, moneyFormatter, PER_SHARE_DIGITS } from '../lib/format';
 import { sanitizeHtml } from '../lib/m2';
 
@@ -47,6 +47,12 @@ interface Bundle {
     has_report: boolean;
     has_conclusion: boolean;
     qa_count: number;
+    /**
+     * `qa_count` counts the reviews this response carries, not the reviews that
+     * exist. An auditor reading a number off a capped page is being told a
+     * figure rather than shown a list; see QA_REVIEW_PAGE_LIMIT.
+     */
+    qa_truncated: boolean;
     assumptions_recorded: boolean;
   };
   access_expires_at: string;
@@ -202,6 +208,12 @@ export function AuditorPortalPage() {
               </ul>
             </div>
           ))}
+          <ListTruncationNote
+            truncated={bundle.evidence_summary.qa_truncated}
+            shown={bundle.qa.length}
+            noun="reviews"
+            hint="ask the engagement team for the full review history"
+          />
         </Card>
       )}
     </div>

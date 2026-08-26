@@ -250,16 +250,32 @@ export async function latestSucceededCalculationsByValuationIds(
   return new Map(rows.map((row) => [row.valuation_id, row]));
 }
 
+/**
+ * Ceiling on one page of the run history.
+ *
+ * Twenty is a deliberately short window — a working engagement re-runs the
+ * engine many times a day — and two callers do arithmetic over it rather than
+ * merely drawing it. `routes/qa.ts` collects the *superseded* figures from
+ * this list to warn a reviewer that the number they are approving has moved,
+ * and `routes/specialty.ts` reads the history for the run shapes a surface may
+ * show. Both of those answer "no, nothing was superseded" when the answer is
+ * really "not in the last twenty", which is the one shape of wrong a reviewer
+ * cannot see. `listCalculationTraces` shares the window on purpose; see below.
+ */
+export const CALCULATION_PAGE_LIMIT = 20;
+
 export async function listCalculations(
   pool: pg.Pool,
   valuationId: string,
-): Promise<Array<CalculationRow & { has_trace: boolean }>> {
+  opts: { limit?: number } = {},
+): Promise<{ calculations: Array<CalculationRow & { has_trace: boolean }>; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? CALCULATION_PAGE_LIMIT, 1), CALCULATION_PAGE_LIMIT);
   const { rows } = await pool.query<CalculationRow & { has_trace: boolean }>(
     `SELECT ${CALCULATION_COLUMNS}, trace IS NOT NULL AS has_trace
-       FROM calculations WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT 20`,
-    [valuationId],
+       FROM calculations WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [valuationId, limit + 1],
   );
-  return rows;
+  return { calculations: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 /**
@@ -292,11 +308,11 @@ export async function listCalculationTraces(
     `SELECT id, created_at, engine_version, trace
        FROM (
          SELECT id, created_at, engine_version, trace
-           FROM calculations WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT 20
+           FROM calculations WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT $2
        ) recent
       WHERE trace IS NOT NULL
       ORDER BY created_at DESC`,
-    [valuationId],
+    [valuationId, CALCULATION_PAGE_LIMIT],
   );
   return rows;
 }

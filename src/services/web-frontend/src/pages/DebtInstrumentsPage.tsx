@@ -2,7 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { moneyFormatter } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  ListTruncationNote,
+  Select,
+  Spinner,
+  TextInput,
+} from '../components/ui';
 import { HelpIcon } from '../components/HelpIcon';
 
 /**
@@ -160,6 +169,7 @@ interface Valuation {
 
 export function DebtInstrumentsPage() {
   const [instruments, setInstruments] = useState<Instrument[]>([]);
+  const [capped, setCapped] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -183,8 +193,12 @@ export function DebtInstrumentsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { instruments: i } = await api<{ instruments: Instrument[] }>('/debt/instruments');
+      const { instruments: i, truncated } = await api<{
+        instruments: Instrument[];
+        truncated: boolean;
+      }>('/debt/instruments');
       setInstruments(i);
+      setCapped(truncated);
       setLoadFailed(false);
       if (i.length > 0 && !selected) setSelected(i[0]!.id);
     } catch (e) {
@@ -316,18 +330,43 @@ export function DebtInstrumentsPage() {
               {i.name} <span className="text-ink-400">· {TYPE_LABELS[i.instrument_type]}</span>
             </button>
           ))}
+          <ListTruncationNote truncated={capped} shown={instruments.length} noun="instruments" />
         </div>
       )}
 
-      {selected && <InstrumentDetail key={selected} instrumentId={selected} />}
+      {selected && (
+        <InstrumentDetail
+          key={selected}
+          instrumentId={selected}
+          onChanged={() => void load()}
+          onDeleted={() => {
+            // Clear the selection first: the detail panel for a row that no
+            // longer exists would reload into a 404 and render its error.
+            setSelected(null);
+            void load();
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
+function InstrumentDetail({
+  instrumentId,
+  onChanged,
+  onDeleted,
+}: {
+  instrumentId: string;
+  /** A rename lands in the picker above, which holds its own copy of the row. */
+  onChanged: () => void;
+  onDeleted: () => void;
+}) {
   const [instrument, setInstrument] = useState<Instrument | null>(null);
   const [creditTerms, setCreditTerms] = useState<CreditTerms | null>(null);
   const [valuations, setValuations] = useState<Valuation[]>([]);
+  const [historyCapped, setHistoryCapped] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [params, setParams] = useState<Record<string, string>>({});
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [sensitivity, setSensitivity] = useState<Array<{ shift: number; value: number }> | null>(null);
@@ -341,8 +380,10 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
         instrument: Instrument;
         credit_terms: CreditTerms | null;
         valuations: Valuation[];
+        truncated: boolean;
       }>(`/debt/instruments/${instrumentId}`);
       setInstrument(d.instrument);
+      setHistoryCapped(d.truncated);
       setCreditTerms(d.credit_terms);
       setValuations(d.valuations);
       const p: Record<string, string> = {};
@@ -378,6 +419,52 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
       parsed[f.key] = f.bool ? params[f.key] === 'true' : Number(params[f.key]);
     await api(`/debt/instruments/${instrumentId}`, { method: 'PUT', body: { params: parsed } });
     await load();
+  };
+
+  /**
+   * Rename the instrument.
+   *
+   * `PUT /debt/instruments/:id` has accepted a name since the route was
+   * written; nothing in the product ever sent one, so an instrument typed
+   * wrongly kept its typo for good and the only way to correct it was to make
+   * a second instrument and abandon the first — which leaves its measurement
+   * history in the book under the wrong name.
+   */
+  const rename = async () => {
+    const name = renaming?.trim();
+    if (!name || name === instrument?.name) return setRenaming(null);
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/debt/instruments/${instrumentId}`, { method: 'PUT', body: { name } });
+      setRenaming(null);
+      await load();
+      onChanged();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Rename failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Delete the instrument, after confirming — this takes the whole measurement
+   * history with it (`debt_valuations` cascades) and the API refuses outright
+   * when the instrument is linked to an engagement, which surfaces here as the
+   * 409's own message rather than as a generic failure.
+   */
+  const remove = async () => {
+    if (!instrument) return;
+    if (!window.confirm(`Delete “${instrument.name}” and its whole valuation history?`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await api(`/debt/instruments/${instrumentId}`, { method: 'DELETE' });
+      onDeleted();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Delete failed');
+      setDeleting(false);
+    }
   };
 
   /**
@@ -475,6 +562,46 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
   return (
     <div className="space-y-5">
       {error && <ErrorNote>{error}</ErrorNote>}
+
+      <div className="flex flex-wrap items-end gap-3 rounded-lg border border-paper-200 bg-surface p-4">
+        {renaming === null ? (
+          <>
+            <div className="min-w-0">
+              <div className="overline text-ink-400">Instrument</div>
+              <div className="truncate text-sm font-semibold text-ink-900">{instrument.name}</div>
+            </div>
+            <div className="ml-auto flex gap-2">
+              <Button
+                variant="secondary"
+                className="!px-3 !py-1.5 !text-xs"
+                onClick={() => setRenaming(instrument.name)}
+              >
+                Rename
+              </Button>
+              <Button
+                variant="ghost"
+                className="!px-3 !py-1.5 !text-xs"
+                disabled={deleting}
+                onClick={() => void remove()}
+              >
+                Delete
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <Field label="Name">
+              <TextInput value={renaming} onChange={(e) => setRenaming(e.target.value)} />
+            </Field>
+            <Button className="!px-3 !py-1.5 !text-xs" disabled={busy} onClick={() => void rename()}>
+              Save
+            </Button>
+            <Button variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => setRenaming(null)}>
+              Cancel
+            </Button>
+          </>
+        )}
+      </div>
 
       {/* Parameters */}
       <div className="rounded-lg border border-paper-200 bg-surface p-4">
@@ -576,6 +703,10 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
               ))}
             </tbody>
           </table>
+          {/* The head of this table is the measurement the report speaks for, so
+              a reader has every reason to take the tail for the whole record
+              behind it. */}
+          <ListTruncationNote truncated={historyCapped} shown={valuations.length} noun="measurements" />
         </div>
       )}
     </div>

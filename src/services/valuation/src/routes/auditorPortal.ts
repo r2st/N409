@@ -199,7 +199,7 @@ export function registerAuditorPortalRoutes(
         }
       : null;
 
-    const qa = await listQaReviews(deps.pool, valuation.id);
+    const { reviews: qa, truncated: qaTruncated } = await listQaReviews(deps.pool, valuation.id);
 
     return {
       valuation: {
@@ -240,6 +240,10 @@ export function registerAuditorPortalRoutes(
         has_report: report !== null,
         has_conclusion: calc !== null,
         qa_count: qa.length,
+        // `qa_count` is a count of the rows this response carries, so the flag
+        // has to travel with it: an auditor reading "3 QA reviews" off a capped
+        // page is being told a number, not shown a list.
+        qa_truncated: qaTruncated,
         assumptions_recorded: assumptions !== null,
       },
       access_expires_at: access.expires_at,

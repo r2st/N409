@@ -326,7 +326,7 @@ describe.skipIf(!dbUp)('`date` columns leave the API as days, not instants', () 
     });
     expect(created.measurement_date).toBe(DAY);
 
-    const marks = await listMarks(pool, position.id);
+    const { marks } = await listMarks(pool, position.id);
     expect(marks[0]?.measurement_date).toBe(DAY);
     expect((await latestMarks(pool, fund.id)).get(position.id)?.measurement_date).toBe(DAY);
 
@@ -352,7 +352,7 @@ describe.skipIf(!dbUp)('`date` columns leave the API as days, not instants', () 
       createdBy: ops.id,
     });
     expect(created.valuation_date).toBe(DAY);
-    expect((await listValuations(pool, instrument.id))[0]?.valuation_date).toBe(DAY);
+    expect((await listValuations(pool, instrument.id)).valuations[0]?.valuation_date).toBe(DAY);
   });
 
   it('a board resolution round-trips its `valuation_date`', async () => {

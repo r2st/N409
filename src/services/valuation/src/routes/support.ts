@@ -48,7 +48,7 @@ export function registerSupportRoutes(app: FastifyInstance, deps: { pool: pg.Poo
     const filters = isOps(principal)
       ? { status: parsed.data.status }
       : { status: parsed.data.status, userId: principal.id };
-    return { messages: await listSupportMessages(deps.pool, filters) };
+    return listSupportMessages(deps.pool, filters);
   });
 
   app.patch('/api/v1/support/messages/:id', { preHandler: app.authenticate }, async (req) => {

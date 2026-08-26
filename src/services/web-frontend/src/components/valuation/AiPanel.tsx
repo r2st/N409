@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { AI_PIPELINE_META, AI_PIPELINES, type AiJob, type AiPipeline } from '../../lib/pipeline';
-import { Button, EmptyState, ErrorNote, Spinner } from '../ui';
+import { Button, EmptyState, ErrorNote, ListTruncationNote, Spinner } from '../ui';
 
 function JobResult({ job }: { job: AiJob }) {
   const result = job.result ?? {};
@@ -129,6 +129,7 @@ function JobResult({ job }: { job: AiJob }) {
 /** AI actions: run the pipelines and browse past runs with provenance. */
 export function AiPanel({ valuationId }: { valuationId: string }) {
   const [jobs, setJobs] = useState<AiJob[] | null>(null);
+  const [capped, setCapped] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState<AiPipeline | null>(null);
   const [applying, setApplying] = useState(false);
@@ -136,8 +137,11 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
 
   const load = useCallback(async () => {
     try {
-      const { jobs: items } = await api<{ jobs: AiJob[] }>(`/valuations/${valuationId}/ai`);
+      const { jobs: items, truncated } = await api<{ jobs: AiJob[]; truncated: boolean }>(
+        `/valuations/${valuationId}/ai`,
+      );
       setJobs(items);
+      setCapped(truncated);
     } catch {
       setError('Could not load AI runs.');
     }
@@ -275,6 +279,9 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
           ))}
         </ol>
       )}
+      {/* `latestExtract` above is a `find` over this same page, so a capped list
+          can also mean the panel offers to re-extract data it already has. */}
+      <ListTruncationNote truncated={capped} shown={jobs?.length ?? 0} noun="runs" />
     </div>
   );
 }

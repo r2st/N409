@@ -97,7 +97,23 @@ export async function createInvitation(
   });
 }
 
-export async function listInvitations(pool: pg.Pool): Promise<InvitationListRow[]> {
+/**
+ * Ceiling on one page of the invitation ledger.
+ *
+ * The cap was already 200 and was already reachable — this table keeps every
+ * invitation ever sent, accepted and revoked ones included, so a firm that has
+ * onboarded two hundred people has an admin console reading only the newest
+ * page. What it did not do was say so, and a pending invitation that falls off
+ * the end reads as an address nobody has invited: the admin sends another one
+ * and gets `InvitationPendingError` back for a row they cannot see.
+ */
+export const INVITATION_PAGE_LIMIT = 200;
+
+export async function listInvitations(
+  pool: pg.Pool,
+  opts: { limit?: number } = {},
+): Promise<{ invitations: InvitationListRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? INVITATION_PAGE_LIMIT, 1), INVITATION_PAGE_LIMIT);
   const { rows } = await pool.query<InvitationListRow>(
     `SELECT i.id, i.email, i.roles, i.partner_id, i.invited_by, i.expires_at,
             i.accepted_at, i.revoked_at, i.created_at,
@@ -106,9 +122,10 @@ export async function listInvitations(pool: pg.Pool): Promise<InvitationListRow[
      LEFT JOIN partners p ON p.id = i.partner_id
      LEFT JOIN users u ON u.id = i.invited_by
      ORDER BY i.created_at DESC
-     LIMIT 200`,
+     LIMIT $1`,
+    [limit + 1],
   );
-  return rows;
+  return { invitations: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 /** Pending (unaccepted, unrevoked, unexpired) invitation for a presented token. */

@@ -29,10 +29,21 @@ export async function createSupportMessage(
   return rows[0]!;
 }
 
+/**
+ * Ceiling on one page of the support inbox.
+ *
+ * Ordered by status first, so the cap falls on the *oldest* message of the
+ * lowest-priority status rather than on the newest of anything — which is
+ * exactly the row an operator would assume had been dealt with. Two hundred is
+ * far above a day's volume and well within a year's, and the inbox has no
+ * archive: every message ever sent is still in this query's `FROM`.
+ */
+export const SUPPORT_MESSAGE_PAGE_LIMIT = 200;
+
 export async function listSupportMessages(
   pool: pg.Pool,
-  filters: { status?: SupportMessageStatus; userId?: string } = {},
-): Promise<SupportMessageRow[]> {
+  filters: { status?: SupportMessageStatus; userId?: string; limit?: number } = {},
+): Promise<{ messages: SupportMessageRow[]; truncated: boolean }> {
   const where: string[] = [];
   const params: unknown[] = [];
   if (filters.status) {
@@ -44,15 +55,20 @@ export async function listSupportMessages(
     where.push(`m.user_id = $${params.length}`);
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const limit = Math.min(
+    Math.max(filters.limit ?? SUPPORT_MESSAGE_PAGE_LIMIT, 1),
+    SUPPORT_MESSAGE_PAGE_LIMIT,
+  );
+  params.push(limit + 1);
   const { rows } = await pool.query<SupportMessageRow>(
     `SELECT m.*, u.email AS user_email
      FROM support_messages m JOIN users u ON u.id = m.user_id
      ${whereSql}
      ORDER BY m.status ASC, m.created_at DESC
-     LIMIT 200`,
+     LIMIT $${params.length}`,
     params,
   );
-  return rows;
+  return { messages: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 export async function setSupportMessageStatus(

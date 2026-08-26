@@ -845,7 +845,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     if (!isOps(principal)) throw problems.forbidden('AI pipelines are operations-only');
     const { id } = req.params as { id: string };
     await loadValuation(id);
-    return { jobs: await listAiJobs(deps.pool, id) };
+    return listAiJobs(deps.pool, id);
   });
 
   // Plain-English methodology summary (IMPROVEMENTS_RESEARCH §4.5). Readable

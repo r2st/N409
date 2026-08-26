@@ -34,8 +34,8 @@ export function registerPackageRoutes(app: FastifyInstance, deps: { pool: pg.Poo
       profile,
       params,
       documents,
-      aiJobs,
-      calculations,
+      aiJobPage,
+      calculationPage,
       overwrites,
       report,
       tasks,
@@ -54,6 +54,8 @@ export function registerPackageRoutes(app: FastifyInstance, deps: { pool: pg.Poo
       listTransactions(deps.pool, id),
     ]);
     const reportVersions = report ? await listVersions(deps.pool, report.id) : [];
+    const { jobs: aiJobs, truncated: aiJobsTruncated } = aiJobPage;
+    const { calculations, truncated: calculationsTruncated } = calculationPage;
 
     // Calculations without result payloads — the explorer shows summaries,
     // the Calculations tab has the full breakdown.
@@ -84,6 +86,10 @@ export function registerPackageRoutes(app: FastifyInstance, deps: { pool: pg.Poo
         documents,
         ai_jobs: aiJobSummaries,
         calculations: calculationSummaries,
+        // The explorer's section headings carry counts taken from these two
+        // arrays, so the caps they came from travel with them.
+        ai_jobs_truncated: aiJobsTruncated,
+        calculations_truncated: calculationsTruncated,
         overwrites,
         report: report
           ? {

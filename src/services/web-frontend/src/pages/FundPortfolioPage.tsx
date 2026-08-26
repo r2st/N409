@@ -68,6 +68,8 @@ interface FundDetail {
   fund: Fund;
   lp_terms: LpTerms | null;
   positions: Position[];
+  /** More holdings exist than this page carries; see FUND_POSITION_PAGE_LIMIT. */
+  truncated: boolean;
 }
 interface Nav {
   net_asset_value: number;
@@ -255,13 +257,36 @@ export function FundPortfolioPage() {
       )}
       <ListTruncationNote truncated={truncated} shown={funds.length} noun="funds" />
 
-      {selected && <FundDetailView key={selected} fundId={selected} />}
+      {selected && (
+        <FundDetailView
+          key={selected}
+          fundId={selected}
+          onChanged={() => void loadFunds()}
+          onDeleted={() => {
+            // Clear the selection first: the detail panel for a fund that no
+            // longer exists would reload into a 404 and render its error.
+            setSelected(null);
+            void loadFunds();
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function FundDetailView({ fundId }: { fundId: string }) {
+function FundDetailView({
+  fundId,
+  onChanged,
+  onDeleted,
+}: {
+  fundId: string;
+  /** A rename lands in the chips above, which hold their own copy of the row. */
+  onChanged: () => void;
+  onDeleted: () => void;
+}) {
   const [detail, setDetail] = useState<FundDetail | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [nav, setNav] = useState<Nav | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showPos, setShowPos] = useState(false);
@@ -294,6 +319,47 @@ function FundDetailView({ fundId }: { fundId: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * Rename the portfolio.
+   *
+   * `POST /funds` was the only write that ever touched a fund's own fields, so
+   * a portfolio created with a typo carried it for good: the chips above, the
+   * NAV header and any report the fund is linked to all read this one string.
+   */
+  const rename = async () => {
+    const name = renaming?.trim();
+    if (!name || name === detail?.fund.name) return setRenaming(null);
+    setError(null);
+    try {
+      await api(`/funds/${fundId}`, { method: 'PATCH', body: { name } });
+      setRenaming(null);
+      await load();
+      onChanged();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Rename failed');
+    }
+  };
+
+  /**
+   * Delete the portfolio, after confirming — this takes every holding and its
+   * whole mark trail with it (both cascade from `fund_portfolios`). The API
+   * refuses outright while the fund is linked to an engagement; that 409's own
+   * message is what shows here, because it names the thing to do about it.
+   */
+  const remove = async () => {
+    if (!detail) return;
+    if (!window.confirm(`Delete “${detail.fund.name}”, its holdings and their whole mark history?`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await api(`/funds/${fundId}`, { method: 'DELETE' });
+      onDeleted();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Delete failed');
+      setDeleting(false);
+    }
+  };
 
   /*
    * `quantity` and `cost_basis` are plain text boxes read with `Number(...)`,
@@ -351,6 +417,46 @@ function FundDetailView({ fundId }: { fundId: string }) {
   return (
     <div className="space-y-5">
       {error && <ErrorNote>{error}</ErrorNote>}
+
+      <div className="flex flex-wrap items-end gap-3 rounded-lg border border-paper-200 bg-surface p-4">
+        {renaming === null ? (
+          <>
+            <div className="min-w-0">
+              <div className="overline text-ink-400">Portfolio</div>
+              <div className="truncate text-sm font-semibold text-ink-900">{fund.name}</div>
+            </div>
+            <div className="ml-auto flex gap-2">
+              <Button
+                variant="secondary"
+                className="!px-3 !py-1.5 !text-xs"
+                onClick={() => setRenaming(fund.name)}
+              >
+                Rename
+              </Button>
+              <Button
+                variant="ghost"
+                className="!px-3 !py-1.5 !text-xs"
+                disabled={deleting}
+                onClick={() => void remove()}
+              >
+                Delete
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <Field label="Fund name">
+              <TextInput value={renaming} onChange={(e) => setRenaming(e.target.value)} />
+            </Field>
+            <Button className="!px-3 !py-1.5 !text-xs" onClick={() => void rename()}>
+              Save
+            </Button>
+            <Button variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => setRenaming(null)}>
+              Cancel
+            </Button>
+          </>
+        )}
+      </div>
 
       {/* NAV summary */}
       {nav && (
@@ -462,6 +568,15 @@ function FundDetailView({ fundId }: { fundId: string }) {
             ))}
           </div>
         )}
+        {/* NAV, the level breakdown and the unrealised-gain total above are all
+            sums over these rows, so a capped page is an understated NAV rather
+            than a short table. */}
+        <ListTruncationNote
+          truncated={detail.truncated}
+          shown={positions.length}
+          noun="holdings"
+          hint="the NAV above covers only the holdings listed"
+        />
       </div>
 
       <WaterfallCard fundId={fundId} lpTerms={detail.lp_terms} currency={cur} onSaved={load} />
@@ -482,6 +597,8 @@ function PositionRow({
 }) {
   const [open, setOpen] = useState(false);
   const [marks, setMarks] = useState<Mark[] | null>(null);
+  const [marksCapped, setMarksCapped] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [markForm, setMarkForm] = useState({
     measurement_date: '2026-03-31',
     method: 'market',
@@ -494,8 +611,11 @@ function PositionRow({
   const [recording, setRecording] = useState(false);
 
   const loadMarks = useCallback(async () => {
-    const { marks: m } = await api<{ marks: Mark[] }>(`/funds/${fundId}/positions/${position.id}/marks`);
+    const { marks: m, truncated } = await api<{ marks: Mark[]; truncated: boolean }>(
+      `/funds/${fundId}/positions/${position.id}/marks`,
+    );
     setMarks(m);
+    setMarksCapped(truncated);
   }, [fundId, position.id]);
 
   const toggle = () => {
@@ -668,6 +788,33 @@ function PositionRow({
                 </tbody>
               </table>
             )}
+            <ListTruncationNote truncated={marksCapped} shown={marks?.length ?? 0} noun="marks" />
+          </div>
+          {/*
+           * Removing a holding is not refused for a linked fund, unlike deleting
+           * the portfolio: a position entered against the wrong fund is the
+           * ordinary correction this exists for, and refusing it would leave a
+           * linked engagement's NAV permanently wrong with no way to fix it.
+           */}
+          <div>
+            <Button
+              variant="ghost"
+              className="!px-3 !py-1.5 !text-xs"
+              disabled={removing}
+              onClick={() => {
+                if (!window.confirm(`Remove “${position.company_name}” and its marks?`)) return;
+                setRemoving(true);
+                setError(null);
+                void api(`/funds/${fundId}/positions/${position.id}`, { method: 'DELETE' })
+                  .then(() => onChange())
+                  .catch((e: unknown) => {
+                    setError(e instanceof ApiError ? e.message : 'Could not remove the holding');
+                    setRemoving(false);
+                  });
+              }}
+            >
+              Remove holding
+            </Button>
           </div>
         </div>
       )}

@@ -8,6 +8,7 @@ import {
   ErrorNote,
   Field,
   inputClass,
+  ListTruncationNote,
   LoadingBlock,
   Skeleton,
   SkeletonText,
@@ -61,6 +62,12 @@ interface SpecialtyResponse {
   calculation: { id: string; created_at: string; engine_version: string } | null;
   result: Record<string, unknown> | null;
   history: HistoryRow[];
+  /**
+   * The twenty-run window this history was filtered out of, not the filtered
+   * list — a run that fell off it is one this tab cannot show, whether or not
+   * it was a specialty run. See CALCULATION_PAGE_LIMIT.
+   */
+  truncated: boolean;
 }
 
 /**
@@ -304,6 +311,7 @@ export function SpecialtyTab() {
               </li>
             ))}
           </ol>
+          <ListTruncationNote truncated={data.truncated} shown={data.history.length} noun="engine runs" />
         </section>
       )}
     </div>

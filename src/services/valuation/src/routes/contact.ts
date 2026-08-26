@@ -72,7 +72,7 @@ export function registerContactRoutes(
     if (!isOps(principal)) throw problems.forbidden('Contact submissions are operations-only');
     const parsed = ListQuery.safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
-    return { submissions: await listContactSubmissions(deps.pool, { status: parsed.data.status }) };
+    return listContactSubmissions(deps.pool, { status: parsed.data.status });
   });
 
   app.patch('/api/v1/contact/submissions/:id', { preHandler: app.authenticate }, async (req) => {

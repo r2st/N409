@@ -159,7 +159,7 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
      * twenty-run window the calculation history and the evidence bundle read,
      * so the runs this check can see are the runs a reviewer can see.
      */
-    const supersededFigures = (await listCalculations(deps.pool, valuation.id))
+    const supersededFigures = (await listCalculations(deps.pool, valuation.id)).calculations
       .filter((run) => run.id !== calculation.id && run.status === 'succeeded')
       .map((run) => reportFigures(run, valuation.currency));
 
@@ -242,7 +242,7 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     requireOps(principal);
     const { id } = req.params as { id: string };
     await loadValuation(id);
-    const [reviews, calculation, report] = await Promise.all([
+    const [{ reviews, truncated }, calculation, report] = await Promise.all([
       listQaReviews(deps.pool, id),
       latestSucceededCalculation(deps.pool, id),
       findReportByValuation(deps.pool, id),
@@ -264,6 +264,7 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       (current.report_version === null || report.current_version > current.report_version);
     return {
       reviews,
+      truncated,
       latest_calculation_id: calculation?.id ?? null,
       report_version: report?.current_version ?? null,
       gate: {

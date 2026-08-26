@@ -6,6 +6,7 @@ import {
   Button,
   EmptyState,
   ErrorNote,
+  ListTruncationNote,
   LoadingBlock,
   Skeleton,
   SkeletonText,
@@ -35,6 +36,8 @@ interface HealthRun {
 
 interface HealthResponse {
   health_checks: HealthRun[];
+  /** More runs exist than this page carries; see HEALTH_CHECK_PAGE_LIMIT. */
+  truncated: boolean;
   latest_calculation_id: string | null;
   gate: {
     satisfied: boolean;
@@ -213,6 +216,7 @@ export function HealthTab() {
               </li>
             ))}
           </ol>
+          <ListTruncationNote truncated={data.truncated} shown={data.health_checks.length} noun="runs" />
         </section>
       )}
     </div>

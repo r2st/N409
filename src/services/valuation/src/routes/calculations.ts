@@ -448,7 +448,7 @@ export function registerCalculationRoutes(
     if (!isOps(principal)) throw problems.forbidden('Calculations are operations-only');
     const { id } = req.params as { id: string };
     await loadValuation(id);
-    return { calculations: await listCalculations(deps.pool, id) };
+    return listCalculations(deps.pool, id);
   });
 
   /**

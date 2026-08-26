@@ -11,6 +11,7 @@ import { DEBT_FAIR_VALUE, requireStorableFigure } from '../domain/numericColumn.
 import {
   createInstrument,
   createValuation,
+  deleteInstrument,
   findCreditTerms,
   findInstrument,
   linkInstrumentToValuation,
@@ -134,17 +135,40 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
 
   app.get('/api/v1/debt/instruments', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
-    return { instruments: await listInstruments(deps.pool) };
+    return listInstruments(deps.pool);
+  });
+
+  /**
+   * Delete an instrument, its credit terms and its whole measurement history.
+   *
+   * Refused while the instrument is linked to an engagement, for the same
+   * reason as `DELETE /funds/:id`: those measurements are the price a report we
+   * have issued speaks for, and 0110's `ON DELETE SET NULL` protects the link
+   * in the other direction on exactly that ground. Detach first.
+   */
+  app.delete('/api/v1/debt/instruments/:id', { preHandler: app.authenticate }, async (req, reply) => {
+    requireOps(requirePrincipal(req));
+    const { id } = req.params as { id: string };
+    const instrument = await loadInstrument(id);
+    if (instrument.valuation_id !== null) {
+      throw problems.conflict(
+        'This instrument is linked to an engagement — detach it from the engagement before deleting',
+      );
+    }
+    if (!(await deleteInstrument(deps.pool, id))) throw problems.notFound();
+    return reply.status(204).send();
   });
 
   app.get('/api/v1/debt/instruments/:id', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
     const instrument = await loadInstrument(id);
+    const { valuations, truncated } = await listValuations(deps.pool, id);
     return {
       instrument,
       credit_terms: await findCreditTerms(deps.pool, id),
-      valuations: await listValuations(deps.pool, id),
+      valuations,
+      truncated,
     };
   });
 
@@ -251,7 +275,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
     await loadInstrument(id);
-    return { valuations: await listValuations(deps.pool, id) };
+    return listValuations(deps.pool, id);
   });
 
   app.post('/api/v1/debt/rating-spread', { preHandler: app.authenticate }, async (req) => {

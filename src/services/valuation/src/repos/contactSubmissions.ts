@@ -36,24 +36,37 @@ export async function createContactSubmission(
   return rows[0]!;
 }
 
+/**
+ * Ceiling on one page of the contact inbox. Same shape and same reason as
+ * {@link SUPPORT_MESSAGE_PAGE_LIMIT}: status-first ordering means the cap eats
+ * the oldest `new` enquiry once the closed ones outnumber the page, and a
+ * sales enquiry nobody can see is one nobody answers.
+ */
+export const CONTACT_SUBMISSION_PAGE_LIMIT = 200;
+
 export async function listContactSubmissions(
   pool: pg.Pool,
-  filters: { status?: ContactSubmissionStatus } = {},
-): Promise<ContactSubmissionRow[]> {
+  filters: { status?: ContactSubmissionStatus; limit?: number } = {},
+): Promise<{ submissions: ContactSubmissionRow[]; truncated: boolean }> {
   const params: unknown[] = [];
   let where = '';
   if (filters.status) {
     params.push(filters.status);
     where = `WHERE status = $${params.length}`;
   }
+  const limit = Math.min(
+    Math.max(filters.limit ?? CONTACT_SUBMISSION_PAGE_LIMIT, 1),
+    CONTACT_SUBMISSION_PAGE_LIMIT,
+  );
+  params.push(limit + 1);
   const { rows } = await pool.query<ContactSubmissionRow>(
     `SELECT * FROM contact_submissions
      ${where}
      ORDER BY status ASC, created_at DESC
-     LIMIT 200`,
+     LIMIT $${params.length}`,
     params,
   );
-  return rows;
+  return { submissions: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 export async function setContactSubmissionStatus(

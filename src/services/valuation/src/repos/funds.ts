@@ -139,14 +139,74 @@ export async function createFund(
   return rows[0]!;
 }
 
+/**
+ * Rename / reclassify a portfolio. Every field is optional; an absent one is
+ * left alone rather than nulled, so a caller correcting a vintage year cannot
+ * blank the fund's name by omission.
+ *
+ * `valuation_id` is deliberately not patchable here — linking a portfolio to an
+ * engagement is `linkFundToValuation`, which has a uniqueness conflict to
+ * translate and an audit story of its own.
+ */
+export async function updateFund(
+  pool: pg.Pool,
+  id: string,
+  patch: { name?: string; fundType?: FundType; currency?: string; vintageYear?: number | null },
+): Promise<FundRow | null> {
+  const sets: string[] = [];
+  const params: unknown[] = [id];
+  const add = (sql: string, value: unknown) => {
+    params.push(value);
+    sets.push(`${sql} = $${params.length}`);
+  };
+  if (patch.name !== undefined) add('name', patch.name);
+  if (patch.fundType !== undefined) add('fund_type', patch.fundType);
+  if (patch.currency !== undefined) add('currency', patch.currency);
+  if (patch.vintageYear !== undefined) add('vintage_year', patch.vintageYear);
+  if (sets.length === 0) return findFund(pool, id);
+  const { rows } = await pool.query<FundRow>(
+    `UPDATE fund_portfolios SET ${sets.join(', ')} WHERE id = $1 RETURNING *`,
+    params,
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Remove a portfolio and everything keyed to it.
+ *
+ * `fund_positions`, `fund_marks` and `lp_terms` all cascade from this row
+ * (0086), so the mark history goes with the fund. That is why the route refuses
+ * to delete a portfolio linked to an engagement: those marks are the NAV a
+ * report we have issued speaks for. Returns false when the row is already gone.
+ */
+export async function deleteFund(pool: pg.Pool, id: string): Promise<boolean> {
+  const { rowCount } = await pool.query('DELETE FROM fund_portfolios WHERE id = $1', [id]);
+  return (rowCount ?? 0) > 0;
+}
+
 // ── Positions ─────────────────────────────────────────────────────────────
 
-export async function listPositions(pool: pg.Pool, fundId: string): Promise<FundPositionRow[]> {
+/**
+ * Ceiling on one page of a fund's holdings.
+ *
+ * This query had no `LIMIT`. Two hundred is more positions than a fund of funds
+ * carries and the flag is what makes the cap safe: NAV, the level breakdown and
+ * the unrealised-gain total on the fund page are all sums over the rows this
+ * returns, so a silently short list is a wrong NAV rather than a short table.
+ */
+export const FUND_POSITION_PAGE_LIMIT = 200;
+
+export async function listPositions(
+  pool: pg.Pool,
+  fundId: string,
+  opts: { limit?: number } = {},
+): Promise<{ positions: FundPositionRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? FUND_POSITION_PAGE_LIMIT, 1), FUND_POSITION_PAGE_LIMIT);
   const { rows } = await pool.query<FundPositionRow>(
-    'SELECT * FROM fund_positions WHERE fund_id = $1 ORDER BY company_name',
-    [fundId],
+    'SELECT * FROM fund_positions WHERE fund_id = $1 ORDER BY company_name LIMIT $2',
+    [fundId, limit + 1],
   );
-  return rows;
+  return { positions: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 export async function findPosition(
@@ -188,17 +248,88 @@ export async function createPosition(
   return rows[0]!;
 }
 
+/**
+ * Correct a holding in place. Same optional-field rule as {@link updateFund}.
+ *
+ * Changing `quantity` or `mark_method` does not rewrite the marks already
+ * taken: a mark records the fair value concluded on its measurement date from
+ * the inputs of the day, and back-dating it to a corrected share count would
+ * restate a figure that has already been reported. The new quantity is the
+ * default the *next* mark is taken at.
+ */
+export async function updatePosition(
+  pool: pg.Pool,
+  fundId: string,
+  positionId: string,
+  patch: {
+    companyName?: string;
+    securityType?: SecurityType;
+    quantity?: number;
+    costBasis?: number;
+    markMethod?: MarkMethod;
+  },
+): Promise<FundPositionRow | null> {
+  const sets: string[] = [];
+  const params: unknown[] = [positionId, fundId];
+  const add = (sql: string, value: unknown) => {
+    params.push(value);
+    sets.push(`${sql} = $${params.length}`);
+  };
+  if (patch.companyName !== undefined) add('company_name', patch.companyName);
+  if (patch.securityType !== undefined) add('security_type', patch.securityType);
+  if (patch.quantity !== undefined) add('quantity', patch.quantity);
+  if (patch.costBasis !== undefined) add('cost_basis', patch.costBasis);
+  if (patch.markMethod !== undefined) add('mark_method', patch.markMethod);
+  if (sets.length === 0) return findPosition(pool, fundId, positionId);
+  const { rows } = await pool.query<FundPositionRow>(
+    `UPDATE fund_positions SET ${sets.join(', ')} WHERE id = $1 AND fund_id = $2 RETURNING *`,
+    params,
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Remove a holding and its marks (`fund_marks` cascades from it, 0086).
+ *
+ * Scoped by `fund_id` as well as by id, like every other position query here:
+ * a position id from one fund must not delete a row out of another, and the
+ * route's 404 for a mismatched pair depends on this clause rather than on the
+ * caller having checked first.
+ */
+export async function deletePosition(pool: pg.Pool, fundId: string, positionId: string): Promise<boolean> {
+  const { rowCount } = await pool.query('DELETE FROM fund_positions WHERE id = $1 AND fund_id = $2', [
+    positionId,
+    fundId,
+  ]);
+  return (rowCount ?? 0) > 0;
+}
+
 // ── Marks (append-only history) ─────────────────────────────────────────────
 
 /** See the note on `FundMarkRow.measurement_date` and domain/calendarDate.ts. */
 const mark = (row: FundMarkRow): FundMarkRow => calendarDateRow(row, 'measurement_date');
 
-export async function listMarks(pool: pg.Pool, positionId: string): Promise<FundMarkRow[]> {
+/**
+ * Ceiling on one page of a holding's mark trail.
+ *
+ * Append-only and quarterly at minimum, so two hundred is decades of marks for
+ * one position — but it grows without bound and every roll-forward adds a row,
+ * so the cap is reported rather than assumed unreachable.
+ */
+export const FUND_MARK_PAGE_LIMIT = 200;
+
+export async function listMarks(
+  pool: pg.Pool,
+  positionId: string,
+  opts: { limit?: number } = {},
+): Promise<{ marks: FundMarkRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? FUND_MARK_PAGE_LIMIT, 1), FUND_MARK_PAGE_LIMIT);
   const { rows } = await pool.query<FundMarkRow>(
-    'SELECT * FROM fund_marks WHERE position_id = $1 ORDER BY measurement_date DESC, created_at DESC',
-    [positionId],
+    `SELECT * FROM fund_marks WHERE position_id = $1
+      ORDER BY measurement_date DESC, created_at DESC LIMIT $2`,
+    [positionId, limit + 1],
   );
-  return rows.map(mark);
+  return { marks: rows.slice(0, limit).map(mark), truncated: rows.length > limit };
 }
 
 /** Latest mark per position for a fund (for the NAV roll-up). */

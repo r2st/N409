@@ -12,7 +12,7 @@ import {
   TASK_STATUS_LABELS,
 } from '../../lib/pipeline';
 import type { AiPipeline, DocumentKind, ReviewTaskKind, ReviewTaskStatus } from '../../lib/pipeline';
-import { ErrorNote, Spinner } from '../../components/ui';
+import { ErrorNote, ListTruncationNote, Spinner } from '../../components/ui';
 import { useWorkspace } from './ValuationWorkspace';
 
 interface PackageDocument {
@@ -48,6 +48,9 @@ interface PackageData {
     error: string | null;
     created_at: string;
   }>;
+  /** Both run histories are pages of longer logs; see the `truncated` note on `Node`. */
+  ai_jobs_truncated: boolean;
+  calculations_truncated: boolean;
   overwrites: Array<{ id: string; category: string; field_key: string; value: unknown }>;
   report: {
     id: string;
@@ -71,12 +74,23 @@ function Node({
   label,
   count,
   to,
+  truncated = false,
   defaultOpen = false,
   children,
 }: {
   label: string;
   count: number;
   to?: string;
+  /**
+   * The rows under this node are a page of a longer list.
+   *
+   * The count badge is `rows.length`, which is the shape this explorer is most
+   * exposed to: a collapsed node reads as a complete inventory of what the
+   * engagement holds, and "20" over a hundred engine runs is a wrong number
+   * rather than a short list. Marked on the badge and again under the rows,
+   * because a reader who never expands the node sees only the badge.
+   */
+  truncated?: boolean;
   defaultOpen?: boolean;
   children: ReactNode;
 }) {
@@ -98,6 +112,7 @@ function Node({
         <span className="text-sm font-semibold text-ink-900">{label}</span>
         <span className="tnum rounded-full bg-paper-200 px-2 py-0.5 text-xs font-semibold text-ink-600">
           {count}
+          {truncated && '+'}
         </span>
         {to && (
           <Link
@@ -109,7 +124,10 @@ function Node({
           </Link>
         )}
       </summary>
-      <div className="border-t border-paper-200 px-5 py-4">{children}</div>
+      <div className="border-t border-paper-200 px-5 py-4">
+        {children}
+        <ListTruncationNote truncated={truncated} shown={count} noun={label.toLowerCase()} />
+      </div>
     </details>
   );
 }
@@ -216,7 +234,7 @@ export function PackageTab() {
         )}
       </Node>
 
-      <Node label="AI runs" count={pkg.ai_jobs.length} to={`${base}/ai`}>
+      <Node label="AI runs" count={pkg.ai_jobs.length} truncated={pkg.ai_jobs_truncated} to={`${base}/ai`}>
         {pkg.ai_jobs.length === 0 ? (
           <None>No AI pipeline runs.</None>
         ) : (
@@ -241,7 +259,12 @@ export function PackageTab() {
         )}
       </Node>
 
-      <Node label="Calculations" count={pkg.calculations.length} to={`${base}/calculations`}>
+      <Node
+        label="Calculations"
+        count={pkg.calculations.length}
+        truncated={pkg.calculations_truncated}
+        to={`${base}/calculations`}
+      >
         {pkg.calculations.length === 0 ? (
           <None>No engine runs.</None>
         ) : (

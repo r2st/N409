@@ -5,7 +5,7 @@ import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { isOps, isPartner } from '../lib/rbac';
 import { formatDateTime, formatCents } from '../lib/format';
-import { EmptyState, ErrorNote, KindBadge, Spinner, StatCard } from '../components/ui';
+import { EmptyState, ErrorNote, KindBadge, ListTruncationNote, Spinner, StatCard } from '../components/ui';
 import { SubscriptionSection } from '../components/SubscriptionSection';
 import type { ValuationKind } from '../lib/types';
 
@@ -36,6 +36,9 @@ interface UnpaidValuation {
 interface Billing {
   payments: BillingPayment[];
   unpaid_valuations: UnpaidValuation[];
+  /** Both caps travel with the rows; see BILLING_PAYMENT_PAGE_LIMIT. */
+  payments_truncated: boolean;
+  unpaid_truncated: boolean;
   totals: {
     gross_cents: number;
     refunded_cents: number;
@@ -99,7 +102,17 @@ export function BillingPage() {
         {billing.totals.refunded_cents > 0 && (
           <StatCard label="Refunded" value={formatCents(billing.totals.refunded_cents)} />
         )}
-        <StatCard label="Unpaid engagements" value={billing.unpaid_valuations.length} />
+        <StatCard
+          label="Unpaid engagements"
+          /* The one stat on this page taken from `rows.length` rather than from
+             a server-side aggregate, so it is the one that becomes a wrong
+             number rather than a short list when the page caps. */
+          value={
+            billing.unpaid_truncated
+              ? `${billing.unpaid_valuations.length}+`
+              : billing.unpaid_valuations.length
+          }
+        />
       </div>
 
       {billing.unpaid_valuations.length > 0 && (
@@ -125,6 +138,14 @@ export function BillingPage() {
               </li>
             ))}
           </ul>
+          {/* An unpaid engagement past this cap has no checkout button anywhere
+              in the product, so the note has to name the way to reach it. */}
+          <ListTruncationNote
+            truncated={billing.unpaid_truncated}
+            shown={billing.unpaid_valuations.length}
+            noun="unpaid engagements"
+            hint="open the remaining ones from the valuations list"
+          />
         </section>
       )}
 
@@ -205,6 +226,14 @@ export function BillingPage() {
             </table>
           </div>
         )}
+        {/* "Total paid" above is summed from these rows, so a capped history is
+            a total that is less money than has actually been paid. */}
+        <ListTruncationNote
+          truncated={billing.payments_truncated}
+          shown={billing.payments.length}
+          noun="payments"
+          hint="the totals above cover only the payments listed"
+        />
       </section>
 
       {/* Feature 7: recurring subscription / retainer billing + invoices */}

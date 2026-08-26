@@ -6,6 +6,7 @@ import {
   Button,
   EmptyState,
   ErrorNote,
+  ListTruncationNote,
   LoadingBlock,
   Skeleton,
   SkeletonText,
@@ -41,6 +42,8 @@ interface QaReview {
 
 interface QaResponse {
   reviews: QaReview[];
+  /** More reviews exist than this page carries; see QA_REVIEW_PAGE_LIMIT. */
+  truncated: boolean;
   latest_calculation_id: string | null;
   report_version: number | null;
   gate: {
@@ -260,6 +263,7 @@ export function QaTab() {
               </li>
             ))}
           </ol>
+          <ListTruncationNote truncated={data.truncated} shown={data.reviews.length} noun="QA reviews" />
         </section>
       )}
     </div>
