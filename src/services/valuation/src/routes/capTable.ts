@@ -20,7 +20,7 @@ import { findCapTable, saveCapTable } from '../repos/capTables.js';
 import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { listRounds } from '../repos/transactions.js';
 import { looksLikeXlsx, readXlsx, XlsxReadError } from '../domain/xlsxRead.js';
-import { UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
+import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
@@ -179,12 +179,7 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     });
     if (!file) throw problems.badRequest('Expected a multipart file field named "file"');
 
-    let buffer: Buffer;
-    try {
-      buffer = await file.toBuffer();
-    } catch {
-      throw problems.unprocessable(`File exceeds the ${MAX_CAP_TABLE_UPLOAD_BYTES / (1024 * 1024)} MB limit`);
-    }
+    const buffer = await bufferUpload(file, MAX_CAP_TABLE_UPLOAD_BYTES);
     if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
 
     const filename = file.filename ?? 'upload';

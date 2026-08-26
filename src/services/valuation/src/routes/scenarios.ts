@@ -17,7 +17,7 @@ import {
   listScenarios,
   SCENARIO_LABELS,
 } from '../repos/scenarios.js';
-import { deepMerge, type EngineComputeResponse } from './calculations.js';
+import { deepMerge, parseComputeResponse } from './calculations.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
@@ -205,14 +205,16 @@ export function registerScenarioRoutes(
       inputs: deepMerge(base.inputs, scenarioOverrides(parsed.data)),
     };
     try {
-      const response = await postJson<EngineComputeResponse>(
-        'engine',
-        `${deps.engineUrl}/engine/v1/compute`,
-        payload,
-        {
+      // Same boundary check the official run uses — see `parseComputeResponse`.
+      // A preview that read a missing `results` walked straight into a
+      // TypeError and a bare 500; one that read absent figures subtracted
+      // `undefined` from the baseline and returned a delta of `null`, which is
+      // indistinguishable from "no change".
+      const response = parseComputeResponse(
+        await postJson<unknown>('engine', `${deps.engineUrl}/engine/v1/compute`, payload, {
           timeoutMs: 30_000,
           record: { valuationId: valuation.id, name: 'engine compute (scenario preview)' },
-        },
+        }),
       );
       const baseline = baselineOf(calc);
       const equity = response.results.equity_value;
@@ -270,14 +272,11 @@ export function registerScenarioRoutes(
       inputs: deepMerge(base.inputs, scenarioOverrides(knobs)),
     };
     try {
-      const response = await postJson<EngineComputeResponse>(
-        'engine',
-        `${deps.engineUrl}/engine/v1/compute`,
-        payload,
-        {
+      const response = parseComputeResponse(
+        await postJson<unknown>('engine', `${deps.engineUrl}/engine/v1/compute`, payload, {
           timeoutMs: 30_000,
           record: { valuationId: valuation.id, name: `engine compute (scenario ${name})` },
-        },
+        }),
       );
       const scenario = await createScenario(
         deps.pool,

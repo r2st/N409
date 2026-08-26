@@ -773,6 +773,29 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     return { received: true, dispute_status: status };
   }
 
+  /**
+   * The engagement a checkout session says it is for, or null when it does not
+   * say — which is how a session opened by something other than this platform
+   * reads.
+   *
+   * Both fields, because `createCheckoutSession` sets both and they are not
+   * equally durable: `client_reference_id` is the documented top-level field
+   * and `metadata.valuation_id` survives being copied onto the objects Stripe
+   * derives from the session. Checked for ULID shape rather than looked up,
+   * so a settled session for an engagement that has since been purged still
+   * reads as ours — which is exactly the case where the row is missing.
+   */
+  function ourValuationId(session: Record<string, unknown>): string | null {
+    const direct = session.client_reference_id;
+    if (typeof direct === 'string' && isUlid(direct)) return direct;
+    const metadata = session.metadata;
+    if (metadata && typeof metadata === 'object') {
+      const tagged = (metadata as Record<string, unknown>).valuation_id;
+      if (typeof tagged === 'string' && isUlid(tagged)) return tagged;
+    }
+    return null;
+  }
+
   // Webhook lives in its own plugin scope so the raw-buffer content parser
   // (required for signature verification) can't leak to other routes.
   void app.register(async (scope) => {
@@ -844,7 +867,66 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         return settled({ received: true, ignored: event.type ?? 'unknown' });
       }
       const payment = await findPaymentBySessionId(deps.pool, sessionId);
-      if (!payment) return settled({ received: true, ignored: 'unknown session' });
+      if (!payment) {
+        /*
+         * A session we cannot match to a row.
+         *
+         * For most event types that is ordinary and silence is right: an
+         * `expired` or a `checkout.session.completed` that never settled says
+         * nothing happened, and a Stripe account can carry sessions this
+         * platform never created.
+         *
+         * A *settled* one is the opposite. The session id was minted by our own
+         * checkout route, the customer has been charged, and there is nothing
+         * on this side that records it — so no payment row moves to
+         * `succeeded`, no valuation crosses the payment gate, and no receipt is
+         * captured. Before this the handler answered `ignored: 'unknown
+         * session'` and wrote the event into the ledger as dealt with, which
+         * made the silence permanent: Stripe's redelivery is classified a
+         * duplicate and returns without looking again.
+         *
+         * The gap is not hypothetical. `createCheckoutSession` runs *before*
+         * `createPayment`, so any failure between the two — a pool timeout, a
+         * constraint, a restart — leaves a live Stripe session with no row
+         * behind it, and the client is holding a 500 from a checkout that in
+         * fact opened.
+         *
+         * Acknowledged rather than 5xx'd, because redelivery cannot conjure the
+         * missing row and Stripe would simply retry for days; alerted, because
+         * a person has to reconcile it by hand. The fields are the ones that
+         * reconciliation needs — which session, which event, how much.
+         */
+        const moneySettled =
+          event.type === 'checkout.session.async_payment_succeeded' ||
+          (event.type === 'checkout.session.completed' && isSettled(session.payment_status));
+        // And ours. A webhook endpoint receives every event on the Stripe
+        // account, so a settled session by itself proves only that *somebody*
+        // took money. `createCheckoutSession` stamps every session this
+        // platform opens with the engagement it is for, twice — as
+        // `client_reference_id` and in `metadata` — and no other integration's
+        // session carries a valuation id of ours. That is the whole
+        // discriminator: with it, this is definitively our money gone missing;
+        // without it, the session was never ours to reconcile and the old
+        // silence is the right answer.
+        const claimed = ourValuationId(session);
+        if (moneySettled && claimed !== null) {
+          req.log.error(
+            {
+              alert: true,
+              actorType: 'system',
+              source: 'stripe',
+              sessionId,
+              eventType: event.type,
+              valuationId: claimed,
+              amount_total: typeof session.amount_total === 'number' ? session.amount_total : null,
+              currency: typeof session.currency === 'string' ? session.currency : null,
+            },
+            'stripe settled one of our checkout sessions with no payment row — money taken and unreconciled',
+          );
+          return settled({ received: true, unreconciled: 'settled session has no payment row' });
+        }
+        return settled({ received: true, ignored: 'unknown session' });
+      }
 
       // Money has actually arrived, so mark the payment and release the
       // valuation.

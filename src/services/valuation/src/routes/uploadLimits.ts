@@ -22,6 +22,8 @@
  * takes one file and nothing else. Eight fields of a kilobyte is generous
  * against both and still four orders of magnitude below what was reachable.
  */
+import { problems } from '@n409/shared';
+
 export const UPLOAD_FIELD_LIMITS = {
   /** Text fields per request. Both routes read at most two. */
   fields: 8,
@@ -35,3 +37,54 @@ export const UPLOAD_FIELD_LIMITS = {
    */
   parts: 12,
 } as const;
+
+/**
+ * @fastify/multipart's code for the one failure that really is the size cap.
+ * Matched on the code rather than the class so nothing here has to import the
+ * plugin's error constructors, which it does not export.
+ */
+const FILE_TOO_LARGE = 'FST_REQ_FILE_TOO_LARGE';
+
+/** The MB figure a limit is quoted to a person as. */
+const megabytes = (bytes: number): number => bytes / (1024 * 1024);
+
+/**
+ * Read an uploaded file into memory, and say which way it failed.
+ *
+ * `file.toBuffer()` has more than one way to reject, and both upload routes
+ * caught all of them with a bare `catch` that answered
+ * "File exceeds the N MB limit". Only one of those rejections is about size.
+ *
+ * The other is the ordinary one: a client whose connection dropped part-way
+ * through the upload. `toBuffer` consumes the file stream with a `for await`,
+ * so a body that stops mid-part — a closed laptop, a lost tunnel, a proxy
+ * timing out — throws from the iterator, and an eight-byte CSV came back as
+ * "File exceeds the 25 MB limit". That message is not merely unhelpful, it is
+ * false and it is *actionable in the wrong direction*: the reader goes away
+ * and splits a spreadsheet that was never too big, and the thing that would
+ * have worked — sending it again — is the one thing the message argues
+ * against.
+ *
+ * Both answers say the same two things a failed upload has to say: nothing was
+ * stored, and here is what to do differently. They differ on what that is.
+ */
+export async function bufferUpload(
+  file: { toBuffer: () => Promise<Buffer>; file?: { truncated?: boolean } },
+  maxBytes: number,
+): Promise<Buffer> {
+  try {
+    return await file.toBuffer();
+  } catch (err) {
+    // `truncated` as well as the code, because the flag is what busboy sets
+    // when it stops feeding the stream and is true whether or not the plugin
+    // got as far as constructing its error.
+    const code = (err as { code?: unknown } | null | undefined)?.code;
+    if (code === FILE_TOO_LARGE || file.file?.truncated === true) {
+      throw problems.unprocessable(`File exceeds the ${megabytes(maxBytes)} MB limit`);
+    }
+    throw problems.badRequest(
+      'The upload ended before the whole file arrived — nothing was saved. ' +
+        'This is usually a dropped connection rather than a problem with the file; upload it again.',
+    );
+  }
+}

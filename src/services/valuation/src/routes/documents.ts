@@ -29,7 +29,7 @@ import { maybeStartAutoPipeline, type AutoPipelineDeps } from '../pipeline/autoP
 import { checkUploadType } from '../documents/fileType.js';
 import { scanUpload, UploadRejected, type ScanPolicy } from '../documents/virusScan.js';
 import { decodeFromStorage, encodeForStorage } from '../storage/documentEncryption.js';
-import { UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
+import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
@@ -263,12 +263,7 @@ export function registerDocumentRoutes(
     }
     const { kind, category } = filing;
 
-    let buffer: Buffer;
-    try {
-      buffer = await file.toBuffer();
-    } catch {
-      throw problems.unprocessable(`File exceeds the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB limit`);
-    }
+    const buffer = await bufferUpload(file, MAX_DOCUMENT_BYTES);
     if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
 
     // Confirm the bytes match the declared type before the file can feed the AI

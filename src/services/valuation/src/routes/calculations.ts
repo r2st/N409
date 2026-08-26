@@ -61,6 +61,73 @@ export interface EngineComputeResponse {
   trace?: CalculationStep[];
 }
 
+/**
+ * Check that the engine actually answered with a calculation, and say so when
+ * it did not.
+ *
+ * `postJson<EngineComputeResponse>` is a *cast*. It proves the body was JSON
+ * and nothing else, and every reader downstream — here, and both scenario call
+ * sites — then walks `response.results.equity_value` as though the shape were
+ * established. It is not, and the two ways it can be wrong fail in opposite
+ * and equally bad directions.
+ *
+ * A body with no `results` at all raises a `TypeError` at the first property
+ * read. That is not an `InternalServiceError`, so `runCalculation`'s catch
+ * declines to record a `failed` calculation and the error escapes as a bare
+ * 500 with no detail: the run leaves *no row of any kind*, so nothing in the
+ * calculations history says it was ever attempted, and the analyst is told
+ * "Internal Server Error" about a valuation whose inputs are all fine. An
+ * absent `engine_version` fails the same way one line later, on the column's
+ * NOT NULL.
+ *
+ * A body that has `results` but not the two concluded figures is worse,
+ * because it succeeds. `createCalculation` coerces the missing numbers to
+ * `null` (`args.equityValue ?? null`) and writes `status: 'succeeded'`, so the
+ * valuation acquires a latest-good calculation that concludes nothing. The QA
+ * review then *passes* it: the two output-sanity rules are written
+ * `if (equity !== null && ...)`, so a null figure does not fail the check — it
+ * deletes it, and the review comes back `pass` with the two rules that would
+ * have objected simply absent from the list. That is the vacuous-guard shape,
+ * and the publish gate reads that review.
+ *
+ * So the shape is asserted once, here, at the boundary where the bytes stop
+ * being the engine's and start being ours. The failure is raised as an
+ * `InternalServiceError` — the type every caller of this module already
+ * handles — carrying status 200, deliberately: the engine answered, so this is
+ * not an outage, must not count toward the breaker as one (`classifyStatus`
+ * calls a 2xx permanent), and must not be retried, because a body of the wrong
+ * shape will be the wrong shape again. The precedent is `postJsonOnce`'s own
+ * 'invalid JSON in response body', which is the same failure caught one layer
+ * earlier and reported exactly this way.
+ */
+export function parseComputeResponse(body: unknown): EngineComputeResponse {
+  const fail = (detail: string): never => {
+    throw new InternalServiceError('engine', 200, `response is not a calculation result — ${detail}`);
+  };
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    fail(`expected an object, got ${Array.isArray(body) ? 'an array' : typeof body}`);
+  }
+  const doc = body as Record<string, unknown>;
+  if (typeof doc.engine_version !== 'string' || doc.engine_version === '') {
+    fail('engine_version is missing');
+  }
+  const results = doc.results;
+  if (!results || typeof results !== 'object' || Array.isArray(results)) {
+    fail('results is missing');
+  }
+  // Finite, not merely present: a null, a string, or the NaN/Infinity the
+  // engine's own `_assert_finite_results` exists to stop are each a figure
+  // that cannot be a concluded value, and `numeric` would take two of the
+  // three without complaint.
+  for (const key of ['equity_value', 'fmv_per_share'] as const) {
+    const value = (results as Record<string, unknown>)[key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      fail(`results.${key} is ${value === undefined ? 'missing' : `not a finite number (${String(value)})`}`);
+    }
+  }
+  return doc as unknown as EngineComputeResponse;
+}
+
 export interface EngineValidateResponse {
   engine_version: string;
   ok: boolean;
@@ -252,14 +319,11 @@ export async function runCalculation(
     trace: true,
   };
   try {
-    const response = await postJson<EngineComputeResponse>(
-      'engine',
-      `${deps.engineUrl}/engine/v1/compute`,
-      payload,
-      {
+    const response = parseComputeResponse(
+      await postJson<unknown>('engine', `${deps.engineUrl}/engine/v1/compute`, payload, {
         timeoutMs: 30_000,
         record: { valuationId: args.valuation.id, name: 'engine compute' },
-      },
+      }),
     );
     return await createCalculation(
       deps.pool,
