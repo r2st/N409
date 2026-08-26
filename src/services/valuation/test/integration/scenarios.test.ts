@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '../../src/db/migrate.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
+import { createCalculation } from '../../src/repos/calculations.js';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
 import type pg from 'pg';
 
@@ -190,6 +191,88 @@ describe.skipIf(!dbUp)('improvement 3 — client what-if scenario sandbox', () =
       payload: { discount_rate: 0.3 },
     });
     expect(preview.statusCode).toBe(422);
+  });
+
+  /**
+   * A specialty run in place of a 409A one.
+   *
+   * The sandbox clones a compute payload — `{ params, inputs }` carrying a
+   * discount rate, a terminal growth rate, revenue and multiples — and moves
+   * one dial. A specialty engine stores `inputs = { endpoint, ...body }` and
+   * has none of those, so taking simply the newest succeeded run read `{}` off
+   * it and served a *full* sandbox: empty knobs for assumptions the run never
+   * used, over a baseline card printing the specialty headline (on an EMI run,
+   * the restricted AMV) as "Scenario FMV / share". Moving a knob then posted
+   * `params: {}` to the compute endpoint.
+   *
+   * The refusal has to say which of the two things is true, because they take
+   * opposite actions: "run a calculation" versus "this report type has no such
+   * assumptions". Telling a client to check back once the valuation is drafted,
+   * when it is drafted and calculated, is an instruction to wait for something
+   * that already happened.
+   */
+  it('refuses to sandbox a specialty run, and says why rather than asking for one', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(client.token),
+      payload: { kind: 'emi', company_name: 'AmvCo' },
+    });
+    const emiId = created.json().valuation.id;
+    await createCalculation(
+      pool,
+      {
+        valuationId: emiId,
+        engineVersion: 'stub-9.9.9',
+        status: 'succeeded',
+        inputs: { endpoint: '/engine/v1/emi-csop', inputs: { equity_value: 1_000_000 } },
+        results: { kind: 'emi', specialty: { amv_per_share: 0.42, umv_per_share: 1.1 } },
+        equityValue: 1_000_000,
+        fmvPerShare: 0.42,
+        createdBy: ops.id,
+      },
+      { actorType: 'human', actorId: ops.id },
+    );
+
+    const boot = await app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${emiId}/scenarios/baseline`,
+      headers: authHeader(client.token),
+    });
+    expect(boot.statusCode).toBe(200);
+    // No baseline, and above all not the 0.42 AMV captioned as an FMV.
+    expect(boot.json().baseline).toBeNull();
+    expect(boot.json().defaults).toBeNull();
+    expect(JSON.stringify(boot.json())).not.toContain('0.42');
+    // The kind, named the way the picker names it — and not the wording that
+    // asks for a calculation that has already been run.
+    expect(boot.json().unavailable_reason).toContain('EMI');
+    expect(boot.json().unavailable_reason).not.toContain('check back');
+
+    for (const [method, url, payload] of [
+      ['POST', `/api/v1/valuations/${emiId}/scenarios/preview`, { discount_rate: 0.3 }],
+      ['POST', `/api/v1/valuations/${emiId}/scenarios`, { name: 'Downside', discount_rate: 0.3 }],
+    ] as const) {
+      const res = await app.inject({ method, url, headers: authHeader(client.token), payload });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().detail).toContain('EMI');
+    }
+  });
+
+  it('still asks for a calculation when there genuinely is none', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(client.token),
+      payload: { kind: '409a', company_name: 'BarrenCo' },
+    });
+    const id = created.json().valuation.id;
+    const boot = await app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${id}/scenarios/baseline`,
+      headers: authHeader(client.token),
+    });
+    expect(boot.json().unavailable_reason).toContain('check back');
   });
 
   it('rejects out-of-range knobs', async () => {

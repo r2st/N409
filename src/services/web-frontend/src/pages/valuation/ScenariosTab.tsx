@@ -33,6 +33,17 @@ interface BaselineResponse {
   } | null;
   approaches: { asset: boolean; opm_backsolve: boolean; income: boolean; market: boolean } | null;
   currency: string;
+  /**
+   * Why there is no baseline, in the server's words, or `null` when there is
+   * one. A completed run of the wrong shape is not "no calculation yet": a
+   * specialty engine's run carries no weighted approaches and no income or
+   * market assumptions for these knobs to move, so telling the client to check
+   * back once the valuation is drafted would be telling them to wait for
+   * something that has already happened. Composed server-side (`routes/scenarios.ts`)
+   * because the browser cannot see which runs exist, and a mirrored kind list
+   * here would be a second answer to the same question.
+   */
+  unavailable_reason?: string | null;
 }
 
 interface PreviewResponse {
@@ -273,7 +284,8 @@ export function ScenariosTab() {
   if (!boot.baseline || !knobs || !defaults) {
     return (
       <EmptyState title="No calculation to explore yet">
-        The what-if sandbox opens once your valuation has its first completed calculation.
+        {boot.unavailable_reason ??
+          'The what-if sandbox opens once your valuation has its first completed calculation.'}
       </EmptyState>
     );
   }

@@ -4,7 +4,11 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
-import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
+import {
+  latestApproachBaseline,
+  latestSucceededCalculation,
+  type CalculationRow,
+} from '../repos/calculations.js';
 import {
   countScenarios,
   createScenario,
@@ -18,6 +22,7 @@ import { InternalServiceError, postJson, toProblem } from '../clients/internal.j
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { kindLabel } from '../domain/valuationSelector.js';
 
 /**
  * Improvement 3 — client-facing what-if scenario sandbox. Clients clone the
@@ -120,19 +125,64 @@ export function registerScenarioRoutes(
     fmv_per_share: calc.fmv_per_share != null ? Number(calc.fmv_per_share) : null,
   });
 
+  /**
+   * The run these knobs adjust: the newest one carrying weighted approaches.
+   *
+   * The sandbox clones a 409A compute payload — `{ params, inputs }` with a
+   * discount rate, a terminal growth rate, revenue and multiples — and moves
+   * one dial. A specialty engine's stored `inputs` is `{ endpoint, ...body }`
+   * and holds none of those, so `basePayload` read `{}` off it and the tab
+   * rendered a full sandbox anyway: empty knobs for assumptions the run never
+   * used, over a baseline card printing the specialty headline as "Scenario
+   * FMV / share" — which on an EMI run is the *restricted* AMV. Adjusting a
+   * knob then posted `params: {}` to the compute endpoint, so whatever came
+   * back was an answer to a question nobody asked.
+   *
+   * Asked as a question about the run rather than about `valuation.kind`: an
+   * EMI engagement that has also used the Calculations tab's ordinary compute
+   * does have a baseline, and the kind alone cannot see that.
+   */
+  const sandboxBaseline = (valuationId: string) => latestApproachBaseline(deps.pool, valuationId);
+
+  /**
+   * Why there is nothing to sandbox — a completed run of the wrong shape is not
+   * "no calculation yet", and telling a client to check back once the valuation
+   * is drafted, when it is drafted and calculated, is an instruction to wait for
+   * something that has already happened.
+   */
+  const noBaselineReason = async (valuation: ValuationRow): Promise<string> => {
+    const any = await latestSucceededCalculation(deps.pool, valuation.id);
+    return any
+      ? `The what-if sandbox adjusts the income and market assumptions behind a weighted equity value; ` +
+          `a ${kindLabel(valuation.kind)} calculation does not have them`
+      : 'No completed calculation to sandbox yet — check back once the valuation is drafted';
+  };
+
   // Sandbox bootstrap: the baseline numbers + the current knob values.
   app.get('/api/v1/valuations/:id/scenarios/baseline', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(principal, id);
-    const calc = await latestSucceededCalculation(deps.pool, valuation.id);
-    if (!calc) return { baseline: null, defaults: null, approaches: null, currency: valuation.currency };
+    const calc = await sandboxBaseline(valuation.id);
+    if (!calc) {
+      return {
+        baseline: null,
+        defaults: null,
+        approaches: null,
+        currency: valuation.currency,
+        // Shipped rather than restated in the browser: the frontend cannot see
+        // which runs exist, and a mirrored kind list is the drift this codebase
+        // keeps finding. See `noBaselineReason`.
+        unavailable_reason: await noBaselineReason(valuation),
+      };
+    }
     const payload = basePayload(calc);
     return {
       baseline: baselineOf(calc),
       defaults: scenarioDefaults(payload),
       approaches: activeApproaches(payload.params),
       currency: valuation.currency,
+      unavailable_reason: null,
     };
   });
 
@@ -146,12 +196,8 @@ export function registerScenarioRoutes(
     if (!parsed.success)
       throw problems.unprocessable('Invalid scenario inputs', { errors: parsed.error.issues });
 
-    const calc = await latestSucceededCalculation(deps.pool, valuation.id);
-    if (!calc) {
-      throw problems.unprocessable(
-        'No completed calculation to sandbox yet — check back once the valuation is drafted',
-      );
-    }
+    const calc = await sandboxBaseline(valuation.id);
+    if (!calc) throw problems.unprocessable(await noBaselineReason(valuation));
 
     const base = basePayload(calc);
     const payload: EnginePayload = {
@@ -215,10 +261,8 @@ export function registerScenarioRoutes(
         `A valuation holds at most ${MAX_SCENARIOS} saved scenarios — delete one first`,
       );
     }
-    const calc = await latestSucceededCalculation(deps.pool, valuation.id);
-    if (!calc) {
-      throw problems.unprocessable('No completed calculation to build scenarios from yet');
-    }
+    const calc = await sandboxBaseline(valuation.id);
+    if (!calc) throw problems.unprocessable(await noBaselineReason(valuation));
 
     const base = basePayload(calc);
     const payload: EnginePayload = {
@@ -264,7 +308,10 @@ export function registerScenarioRoutes(
     const valuation = await loadValuation(principal, id);
     const [scenarios, calc] = await Promise.all([
       listScenarios(deps.pool, valuation.id),
-      latestSucceededCalculation(deps.pool, valuation.id),
+      // The same run the saved cases were computed against. Comparing a saved
+      // scenario's equity value to a specialty run's headline would be a delta
+      // between two different units.
+      sandboxBaseline(valuation.id),
     ]);
     return {
       scenarios,

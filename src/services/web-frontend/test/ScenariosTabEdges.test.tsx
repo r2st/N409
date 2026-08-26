@@ -289,6 +289,43 @@ describe('ScenariosTab — the other knobs', () => {
     expect(screen.queryByLabelText(/^Revenue/)).not.toBeInTheDocument();
   });
 
+  /**
+   * The empty state, when the reason is not "nothing has been calculated".
+   *
+   * A specialty engagement's run carries no weighted approaches and none of the
+   * income or market assumptions these knobs move, so the server answers with
+   * no baseline — but it is not waiting on a calculation, and the tab's own
+   * wording ("opens once your valuation has its first completed calculation")
+   * would tell a client to wait for something that already happened. The reason
+   * is composed server-side: the browser cannot see which runs exist, and a
+   * mirrored list of specialty kinds here would be a second answer to the same
+   * question.
+   */
+  it('prints the server’s reason for having no baseline rather than its own', async () => {
+    const reason =
+      'The what-if sandbox adjusts the income and market assumptions behind a weighted equity value; ' +
+      'an EMI / CSOP (UK) calculation does not have them';
+    mockApi({
+      boot: { baseline: null, defaults: null, approaches: null, currency: 'USD', unavailable_reason: reason },
+    });
+    renderTab();
+
+    expect(await screen.findByText(reason)).toBeInTheDocument();
+    expect(screen.queryByText(/opens once your valuation has its first completed calculation/)).toBeNull();
+    // And no sandbox: no knobs to move, no baseline card to read a figure off.
+    expect(screen.queryByLabelText(/Discount rate/)).toBeNull();
+  });
+
+  it('falls back to its own wording when the server sends no reason', async () => {
+    // An older server, or the ordinary case of a valuation with no runs at all.
+    mockApi({ boot: { baseline: null, defaults: null, approaches: null, currency: 'USD' } });
+    renderTab();
+
+    expect(
+      await screen.findByText(/opens once your valuation has its first completed calculation/),
+    ).toBeInTheDocument();
+  });
+
   it('shows every knob when the boot response names no approaches', async () => {
     // `approaches: null` is what an older calculation answers with. Hiding the
     // knobs on it would be the wrong default — the sandbox would look broken.
