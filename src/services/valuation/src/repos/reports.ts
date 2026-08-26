@@ -4,7 +4,7 @@ import { withTransaction, type Queryable } from '../db/pool.js';
 import { EVENT_TYPES } from '../domain/valuation.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { lockPublishGate } from './publishLock.js';
-import type { ReportContent } from '../domain/report.js';
+import { DELIVERED_REPORT_STATES, type ReportContent } from '../domain/report.js';
 
 export interface ReportRow {
   id: string;
@@ -222,6 +222,53 @@ export async function storeRenderedPdf(
   args: { report: ReportRow; version: number; pdf: Buffer; actor: EventActor },
 ): Promise<ReportVersionRow> {
   return withTransaction(pool, async (client) => {
+    /*
+     * The delivered-version check, re-asked at the moment of the write.
+     *
+     * `POST /report/render` already refuses to re-render a delivered version,
+     * and the comment over that refusal states the stake: the exhibits are
+     * derived at render time from the latest calculation, so putting new bytes
+     * under a version number the client already holds means a different
+     * document, with a different concluded value, in board minutes and an
+     * auditor's file, indistinguishable from the outside.
+     *
+     * That check reads `valuations.state` at the top of the request, and this
+     * is the bottom of it. In between is the render — the summary and exhibit
+     * queries, a branding lookup that may fetch a white-label logo over the
+     * network, and a delegated call to the report unit whose budget is measured
+     * in seconds. Publication in another tab is one PATCH. So the request that
+     * passed the guard is exactly the request that overwrites the delivered
+     * bytes, and the guard reports a safety it stopped being able to provide
+     * the moment it returned.
+     *
+     * Asked here instead — under the row lock, against the state as it stands —
+     * the answer cannot go stale between the asking and the write. `FOR UPDATE
+     * OF v` locks the version alone: the valuation is read for its state and
+     * locking it would put a report render in the way of every ordinary edit of
+     * the engagement.
+     *
+     * The condition is "delivered *and* already has bytes", exactly as the
+     * route's is. An engagement published before anything was rendered still
+     * has to be able to produce its deliverable, and that first render replaces
+     * nothing.
+     */
+    const { rows: locked } = await client.query<{ pdf: Buffer | null; state: string }>(
+      `SELECT v.pdf, val.state
+         FROM report_versions v
+         JOIN reports r ON r.id = v.report_id
+         JOIN valuations val ON val.id = r.valuation_id
+        WHERE v.report_id = $1 AND v.version = $2
+        FOR UPDATE OF v`,
+      [args.report.id, args.version],
+    );
+    const before = locked[0];
+    if (before && before.pdf !== null && DELIVERED_REPORT_STATES.has(before.state)) {
+      throw problems.conflict(
+        `Version ${args.version} has already been delivered — this render finished after the ` +
+          `engagement was published and has not been stored. Save a new version to publish ` +
+          `revised figures.`,
+      );
+    }
     const { rows } = await client.query<ReportVersionRow>(
       `UPDATE report_versions SET pdf = $1, rendered_at = now()
        WHERE report_id = $2 AND version = $3

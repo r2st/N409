@@ -278,6 +278,12 @@ export async function runCalculation(
     inputs: Record<string, unknown>;
     recompute?: string[];
     priorApproaches?: Record<string, unknown>;
+    /**
+     * The run `priorApproaches` was read from. Carried all the way to the
+     * INSERT, which refuses the row if a different run has become the baseline
+     * in the meantime — see `createCalculation`'s `expectedBaselineId`.
+     */
+    baselineId?: string;
     createdBy: string;
     actor: EventActor;
   },
@@ -340,6 +346,9 @@ export async function runCalculation(
         diagnostics: parseIssues(response.warnings),
         trace: response.trace ?? null,
         createdBy: args.createdBy,
+        // Only a recalculation quotes a baseline; a full run computes every
+        // approach from the inputs as they stand and has nothing to go stale.
+        ...(args.recompute ? { expectedBaselineId: args.baselineId ?? null } : {}),
       },
       args.actor,
     );
@@ -413,6 +422,7 @@ export function registerCalculationRoutes(
     // successful run so the engine only recomputes the selected subsystem.
     let recompute: string[] | undefined;
     let priorApproaches: Record<string, unknown> | undefined;
+    let baselineId: string | undefined;
     if (parsed.data.approach) {
       const { engineKey, weightKey } = RECALC_APPROACHES[parsed.data.approach];
       const weight = num(paramsRow[weightKey]);
@@ -428,6 +438,7 @@ export function registerCalculationRoutes(
       }
       recompute = [engineKey];
       priorApproaches = prior as Record<string, unknown>;
+      baselineId = baseline!.id;
     }
 
     try {
@@ -437,6 +448,7 @@ export function registerCalculationRoutes(
         inputs,
         recompute,
         priorApproaches,
+        baselineId,
         createdBy: principal.id,
         actor: actorFor(principal),
       });

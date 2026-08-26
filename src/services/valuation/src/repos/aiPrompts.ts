@@ -88,6 +88,35 @@ export async function listPromptVersions(
   return { versions: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
+/**
+ * Appends the next numbered version.
+ *
+ * `coalesce(max(version), 0) + 1` inside the INSERT is atomic against nothing
+ * on its own: under READ COMMITTED each transaction's `max` is evaluated
+ * against the snapshot its own statement started with, so two concurrent edits
+ * of one prompt both read the same highest version, both aim at the same next
+ * number, and `UNIQUE (prompt_id, version)` (migration 0045) turns the loser
+ * into a 23505 — which, raised inside the transaction that also carries the
+ * `UPDATE ai_prompts`, rolls the admin's whole edit back and answers it with a
+ * 500. That is what `createTemplateVersion` needed an advisory lock for, one
+ * table over.
+ *
+ * What holds it together here is an ordering, not a lock of its own: **every
+ * caller must have already UPDATEd the `ai_prompts` row in this transaction.**
+ * That UPDATE takes a row-level exclusive lock on the one row all the racing
+ * edits share and holds it to COMMIT, so the second transaction is still
+ * waiting on it when this statement would have run — and when it does run, it
+ * is a new statement with a new snapshot that sees the version the first one
+ * inserted. `report_templates` has no such row to lean on: a brand-new
+ * template name is counted before any row of it exists, and Postgres has no gap
+ * lock to stand in for one.
+ *
+ * So the sequence is safe here by construction, and hoisting this call above
+ * the UPDATE — or letting a caller append a version without touching the
+ * prompt row — restores the collision in full. Pinned by
+ * `test/integration/promptVersionRace.test.ts`, which fails with duplicate-key
+ * errors on that inversion.
+ */
 async function insertNextVersion(
   client: pg.PoolClient,
   prompt: { id: string; system_prompt: string; model: string | null },

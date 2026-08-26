@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { newUlid } from '@n409/shared';
+import { newUlid, problems } from '@n409/shared';
 import { withTransaction, type Queryable } from '../db/pool.js';
 import { lockPublishGate } from './publishLock.js';
 import { PIPELINE_EVENT_TYPES } from '../domain/pipeline.js';
@@ -71,6 +71,31 @@ export interface CalculationStep {
 const CALCULATION_COLUMNS = `id, valuation_id, engine_version, status, inputs, results,
   equity_value, fmv_per_share, error, diagnostics, created_by, created_at`;
 
+/**
+ * The 409 a superseded per-approach recalculation is refused with.
+ *
+ * Refusal rather than repair, and the difference is not stylistic. The reused
+ * approaches are not text that can be re-merged after the fact the way a report
+ * chapter is: the run's `equity_value` and `fmv_per_share` are the *weighted*
+ * combination the engine formed from all four, so grafting the newer baseline's
+ * figures onto this result would mean re-deriving the conclusion here, in
+ * TypeScript, from a document the engine already summed. The honest answer is
+ * that this recalculation was computed against a valuation that has since
+ * moved, and it takes one more press of the same button to compute it against
+ * the one that stands.
+ *
+ * Nothing is lost by refusing: the approach being recomputed is recomputed from
+ * the current inputs either way, and the run that overtook this one is already
+ * in the history with its own numbers.
+ */
+function staleBaseline(): never {
+  throw problems.conflict(
+    'Another calculation landed while this recalculation was running, so its ' +
+      'reused approaches are out of date. Recalculate again to compute against ' +
+      'the run that now stands.',
+  );
+}
+
 export async function createCalculation(
   pool: pg.Pool,
   args: {
@@ -86,6 +111,25 @@ export async function createCalculation(
     /** Engine pipeline steps; omitted on a run the engine never reached. */
     trace?: CalculationStep[] | null;
     createdBy: string;
+    /**
+     * The baseline row whose approaches this run *quotes* rather than computes.
+     *
+     * Only a per-approach recalculation passes it. That run is a read-modify-
+     * write whose modify step is a thirty-second HTTP call: the route reads
+     * `latestApproachBaseline`, ships its `results.approaches` to the engine as
+     * `prior_approaches`, and the engine copies every approach it was not asked
+     * to recompute into the new results verbatim (`_reused_prior`). So the row
+     * about to be inserted states a value for all four approaches and three of
+     * them are quotations of a document that may have been superseded while the
+     * engine was thinking.
+     *
+     * Checked here, under the gate lock, rather than in the route: the failure
+     * this guards *is* another run landing between the route's read and this
+     * insert, so a check against the caller's own copy would be blind to the
+     * only case it exists for. Same reasoning as `saveVersion`'s
+     * `expectedVersion`, one table over.
+     */
+    expectedBaselineId?: string | null;
   },
   actor: EventActor,
 ): Promise<CalculationRow> {
@@ -96,6 +140,10 @@ export async function createCalculation(
     // publish in flight either see this calculation or finish before it exists,
     // never straddle it. See repos/publishLock.ts.
     await lockPublishGate(client, args.valuationId);
+    if (args.expectedBaselineId !== undefined) {
+      const current = await latestSucceededCalculationWith(client, args.valuationId, 'approaches');
+      if ((current?.id ?? null) !== args.expectedBaselineId) staleBaseline();
+    }
     const { rows } = await client.query<CalculationRow>(
       `INSERT INTO calculations
          (id, valuation_id, engine_version, status, inputs, results, equity_value, fmv_per_share, error, diagnostics, trace, created_by)
