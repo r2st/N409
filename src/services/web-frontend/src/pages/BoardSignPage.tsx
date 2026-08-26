@@ -4,6 +4,7 @@ import { sanitizeHtml } from '../lib/m2';
 import { Wordmark } from '../components/Logo';
 import { Button, ErrorNote, Field, Modal } from '../components/ui';
 import { formatAmount, formatDate } from '../lib/format';
+import { mainContentTargetProps } from '../components/SkipLink';
 
 /**
  * Public board-member signing page (feature 5). A board member arrives via the
@@ -43,7 +44,10 @@ function Shell({ children }: { children: React.ReactNode }) {
       <header className="border-b border-chrome-800 bg-chrome-900 px-6 py-4">
         <Wordmark light />
       </header>
-      <main className="mx-auto w-full max-w-3xl flex-1 px-5 py-10">
+      <main
+        {...mainContentTargetProps}
+        className={`mx-auto w-full max-w-3xl flex-1 px-5 py-10 ${mainContentTargetProps.className}`}
+      >
         <h1 className="mb-6 font-display text-2xl font-semibold text-ink-900">Board resolution</h1>
         {children}
       </main>

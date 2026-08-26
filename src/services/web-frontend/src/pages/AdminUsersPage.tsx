@@ -170,6 +170,13 @@ function invitationStatus(i: Invitation): { label: string; tone: string } {
 }
 
 /** M3 feature 13 — user/role admin console. */
+/**
+ * Said out-of-band because the CSV cannot say it in-band — the same reasoning,
+ * and the same wording, as the valuations export on ValuationsPage.
+ */
+const EXPORT_CAPPED =
+  'The export hit the row cap — it holds the first accounts only. Narrow the filters and export again for the rest.';
+
 export function AdminUsersPage() {
   const { user } = useAuth();
   const [params, setParams] = useSearchParams();
@@ -178,6 +185,7 @@ export function AdminUsersPage() {
   const [partnersCapped, setPartnersCapped] = useState(false);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [exportNote, setExportNote] = useState<string | null>(null);
   /** Confirmation for actions with no visible effect on the table. */
   const [notice, setNotice] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -522,9 +530,20 @@ export function AdminUsersPage() {
               if (q) query.set('q', q);
               if (role) query.set('role', role);
               if (partner) query.set('partner_id', partner);
-              void apiDownload(`/users/export?${query}`, 'users.csv').catch(() =>
-                setError('Could not export CSV.'),
-              );
+              setExportNote(null);
+              /*
+               * The result was discarded here, and this is the export where
+               * that matters most: a user directory is handed to an auditor as
+               * "everyone with access", and the accounts past the cap are the
+               * ones nobody thinks to look for. The route sets
+               * `x-export-truncated` for exactly this; saying it out-of-band is
+               * the only option, since a note row in a CSV is data.
+               */
+              void apiDownload(`/users/export?${query}`, 'users.csv')
+                .then(({ truncated }) => {
+                  if (truncated) setExportNote(EXPORT_CAPPED);
+                })
+                .catch(() => setError('Could not export CSV.'));
             }}
           >
             ↓ Export CSV
@@ -850,6 +869,14 @@ export function AdminUsersPage() {
       {error && (
         <div className="mt-6">
           <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
+      {exportNote && (
+        <div
+          role="status"
+          className="mt-6 rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800"
+        >
+          {exportNote}
         </div>
       )}
       {notice && (

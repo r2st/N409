@@ -133,6 +133,7 @@ function mockApi(
     writeStatus?: number;
     listStatus?: number;
     exportStatus?: number;
+    exportTruncated?: boolean;
     /** The two catalogs load separately from the user list; fail them alone. */
     rolesStatus?: number;
     partnersStatus?: number;
@@ -148,7 +149,13 @@ function mockApi(
 
     if (path.includes('/users/export')) {
       if (opts.exportStatus) return jsonResponse({ status: opts.exportStatus, detail: 'No' }, 500);
-      return new Response('email\n', { status: 200, headers: { 'content-type': 'text/csv' } });
+      return new Response('email\n', {
+        status: 200,
+        headers: {
+          'content-type': 'text/csv',
+          'x-export-truncated': opts.exportTruncated ? 'true' : 'false',
+        },
+      });
     }
     if (path.endsWith('/partners')) {
       if (opts.partnersStatus) return jsonResponse({ detail: 'No' }, opts.partnersStatus);
@@ -376,6 +383,42 @@ describe('AdminUsersPage — the console', () => {
     await userEvent.click(screen.getByRole('button', { name: '↓ Export CSV' }));
 
     await screen.findByText('Could not export CSV.');
+  });
+
+  /**
+   * A directory export that stopped at the cap and said nothing.
+   *
+   * This is the export somebody hands an auditor as "everyone with access", so
+   * the accounts past `MAX_EXPORT_ROWS` are precisely the ones nobody thinks to
+   * look for — and a CSV that stops has no way of looking like it stopped. The
+   * route sets `x-export-truncated` for exactly this, `apiDownload` returns it,
+   * and this call site resolved the promise into nothing at all.
+   */
+  it('says so when the export hit the row cap', async () => {
+    mockApi({}, { exportTruncated: true });
+    Object.defineProperty(URL, 'createObjectURL', { value: () => 'blob:x', configurable: true });
+    Object.defineProperty(URL, 'revokeObjectURL', { value: () => {}, configurable: true });
+    renderPage();
+
+    await screen.findByText('ada@acme.com');
+    await userEvent.click(screen.getByRole('button', { name: '↓ Export CSV' }));
+
+    // By text, not by role: the page already carries a `role="status"` for the
+    // result count, so the role alone is ambiguous here.
+    expect(await screen.findByText(/hit the row cap/i)).toBeInTheDocument();
+  });
+
+  it('stays quiet about the cap when the export was complete', async () => {
+    // The notice has to be earned by the header, not shown after every export.
+    mockApi({}, { exportTruncated: false });
+    Object.defineProperty(URL, 'createObjectURL', { value: () => 'blob:x', configurable: true });
+    Object.defineProperty(URL, 'revokeObjectURL', { value: () => {}, configurable: true });
+    renderPage();
+
+    await screen.findByText('ada@acme.com');
+    await userEvent.click(screen.getByRole('button', { name: '↓ Export CSV' }));
+
+    await waitFor(() => expect(screen.queryByText(/hit the row cap/i)).toBeNull());
   });
 
   // ── The editor ────────────────────────────────────────────────────────────

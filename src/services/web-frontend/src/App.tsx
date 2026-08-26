@@ -4,8 +4,8 @@ import { RequireAuth } from './components/RequireAuth';
 import { RequireRole } from './components/RequireRole';
 import { useAuth } from './lib/auth';
 import { canManageUsers, canUseFirmConsole, isFirmAdmin, isOps, isPartner } from './lib/rbac';
-import { MarketingFooter, MarketingHeader, MarketingLayout } from './components/MarketingLayout';
-import { SkipLink, mainContentTargetProps } from './components/SkipLink';
+import { MarketingLayout } from './components/MarketingLayout';
+import { StandaloneLayout } from './components/StandaloneLayout';
 import { RouteTitleProvider } from './components/RouteTitle';
 import { RouteAnnouncer } from './components/RouteAnnouncer';
 import { LandingPage } from './pages/marketing/LandingPage';
@@ -184,18 +184,12 @@ function RoleLanding() {
 function HomeGate() {
   const { status } = useAuth();
   if (status === 'loading') return <PageLoader />;
-  if (status === 'anonymous') {
+  if (status === 'anonymous')
     return (
-      <div className="flex min-h-screen flex-col bg-paper-50">
-        <SkipLink />
-        <MarketingHeader />
-        <main {...mainContentTargetProps} className={`flex-1 ${mainContentTargetProps.className}`}>
-          <LandingPage />
-        </main>
-        <MarketingFooter />
-      </div>
+      <MarketingLayout>
+        <LandingPage />
+      </MarketingLayout>
     );
-  }
   return <RoleLanding />;
 }
 
@@ -208,7 +202,6 @@ export default function App() {
         <RouteAnnouncer />
         <Routes>
           {/* Public marketing site (409.ai §22) */}
-          <Route path="/" element={<HomeGate />} />
           <Route element={<MarketingLayout />}>
             <Route path="/pricing" element={<PricingPage />} />
             <Route path="/which-valuation" element={<WhichValuationPage />} />
@@ -232,21 +225,28 @@ export default function App() {
             <Route path="/terms-of-service" element={<TermsPage />} />
             <Route path="/privacy-policy" element={<PrivacyPage />} />
           </Route>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-          <Route path="/reset-password" element={<ResetPasswordPage />} />
-          <Route path="/verify-email" element={<VerifyEmailPage />} />
-          <Route path="/accept-invite" element={<AcceptInvitePage />} />
-          <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
-          {/* Public board-member resolution signing (feature 5) */}
-          <Route path="/board-sign" element={<BoardSignPage />} />
-          {/* Public external auditor portal (feature 8), token from link fragment */}
-          <Route path="/auditor" element={<AuditorPortalPage />} />
-          {/* Firm-branded client intake — public, token from the link fragment */}
-          <Route path="/intake" element={<ClientIntakePage />} />
-          {/* White-label partner login (improvement 8) — public, branded per slug */}
-          <Route path="/partner/:slug/login" element={<PartnerLoginPage />} />
+          {/* Full-screen pages with no shell of their own — see StandaloneLayout
+              for why they still need a boundary inside the router. */}
+          <Route element={<StandaloneLayout />}>
+            <Route path="/" element={<HomeGate />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
+            <Route path="/verify-email" element={<VerifyEmailPage />} />
+            <Route path="/accept-invite" element={<AcceptInvitePage />} />
+            <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
+            {/* Public board-member resolution signing (feature 5) */}
+            <Route path="/board-sign" element={<BoardSignPage />} />
+            {/* Public external auditor portal (feature 8), token from link fragment */}
+            <Route path="/auditor" element={<AuditorPortalPage />} />
+            {/* Firm-branded client intake — public, token from the link fragment */}
+            <Route path="/intake" element={<ClientIntakePage />} />
+            {/* White-label partner login (improvement 8) — public, branded per slug */}
+            <Route path="/partner/:slug/login" element={<PartnerLoginPage />} />
+            {/* Real 404 for unknown URLs instead of a silent redirect home (F-1 P2). */}
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
           <Route
             element={
               <RequireAuth>
@@ -352,8 +352,6 @@ export default function App() {
             <Route path="/billing" element={<BillingPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
-          {/* Real 404 for unknown URLs instead of a silent redirect home (F-1 P2). */}
-          <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </RouteTitleProvider>
     </Suspense>

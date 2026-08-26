@@ -496,10 +496,7 @@ export const Q_OWNER_LIMIT = 1_000;
  * number never reaches the owner arm — so the extra statement is only spent
  * where it buys something.
  */
-export async function resolveQueryOwners<T extends ValuationFilters>(
-  pool: pg.Pool,
-  filters: T,
-): Promise<T> {
+export async function resolveQueryOwners<T extends ValuationFilters>(pool: pg.Pool, filters: T): Promise<T> {
   const q = filters.q?.trim();
   if (!q || isUlid(q.toUpperCase()) || /^#?\d{1,12}$/.test(q)) return filters;
   const { rows } = await pool.query<{ id: string }>(

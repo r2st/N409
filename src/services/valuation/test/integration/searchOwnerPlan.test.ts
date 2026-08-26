@@ -188,8 +188,12 @@ describe.skipIf(!dbUp)('the free-text search reaches its indexes (R167)', () => 
         const slow = buildValuationWhere({ kind: 'all' }, { q });
         expect(fast.whereSql).not.toBe(slow.whereSql);
         const idsOf = async (built: { whereSql: string; params: unknown[] }) =>
-          (await db.pool.query<{ id: string }>(`SELECT id FROM valuations ${built.whereSql} ORDER BY id`, built.params))
-            .rows.map((r) => r.id);
+          (
+            await db.pool.query<{ id: string }>(
+              `SELECT id FROM valuations ${built.whereSql} ORDER BY id`,
+              built.params,
+            )
+          ).rows.map((r) => r.id);
         expect(await idsOf(fast)).toEqual(await idsOf(slow));
       },
     );
@@ -202,7 +206,6 @@ describe.skipIf(!dbUp)('the free-text search reaches its indexes (R167)', () => 
       expect(plan.map((n) => n['Index Name'])).toContain('valuations_user_idx');
       expect(plan.find((n) => n['Relation Name'] === 'valuations')?.['Node Type']).not.toBe('Seq Scan');
     });
-
   });
 
   describe('the enumeration bound', () => {

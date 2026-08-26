@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { ThemeToggleButton } from './ThemeToggle';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -407,7 +407,19 @@ export function MarketingFooter() {
   );
 }
 
-export function MarketingLayout() {
+/**
+ * The marketing shell.
+ *
+ * Normally a layout route, rendering whichever marketing page matched into the
+ * `Outlet`. `children` is for the one caller that cannot be a layout route: `/`
+ * resolves the visitor's session before it knows whether to show the landing
+ * page at all (see `HomeGate` in App.tsx), so it renders this shell directly.
+ * That used to mean a hand-copied header/main/footer next to this one — and the
+ * copy had drifted, because it left out the boundary below. The busiest
+ * anonymous page in the product was the only marketing page whose render throw
+ * took the whole SPA down with it.
+ */
+export function MarketingLayout({ children }: { children?: ReactNode }) {
   const location = useLocation();
   return (
     <div className="flex min-h-screen flex-col bg-paper-50">
@@ -419,7 +431,7 @@ export function MarketingLayout() {
             The key remounts the boundary on navigation so a caught error does
             not outlive the route that caused it. */}
         <ErrorBoundary key={location.pathname} label="this page">
-          <Outlet />
+          {children ?? <Outlet />}
         </ErrorBoundary>
       </main>
       <MarketingFooter />

@@ -296,9 +296,7 @@ describe.skipIf(!dbUp)('merged feeds read a window, not the whole log (R167)', (
     });
 
     it('reads a bounded prefix of each event table rather than all of it', async () => {
-      const [feed] = await statementsOf(db.pool, () =>
-        dashboardActivity(db.pool, { kind: 'all' }, 20, true),
-      );
+      const [feed] = await statementsOf(db.pool, () => dashboardActivity(db.pool, { kind: 'all' }, 20, true));
       const plan = await explain(feed!.text, feed!.params);
       expect(rowsRead(plan, 'valuation_events')).toBeLessThan(200);
       expect(rowsRead(plan, 'admin_events')).toBeLessThan(200);

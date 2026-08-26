@@ -260,6 +260,61 @@ describe('AuditTrailTab', () => {
   });
 
   /**
+   * A file that stopped short and looked complete.
+   *
+   * The route has set `x-export-truncated` on this download since the cap was
+   * given a voice, and `apiDownload` has returned it — but `useDownload` did
+   * not expose it, so the value died in the hook. The screen's own truncation
+   * banner ("warns when the trail was truncated", above) reads `data.truncated`
+   * from the JSON view and says nothing about the file, and the two caps are
+   * not the same event: the filters that fit the view can still overflow the
+   * export. So a change log missing its oldest entries — the end that answers
+   * "when did this first move" — downloaded with nothing to distinguish it from
+   * the whole history.
+   */
+  it('says so when the downloaded change log was capped', async () => {
+    Object.assign(URL, { createObjectURL: () => 'blob:stub', revokeObjectURL: () => {} });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('audit-trail.csv'))
+        return new Response('a,b\n1,2', {
+          status: 200,
+          headers: { 'content-type': 'text/csv', 'x-export-truncated': 'true' },
+        });
+      // The JSON view is *not* truncated: this must be the file's own notice,
+      // not the banner that was already there.
+      return jsonResponse({ ...RESPONSE, truncated: false });
+    });
+    const user = userEvent.setup();
+    renderTab();
+    await screen.findByTestId('audit-entries');
+
+    await user.click(screen.getByRole('button', { name: /Download change log/ }));
+    expect(await screen.findByText(/oldest entries are missing/i)).toBeInTheDocument();
+  });
+
+  it('says nothing about a cap when the download was complete', async () => {
+    // The other half: the notice has to be earned by the header.
+    Object.assign(URL, { createObjectURL: () => 'blob:stub', revokeObjectURL: () => {} });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('audit-trail.csv'))
+        return new Response('a,b\n1,2', {
+          status: 200,
+          headers: { 'content-type': 'text/csv', 'x-export-truncated': 'false' },
+        });
+      return jsonResponse({ ...RESPONSE, truncated: false });
+    });
+    const user = userEvent.setup();
+    renderTab();
+    await screen.findByTestId('audit-entries');
+
+    await user.click(screen.getByRole('button', { name: /Download change log/ }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Download change log/ })).not.toBeDisabled(),
+    );
+    expect(screen.queryByText(/oldest entries are missing/i)).toBeNull();
+  });
+
+  /**
    * The name the file lands under.
    *
    * This button used to run on a second, private fetch-and-anchor helper that

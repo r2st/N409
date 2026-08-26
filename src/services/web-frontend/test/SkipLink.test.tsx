@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -14,7 +14,14 @@ import { MAIN_CONTENT_ID, SkipLink, mainContentTargetProps } from '../src/compon
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(HERE, '../src');
-const read = (rel: string) => readFileSync(path.join(SRC, rel), 'utf8');
+/** Every source file under src/, so the shell census below is not a hand-list. */
+function walk(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = path.join(dir, entry);
+    if (statSync(full).isDirectory()) return walk(full);
+    return /\.tsx$/.test(full) ? [full] : [];
+  });
+}
 
 describe('SkipLink', () => {
   it('is in the tab order but visually hidden until focused', async () => {
@@ -86,24 +93,71 @@ describe('mainContentTargetProps', () => {
 });
 
 describe('every page shell wires the bypass', () => {
-  // A skip link that only exists in one of three shells is a skip link that
-  // fails on two thirds of the site, and nothing else would catch that.
-  const SHELLS = ['components/AppLayout.tsx', 'components/MarketingLayout.tsx', 'App.tsx'];
+  /**
+   * This census used to be a list of three filenames. That is the version of
+   * this test that cannot work: a shell is not a fixed set, and the list went
+   * stale in both directions at once. `App.tsx` stopped rendering a `<main>`
+   * when `/` was moved onto the shared marketing shell, so one third of the
+   * census was asserting against a file with nothing left to assert on — and
+   * meanwhile the three pages that render their own `<main>` outside any
+   * layout (the intake and board-signing portals, and the 404) had never been
+   * looked at, because naming the shells by hand is exactly what stops you
+   * finding the ones you did not think of.
+   *
+   * So the set is derived. Whatever renders a `<main>` is a shell, and the
+   * rules below follow from what is actually on the page rather than from a
+   * list someone has to remember to update.
+   */
+  const JSX_MAIN = /<main[\s>]/;
+  const JSX_NAV = /<nav[\s>]/;
+  const SKIP_LINK = /<SkipLink\s*\/>/;
 
-  it.each(SHELLS)('%s renders a SkipLink', (shell) => {
-    expect(read(shell)).toMatch(/<SkipLink\s*\/>/);
+  /** Prose says `<main>` too — the docs on SkipLink itself are full of it. */
+  const code = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  const sources = walk(SRC).map((file) => ({
+    file: path.relative(SRC, file).split(path.sep).join('/'),
+    text: code(readFileSync(file, 'utf8')),
+  }));
+
+  const withMain = sources.filter((s) => JSX_MAIN.test(s.text));
+
+  it('finds the shells rather than being told them', () => {
+    // Vacuity guard: a derived census that derives nothing passes silently.
+    expect(withMain.length).toBeGreaterThanOrEqual(4);
+    expect(withMain.map((s) => s.file)).toContain('components/AppLayout.tsx');
+    expect(withMain.map((s) => s.file)).toContain('components/MarketingLayout.tsx');
   });
 
-  it.each(SHELLS)('%s gives its <main> the skip target props', (shell) => {
-    expect(read(shell)).toMatch(/<main\s+\{\.\.\.mainContentTargetProps\}/);
+  it('gives every <main> in the app the skip target props', () => {
+    // Not just the shells: the skip link resolves `#main-content` at click
+    // time, so a <main> that does not carry the id is a bypass that lands
+    // nowhere on that page — and the pages most likely to grow their own
+    // <main> are the standalone ones with no layout to inherit it from.
+    const untargeted = withMain
+      .flatMap(({ file, text }) => [...text.matchAll(/<main[\s>][^>]*/g)].map((m) => ({ file, tag: m[0] })))
+      .filter(({ tag }) => !tag.includes('mainContentTargetProps'))
+      .map(({ file }) => file);
+    expect(untargeted).toEqual([]);
   });
 
-  it('has no <main> left that the skip link cannot reach', () => {
-    for (const shell of SHELLS) {
-      const text = read(shell);
-      const mains = [...text.matchAll(/<main\b[^>]*/g)].map((m) => m[0]);
-      expect(mains.length).toBeGreaterThan(0);
-      for (const tag of mains) expect(tag).toContain('mainContentTargetProps');
-    }
+  it('puts a skip link on every shell that has blocks worth skipping', () => {
+    // WCAG 2.4.1 is about *repeated* content ahead of the main landmark. A nav
+    // beside a main is that, and it is what separates the two real shells from
+    // a portal page whose header is a logo and nothing else.
+    const missing = withMain
+      .filter((s) => JSX_NAV.test(s.text) && !SKIP_LINK.test(s.text))
+      .map((s) => s.file);
+    expect(missing).toEqual([]);
+  });
+
+  it('leaves no skip link without something to skip to', () => {
+    // The other direction: a SkipLink rendered in a file with no target <main>
+    // is a control that focuses nothing. `degrades to the plain fragment`
+    // above proves it fails softly; this proves it does not ship that way.
+    const dangling = sources
+      .filter((s) => SKIP_LINK.test(s.text) && !JSX_MAIN.test(s.text))
+      .map((s) => s.file);
+    expect(dangling).toEqual([]);
   });
 });

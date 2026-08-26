@@ -35,11 +35,6 @@ export function nameColumns(cells: readonly string[]): Array<string | null> {
   });
 }
 
-/** The named columns of a header row, in source order, blanks dropped. */
-export function headerNames(cells: readonly string[]): string[] {
-  return nameColumns(cells).filter((c): c is string => c !== null);
-}
-
 /** One data row keyed by the names `nameColumns` gave the header row. */
 export function rowByColumn(
   columns: readonly (string | null)[],

@@ -127,6 +127,16 @@ const CONSUMERS: Record<string, { renders?: string[]; why?: string }> = {
   '/api/v1/partners/:id/valuations': {
     why: 'Same `listValuations` name collision as `/api/v1/valuations` above.',
   },
+  // ── R171: the two file downloads whose flag never reached a screen ───────
+  // Both routes set `x-export-truncated`; `apiDownload` has returned it all
+  // along, and both call sites dropped it — `useDownload` did not expose it at
+  // all, and AdminUsersPage discarded the resolved value. A capped file is the
+  // quiet half of this bug: a failed download leaves the user with nothing to
+  // misread, and a short one leaves them holding a file that looks whole.
+  '/api/v1/users/export': { renders: ['src/pages/AdminUsersPage.tsx'] },
+  '/api/v1/valuations/:id/audit-trail.csv': {
+    renders: ['src/pages/valuation/AuditTrailTab.tsx'],
+  },
   '/api/v1/valuations/:id/evidence-bundle': {
     why: 'Not a screen. The bundle carries its caps as a `truncated` object inside the manifest written into the archive, which is the artefact an auditor reads; there is no rendered list to annotate.',
   },

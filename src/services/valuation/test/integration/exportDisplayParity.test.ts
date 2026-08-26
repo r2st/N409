@@ -50,7 +50,9 @@ describe.skipIf(!dbUp)('export/display parity', () => {
     let row: string[] = [];
     let field = '';
     let quoted = false;
-    const text = body.replace(/^﻿/, '');
+    // \uFEFF rather than the character itself: a literal BOM in source is
+    // invisible to the reader and irregular whitespace to the linter.
+    const text = body.replace(/^\uFEFF/, '');
     for (let i = 0; i < text.length; i += 1) {
       const ch = text[i]!;
       if (quoted) {

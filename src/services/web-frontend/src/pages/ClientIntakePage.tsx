@@ -10,6 +10,7 @@ import {
   resumeStep,
 } from '../lib/intakeAnswers';
 import { formatDate } from '../lib/format';
+import { mainContentTargetProps } from '../components/SkipLink';
 import {
   hasBlockingIssues,
   issuesByField,
@@ -843,7 +844,12 @@ function Shell({ firm, children }: { firm: Branding; children: React.ReactNode }
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-6 py-10">{children}</main>
+      <main
+        {...mainContentTargetProps}
+        className={`mx-auto max-w-5xl px-6 py-10 ${mainContentTargetProps.className}`}
+      >
+        {children}
+      </main>
       <footer className="mx-auto max-w-5xl px-6 pb-12 text-xs text-ink-400">
         Your answers are shared only with {firm.name}.
         {firm.support_email && (

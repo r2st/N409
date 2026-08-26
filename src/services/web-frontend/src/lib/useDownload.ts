@@ -35,14 +35,29 @@ export function useDownload(): {
   busy: boolean;
   /** Set when the last attempt failed, cleared when a new one starts. */
   error: string | null;
+  /**
+   * Set when the server capped the file it just sent, cleared when a new
+   * attempt starts.
+   *
+   * The same discarded-result problem as `error`, one step quieter. `apiDownload`
+   * has returned this since the export routes started setting
+   * `x-export-truncated`, and this hook threw it away — so a change log that
+   * stopped at MAX_TRAIL_EVENTS downloaded exactly like a complete one. A
+   * failed download at least leaves the user with no file; a capped one leaves
+   * them holding a file they have no reason to doubt.
+   */
+  truncated: boolean;
 } {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [truncated, setTruncated] = useState(false);
 
   const start = useCallback((path: string, filename: string) => {
     setBusy(true);
     setError(null);
+    setTruncated(false);
     void apiDownload(path, filename)
+      .then((res) => setTruncated(res.truncated))
       .catch(() =>
         // The message deliberately does not repeat the status code: the caller
         // cannot act on a 502 differently from a 503, and "try again" is the
@@ -52,7 +67,7 @@ export function useDownload(): {
       .finally(() => setBusy(false));
   }, []);
 
-  return { start, busy, error };
+  return { start, busy, error, truncated };
 }
 
 /**

@@ -109,6 +109,7 @@ const EAGER_REGISTER: Record<string, string> = {
   'components/RouteAnnouncer.tsx': 'per-navigation live region',
   'components/RouteTitle.tsx': 'document-title provider',
   'components/SkipLink.tsx': 'first focusable element on every page',
+  'components/StandaloneLayout.tsx': 'per-route boundary for the pages with no shell',
 
   // The anonymous landing path.
   'pages/marketing/LandingPage.tsx': 'the LCP page for anonymous traffic',

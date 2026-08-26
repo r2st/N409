@@ -251,6 +251,21 @@ export function AuditTrailTab() {
         </p>
       )}
 
+      {download.truncated && (
+        /*
+         * Said here rather than in the file, for the reason ValuationsPage
+         * gives: a CSV has no comment syntax, so a note row would be read as
+         * data by whatever opens it.
+         */
+        <p
+          role="status"
+          className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800"
+        >
+          The downloaded change log hit the event cap — it holds the most recent events, and its oldest
+          entries are missing. Narrow the filters and download again to reach them.
+        </p>
+      )}
+
       {data.entries.length === 0 ? (
         <p className="text-sm text-ink-400">No events match these filters.</p>
       ) : (

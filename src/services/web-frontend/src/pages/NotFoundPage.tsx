@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
+import { mainContentTargetProps } from '../components/SkipLink';
 
 /**
  * Real 404 page (audit F-1 P2). Previously any unknown URL silently redirected
@@ -8,7 +9,10 @@ import { Link, useLocation } from 'react-router-dom';
 export function NotFoundPage() {
   const location = useLocation();
   return (
-    <main className="flex min-h-[60vh] flex-col items-center justify-center px-6 py-16 text-center">
+    <main
+      {...mainContentTargetProps}
+      className={`flex min-h-[60vh] flex-col items-center justify-center px-6 py-16 text-center ${mainContentTargetProps.className}`}
+    >
       <p className="font-mono text-sm font-semibold tracking-wide text-bond-600 uppercase">404</p>
       <h1 className="mt-3 font-display text-3xl font-semibold text-ink-900">Page not found</h1>
       <p className="mt-3 max-w-md text-sm text-ink-500">
