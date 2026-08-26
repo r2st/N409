@@ -1,9 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { articleById, categoryMeta } from '../data/helpContent';
+import { articleById, categoryMeta, loadHelpBodies } from '../data/helpContent';
 import { Markdown } from '../lib/markdown';
-import { useFocusTrap, useScrollLock } from './ui';
+import { ErrorNote, Spinner, useFocusTrap, useScrollLock } from './ui';
 
 /**
  * Contextual help affordance: a small "?" next to a section header that opens
@@ -30,6 +30,31 @@ export function HelpIcon({
   const found = articleById(article);
   const title = found?.title ?? 'Help';
   const category = found ? categoryMeta(found.category) : undefined;
+
+  // The prose is not in the metadata module (see `helpBodies.ts`) — it arrives
+  // when a reader opens the panel. The button's label, the header and the
+  // "coming soon" answer are all decided from metadata, so nothing above the
+  // body waits on this.
+  const [body, setBody] = useState<string | null>(null);
+  const [bodyFailed, setBodyFailed] = useState(false);
+  useEffect(() => {
+    if (!open || !found || body !== null) return;
+    let live = true;
+    setBodyFailed(false);
+    void loadHelpBodies()
+      .then((bodies) => {
+        if (live) setBody(bodies[article] ?? '');
+      })
+      .catch(() => {
+        // A chunk that did not arrive is not an article that does not exist.
+        // Saying "coming soon" here would report a network failure as a fact
+        // about the knowledge base.
+        if (live) setBodyFailed(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [open, found, body, article]);
 
   return (
     <>
@@ -85,10 +110,14 @@ export function HelpIcon({
               </div>
 
               <div className="flex-1 overflow-y-auto overscroll-y-contain px-5 py-5">
-                {found ? (
-                  <Markdown source={found.body} />
-                ) : (
+                {!found ? (
                   <p className="text-sm text-ink-500">This help article is coming soon.</p>
+                ) : bodyFailed ? (
+                  <ErrorNote>This help article could not be loaded.</ErrorNote>
+                ) : body === null ? (
+                  <Spinner label="Loading help article…" />
+                ) : (
+                  <Markdown source={body} />
                 )}
               </div>
 

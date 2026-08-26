@@ -74,7 +74,8 @@ describe('the workspace tabs and a retired engagement', () => {
   });
 
   it('counts the writing tabs, so a classifier that goes blind fails here first', () => {
-    // R91 closed seventeen tabs plus the PipelineTabs adapter. The floor is
+    // R91 closed seventeen tabs plus the six pipeline adapters (one file each
+    // since R161). The floor is
     // deliberately below that: a tab that is deleted should not fail this, and
     // a classifier that stops matching anything should.
     expect(writing.length).toBeGreaterThanOrEqual(17);

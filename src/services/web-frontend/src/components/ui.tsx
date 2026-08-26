@@ -2,8 +2,10 @@ import {
   Children,
   cloneElement,
   isValidElement,
+  useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type ButtonHTMLAttributes,
@@ -309,6 +311,108 @@ export function PickerOverflowNote({ truncated }: { truncated: boolean }) {
     <option disabled value="">
       — more exist than are listed; filter to narrow the list —
     </option>
+  );
+}
+
+/**
+ * How many rows a long list renders before the reader asks for more.
+ *
+ * A hundred is far more than fits on a screen and far less than the caps the
+ * API is willing to answer with — the grant register alone will hand back ten
+ * thousand rows, and the conversation five.
+ */
+export const LIST_WINDOW_STEP = 100;
+
+/**
+ * A window over a list that the server capped somewhere the DOM cannot follow.
+ *
+ * `ListTruncationNote` is about the rows the *server* did not send. This is the
+ * other end of the same problem: the rows it did. Every list endpoint here is
+ * capped in SQL, but the caps are sized for the API — ten thousand grants, five
+ * thousand messages — and a surface that maps straight over the response builds
+ * a node per row per cell. Ten thousand grant rows is roughly two hundred
+ * thousand nodes, and the tab does not render slowly so much as it stops: the
+ * layout pass blocks the main thread, and every keystroke and click after it
+ * queues behind that. Worse, the cost is paid by exactly the customer who has
+ * the most at stake in the page working.
+ *
+ * A window is not virtualization — there is no scroll math and no measured row
+ * height, and it does not try to be. It is the smaller claim that a reader who
+ * has not asked for the ten-thousandth row should not have to wait for it, and
+ * it holds without a dependency, without absolute positioning, and without the
+ * find-in-page and screen-reader breakage that windowing-on-scroll brings.
+ *
+ * `edge` decides which end survives. A register is read from the top, so its
+ * window keeps the head. A conversation is read from the bottom — the newest
+ * message is the one somebody came for — so its window keeps the tail and the
+ * control offers the *earlier* messages.
+ */
+export function useListWindow<T>(
+  items: T[],
+  { step = LIST_WINDOW_STEP, edge = 'head' }: { step?: number; edge?: 'head' | 'tail' } = {},
+): {
+  /** The rows to render. */
+  shown: T[];
+  /** How many are held back — 0 when everything is on screen. */
+  hidden: number;
+  /** Widen the window by one step. */
+  showMore: () => void;
+  step: number;
+} {
+  const [limit, setLimit] = useState(step);
+  const hidden = Math.max(0, items.length - limit);
+  const shown = useMemo(() => {
+    if (hidden === 0) return items;
+    return edge === 'head' ? items.slice(0, limit) : items.slice(items.length - limit);
+  }, [items, limit, hidden, edge]);
+  const showMore = useCallback(() => setLimit((n) => n + step), [step]);
+  return { shown, hidden, showMore, step };
+}
+
+/**
+ * The control that widens a {@link useListWindow}.
+ *
+ * It says how many are hidden rather than only offering a button, because
+ * "Show more" over a list that looks complete is indistinguishable from a list
+ * that *is* complete — the same failure `ListTruncationNote` exists to prevent,
+ * one layer in. Renders nothing when nothing is held back, so a short list
+ * carries no furniture.
+ *
+ * `aria-live` on the count: widening the window changes what is on screen
+ * without moving focus, and a reader who cannot see the rows appear otherwise
+ * has no signal that the button did anything.
+ */
+export function ShowMoreRows({
+  hidden,
+  step = LIST_WINDOW_STEP,
+  noun,
+  plural,
+  onMore,
+  label,
+}: {
+  hidden: number;
+  step?: number;
+  /** Singular, lowercase: "grant", "message". */
+  noun: string;
+  /** Override when the plural is not `noun + "s"`. */
+  plural?: string;
+  onMore: () => void;
+  /** Override the button text — "Show earlier messages" for a conversation. */
+  label?: string;
+}) {
+  if (hidden <= 0) return null;
+  const many = plural ?? `${noun}s`;
+  const word = hidden === 1 ? noun : many;
+  const next = Math.min(step, hidden);
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-3" data-testid="show-more-rows">
+      <Button variant="secondary" onClick={onMore}>
+        {label ?? `Show ${next} more`}
+      </Button>
+      <span aria-live="polite" className="text-xs text-ink-500">
+        {hidden} more {word} not shown
+      </span>
+    </div>
   );
 }
 

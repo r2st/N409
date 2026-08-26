@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { formatDateTime } from '../lib/format';
 import type { Comment } from '../lib/types';
-import { Button, ErrorNote, ListTruncationNote, Spinner } from './ui';
+import { Button, ErrorNote, ListTruncationNote, ShowMoreRows, Spinner, useListWindow } from './ui';
 
 /** First few words of a message, for naming the controls that act on it. */
 function excerpt(body: string, max = 40): string {
@@ -86,10 +86,24 @@ export function CommentsSection({
     }
   };
 
-  if (!comments && !error) return <Spinner />;
+  /*
+   * Memoized because the window below slices them: recomputing the split on
+   * every keystroke in the draft box would re-slice the whole thread each time.
+   */
+  const thread = useMemo(() => (comments ?? []).filter((c) => c.kind !== 'note'), [comments]);
+  const notes = useMemo(() => (comments ?? []).filter((c) => c.kind === 'note'), [comments]);
 
-  const thread = (comments ?? []).filter((c) => c.kind !== 'note');
-  const notes = (comments ?? []).filter((c) => c.kind === 'note');
+  /*
+   * The conversation is windowed from its *newest* end. `/comments` is capped
+   * at five thousand and hands them back oldest-first, and the message somebody
+   * opened this panel for is the last one — so the window keeps the tail and
+   * the control above the list offers the earlier ones. Windowing the head
+   * instead would show a reader five hundred messages of history and hide the
+   * reply they came to read.
+   */
+  const { shown: recent, hidden: earlier, showMore: showEarlier } = useListWindow(thread, { edge: 'tail' });
+
+  if (!comments && !error) return <Spinner />;
 
   const canModerate = (c: Comment) => ops || c.author_id === user?.id;
 
@@ -163,8 +177,9 @@ export function CommentsSection({
             <ErrorNote>{error}</ErrorNote>
           </div>
         )}
+        <ShowMoreRows hidden={earlier} noun="message" onMore={showEarlier} label="Show earlier messages" />
         <ul className="space-y-4">
-          {thread.map((c) => (
+          {recent.map((c) => (
             <li key={c.id} className="flex gap-3">
               <div
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[0.65rem] font-bold ${

@@ -6,7 +6,7 @@ import type { Valuation } from '../src/lib/types';
 /**
  * The six workspace tabs that are pure wiring.
  *
- * `PipelineTabs.tsx` holds no logic of its own — it reads the workspace
+ * Each holds no logic of its own — it reads the workspace
  * context and the signed-in user and hands both to a panel. That is exactly
  * why it was at 0%: nothing looks worth asserting, and the file is a wiring
  * harness that has to be *right*, because every prop it passes is either an
@@ -46,8 +46,14 @@ vi.mock('../src/components/valuation/AiPanel', () => stub('AiPanel'));
 vi.mock('../src/components/valuation/TasksPanel', () => stub('TasksPanel'));
 vi.mock('../src/components/valuation/CalculationPanel', () => stub('CalculationPanel'));
 
-const { AiTab, CalculationsTab, DocumentsTab, FinancialModelTab, ParamsTab, TasksTab } =
-  await import('../src/pages/valuation/PipelineTabs');
+// One module per tab since R161 — they are separate chunks, so this is six
+// imports rather than one. The subject is unchanged: the wiring, not the panels.
+const { AiTab } = await import('../src/pages/valuation/AiTab');
+const { CalculationsTab } = await import('../src/pages/valuation/CalculationsTab');
+const { DocumentsTab } = await import('../src/pages/valuation/DocumentsTab');
+const { FinancialModelTab } = await import('../src/pages/valuation/FinancialModelTab');
+const { ParamsTab } = await import('../src/pages/valuation/ParamsTab');
+const { TasksTab } = await import('../src/pages/valuation/TasksTab');
 
 const VALUATION_ID = '01JZZZZZZZZZZZZZZZZZZZZZZZ';
 
@@ -89,7 +95,7 @@ beforeEach(() => {
   reload.mockClear();
 });
 
-describe('PipelineTabs — every panel gets this engagement', () => {
+describe('pipeline tab adapters — every panel gets this engagement', () => {
   it.each([
     ['DocumentsTab', <DocumentsTab key="d" />, ['DocumentsPanel', 'AccountingConnect']],
     ['ParamsTab', <ParamsTab key="p" />, ['ParamsPanel', 'WaccPanel']],
@@ -105,7 +111,7 @@ describe('PipelineTabs — every panel gets this engagement', () => {
   });
 });
 
-describe('PipelineTabs — who may edit', () => {
+describe('pipeline tab adapters — who may edit', () => {
   it('leaves the params and model forms writable for operations', () => {
     renderTab(<ParamsTab />);
     expect(propsOf('ParamsPanel').readOnly).toBe(false);
@@ -139,7 +145,7 @@ describe('PipelineTabs — who may edit', () => {
   });
 });
 
-describe('PipelineTabs — the details that are easy to drop', () => {
+describe('pipeline tab adapters — the details that are easy to drop', () => {
   it('reloads the workspace after a document review, so the header chip agrees', () => {
     renderTab(<DocumentsTab />);
     // The callback is what keeps the pending-files chip in the header from
@@ -174,7 +180,7 @@ describe('PipelineTabs — the details that are easy to drop', () => {
  * knew how to be read-only for a client; what was missing was the second reason
  * to be, which is why this is one term per panel and not a rewrite.
  */
-describe('PipelineTabs — a retired engagement', () => {
+describe('pipeline tab adapters — a retired engagement', () => {
   const retired = () => valuation({ archived_at: '2026-08-01T00:00:00Z' } as Partial<Valuation>);
 
   it('closes the params and WACC forms to operations as well', () => {

@@ -2,7 +2,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { PARTNER_LOGOS, PRODUCT_CONTENT, STATS, TESTIMONIALS } from '../src/lib/marketing';
+import { PARTNER_LOGOS, STATS, TESTIMONIALS } from '../src/lib/marketing';
+import { PRODUCT_CONTENT } from '../src/lib/productContent';
 import { allPageMeta } from '../src/lib/pageMeta';
 
 /**

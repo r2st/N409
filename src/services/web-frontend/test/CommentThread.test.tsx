@@ -55,6 +55,45 @@ describe('CommentsSection', () => {
     );
   });
 
+  it('windows a long thread from its newest end', async () => {
+    // `/comments` is capped at five thousand and hands them back oldest-first.
+    // Windowing the head would show a reader the start of the conversation and
+    // hide the reply they opened the panel for; the control offers the earlier
+    // messages instead.
+    const many: Comment[] = Array.from({ length: 150 }, (_, i) => ({
+      ...chat,
+      id: `c-${i}`,
+      body: `message ${i}`,
+      created_at: `2026-07-01T10:${String(i % 60).padStart(2, '0')}:00Z`,
+    }));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('/comments')) return jsonResponse({ comments: many, truncated: false });
+      throw new Error(`unexpected fetch ${String(url)}`);
+    });
+    renderSection();
+
+    expect(await screen.findByText('message 149')).toBeInTheDocument();
+    expect(screen.getByText('message 50')).toBeInTheDocument();
+    expect(screen.queryByText('message 49')).toBeNull();
+    expect(screen.getByText('50 more messages not shown')).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Show earlier messages' }));
+    expect(screen.getByText('message 0')).toBeInTheDocument();
+    expect(screen.getByText('message 149')).toBeInTheDocument();
+    expect(screen.queryByTestId('show-more-rows')).toBeNull();
+  });
+
+  it('carries no window control on a thread that fits', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('/comments')) return jsonResponse({ comments: [chat], truncated: false });
+      throw new Error(`unexpected fetch ${String(url)}`);
+    });
+    renderSection();
+    await screen.findByText('When is the draft due?');
+    expect(screen.queryByTestId('show-more-rows')).toBeNull();
+  });
+
   it('says nothing when the whole thread came back', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       if (String(url).includes('/comments')) return jsonResponse({ comments: [chat], truncated: false });

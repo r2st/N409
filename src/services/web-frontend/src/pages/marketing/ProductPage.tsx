@@ -1,12 +1,8 @@
 import { Link, Navigate, useParams } from 'react-router-dom';
-import {
-  FUNDING_STAGES,
-  PROCESS_STEPS,
-  PRODUCTS,
-  formatUsd,
-  productBySlug,
-  productContent,
-} from '../../lib/marketing';
+import { FUNDING_STAGES, PROCESS_STEPS, PRODUCTS, formatUsd, productBySlug } from '../../lib/marketing';
+// The long-form copy is its own module (40 kB, read only here) so it stays out
+// of the first-paint chunk — see `lib/productContent.ts`.
+import { productContent } from '../../lib/productContent';
 import { BookACallSection } from './MarketingSections';
 import { Seo } from '../../components/Seo';
 import { productPageMeta } from '../../lib/pageMeta';

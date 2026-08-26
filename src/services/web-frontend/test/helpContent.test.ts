@@ -4,9 +4,11 @@ import {
   HELP_CATEGORIES,
   articleById,
   categoryMeta,
+  loadHelpBodies,
   primaryArticleForCategory,
   searchArticles,
 } from '../src/data/helpContent';
+import { HELP_BODIES } from '../src/data/helpBodies';
 
 describe('helpContent', () => {
   it('covers all 29 categories (26 core + 3 specialized engines)', () => {
@@ -86,34 +88,63 @@ describe('helpContent', () => {
     const grants = articleById('grants-overview');
     expect(grants!.title.toLowerCase()).toContain('private');
     expect(grants!.related).toContain('asc718-public-overview');
-    expect(grants!.body).toContain('/help/asc718-public-overview');
+    expect(HELP_BODIES['grants-overview']).toContain('/help/asc718-public-overview');
   });
 
   it('names the HRIS providers Rippling, Gusto and Deel', () => {
     const hris = articleById('hris-overview');
     for (const provider of ['Rippling', 'Gusto', 'Deel']) {
-      expect(hris!.body).toContain(provider);
+      expect(HELP_BODIES['hris-overview']).toContain(provider);
       expect(hris!.keywords).toContain(provider.toLowerCase());
     }
   });
 
   it('finds the new engines by their domain terms', () => {
-    expect(searchArticles('lookback').some((a) => a.id === 'asc718-espp')).toBe(true);
-    expect(searchArticles('calibrated opm').some((a) => a.id === 'fund-calibrated-opm')).toBe(true);
-    expect(searchArticles('Tsiveriotis').some((a) => a.id === 'debt-convertible')).toBe(true);
-    expect(searchArticles('valuation cap').some((a) => a.id === 'debt-safe')).toBe(true);
+    expect(searchArticles('lookback', HELP_BODIES).some((a) => a.id === 'asc718-espp')).toBe(true);
+    expect(searchArticles('calibrated opm', HELP_BODIES).some((a) => a.id === 'fund-calibrated-opm')).toBe(
+      true,
+    );
+    expect(searchArticles('Tsiveriotis', HELP_BODIES).some((a) => a.id === 'debt-convertible')).toBe(true);
+    expect(searchArticles('valuation cap', HELP_BODIES).some((a) => a.id === 'debt-safe')).toBe(true);
+  });
+
+  it('has a body for every article and an article for every body', () => {
+    // The two halves of a split module drift apart silently: an article added
+    // without prose renders an empty panel, and a body left behind after its
+    // article is deleted is dead weight in a chunk nobody reads.
+    const ids = HELP_ARTICLES.map((a) => a.id).sort();
+    expect(Object.keys(HELP_BODIES).sort()).toEqual(ids);
+    for (const a of HELP_ARTICLES) {
+      expect(HELP_BODIES[a.id]!.trim().length, `${a.id} has an empty body`).toBeGreaterThan(0);
+    }
+  });
+
+  it('searches metadata only when the corpus has not been loaded', () => {
+    // A caller that has not paid for the prose gets a metadata match rather
+    // than a lie: `searchArticles` cannot claim an article does not mention a
+    // term it has never read.
+    // "safe harbor" appears in two bodies and in no title, summary or keyword.
+    const bodyOnly = 'safe harbor';
+    expect(searchArticles(bodyOnly)).toHaveLength(0);
+    expect(searchArticles(bodyOnly, HELP_BODIES).map((a) => a.id)).toContain('what-is-409a');
+    // Title/keyword matches work either way — those are metadata.
+    expect(searchArticles('dlom').some((a) => a.id === 'assumptions-dlom')).toBe(true);
+  });
+
+  it('loads the bodies through the split and gets the same corpus', async () => {
+    await expect(loadHelpBodies()).resolves.toBe(HELP_BODIES);
   });
 
   it('searches across title, keywords and body', () => {
-    const dlom = searchArticles('dlom');
+    const dlom = searchArticles('dlom', HELP_BODIES);
     expect(dlom.some((a) => a.id === 'assumptions-dlom')).toBe(true);
 
-    const scim = searchArticles('SCIM');
+    const scim = searchArticles('SCIM', HELP_BODIES);
     expect(scim.some((a) => a.id === 'sso-overview')).toBe(true);
 
     // Empty query returns everything.
-    expect(searchArticles('   ')).toHaveLength(HELP_ARTICLES.length);
+    expect(searchArticles('   ', HELP_BODIES)).toHaveLength(HELP_ARTICLES.length);
     // No matches → empty.
-    expect(searchArticles('zzz-nonexistent-term')).toHaveLength(0);
+    expect(searchArticles('zzz-nonexistent-term', HELP_BODIES)).toHaveLength(0);
   });
 });

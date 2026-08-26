@@ -5,6 +5,10 @@ import { formatDate } from '../lib/format';
 import { Markdown } from '../lib/markdown';
 import { sanitizeHtml } from '../lib/m2';
 import { HELP_ARTICLES, HELP_CATEGORIES, type HelpArticleContent } from '../data/helpContent';
+// The Help Center *is* the article corpus: it searches the full text and
+// renders it, so it imports the bodies statically and they ride in this
+// route's chunk. Everywhere else asks for them with `loadHelpBodies()`.
+import { HELP_BODIES } from '../data/helpBodies';
 import { EmptyState, ErrorNote, ResultCount, Spinner, TextInput } from '../components/ui';
 
 /**
@@ -51,7 +55,7 @@ function fromStatic(a: HelpArticleContent): UnifiedArticle {
     categoryLabel: cat?.label ?? a.category,
     keywords: a.keywords.join(' '),
     source: 'static',
-    body: a.body,
+    body: HELP_BODIES[a.id] ?? '',
     related: a.related,
     route: a.route,
   };

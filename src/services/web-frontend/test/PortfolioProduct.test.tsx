@@ -4,7 +4,8 @@ import { HelmetProvider } from 'react-helmet-async';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ProductPage } from '../src/pages/marketing/ProductPage';
 import { WhichValuationPage } from '../src/pages/marketing/WhichValuationPage';
-import { PRODUCTS, QUIZ_OPTIONS, productBySlug, productContent } from '../src/lib/marketing';
+import { PRODUCTS, QUIZ_OPTIONS, productBySlug } from '../src/lib/marketing';
+import { productContent } from '../src/lib/productContent';
 import { pageMeta } from '../src/lib/pageMeta';
 import { marketingRoutes } from '../src/lib/routes';
 

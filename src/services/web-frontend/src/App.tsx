@@ -81,12 +81,14 @@ const NewValuationPage = named(() => import('./pages/NewValuationPage'), 'NewVal
 const ValuationComparePage = named(() => import('./pages/ValuationComparePage'), 'ValuationComparePage');
 const ValuationDetailPage = named(() => import('./pages/ValuationDetailPage'), 'ValuationDetailPage');
 const ValuationWorkspace = named(() => import('./pages/valuation/ValuationWorkspace'), 'ValuationWorkspace');
-const AiTab = named(() => import('./pages/valuation/PipelineTabs'), 'AiTab');
-const CalculationsTab = named(() => import('./pages/valuation/PipelineTabs'), 'CalculationsTab');
-const DocumentsTab = named(() => import('./pages/valuation/PipelineTabs'), 'DocumentsTab');
-const FinancialModelTab = named(() => import('./pages/valuation/PipelineTabs'), 'FinancialModelTab');
-const ParamsTab = named(() => import('./pages/valuation/PipelineTabs'), 'ParamsTab');
-const TasksTab = named(() => import('./pages/valuation/PipelineTabs'), 'TasksTab');
+// One module per tab: six entries resolving to one file is one chunk, and it
+// was 114 kB — every pipeline panel, downloaded to open any one of them.
+const AiTab = named(() => import('./pages/valuation/AiTab'), 'AiTab');
+const CalculationsTab = named(() => import('./pages/valuation/CalculationsTab'), 'CalculationsTab');
+const DocumentsTab = named(() => import('./pages/valuation/DocumentsTab'), 'DocumentsTab');
+const FinancialModelTab = named(() => import('./pages/valuation/FinancialModelTab'), 'FinancialModelTab');
+const ParamsTab = named(() => import('./pages/valuation/ParamsTab'), 'ParamsTab');
+const TasksTab = named(() => import('./pages/valuation/TasksTab'), 'TasksTab');
 const WorkbookTab = named(() => import('./pages/valuation/WorkbookTab'), 'WorkbookTab');
 const ScenariosTab = named(() => import('./pages/valuation/ScenariosTab'), 'ScenariosTab');
 const BridgeTab = named(() => import('./pages/valuation/BridgeTab'), 'BridgeTab');

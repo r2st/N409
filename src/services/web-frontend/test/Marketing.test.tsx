@@ -14,11 +14,11 @@ import {
   COMPARISONS,
   PRICING_FAQ,
   PRODUCTS,
-  PRODUCT_CONTENT,
   RAISE_BANDS,
   formatUsd,
   quote,
 } from '../src/lib/marketing';
+import { PRODUCT_CONTENT } from '../src/lib/productContent';
 
 function renderAt(path: string) {
   return render(

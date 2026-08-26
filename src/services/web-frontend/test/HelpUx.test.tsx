@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -6,6 +6,11 @@ import { HelpIcon } from '../src/components/HelpIcon';
 import { GettingStarted } from '../src/components/GettingStarted';
 import { FeaturesPage } from '../src/pages/FeaturesPage';
 import { InfoTooltip } from '../src/components/ui';
+import * as helpContent from '../src/data/helpContent';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function wrap(ui: React.ReactElement) {
   return render(<MemoryRouter>{ui}</MemoryRouter>);
@@ -26,6 +31,48 @@ describe('HelpIcon', () => {
 
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('labels itself from metadata and fetches the prose only when opened', async () => {
+    // The corpus is a separate chunk (see `data/helpBodies.ts`). The button's
+    // accessible name and the panel header come from metadata, so neither
+    // waits on the fetch — but the body does, and it has to arrive.
+    const user = userEvent.setup();
+    const load = vi.spyOn(helpContent, 'loadHelpBodies');
+    wrap(<HelpIcon article="methodology-opm" />);
+
+    const trigger = screen.getByRole('button', { name: /Help: Option Pricing Method/ });
+    expect(load).not.toHaveBeenCalled();
+
+    await user.click(trigger);
+    expect(load).toHaveBeenCalled();
+    // A body sentence, not a title — proof the prose itself arrived.
+    expect(await screen.findByText(/treats each class of equity as a call option/i)).toBeInTheDocument();
+  });
+
+  it('says the article failed rather than that it does not exist', async () => {
+    // A chunk that did not arrive is a network fact, not a fact about the
+    // knowledge base: "coming soon" here would report the former as the latter.
+    const user = userEvent.setup();
+    vi.spyOn(helpContent, 'loadHelpBodies').mockRejectedValue(new Error('chunk load failed'));
+    wrap(<HelpIcon article="methodology-opm" />);
+
+    await user.click(screen.getByRole('button', { name: /Help: Option Pricing Method/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be loaded/i);
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
+    // The header still names the article — metadata never depended on the fetch.
+    expect(screen.getByRole('dialog', { name: /Option Pricing Method/ })).toBeInTheDocument();
+  });
+
+  it('still says "coming soon" for an id with no article', async () => {
+    const user = userEvent.setup();
+    const load = vi.spyOn(helpContent, 'loadHelpBodies');
+    wrap(<HelpIcon article="no-such-article" />);
+
+    await user.click(screen.getByRole('button', { name: /Help: Help/ }));
+    expect(await screen.findByText(/coming soon/i)).toBeInTheDocument();
+    // Nothing to fetch: an unknown id must not pull the corpus down.
+    expect(load).not.toHaveBeenCalled();
   });
 });
 

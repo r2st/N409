@@ -244,6 +244,52 @@ describe('GrantsTab', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('The grants service is unavailable.');
       expect(screen.queryByText('No grants issued yet')).not.toBeInTheDocument();
     });
+
+    it('renders a window of the register rather than every row the cap allows', async () => {
+      // `/grants` is capped at ten thousand, and each row carries a vesting bar
+      // — the register at its cap is roughly two hundred thousand nodes, and
+      // the tab stops responding rather than merely rendering slowly. The
+      // reader who wants the fiftieth grant should not wait on the last one.
+      const many = Array.from({ length: 250 }, (_, i) => ({
+        ...GRANT,
+        id: `g-${i}`,
+        grantee_name: `Grantee ${i}`,
+      }));
+      mockApi({ grants: () => json({ grants: many, truncated: false }) });
+      renderTab();
+      await ready();
+
+      expect(screen.getByText('Grantee 0')).toBeInTheDocument();
+      expect(screen.getByText('Grantee 99')).toBeInTheDocument();
+      expect(screen.queryByText('Grantee 100')).toBeNull();
+      // And it says so — a window that looked like the whole register would be
+      // a shorter list stated as a complete one.
+      expect(screen.getByText('150 more grants not shown')).toBeInTheDocument();
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Show 100 more' }));
+      expect(screen.getByText('Grantee 100')).toBeInTheDocument();
+      expect(screen.getByText('50 more grants not shown')).toBeInTheDocument();
+    });
+
+    it('leaves a register that fits alone', async () => {
+      mockApi({ grants: () => json({ grants: [GRANT, CANCELLED], truncated: false }) });
+      renderTab();
+      await ready();
+      expect(screen.queryByTestId('show-more-rows')).toBeNull();
+    });
+
+    it("keeps the server's own truncation note, which is about different rows", async () => {
+      // Two different shortfalls: the window is the reader's choice about rows
+      // that arrived, the note is about rows that never did. A page that
+      // conflated them would tell a reader to press "Show more" for grants the
+      // response does not contain.
+      mockApi({ grants: () => json({ grants: [GRANT], truncated: true }) });
+      renderTab();
+      await ready();
+      expect(screen.getByTestId('list-truncated')).toHaveTextContent('More exist than are listed');
+      expect(screen.queryByTestId('show-more-rows')).toBeNull();
+    });
   });
 
   describe('permissions', () => {

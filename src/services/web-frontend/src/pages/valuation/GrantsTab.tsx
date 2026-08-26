@@ -36,11 +36,13 @@ import {
   ListTruncationNote,
   LoadingBlock,
   Select,
+  ShowMoreRows,
   Skeleton,
   SkeletonCardList,
   Spinner,
   TextInput,
   WriteGate,
+  useListWindow,
 } from '../../components/ui';
 
 /**
@@ -245,12 +247,29 @@ const emptyForm = {
   vesting_start_date: '',
 };
 
+/** Stable identity for the pre-load render, so the window's memo does not churn. */
+const NO_GRANTS: Grant[] = [];
+
 export function GrantsTab() {
   const { valuation, retired } = useWorkspace();
   const { user } = useAuth();
   const ops = isOps(user);
   const [grants, setGrants] = useState<Grant[] | null>(null);
   const [truncated, setTruncated] = useState(false);
+  /*
+   * The register is windowed, not paged: `/grants` has no offset, and its cap
+   * is ten thousand. A company with a few thousand employees renders a row per
+   * grant with a vesting bar in each, and the tab stops responding long before
+   * the cap — so a reader who wants the fiftieth grant should not be waiting on
+   * the ten-thousandth. Hooks run before the loading early-return below, hence
+   * the stable empty array.
+   */
+  const {
+    shown: windowed,
+    hidden: hiddenGrants,
+    showMore: showMoreGrants,
+    step: grantStep,
+  } = useListWindow(grants ?? NO_GRANTS);
   const [templates, setTemplates] = useState<Template[]>([]);
   /*
    * `vesting_template` defaults to 'standard_4yr_1yr_cliff' and is submitted
@@ -496,7 +515,7 @@ export function GrantsTab() {
         )
       ) : (
         <ul className="space-y-3">
-          {grants.map((g) => (
+          {windowed.map((g) => (
             <li
               key={g.id}
               className={`rounded-lg border border-paper-300 bg-surface p-5 shadow-card ${g.status === 'cancelled' ? 'opacity-60' : ''}`}
@@ -549,6 +568,10 @@ export function GrantsTab() {
           ))}
         </ul>
       )}
+      <ShowMoreRows hidden={hiddenGrants} step={grantStep} noun="grant" onMore={showMoreGrants} />
+      {/* Counts the rows the *server* sent, not the rows on screen: the window
+          above is the reader's own choice and says so for itself, while this
+          line is about the grants that were never in the response at all. */}
       <ListTruncationNote truncated={truncated} shown={grants.length} noun="grants" />
     </div>
   );
