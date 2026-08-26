@@ -122,13 +122,42 @@ def _pdf_text(raw: bytes) -> str:
     return "\n".join(pages)
 
 
+def _rich_text(node: ElementTree.Element) -> str:
+    """The value of a rich-text container — one `<si>` or one `<is>`.
+
+    A container holds two kinds of `<t>`, and only one of them is the value.
+    `<t>` directly, or `<r><t>` where the string is split across styles, is the
+    text. `<rPh sb=".." eb=".."><t>` is not: it is the reading the typist
+    entered to produce a span of that text, which Excel stores beside the string
+    and renders *above* the cell. Every workbook typed with a Japanese IME
+    carries them, on names in particular.
+
+    `iter()` descends, so joining every `<t>` under the container appended the
+    furigana to the value — 山田太郎 read as 山田太郎ヤマダタロウ. This text is
+    what the extraction pipeline sends to the model, and that heading is all the
+    model has to go on, so the corruption reaches every field pulled out of a
+    Japanese workbook.
+
+    Written as a whitelist of the two element names that carry the value rather
+    than as a skip-list of `rPh`, so `<phoneticPr>` and anything else the schema
+    grows are excluded by construction instead of by enumeration.
+    """
+    parts: list[str] = []
+    for child in node:
+        if child.tag == f"{_SSML}t":
+            parts.append(child.text or "")
+        elif child.tag == f"{_SSML}r":
+            parts.extend(t.text or "" for t in child.iter(f"{_SSML}t"))
+    return "".join(parts)
+
+
 def _xlsx_shared_strings(zf: _BoundedZip) -> list[str]:
     try:
         root = ElementTree.fromstring(zf.read("xl/sharedStrings.xml"))
     except (KeyError, ElementTree.ParseError):
         return []
     # Each <si> may hold one <t> or rich-text runs of <r><t>; join the runs.
-    return ["".join(t.text or "" for t in si.iter(f"{_SSML}t")) for si in root.iter(f"{_SSML}si")]
+    return [_rich_text(si) for si in root.iter(f"{_SSML}si")]
 
 
 def _xlsx_rels(zf: _BoundedZip) -> dict[str, str]:
@@ -188,7 +217,10 @@ def _xlsx_sheets(zf: _BoundedZip) -> list[tuple[str, str]]:
 def _xlsx_cell_value(cell: ElementTree.Element, shared: list[str]) -> str:
     kind = cell.get("t")
     if kind == "inlineStr":
-        return "".join(t.text or "" for t in cell.iter(f"{_SSML}t"))
+        # `<is>` is the same rich-text container `<si>` is, phonetic guides and
+        # all — see `_rich_text`.
+        inline = cell.find(f"{_SSML}is")
+        return _rich_text(inline) if inline is not None else ""
     v = cell.find(f"{_SSML}v")
     raw = v.text if v is not None and v.text is not None else ""
     if kind == "s":

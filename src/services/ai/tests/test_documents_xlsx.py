@@ -421,3 +421,62 @@ class TestBoundedZip:
         # ...and the next read has nothing left.
         with pytest.raises(DocumentTooLarge):
             zf.read("a.xml")
+
+
+# --- phonetic guides ---------------------------------------------------------
+#
+# Furigana. A workbook typed with a Japanese IME stores, beside the text, the
+# reading the typist entered to produce it — `<rPh>` runs inside the same `<si>`
+# or `<is>`, keyed to a span of the value. Excel prints them above the cell;
+# they are not the cell. `iter()` descends, so joining every `<t>` under the
+# container appended the reading to the value: a shareholder called 山田太郎
+# extracted as 山田太郎ヤマダタロウ, in the text that *is* the model's input to
+# the extraction pipeline.
+
+_PHONETIC_SHARED_STRINGS = """<?xml version="1.0"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <si><t>山田太郎</t><rPh sb="0" eb="2"><t>ヤマダ</t></rPh><rPh sb="2" eb="4"><t>タロウ</t></rPh><phoneticPr fontId="1" type="Hiragana"/></si>
+  <si><r><rPr><b/></rPr><t>Acme</t></r><r><t xml:space="preserve"> Holdings</t></r><rPh sb="0" eb="4"><t>アクメ</t></rPh></si>
+</sst>"""
+
+_PHONETIC_SHEET = """<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="s"><v>0</v></c>
+      <c r="B1" t="s"><v>1</v></c>
+      <c r="C1" t="inlineStr"><is><t>佐藤</t><rPh sb="0" eb="2"><t>サトウ</t></rPh></is></c>
+    </row>
+  </sheetData>
+</worksheet>"""
+
+
+def _phonetic_bytes() -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("[Content_Types].xml", _CONTENT_TYPES)
+        zf.writestr("xl/workbook.xml", _WORKBOOK)
+        zf.writestr("xl/sharedStrings.xml", _PHONETIC_SHARED_STRINGS)
+        zf.writestr("xl/worksheets/sheet1.xml", _PHONETIC_SHEET)
+    return buf.getvalue()
+
+
+def test_a_shared_string_drops_its_phonetic_guide():
+    [doc] = extract_texts([_doc(_phonetic_bytes())])
+    assert "山田太郎\t" in doc.text
+    assert "ヤマダ" not in doc.text
+    assert "タロウ" not in doc.text
+
+
+def test_formatting_runs_are_kept_alongside_a_guide():
+    # `<r>` splits one string across styles and is the value; `<rPh>` sits
+    # beside it and is not. Only the second is dropped.
+    [doc] = extract_texts([_doc(_phonetic_bytes())])
+    assert "Acme Holdings" in doc.text
+    assert "アクメ" not in doc.text
+
+
+def test_an_inline_string_drops_its_phonetic_guide():
+    [doc] = extract_texts([_doc(_phonetic_bytes())])
+    assert doc.text.rstrip().endswith("佐藤")
+    assert "サトウ" not in doc.text
