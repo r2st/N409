@@ -355,6 +355,120 @@ describe('xlsxRead', () => {
       ]);
     });
 
+    /**
+     * Furigana. A workbook typed with a Japanese IME stores, beside the text,
+     * the reading the typist entered to produce it — `<rPh>` runs inside the
+     * same `<si>`, keyed to a span of the value. Excel prints them above the
+     * cell; they are not the cell. Concatenating every `<t>` alike appended the
+     * reading to the value, so a shareholder called 山田太郎 arrived as
+     * 山田太郎ヤマダタロウ — in the column the cap table is keyed by, matching
+     * nothing, with no error anywhere to say why.
+     */
+    describe('phonetic guides', () => {
+      const withStrings = (si: string[], sheet: string) => {
+        const workbook =
+          '<?xml version="1.0"?><workbook><sheets>' +
+          '<sheet name="Cap Table" sheetId="1" r:id="rId1"/></sheets></workbook>';
+        const rels =
+          '<?xml version="1.0"?><Relationships>' +
+          '<Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>';
+        return readXlsx(
+          buildZip([
+            { name: 'xl/workbook.xml', data: workbook },
+            { name: 'xl/_rels/workbook.xml.rels', data: rels },
+            { name: 'xl/sharedStrings.xml', data: `<?xml version="1.0"?><sst>${si.join('')}</sst>` },
+            { name: 'xl/worksheets/sheet1.xml', data: sheet },
+          ]),
+        );
+      };
+
+      /** Two shared-string columns: A is the holder, B the header pair's second. */
+      const TWO_COLUMN_SHEET = `<?xml version="1.0"?><worksheet><sheetData>
+        <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
+        <row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2"><v>100</v></c></row>
+      </sheetData></worksheet>`;
+
+      const holderNamed = (si2: string) =>
+        withStrings(['<si><t>Holder</t></si>', '<si><t>Shares</t></si>', si2], TWO_COLUMN_SHEET)[0]!.rows[0]!
+          .Holder;
+
+      it('drops the reading Excel stores beside East Asian text', () => {
+        expect(
+          holderNamed(
+            '<si><t>山田太郎</t>' +
+              '<rPh sb="0" eb="2"><t>ヤマダ</t></rPh>' +
+              '<rPh sb="2" eb="4"><t>タロウ</t></rPh>' +
+              '<phoneticPr fontId="1" type="Hiragana"/></si>',
+          ),
+        ).toBe('山田太郎');
+      });
+
+      it('keeps the formatting runs, which are the value', () => {
+        // `<r>` splits one string across styles; `<rPh>` is a different thing
+        // that happens to sit beside it. Only the second is dropped.
+        expect(
+          holderNamed(
+            '<si><r><rPr><b/></rPr><t>Acme</t></r><r><t xml:space="preserve"> Holdings</t></r>' +
+              '<rPh sb="0" eb="4"><t>アクメ</t></rPh></si>',
+          ),
+        ).toBe('Acme Holdings');
+      });
+
+      it('reads an inline string the same way', () => {
+        const [sheet] = withStrings(
+          ['<si><t>Holder</t></si>', '<si><t>Shares</t></si>'],
+          `<?xml version="1.0"?><worksheet><sheetData>
+            <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
+            <row r="2"><c r="A2" t="inlineStr"><is><t>佐藤</t><rPh sb="0" eb="2"><t>サトウ</t></rPh></is></c><c r="B2"><v>5</v></c></row>
+          </sheetData></worksheet>`,
+        );
+        expect(sheet!.rows).toEqual([{ Holder: '佐藤', Shares: '5' }]);
+      });
+
+      it('leaves an empty guide and a longer tag name alone', () => {
+        expect(holderNamed('<si><t>A</t><rPh sb="0" eb="1"/><t>B</t></si>')).toBe('AB');
+        // `<rPhony>` is not `<rPh>`; the scan must not swallow to its close.
+        expect(holderNamed('<si><rPhony><t>kept</t></rPhony></si>')).toBe('kept');
+      });
+
+      it('treats an unterminated guide as running to the end of the item', () => {
+        // Everything after an `<rPh>` that never closes is, per the document,
+        // inside it. Reading it as the value is the direction that corrupts.
+        expect(holderNamed('<si><t>山田</t><rPh sb="0" eb="2"><t>ヤマダ</t></si>')).toBe('山田');
+      });
+
+      it('scans unclosed guides in linear time', () => {
+        // The regex form of this cut — `/<rPh\b[^>]*>[\s\S]*?<\/rPh>/g` — is
+        // quadratic on a part that opens one it never closes, and this runs over
+        // the shared-string table, the largest part of a real workbook.
+        const sstOf = (n: number) =>
+          buildZip([
+            {
+              name: 'xl/workbook.xml',
+              data:
+                '<?xml version="1.0"?><workbook><sheets>' +
+                '<sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>',
+            },
+            {
+              name: 'xl/_rels/workbook.xml.rels',
+              data:
+                '<?xml version="1.0"?><Relationships>' +
+                '<Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+            },
+            {
+              name: 'xl/sharedStrings.xml',
+              data: `<?xml version="1.0"?><sst><si>${'<rPh sb="0" eb="1">'.repeat(n)}</si></sst>`,
+            },
+            {
+              name: 'xl/worksheets/sheet1.xml',
+              data: '<?xml version="1.0"?><worksheet><sheetData/></worksheet>',
+            },
+          ]);
+        expect(() => readXlsx(sstOf(100_000))).not.toThrow();
+        expectSubQuadratic({ input: sstOf, run: readXlsx, size: 25_000 });
+      });
+    });
+
     it('rejects a file that is not a workbook', () => {
       expect(() => readXlsx(Buffer.from('class,shares\nCommon,10'))).toThrow(XlsxReadError);
       expect(() => readXlsx(buildZip([{ name: 'notes.txt', data: 'hi' }]))).toThrow(/not an excel workbook/i);

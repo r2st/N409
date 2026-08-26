@@ -230,10 +230,61 @@ function pairedInner(xml: string, tag: string): string | undefined {
   return undefined;
 }
 
+/**
+ * A rich-text item with its phonetic guides removed.
+ *
+ * `<si>` and `<is>` hold two kinds of `<t>`. The formatting runs — `<r><t>` —
+ * are the value, split only because parts of it are bold or coloured. The
+ * phonetic runs — `<rPh sb=".." eb=".."><t>` — are *not* the value: they are
+ * the furigana Excel stores beside East Asian text, keyed to a span of it, and
+ * Excel shows them above the cell rather than in it. Every workbook typed with
+ * a Japanese IME carries them, on names in particular, and concatenating every
+ * `<t>` alike turned a shareholder called 山田太郎 into 山田太郎ヤマダタロウ on
+ * import — a name that matches nothing, in the column the whole cap table is
+ * keyed by.
+ *
+ * Removed by a forward scan for the same reason `elements` is one: cutting the
+ * spans with `/<rPh\b[^>]*>[\s\S]*?<\/rPh>/g` is quadratic on a part that
+ * opens one it never closes, and this runs over the shared-string table, which
+ * is the largest part of a real workbook. Each `indexOf` resumes where the last
+ * finished, so the pass is linear whatever the input claims.
+ *
+ * An `<rPh` with no `</rPh>` after it takes the rest of the item with it: the
+ * document says everything from there on is inside a phonetic run, and reading
+ * it as the value is the direction this function exists to avoid.
+ */
+function withoutPhoneticRuns(xml: string): string {
+  if (!xml.includes('<rPh')) return xml;
+  const CLOSE = '</rPh>';
+  let out = '';
+  let at = 0;
+  for (;;) {
+    const open = xml.indexOf('<rPh', at);
+    if (open === -1) return out + xml.slice(at);
+    const nameEnd = open + '<rPh'.length;
+    if (continuesName(xml.charCodeAt(nameEnd))) {
+      // A longer name that merely starts the same way (`<rPhX`), kept as text.
+      out += xml.slice(at, nameEnd);
+      at = nameEnd;
+      continue;
+    }
+    const tagEnd = xml.indexOf('>', nameEnd);
+    if (tagEnd === -1) return out + xml.slice(at, open);
+    out += xml.slice(at, open);
+    if (xml.charCodeAt(tagEnd - 1) === 0x2f) {
+      at = tagEnd + 1; // `<rPh/>` — an empty guide, nothing to skip past
+      continue;
+    }
+    const closeAt = xml.indexOf(CLOSE, tagEnd + 1);
+    if (closeAt === -1) return out;
+    at = closeAt + CLOSE.length;
+  }
+}
+
 /** Concatenate the `<t>` runs inside a shared-string or inline-string item. */
 function textRuns(xml: string): string {
   let out = '';
-  for (const { inner } of elements(xml, 't')) out += decodeXmlText(inner);
+  for (const { inner } of elements(withoutPhoneticRuns(xml), 't')) out += decodeXmlText(inner);
   return out;
 }
 
