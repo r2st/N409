@@ -12,6 +12,7 @@ import {
 import { displayName, formatDate, formatDateTime, GROUP_LABELS } from '../lib/format';
 import { NAMED_BUCKETS, PARTNER_EMAIL_TEMPLATE_KEYS } from '../lib/types';
 import { useLatestOnly } from '../lib/useLatestOnly';
+import { useClearOnChange } from '../lib/useClearOnChange';
 import type { NamedBucketKey, PartnerDetail, ValuationKind, ValuationState } from '../lib/types';
 import {
   Button,
@@ -420,6 +421,11 @@ function PartnerValuations({ partnerId }: { partnerId: string }) {
       .catch(() => current() && setError('Could not load this partner’s engagements.'));
   }, [partnerId, page, claim]);
 
+  // The pager is the question. Without this, page 2's engagements sat under a
+  // pager already reading 3 for the length of the round trip — the stale-reply
+  // case this effect guards against, arriving by the other route.
+  useClearOnChange(`${partnerId}|${page}`, () => setRows(null));
+
   return (
     <section className="mt-10">
       <div className="flex items-center justify-between">
@@ -438,7 +444,7 @@ function PartnerValuations({ partnerId }: { partnerId: string }) {
       )}
       {!rows ? (
         <div className="mt-3">
-          <Spinner />
+          <Spinner label="Loading engagements…" />
         </div>
       ) : rows.length === 0 ? (
         <p className="mt-3 text-sm text-ink-400">No engagements yet.</p>
@@ -478,8 +484,15 @@ function PartnerValuations({ partnerId }: { partnerId: string }) {
               </tbody>
             </table>
           </div>
-          <Pagination page={page} pageCount={pageCountOf(total, 10)} onPage={setPage} className="mt-4" />
         </>
+      )}
+      {/* Outside the rows branch: the pager is how you leave the page you are
+          waiting for, so it has to survive the wait. `total` is the one figure
+          here that a page change does not alter, so holding the last known
+          count while the next page is in flight states nothing that is not
+          still true. */}
+      {total > 0 && (
+        <Pagination page={page} pageCount={pageCountOf(total, 10)} onPage={setPage} className="mt-4" />
       )}
     </section>
   );

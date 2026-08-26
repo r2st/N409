@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
+import { HelmetProvider } from 'react-helmet-async';
 import { EmailOutboxPage } from '../src/pages/EmailOutboxPage';
 import { SupportInboxPage } from '../src/pages/SupportInboxPage';
 import { AdminApiTokensPage } from '../src/pages/AdminApiTokensPage';
@@ -10,6 +11,7 @@ import { InboxPage } from '../src/pages/InboxPage';
 import { AdminJobsPage } from '../src/pages/AdminJobsPage';
 import { CommunicationsPage } from '../src/pages/CommunicationsPage';
 import { AdminUsersPage } from '../src/pages/AdminUsersPage';
+import { BlogPostPage } from '../src/pages/marketing/BlogPages';
 
 /**
  * The window between changing a filter and the reply that answers it.
@@ -417,6 +419,52 @@ describe('a filter change must not leave the previous answer on screen', () => {
 
     // Page 2's rows are not page 1's, and the pager already reads 2.
     await waitFor(() => expect(screen.queryByText('PAGE-ONE@acme.test')).not.toBeInTheDocument());
+    assertWaitIsAnnounced();
+  });
+
+  it('a blog post gives up the previous post the moment another slug is asked for', async () => {
+    const post = (slug: string, title: string) => ({
+      slug,
+      title,
+      excerpt: 'An excerpt.',
+      body_html: '<p>Body.</p>',
+      category: 'Methodology',
+      keywords: '409a',
+      author: 'The N409 team',
+      og_image: null,
+      published: true,
+      published_at: '2026-02-01T09:00:00Z',
+    });
+    const { pending } = holdSecondMatching(/\/blog\/posts\//, (url) =>
+      url.includes('second-post')
+        ? { post: post('second-post', 'SECOND POST') }
+        : { post: post('first-post', 'FIRST POST') },
+    );
+
+    render(
+      <HelmetProvider>
+        <MemoryRouter initialEntries={['/blog/first-post']}>
+          <Routes>
+            <Route
+              path="/blog/:slug"
+              element={
+                <>
+                  <BlogPostPage />
+                  <Link to="/blog/second-post">Next post</Link>
+                </>
+              }
+            />
+          </Routes>
+        </MemoryRouter>
+      </HelmetProvider>,
+    );
+    await screen.findByText('FIRST POST');
+
+    // A related-post link changes the slug without remounting the page.
+    await userEvent.click(screen.getByRole('link', { name: 'Next post' }));
+    await pending;
+
+    await waitFor(() => expect(screen.queryByText('FIRST POST')).not.toBeInTheDocument());
     assertWaitIsAnnounced();
   });
 });

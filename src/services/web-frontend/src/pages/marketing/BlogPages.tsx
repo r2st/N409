@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { useLatestOnly } from '../../lib/useLatestOnly';
+import { useClearOnChange } from '../../lib/useClearOnChange';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { formatDate } from '../../lib/format';
@@ -243,6 +244,18 @@ export function BlogPostPage() {
       }
     }
   }, [slug, ops, claim]);
+
+  /*
+   * A related-post link changes `slug` without remounting this component, so
+   * the post the reader has just left stayed on screen — its title, its body
+   * and its publication date — under the URL of the one they asked for. The
+   * `missing` flag goes with it: carried over, it would render the previous
+   * slug's 404 body for a post that may well exist.
+   */
+  useClearOnChange(slug ?? '', () => {
+    setPost(null);
+    setMissing(false);
+  });
 
   useEffect(() => {
     void load();

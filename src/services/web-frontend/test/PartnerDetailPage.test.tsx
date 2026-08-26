@@ -620,6 +620,28 @@ describe('PartnerDetailPage — the engagement pager', () => {
     expect(screen.getByText(/Page 3 of/)).toBeInTheDocument();
   });
 
+  /*
+   * The other half of the same guarantee. The case above covers the reply that
+   * lands out of order; this one covers the wait before either reply lands, in
+   * which page 1's engagements sat under a pager already reading 2 — the firm's
+   * book, one page wrong, with nothing on screen saying so.
+   */
+  it('gives up the current page as soon as the pager moves off it', async () => {
+    const user = userEvent.setup();
+    const pending = deferValuationPages();
+    renderPage();
+
+    await waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]!.resolve(page('Page One Co'));
+    await screen.findByText('Page One Co');
+
+    await user.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+
+    await waitFor(() => expect(screen.queryByText('Page One Co')).toBeNull());
+    expect(screen.getByText(/Page 2 of/)).toBeInTheDocument();
+  });
+
   it('does not report a failure the abandoned page ran into', async () => {
     const user = userEvent.setup();
     const pending = deferValuationPages();
