@@ -359,6 +359,77 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       }
     });
 
+    /*
+     * Which schedules a report carries is dispatched on the *shape* of the run
+     * it is rendered from — `results.specialty` sends `buildExhibits` to the
+     * specialty schedules, anything else to A–H. The run it was handed was
+     * simply the newest succeeded one, and the Calculations tab offers the
+     * ordinary 409A compute on every kind. So one pressed after the EMI run
+     * swapped the whole exhibit set on a deliverable whose narrative, title
+     * block and template are still the EMI report's: the UMV/AMV pair and the
+     * Schedule 5 conditions the document exists to state fell out, and a
+     * §409A allocation waterfall the client never commissioned took their
+     * place — under an EMI report's chapter headings.
+     */
+    it('renders the schedules of the run the engagement is reported in, not the newest', async () => {
+      const emi = await createValuation(
+        ctx.pool,
+        { kind: 'emi', companyName: 'Marlow Instruments Ltd', userId: client.id, currency: 'USD' },
+        { ...actor, actorId: client.id },
+      );
+      await createCalculation(
+        ctx.pool,
+        {
+          valuationId: emi.id,
+          engineVersion: '1.4.0',
+          status: 'succeeded',
+          inputs: { params: { gross_assets: 2_000_000 } },
+          results: {
+            kind: 'emi',
+            specialty: {
+              pro_rata_per_share: 1.0,
+              restriction_discount: 0.2,
+              umv_per_share: 1.0,
+              amv_per_share: 0.8,
+              qualification: { scheme: 'emi', qualifies: true, checks: {} },
+            },
+          },
+          equityValue: 1_000_000,
+          fmvPerShare: 0.8,
+          createdBy: client.id,
+        },
+        { ...actor, actorId: client.id },
+      );
+      await createCalculation(
+        ctx.pool,
+        {
+          valuationId: emi.id,
+          engineVersion: '1.4.0',
+          status: 'succeeded',
+          inputs: { params: {}, inputs: ENGINE_INPUTS },
+          results: RESULTS,
+          equityValue: RESULTS.equity_value,
+          fmvPerShare: RESULTS.fmv_per_share,
+          createdBy: client.id,
+        },
+        { ...actor, actorId: client.id },
+      );
+
+      const text = await pdfText(emi.id);
+      // The EMI schedule, off the EMI engine's own payload. Asserted on the
+      // exhibit's own heading: the VAL231 appendix states a UMV/AMV pair of its
+      // own, so the wording alone proves nothing about which schedules ran.
+      expect(text).toContain('Exhibit — Share Valuation & Scheme Limits');
+      expect(text).toContain('Restriction discount');
+      // And not the 409A set, which this engagement did not commission.
+      expect(text).not.toContain('Exhibit F — Allocation of Equity Value');
+      expect(text).not.toContain('Tranche');
+      expect(text).not.toContain('$34,000,000');
+      // Nor a §409A conclusion in the summary of an HMRC report — the appendix
+      // one page later states the AMV, and a document cannot say both.
+      expect(text).not.toContain('$1.2345');
+    });
+
     it('omits the schedules for analyses this valuation did not run', async () => {
       const text = await pdfText(computed.id);
       // No asset approach was weighted and this is not a PWERM run. Asserted on

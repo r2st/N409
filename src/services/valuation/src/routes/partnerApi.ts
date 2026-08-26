@@ -46,7 +46,7 @@ import { WORKFLOW_TRANSITIONS } from '../domain/workflow.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { findPartnerIdentity } from '../repos/branding.js';
 import { findApiTokenById } from '../repos/apiTokens.js';
-import { latestSucceededCalculation } from '../repos/calculations.js';
+import { latestCalculationForKind } from '../repos/calculations.js';
 import { findReportByValuation, getVersion, listVersions } from '../repos/reports.js';
 import { deliverablePdf } from './reports.js';
 import { MAX_DOCUMENT_BYTES, rethrowRejectedUpload, storeDocument } from './documents.js';
@@ -1057,7 +1057,13 @@ export function registerPartnerApiRoutes(
       const valuation = await loadScoped(token, id);
       const reportReadable = partnerCanReadReport(principal, valuation);
       const [calculation, documents, report] = await Promise.all([
-        latestSucceededCalculation(deps.pool, valuation.id),
+        // `equity_value` and `fmv_per_share` below are 409A column names every
+        // engine writes into, so which run they come off has to be the one this
+        // engagement's kind is measured in — see `latestCalculationForKind`.
+        // Otherwise an ordinary compute run on an EMI engagement flips the
+        // published per-share figure from the restricted AMV to an
+        // unrestricted §409A price, and the payload says only that it is newer.
+        latestCalculationForKind(deps.pool, valuation.id, valuation.kind),
         listDocuments(deps.pool, valuation.id),
         reportReadable ? findReportByValuation(deps.pool, valuation.id) : null,
       ]);

@@ -18,7 +18,7 @@ import { valuationWorkbookSheets } from '../export/valuationWorkbook.js';
 import { findCapTable } from '../repos/capTables.js';
 import { GRANT_PAGE_LIMIT, listGrants } from '../repos/grants.js';
 import { listWorkbookCells } from '../repos/workbook.js';
-import { latestSucceededCalculation } from '../repos/calculations.js';
+import { latestCalculationForKind } from '../repos/calculations.js';
 import { listOverwrites } from '../repos/overwrites.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
@@ -326,7 +326,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       listWorkbookCells(deps.pool, id),
       findCapTable(deps.pool, id),
       listGrants(deps.pool, id),
-      latestSucceededCalculation(deps.pool, id),
+      latestCalculationForKind(deps.pool, id, valuation.kind),
       listOverwrites(deps.pool, id),
     ]);
     // A deliverable that quietly omits grants is worse than one that will not

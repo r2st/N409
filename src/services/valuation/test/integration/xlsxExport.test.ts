@@ -59,12 +59,16 @@ describe.skipIf(!dbUp)('XLSX export', () => {
     return execFileSync('unzip', ['-Z1', file], { encoding: 'utf8' }).trim().split('\n');
   }
 
-  const createValuation = async (companyName: string, token = client.token): Promise<string> => {
+  const createValuation = async (
+    companyName: string,
+    token = client.token,
+    kind = '409a',
+  ): Promise<string> => {
     const res = await ctx.app.inject({
       method: 'POST',
       url: '/api/v1/valuations',
       headers: authHeader(token),
-      payload: { kind: '409a', company_name: companyName },
+      payload: { kind, company_name: companyName },
     });
     expect(res.statusCode).toBe(201);
     return res.json().valuation.id as string;
@@ -250,6 +254,60 @@ describe.skipIf(!dbUp)('XLSX export', () => {
       expect(workbook).toContain('name="Overrides"');
       // Eight sheets means eight worksheet parts, not one reused eight times.
       expect(entries(res.rawPayload)).toContain('xl/worksheets/sheet8.xml');
+    });
+
+    /*
+     * The Summary sheet's headline row is captioned from the engagement's kind
+     * — "Actual market value (AMV) per share" on an EMI — while the figure
+     * under it came off whichever run happened last. The Calculations tab
+     * offers the ordinary 409A compute on every kind, so one landing after the
+     * EMI run printed an unrestricted §409A price under the AMV heading, and
+     * the Waterfall sheet was built off the same number. AMV is UMV less the
+     * restriction discount; the two are never the same figure, and this
+     * workbook is what an auditor reconciles the option pool against.
+     */
+    it('captions the headline row over the run that engine wrote, not the newest', async () => {
+      const emiId = await createValuation('Restricted Devices', client.token, 'emi');
+      await createCalculation(
+        ctx.pool,
+        {
+          valuationId: emiId,
+          engineVersion: 'py-1.0.0',
+          status: 'succeeded',
+          inputs: {},
+          results: { kind: 'emi', specialty: { umv_per_share: 1.0, amv_per_share: 0.72 } },
+          equityValue: 1_000_000,
+          fmvPerShare: 0.72,
+          createdBy: ops.id,
+        },
+        { actorType: 'human', actorId: ops.id },
+      );
+      await createCalculation(
+        ctx.pool,
+        {
+          valuationId: emiId,
+          engineVersion: 'py-1.0.0',
+          status: 'succeeded',
+          inputs: {},
+          results: { approaches: { income: { equity_value: 1_400_000, weight: 1 } } },
+          equityValue: 1_400_000,
+          fmvPerShare: 1.31,
+          createdBy: ops.id,
+        },
+        { actorType: 'human', actorId: ops.id },
+      );
+
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${emiId}/workbook.xlsx`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      const summary = sheetNamed(res.rawPayload, 'Summary');
+      expect(textsIn(summary)).toContain('Actual market value (AMV) per share');
+      // The AMV, and not the §409A price that ran after it.
+      expect(summary).toContain('<v>0.72</v>');
+      expect(summary).not.toContain('<v>1.31</v>');
     });
 
     it('delivers derived rows as live formulas, not frozen numbers', async () => {

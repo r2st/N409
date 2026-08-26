@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createCalculation } from '../../src/repos/calculations.js';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -28,6 +29,7 @@ describe.skipIf(!dbUp)('partner API', () => {
   let apiKey: string;
   let otherApiKey: string;
   let partnerAdminToken: string;
+  let partnerAdminId: string;
 
   const keyHeader = (key: string) => ({ authorization: `Bearer ${key}` });
 
@@ -43,6 +45,7 @@ describe.skipIf(!dbUp)('partner API', () => {
 
     const admin = await seedUser(ctx, { roles: ['partner'], partnerId });
     partnerAdminToken = admin.token;
+    partnerAdminId = admin.id;
     const minted = await app.inject({
       method: 'POST',
       url: `/api/v1/partners/${partnerId}/tokens`,
@@ -146,6 +149,63 @@ describe.skipIf(!dbUp)('partner API', () => {
       headers: keyHeader(otherApiKey),
     });
     expect(foreignList.json().total).toBe(0);
+  });
+
+  /*
+   * `/results` reports `equity_value` and `fmv_per_share` — 409A column names
+   * that every engine writes into (domain/specialty.ts). On an EMI engagement
+   * the per-share figure is the restricted AMV, and a partner integration reads
+   * whatever is in the field. Which run it came off was decided by recency:
+   * the Calculations tab offers the ordinary compute on every kind, so pressing
+   * it once flipped an EMI engagement's published figure from the AMV to an
+   * unrestricted §409A price, with nothing in the payload saying anything had
+   * changed but the timestamp.
+   */
+  it('reports the run the engagement is measured in, not whichever ran last', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/partner/v1/valuations',
+      headers: keyHeader(apiKey),
+      payload: { kind: 'emi', company_name: 'Restricted Holdings' },
+    });
+    const id = created.json().valuation.id as string;
+    await createCalculation(
+      ctx.pool,
+      {
+        valuationId: id,
+        engineVersion: 'py-1.0.0',
+        status: 'succeeded',
+        inputs: {},
+        results: { kind: 'emi', specialty: { umv_per_share: 1.0, amv_per_share: 0.8 } },
+        equityValue: 1_000_000,
+        fmvPerShare: 0.8,
+        createdBy: partnerAdminId,
+      },
+      { actorType: 'human', actorId: partnerAdminId },
+    );
+    await createCalculation(
+      ctx.pool,
+      {
+        valuationId: id,
+        engineVersion: 'py-1.0.0',
+        status: 'succeeded',
+        inputs: {},
+        results: { approaches: { income: { equity_value: 1_400_000, weight: 1 } } },
+        equityValue: 1_400_000,
+        fmvPerShare: 1.4,
+        createdBy: partnerAdminId,
+      },
+      { actorType: 'human', actorId: partnerAdminId },
+    );
+
+    const results = await app.inject({
+      method: 'GET',
+      url: `/api/partner/v1/valuations/${id}/results`,
+      headers: keyHeader(apiKey),
+    });
+    expect(results.statusCode).toBe(200);
+    expect(Number(results.json().calculation.fmv_per_share)).toBe(0.8);
+    expect(Number(results.json().calculation.equity_value)).toBe(1_000_000);
   });
 
   it('uploads a base64 document and surfaces it in results', async () => {

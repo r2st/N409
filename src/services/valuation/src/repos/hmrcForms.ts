@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import { buildHmrcForm, schemeForKind, type HmrcForm } from '../domain/hmrcForms.js';
-import { latestSucceededCalculation } from './calculations.js';
+import { latestSucceededSpecialtyCalculation } from './calculations.js';
 import { findCompanyProfile } from './companyProfiles.js';
 import { findQuestionnaire } from './intake.js';
 import type { ValuationRow } from './valuations.js';
@@ -23,14 +23,23 @@ export async function loadHmrcForm(pool: pg.Pool, valuation: ValuationRow): Prom
   const [profile, questionnaire, calculation] = await Promise.all([
     findCompanyProfile(pool, valuation.id),
     findQuestionnaire(pool, valuation.id),
-    latestSucceededCalculation(pool, valuation.id),
+    latestSucceededSpecialtyCalculation(pool, valuation.id),
   ]);
 
   // The specialty run records the engine's output under results.specialty and
   // the payload it was given under inputs.params (routes/specialty.ts). A 409A
   // calculation on the same engagement has neither, and reading it would put
-  // common-stock figures on an EMI form — so an unrecognised shape contributes
-  // nothing and the form reports the values as not supplied.
+  // common-stock figures on an EMI form.
+  //
+  // Which is why the run is asked for by shape rather than by recency. The
+  // Calculations tab offers the ordinary compute on every kind, so both shapes
+  // interleave in one `created_at DESC` ordering here; taking the newest of
+  // any shape let a 409A run land on top of the EMI one and take the whole
+  // form down with it — UMV and AMV are required fields, so the pack an
+  // analyst sends to Shares and Assets Valuation reported the two figures HMRC
+  // is being asked to agree as not supplied, on an engagement whose specialty
+  // tab was showing them. The guard below still stands for a malformed
+  // payload; it is no longer load-bearing for the ordinary case.
   const results = calculation?.results as { specialty?: unknown } | undefined;
   const specialty =
     results?.specialty && typeof results.specialty === 'object'

@@ -4,6 +4,8 @@ import { withTransaction, type Queryable } from '../db/pool.js';
 import { lockPublishGate } from './publishLock.js';
 import { PIPELINE_EVENT_TYPES } from '../domain/pipeline.js';
 import { recordEvent, type EventActor } from '../events/record.js';
+import { isSpecialtyKind } from '../domain/specialty.js';
+import type { ValuationKind } from '../domain/valuation.js';
 
 export interface CalculationRow {
   id: string;
@@ -182,6 +184,35 @@ export function latestSucceededSpecialtyCalculation(
   valuationId: string,
 ): Promise<CalculationRow | null> {
   return latestSucceededCalculationWith(db, valuationId, 'specialty');
+}
+
+/**
+ * The newest run of the shape this engagement's *kind* is reported in.
+ *
+ * Three things about a valuation are fixed by its kind and not by its run
+ * history: the report skeleton (`templateForKind`), the exhibit set the render
+ * dispatches to, and the caption over the headline columns
+ * (`headlineLabels` — `equity_value` and `fmv_per_share` are 409A columns by
+ * name that every engine writes into). The newest calculation is fixed by
+ * neither: the Calculations tab offers the ordinary 409A compute on every kind,
+ * so on a specialty engagement both shapes interleave in one `created_at DESC`
+ * ordering and the top row is whichever button was pressed last.
+ *
+ * Reading that top row put a §409A equity value under "Total expense", and the
+ * 409A schedules A–H into a deliverable whose narrative is an EMI report. So
+ * the kind picks the run, rather than the run quietly redefining the kind.
+ *
+ * On a 409A-family kind there is no second shape to confuse — the specialty
+ * pipeline refuses every other kind — and this is the plain newest run.
+ */
+export function latestCalculationForKind(
+  db: Queryable,
+  valuationId: string,
+  kind: string,
+): Promise<CalculationRow | null> {
+  return isSpecialtyKind(kind as ValuationKind)
+    ? latestSucceededSpecialtyCalculation(db, valuationId)
+    : latestSucceededCalculation(db, valuationId);
 }
 
 /** The newest successful run of any shape. */

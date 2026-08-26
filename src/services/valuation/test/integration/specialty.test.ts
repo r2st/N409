@@ -326,6 +326,77 @@ describe.skipIf(!dbUp)('specialty report-type pipeline', () => {
     expect(body.history.some((h: { id: string }) => h.id === body.calculation.id)).toBe(true);
   });
 
+  /*
+   * The VAL231 pack, one ordinary compute later.
+   *
+   * `loadHmrcForm` reads the UMV/AMV pair off `results.specialty` and the
+   * Schedule 5 facts off `inputs.params` — both written only by the EMI engine
+   * run. Taking simply the newest succeeded run meant a 409A compute on the
+   * same engagement (the Calculations tab offers it on every kind) shadowed
+   * that run: neither shape matched, both projections came back null, and the
+   * form reported the two figures HMRC is being asked to agree as *not
+   * supplied* — while the analyst looking at the specialty tab could see the
+   * engine had produced them.
+   */
+  it('builds the HMRC pack off the EMI run after a 409A compute lands on top', async () => {
+    const id = await createValuation('emi');
+    await saveAnswers(id, {
+      equity_value: 1_000_000,
+      total_shares: 100_000,
+      options_granted: 1_000,
+      gross_assets: 2_000_000,
+      fte_employee_count: 40,
+      is_independent: true,
+      has_qualifying_trade: true,
+      works_25_hours_or_75_pct: true,
+    });
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${id}/specialty`,
+          headers: authHeader(ops.token),
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(201);
+
+    await createCalculation(
+      pool,
+      {
+        valuationId: id,
+        engineVersion: 'py-1.0.0',
+        status: 'succeeded',
+        inputs: {},
+        results: { approaches: { income: { equity_value: 2_000_000, weight: 1 } } },
+        equityValue: 2_000_000,
+        fmvPerShare: 20,
+        createdBy: ops.id,
+      },
+      { actorType: 'human', actorId: ops.id },
+    );
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${id}/hmrc-form`,
+      headers: authHeader(ops.token),
+    });
+    expect(res.statusCode).toBe(200);
+    const form = res.json().form;
+    const fields = new Map(
+      (form.sections as Array<{ fields: Array<{ key: string; value: string | null }> }>)
+        .flatMap((s) => s.fields)
+        .map((f) => [f.key, f.value]),
+    );
+    // The stub prices UMV at equity/shares and AMV at 90% of it.
+    expect(fields.get('umv_per_share')).toContain('10.00');
+    expect(fields.get('amv_per_share')).toContain('9.00');
+    // And the Schedule 5 facts off the same run's params, not a 409A row's.
+    expect(fields.get('employee_count')).toBe('40');
+    expect(form.missing_required).not.toContain('Unrestricted market value (UMV) per share');
+    expect(form.missing_required).not.toContain('Actual market value (AMV) per share');
+  });
+
   it('merges run inputs over the questionnaire answers', async () => {
     const id = await createValuation('emi');
     await saveAnswers(id, {

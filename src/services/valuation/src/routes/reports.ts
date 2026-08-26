@@ -55,7 +55,7 @@ import { findCurrentProjection } from '../repos/projections.js';
 import { findAppliedRollforwardRun } from '../repos/rollforwardRuns.js';
 import { FMV_TREND_KINDS, sameCompanyFilter } from '../domain/valuationHistory.js';
 import { fitsInt4, int4Version } from '../domain/int4.js';
-import { latestSucceededCalculation } from '../repos/calculations.js';
+import { latestCalculationForKind } from '../repos/calculations.js';
 import { findPartnerById } from '../repos/adminUsers.js';
 import { fetchPartnerLogoCached } from '../clients/partnerLogoCache.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -140,13 +140,13 @@ function expectedReportVersion(raw: string | string[] | undefined): number | und
  * what the run it reports on was computed as of, and the model can move
  * afterwards.
  */
-async function valuationDateFor(pool: pg.Pool, valuationId: string): Promise<string | null> {
-  const calculation = await latestSucceededCalculation(pool, valuationId);
+async function valuationDateFor(pool: pg.Pool, valuation: ValuationRow): Promise<string | null> {
+  const calculation = await latestCalculationForKind(pool, valuation.id, valuation.kind);
   const payload = calculation?.inputs as { inputs?: { valuation_date?: unknown } } | undefined;
   const fromRun = payload?.inputs?.valuation_date;
   if (typeof fromRun === 'string' && fromRun) return fromRun.slice(0, 10);
 
-  const params = await findParams(pool, valuationId);
+  const params = await findParams(pool, valuation.id);
   const model = params?.engine_inputs as { valuation_date?: unknown } | null | undefined;
   const fromModel = model?.valuation_date;
   return typeof fromModel === 'string' && fromModel ? fromModel.slice(0, 10) : null;
@@ -192,7 +192,7 @@ async function loadOrCreateReport(
   // Gap 6 — an ACTIVE managed template for this kind supplies the body of a
   // new report; the built-in skeleton is only the fallback.
   const managed = await findActiveTemplateForKind(pool, valuation.kind);
-  const vars = templateVars(valuation, await valuationDateFor(pool, valuation.id));
+  const vars = templateVars(valuation, await valuationDateFor(pool, valuation));
   const { templateVersion, content } = managed
     ? { templateVersion: templateLabel(managed), content: contentFromManagedTemplate(managed, vars) }
     : (() => {
@@ -324,7 +324,12 @@ export async function summaryFor(
    * below — this is purely about not waiting for a query to answer a question
    * the next query never asks.
    */
-  const calculation = await latestSucceededCalculation(pool, valuation.id);
+  // The run this engagement is *reported in*, not merely the newest one.
+  // `buildExhibits` dispatches on the run's shape, so a 409A compute pressed
+  // after a specialty run replaced an EMI report's UMV/AMV and Schedule 5
+  // schedules with a §409A allocation waterfall — under that report's own
+  // chapter headings, and contradicting the VAL231 appendix beneath it.
+  const calculation = await latestCalculationForKind(pool, valuation.id, valuation.kind);
   const payload = calculation?.inputs as { inputs?: { valuation_date?: unknown } } | undefined;
   const rawDate = payload?.inputs?.valuation_date;
   const valuationDate = typeof rawDate === 'string' && rawDate ? rawDate.slice(0, 10) : null;
@@ -745,7 +750,7 @@ export function registerReportRoutes(
     const report = await loadOrCreateReport(deps.pool, principal, valuation);
 
     const managed = await findActiveTemplateForKind(deps.pool, valuation.kind);
-    const vars = templateVars(valuation, await valuationDateFor(deps.pool, valuation.id));
+    const vars = templateVars(valuation, await valuationDateFor(deps.pool, valuation));
     const { templateVersion, content } = managed
       ? { templateVersion: templateLabel(managed), content: contentFromManagedTemplate(managed, vars) }
       : (() => {
@@ -855,7 +860,10 @@ export function registerReportRoutes(
      * text is one nobody has written. That is the whole overwrite rule.
      */
     const baseline = target.version === 1 ? target : await getVersion(deps.pool, current.id, 1);
-    const calculation = await latestSucceededCalculation(deps.pool, valuation.id);
+    // Same reading as the render below it: `applyNarrative` is told the kind,
+    // and the figures it falls back on must come from the run that kind is
+    // reported in — not from a compute of the other shape run afterwards.
+    const calculation = await latestCalculationForKind(deps.pool, valuation.id, valuation.kind);
     const outcome = applyNarrative(target.content, drafted, {
       overwrite: parsed.data.overwrite,
       baseline: baseline?.content ?? null,

@@ -108,6 +108,63 @@ describe.skipIf(!dbUp)('external auditor portal (feature 8)', () => {
     expect(body.conclusion.fmv_per_share_label).toBeNull();
   });
 
+  /*
+   * The same caption, one ordinary compute later.
+   *
+   * `headlineLabels` is keyed on the engagement's *kind*, so the caption says
+   * "Total expense" for as long as this is an IFRS 2 engagement. The figure
+   * beneath it was whichever run happened last — and the Calculations tab
+   * offers the 409A compute on every kind, so a run of the other shape landing
+   * on top put a §409A equity value under a heading that calls it a
+   * share-based-payment expense, in the one bundle an outside auditor reads
+   * without anyone in the firm present to correct it.
+   *
+   * The conclusion an IFRS 2 engagement reports is its own engine's.
+   */
+  it('keeps the captioned figure the one that engine wrote, after a 409A run lands on top', async () => {
+    const v = await createValuation(
+      ctx.pool,
+      { kind: 'ifrs2', companyName: 'Awards Ltd', userId: owner.id },
+      { ...actor, actorId: owner.id },
+    );
+    await createCalculation(
+      ctx.pool,
+      {
+        valuationId: v.id,
+        engineVersion: 'py-1.0.0',
+        status: 'succeeded',
+        inputs: {},
+        results: { kind: 'ifrs2', specialty: { total_expense: 480_000 } },
+        equityValue: 480_000,
+        fmvPerShare: null,
+        createdBy: owner.id,
+      },
+      { ...actor, actorId: owner.id },
+    );
+    await createCalculation(
+      ctx.pool,
+      {
+        valuationId: v.id,
+        engineVersion: 'py-1.0.0',
+        status: 'succeeded',
+        inputs: {},
+        results: { approaches: { income: { equity_value: 31_000_000, weight: 1 } } },
+        equityValue: 31_000_000,
+        fmvPerShare: 4.25,
+        createdBy: owner.id,
+      },
+      { ...actor, actorId: owner.id },
+    );
+
+    const { token } = (await createLink(owner.token, v.id)).json();
+    const body = (await redeem(token)).json();
+    expect(body.conclusion.equity_label).toBe('Total expense');
+    expect(Number(body.conclusion.equity_value)).toBe(480_000);
+    // And above all not a per-share figure on a kind that concludes none.
+    expect(body.conclusion.fmv_per_share).toBeNull();
+    expect(body.conclusion.fmv_per_share_label).toBeNull();
+  });
+
   it('rejects an expired link', async () => {
     const v = await seedValuation();
     const { token } = (await createLink(owner.token, v.id)).json();

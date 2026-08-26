@@ -7,7 +7,7 @@ import { isOps, REPORT_VISIBLE_STATES, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
 import { findReportByValuation, getVersion } from '../repos/reports.js';
-import { latestSucceededCalculation } from '../repos/calculations.js';
+import { latestCalculationForKind } from '../repos/calculations.js';
 import { listQaReviews } from '../repos/qaReviews.js';
 import { headlineLabels } from '../domain/specialty.js';
 import {
@@ -177,7 +177,11 @@ export function registerAuditorPortalRoutes(
     // Assumptions: methodology params + the analyst-entered engine inputs, plus
     // the concluded figures from the latest calculation.
     const params = await findParams(deps.pool, valuation.id);
-    const calc = await latestSucceededCalculation(deps.pool, valuation.id);
+    // The run this bundle's captions are describing — see
+    // `latestCalculationForKind`. Simply the newest succeeded run let a 409A
+    // compute on a specialty engagement put its equity value under the other
+    // engine's heading, to an outside reader with nobody present to correct it.
+    const calc = await latestCalculationForKind(deps.pool, valuation.id, valuation.kind);
     const assumptions = params
       ? {
           allocation_method: params.allocation_method,
