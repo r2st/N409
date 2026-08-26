@@ -6,7 +6,7 @@ import {
   marketableValuePerShare,
   num,
 } from './reportSummary.js';
-import { fillTemplateVars, type ReportContent } from './report.js';
+import { escapeTemplateVars, fillTemplateVars, type ReportContent } from './report.js';
 
 /**
  * The concluded figures, substituted into the authored body at render time.
@@ -51,21 +51,6 @@ import { fillTemplateVars, type ReportContent } from './report.js';
 
 /** Values are formatted, escaped strings destined for a sanitized HTML body. */
 export type ReportFigures = Record<string, string>;
-
-/**
- * HTML-escape, because these land inside stored-and-then-rendered HTML.
- *
- * Everything here is engine-derived and numeric today, so nothing needs it in
- * practice. It is applied anyway for the reason the equivalent note in
- * `instantiateTemplate` gives: the set of substituted values has grown once
- * already, and the first free-text figure to join it — a DLOM method label, a
- * benchmark name an analyst typed — would otherwise be stored HTML with no
- * sanitizer between it and the auditor portal that renders section bodies
- * directly.
- */
-function esc(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
 
 interface IncomeApproachShape {
   discount_rate?: unknown;
@@ -193,8 +178,25 @@ export function reportFigures(calculation: CalculationRow | null, currency: stri
   if (!calculation || calculation.status !== 'succeeded' || !calculation.results) return {};
   const results = calculation.results as ResultsShape;
   const out: ReportFigures = {};
+  /*
+   * Stored as written, not HTML-escaped.
+   *
+   * These used to be escaped here, on the argument that they land inside
+   * stored-and-then-rendered HTML — true of `fillFigures`'s third call and of
+   * neither of its first two. A figure is substituted into the section body,
+   * which is markup, and into the heading and the title, which are text: the
+   * PDF writer draws a heading as a string and the table of contents repeats
+   * it. Escaping at the source put `S&amp;P 500` in a chapter heading and in
+   * the contents entry pointing at it, spelled out, for the one figure here
+   * that is free text rather than a formatted number.
+   *
+   * So the escape moved to the fill, where the destination is known. Every
+   * value that reaches HTML still gets it — see `fillFigures` below, and
+   * `escapeTemplateVars`, which is the same rule applied to the five
+   * instantiation variables.
+   */
   const put = (key: string, value: string | null) => {
-    if (value !== null) out[key] = esc(value);
+    if (value !== null) out[key] = value;
   };
 
   const fmv = num(results.fmv_per_share);
@@ -317,15 +319,23 @@ export function reportFigures(calculation: CalculationRow | null, currency: stri
  * back, so the stored version keeps its placeholders and a later re-render
  * picks up a later calculation. Headings are filled too — a heading is plain
  * text everywhere it is shown, and a skeleton is free to put a figure in one.
+ *
+ * Which is why there are two forms of the same map. The title and the heading
+ * take the figure as written, because they are drawn as strings; the body takes
+ * it HTML-escaped, because it is markup that is tokenized by the renderer and
+ * rendered directly by the auditor portal. Nothing here is free text today
+ * except the benchmark name, and one figure is enough: `S&P 500` has to reach
+ * the page as itself on both sides of that split.
  */
 export function fillFigures(content: ReportContent, figures: ReportFigures): ReportContent {
   if (Object.keys(figures).length === 0) return content;
+  const htmlFigures = escapeTemplateVars(figures);
   return {
     title: fillTemplateVars(content.title, figures),
     sections: content.sections.map((s) => ({
       ...s,
       heading: fillTemplateVars(s.heading, figures),
-      html: fillTemplateVars(s.html, figures),
+      html: fillTemplateVars(s.html, htmlFigures),
     })),
   };
 }

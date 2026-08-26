@@ -518,13 +518,39 @@ describe('report templates', () => {
       currency: 'USD',
     });
 
-  it('strips markup a company name smuggles into the body', () => {
+  it('escapes markup a company name smuggles into the body rather than deleting it', () => {
     const content = instantiate409a(XSS_NAME);
-    // The name appears in several sections; none may carry the payload.
-    const carrying = content.sections.filter((s) => /<img|onerror/i.test(s.html));
-    expect(carrying).toEqual([]);
-    // The harmless part of the name still reads through.
-    expect(content.sections.some((s) => s.html.includes('Acme'))).toBe(true);
+    // The name appears in several sections; none may carry a live tag.
+    expect(content.sections.filter((s) => /<img/i.test(s.html))).toEqual([]);
+    // Escaped, not stripped, which is the difference this asserts. Sanitizing
+    // the substituted value made the payload inert by *deleting* it — and it
+    // deletes an ordinary name's own angle brackets just as thoroughly, so
+    // `A & B <Holdings> Ltd` was drafted as `A & B  Ltd` in the one document
+    // whose first job is to say which company it values. See
+    // `escapeTemplateVars`.
+    const carrying = content.sections.filter((s) =>
+      s.html.includes('&lt;img src=x onerror="alert(1)"&gt;Acme'),
+    );
+    expect(carrying.length).toBeGreaterThan(0);
+  });
+
+  it('keeps a company name whose own spelling looks like markup', () => {
+    for (const name of ['A & B <Holdings> Ltd', 'Q < R Capital', "O'Brien & Sons"]) {
+      const bodies = instantiate409a(name).sections.map((s) => s.html);
+      // Decoding what the PDF renderer's `decodeEntities` decodes is what says
+      // the reader gets the name back, character for character.
+      const decoded = bodies.map((h) =>
+        h
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&amp;/g, '&'),
+      );
+      expect(
+        decoded.some((h) => h.includes(name)),
+        name,
+      ).toBe(true);
+    }
   });
 
   it('leaves a filled skeleton at its sanitizer fixed point for every var', () => {

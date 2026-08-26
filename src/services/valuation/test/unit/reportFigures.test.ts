@@ -148,9 +148,10 @@ describe('reportFigures', () => {
     const figures = reportFigures(calculation(), 'USD');
     expect(figures.market_movement_factor).toBe('0.8990x');
     expect(figures.market_movement_return).toBe('-8.8%');
-    // Escaped on the way in — the renderer decodes entities, so the page reads
-    // "S&P Software". See the note on `esc` in the module.
-    expect(figures.market_movement_index).toBe('S&amp;P Software');
+    // Held as written. The escape happens at the fill, where the destination is
+    // known — see the two assertions below on `fillFigures`, which is where the
+    // only free-text figure in this map reaches both a heading and a body.
+    expect(figures.market_movement_index).toBe('S&P Software');
   });
 
   it('inverts the discount chain when the allocation reports no per-share value', () => {
@@ -230,14 +231,45 @@ describe('fillFigures', () => {
     expect(out.sections[0]!.heading).toBe('Value: $1.4947');
   });
 
-  it('cannot be used to inject markup', () => {
-    const figures = reportFigures(
+  const withIndexName = (index_name: string) =>
+    reportFigures(
       calculation({
-        results: { fmv_per_share: 1, market_movement: { factor: 1, index_name: '<img src=x>' } },
+        results: { fmv_per_share: 1, market_movement: { factor: 1, index_name } },
       } as Partial<CalculationRow>),
       'USD',
     );
-    expect(figures.market_movement_index).toBe('&lt;img src=x&gt;');
+
+  it('cannot be used to inject markup into a body', () => {
+    const out = fillFigures(
+      { title: 'T', sections: [{ key: 'k', heading: 'H', html: '<p>{{market_movement_index}}</p>' }] },
+      withIndexName('<img src=x>'),
+    );
+    expect(out.sections[0]!.html).toBe('<p>&lt;img src=x&gt;</p>');
+  });
+
+  it('does not spell an ampersand out in a heading', () => {
+    // A heading is drawn as a string by the PDF writer and repeated verbatim in
+    // the table of contents. Escaping the figure at its source — which is where
+    // the escape used to live — put `S&amp;P 500` on both, in a deliverable
+    // whose contents page is the first thing a reader looks at.
+    const out = fillFigures(
+      {
+        title: 'Report — {{market_movement_index}}',
+        sections: [
+          {
+            key: 'k',
+            heading: 'Benchmark: {{market_movement_index}}',
+            html: '<p>{{market_movement_index}}</p>',
+          },
+        ],
+      },
+      withIndexName('S&P 500'),
+    );
+    expect(out.title).toBe('Report — S&P 500');
+    expect(out.sections[0]!.heading).toBe('Benchmark: S&P 500');
+    // The body is markup, so there it *is* escaped — and the renderer's own
+    // entity decoding puts it back to `S&P 500` on the page.
+    expect(out.sections[0]!.html).toBe('<p>S&amp;P 500</p>');
   });
 });
 

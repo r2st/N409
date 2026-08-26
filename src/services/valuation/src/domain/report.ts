@@ -1,3 +1,4 @@
+import { esc } from './exhibitHtml.js';
 import type { ValuationKind } from './valuation.js';
 
 /**
@@ -2287,6 +2288,45 @@ export function fillTemplateVars(text: string, vars: Readonly<Record<string, unk
 }
 
 /**
+ * The same variables, ready to be substituted into HTML rather than into text.
+ *
+ * A template is filled into two kinds of field and they want opposite things
+ * from a value. A heading is drawn as a string — by React, which escapes it,
+ * and by the PDF writer, which measures and draws it — so it wants the name the
+ * client typed. A body is HTML that is stored, sanitized, re-rendered in the
+ * auditor portal and finally tokenized by the PDF renderer, so it wants that
+ * same name spelled as HTML text.
+ *
+ * Substituting raw was safe and lossy, which is why it survived. `sanitizeHtml`
+ * runs after the fill, so `<img src=x onerror=…>` in a company name never
+ * reached the auditor's browser — it was *deleted*, along with anything else
+ * between a `<` and its `>`. A company legally named `A & B <Holdings> Ltd`
+ * had its 409A drafted for `A & B  Ltd`: the sanitizer read the name's own
+ * middle word as a tag it did not recognise and dropped it, in five sections of
+ * the skeleton, in a deliverable whose first job is to identify the company it
+ * values. Nothing failed, nothing logged, and the name is one of the few fields
+ * in the document that no reviewer re-derives.
+ *
+ * Escaping is what `reportFigures` and `exhibitHtml` already do with values
+ * that land in HTML, and the rule is now the same in all three: a value is
+ * escaped when, and only when, it is filled into markup. `esc` is imported from
+ * `exhibitHtml` rather than written again here for the reason that module
+ * gives — an escape applied in two places out of three is an escape that a
+ * company name can still get around.
+ *
+ * `null` and `undefined` pass through untouched so `fillTemplateVars` can still
+ * tell "no value for this key" from "the empty string", and leave the
+ * placeholder standing.
+ */
+export function escapeTemplateVars(vars: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(vars)) {
+    out[key] = value === null || value === undefined ? value : esc(String(value));
+  }
+  return out;
+}
+
+/**
  * Instantiates a template into editable content with placeholders resolved.
  *
  * The filled body is sanitized, exactly as `contentFromManagedTemplate` does
@@ -2301,16 +2341,19 @@ export function fillTemplateVars(text: string, vars: Readonly<Record<string, unk
  *
  * Only the body is sanitized. Headings render as text everywhere they are
  * shown (React escapes them, and the PDF writer draws them as a string), so
- * passing them through the HTML whitelist would only mangle an ampersand.
+ * passing them through the HTML whitelist would only mangle an ampersand —
+ * and for the same reason they are filled from the raw variables while the
+ * body is filled from the escaped ones. See {@link escapeTemplateVars} for
+ * what sanitizing instead of escaping cost the body.
  */
 export function instantiateTemplate(template: ReportTemplate, vars: ReportTemplateVars): ReportContent {
-  const fill = (text: string) => fillTemplateVars(text, vars);
+  const htmlVars = escapeTemplateVars(vars);
   return {
     title: `${template.name} — ${vars.company_name}`,
     sections: template.sections.map((s) => ({
       key: s.key,
-      heading: fill(s.heading),
-      html: sanitizeHtml(fill(s.html)),
+      heading: fillTemplateVars(s.heading, vars),
+      html: sanitizeHtml(fillTemplateVars(s.html, htmlVars)),
     })),
   };
 }
@@ -2351,28 +2394,41 @@ function splitOnH1(html: string): string[] {
  * a body without any <h1> becomes a single "Report" section. Placeholders
  * resolve with the same vars as the built-in skeletons; everything is
  * sanitized to the editor whitelist.
+ *
+ * Split before the fill, not after, which is the order that lets a heading and
+ * a body be filled differently — the heading from the raw variables because it
+ * is drawn as text, the body from the escaped ones because it is markup
+ * (see {@link escapeTemplateVars}). It also settles a question the old order
+ * answered badly: splitting the *filled* body meant an `<h1>` inside a
+ * substituted company name cut the template into chapters the ops author did
+ * not write, and a report's section headings are its table of contents.
  */
 export function contentFromManagedTemplate(
   template: { name: string; body: string },
   vars: ReportTemplateVars,
 ): ReportContent {
-  const filled = fillTemplateVars(template.body, vars);
-  const parts = splitOnH1(filled);
+  const htmlVars = escapeTemplateVars(vars);
+  const fillHtml = (text: string) => fillTemplateVars(text, htmlVars);
+  const parts = splitOnH1(template.body);
   const sections: ReportSection[] = [];
   // parts = [before-first-h1, heading1, body1, heading2, body2, …]
-  const preamble = parts.length > 1 ? parts[0]?.trim() : '';
+  const preamble = parts.length > 1 ? fillHtml(parts[0] ?? '').trim() : '';
   if (preamble) sections.push({ key: 'section-0', heading: 'Introduction', html: sanitizeHtml(preamble) });
   for (let i = 1; i < parts.length; i += 2) {
-    const heading =
-      sanitizeHtml(parts[i] ?? '')
-        .replace(/<[^>]+>/g, '')
-        .trim() || `Section ${sections.length + 1}`;
+    // Tags stripped from what the ops author wrote, *then* filled — a heading is
+    // text, and a value substituted before the strip would have its own angle
+    // brackets read as markup and deleted with it.
+    const authored = sanitizeHtml(parts[i] ?? '')
+      .replace(/<[^>]+>/g, '')
+      .trim();
+    const heading = fillTemplateVars(authored, vars).trim() || `Section ${sections.length + 1}`;
     sections.push({
       key: `section-${sections.length}`,
       heading,
-      html: sanitizeHtml((parts[i + 1] ?? '').trim()),
+      html: sanitizeHtml(fillHtml(parts[i + 1] ?? '').trim()),
     });
   }
-  if (sections.length === 0) sections.push({ key: 'body', heading: 'Report', html: sanitizeHtml(filled) });
+  if (sections.length === 0)
+    sections.push({ key: 'body', heading: 'Report', html: sanitizeHtml(fillHtml(template.body)) });
   return { title: `${template.name} — ${vars.company_name}`, sections };
 }

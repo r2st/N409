@@ -338,14 +338,46 @@ const SOFT_HYPHEN = '­';
  * carries a glyph for it, which is what makes the drawn form a hyphen.
  *
  * Whitespace-separated text — which is all real prose — comes back untouched.
+ *
+ * Chunked by character rather than by UTF-16 unit, which it was not. `slice`
+ * counts units, so a run of astral characters — an emoji, a rarer Han ideograph,
+ * anything from a supplementary plane — was cut through the middle of a
+ * surrogate pair whenever the boundary fell between its halves, and a soft
+ * hyphen was inserted into the character. `ellipsize` states the rule this
+ * violated a hundred lines below: a lone half of a surrogate pair in the
+ * content stream is a worse failure than the overflow being repaired, because
+ * it is not text any more — `fontSafe` cannot decide coverage for half a
+ * codepoint, so it replaces both halves with `?`, and one character the face
+ * *does* draw becomes two question marks in a signed deliverable.
+ *
+ * Combining marks are kept with the character they modify for the same reason,
+ * with the slack below bounding how far past the limit that is allowed to push
+ * a chunk. Without a bound, a run that is nothing but marks would be one
+ * unbroken chunk again and the quadratic fitting cost this function exists to
+ * remove would come back with it; with it, a chunk is at most
+ * `limit + MAX_CLUSTER_SLACK` and the cost stays linear.
  */
+const MAX_CLUSTER_SLACK = 16;
+const COMBINING_MARK = /\p{M}/u;
+
 export function breakLongRuns(text: string, limit: number = MAX_UNBROKEN_RUN): string {
   // The common case is one pass over the string finding nothing to do.
   if (text.length <= limit) return text;
   return text.replace(/\S+/g, (run) => {
     if (run.length <= limit) return run;
     const parts: string[] = [];
-    for (let i = 0; i < run.length; i += limit) parts.push(run.slice(i, i + limit));
+    let chunk = '';
+    for (const ch of run) {
+      const full = chunk.length + ch.length > limit;
+      // A mark with nothing to attach to is an ordinary character.
+      const attaches = chunk !== '' && chunk.length < limit + MAX_CLUSTER_SLACK && COMBINING_MARK.test(ch);
+      if (full && !attaches) {
+        parts.push(chunk);
+        chunk = '';
+      }
+      chunk += ch;
+    }
+    if (chunk !== '') parts.push(chunk);
     return parts.join(SOFT_HYPHEN);
   });
 }
@@ -1316,6 +1348,64 @@ export function formatChartValue(value: number): string {
   return value.toFixed(4);
 }
 
+/**
+ * A chart with every value the geometry cannot place removed, or null when
+ * removing them leaves nothing to draw.
+ *
+ * `donutSegments` has always dropped non-finite slices; the other three
+ * builders did not, and the three ways they failed had nothing in common:
+ *
+ *  - a bar chart scales off `Math.max(0, ...|values|)`. One `Infinity` makes
+ *    every bar `Infinity / Infinity = NaN` wide and pdfkit refuses the rect
+ *    with `unsupported number: NaN` — a 500 in place of the report. One `NaN`
+ *    is quieter and worse: `max` becomes `NaN`, `max > 0` is false, and *every*
+ *    bar in the chart silently vanishes while its labels stay.
+ *  - a waterfall accumulates, so one non-finite step poisons the running total
+ *    and every column after it, and the render throws.
+ *  - `linePlot` already filters, so the line came out right and the alt text
+ *    beside it — which reads `spec.points` directly — announced `NaN`.
+ *
+ * The wire schema says `z.number().finite()`, so nothing crosses `POST
+ * /render/v1/pdf` that needs this. That is exactly why the library needs it:
+ * a payload the wire rejects is answered with a 422, and `clients/reportRender.ts`
+ * answers a 422 by rendering the same payload *here*, in the caller's process.
+ * The one path that can carry a non-finite value is the one with no schema on
+ * it, and the fallback exists so that a report renders anyway.
+ *
+ * Applied once, at the top of `renderChart`, so the geometry, the pagination
+ * reserve and the alternative text are all computed from the same points. A
+ * chart that omits a value while its alt text names it is the divergence this
+ * placement exists to prevent.
+ *
+ * Dropping a point is as far as this goes. A chart left with none is still
+ * drawn — the donut and the line already answer that state in words ("No
+ * weighted components to show.", "No history to plot yet.") and an empty set is
+ * a thing a caller can legitimately pass. Only the waterfall is suppressed
+ * outright, and only when its *start* is not a number: that column is the axis
+ * every other one is measured from, and there is no honest way to draw the
+ * bridge without it.
+ */
+export function finiteChart(spec: ChartSpec): ChartSpec | null {
+  const finite = (p: ChartPoint) => Number.isFinite(p.value);
+  switch (spec.type) {
+    case 'bar':
+      return { ...spec, points: spec.points.filter(finite) };
+    case 'line':
+      return { ...spec, points: spec.points.filter(finite) };
+    case 'donut':
+      return { ...spec, slices: spec.slices.filter(finite) };
+    case 'waterfall': {
+      if (!finite(spec.start)) return null;
+      const end = spec.end_value;
+      return {
+        ...spec,
+        steps: spec.steps.filter(finite),
+        end_value: end !== undefined && Number.isFinite(end) ? end : undefined,
+      };
+    }
+  }
+}
+
 export interface WaterfallColumn {
   label: string;
   display: string;
@@ -1652,11 +1742,13 @@ function chartColor(kind: WaterfallColumn['kind'], accent: string): string {
  */
 function renderChart(
   doc: PDFKit.PDFDocument,
-  spec: ChartSpec,
+  input: ChartSpec,
   usable: number,
   accent: string,
   parent: Struct,
 ): void {
+  const spec = finiteChart(input);
+  if (spec === null) return;
   // Outside the figure: a page break inside a marked-content region is legal but
   // pointless here, and the reserve has to be taken before the tag opens.
   ensureRoom(doc, chartHeight(spec));
