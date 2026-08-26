@@ -1,5 +1,114 @@
 176dadc94f4f731b6646d9bbbe67c27fd603fd34
 # N409 revision
+# commit:    22ec813
+# subject:   the status a table documented and the code never sent
+# previous:  bd8088f (ten caps that never said they were caps).
+# includes:  1 commit — R163, a documentation round over the API contracts.
+#
+#            Three of the five things this round set out to do were already
+#            done, and saying so is part of the result. `.env.example` is a
+#            deployment contract with a source scan behind it in both
+#            directions, and every one of its 144 variables already sits under
+#            prose that explains it — a per-variable naming rule would have
+#            passed vacuously or forced a rewrite of a file that is already
+#            better than the rule. The engine's business logic is documented at
+#            module level throughout; `compute.py` explains its own pipeline and
+#            every one of its thirty helpers has a docstring. Padding either
+#            would have been motion.
+#
+#            What was actually missing was the same shape in three places: a
+#            document that describes the code, maintained by hand, with nothing
+#            comparing the two.
+#
+#            22ec813 — the error catalog first, because it turned up the defect
+#              that justifies the inversion. `problemTypes.test.ts` had refused
+#              since R32 to let a `urn:n409:problem:*` type be raised without a
+#              row in api-design.md §1.1 — but the row's *status column* was
+#              never compared to anything. `plan-limit` has been documented as a
+#              409 since the table was written and the route has always thrown
+#              402. The table instructed a client to branch on a code the
+#              service does not send, and the census that existed to keep the
+#              table honest could not see it: it checked that a status column
+#              was present, not that it was true.
+#
+#              So PROBLEM_CATALOG (shared/src/problemCatalog.ts) is the source
+#              now and §1.1 is rendered from it. The census holds the catalog to
+#              three things the code decides — the type, the status, and the
+#              title — by parsing the `new ApiProblem({…})` literals in the
+#              services and the two fallback tables in the shared handler. The
+#              catalog file is excluded from its own scan, without which every
+#              catalogued type is trivially "raised" and the stale-entry
+#              direction asks nothing; that exclusion has its own test.
+#
+#              The title check found the second one. `urn:n409:problem:validation`
+#              came back as "Unprocessable Entity" from `problems.unprocessable`
+#              and "Unprocessable Content" from the fastify fallback — one type,
+#              two spellings of the one field RFC 9457 asks to be constant
+#              across occurrences. Aligned on the RFC 9110 phrase.
+#
+#              What the catalog adds beyond the old table is the half nobody had
+#              written down: what to *do*. "Retryable" collapses two different
+#              instructions, so `retry` has three values. A 429 and an open
+#              breaker say when to come back and mean nothing ran; a 500 means
+#              the server fell over mid-request and the caller does not know
+#              whether the write landed, so its retry needs an idempotency key
+#              rather than a timer. Served at GET /api/v1/problems — public,
+#              because requiring a credential to read what a 401 means is a
+#              loop.
+#
+#              Second: the client API had no machine-readable description at
+#              all. The partner API has had a full spec since R88; the 462
+#              routes the web app and the firm workspace talk to had §2 of
+#              api-design.md, which is a design sketch written before the
+#              service existed — paths without the `/api/v1` prefix they ship
+#              under, a handful of routes out of hundreds. GET
+#              /api/v1/openapi.json is generated from `app.routeAudit`, the same
+#              structure the boot-time authentication guard reads, so the
+#              inventory is exact and whether an operation needs a session is
+#              read off the preHandler rather than off a list.
+#
+#              It deliberately carries no per-operation prose, and the reason is
+#              worth keeping: these routes validate inside their handlers with
+#              zod rather than through a route schema, so there is nothing to
+#              derive a summary from, and a summary rearranged out of the URL
+#              reads like documentation without being any — a reader cannot tell
+#              the two apart, which makes the invented ones cost more than they
+#              add. Prose lives on 41 hand-written tags, each held to a length
+#              floor; the public operations carry the reason PUBLIC_ROUTES
+#              already gives. The census refuses a route that matches no section,
+#              a section no route sits under, and a tag no section reaches, and
+#              checks the security block against the preHandler for all 462.
+#              `underPrefix` matches at a segment boundary because `/api/v1/me`
+#              and `/api/v1/metrics` differ after the shared prefix by a
+#              character rather than a slash.
+#
+#              Third, and the opposite failure: the partner spec's response
+#              schemas have described every field since they were written, in
+#              JSDoc, which nothing publishes. `jsonSchemaFromZod` never read
+#              `_def.description`, so a partner generating a client got
+#              `fmv_per_share: string` with no hint that it is an exact decimal
+#              that must not be parsed as a float, and `secret: string |
+#              undefined` with no hint that it is returned exactly once. The
+#              converter reads `.describe()` now — on either side of a wrapper,
+#              and at any depth, which is the level a per-operation description
+#              map cannot reach at all. All twelve response schemas carry a
+#              sentence per field, and the test checks both that they do and
+#              that it survives `responseSchema`'s rebuild into the served
+#              document; either check alone passes while the published spec says
+#              nothing.
+#
+#              The two smaller pieces are where the round's own subject matter
+#              pointed. `buildExhibits` governs the report's exhibit order by
+#              three rules — a schedule with nothing to say is absent rather
+#              than empty, supporting detail follows what it supports,
+#              appendices last — which existed only as inline comments between
+#              the calls and nowhere as a contract the six undocumented builders
+#              could be read against. And the four add-on and fallback price
+#              constants now say they are cents, in a codebase where a
+#              hundredfold has already shipped twice.
+#
+
+# N409 revision
 # commit:    4cb7159
 # subject:   the tie that paged a row twice, and the accent that unaddressed the mail
 # previous:  39a0187 (the work committed, and the message about it did not).
