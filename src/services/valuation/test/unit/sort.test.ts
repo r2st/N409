@@ -81,8 +81,14 @@ describe('exportValuations ordering (round 36)', () => {
         { column: 'due_date', dir: 'desc' },
       ],
     });
+    // The spelling is R166's: `NULLS LAST` survives only on `due_date`, which
+    // is the one of these two that can hold a null, and the tiebreaker runs in
+    // the last term's direction. Both are plan decisions — on a NOT NULL column
+    // the clause cannot move a row but does cost the index, and `col DESC, id
+    // ASC` is a mixed ordering no btree produces. What this test is about is
+    // unchanged: the caller's sort reaches the SQL instead of being dropped.
     expect(squash(calls[0]!.sql)).toContain(
-      'ORDER BY v.company_name ASC NULLS LAST, v.due_date DESC NULLS LAST, v.id ASC',
+      'ORDER BY v.company_name ASC, v.due_date DESC NULLS LAST, v.id DESC',
     );
   });
 
