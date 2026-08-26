@@ -253,10 +253,33 @@ export function parseCsvSheet(text: string): {
   const grid: string[][] = [];
   /** Source line of each kept row, parallel to `grid`. */
   const gridLines: number[] = [];
+  /**
+   * The physical line of the file, and the physical line the record now being
+   * read began on. They are two counters because a record is not a line: a
+   * quoted field may hold newlines, so one record can span several.
+   *
+   * Counting only the newlines that *end* a record — which is what a single
+   * counter does — makes every line number after a multi-line cell too low by
+   * the number of lines that cell swallowed, and the whole point of this figure
+   * is to name the row the reader has open. `capTableCsvParity` pins a quoted
+   * header spanning two lines as a shape real exports have, and that one alone
+   * shifts every data row in the file.
+   */
   let line = 1;
+  let rowStart = 1;
   let field = '';
   let row: string[] = [];
   let inQuotes = false;
+  /** Flush the record in progress, keeping the line it started on. */
+  const endRow = () => {
+    row.push(field);
+    field = '';
+    if (row.some((f) => f.trim() !== '')) {
+      grid.push(row);
+      gridLines.push(rowStart);
+    }
+    row = [];
+  };
   for (let i = 0; i < body.length; i++) {
     const c = body[i];
     if (inQuotes) {
@@ -265,7 +288,13 @@ export function parseCsvSheet(text: string): {
           field += '"';
           i++;
         } else inQuotes = false;
-      } else field += c;
+      } else {
+        field += c;
+        // The newline stays in the field — it is data — but the file moved on
+        // a line and the counter has to move with it. A CRLF counts once, on
+        // its `\n`; a lone `\r` counts where it stands.
+        if (c === '\n' || (c === '\r' && body[i + 1] !== '\n')) line += 1;
+      }
     } else if (c === '"') {
       inQuotes = true;
     } else if (c === delimiter) {
@@ -273,25 +302,12 @@ export function parseCsvSheet(text: string): {
       field = '';
     } else if (c === '\n' || c === '\r') {
       if (c === '\r' && body[i + 1] === '\n') i++;
-      row.push(field);
-      field = '';
-      if (row.some((f) => f.trim() !== '')) {
-        grid.push(row);
-        gridLines.push(line);
-      }
-      row = [];
-      // A newline inside a quoted field never reaches here, so this counts
-      // lines of the file rather than of the logical records.
+      endRow();
       line += 1;
+      rowStart = line;
     } else field += c;
   }
-  if (field !== '' || row.length > 0) {
-    row.push(field);
-    if (row.some((f) => f.trim() !== '')) {
-      grid.push(row);
-      gridLines.push(line);
-    }
-  }
+  if (field !== '' || row.length > 0) endRow();
   if (grid.length === 0) return { headers: [], rows: [], lines: [] };
 
   const columns = nameColumns(grid[0]!);

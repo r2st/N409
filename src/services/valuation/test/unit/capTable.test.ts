@@ -194,6 +194,43 @@ describe('capTable', () => {
       expect(entries.map((e) => e.source_row)).toEqual([2, 4, 6]);
     });
 
+    it('counts the physical lines a quoted cell spans, not the records', () => {
+      // A record is not a line. `notes` holds two embedded newlines, so the row
+      // below it is the fifth line of the file — and a counter that only ticks
+      // on the newline *ending* a record called it the third, sending the
+      // reader two lines above the row with the problem. Multi-line cells are
+      // ordinary in exports that carry a notes or legend column, and
+      // `capTableCsvParity` already pins a header that spans two lines.
+      const sheet = parseCsvSheet(
+        [
+          'class,shares,notes',
+          'Common Stock,8000000,"founder grant',
+          'board minutes 2019-04-02',
+          'see schedule B"',
+          'Series A,2000000,ok',
+        ].join('\n'),
+      );
+      expect(sheet.rows).toHaveLength(2);
+      expect(sheet.lines).toEqual([2, 5]);
+    });
+
+    it('counts the lines a quoted header spans as well', () => {
+      // The header is the one multi-line cell that shifts *every* data row.
+      const sheet = parseCsvSheet('"Security\nClass",shares\nCommon,100\nSeries A,200');
+      expect(sheet.lines).toEqual([3, 4]);
+    });
+
+    it('counts a CRLF inside a quoted cell once', () => {
+      const sheet = parseCsvSheet('class,notes\r\nCommon,"a\r\nb"\r\nSeries A,ok\r\n');
+      expect(sheet.lines).toEqual([2, 4]);
+    });
+
+    it('counts a lone CR inside a quoted cell', () => {
+      // Classic-Mac line endings still turn up in files exported by old tools.
+      const sheet = parseCsvSheet('class,notes\nCommon,"a\rb"\nSeries A,ok');
+      expect(sheet.lines).toEqual([2, 4]);
+    });
+
     it('points a validation error at the spreadsheet row the reader can open', () => {
       const sheet = parseCsvSheet(['class,shares', 'Common Stock,8000000', '', 'Series A,n/a'].join('\n'));
       const entries = parseCapTable(sheet.rows, presetByKey('generic')!.mapping, sheet.lines);
