@@ -167,6 +167,30 @@ export async function listInbox(
 }
 
 /**
+ * Everything {@link unreadThreadCount} answers differently for, as one string.
+ *
+ * Built here rather than at the route because this file owns the query, and a
+ * key that misses one of the query's inputs is not a stale badge — it is one
+ * reader served another reader's number. The three inputs are the three the
+ * SQL below actually reads: the scope clause (`valuationScope`), the read-mark
+ * join (`principal.id`), and the kind filter (`visibleCommentKinds`). All three
+ * derive from the principal, so a role change produces a different key rather
+ * than a stale hit under the old one.
+ *
+ * The kinds are sorted: `visibleCommentKinds` returns a Set, and iteration
+ * order is insertion order, so two principals with the same visibility built by
+ * different paths would otherwise key differently and each pay for their own
+ * miss.
+ */
+export function unreadThreadCountKey(principal: Principal): string {
+  return JSON.stringify({
+    scope: valuationScope(principal),
+    reader: principal.id,
+    kinds: [...visibleCommentKinds(principal)].sort(),
+  });
+}
+
+/**
  * How many engagements have moved since this reader last looked at them.
  *
  * Threads, not comments: "3" in the nav badge means three files want

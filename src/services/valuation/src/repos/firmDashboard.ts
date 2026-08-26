@@ -46,63 +46,90 @@ export interface FirmSummary {
   by_state: Record<string, number>;
 }
 
+/**
+ * The firm's header figures, in one pass over its book.
+ *
+ * Every one of these numbers is a tally of the same rows under the same WHERE,
+ * so they come from a single `GROUP BY state` folded in JavaScript rather than
+ * from an aggregate query plus a second grouped query beside it. That is the
+ * shape the rest of the service already uses — `countValuationsByGroup`,
+ * `namedBucketBreakdown` and `dashboardStats` in repos/valuations.ts all read
+ * once and fold, and `namedBucketBreakdown` states the argument outright: "one
+ * scan for all nine buckets … the alternative is eighteen aggregates over the
+ * same table on a page that renders on every navigation".
+ *
+ * This function was the one that did not. It scanned the firm's engagements
+ * for the eight headline counts and then scanned them again, with the identical
+ * WHERE clause, purely to break the total down by state — so the dashboard
+ * header cost two passes over `valuations` where one answers everything.
+ *
+ * The per-state row carries the extra dimensions (waiting, overdue, due soon,
+ * unassigned) as filtered counts, because each is only ever *reported* within a
+ * set of states: the fold below re-applies exactly the state predicate the SQL
+ * used to carry. `now()` is evaluated once for the statement, which is what the
+ * two `due_date` windows already relied on.
+ */
 export async function firmSummary(
   pool: pg.Pool,
   partnerId: string,
   dueSoonDays: number,
 ): Promise<FirmSummary> {
   const { rows } = await pool.query<{
-    total: string;
-    active: string;
-    published: string;
-    closed: string;
+    state: string;
+    n: string;
     waiting_on_client: string;
     overdue: string;
     due_soon: string;
     unassigned: string;
   }>(
-    `SELECT count(*)                                              AS total,
-            count(*) FILTER (WHERE state = ANY($2))               AS active,
-            count(*) FILTER (WHERE state = 'published')           AS published,
-            count(*) FILTER (WHERE state = ANY($3))               AS closed,
-            count(*) FILTER (WHERE waiting_on_client
-                               AND state = ANY($2))               AS waiting_on_client,
-            count(*) FILTER (WHERE due_date < now()
-                               AND state = ANY($2))               AS overdue,
+    `SELECT state,
+            count(*)                                        AS n,
+            count(*) FILTER (WHERE waiting_on_client)       AS waiting_on_client,
+            count(*) FILTER (WHERE due_date < now())        AS overdue,
             count(*) FILTER (WHERE due_date >= now()
-                               AND due_date < now() + ($4 || ' days')::interval
-                               AND state = ANY($2))               AS due_soon,
-            count(*) FILTER (WHERE assigned_reviewer_id IS NULL
-                               AND state = ANY($5))               AS unassigned
+                               AND due_date < now() + ($2 || ' days')::interval) AS due_soon,
+            count(*) FILTER (WHERE assigned_reviewer_id IS NULL) AS unassigned
        FROM valuations
-      WHERE partner_id = $1 AND ${LIVE_ONLY()}`,
-    [
-      partnerId,
-      ACTIVE_STATES,
-      STATE_GROUPS.closed,
-      String(dueSoonDays),
-      [...STATE_GROUPS.in_review, ...STATE_GROUPS.drafted],
-    ],
+      WHERE partner_id = $1 AND ${LIVE_ONLY()}
+      GROUP BY state`,
+    [partnerId, String(dueSoonDays)],
   );
 
-  const byState = await pool.query<{ state: string; count: string }>(
-    `SELECT state, count(*) AS count FROM valuations
-      WHERE partner_id = $1 AND ${LIVE_ONLY()} GROUP BY state`,
-    [partnerId],
-  );
+  // The state sets the SQL used to carry, applied here instead. Sets rather
+  // than `includes` so a firm with many states does not turn the fold into a
+  // quadratic scan of the group lists.
+  const active = new Set<string>(ACTIVE_STATES);
+  const closed = new Set<string>(STATE_GROUPS.closed);
+  const assignable = new Set<string>([...STATE_GROUPS.in_review, ...STATE_GROUPS.drafted]);
 
-  const r = rows[0]!;
-  return {
-    total: Number(r.total),
-    active: Number(r.active),
-    published: Number(r.published),
-    closed: Number(r.closed),
-    waiting_on_client: Number(r.waiting_on_client),
-    overdue: Number(r.overdue),
-    due_soon: Number(r.due_soon),
-    unassigned: Number(r.unassigned),
-    by_state: Object.fromEntries(byState.rows.map((row) => [row.state, Number(row.count)])),
+  const summary: FirmSummary = {
+    total: 0,
+    active: 0,
+    published: 0,
+    closed: 0,
+    waiting_on_client: 0,
+    overdue: 0,
+    due_soon: 0,
+    unassigned: 0,
+    by_state: {},
   };
+
+  for (const row of rows) {
+    const n = Number(row.n);
+    summary.total += n;
+    summary.by_state[row.state] = n;
+    if (row.state === 'published') summary.published += n;
+    if (closed.has(row.state)) summary.closed += n;
+    if (active.has(row.state)) {
+      summary.active += n;
+      summary.waiting_on_client += Number(row.waiting_on_client);
+      summary.overdue += Number(row.overdue);
+      summary.due_soon += Number(row.due_soon);
+    }
+    if (assignable.has(row.state)) summary.unassigned += Number(row.unassigned);
+  }
+
+  return summary;
 }
 
 export interface FirmClient {
