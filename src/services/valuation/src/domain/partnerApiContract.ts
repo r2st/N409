@@ -39,81 +39,110 @@ const DecimalString = z.string();
 
 export const PublicValuationSchema = z
   .object({
-    id: z.string(),
-    number: DecimalString,
+    id: z.string().describe('ULID of the valuation. Use it in every other path on this API.'),
+    number: DecimalString.describe(
+      'Human-facing engagement number, unique within the platform. A bigint, so a string.',
+    ),
     /** The partner's own id (migration 0164). Null for anything they did not create with one. */
-    external_id: z.string().nullable(),
-    kind: z.enum(VALUATION_KINDS),
-    state: z.enum(VALUATION_STATES),
-    waiting_on_client: z.boolean(),
-    company_name: z.string(),
-    service_name: z.string().nullable(),
-    currency: z.string(),
-    paid_status: z.enum(PAID_STATUSES),
-    created_at: Timestamp,
-    due_date: Timestamp.nullable(),
-    published_at: Timestamp.nullable(),
+    external_id: z
+      .string()
+      .nullable()
+      .describe(
+        'Your own identifier for this engagement, echoed back. Null for anything created without one.',
+      ),
+    kind: z
+      .enum(VALUATION_KINDS)
+      .describe('Which measurement this is — 409A, ASC 718, a fund NAV, and so on.'),
+    state: z
+      .enum(VALUATION_STATES)
+      .describe('Workflow state. Advances one way; `published` is the terminal success state.'),
+    waiting_on_client: z
+      .boolean()
+      .describe('True while the firm is blocked on something the company has not supplied.'),
+    company_name: z.string().describe('The subject company, as it appears on the report.'),
+    service_name: z.string().nullable().describe('The service package sold, if the firm records one.'),
+    currency: z.string().describe('ISO 4217 code the concluded figures are expressed in.'),
+    paid_status: z.enum(PAID_STATUSES).describe('Whether the engagement has been paid for.'),
+    created_at: Timestamp.describe('When the engagement was created.'),
+    due_date: Timestamp.nullable().describe('When the firm has committed to deliver. Null if unset.'),
+    published_at: Timestamp.nullable().describe(
+      'When the report was published. Null until then — the field to poll on.',
+    ),
     /**
      * Set once the firm withdraws the engagement. Non-null means every write
      * to it now answers 409 — see `publicValuation`.
      */
-    retired_at: Timestamp.nullable(),
+    retired_at: Timestamp.nullable().describe(
+      'Set once the firm withdraws the engagement. Non-null means every write to it now answers 409.',
+    ),
   })
   .strict();
 
 export const PublicDocumentSchema = z
   .object({
-    id: z.string(),
-    kind: z.enum(DOCUMENT_KINDS),
-    filename: z.string(),
-    content_type: z.string(),
+    id: z.string().describe('ULID of the stored document.'),
+    kind: z.enum(DOCUMENT_KINDS).describe('What the document is — the category the firm files it under.'),
+    filename: z.string().describe('The name it was uploaded under.'),
+    content_type: z.string().describe('MIME type as stored, sniffed rather than trusted from the upload.'),
     /**
      * `bigint`, so a string like every other bigint on this API — the same
      * reason `number` is one. Typing it as a JSON number would be the more
      * natural-looking spec and a wrong one: a client generated from it parses
      * `"24"` into a type it was told is numeric and fails on the first upload.
      */
-    size_bytes: DecimalString,
-    sha256: z.string(),
-    created_at: Timestamp,
+    size_bytes: DecimalString.describe('Size in bytes. A bigint, so a decimal string rather than a number.'),
+    sha256: z.string().describe('Hex SHA-256 of the stored bytes — compare it to what you sent.'),
+    created_at: Timestamp.describe('When the upload was accepted.'),
   })
   .strict();
 
 /** The results projection carries a narrower document view than the upload. */
 export const ResultsDocumentSchema = z
   .object({
-    id: z.string(),
-    kind: z.enum(DOCUMENT_KINDS),
-    filename: z.string(),
-    sha256: z.string(),
-    created_at: Timestamp,
+    id: z.string().describe('ULID of the stored document.'),
+    kind: z.enum(DOCUMENT_KINDS).describe('What the document is.'),
+    filename: z.string().describe('The name it was uploaded under.'),
+    sha256: z.string().describe('Hex SHA-256 of the stored bytes.'),
+    created_at: Timestamp.describe('When the upload was accepted.'),
   })
   .strict();
 
 export const PublicWebhookSchema = z
   .object({
-    id: z.string(),
-    url: z.string(),
-    events: z.array(z.enum(WEBHOOK_EVENT_TYPES)),
-    enabled: z.boolean(),
-    created_at: Timestamp,
+    id: z.string().describe('ULID of the subscription.'),
+    url: z.string().describe('Where deliveries are POSTed. HTTPS, and not a private address.'),
+    events: z
+      .array(z.enum(WEBHOOK_EVENT_TYPES))
+      .describe('Which events this subscription receives. Others are not delivered.'),
+    enabled: z.boolean().describe('False suspends delivery without losing the subscription.'),
+    created_at: Timestamp.describe('When the subscription was created.'),
     /** Only ever present on the create response — see `publicWebhook`. */
-    secret: z.string().optional(),
+    secret: z
+      .string()
+      .optional()
+      .describe(
+        'The HMAC signing secret, returned once on creation and never again. Store it now; verify ' +
+          'every delivery against it.',
+      ),
   })
   .strict();
 
 export const DeliverySchema = z
   .object({
-    id: z.string(),
-    event_type: z.string(),
-    valuation_id: z.string().nullable(),
-    status: z.enum(['pending', 'delivered', 'failed']),
-    attempts: z.number().int(),
-    max_attempts: z.number().int(),
-    next_attempt_at: Timestamp.nullable(),
-    last_error: z.string().nullable(),
-    created_at: Timestamp,
-    delivered_at: Timestamp.nullable(),
+    id: z.string().describe('ULID of this delivery attempt record.'),
+    event_type: z.string().describe('Which event was delivered, e.g. `valuation.published`.'),
+    valuation_id: z.string().nullable().describe('The engagement the event was about, when it had one.'),
+    status: z
+      .enum(['pending', 'delivered', 'failed'])
+      .describe('`pending` is still being retried; `failed` has exhausted `max_attempts`.'),
+    attempts: z.number().int().describe('How many times delivery has been tried so far.'),
+    max_attempts: z.number().int().describe('Attempts after which the delivery is abandoned.'),
+    next_attempt_at: Timestamp.nullable().describe(
+      'When the next retry is due. Null once the delivery is settled either way.',
+    ),
+    last_error: z.string().nullable().describe('Why the last attempt failed. Null if none has.'),
+    created_at: Timestamp.describe('When the event was queued.'),
+    delivered_at: Timestamp.nullable().describe('When your endpoint accepted it. Null until it does.'),
   })
   .strict();
 
@@ -128,8 +157,11 @@ export const DeliverySchema = z
  * loop on whichever reads better.
  */
 export const CursorPage = {
-  next_cursor: z.string().nullable(),
-  has_more: z.boolean(),
+  next_cursor: z
+    .string()
+    .nullable()
+    .describe('Pass as `cursor` to fetch the next page. Null exactly when `has_more` is false.'),
+  has_more: z.boolean().describe('Whether another page exists. Equivalent to `next_cursor !== null`.'),
 } as const;
 
 /**
@@ -145,77 +177,117 @@ export const MeResponse = z
   .object({
     partner: z
       .object({
-        id: z.string(),
-        name: z.string(),
-        key: z.string(),
-        white_label_enabled: z.boolean(),
-        created_at: Timestamp,
-      })
-      .strict(),
-    token: z
-      .object({
-        id: z.string(),
-        name: z.string(),
-        /** The visible half of the key — never the secret. */
-        prefix: z.string(),
-        created_at: Timestamp,
-        last_used_at: Timestamp.nullable(),
+        id: z.string().describe('ULID of your organisation.'),
+        name: z.string().describe('Your organisation as the platform records it.'),
+        key: z.string().describe('Stable slug for your organisation, used in white-label URLs.'),
+        white_label_enabled: z
+          .boolean()
+          .describe('Whether reports are branded as yours rather than as the platform’s.'),
+        created_at: Timestamp.describe('When your organisation was onboarded.'),
       })
       .strict()
-      .nullable(),
+      .describe('The organisation this key belongs to.'),
+    token: z
+      .object({
+        id: z.string().describe('ULID of the key making this request.'),
+        name: z.string().describe('The label the key was created with.'),
+        /** The visible half of the key — never the secret. */
+        prefix: z.string().describe('The visible leading characters of the key. Never the secret.'),
+        created_at: Timestamp.describe('When the key was minted.'),
+        last_used_at: Timestamp.nullable().describe('When it was last used before this request.'),
+      })
+      .strict()
+      .nullable()
+      .describe(
+        'The key making this request, or null if its record has since been deleted — the request is ' +
+          'still authenticated, so the organisation above is reported either way.',
+      ),
   })
   .strict();
 
-export const CreateValuationResponse = z.object({ valuation: PublicValuationSchema }).strict();
+export const CreateValuationResponse = z
+  .object({ valuation: PublicValuationSchema.describe('The engagement that was created.') })
+  .strict();
 
 export const ListValuationsResponse = z
   .object({
-    valuations: z.array(PublicValuationSchema),
-    page: z.number().int().min(1),
-    per_page: z.number().int().min(1),
-    total: z.number().int().min(0),
+    valuations: z.array(PublicValuationSchema).describe('This page of engagements, newest first.'),
+    page: z.number().int().min(1).describe('1-based page number, for offset paging.'),
+    per_page: z.number().int().min(1).describe('How many rows this page holds at most.'),
+    total: z.number().int().min(0).describe('Total matching engagements across all pages.'),
     ...CursorPage,
   })
   .strict();
 
-export const GetValuationResponse = z.object({ valuation: PublicValuationSchema }).strict();
+export const GetValuationResponse = z
+  .object({ valuation: PublicValuationSchema.describe('The engagement.') })
+  .strict();
 
-export const UploadDocumentResponse = z.object({ document: PublicDocumentSchema }).strict();
+export const UploadDocumentResponse = z
+  .object({ document: PublicDocumentSchema.describe('The document as stored.') })
+  .strict();
 
 export const ResultsResponse = z
   .object({
-    valuation: PublicValuationSchema,
+    valuation: PublicValuationSchema.describe('The engagement these results belong to.'),
     calculation: z
       .object({
-        engine_version: z.string(),
-        equity_value: DecimalString.nullable(),
-        fmv_per_share: DecimalString.nullable(),
-        created_at: Timestamp,
+        engine_version: z.string().describe('Which build of the valuation engine produced this run.'),
+        equity_value: DecimalString.nullable().describe(
+          'Concluded total equity value, as an exact decimal string. Null before the first run.',
+        ),
+        fmv_per_share: DecimalString.nullable().describe(
+          'Concluded fair market value per share, to four decimal places, as an exact decimal string. ' +
+            'Parsing it as a float is how a client silently rounds a valuation.',
+        ),
+        created_at: Timestamp.describe('When this run completed.'),
       })
       .strict()
-      .nullable(),
-    documents: z.array(ResultsDocumentSchema),
+      .nullable()
+      .describe('The latest completed run, or null if none has completed.'),
+    documents: z.array(ResultsDocumentSchema).describe('Documents attached to the engagement.'),
     report: z
       .object({
         /** False until a draft has been shared — not merely until it renders. */
-        available: z.boolean(),
-        version: z.number().int().nullable(),
+        available: z
+          .boolean()
+          .describe('Whether `report.pdf` will answer. False until a draft has been shared with you.'),
+        version: z.number().int().nullable().describe('Version of the shared report. Null until one is.'),
       })
-      .strict(),
+      .strict()
+      .describe('Whether the report is downloadable yet, and which version it is.'),
   })
   .strict();
 
-export const CreateWebhookResponse = z.object({ webhook: PublicWebhookSchema }).strict();
+export const CreateWebhookResponse = z
+  .object({
+    webhook: PublicWebhookSchema.describe(
+      'The subscription. This is the only response that carries `secret`.',
+    ),
+  })
+  .strict();
 
-export const ListWebhooksResponse = z.object({ webhooks: z.array(PublicWebhookSchema) }).strict();
+export const ListWebhooksResponse = z
+  .object({ webhooks: z.array(PublicWebhookSchema).describe('Your subscriptions, without their secrets.') })
+  .strict();
 
-export const DeleteWebhookResponse = z.object({ deleted: z.literal(true) }).strict();
+export const DeleteWebhookResponse = z
+  .object({ deleted: z.literal(true).describe('Always true; the failure case is a status, not a field.') })
+  .strict();
 
 export const ListDeliveriesResponse = z
   .object({
     // Each row carries its own `cursor` as well, so a client can resume from a
     // specific delivery rather than only from the end of a page.
-    deliveries: z.array(DeliverySchema.extend({ cursor: z.string() })),
+    deliveries: z
+      .array(
+        DeliverySchema.extend({
+          cursor: z
+            .string()
+            .describe('Pass as `cursor` to resume from this delivery rather than from the page end.'),
+        }),
+      )
+      .describe('This page of delivery attempts, newest first.'),
     ...CursorPage,
   })
   .strict();
@@ -224,18 +296,27 @@ export const RetryDeliveryResponse = z
   .object({
     delivery: z
       .object({
-        id: z.string(),
-        event_type: z.string(),
-        status: z.enum(['pending', 'delivered', 'failed']),
-        attempts: z.number().int(),
-        max_attempts: z.number().int(),
-        next_attempt_at: Timestamp.nullable(),
+        id: z.string().describe('ULID of the delivery that was re-queued.'),
+        event_type: z.string().describe('Which event it carries.'),
+        status: z
+          .enum(['pending', 'delivered', 'failed'])
+          .describe('`pending` immediately after a retry is accepted.'),
+        attempts: z.number().int().describe('Attempts made before this retry.'),
+        max_attempts: z.number().int().describe('Attempts after which it is abandoned.'),
+        next_attempt_at: Timestamp.nullable().describe('When the retry will be sent.'),
       })
-      .strict(),
+      .strict()
+      .describe('The delivery as it now stands.'),
   })
   .strict();
 
-export const TestWebhookResponse = z.object({ delivered: z.boolean() }).strict();
+export const TestWebhookResponse = z
+  .object({
+    delivered: z
+      .boolean()
+      .describe('Whether your endpoint accepted the test event. False is a failure to reach it, not a 4xx.'),
+  })
+  .strict();
 
 /**
  * `GET /docs` and `GET /openapi.json` describe themselves loosely on purpose.

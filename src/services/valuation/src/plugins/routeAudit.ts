@@ -175,6 +175,21 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
       'the same outline rendered as the document itself, on a fictitious company; every page is ' +
       'marked as not a valuation opinion, and no engagement data is reachable from it',
   },
+  // The client API's own documentation. Public for the same reason the partner
+  // pair is: the first thing somebody does with a status they do not understand
+  // is look it up, and requiring a credential to read what a 401 means is a
+  // loop. Neither document names an engagement, a person or a tenant — one is
+  // the shape of the URL space, the other a fixed vocabulary in the binary.
+  {
+    method: 'GET',
+    url: '/api/v1/openapi.json',
+    reason: 'the client API described as an OpenAPI 3.1 document; the URL space, not any data in it',
+  },
+  {
+    method: 'GET',
+    url: '/api/v1/problems',
+    reason: 'the problem-type catalogue every error body branches on; a fixed vocabulary',
+  },
   { method: 'GET', url: '/api/partner/v1/docs', reason: 'self-describing partner API documentation' },
   {
     method: 'GET',
@@ -248,6 +263,17 @@ export interface RouteAudit {
    * against reality instead of against what somebody assumed the paths were.
    */
   all(): string[];
+  /**
+   * The subset of {@link all} that runs through `app.authenticate`.
+   *
+   * `unguarded()` answers the security question — "what escaped both the
+   * preHandler and the allow-list" — and deliberately subtracts PUBLIC_ROUTES,
+   * so it cannot answer the documentation one. The generated OpenAPI needs to
+   * mark each operation `security: [session]` or `security: []`, and a route
+   * that is authenticated is a different claim from a route that is merely not
+   * a violation.
+   */
+  authenticated(): string[];
 }
 
 declare module 'fastify' {
@@ -292,6 +318,7 @@ export function registerRouteAudit(app: FastifyInstance): RouteAudit {
     redundantExemptions: () =>
       [...PUBLIC_KEYS].filter((k) => authenticated.has(k)).sort((a, b) => a.localeCompare(b)),
     all: () => [...seen].sort((a, b) => a.localeCompare(b)),
+    authenticated: () => [...authenticated].sort((a, b) => a.localeCompare(b)),
   };
   app.decorate('routeAudit', audit);
   return audit;

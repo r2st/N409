@@ -285,7 +285,7 @@ export const problems = {
   unprocessable: (detail?: string, extensions?: Record<string, unknown>) =>
     new ApiProblem({
       status: 422,
-      title: 'Unprocessable Entity',
+      title: 'Unprocessable Content',
       type: 'urn:n409:problem:validation',
       detail,
       extensions,

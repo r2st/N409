@@ -39,6 +39,15 @@ export {
   type RouteErrorRate,
 } from './errorRates.js';
 export {
+  PROBLEM_CATALOG,
+  PROBLEM_TYPES,
+  describeProblem,
+  renderProblemTable,
+  statusOrder,
+  type ProblemCatalogEntry,
+  type RetryAdvice,
+} from './problemCatalog.js';
+export {
   ApiProblem,
   problems,
   registerProblemHandler,

@@ -107,6 +107,7 @@ import { registerJobRoutes } from './routes/jobs.js';
 import { registerSupportRoutes } from './routes/support.js';
 import { registerContactRoutes } from './routes/contact.js';
 import { registerAdminEventRoutes } from './routes/adminEvents.js';
+import { registerApiDocsRoutes } from './routes/apiDocs.js';
 import { registerHelpRoutes } from './routes/help.js';
 import { registerBlogRoutes } from './routes/blog.js';
 import { registerCommunicationRoutes } from './routes/communications.js';
@@ -731,6 +732,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerSampleReportRoutes(app, { pdfLimiter: deps.sampleReportPdfLimiter });
   // P2 #12 — global activity audit viewer
   registerAdminEventRoutes(app, { pool });
+  // R163 — the client API's own OpenAPI document and the error catalog behind
+  // every problem+json body. Registered late so `routeAudit.all()` is complete
+  // by the time either is served; both are pure reads of in-memory state.
+  registerApiDocsRoutes(app);
   // P2 #10 — help / knowledge base
   registerHelpRoutes(app, { pool });
   // Design §16.2 — the public marketing blog, shaped on the help centre.

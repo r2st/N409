@@ -987,6 +987,18 @@ function discountRateBasis(results: Record<string, unknown>): string {
   return 'Weighted average cost of capital, built up in Appendix I';
 }
 
+/**
+ * Exhibit C — the income approach, as the DCF a reader can recompute.
+ *
+ * Null when the run has no income approach, which is the convention every
+ * builder in this file follows: a schedule that would have nothing to say is
+ * absent rather than present and empty. That is a statement about the
+ * valuation, not a rendering failure — printing "not applicable" under a
+ * lettered exhibit invites the question of what was suppressed.
+ *
+ * Its supporting detail is C-1 ({@link projectionExhibit}), which is why
+ * `buildExhibits` emits the two adjacently.
+ */
 export function incomeExhibit(
   inputs: Record<string, unknown>,
   results: Record<string, unknown>,
@@ -1217,6 +1229,16 @@ function rateAssumption(value: unknown): string | null {
   return lo === hi ? formatPercent(lo, 1) : `${formatPercent(lo, 1)} to ${formatPercent(hi, 1)}, by year`;
 }
 
+/**
+ * Exhibit C-1 — the projection Exhibit C discounts, year by year.
+ *
+ * Reads `ctx.projection` rather than the engine's results: the projection is
+ * an *input* the analyst recorded, and the whole value of the schedule is
+ * showing what was fed in beside what came out. Null when there is none, and
+ * also when the stored row is a shape this builder cannot read — dropping one
+ * supporting schedule is a better failure than throwing out of a render that
+ * had a finished report in it.
+ */
 export function projectionExhibit(
   inputs: Record<string, unknown>,
   ctx: ExhibitContext,
@@ -1346,6 +1368,13 @@ const MARKET_BASIS_WORDS: Record<string, string> = {
   ebitda: 'EBITDA',
 };
 
+/**
+ * Exhibit D — the market approach: the multiple applied and what it was applied
+ * to.
+ *
+ * Null when the run weighted no market approach. Its supporting detail is D-1
+ * ({@link peerSetExhibit}), the companies the multiple was drawn from.
+ */
 export function marketExhibit(
   inputs: Record<string, unknown>,
   results: Record<string, unknown>,
@@ -1492,6 +1521,16 @@ function usablePeers(peers: unknown): ExhibitPeer[] {
     });
 }
 
+/**
+ * Exhibit D-1 — the guideline public companies behind Exhibit D's multiple,
+ * and the ones that were screened and rejected.
+ *
+ * Two conditions for it to print, and the second is the substantive one: there
+ * have to be usable peers, *and* the run has to have weighted a market
+ * approach. A peer set an analyst screened but did not weight into the
+ * conclusion is working material rather than support for a conclusion, and
+ * publishing it under a lettered exhibit would present it as the latter.
+ */
 export function peerSetExhibit(
   peers: readonly ExhibitPeer[] | undefined,
   results: Record<string, unknown>,
@@ -1682,6 +1721,12 @@ export function peerSetExhibit(
 
 // ── Exhibit E — asset approach ───────────────────────────────────────────────
 
+/**
+ * Exhibit E — the asset approach: assets, liabilities, and the adjustments
+ * between book and fair value.
+ *
+ * Null when the run weighted no asset approach.
+ */
 export function assetExhibit(results: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
   const approach = record(record(results.approaches)?.asset);
   if (!approach) return null;
@@ -2391,6 +2436,17 @@ export function rfrSensitivityExhibit(
 
 // ── Exhibit G — PWERM scenarios ──────────────────────────────────────────────
 
+/**
+ * Exhibit G — the PWERM scenarios: each exit, its probability, and the
+ * per-share value it implies.
+ *
+ * Only for an allocation that really is scenario-based. A Monte Carlo run also
+ * reports `allocation.scenarios`, and those entries are a different object — a
+ * horizon and a volatility with no exit value, because the exit is a
+ * distribution rather than a point — so rendering them through these columns
+ * would print an exit the model never assumed. Null in that case, and null
+ * when the run used neither.
+ */
 export function pwermExhibit(results: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
   const allocation = record(results.allocation);
   /*
@@ -3903,6 +3959,36 @@ export function opmCalculationsExhibit(
   ]);
 }
 
+/**
+ * Every exhibit the report renders, in the order they are bound into the PDF.
+ *
+ * Three rules govern this list, and none of them is visible from any single
+ * builder:
+ *
+ *  1. **An exhibit that would say nothing is absent, not empty.** Each builder
+ *     answers `null` when the run gives it nothing to show, and the nulls are
+ *     dropped rather than rendered as a heading over "not applicable". So the
+ *     lettering a reader sees is contiguous and every letter present carries
+ *     content — which is also why a builder must never answer a section it
+ *     could not populate.
+ *
+ *  2. **Supporting detail follows what it supports.** C-1 after C, D-1 after
+ *     D, F-1/F-2/F-3 after F, H-1 after H, II-1 after II. The suffix is not
+ *     decoration: those schedules are unreadable out of sequence, because each
+ *     one argues an input the exhibit above it used.
+ *
+ *  3. **Appendices last.** I through IV support the exhibits rather than being
+ *     read in sequence with them.
+ *
+ * A run has to have succeeded and carried results; anything else contributes
+ * no exhibits at all, because a report body that stands on its own is a better
+ * artifact than one padded with the shape of a calculation that failed.
+ *
+ * Specialty runs fork entirely. `results.specialty` is a different engine's
+ * output — an ASC 718 expense, an intangible, a fund NAV — and not one of the
+ * 409A schedules below can read it, so those runs are handed to
+ * `domain/specialtyExhibits.ts` and none of this list executes.
+ */
 export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitContext): ReportPdfSection[] {
   if (!calculation || calculation.status !== 'succeeded' || !calculation.results) return [];
   // A specialty run (routes/specialty.ts) records its engine's result under

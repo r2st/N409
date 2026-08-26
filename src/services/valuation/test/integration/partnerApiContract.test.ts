@@ -41,6 +41,7 @@ const dbUp = await isDbAvailable();
  */
 interface SchemaNode {
   type?: string;
+  description?: string;
   enum?: unknown[];
   minimum?: number;
   additionalProperties?: unknown;
@@ -172,13 +173,19 @@ describe.skipIf(!dbUp)('partner API response contract', () => {
     const doc = res.json() as OpenApiDoc;
 
     const schema = responseSchema(doc, '/valuations', 'get', '200');
-    expect(schema.properties?.total).toEqual({ type: 'integer', minimum: 0 });
+    expect(schema.properties?.total).toMatchObject({ type: 'integer', minimum: 0 });
+    // …and the prose the schema carries reaches the document. `.describe()` was
+    // dropped by the converter until R163, so every field here was a bare type.
+    expect(schema.properties?.total?.description).toBeTruthy();
     const valuations = at(schema, 'valuations');
     expect(valuations.type).toBe('array');
     expect(item(valuations, 'valuations').properties?.state?.enum).toContain('published');
     // A decimal column is a string on the wire; a spec that says `number` is
     // how a client silently rounds a valuation.
     expect(item(valuations, 'valuations').properties?.number?.type).toBe('string');
+    // Nested inside an array element — the depth no per-operation description
+    // map can reach, and the reason the converter has to read `.describe()`.
+    expect(item(valuations, 'valuations').properties?.number?.description).toContain('bigint');
 
     // Responses must stay additive-safe: closing them would break every
     // strictly-generated client the day a field is added.

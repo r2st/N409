@@ -112,12 +112,36 @@ function numberSchema(def: Def): JsonSchema {
  * The JSON Schema for one zod schema.
  *
  * `descriptions` maps a top-level property name to the prose already written
- * for the API reference, so the generated schema carries both halves.
+ * for the API reference, so the generated schema carries both halves. It only
+ * reaches the top level, which is what the second source below is for.
+ *
+ * Prose can also travel *on* the schema, via `.describe()`. That is the only
+ * way to document a field that is not a top-level key — an element of
+ * `share_classes[]`, the `calculation` object inside a results payload — and
+ * until R163 this converter dropped it on the floor: zod recorded it in
+ * `_def.description` and nothing read that key, so every nested field in the
+ * published spec was a bare type. The generated document typed a partner's
+ * response and explained none of it.
+ *
+ * Where both exist the registry wins. It is written per operation, against the
+ * endpoint being documented, and a shared schema's own sentence is the more
+ * general of the two.
  */
 export function jsonSchemaFromZod(
   schema: z.ZodTypeAny,
   descriptions: Record<string, string> = {},
 ): JsonSchema {
+  const converted = convert(schema, descriptions);
+  // `.describe()` on the outside of a wrapper — `z.string().optional().describe(…)`
+  // — records on the wrapper, and on the inside records on what it wraps. Both
+  // spellings mean the same thing to a reader, so whichever carried it wins,
+  // and an inner one already present is not overwritten by an outer absence.
+  const own = defOf(schema).description;
+  if (typeof own === 'string' && own.length > 0) return { ...converted, description: own };
+  return converted;
+}
+
+function convert(schema: z.ZodTypeAny, descriptions: Record<string, string>): JsonSchema {
   const def = defOf(schema);
   switch (typeName(schema)) {
     case 'ZodString':
@@ -147,7 +171,7 @@ export function jsonSchemaFromZod(
       for (const [key, value] of Object.entries(shape)) {
         const child = jsonSchemaFromZod(value);
         const description = descriptions[key];
-        properties[key] = description ? { description, ...child } : child;
+        properties[key] = description ? { ...child, description } : child;
         if (!isOptionalSchema(value)) required.push(key);
       }
       const out: JsonSchema = { type: 'object', properties, additionalProperties: false };

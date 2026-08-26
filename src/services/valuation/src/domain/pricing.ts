@@ -35,6 +35,15 @@ export const DEFAULT_PRICE_CENTS: Partial<Record<ValuationKind, number>> = {
   '820': 149_000,
 };
 
+/**
+ * What an unrecognised kind is quoted, cents.
+ *
+ * Every specialty kind added since the table above was written lands here, so
+ * this is not a defensive branch that never runs — it is the list price of the
+ * long tail. Set to the cheapest published figure deliberately: a kind whose
+ * price nobody has decided should be under-quoted and corrected by a human,
+ * not over-quoted to a client who then has to be talked down.
+ */
 export const FALLBACK_PRICE_CENTS = 99_000;
 
 /** Entry price for a kind, before any band uplift or add-on. */
@@ -101,13 +110,28 @@ export function bandForRaise(amountRaisedCents: number | string | null | undefin
 
 // ── Add-ons ──────────────────────────────────────────────────────────────────
 
+/**
+ * The two things that can be bought alongside a valuation.
+ *
+ * A closed list rather than a free-form set, because each one is priced by a
+ * constant below and rendered as its own quote line — an add-on the quote does
+ * not recognise would be charged nothing and appear nowhere.
+ */
 export const ADDON_KEYS = ['express', 'qsbs_letter'] as const;
 export type AddonKey = (typeof ADDON_KEYS)[number];
 
+/**
+ * Add-on prices, cents — flat, not a percentage of the base.
+ *
+ * Cents like every other money figure in this file and in `plan_limits`. The
+ * unit is worth stating each time it appears: these read as plausible dollar
+ * amounts, and $500 rather than $50,000 is the shape of mistake that gets all
+ * the way to an invoice before anybody notices.
+ */
 export const EXPRESS_DELIVERY_CENTS = 50_000;
 export const QSBS_LETTER_CENTS = 50_000;
 
-/** Business days to the final report. */
+/** Business days to the final report, and what the express add-on buys. */
 export const STANDARD_DELIVERY_DAYS = 7;
 export const EXPRESS_DELIVERY_DAYS = 1;
 

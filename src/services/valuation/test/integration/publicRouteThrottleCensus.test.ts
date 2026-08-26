@@ -82,6 +82,14 @@ const CENSUS: Record<string, Verdict> = {
     kind: 'open',
     why: 'SP metadata is a published document by specification',
   },
+  'GET /api/v1/openapi.json': {
+    kind: 'open',
+    why: 'the client API as a spec, built from the in-memory route table; no query, no data',
+  },
+  'GET /api/v1/problems': {
+    kind: 'open',
+    why: 'a constant catalogue served from the binary; the same bytes for every caller',
+  },
   'GET /api/partner/v1/docs': { kind: 'open', why: 'the partner API documentation page' },
   'GET /api/partner/v1/openapi.json': {
     kind: 'open',

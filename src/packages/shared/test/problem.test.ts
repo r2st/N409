@@ -312,7 +312,7 @@ describe('problem factories', () => {
     const body = problems.unprocessable('Invalid valuation', { errors: [{ path: ['kind'] }] }).toBody('/v');
     expect(body).toMatchObject({
       status: 422,
-      title: 'Unprocessable Entity',
+      title: 'Unprocessable Content',
       instance: '/v',
       errors: [{ path: ['kind'] }],
     });
