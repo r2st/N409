@@ -167,6 +167,13 @@ export function DebtInstrumentsPage() {
   // failed load may suppress the empty state — see the render below.
   const [loadFailed, setLoadFailed] = useState(false);
   const [showNew, setShowNew] = useState(false);
+  /**
+   * A create in flight. `debt_instruments` has no uniqueness of its own
+   * (migration 0087) and the panel only closes once the POST answers, so a
+   * double-click on Create made two instruments. Every other write on this
+   * page already refuses re-entry.
+   */
+  const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<{ name: string; instrument_type: InstrumentType; currency: string }>({
     name: '',
     instrument_type: 'bond',
@@ -201,6 +208,8 @@ export function DebtInstrumentsPage() {
   });
 
   const create = handleSubmit(async () => {
+    if (creating) return;
+    setCreating(true);
     setError(null);
     try {
       const params: Record<string, unknown> = {};
@@ -222,6 +231,8 @@ export function DebtInstrumentsPage() {
       setSelected(instrument.id);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to create instrument');
+    } finally {
+      setCreating(false);
     }
   });
 
@@ -279,7 +290,9 @@ export function DebtInstrumentsPage() {
               required
             />
           </Field>
-          <Button type="submit">Create</Button>
+          <Button type="submit" disabled={creating}>
+            Create
+          </Button>
         </form>
       )}
 

@@ -93,6 +93,14 @@ export function FundPortfolioPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [truncated, setTruncated] = useState(false);
   const [form, setForm] = useState({ name: '', fund_type: 'vc', currency: 'USD', vintage_year: '2024' });
+  /**
+   * A create in flight. `funds` and `fund_positions` carry no uniqueness of
+   * their own (migration 0086), so a second submit before the first answers is
+   * a second row — and the panel only closes once the first one returns, so the
+   * button stayed live for the whole round trip. Every other write on this page
+   * already refuses re-entry; these two were the exceptions.
+   */
+  const [creating, setCreating] = useState(false);
 
   const loadFunds = useCallback(async () => {
     setLoading(true);
@@ -130,6 +138,8 @@ export function FundPortfolioPage() {
   });
 
   const create = handleSubmit(async () => {
+    if (creating) return;
+    setCreating(true);
     setError(null);
     try {
       const { fund } = await api<{ fund: Fund }>('/funds', {
@@ -150,6 +160,8 @@ export function FundPortfolioPage() {
       setSelected(fund.id);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to create fund');
+    } finally {
+      setCreating(false);
     }
   });
 
@@ -213,7 +225,9 @@ export function FundPortfolioPage() {
               required
             />
           </Field>
-          <Button type="submit">Create</Button>
+          <Button type="submit" disabled={creating}>
+            Create
+          </Button>
         </form>
       )}
 
@@ -251,6 +265,8 @@ function FundDetailView({ fundId }: { fundId: string }) {
   const [nav, setNav] = useState<Nav | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showPos, setShowPos] = useState(false);
+  /** See `creating` on the page above — the same re-entry, one row lower. */
+  const [adding, setAdding] = useState(false);
   const [posForm, setPosForm] = useState({
     company_name: '',
     security_type: 'preferred',
@@ -292,6 +308,8 @@ function FundDetailView({ fundId }: { fundId: string }) {
   });
 
   const addPosition = positionForm.handleSubmit(async () => {
+    if (adding) return;
+    setAdding(true);
     setError(null);
     try {
       await api(`/funds/${fundId}/positions`, {
@@ -316,6 +334,8 @@ function FundDetailView({ fundId }: { fundId: string }) {
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to add position');
+    } finally {
+      setAdding(false);
     }
   });
 
@@ -427,7 +447,9 @@ function FundDetailView({ fundId }: { fundId: string }) {
               />
             </Field>
             <div className="flex items-end">
-              <Button type="submit">Add</Button>
+              <Button type="submit" disabled={adding}>
+                Add
+              </Button>
             </div>
           </form>
         )}
