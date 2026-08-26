@@ -106,8 +106,54 @@ export function presetByKey(key: string): FormatPreset | undefined {
   return FORMAT_PRESETS.find((p) => p.key === key);
 }
 
+/** Digits grouped in threes by commas — `1,234`, `12,345,678`. US thousands. */
+const COMMA_GROUPED = /^\d{1,3}(?:,\d{3})+$/;
+
 /**
- * Parse a money/number cell: strips $, commas and whitespace; '' → null.
+ * Resolve `.` and `,` into the one decimal point JS `Number` understands.
+ *
+ * The comma used to be stripped outright, on the reading that it is always a
+ * thousands separator. It is not, and this module knows it is not: the
+ * delimiter sniffer above exists precisely because "Save as CSV" outside the US
+ * writes semicolons, and the same locale that writes the semicolon writes
+ * `1,00` for one euro and `1.234,56` for a thousand of them.
+ *
+ * So `1,00` — a price per share of one — was read as **one hundred**, and
+ * `1.234,56` as `1.23456`. Both land in `price_per_share`, which is what a
+ * 409A's per-share conclusion is reconciled against, and neither looks wrong
+ * anywhere downstream: they are finite, positive numbers of a plausible shape.
+ * `capTableCsvParity` has carried `Common;100;1,00` as a fixture the whole time
+ * — the parser was pinned on the columns of that file and never on its figures.
+ *
+ * The rules, in the order they are decided:
+ *
+ *  - **Both separators present.** The last one is the decimal point and the
+ *    other is grouping, whichever way round they fall. This settles
+ *    `1,234.56` and `1.234,56` without knowing the locale.
+ *  - **Commas only, grouped in threes** (`1,234`, `12,345,678`). Read as
+ *    grouping, which keeps every US file parsing exactly as it did. `1,234` is
+ *    genuinely ambiguous — it is 1.234 to a German spreadsheet — and this is
+ *    the reading the platform's own exports use.
+ *  - **Commas only, not grouped in threes** (`1,00`, `1,5`, `12,345,6`). Not a
+ *    thousands separator, because no thousands separator produces those. The
+ *    first two are a decimal comma; the third is not a number, and turning it
+ *    into `12.345.6` makes it unparseable, which is the honest answer.
+ *  - **Dots only.** Left alone. `1.234` is as ambiguous as `1,234` and is read
+ *    the same way round, as the plain JS number it already is.
+ */
+function normalizeDecimalSeparator(digits: string): string {
+  const lastDot = digits.lastIndexOf('.');
+  const lastComma = digits.lastIndexOf(',');
+  if (lastDot !== -1 && lastComma !== -1) {
+    return lastComma > lastDot ? digits.replace(/\./g, '').replace(',', '.') : digits.replace(/,/g, '');
+  }
+  if (lastComma === -1) return digits;
+  return COMMA_GROUPED.test(digits) ? digits.replace(/,/g, '') : digits.replace(/,/g, '.');
+}
+
+/**
+ * Parse a money/number cell: strips $ and whitespace, resolves the decimal
+ * separator (see {@link normalizeDecimalSeparator}); '' → null.
  *
  * A fully parenthesised figure is negative — that is what `(500,000)` means in
  * every accounting export a cap table arrives from. Discarding the parentheses
@@ -122,7 +168,7 @@ export function presetByKey(key: string): FormatPreset | undefined {
 export function parseNumericCell(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  let cleaned = String(value).replace(/[$,\s]/g, '');
+  let cleaned = String(value).replace(/[$\s]/g, '');
   if (cleaned === '') return null;
   let negated = false;
   if (cleaned.startsWith('(') && cleaned.endsWith(')')) {
@@ -130,7 +176,10 @@ export function parseNumericCell(value: unknown): number | null {
     cleaned = cleaned.slice(1, -1);
     if (cleaned === '') return null;
   }
-  const n = Number(cleaned);
+  // The sign travels separately: the grouping test is about the digits, and
+  // `-1,234` groups exactly as `1,234` does.
+  const sign = /^[+-]/.test(cleaned) ? cleaned[0]! : '';
+  const n = Number(sign + normalizeDecimalSeparator(sign ? cleaned.slice(1) : cleaned));
   if (!Number.isFinite(n)) return null;
   // `n !== 0` keeps `(0)` from becoming -0, which formats as "-0".
   return negated && n !== 0 ? -n : n;

@@ -41,6 +41,61 @@ describe('parseNumericCell — the values a sheet library can hand back', () => 
   });
 });
 
+/**
+ * The decimal separator, which the comma is as often as it is a grouping mark.
+ *
+ * This module already knows the European CSV exists — `sniffDelimiter` is there
+ * because "Save as CSV" outside the US writes semicolons — and the locale that
+ * writes the semicolon writes `1,00` for one. Stripping the comma made that one
+ * hundred, in `price_per_share`, which is the column a per-share conclusion is
+ * reconciled against.
+ */
+describe('parseNumericCell — the decimal separator', () => {
+  it('reads a decimal comma the European CSV writes', () => {
+    // `Common;100;1,00` is a fixture in capTableCsvParity: a price of one, read
+    // as a hundred, on a figure nothing downstream can tell is wrong.
+    expect(parseNumericCell('1,00')).toBe(1);
+    expect(parseNumericCell('1,5')).toBe(1.5);
+    expect(parseNumericCell('12,34')).toBe(12.34);
+    expect(parseNumericCell('0,0001')).toBe(0.0001);
+  });
+
+  it('reads whichever separator comes last as the decimal point', () => {
+    expect(parseNumericCell('1.234,56')).toBe(1234.56);
+    expect(parseNumericCell('1,234.56')).toBe(1234.56);
+    expect(parseNumericCell('1.234.567,89')).toBe(1234567.89);
+    expect(parseNumericCell('1,234,567.89')).toBe(1234567.89);
+  });
+
+  it('still reads commas grouped in threes as thousands', () => {
+    // Genuinely ambiguous — `1,234` is 1.234 to a German spreadsheet — and this
+    // is the reading every US export and this platform's own exports intend.
+    expect(parseNumericCell('1,234')).toBe(1234);
+    expect(parseNumericCell('500,000')).toBe(500000);
+    expect(parseNumericCell('12,345,678')).toBe(12345678);
+    expect(parseNumericCell('$1,234.50')).toBe(1234.5);
+  });
+
+  it('carries the sign through the grouping test', () => {
+    expect(parseNumericCell('-1,234')).toBe(-1234);
+    expect(parseNumericCell('-1,5')).toBe(-1.5);
+    expect(parseNumericCell('+1.234,5')).toBe(1234.5);
+    expect(parseNumericCell('(1.234,56)')).toBe(-1234.56);
+  });
+
+  it('leaves a lone dot alone', () => {
+    expect(parseNumericCell('1.234')).toBe(1.234);
+    expect(parseNumericCell('0.5')).toBe(0.5);
+  });
+
+  it('refuses a comma pattern that is neither', () => {
+    // `12,345,6` is not grouping and not one decimal comma. Null says the cell
+    // was not understood, which beats inventing a figure from it.
+    expect(parseNumericCell('12,345,6')).toBeNull();
+    expect(parseNumericCell('1,,2')).toBeNull();
+  });
+});
+
 describe('sniffDelimiter — quoting in the header', () => {
   it('does not let an escaped quote flip it in and out of a quoted header cell', () => {
     // `"Series ""A"" Preferred"` holds two doubled quotes. Read as four state
