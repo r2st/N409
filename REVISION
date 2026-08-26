@@ -1,5 +1,94 @@
 176dadc94f4f731b6646d9bbbe67c27fd603fd34
 # N409 revision
+# commit:    712daa0
+# subject:   the two settlement events one payment sends, and a receipt naming an invoice nobody had
+# previous:  22ec813 (the status a table documented and the code never sent).
+# includes:  1 commit — R164, a state-machine round over billing and invoices.
+#
+#            Two entities carry a billing lifecycle here — `invoices.status`
+#            (draft / open / paid / void) and `subscriptions.status` (active /
+#            trialing / past_due / canceled) — and what existed for either was
+#            the CHECK constraint: the set of states, with nothing anywhere
+#            saying which moves between them are legal, what fires on each, or
+#            what a second delivery of the same transition does. This round
+#            enumerated both and then drove every edge.
+#
+#            The first thing the enumeration says is about the invoice table,
+#            and it is not a defect: four states are declared and exactly one is
+#            reachable. Invoices are not issued here, they are *recorded* here,
+#            by the `invoice.paid` / `invoice.payment_succeeded` branch after
+#            Stripe has already taken the money — so a row is born `paid`, which
+#            is terminal, and nothing ever writes to `status` again. `draft`,
+#            `open` and `void` are unreachable, and a refund is deliberately not
+#            an edge: Stripe leaves the invoice `paid` and takes the money off
+#            the charge, which is why 0169 recorded an amount and not a state.
+#            That is a real property to depend on — `billingSummary` nets
+#            revenue over `status = 'paid'` and would silently omit an `open`
+#            row — and it held only because no second writer had ever been
+#            added. It is written down now, in three places that check each
+#            other: INVOICE_TRANSITIONS in the domain, the CHECK constraint read
+#            back out of pg_constraint, and a source scan for who writes the
+#            column. Both scans refuse to pass on an empty match, which is the
+#            failure mode a census of an absence has.
+#
+#            The two defects were both about a transition firing twice.
+#
+#            The invoice one is the same shape migration 0096 removed from the
+#            numbering, one line above where it was still standing. `invoice.paid`
+#            decided whether a payment was news with a read taken before the
+#            write — `findInvoiceByStripeId`, then allocate, then insert. Stripe
+#            sends `invoice.paid` *and* `invoice.payment_succeeded` for one
+#            payment, with distinct event ids the ledger cannot collapse, and
+#            fans them out together; both deliveries read "not seen", both
+#            allocated a sequence number, and both reached the insert.
+#            `createInvoice` survives that — the ON CONFLICT declines the
+#            loser's insert and hands back the row on file — but the
+#            announcement beside it did not. It ran on both paths and quoted the
+#            *local* number rather than the stored one, so the subscriber got
+#            two receipts for one renewal and one of them named an invoice
+#            number that exists nowhere: the loser's allocation, discarded by
+#            the conflict, out of a sequence an auditor reads as a count of what
+#            was billed. The fix is to let the write say who won — `number` is
+#            UNIQUE and freshly allocated, so getting our own number back from
+#            `createInvoice` is exactly the statement "this delivery inserted
+#            the row" — and to announce the stored row's fields rather than the
+#            ones this delivery happened to compute.
+#
+#            The subscription one is smaller and has the same cause. Cancellation
+#            has two writers, `customer.subscription.deleted` through
+#            `cancelSubscription` and `customer.subscription.updated` carrying
+#            `status: 'canceled'` through `upsertSubscription`, and Stripe sends
+#            both for one cancellation without ordering them. `upsertSubscription`
+#            already refused to write over a cancelled row; `cancelSubscription`
+#            assigned `canceled_at = now()` unconditionally, so whichever landed
+#            second restated when the customer left, and a redelivery days later
+#            restated it again. COALESCE, and the transition is now idempotent
+#            in the only field that carried a fact.
+#
+#            Two overlapping `inject`s do not reproduce the invoice race — the
+#            webhook's awaits serialise, which is what R57 concluded and this
+#            round re-confirmed by watching the pair test pass against the
+#            broken code. So it is staged where the window actually is: the
+#            other delivery's row commits between this one's read and its write,
+#            which is precisely the state the losing delivery finds, and
+#            everything after that is the real handler. Both fixes were
+#            confirmed by reverting them: the receipt reappears naming
+#            INV-202608-0001 against a stored INV-RACE-…, and the cancellation
+#            date moves by the milliseconds between the two deliveries.
+#
+# gap:       A full refund takes `valuations.paid_status` back to 'unpaid' and
+#            leaves the workflow `state` on 'paid' — the state migration 0107
+#            added to mean "payment has settled, awaiting an analyst". The
+#            engagement is correctly back in the pay-now list and correctly out
+#            of the collected total, but the dashboard column still reads as
+#            money in. Left alone deliberately: `WORKFLOW_TRANSITIONS` declares
+#            `paid → completed` illegal, the file may legitimately have moved on
+#            to `review` by the time the money comes back, and this round's
+#            scope was the billing machine rather than the engagement one. It is
+#            a coupling worth deciding on rather than a bug to fix in passing.
+#
+
+# N409 revision
 # commit:    22ec813
 # subject:   the status a table documented and the code never sent
 # previous:  bd8088f (ten caps that never said they were caps).
