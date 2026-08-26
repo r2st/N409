@@ -8,6 +8,7 @@ import {
   type WorkbookOverwrite,
 } from '../../src/export/valuationWorkbook.js';
 import { validateCapTable, type CapTableEntry } from '../../src/domain/capTable.js';
+import { capTableTotals } from '../../src/domain/workbookTabs.js';
 import { computeWorkbook, type WorkbookCellInput } from '../../src/domain/workbook.js';
 import type { XlsxFormula, XlsxSheet, XlsxValue } from '../../src/export/xlsx.js';
 
@@ -427,6 +428,91 @@ describe('valuationWorkbookSheets', () => {
         const ct = sheet(all(), 'Cap table');
         expect(valueAt(ct, indexOfLabel(ct, 'Common'), 4)).toBeNull();
         expect(valueAt(ct, indexOfLabel(ct, 'Option pool'), 4)).toBeNull();
+      });
+    });
+
+    /**
+     * The other half of the same column, and the half that was still open: a
+     * *non-preferred* row that does carry an amount.
+     *
+     * `parseCapTable` fills `invested_amount` from the mapped column for every
+     * row it reads, so an export whose "Amount Invested" column is populated on
+     * the founders' common line — $800 for eight million shares at $0.0001 — or
+     * on warrants issued alongside a debt facility puts a real figure on a row
+     * no other consumer counts. This column then held derived figures for
+     * preferred and raw ones for everything else, and the live `SUM` beneath it
+     * totalled the mixture, so the Cap table sheet's invested capital disagreed
+     * with the Waterfall sheet's preference stack two tabs along, with `Total
+     * preference stack` on the cover, and with `capTableTotals.invested_capital`
+     * in the app's own cap-table tab — one file, three different answers to
+     * "how much has been invested in this company".
+     *
+     * Invested capital is a preference-stack figure everywhere else in this
+     * service (`capTableTotals`, `toWaterfallInputs`, `liquidationPreference`),
+     * which is what `preferredInvested`'s own note already said this column
+     * followed. The per-row amount is not lost: the Cap table *tab* prints the
+     * stored column for every class, unaggregated.
+     */
+    describe('a non-preferred class carrying a stated amount', () => {
+      const FUNDED: CapTableEntry[] = [
+        ...ENTRIES.map((e) =>
+          e.security_class === 'Common' ? { ...e, price_per_share: 0.0001, invested_amount: 800 } : e,
+        ),
+        {
+          security_class: 'Warrants',
+          class_type: 'warrant',
+          shares: 250_000,
+          price_per_share: 1,
+          invested_amount: 250_000,
+          liquidation_multiple: null,
+          seniority: null,
+          conversion_ratio: null,
+        },
+      ];
+      const all = () =>
+        valuationWorkbookSheets(
+          input({ capTable: { entries: FUNDED, validation: validateCapTable(FUNDED) } }),
+        );
+
+      it('leaves the common and warrant rows blank rather than counting them', () => {
+        const ct = sheet(all(), 'Cap table');
+        expect(valueAt(ct, indexOfLabel(ct, 'Common'), 4)).toBeNull();
+        expect(valueAt(ct, indexOfLabel(ct, 'Warrants'), 4)).toBeNull();
+      });
+
+      it('totals to the preference stack, not to the stack plus the founders', () => {
+        const ct = sheet(all(), 'Cap table');
+        const wf = sheet(all(), 'Waterfall');
+        const ctTotal = formulaAt(ct, indexOfLabel(ct, 'Total (fully diluted)'), 4).value;
+        const wfTotal = formulaAt(wf, indexOfLabel(wf, 'Total preference stack', 1), 3).value;
+        // The two preferred classes, and nothing else: 4,000,000 + 3,000,000.
+        expect(ctTotal).toBe(7_000_000);
+        expect(wfTotal).toBe(ctTotal);
+      });
+
+      it('agrees with the cap-table tab the app renders from the same rows', () => {
+        const ct = sheet(all(), 'Cap table');
+        const ctTotal = formulaAt(ct, indexOfLabel(ct, 'Total (fully diluted)'), 4).value;
+        expect(ctTotal).toBe(capTableTotals(FUNDED).invested_capital);
+      });
+
+      /*
+       * The cached total and the formula that recomputes it, against each
+       * other. `xlsx.ts` ships both, and a reader that recalculates (Excel,
+       * openpyxl without `data_only`) sees the formula's answer while Quick
+       * Look and Numbers' preview show the cache — so a column whose blanks
+       * and whose total were derived by different rules would have shown two
+       * different figures for the same cell depending on what opened the file.
+       */
+      it('recalculates to its own cached total', () => {
+        const ct = sheet(all(), 'Cap table');
+        const totalRow = indexOfLabel(ct, 'Total (fully diluted)');
+        const cell = formulaAt(ct, totalRow, 4);
+        expect(cell.formula).toBe(`SUM(E${rowNumber(ct, 0)}:E${rowNumber(ct, totalRow - 1)})`);
+        const summed = ct.rows
+          .slice(0, totalRow)
+          .reduce((n, r) => n + (typeof unwrap(r[4]) === 'number' ? (unwrap(r[4]) as number) : 0), 0);
+        expect(summed).toBe(cell.value);
       });
     });
   });

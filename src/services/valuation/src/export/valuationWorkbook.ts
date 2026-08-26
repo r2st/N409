@@ -207,9 +207,25 @@ function modelSheet(computed: ComputedSheet, currency: string): XlsxSheet {
  * that is `validateCapTable`'s `no_investment` warning, and a `0` in a currency
  * column reads as a measured figure rather than a missing one. Non-preferred
  * rows are blank for the same reason `capTableTotals` counts none of them.
+ *
+ * The non-preferred branch used to return the row's stored `invested_amount`
+ * instead of blank, which is what the sentence above already said it should
+ * not, and it reopened the very defect the note on the Invested column below
+ * records as closed. `parseCapTable` fills `invested_amount` from the mapped
+ * column for *every* row, and an "Amount Invested" column populated on a
+ * founders' common line or on warrants issued with a debt facility is ordinary
+ * rather than exotic — so the column held derived figures for preferred and
+ * raw ones for everything else, and its live `SUM` then totalled a mixture.
+ * One workbook stated two invested-capital totals for one cap table again: the
+ * Cap table sheet's total against the Waterfall sheet's preference stack two
+ * tabs along, against `Total preference stack` on the cover, and against
+ * `capTableTotals.invested_capital` in the app's own cap-table tab. Invested
+ * capital is a preference-stack figure everywhere else in this service, and
+ * the per-row amount an auditor may still want is on the Cap table tab, which
+ * prints the stored column unaggregated.
  */
 function preferredInvested(entry: CapTableEntry): number | null {
-  if (entry.class_type !== 'preferred') return entry.invested_amount;
+  if (entry.class_type !== 'preferred') return null;
   return investedAmount(entry) || null;
 }
 
