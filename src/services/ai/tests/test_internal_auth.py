@@ -36,7 +36,7 @@ def client():
 
 def test_public_paths_never_require_the_token(monkeypatch, client):
     monkeypatch.setenv(INTERNAL_TOKEN_ENV, TOKEN)
-    for path in ("/", "/health", "/openapi.json"):
+    for path in ("/", "/health"):
         res = client.get(path)
         assert res.status_code == 200, f"{path} -> {res.status_code}"
     # /ready is public too, but its own status depends on the OpenRouter key —
@@ -219,3 +219,53 @@ def test_production_keeps_the_probes_open_with_no_secret(monkeypatch, client):
     monkeypatch.setenv("APP_ENV", "production")
     assert client.get("/health").status_code == 200
     assert client.get("/ready").status_code in (200, 503)
+
+
+# ── The API document is topology, not liveness ────────────────────────────────
+#
+# R157. `/docs`, `/redoc` and `/openapi.json` used to be in `_PUBLIC_PATHS`,
+# which made the complete internal API surface — every pipeline endpoint with
+# its full request and response schema — readable by anyone who could reach the
+# port. This estate had already ruled on that question one level down: the
+# reasons inside a `/ready` body are gated on `is_internal_caller` precisely
+# because an installation with no secret configured is the one least able to
+# afford publishing its topology. An OpenAPI document is more topology than a
+# readiness reason, not less.
+#
+# The gate is the ordinary one, so nothing changes where no secret is set.
+
+
+def test_doc_routes_require_the_token_when_one_is_configured(monkeypatch, client):
+    monkeypatch.setenv(INTERNAL_TOKEN_ENV, TOKEN)
+    for path in ("/openapi.json", "/docs", "/redoc"):
+        res = client.get(path)
+        assert res.status_code == 401, f"{path} -> {res.status_code}"
+        assert "internal service token" in res.json()["detail"].lower()
+
+
+def test_doc_routes_answer_the_holder_of_the_token(monkeypatch, client):
+    # The other half: gated, not removed. A caller that holds the secret still
+    # gets the document, so this is a disclosure boundary and not a deletion.
+    monkeypatch.setenv(INTERNAL_TOKEN_ENV, TOKEN)
+    for path in ("/openapi.json", "/docs", "/redoc"):
+        res = client.get(path, headers={"X-Internal-Token": TOKEN})
+        assert res.status_code == 200, f"{path} -> {res.status_code}"
+
+
+def test_doc_routes_stay_open_where_no_secret_is_configured(monkeypatch, client):
+    # Every developer machine and every test run. Gating the docs must not mean
+    # the Swagger UI stops working locally, or the gate gets taken back out.
+    monkeypatch.delenv(INTERNAL_TOKEN_ENV, raising=False)
+    for path in ("/openapi.json", "/docs", "/redoc"):
+        assert client.get(path).status_code == 200, path
+
+
+def test_the_public_set_is_exactly_liveness_and_readiness():
+    # Stated as an equality rather than as a handful of `assert is_public_path`
+    # calls, because the failure this guards against is an *addition*: a path
+    # added to the frozenset is unauthenticated on this service from that
+    # commit, and a test that only checks the members it already knows about
+    # cannot see one arrive.
+    from app.internal_auth import _PUBLIC_PATHS
+
+    assert _PUBLIC_PATHS == frozenset({"/", "/health", "/ready"})

@@ -39,6 +39,10 @@ names would have to be edited by the same person who forgot the check.
   been asked the question. They answer it correctly — they are now asked.
 * The thirty-eight non-valuation id-keyed routes had no sweep of any kind. They
   are correct today; nothing kept them that way.
+* One route class *was* open that should not have been, on the internal tier
+  rather than the customer-facing one: `/docs`, `/redoc` and `/openapi.json` on
+  both Python services answered without the estate's shared secret. See "the two
+  surfaces that table cannot see", below.
 
 ## Roles
 
@@ -199,6 +203,20 @@ Python services (`ai`, `engine-wrapper`) — is gated by
 `registerInternalAuth` / `internal_auth.py`: an `X-Internal-Token` compared in
 constant time on every non-health route, required in production, where an unset
 `INTERNAL_SERVICE_TOKEN` refuses to boot rather than serving traffic open.
+
+The two tiers disagreed on what "public" meant, and R157 closed it. The
+TypeScript set was `/`, `/health`, `/ready`; the Python set added `/docs`,
+`/redoc` and `/openapi.json`, which published the complete internal API surface
+— every AI pipeline and every engine endpoint, with the full request and
+response schema of each — to anyone who could reach the port. This estate had
+already ruled on that question one level down: the *reasons* inside a `/ready`
+body are gated on `isInternalCaller` because "an installation that has not
+configured a secret is exactly the one least able to afford publishing its
+topology", and an OpenAPI document is more topology than a readiness reason, not
+less. Loopback binding and ufw were the only two things in front of them, which
+is the argument `internalAuth.ts` gives for not relying on either. The doc routes
+are now gated rather than removed: with no secret configured — every developer
+machine, every test run — they answer exactly as before.
 
 ## Where the exemptions live
 

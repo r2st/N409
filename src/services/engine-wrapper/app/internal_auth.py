@@ -28,11 +28,25 @@ from .errors import error_response
 INTERNAL_TOKEN_HEADER = "x-internal-token"
 INTERNAL_TOKEN_ENV = "INTERNAL_SERVICE_TOKEN"
 
-# Liveness / readiness / API introspection are always reachable so a load
-# balancer or `docker healthcheck` never needs the secret.
-_PUBLIC_PATHS = frozenset(
-    {"/", "/health", "/ready", "/engine/v1/health", "/docs", "/redoc", "/openapi.json"}
-)
+# Liveness and readiness are always reachable so a load balancer or `docker
+# healthcheck` never needs the secret. Nothing else is.
+#
+# `/docs`, `/redoc` and `/openapi.json` used to sit here as well. They are the
+# one kind of unauthenticated route this estate had already decided against on
+# the tier below — readiness *reasons* are token-gated because an installation
+# with no secret configured is the one least able to afford publishing its
+# topology — and the OpenAPI document publishes far more of it than a readiness
+# reason: every engine endpoint, with the full request and response schema of
+# each. Loopback binding and a firewall rule were the only two things in front
+# of them, which is the argument `internalAuth.ts` gives for not relying on
+# either: a service that answers unauthenticated requests is one
+# `--host 0.0.0.0` away from being open, and docker-compose sets exactly that.
+#
+# Gated rather than removed. With no secret configured — every developer
+# machine, every test run — the middleware lets everything through and the
+# Swagger UI works as it always has. Where a secret *is* configured the doc
+# routes ask for it like every other route on the service.
+_PUBLIC_PATHS = frozenset({"/", "/health", "/ready", "/engine/v1/health"})
 
 _log = logging.getLogger("internal_auth")
 
