@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Writable } from 'node:stream';
 import { pino } from 'pino';
 import { createLogger } from '../src/logger.js';
-import { bindRequestId, runWithRequestId } from '../src/requestContext.js';
+import { bindActor, bindRequestId, currentActor, runWithRequestId } from '../src/requestContext.js';
 
 /**
  * A log line you can join to a request.
@@ -148,5 +148,183 @@ describe('the correlation id on a log line', () => {
     });
 
     expect(JSON.parse(lines.at(-1)!).requestId).toBe('REQ-5');
+  });
+});
+
+describe('the actor on a log line', () => {
+  it('is on a line written by something that was never told about the request', () => {
+    // The gap. `requestErrorContext` has put an actor on the *unhandled error*
+    // line since the B-1 audit, and there are forty-odd `log.warn({ err }, …)`
+    // sites reporting failures that never become one. For those, "which
+    // customer" had no answer anywhere: the id was on the request and on
+    // nothing the request wrote.
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    runWithRequestId('REQ-A1', () => {
+      bindActor({ userId: 'USR-1', partnerId: 'PTR-1' });
+      log.warn('a webhook would not sign');
+    });
+
+    const entry = JSON.parse(lines.at(-1)!);
+    expect(entry.requestId).toBe('REQ-A1');
+    expect(entry.userId).toBe('USR-1');
+    expect(entry.partnerId).toBe('PTR-1');
+  });
+
+  it('follows work that outlives the response, like the request id does', async () => {
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    await runWithRequestId('REQ-A2', async () => {
+      bindActor({ userId: 'USR-2' });
+      await new Promise((r) => setTimeout(r, 5));
+      log.warn('a diagnostic write that failed after the 200');
+    });
+
+    const entry = JSON.parse(lines.at(-1)!);
+    expect(entry.userId).toBe('USR-2');
+  });
+
+  it('reaches a line logged through a child logger, which is what req.log is', () => {
+    // Every route logs through `req.log`, a child. A mixin that only showed up
+    // on `app.log` would miss the sites this exists for.
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+    const requestLogger = log.child({ reqId: 'REQ-A3' });
+
+    runWithRequestId('REQ-A3', () => {
+      bindActor({ userId: 'USR-3' });
+      requestLogger.warn('upload would not scan');
+    });
+
+    expect(JSON.parse(lines.at(-1)!).userId).toBe('USR-3');
+  });
+
+  it('is omitted before the request authenticates, not emitted empty', () => {
+    // The routing, the 401s and the rate-limit refusals are all written before
+    // `authenticate` has resolved anybody. "No userId" has to keep meaning
+    // "nobody was authenticated".
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    runWithRequestId('REQ-A4', () => log.info('before the preHandler'));
+
+    const entry = JSON.parse(lines.at(-1)!);
+    expect(entry.requestId).toBe('REQ-A4');
+    expect(entry).not.toHaveProperty('userId');
+    expect(entry).not.toHaveProperty('partnerId');
+    expect(entry).not.toHaveProperty('apiTokenId');
+  });
+
+  it('omits partnerId and apiTokenId for a session user with neither', () => {
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    runWithRequestId('REQ-A5', () => {
+      bindActor({ userId: 'USR-5', partnerId: null, apiTokenId: null });
+      log.info('a plain session');
+    });
+
+    const entry = JSON.parse(lines.at(-1)!);
+    expect(entry.userId).toBe('USR-5');
+    expect(entry).not.toHaveProperty('partnerId');
+    expect(entry).not.toHaveProperty('apiTokenId');
+  });
+
+  it('separates an integration from a human session', () => {
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    runWithRequestId('REQ-A6', () => {
+      bindActor({ userId: 'USR-6', partnerId: 'PTR-6', apiTokenId: 'TOK-6' });
+      log.warn('partner call failed');
+    });
+
+    expect(JSON.parse(lines.at(-1)!).apiTokenId).toBe('TOK-6');
+  });
+
+  it('does not leak one request actor into the next', () => {
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    runWithRequestId('REQ-A7', () => {
+      bindActor({ userId: 'USR-7' });
+      log.info('a');
+    });
+    runWithRequestId('REQ-A8', () => log.info('b'));
+    log.info('none');
+
+    const entries = lines.slice(-3).map((l) => JSON.parse(l));
+    expect(entries[0]!.userId).toBe('USR-7');
+    expect(entries[1]!).not.toHaveProperty('userId');
+    expect(entries[2]!).not.toHaveProperty('userId');
+  });
+
+  it('is bound on the store the request already holds, not on a fresh one', () => {
+    // The mechanism the whole thing rests on. `bindActor` runs in the
+    // `authenticate` preHandler, long after `bindRequestId` put the store in
+    // place at `onRequest`, and the consumers that matter most read through the
+    // reference taken from that first store. Re-binding would strand them.
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    runWithRequestId('REQ-A9', () => {
+      const before = currentActor();
+      bindActor({ userId: 'USR-9' });
+      expect(before).toBeUndefined();
+      expect(currentActor()).toEqual({ userId: 'USR-9' });
+      log.info('same store');
+    });
+
+    expect(JSON.parse(lines.at(-1)!).requestId).toBe('REQ-A9');
+  });
+
+  it('does nothing outside a request rather than inventing a context', () => {
+    // A background sweep has no actor. Minting a store here would make
+    // `currentRequestId` start answering for lines that had no request.
+    expect(() => bindActor({ userId: 'USR-X' })).not.toThrow();
+    expect(currentActor()).toBeUndefined();
+  });
+
+  it('does not collide with the nested actor block the 5xx line carries', () => {
+    // problem.ts logs `actor: { user_id, roles, … }` on an unhandled error.
+    // These three keys are flat and camelCase precisely so a mixin key and a
+    // log-call key can never be the same key — the `reqId` trap, one field
+    // over. Asserted on raw text, because JSON.parse hides a duplicate.
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    runWithRequestId('REQ-A10', () => {
+      bindActor({ userId: 'USR-10' });
+      log.error({ actor: { user_id: 'USR-10', roles: ['analyst'] } }, 'unhandled error');
+    });
+
+    const raw = lines.at(-1)!;
+    expect(raw.match(/"actor"/g)).toHaveLength(1);
+    expect(raw.match(/"userId"/g)).toHaveLength(1);
+    const entry = JSON.parse(raw);
+    expect(entry.userId).toBe('USR-10');
+    expect(entry.actor.user_id).toBe('USR-10');
+  });
+
+  it('carries no field that names the person behind the id', () => {
+    // RequestActor is ids only, on purpose: email, first_name and company are
+    // all on the redact list, and a mixin is a door into every line in the
+    // process. This is the guard on that door.
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    runWithRequestId('REQ-A11', () => {
+      bindActor({ userId: 'USR-11', partnerId: 'PTR-11', apiTokenId: 'TOK-11' });
+      log.info('a line');
+    });
+
+    const entry = JSON.parse(lines.at(-1)!) as Record<string, unknown>;
+    const values = Object.values(entry).map(String);
+    expect(values.some((v) => v.includes('@'))).toBe(false);
+    expect(Object.keys(entry).sort()).toEqual(
+      ['apiTokenId', 'level', 'msg', 'name', 'partnerId', 'requestId', 'service', 'time', 'userId'].sort(),
+    );
   });
 });

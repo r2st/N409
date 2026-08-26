@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type pg from 'pg';
-import { problems } from '@n409/shared';
+import { bindActor, problems, type RequestApiToken } from '@n409/shared';
 import { verifySession, type JwtConfig } from '../auth/jwt.js';
 import { SESSION_COOKIE } from '../auth/cookies.js';
 import { isOps, type Principal } from '../auth/rbac.js';
@@ -10,12 +10,17 @@ import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import { costOfRequest } from '../domain/requestCost.js';
 import type { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './rateLimit.js';
 
-/** How the request authenticated — the partner API accepts api_token only. */
-export interface ApiTokenContext {
-  tokenId: string;
-  /** null for a personal token, which carries its owner's own scope. */
-  partnerId: string | null;
-}
+/**
+ * How the request authenticated — the partner API accepts api_token only.
+ *
+ * Aliases the shared shape rather than restating it because `requestErrorContext`
+ * reads this decoration off the request to label the 5xx line, and shared cannot
+ * import this file to find out what it is called. It read `apiToken.id` for as
+ * long as this existed, so the `api_token_id` it logs was undefined on every
+ * request that had a token. Having one definition is what makes renaming a
+ * field a build error rather than a field that silently stops appearing.
+ */
+export type ApiTokenContext = RequestApiToken;
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -158,6 +163,18 @@ export function registerAuth(
 
     req.principal = { id: user.id, roles: user.roles, partnerId: user.partner_id };
     req.sessionEpoch = sessionEpoch;
+
+    // Put the actor on the request's log context now that it is known, so every
+    // line this request writes says who it was for — including the work that
+    // outlives the response, which this service starts a lot of and awaits none
+    // of. Bound here rather than per route for the same reason the throttles
+    // are: this preHandler is the one place every authenticated request passes
+    // through. Ids only; see RequestActor.
+    bindActor({
+      userId: req.principal.id,
+      partnerId: req.principal.partnerId,
+      apiTokenId: req.apiToken?.tokenId ?? null,
+    });
 
     // Per-user / per-org throttling (improvement 5), checked right after the
     // principal resolves so it covers every authenticated route through this

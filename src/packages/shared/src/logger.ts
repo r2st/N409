@@ -4,7 +4,7 @@
 // is a build error even though it resolves at runtime.
 import { pino, stdSerializers, type Logger } from 'pino';
 import { scrubSensitive, scrubUrl } from './problem.js';
-import { currentRequestId } from './requestContext.js';
+import { currentActor, currentRequestId } from './requestContext.js';
 
 /**
  * Field names whose value must never reach a log line (NFR: structured
@@ -223,7 +223,8 @@ export interface LoggerOptions {
 }
 
 /**
- * The correlation id, on every line rather than on the lines that remembered.
+ * The correlation id and the actor, on every line rather than on the lines that
+ * remembered.
  *
  * Fastify binds `reqId` onto `req.log`, so a handler that logs through the
  * request's own logger is correlated and always was. Everything else in a
@@ -256,7 +257,19 @@ export interface LoggerOptions {
  */
 function requestIdMixin(): Record<string, string> {
   const requestId = currentRequestId();
-  return requestId ? { requestId } : {};
+  const actor = currentActor();
+  return {
+    ...(requestId ? { requestId } : {}),
+    // Flat, and camelCase, for the same collision argument the note above
+    // makes about `reqId`. The 5xx line carries a nested `actor` *object*
+    // (problem.ts), and a mixin emitting a key a log call also passes is the
+    // one shape that puts two of it in the JSON; these three names are used
+    // nowhere else. Each is omitted when absent, so a missing `userId` keeps
+    // meaning "nobody was authenticated" rather than "we lost who it was".
+    ...(actor ? { userId: actor.userId } : {}),
+    ...(actor?.partnerId ? { partnerId: actor.partnerId } : {}),
+    ...(actor?.apiTokenId ? { apiTokenId: actor.apiTokenId } : {}),
+  };
 }
 
 export function createLogger(opts: LoggerOptions): Logger {

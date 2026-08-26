@@ -16,8 +16,32 @@ import { AsyncLocalStorage } from 'node:async_hooks';
  * mirrors what the Python side does with `contextvars`, which is the same
  * mechanism under a different name.
  */
+/**
+ * Who a request is being served for, in ids only.
+ *
+ * Deliberately not the principal: `roles` is a shape rather than an identity
+ * and belongs on the 5xx line where the failure is being described, not on
+ * every line; and everything that would *name* the person — email, first name,
+ * company — is on the pino redact list and must not arrive here by another
+ * door. Three opaque ids is the whole of it.
+ */
+export interface RequestActor {
+  userId: string;
+  /** The tenant, when the user belongs to one. */
+  partnerId?: string | null;
+  /** Set when the caller authenticated with an API token rather than a session. */
+  apiTokenId?: string | null;
+}
+
 export interface RequestContext {
   requestId: string;
+  /**
+   * Bound once the request has authenticated, so it is absent on the lines
+   * written before that (the routing, the rate-limit refusals) and on
+   * everything a genuinely anonymous route writes. Mutable for the reason
+   * {@link bindActor} gives.
+   */
+  actor?: RequestActor;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
@@ -47,6 +71,48 @@ export function runWithRequestId<T>(requestId: string, fn: () => T): T {
  */
 export function bindRequestId(requestId: string): void {
   storage.enterWith({ requestId });
+}
+
+/**
+ * The active actor, or undefined before the request has authenticated.
+ */
+export function currentActor(): RequestActor | undefined {
+  return storage.getStore()?.actor;
+}
+
+/**
+ * Record who this request is for, on the context already bound to it.
+ *
+ * ## Why every log line and not just the 5xx one
+ *
+ * `requestErrorContext` has put an `actor` block on the unhandled-error line
+ * since the B-1 audit, on the reasoning that "is this one customer or everyone"
+ * is the first question asked of a spike in 500s. That reasoning does not stop
+ * at 500s. There are forty-odd `log.warn({ err }, …)` sites in the routes
+ * reporting failures that never become one — a webhook that would not sign, an
+ * upload that would not scan, a sync that came back empty — and for those the
+ * question has no answer at all: the id is on the request and on nothing the
+ * request wrote. Joining back through `requestId` only works when some *other*
+ * line for the same request happened to carry the actor, which for a request
+ * that never 500s is no line at all.
+ *
+ * ## Why it mutates rather than re-binds
+ *
+ * The store is put in place by `bindRequestId` at `onRequest`, and the actor is
+ * not known until the `authenticate` preHandler has resolved it. Calling
+ * `enterWith` a second time would bind a *new* store to whatever async context
+ * the preHandler happens to be running in, and every consumer that matters —
+ * the handler, the hooks after it, and above all the work this service starts
+ * and deliberately does not await — reads through the reference taken from the
+ * first one. Mutating the object they already hold reaches all of them.
+ *
+ * Outside a request there is no store and this does nothing, which is correct
+ * rather than defensive: a background sweep has no actor, and inventing one
+ * would make "no userId" stop meaning "nobody asked for this".
+ */
+export function bindActor(actor: RequestActor): void {
+  const store = storage.getStore();
+  if (store) store.actor = actor;
 }
 
 /**

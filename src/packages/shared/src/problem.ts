@@ -174,12 +174,30 @@ export function scrubUrl(url: string): string {
  * is decoded and scrubbed on the way in, because query strings on this API
  * carry free-text search (`?q=`) that clients type addresses into.
  */
+/**
+ * The API-token decoration {@link requestErrorContext} reads off a request.
+ *
+ * Exported so the service that *sets* it can declare its own context type as an
+ * extension of this one, which turns a structural coincidence into something
+ * tsc checks. It was a coincidence, and it did not hold: this reader looked up
+ * `apiToken.id` while the only assignment in the estate wrote `tokenId`, so the
+ * field resolved to undefined on every request that had a token and the key
+ * never appeared in a log line. Nothing could catch that — shared cannot import
+ * the service, the service never mentioned this reader, and the test that
+ * covered it built its own fixture from the database row's spelling.
+ */
+export interface RequestApiToken {
+  tokenId: string;
+  /** null for a personal token, which carries its owner's own scope. */
+  partnerId: string | null;
+}
+
 export function requestErrorContext(req: FastifyRequest): Record<string, unknown> {
   // Structurally typed rather than imported: `principal` and `apiToken` are
   // decorations the valuation service adds, and shared cannot depend on it.
   const r = req as FastifyRequest & {
     principal?: { id?: unknown; roles?: unknown; partnerId?: unknown } | null;
-    apiToken?: { id?: unknown; partner_id?: unknown } | null;
+    apiToken?: Partial<RequestApiToken> | null;
     routeOptions?: { url?: unknown };
   };
   const route = typeof r.routeOptions?.url === 'string' ? r.routeOptions.url : undefined;
@@ -197,7 +215,7 @@ export function requestErrorContext(req: FastifyRequest): Record<string, unknown
           // A partner API call authenticates as its token's creating user, so
           // the principal alone cannot tell a human session from an
           // integration — and they fail for different reasons.
-          ...(apiToken ? { api_token_id: apiToken.id } : {}),
+          ...(apiToken ? { api_token_id: apiToken.tokenId } : {}),
         }
       : 'anonymous',
   };

@@ -400,10 +400,19 @@ describe('5xx log context', () => {
   it('distinguishes a partner integration from the human whose token it is', async () => {
     // A partner API call authenticates as its token's creating user, so the
     // principal alone cannot tell the two apart — and they fail differently.
+    //
+    // The fixture is the *decoration*, verbatim: valuation's auth plugin sets
+    // `req.apiToken = { tokenId, partnerId }` and that is the only assignment
+    // there is. This test used to build `{ id: 'tok_7' }` instead — the shape
+    // of the database row — and passed for years against a reader that looked
+    // up `apiToken.id`, which on a real request is undefined. Pino drops an
+    // undefined value, so the field simply was not there, and the distinction
+    // this test is named for was never once recorded in production. A fixture
+    // invented to match the reader tests nothing but the reader.
     const { line } = await capture((app) => {
       app.addHook('onRequest', (req, _reply, done) => {
         (req as { principal?: unknown }).principal = { id: 'usr_1', roles: ['partner_api'], partnerId: 'p1' };
-        (req as { apiToken?: unknown }).apiToken = { id: 'tok_7' };
+        (req as { apiToken?: unknown }).apiToken = { tokenId: 'tok_7', partnerId: 'p1' };
         done();
       });
       app.get('/valuations/:id/report', () => {
@@ -411,6 +420,21 @@ describe('5xx log context', () => {
       });
     });
     expect(line?.obj.actor).toMatchObject({ api_token_id: 'tok_7' });
+  });
+
+  it('reports no token id for a session, so the field means what it says', async () => {
+    // The other half. `api_token_id` is only worth having if its absence is
+    // information — a human session must not carry the key at all.
+    const { line } = await capture((app) => {
+      app.addHook('onRequest', (req, _reply, done) => {
+        (req as { principal?: unknown }).principal = { id: 'usr_1', roles: ['analyst'], partnerId: null };
+        done();
+      });
+      app.get('/valuations/:id/report', () => {
+        throw new Error('boom');
+      });
+    });
+    expect(line?.obj.actor).toEqual({ user_id: 'usr_1', roles: ['analyst'], partner_id: null });
   });
 
   it('scrubs the query string, which carries whatever a client typed', async () => {

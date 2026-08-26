@@ -47,6 +47,7 @@ export {
   scrubError,
   scrubUrl,
   SENSITIVE_QUERY_PARAMS,
+  type RequestApiToken,
 } from './problem.js';
 export {
   API_PERMISSIONS_POLICY,
@@ -110,10 +111,13 @@ export { isIsoCalendarDate, isoCalendarDateError } from './dates.js';
 export { E164_MAX_DIGITS, E164_MIN_DIGITS, e164Error, isE164, normalizeE164 } from './phone.js';
 export {
   REQUEST_ID_HEADER,
+  bindActor,
   bindRequestId,
+  currentActor,
   currentRequestId,
   requestIdHeaders,
   runWithRequestId,
+  type RequestActor,
   type RequestContext,
 } from './requestContext.js';
 export {
