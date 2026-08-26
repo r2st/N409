@@ -18,6 +18,7 @@ import { contentDisposition } from './documents.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
 import { checkWindowOrder, dateWindowFields } from '../domain/dateWindow.js';
+import { sendExport } from './exports.js';
 
 /**
  * Per-valuation audit trail: the raw event spine enriched with category,
@@ -130,9 +131,20 @@ export function registerAuditTrailRoutes(app: FastifyInstance, deps: { pool: pg.
    * the UTF-8 half, so a name outside ASCII survives the trip.
    */
   app.get('/api/v1/valuations/:id/audit-trail.csv', { preHandler: app.authenticate }, async (req, reply) => {
-    const { valuation, entries, includeInternal } = await loadTrail(req);
+    const { valuation, entries, includeInternal, truncated } = await loadTrail(req);
     const visible = filterAuditEntries(entries, { includeInternal });
-    return reply
+    /*
+     * The same cap bit the JSON view above returns, on the format an auditor
+     * actually opens.
+     *
+     * `loadTrail` has computed it all along and this route destructured around
+     * it. MAX_TRAIL_EVENTS is where the spine stops being read, so a valuation
+     * with a longer history exported a change log missing its *oldest* entries
+     * — `entries` keeps the newest 5,000 — and the file said nothing. The whole
+     * point of a change log is answering "when did this first move", which is a
+     * question the dropped end holds.
+     */
+    return sendExport(reply, truncated)
       .header('content-type', 'text/csv; charset=utf-8')
       .header('content-disposition', contentDisposition(`change-log-${valuation.company_name}.csv`))
       .send(changeLogCsv(visible));

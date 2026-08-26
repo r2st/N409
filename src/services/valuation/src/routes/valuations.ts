@@ -146,6 +146,21 @@ export const ValuationFilterQuery = z.object({
     .optional(),
 });
 
+/**
+ * Which side of the read marker this caller's "unread" means.
+ *
+ * Ops read the admin side of every conversation; everyone else reads their own.
+ * It lives beside {@link toRepoFilters} because it is that function's missing
+ * second argument — `unreadFor` resolves to `undefined` without it, and a
+ * filter that resolves to `undefined` is not a narrower result, it is no filter
+ * at all. Three routes derived this rule inline or privately and one of them
+ * forgot to derive it, so there is one copy now and it is next to the thing
+ * that needs it.
+ */
+export function readerSideFor(principal: Principal): 'admin' | 'user' {
+  return isOps(principal) ? 'admin' : 'user';
+}
+
 export function toRepoFilters(
   f: z.infer<typeof ValuationFilterQuery>,
   readerSide?: 'admin' | 'user',
@@ -271,7 +286,7 @@ export function registerValuationRoutes(
     const sort = parseSort(parsed.data.sort);
     if (sort === null) throw problems.badRequest('Invalid sort');
 
-    const readerSide = isOps(principal) ? 'admin' : 'user';
+    const readerSide = readerSideFor(principal);
     const { items, total } = await listValuations(deps.pool, valuationScope(principal), {
       ...toRepoFilters(parsed.data, readerSide),
       sort,

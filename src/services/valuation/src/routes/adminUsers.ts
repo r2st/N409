@@ -12,6 +12,7 @@ import { NullablePhone } from '../domain/phone.js';
 import { listValuations } from '../repos/valuations.js';
 import { VALUATION_STATES } from '../domain/valuation.js';
 import { toCsv } from '../domain/csv.js';
+import { MAX_EXPORT_ROWS, sendExport, truncationOf } from './exports.js';
 import { hashPassword } from '../auth/password.js';
 import { PASSWORD_MIN_LENGTH, passwordPolicyError } from '../domain/passwordPolicy.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
@@ -295,14 +296,29 @@ export function registerAdminUserRoutes(
     if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
     const { q, role, partner_id, include_deleted } = parsed.data;
 
-    const { items } = await listUsers(deps.pool, {
+    /*
+     * One row more than we will emit, so the file can say whether it is the
+     * whole answer — the same device, and the same cap, as the valuations
+     * export.
+     *
+     * This capped at ten thousand accounts and reported nothing. A user
+     * directory export is a reconciliation artifact — somebody hands it to an
+     * auditor as "everyone with access" — and the rows past the cap are exactly
+     * the ones nobody thinks to look for, because a CSV that stops has no way
+     * of looking like it stopped. `listUsers` hands back a `total` this route
+     * was already discarding, but the count is a second statement over the same
+     * WHERE and can disagree with the page under concurrent writes; the extra
+     * row cannot.
+     */
+    const { items: fetched } = await listUsers(deps.pool, {
       q,
       role,
       partnerId: partner_id,
       includeDeleted: include_deleted,
       page: 1,
-      perPage: 10_000,
+      perPage: MAX_EXPORT_ROWS + 1,
     });
+    const { rows: items, truncated } = truncationOf(fetched);
     // `as const` so the names are checked against the row type rather than
     // widened to `string[]` — see the note on `toCsv`.
     const columns = [
@@ -321,7 +337,7 @@ export function registerAdminUserRoutes(
       'deleted_at',
     ] as const;
     const csv = toCsv(columns, items);
-    return reply
+    return sendExport(reply, truncated)
       .header('content-type', 'text/csv; charset=utf-8')
       .header('content-disposition', 'attachment; filename="users.csv"')
       .send(csv);

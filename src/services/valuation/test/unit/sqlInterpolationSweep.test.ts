@@ -176,7 +176,9 @@ const REVIEWED: Record<string, string[]> = {
   // / `union` / `values`: predicate and column-list fragments assembled in the
   // same function from string literals, with every value pushed onto `params`
   // and referenced as `$n`. No branch of any of them embeds a value.
-  'src/services/valuation/src/repos/activityLog.ts': ['union', 'whereSql'],
+  // `sql` is one branch's WHERE, `limitParam` is the `$n` naming the merge
+  // window (R167) — a placeholder number, never a value.
+  'src/services/valuation/src/repos/activityLog.ts': ['limitParam', 'sql', 'whereSql'],
   'src/services/valuation/src/repos/adminUsers.ts': ['search', 'whereSql'],
   'src/services/valuation/src/repos/contactSubmissions.ts': ['where'],
   'src/services/valuation/src/repos/engagements.ts': ['cursorSql'],
@@ -260,6 +262,11 @@ const REVIEWED: Record<string, string[]> = {
   // this far.
   'src/services/valuation/src/repos/valuations.ts': [
     'alias',
+    // R167. `limitParam` is the `$n` naming the dashboard feed's per-branch
+    // window; `userFullNameSql('users')` is the same column expression the
+    // full-name trigram index is built on, with no argument of its own.
+    'limitParam',
+    "userFullNameSql('users')",
     'column',
     'cursorSelect',
     'idRef',

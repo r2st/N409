@@ -198,6 +198,34 @@ describe('CapTableTab', () => {
       expect(within(row).getAllByText('—')).toHaveLength(2);
     });
 
+    /**
+     * The shape the importer sees most: an administrator's export states the
+     * round price and leaves the amount column empty. Every server-side reader
+     * of that row derives `price × shares` — the engine's waterfall inputs, the
+     * cap-table graph, the auditor workbook's Invested column, and the
+     * Preference stack total printed on this very screen. The tab read the raw
+     * column and showed "—", so the rows a reviewer can see summed to nothing
+     * while the total beside them said $3,000,000. See lib/capTableFigures.
+     */
+    it('derives Invested for a preferred class that states only a price', async () => {
+      const carta = {
+        ...STORED,
+        entries: [
+          { ...ENTRIES[0] },
+          { ...ENTRIES[1], invested_amount: null, shares: 2_000_000, price_per_share: 1.5 },
+        ],
+        validation: { ...VALID, summary: { ...SUMMARY, total_preference_stack: 3_000_000 } },
+      };
+      mockApi([capTable({ cap_table: carta, can_edit: true }), formats()]);
+      renderTab();
+      const row = (await screen.findByText('Series A Preferred')).closest('tr')!;
+      expect(within(row).getByText('$3,000,000.00')).toBeInTheDocument();
+      // Twice on the page: once in the row, once as the Preference stack the
+      // summary totals — which is the point. The visible cells now add up to
+      // the figure printed beside them.
+      expect(screen.getAllByText('$3,000,000.00')).toHaveLength(2);
+    });
+
     it('names the source format and class count', async () => {
       mockApi([capTable({ cap_table: STORED, can_edit: true }), formats()]);
       renderTab();

@@ -10,7 +10,7 @@ import {
   parseSort,
   type ValuationRow,
 } from '../repos/valuations.js';
-import { ValuationFilterQuery, toRepoFilters } from './valuations.js';
+import { readerSideFor, ValuationFilterQuery, toRepoFilters } from './valuations.js';
 import { toCsv as recordsToCsv } from '../domain/csv.js';
 import { tablePdf, type PdfColumn } from '../export/pdf.js';
 import { buildXlsx, XLSX_CONTENT_TYPE, type XlsxColumn, type XlsxValue } from '../export/xlsx.js';
@@ -40,10 +40,18 @@ const ExportQuery = ValuationFilterQuery.extend({
   sort: z.string().max(200).optional(),
 });
 
-const MAX_EXPORT_ROWS = 10_000;
+/**
+ * The row ceiling every list export shares.
+ *
+ * Exported so the admin users CSV caps at the same number through the same
+ * `truncationOf`/`sendExport` pair rather than re-typing 10_000 beside its own
+ * `perPage` — which is how that export came to stop at ten thousand accounts
+ * and say nothing about it.
+ */
+export const MAX_EXPORT_ROWS = 10_000;
 
 /** CSV: the rich projection (owner/partner/reviewer joined in the repo). */
-const CSV_COLUMNS = [
+export const CSV_COLUMNS = [
   'id',
   'number',
   'workflow_id',
@@ -133,8 +141,22 @@ const PDF_COLUMNS: PdfColumn[] = [
 /**
  * XLSX: the CSV projection, but typed — dates become real dates and counts
  * become real numbers, so the sheet is sortable and summable on arrival.
+ *
+ * "The CSV projection" is a claim the two lists have to keep, and one of them
+ * had already stopped: `workflow_id` was in the CSV and not here, so the same
+ * export taken as a spreadsheet was missing the only column that joins a row
+ * back to the workflow it came from. Nothing failed — a column that is not
+ * there does not error, it is simply not there, and a reader who has never seen
+ * the CSV has no way to notice. `exportProjectionDrift` now asserts the two
+ * lists name the same fields in both directions; a column added to either one
+ * fails until it is added to the other or the difference is stated here.
+ *
+ * The *order* is deliberately not shared. The CSV leads with the identifiers
+ * because it is read by programs; the sheet leads with the number and the
+ * company because it is read by people, and puts the two opaque ids at the far
+ * right where they do not push the readable columns off the first screen.
  */
-const XLSX_LIST_COLUMNS: Array<XlsxColumn & { key: string }> = [
+export const XLSX_LIST_COLUMNS: Array<XlsxColumn & { key: string }> = [
   { key: 'number', header: 'Number', width: 14, format: 'text' },
   { key: 'company_name', header: 'Company', width: 30, format: 'text' },
   { key: 'kind', header: 'Kind', width: 12, format: 'text' },
@@ -150,6 +172,7 @@ const XLSX_LIST_COLUMNS: Array<XlsxColumn & { key: string }> = [
   { key: 'created_at', header: 'Created', width: 13, format: 'date' },
   { key: 'due_date', header: 'Due', width: 13, format: 'date' },
   { key: 'published_at', header: 'Published', width: 13, format: 'date' },
+  { key: 'workflow_id', header: 'Workflow ID', width: 28, format: 'text' },
   { key: 'id', header: 'ID', width: 28, format: 'text' },
 ];
 
@@ -201,7 +224,7 @@ export function truncationNotice(emitted: number): string {
  * business parsing a title line, and the header is the only marker CSV can
  * carry at all.
  */
-function sendExport(reply: FastifyReply, truncated: boolean): FastifyReply {
+export function sendExport(reply: FastifyReply, truncated: boolean): FastifyReply {
   return reply
     .header('x-export-truncated', truncated ? 'true' : 'false')
     .header('x-export-row-limit', String(MAX_EXPORT_ROWS));
@@ -213,7 +236,21 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     const parsed = ExportQuery.safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
     const { format } = parsed.data;
-    const filters = toRepoFilters(parsed.data);
+    /*
+     * The reader's side of the read marker, which is the second half of the
+     * Unread filter rather than an optimisation.
+     *
+     * `unreadFor` is per-caller — the predicate compares `last_comment_at`
+     * against *this* principal's `admin_read_at` or `user_read_at` — so
+     * `toRepoFilters` cannot derive it from the query string and drops the
+     * filter entirely when nobody says which side is asking. This route did not
+     * say, so `?unread=true` and the Unread tab both narrowed the screen and
+     * narrowed nothing in the file: the export a user took from that tab held
+     * every engagement in their scope, looking exactly like the tab they took
+     * it from. Silent, and in the direction that matters — a file with rows the
+     * screen did not show is one somebody reconciles against.
+     */
+    const filters = toRepoFilters(parsed.data, readerSideFor(principal));
 
     const sort = parseSort(parsed.data.sort);
     if (sort === null) throw problems.badRequest('Invalid sort');

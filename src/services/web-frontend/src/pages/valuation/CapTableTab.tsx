@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { api, ApiError, apiUpload, ifMatch, type Problem } from '../../lib/api';
+import { investedForDisplay } from '../../lib/capTableFigures';
 import { csvColumns } from '../../lib/csvColumns';
 import { useAuth } from '../../lib/auth';
 import { formatAmount, formatNumber } from '../../lib/format';
@@ -196,22 +197,29 @@ function EntriesTable({ entries, currency }: { entries: Entry[]; currency: strin
           </tr>
         </thead>
         <tbody className="tnum">
-          {entries.map((e, i) => (
-            <tr key={`${e.security_class}-${i}`} className="border-b border-paper-200 last:border-0">
-              <td className="py-1.5 pr-3 font-semibold text-ink-800">{e.security_class}</td>
-              <td className={`py-1.5 pr-3 font-medium ${TYPE_TONE[e.class_type] ?? ''}`}>{e.class_type}</td>
-              <td className="py-1.5 pr-3 text-right">{formatNumber(e.shares)}</td>
-              <td className="py-1.5 pr-3 text-right text-ink-500">
-                {e.price_per_share !== null ? formatAmount(e.price_per_share, currency) : '—'}
-              </td>
-              <td className="py-1.5 pr-3 text-right text-ink-500">
-                {e.invested_amount !== null ? formatAmount(e.invested_amount, currency) : '—'}
-              </td>
-              <td className="py-1.5 text-right text-ink-500">
-                {e.liquidation_multiple !== null ? `${e.liquidation_multiple}×` : '—'}
-              </td>
-            </tr>
-          ))}
+          {entries.map((e, i) => {
+            // Derived, not raw — see lib/capTableFigures. A preferred class off
+            // a sheet that states only a round price showed "—" in this column
+            // while the workbook, the graph, the engine and the preference
+            // stack printed below all read `price × shares` off the same row.
+            const invested = investedForDisplay(e);
+            return (
+              <tr key={`${e.security_class}-${i}`} className="border-b border-paper-200 last:border-0">
+                <td className="py-1.5 pr-3 font-semibold text-ink-800">{e.security_class}</td>
+                <td className={`py-1.5 pr-3 font-medium ${TYPE_TONE[e.class_type] ?? ''}`}>{e.class_type}</td>
+                <td className="py-1.5 pr-3 text-right">{formatNumber(e.shares)}</td>
+                <td className="py-1.5 pr-3 text-right text-ink-500">
+                  {e.price_per_share !== null ? formatAmount(e.price_per_share, currency) : '—'}
+                </td>
+                <td className="py-1.5 pr-3 text-right text-ink-500">
+                  {invested !== null ? formatAmount(invested, currency) : '—'}
+                </td>
+                <td className="py-1.5 text-right text-ink-500">
+                  {e.liquidation_multiple !== null ? `${e.liquidation_multiple}×` : '—'}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
