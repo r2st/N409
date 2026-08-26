@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { migrate } from '../../src/db/migrate.js';
+import { createCalculation } from '../../src/repos/calculations.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { resetEngineVersionCache } from '../../src/routes/specialty.js';
@@ -259,6 +260,70 @@ describe.skipIf(!dbUp)('specialty report-type pipeline', () => {
     expect(latest.statusCode).toBe(200);
     expect(latest.json().result.fmv_per_share).toBeCloseTo(7.5);
     expect(latest.json().supported).toBe(true);
+  });
+
+  /**
+   * A 409A-shaped run landing after a specialty one, on the same valuation.
+   *
+   * `calculations` holds both shapes. Nothing stops an ESOP or EMI engagement
+   * from also using the Calculations tab's ordinary compute — the button is
+   * offered on every kind — and that row is newer without being a specialty
+   * result. This handler used to ask for the newest succeeded run of *any*
+   * shape and then read `results.specialty` off it, so a later 409A run made
+   * the tab report "No result yet · Run the engine to produce the calculation
+   * this report type's exhibits are built from" directly above a run history
+   * listing the succeeded specialty run it had just discarded. The history has
+   * always filtered to specialty runs; the latest-result lookup now asks the
+   * same question.
+   */
+  it('keeps serving the specialty result after a 409A run lands on top of it', async () => {
+    const id = await createValuation('esop');
+    await saveAnswers(id, {
+      equity_value: 8_000_000,
+      shares_outstanding: 1_000_000,
+      value_basis: 'control',
+      esop_share_balance: 100_000,
+    });
+    const run = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/specialty`,
+      headers: authHeader(ops.token),
+      payload: {},
+    });
+    expect(run.statusCode).toBe(201);
+
+    // The ordinary pipeline's shape, written by the same repo function the
+    // compute route uses, and newer.
+    await createCalculation(
+      pool,
+      {
+        valuationId: id,
+        engineVersion: 'py-1.0.0',
+        status: 'succeeded',
+        inputs: {},
+        results: { approaches: { income: { equity_value: 9_000_000, weight: 1 } } },
+        equityValue: 9_000_000,
+        fmvPerShare: 9,
+        createdBy: ops.id,
+      },
+      { actorType: 'human', actorId: ops.id },
+    );
+
+    const latest = await app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${id}/specialty`,
+      headers: authHeader(ops.token),
+    });
+    expect(latest.statusCode).toBe(200);
+    const body = latest.json();
+    // The specialty result is still the one served, and it is the specialty
+    // run's own calculation row beside it — not the 409A row's figures.
+    expect(body.result.fmv_per_share).toBeCloseTo(6);
+    expect(body.calculation.results.kind).toBe('esop');
+    expect(Number(body.calculation.fmv_per_share)).toBeCloseTo(6);
+    // And the two never disagree: a served result means a non-empty history.
+    expect(body.history.length).toBeGreaterThan(0);
+    expect(body.history.some((h: { id: string }) => h.id === body.calculation.id)).toBe(true);
   });
 
   it('merges run inputs over the questionnaire answers', async () => {

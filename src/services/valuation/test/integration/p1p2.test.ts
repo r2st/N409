@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '../../src/db/migrate.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
+import { createCalculation } from '../../src/repos/calculations.js';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
 import type pg from 'pg';
 
@@ -347,6 +348,48 @@ describe.skipIf(!dbUp)('P1/P2 features API', () => {
         },
       });
       expect(partial.json().calculation.results.recomputed).toEqual(['opm_backsolve']);
+    });
+
+    /**
+     * A specialty run landing between the full calculation and the recalc.
+     *
+     * `calculations` holds runs of two shapes, and this valuation's kind does
+     * not decide which: the specialty engines write `{ kind, specialty }` and
+     * carry no approaches, while the Calculations tab offers the ordinary
+     * compute on every kind. The baseline lookup took the newest succeeded run
+     * of any shape and then read `results.approaches` off it, so one specialty
+     * run was enough to refuse every later recalculation with "Run a full
+     * calculation before recalculating a single approach" — an instruction to
+     * do the thing that had already been done, with the run that proves it
+     * sitting one row below in the same table.
+     */
+    it('recalculates against the last run that has approaches, not the last run', async () => {
+      await createCalculation(
+        pool,
+        {
+          valuationId,
+          engineVersion: 'stub-9.9.9',
+          status: 'succeeded',
+          inputs: { endpoint: '/engine/v1/esop' },
+          results: { kind: 'esop', specialty: { fmv_per_share: 7.5 } },
+          equityValue: 10_000_000,
+          fmvPerShare: 7.5,
+          createdBy: ops.id,
+        },
+        { actorType: 'human', actorId: ops.id },
+      );
+
+      const partial = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${valuationId}/calculations`,
+        headers: authHeader(ops.token),
+        payload: { approach: 'opm', inputs: { last_round_post_money: 30_000_000 } },
+      });
+      expect(partial.statusCode).toBe(201);
+      // The prior approaches come from the 409A run beneath the specialty row,
+      // which is the only run that has any.
+      expect(lastEnginePayload).toMatchObject({ recompute: ['opm_backsolve'] });
+      expect((lastEnginePayload as { prior_approaches?: unknown }).prior_approaches).toBeTruthy();
     });
   });
 

@@ -131,7 +131,60 @@ export async function createCalculation(
   });
 }
 
-/** Baseline for per-approach recalculation: the newest full successful run. */
+/**
+ * The newest succeeded run whose result document carries `resultsKey`.
+ *
+ * One valuation's `calculations` table holds runs of two different shapes. The
+ * 409A pipeline writes `results = { approaches, discounts, assumptions, ... }`;
+ * a specialty engine writes `results = { kind, specialty }` (`routes/specialty.ts`).
+ * Nothing stops an EMI engagement from also running the ordinary compute — the
+ * Calculations tab offers the button on every kind — so the two interleave in
+ * one `created_at DESC` ordering.
+ *
+ * That makes {@link latestSucceededCalculation} the wrong question for any
+ * caller that goes on to read a *shape-specific* key: the newest row of the
+ * wrong shape shadows the newest row of the right one, and the caller reports
+ * the absence as a fact about the engagement. Ask for the shape you are about
+ * to read instead.
+ */
+async function latestSucceededCalculationWith(
+  db: Queryable,
+  valuationId: string,
+  resultsKey: 'approaches' | 'specialty',
+): Promise<CalculationRow | null> {
+  const { rows } = await db.query<CalculationRow>(
+    // `jsonb_exists(results, $2)` rather than the `?` operator: the operator is
+    // spelled the same as a placeholder in several pg tooling layers, and the
+    // function form is the same index-eligible test without that hazard.
+    `SELECT ${CALCULATION_COLUMNS} FROM calculations
+     WHERE valuation_id = $1 AND status = 'succeeded' AND jsonb_exists(results, $2)
+     ORDER BY created_at DESC LIMIT 1`,
+    [valuationId, resultsKey],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Baseline for per-approach recalculation: the newest run that actually carries
+ * approaches to reuse. A specialty run carries none, and is not a baseline for
+ * one — nor evidence that no full calculation has been run.
+ */
+export function latestApproachBaseline(db: Queryable, valuationId: string): Promise<CalculationRow | null> {
+  return latestSucceededCalculationWith(db, valuationId, 'approaches');
+}
+
+/**
+ * The newest specialty-engine run, for surfaces that render `results.specialty`.
+ * Matches the predicate the specialty tab's run history already filters on.
+ */
+export function latestSucceededSpecialtyCalculation(
+  db: Queryable,
+  valuationId: string,
+): Promise<CalculationRow | null> {
+  return latestSucceededCalculationWith(db, valuationId, 'specialty');
+}
+
+/** The newest successful run of any shape. */
 export async function latestSucceededCalculation(
   db: Queryable,
   valuationId: string,

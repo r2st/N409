@@ -7,7 +7,11 @@ import { internalAuthHeaders, InternalServiceError, postJson, toProblem } from '
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findQuestionnaire } from '../repos/intake.js';
-import { createCalculation, latestSucceededCalculation, listCalculations } from '../repos/calculations.js';
+import {
+  createCalculation,
+  latestSucceededSpecialtyCalculation,
+  listCalculations,
+} from '../repos/calculations.js';
 import { loadHmrcForm } from '../repos/hmrcForms.js';
 import type { EventActor } from '../events/record.js';
 import {
@@ -187,7 +191,14 @@ export function registerSpecialtyRoutes(
     const valuation = await loadValuation(id, principal);
     const kind = valuation.kind as ValuationKind;
     const supported = isSpecialtyKind(kind);
-    const latest = await latestSucceededCalculation(deps.pool, id);
+    // The newest *specialty* run, not the newest run. Nothing stops an EMI or
+    // ESOP engagement from also using the Calculations tab's ordinary compute,
+    // and that row is newer without being a specialty result — so asking for
+    // the latest of any shape made a 409A run hide a perfectly good specialty
+    // one, and this handler then reported "No result yet" directly above a run
+    // history listing the succeeded run it had just discarded. `history` below
+    // has always filtered to specialty runs; this is the same question.
+    const latest = await latestSucceededSpecialtyCalculation(deps.pool, id);
     const specialty =
       latest?.results && typeof latest.results.specialty === 'object'
         ? (latest.results.specialty as Record<string, unknown>)

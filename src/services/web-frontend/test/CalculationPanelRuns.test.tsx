@@ -312,3 +312,114 @@ describe('CalculationPanel — the run history', () => {
     expect(screen.queryByText('Approach breakdown')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * A specialty run sitting on the same valuation as a 409A one.
+ *
+ * `calculations` is one table holding two shapes of run: the 409A pipeline's
+ * `results.approaches` document, and a specialty engine's `{ kind, specialty }`
+ * (`routes/specialty.ts`), whose headline goes into the typed `equity_value` /
+ * `fmv_per_share` columns where it means something else — an EMI run's
+ * per-share figure is the *restricted* AMV, not a §409A fair market value.
+ * Nothing stops an EMI engagement from also using this panel's own "Run
+ * calculation" button, so the two interleave in one newest-first list.
+ *
+ * Taking simply the newest succeeded run let the specialty row drive this
+ * panel: its AMV printed as "Fair market value / share", an empty table under
+ * "Approach breakdown", and all four recalculate buttons disabled saying the
+ * approach "has no weight in the latest run" — a claim about a weighting the
+ * run does not have, while the 409A run those buttons could have recalculated
+ * sat one row below.
+ */
+const SPECIALTY: Calculation = {
+  ...SUCCEEDED,
+  id: 'c-emi',
+  results: { kind: 'emi', specialty: { amv_per_share: 0.42, umv_per_share: 1.1 } },
+  equity_value: '5000000',
+  fmv_per_share: '0.42',
+  created_at: '2026-07-03T00:00:00Z',
+};
+
+describe('CalculationPanel — a specialty run newer than the 409A one', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('describes the 409A run, not the specialty row above it', async () => {
+    mockApi({ calculations: [SPECIALTY, SUCCEEDED] });
+    renderPanel();
+
+    await screen.findByText('Approach breakdown');
+    // The breakdown is the 409A run's, so the recalculate strip can tell the
+    // truth about which approaches are there to recompute.
+    expect(screen.getByText('Income (DCF)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '↻ DCF' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '↻ Market' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '↻ Asset' })).toBeDisabled();
+  });
+
+  it('recalculates against that run rather than refusing', async () => {
+    const posts = mockApi({ calculations: [SPECIALTY, SUCCEEDED] });
+    renderPanel();
+
+    await screen.findByText('Approach breakdown');
+    await userEvent.click(screen.getByRole('button', { name: '↻ Market' }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]!.body).toEqual({ inputs: {}, approach: 'market' });
+  });
+
+  it('does not caption the specialty headline as a §409A fair market value', async () => {
+    mockApi({ calculations: [SPECIALTY, SUCCEEDED] });
+    renderPanel();
+
+    await screen.findByText('Approach breakdown');
+    // 1.2 is the 409A run's FMV per share; 0.42 is the EMI restricted AMV,
+    // which this panel has no wording for and must not borrow one for.
+    const card = screen.getByText('Fair market value / share').parentElement!;
+    expect(card).toHaveTextContent('$1.20');
+    expect(card).not.toHaveTextContent('0.42');
+  });
+
+  it('still lists the specialty run in the history', async () => {
+    mockApi({ calculations: [SPECIALTY, SUCCEEDED] });
+    renderPanel();
+
+    await screen.findByText('History');
+    // Two rows: nothing was filtered out of the record of what was run, only
+    // out of the question "which run does this panel describe".
+    expect(screen.getAllByRole('button', { name: 'Inspect steps' })).toHaveLength(2);
+  });
+});
+
+describe('CalculationPanel — only specialty runs on the valuation', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('offers no approach breakdown or recalculate strip at all', async () => {
+    mockApi({ calculations: [SPECIALTY] });
+    renderPanel();
+
+    await screen.findByText('History');
+    // There is no 409A run to describe. Four disabled buttons explaining that
+    // each approach "has no weight" would be an account of a weighting that
+    // does not exist, and an empty table under "Approach breakdown" asserts a
+    // breakdown was computed and came to nothing.
+    expect(screen.queryByText('Approach breakdown')).not.toBeInTheDocument();
+    expect(screen.queryByText('Recalculate one approach:')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '↻ Asset' })).not.toBeInTheDocument();
+    // And no borrowed caption over the restricted AMV.
+    expect(screen.queryByText('Fair market value / share')).not.toBeInTheDocument();
+    // The run itself is still there to inspect.
+    expect(screen.getByRole('button', { name: 'Inspect steps' })).toBeInTheDocument();
+  });
+
+  it('still lets a full calculation be started', async () => {
+    mockApi({ calculations: [SPECIALTY] });
+    renderPanel();
+
+    await screen.findByText('History');
+    expect(screen.getByRole('button', { name: 'Run calculation' })).toBeEnabled();
+  });
+});

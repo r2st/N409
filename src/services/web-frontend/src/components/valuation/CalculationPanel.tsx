@@ -28,6 +28,11 @@ export const RECALC_OPTIONS = [
 ] as const;
 export type RecalcApproach = (typeof RECALC_OPTIONS)[number]['approach'];
 
+/** A present, non-null object — `typeof null` is `'object'`, which this is not. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 function approachRows(calc: Calculation): ApproachRow[] {
   const approaches = (calc.results?.approaches ?? {}) as Record<
     string,
@@ -157,7 +162,30 @@ export function CalculationPanel({
 
   if (!calculations && !error) return <Spinner />;
 
-  const latest = calculations?.find((c) => c.status === 'succeeded');
+  /*
+   * The newest run this panel is actually about.
+   *
+   * `calculations` holds runs of two shapes. The 409A pipeline writes
+   * `results.approaches` (and the discounts and assumptions read below); a
+   * specialty engine writes `results = { kind, specialty }` and puts its
+   * headline into the typed `equity_value` / `fmv_per_share` columns, where it
+   * means something else — an EMI run's per-share figure is the *restricted*
+   * AMV, an IFRS 2 run's equity column is a total share-based-payment expense.
+   * Nothing stops an EMI engagement from also running the ordinary compute, so
+   * the two interleave here.
+   *
+   * Taking `find(succeeded)` therefore let a specialty run drive this panel:
+   * its AMV printed under "Fair market value / share", an empty approach table
+   * under a heading claiming a breakdown, and all four recalculate buttons
+   * disabled with "has no weight in the latest run" — a sentence about a
+   * weighting the run does not have and never will. Worse, the 409A run those
+   * four buttons *could* have recalculated might be sitting one row down.
+   *
+   * So this panel takes the newest run carrying approaches. A specialty run is
+   * not hidden — it stays in the History list below, and its own numbers are on
+   * the Specialty Engine tab, captioned by the engine that produced them.
+   */
+  const latest = calculations?.find((c) => c.status === 'succeeded' && isRecord(c.results?.approaches));
   const discounts = latest?.results?.discounts as
     { dloc?: number; dlom?: number; dlom_method?: string } | undefined;
   const assumptions = latest?.results?.assumptions as

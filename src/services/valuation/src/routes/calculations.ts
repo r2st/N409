@@ -11,7 +11,7 @@ import { marketMultiples } from '../domain/comparables.js';
 import {
   createCalculation,
   findCalculationWithTrace,
-  latestSucceededCalculation,
+  latestApproachBaseline,
   listCalculations,
   type CalculationRow,
   type CalculationStep,
@@ -357,7 +357,7 @@ export function registerCalculationRoutes(
           `The ${parsed.data.approach} approach has zero weight — give it a weight in params first`,
         );
       }
-      const baseline = await latestSucceededCalculation(deps.pool, id);
+      const baseline = await latestApproachBaseline(deps.pool, id);
       const prior = baseline?.results?.approaches;
       if (!prior || typeof prior !== 'object') {
         throw problems.unprocessable('Run a full calculation before recalculating a single approach');
@@ -412,7 +412,7 @@ export function registerCalculationRoutes(
     let priorApproaches: Record<string, unknown> | undefined;
     if (parsed.data.approach) {
       recompute = [RECALC_APPROACHES[parsed.data.approach].engineKey];
-      const baseline = await latestSucceededCalculation(deps.pool, id);
+      const baseline = await latestApproachBaseline(deps.pool, id);
       const prior = baseline?.results?.approaches;
       if (prior && typeof prior === 'object') priorApproaches = prior as Record<string, unknown>;
     }
