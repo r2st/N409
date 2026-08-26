@@ -2,8 +2,17 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
+import { useClearOnChange } from '../lib/useClearOnChange';
 import { formatDate, formatDateTime } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Spinner, StatCard } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  LoadingBlock,
+  SkeletonStatStrip,
+  SkeletonTable,
+  StatCard,
+} from '../components/ui';
 
 /**
  * Cross-partner credential inventory (design §14.1).
@@ -76,6 +85,10 @@ export function AdminApiTokensPage() {
     }
   }, [showRevoked, claim]);
 
+  // Ticking "include revoked" must not leave the live-only listing on screen
+  // reading as though it already included them, or the reverse.
+  useClearOnChange(String(showRevoked), () => setData(null));
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -100,11 +113,14 @@ export function AdminApiTokensPage() {
     }
   };
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
-  if (!data) return <Spinner />;
-
-  const dormantAfter = data.dormant_after_days;
-
+  /*
+   * The heading, the "include revoked" box and Refresh are the same whatever
+   * the listing turns out to hold, so they stay mounted through the wait — a
+   * bare `<Spinner />` here removed the very checkbox the user had just ticked.
+   * The counters swap too, not just the table: "Listed" answers the same
+   * question the checkbox asks, so leaving the previous figure up would state
+   * a total for a listing that is no longer the one on screen.
+   */
   return (
     <div>
       <h1 className="font-display text-3xl font-semibold text-ink-900">API tokens</h1>
@@ -114,11 +130,15 @@ export function AdminApiTokensPage() {
         same action as revoking on the firm&rsquo;s own page.
       </p>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-3">
-        <StatCard label="Live tokens" value={String(data.live)} />
-        <StatCard label={`Dormant (${dormantAfter}d)`} value={String(data.dormant)} />
-        <StatCard label="Listed" value={String(data.total)} />
-      </div>
+      {data ? (
+        <div className="mt-6 grid gap-4 sm:grid-cols-3">
+          <StatCard label="Live tokens" value={String(data.live)} />
+          <StatCard label={`Dormant (${data.dormant_after_days}d)`} value={String(data.dormant)} />
+          <StatCard label="Listed" value={String(data.total)} />
+        </div>
+      ) : error ? null : (
+        <SkeletonStatStrip count={3} className="mt-6" />
+      )}
 
       {error && (
         <div className="mt-4">
@@ -136,7 +156,17 @@ export function AdminApiTokensPage() {
         </Button>
       </div>
 
-      {data.tokens.length === 0 ? (
+      {!data ? (
+        // The failure is already reported above; a skeleton next to it would be
+        // a wait that never ends.
+        !error && (
+          <div className="mt-6">
+            <LoadingBlock label={showRevoked ? 'Loading all tokens…' : 'Loading live tokens…'}>
+              <SkeletonTable columns={6} rows={5} />
+            </LoadingBlock>
+          </div>
+        )
+      ) : data.tokens.length === 0 ? (
         <div className="mt-6">
           <EmptyState title="No tokens issued">
             Nothing on the platform currently holds API credentials.
@@ -160,7 +190,8 @@ export function AdminApiTokensPage() {
             <tbody>
               {data.tokens.map((t) => {
                 const revoked = t.revoked_at !== null;
-                const dormant = !revoked && daysSince(t.last_used_at ?? t.created_at) > dormantAfter;
+                const dormant =
+                  !revoked && daysSince(t.last_used_at ?? t.created_at) > data.dormant_after_days;
                 return (
                   <tr
                     key={t.id}

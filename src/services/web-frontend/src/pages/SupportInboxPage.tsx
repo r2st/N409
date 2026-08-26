@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
+import { useClearOnChange } from '../lib/useClearOnChange';
 import { formatDateTime } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Spinner } from '../components/ui';
+import { Button, EmptyState, ErrorNote, LoadingBlock, SkeletonCardList } from '../components/ui';
 
 export interface SupportMessage {
   id: string;
@@ -48,6 +49,10 @@ export function SupportInboxPage() {
     }
   }, [scope, claim]);
 
+  // Otherwise the open queue stays under the Resolved chip until the reply
+  // lands — with a Resolve button beside every row of it.
+  useClearOnChange(scope, () => setMessages(null));
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -65,9 +70,11 @@ export function SupportInboxPage() {
     }
   };
 
-  if (error && !messages) return <ErrorNote>{error}</ErrorNote>;
-  if (!messages) return <Spinner />;
-
+  /*
+   * No early return for the wait: a bare `<Spinner />` here took the scope
+   * chips with it, so pressing Resolved blanked the page and left nothing
+   * saying which queue had been asked for. Only the message list swaps.
+   */
   return (
     <div>
       <h1 className="font-display text-3xl font-semibold text-ink-900">Support inbox</h1>
@@ -100,12 +107,17 @@ export function SupportInboxPage() {
       )}
 
       <div className="mt-6 space-y-4">
-        {messages.length === 0 && (
+        {!messages && !error && (
+          <LoadingBlock label={`Loading ${scope === 'all' ? 'all' : scope} support messages…`}>
+            <SkeletonCardList rows={3} badges={1} />
+          </LoadingBlock>
+        )}
+        {messages?.length === 0 && (
           <EmptyState title={scope === 'open' ? 'Inbox zero' : 'Nothing here'}>
             {scope === 'open' ? 'No open support messages — nice.' : 'No messages match this filter.'}
           </EmptyState>
         )}
-        {messages.map((m) => (
+        {messages?.map((m) => (
           <article key={m.id} className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-semibold text-ink-900">{m.subject}</h2>

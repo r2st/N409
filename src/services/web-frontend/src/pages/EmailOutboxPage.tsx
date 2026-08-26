@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
+import { useClearOnChange } from '../lib/useClearOnChange';
 import { formatDateTime } from '../lib/format';
 import type { DeliveryState, OutboxEmail, OutboxStatus } from '../lib/types';
-import { Button, EmptyState, ErrorNote, Spinner } from '../components/ui';
+import { Button, EmptyState, ErrorNote, LoadingBlock, SkeletonTable } from '../components/ui';
 
 /**
  * `sent` is deliberately not green. It means the relay accepted the message,
@@ -80,13 +81,23 @@ export function EmailOutboxPage() {
     }
   }, [scope, claim]);
 
+  // The scope chips are the question; the table is the answer to it. Without
+  // this the previous scope's rows sit under the newly pressed chip for a
+  // whole round trip, unmarked. See `useClearOnChange`.
+  useClearOnChange(scope, () => setEmails(null));
+
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (error && !emails) return <ErrorNote>{error}</ErrorNote>;
-  if (!emails) return <Spinner />;
-
+  /*
+   * The wait replaces the answer, not the page. Returning a bare `<Spinner />`
+   * from here took the scope chips with it, so pressing Failed blanked the
+   * screen the user had just filtered — no way to see which scope was selected,
+   * and no way to change their mind without waiting for a request they no
+   * longer wanted. The header and the filters are the same whatever the answer
+   * turns out to be, so they render either way and only the table swaps.
+   */
   return (
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -128,7 +139,17 @@ export function EmailOutboxPage() {
         </div>
       )}
 
-      {emails.length === 0 ? (
+      {!emails ? (
+        // A load that failed has reported itself above; a skeleton beside that
+        // note would be a wait with nothing behind it, running forever.
+        !error && (
+          <div className="mt-6">
+            <LoadingBlock label={scope === 'all' ? 'Loading emails…' : `Loading ${scope} emails…`}>
+              <SkeletonTable columns={7} rows={6} />
+            </LoadingBlock>
+          </div>
+        )
+      ) : emails.length === 0 ? (
         <div className="mt-6">
           <EmptyState title={scope === 'all' ? 'The outbox is empty' : `No ${scope} emails`}>
             Workflow emails appear here as they are queued and delivered.
