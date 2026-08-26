@@ -339,6 +339,21 @@ def _check_income(c: _Collector, inputs: dict, *, auto_wacc: bool = False) -> No
             )
         else:
             growth = parsed_growth
+            # The perpetuity's floor, mirroring `projection.terminal_value_gordon`.
+            # Below -100% the Gordon formula's `(1 + g)` goes negative while its
+            # denominator does not, so a positive final cash flow capitalises to a
+            # *negative* terminal value — and `r > g` below is satisfied by every
+            # such rate, so nothing else here would have caught it. Reported as an
+            # error rather than left to the engine because the whole point of the
+            # pre-flight is that a payload it clears is one `/compute` will run.
+            if growth < -1.0:
+                c.error(
+                    "out_of_range",
+                    "inputs.income.terminal_growth",
+                    f"terminal_growth must be >= -1 (i.e. no worse than -100%); got {growth:g}",
+                    "Enter the long-run growth rate as a fraction (-2% is -0.02), or use -1 "
+                    "for a cash flow that stops at the end of the forecast.",
+                )
     if rate is not None:
         # Only the Gordon perpetuity diverges at r <= g; an exit multiple
         # capitalises nothing, so the engine does not demand the inequality

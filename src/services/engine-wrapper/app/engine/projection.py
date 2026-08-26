@@ -89,13 +89,57 @@ def _finite(value: float, name: str, hint: str = "check the growth and margin as
     return value
 
 
-def _rate_vector(rate, years: int, name: str) -> list[float]:
-    """Normalize a scalar or per-year list of rates to a length-``years`` list."""
+def _rate_vector(rate, years: int, name: str, *, above_minus_one: bool = False) -> list[float]:
+    """Normalize a scalar or per-year list of rates to a length-``years`` list.
+
+    ``above_minus_one`` is for the rates that *compound* — see
+    ``_check_growth``. The margin and ratio vectors do not compound and are
+    deliberately left unbounded: a negative ``capex_pct`` is a disposal and a
+    negative ``nwc_pct`` is deferred revenue funding the business, both of which
+    a real forecast carries.
+    """
     if isinstance(rate, (list, tuple)):
         if len(rate) != years:
             raise EngineInputError(f"{name} list must have {years} entries (one per forecast year)")
-        return [_num(x, f"{name}[]") for x in rate]
-    return [_num(rate, name)] * years
+        values = [_num(x, f"{name}[]") for x in rate]
+        if above_minus_one:
+            for i, value in enumerate(values):
+                _check_growth(value, f"{name}[{i}]")
+        return values
+    value = _num(rate, name)
+    if above_minus_one:
+        _check_growth(value, name)
+    return [value] * years
+
+
+def _check_growth(rate: float, name: str) -> None:
+    """Refuse a growth rate below −100%, which does not compound.
+
+    ``revenue`` is built by multiplying the prior year by ``(1 + g)``, so a
+    growth rate below −1 makes the multiplier negative and the projected
+    revenue line *alternates sign*: on a $1,000,000 base at g = −150% the
+    forecast reads −$500,000, $250,000, −$125,000, $62,500, −$31,250, and every
+    line derived from it — COGS, EBITDA, the free cash flows the DCF is then
+    handed — inherits the alternation, so the odd years show a *positive*
+    EBITDA struck on negative revenue.
+
+    None of it raised. ``_finite`` sees only finite numbers, and the DCF that
+    consumes ``free_cash_flows`` has no way to know the stream came from a
+    revenue line that went negative. So a single mistyped rate — a percentage
+    where a fraction was meant, ``-150`` for "down 1.5%" — produced a complete,
+    plausible-looking, entirely fictional forecast on a 200.
+
+    Exactly −1 is kept: revenue goes to zero at the first forecast year and
+    stays there, which is a wind-down and is monotone. It is the same floor
+    ``comparables.comparable_analysis`` applies to its target growth
+    (``minimum=-1.0``) and ``intangibles`` to its terminal growth.
+    """
+    if rate < -1.0:
+        raise EngineInputError(
+            f"{name} must be >= -1 (i.e. no worse than -100%); got {rate:g} — a growth rate below "
+            "-100% does not compound, it flips the sign of the projected revenue every year; "
+            "check the rate is a fraction (-0.15), not a percentage (-15)"
+        )
 
 
 def _sequence(vals, name: str) -> list:
@@ -117,7 +161,39 @@ def terminal_value_gordon(
     discount_rate: float,
     terminal_growth: float,
 ) -> float:
-    """Gordon growth terminal value: FCF·(1+g) / (r − g)."""
+    """Gordon growth terminal value: FCF·(1+g) / (r − g).
+
+    ``terminal_growth`` has a floor as well as the ``r > g`` ceiling, and only
+    the ceiling was here. A perpetual growth rate below −100% is not a steep
+    decline; it is a sign flip in the perpetuity's very first period, and
+    the formula reports it as one: ``(1 + g)`` goes negative while ``(r − g)``
+    stays positive, so a *positive* final cash flow capitalises to a *negative*
+    terminal value. On a flat $100 forecast at a 15% discount rate the terminal
+    value falls from $0.88 at g = −99% to $0.00 at g = −100% — both right, a
+    business shrinking that fast is worth nothing — and then to −$30.30 at
+    g = −150% and −$63.49 at g = −300%, converging on −$100 as g → −∞. It is
+    not merely implausible, it is wrong in direction: the limit is zero.
+
+    Nothing downstream could catch it. ``r > g`` is trivially satisfied by any
+    rate below −1, ``validate`` only warns when terminal growth is *too high*
+    (above long-run GDP), and ``income_dcf`` adds the negative terminal PV to a
+    healthy explicit period and returns a smaller-but-positive enterprise value
+    — a silently understated conclusion on a 200, which is exactly what a
+    negative terminal value is worth catching for.
+
+    Exactly −1 is kept, and is the floor rather than the first refusal: it is
+    the zero tail — the flow stops at the horizon and the terminal value is
+    $0.00, which is a thing a forecast means to say. That is the same bound
+    ``intangibles.relief_from_royalty`` already applies to its own terminal
+    growth (``minimum=-1.0``), and this is the DCF's perpetuity agreeing with
+    it rather than holding the one opinion the engine had not written down.
+    """
+    if terminal_growth < -1.0:
+        raise EngineInputError(
+            f"terminal_growth must be >= -1 (i.e. no worse than -100%); got {terminal_growth:g} — "
+            "a perpetuity shrinking faster than 100% a year capitalises a positive cash flow "
+            "into a negative terminal value; use -1 for a flow that stops at the horizon"
+        )
     if discount_rate <= terminal_growth:
         raise EngineInputError("discount_rate must exceed terminal_growth")
     return final_fcf * (1.0 + terminal_growth) / (discount_rate - terminal_growth)
@@ -191,7 +267,7 @@ def project_financials(
         if n < 1:
             raise EngineInputError("growth method needs years (or a revenue_growth list)")
         _check_horizon(n)
-        growth_vec = _rate_vector(revenue_growth, n, "revenue_growth")
+        growth_vec = _rate_vector(revenue_growth, n, "revenue_growth", above_minus_one=True)
         cogs_vec = _rate_vector(cogs_pct if cogs_pct is not None else 0.0, n, "cogs_pct")
         opex_vec = _rate_vector(opex_pct if opex_pct is not None else 0.0, n, "opex_pct")
         da_vec = _rate_vector(da_pct if da_pct is not None else 0.0, n, "da_pct")
