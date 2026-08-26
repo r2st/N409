@@ -198,10 +198,37 @@ def _time_to_exit(params: dict, inputs: dict) -> float:
 
 
 def _weights(params: dict) -> dict[str, float]:
+    """The four approach weights, each in [0, 1] and summing to 1.
+
+    The range check is not redundant with the sum. Summing to 1.0 is satisfied
+    by ``{income: 1.5, market: -0.5}`` and by ``{asset: -1, income: 1, market:
+    1}``, and neither is a weighting — the first extrapolates past the income
+    approach and the second double-counts two approaches at full weight. What
+    made them dangerous rather than merely odd is the ``w > 0`` filter on the
+    weighted sum a few hundred lines below: a negative weight is dropped from
+    the sum entirely (its approach is never even computed, since the same
+    predicate gates that), so the total is not the negative combination the
+    weights describe — it is the *positive* legs at their inflated weights, and
+    those are the ones that sum past 1. The measured effect on the reference
+    payload is a concluded FMV of $2.9498 against the $0.7304 the same inputs
+    produce at ``income: 1.0``, returned as an ordinary 200 with no warning and
+    a `weight_total` of 1.0 printed beside it.
+
+    ``validate._check_weights`` has always refused the same thing as an
+    ``out_of_range`` *error*, so ``/engine/v1/compute`` was covered. The gap was
+    every caller that reaches ``compute`` without the pre-flight validator, and
+    the one that matters is ``/engine/v1/sensitivity`` — it calls ``compute``
+    directly, deliberately, and inherits whatever params the engagement stored.
+    Two layers disagreeing about the same rule is the bug; this makes the
+    engine's own guard say what the validator already says.
+    """
     raw = {k: params.get(k) for k in WEIGHT_KEYS}
     if all(v is None for v in raw.values()):
         raise EngineInputError("approach weights are not set — save valuation params first")
     weights = {k: _req(v, k) for k, v in raw.items()}
+    for key, value in weights.items():
+        if not 0.0 <= value <= 1.0:
+            raise EngineInputError(f"{key} must be between 0 and 1 (got {value:g})")
     total = sum(weights.values())
     if abs(total - 1.0) > 1e-6:
         raise EngineInputError(f"approach weights must sum to 1.0 (got {total:.4f})")
