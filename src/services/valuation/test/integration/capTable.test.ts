@@ -247,6 +247,72 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
     expect(denied.statusCode).toBe(403);
   });
 
+  /**
+   * The row cap, on every path into the import.
+   *
+   * `rows` is capped by zod and `/upload` truncates and reports it, but the
+   * pasted-CSV path — the one the textarea uses — was bounded only by its two
+   * megabytes of text, some 340,000 lines of `Class,1000`. The same cap table
+   * refused as `rows` was accepted as `csv`, and on PUT it was persisted whole
+   * into one JSON document that every later reader of the valuation loads.
+   */
+  describe('the row cap', () => {
+    const overCapCsv = () =>
+      [
+        'class,shares,price,invested',
+        ...Array.from({ length: 2500 }, (_, i) => `Class ${i},1000,1.00,1000`),
+      ].join('\n');
+
+    it('refuses a pasted CSV past the cap, naming the limit', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${valuationId}/cap-table/preview`,
+        headers: authHeader(client.token),
+        payload: { format: 'generic', csv: overCapCsv() },
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().detail).toContain('2500');
+      expect(res.json().detail).toContain('2000');
+    });
+
+    it('refuses it on the save path too, so nothing over the cap is persisted', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/valuations/${valuationId}/cap-table`,
+        headers: authHeader(client.token),
+        payload: { format: 'generic', csv: overCapCsv() },
+      });
+      expect(res.statusCode).toBe(422);
+    });
+
+    it('answers the same way whichever shape the rows arrive in', async () => {
+      // The `rows` half was already capped, by zod. The point is that the two
+      // now agree: one import, one verdict, whatever the client sent.
+      const viaRows = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${valuationId}/cap-table/preview`,
+        headers: authHeader(client.token),
+        payload: {
+          format: 'generic',
+          rows: Array.from({ length: 2500 }, (_, i) => ({ class: `Class ${i}`, shares: '1000' })),
+        },
+      });
+      expect(viaRows.statusCode).toBe(422);
+    });
+
+    it('still accepts a paste right up to the cap', async () => {
+      const csv = ['class,shares', ...Array.from({ length: 2000 }, (_, i) => `Class ${i},1000`)].join('\n');
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${valuationId}/cap-table/preview`,
+        headers: authHeader(client.token),
+        payload: { format: 'generic', csv },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().entries).toHaveLength(2000);
+    });
+  });
+
   describe('spreadsheet upload', () => {
     const uploadUrl = () => `/api/v1/valuations/${valuationId}/cap-table/upload`;
 

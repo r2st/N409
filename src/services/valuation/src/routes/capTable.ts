@@ -35,7 +35,21 @@ import { refuseIfRetired } from '../domain/retiredEngagement.js';
  * rows, and an `.xlsx` is decompressed in memory before it is read.
  */
 export const MAX_CAP_TABLE_UPLOAD_BYTES = 10 * 1024 * 1024;
-/** Matches the row cap on {@link ImportBody} so a preview cannot be rejected. */
+/**
+ * The most rows one import may carry, on every path into it.
+ *
+ * Matches the row cap on {@link ImportBody} so a preview cannot be rejected —
+ * and is now applied to the pasted-CSV path too, which is the one the textarea
+ * uses and the one that had no bound at all. `rows` is capped by zod at 2,000
+ * and `/upload` truncates to 2,000 and says so; `csv` was only ever bounded by
+ * its two megabytes of *text*, which is some 340,000 lines of `Class,1000`.
+ *
+ * The same cap table refused as `rows` was therefore accepted as `csv`, and on
+ * PUT it was persisted: hundreds of thousands of entries in one `cap_tables`
+ * JSON document, which every reader of that valuation then loads whole — the
+ * workbook export, the waterfall projection, the graph, the report exhibits.
+ * A bound two of three callers enforce is not a bound.
+ */
 const MAX_UPLOAD_ROWS = 2000;
 
 const ImportBody = z.object({
@@ -109,6 +123,17 @@ function parseInput(body: z.infer<typeof ImportBody>): {
   }
   if (body.csv) {
     const sheet = parseCsvSheet(body.csv);
+    // Refused rather than truncated, because this parse feeds the PUT as well
+    // as the preview, and silently storing the first 2,000 rows of somebody's
+    // cap table is the one outcome worse than refusing it. `/upload` may
+    // truncate because it persists nothing and reports `truncated`; here the
+    // honest answer names the limit, exactly as zod does for `rows`.
+    if (sheet.rows.length > MAX_UPLOAD_ROWS) {
+      throw problems.unprocessable(
+        `The pasted CSV has ${sheet.rows.length} rows; at most ${MAX_UPLOAD_ROWS} can be imported at once`,
+        { rows: sheet.rows.length, limit: MAX_UPLOAD_ROWS },
+      );
+    }
     return { rows: sheet.rows, mapping, sourceLines: sheet.lines };
   }
   return { rows: [], mapping };
