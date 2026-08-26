@@ -247,6 +247,73 @@ def test_the_validator_refuses_the_same_terminal_growth_the_engine_does():
     assert ok_errors == []
 
 
+# ── a derived discount rate that cannot discount ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "wacc_in,came_out",
+    [
+        # A negative unlevered beta drags the cost of equity below zero.
+        ({"unlevered_beta_input": -5.0, "risk_free_rate_override": 0.04}, -0.21),
+        # Wd = 1 with no cost of debt zeroes the equity leg, so the cost of
+        # equity leaves the blend entirely and the WACC is exactly 0.
+        ({"unlevered_beta_input": 1.0, "debt_weight": 1.0, "cost_of_debt": 0.0}, 0.0),
+    ],
+)
+def test_a_non_positive_wacc_blames_the_build_up_not_the_field_it_was_written_to(wacc_in, came_out):
+    """The 422 named `income.discount_rate` on a payload that had no such field.
+
+    `auto_wacc` writes the derived WACC into `income.discount_rate`, so a
+    build-up landing at or below zero was refused by `income_dcf`'s
+    `positive=True` — pointing the caller at the one field they could not change
+    to fix it. `compute_wacc`'s own overflow guard exists to stop exactly this
+    misdirection; it checks `isfinite`, and 0.0 is finite.
+    """
+    from app.engine.wacc import compute_wacc
+
+    assert compute_wacc(**wacc_in)["wacc"] == pytest.approx(came_out)
+
+    inputs = {
+        "shares_outstanding_common": 8e6,
+        "options_outstanding": 2e6,
+        "volatility": 0.6,
+        "income": {"free_cash_flows": [1e6] * 5, "terminal_growth": 0.0},
+        "wacc": wacc_in,
+    }
+    with pytest.raises(EngineInputError, match=r"the WACC build-up came out at"):
+        compute(_params(), inputs, auto_wacc=True)
+
+
+def test_a_healthy_build_up_still_discounts():
+    """The guard is on the sign, not on the derivation."""
+    inputs = {
+        "shares_outstanding_common": 8e6,
+        "options_outstanding": 2e6,
+        "volatility": 0.6,
+        "income": {"free_cash_flows": [1e6] * 5, "terminal_growth": 0.0},
+        "wacc": {
+            "unlevered_beta_input": 1.2,
+            "risk_free_rate_override": 0.042,
+            "equity_risk_premium": 0.055,
+        },
+    }
+    out = compute(_params(), inputs, auto_wacc=True)
+    assert out["results"]["auto"]["wacc"]["wacc"] == pytest.approx(0.108)
+    assert out["results"]["fmv_per_share"] > 0
+
+
+def test_the_standalone_wacc_endpoint_still_reports_a_zero_build_up():
+    """`/engine/v1/wacc` describes a build-up; it does not discount with it.
+
+    A zero or negative WACC is a fact about the inputs there and worth
+    reporting. It is only unusable at the point it becomes a discount rate,
+    which is why the guard lives at the assignment rather than in `compute_wacc`.
+    """
+    from app.engine.wacc import compute_wacc
+
+    assert compute_wacc(unlevered_beta_input=1.0, debt_weight=1.0, cost_of_debt=0.0)["wacc"] == 0.0
+
+
 # ── a multiple struck on zero ────────────────────────────────────────────────
 
 PRE_REVENUE = {"sic_code": "2836", "revenue_growth": 0.2, "ebitda_margin": 0.05}

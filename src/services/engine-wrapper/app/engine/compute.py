@@ -329,6 +329,33 @@ def _apply_autopilot(
             income_in = dict(_section(inputs, "income"))
             manual = income_in.get("discount_rate") is not None
             if not manual:
+                # Named here, where the fields at fault are, rather than left to
+                # `income_dcf`'s `positive=True` on a field the caller never set.
+                #
+                # A CAPM build-up can land at or below zero out of perfectly
+                # finite inputs: a negative unlevered beta, a zero ERP against a
+                # zero risk-free rate, or a `debt_weight` of 1.0 with no cost of
+                # debt, which zeroes the equity leg and takes the cost of equity
+                # out of the blend entirely. `compute_wacc` returns each of them
+                # as an ordinary result, and this line then assigned it to
+                # `income.discount_rate` — so the 422 read "income.discount_rate
+                # must be positive" for a payload whose `income` section had no
+                # discount rate in it at all, and pointed at the one field the
+                # caller could not change to fix it.
+                #
+                # That is the same misdirection `wacc.compute_wacc`'s own
+                # overflow guard was written to stop ("blaming an input the
+                # caller never supplied"); it checked `isfinite` and stopped
+                # there, and 0.0 is finite. Refused at the assignment rather
+                # than inside `compute_wacc`, because `/engine/v1/wacc` reports
+                # a build-up rather than discounting with it, and a zero WACC is
+                # a fact about the inputs there — it is only unusable *here*.
+                if result["wacc"] <= 0:
+                    raise EngineInputError(
+                        f"the WACC build-up came out at {result['wacc']:g}, which cannot discount "
+                        "a cash flow — check the beta, the equity risk premium and the debt "
+                        "weight in inputs.wacc, or set inputs.income.discount_rate directly"
+                    )
                 income_in["discount_rate"] = result["wacc"]
                 inputs["income"] = income_in
             meta["wacc"] = {**result, "used_manual_override": manual}
