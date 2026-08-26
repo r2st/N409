@@ -45,6 +45,35 @@ export function offsetFor(page: number, perPage: number): number {
   return (page - 1) * perPage;
 }
 
+/**
+ * How many rows one branch of a merged feed has to contribute.
+ *
+ * `ORDER BY t DESC LIMIT n OFFSET k` written *above* a `UNION ALL` is answered
+ * the only way it can be: every branch is materialised in full, the lot is
+ * sorted, and n rows are kept. On an append-only table that is a scan of the
+ * whole history to render one screen, and it gets slower every day the product
+ * is used — the shape R167 found on three feeds at once.
+ *
+ * The rewrite is to cap each branch *before* the merge, and this is the cap.
+ * The n+k rows the caller ends up with are, by construction, within the top n+k
+ * of the branch each came from: a row sitting at position n+k+1 or later in its
+ * own branch already has n+k branch-mates ahead of it, so it cannot be in the
+ * top n+k of a superset. Capping each branch at n+k therefore discards only
+ * rows that could not have been returned, and the merge sorts
+ * (branches × (n+k)) rows instead of the tables.
+ *
+ * Two conditions, and both are the caller's to keep:
+ *
+ *  - the branch's `ORDER BY` must be the merged one, on the branch's own
+ *    columns — a branch capped in a different order caps the wrong rows;
+ *  - every predicate that applies to the branch must be *inside* it. A filter
+ *    left above the union is applied after the cap, so a page could come back
+ *    short (or empty) while matching rows sit unread below the cap.
+ */
+export function mergeWindow(page: number, perPage: number): number {
+  return offsetFor(page, perPage) + perPage;
+}
+
 // ── Keyset (cursor) pagination ──────────────────────────────────────────────
 
 /**

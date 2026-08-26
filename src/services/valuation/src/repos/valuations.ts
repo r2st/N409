@@ -273,6 +273,15 @@ export interface ValuationFilters {
   bucket?: NamedBucketKey;
   /** Free search: exact ULID / engagement number / workflow id, else company-name substring. */
   q?: string;
+  /**
+   * The users whose email or name matched `q`, already resolved.
+   *
+   * See {@link resolveQueryOwners} for why this is a *value* rather than the
+   * subquery it used to be. `undefined` means nobody has resolved it and the
+   * correlated `EXISTS` is used; `null` means the search matched more owners
+   * than {@link Q_OWNER_LIMIT} and the `EXISTS` is used deliberately.
+   */
+  qOwnerIds?: readonly string[] | null;
   /** Explicit id list — powers bulk export of a checkbox selection. */
   ids?: string[];
   /**
@@ -450,6 +459,62 @@ export interface ListFilters extends ValuationFilters {
 }
 
 /**
+ * How many owner matches a text search may resolve before it gives up and uses
+ * the correlated form.
+ *
+ * The fast path passes the matching owners as an array parameter, so its cost
+ * is the array's size. A search broad enough to match a thousand accounts is
+ * one whose company-name half already matches most of the book, so the scan the
+ * fallback plans is going to happen either way — and refusing to enumerate past
+ * this point is what keeps the array from becoming the new problem. Deliberately
+ * *not* a `LIMIT` on the owner list: truncating it would silently drop
+ * engagements from a search that says nothing about having done so.
+ */
+export const Q_OWNER_LIMIT = 1_000;
+
+/**
+ * Resolves the owner half of a free-text search into ids, ahead of the query
+ * that filters on it.
+ *
+ * `q` matches three things: the company name, an exact workflow id, and the
+ * requesting user's name or email. The third used to be a correlated `EXISTS`
+ * against `users`, sitting inside the same `OR` as the other two — and that one
+ * placement cost the whole predicate its indexes. Postgres can answer
+ * `a ILIKE ? OR b = ?` from a `BitmapOr` over the trigram and btree indexes; add
+ * a subquery as a third arm and no arm can be an index condition any more, so
+ * the plan degrades to reading every live valuation and evaluating `ILIKE` per
+ * row. Measured on 40k rows: 1.4ms without the `EXISTS`, 23.8ms with it, on both
+ * the count and the page — and migration 0149's two trigram indexes on `users`,
+ * added for exactly this search, were unreachable the whole time.
+ *
+ * Resolving first turns the third arm into `user_id = ANY($n)`, a plain value.
+ * All three arms are index conditions again, the owner lookup itself is a
+ * `BitmapOr` over `users_email_trgm_idx` and `users_full_name_trgm_idx`, and the
+ * two statements together cost less than the one did.
+ *
+ * A no-op for the searches that are not text — an exact ULID or an engagement
+ * number never reaches the owner arm — so the extra statement is only spent
+ * where it buys something.
+ */
+export async function resolveQueryOwners<T extends ValuationFilters>(
+  pool: pg.Pool,
+  filters: T,
+): Promise<T> {
+  const q = filters.q?.trim();
+  if (!q || isUlid(q.toUpperCase()) || /^#?\d{1,12}$/.test(q)) return filters;
+  const { rows } = await pool.query<{ id: string }>(
+    `SELECT id FROM users
+      WHERE email ILIKE $1 OR ${userFullNameSql('users')} ILIKE $1
+      LIMIT $2`,
+    [likeContains(q), Q_OWNER_LIMIT + 1],
+  );
+  // One over the limit: `null` says "too many to enumerate", which
+  // `buildValuationWhere` reads as "use the correlated form".
+  if (rows.length > Q_OWNER_LIMIT) return { ...filters, qOwnerIds: null };
+  return { ...filters, qOwnerIds: rows.map((r) => r.id) };
+}
+
+/**
  * Shared WHERE builder: RBAC scope + M3 advanced filters, all enforced in SQL.
  * `alias` prefixes column references when the query joins other tables.
  * Exported for unit tests only.
@@ -540,9 +605,21 @@ export function buildValuationWhere(
       where.push(`(${alias}id = $${params.length} OR ${alias}workflow_id = $${params.length})`);
     } else if (/^#?\d{1,12}$/.test(q)) {
       add('number = ?', Number(q.replace('#', '')));
-    } else {
+    } else if (filters.qOwnerIds !== undefined && filters.qOwnerIds !== null) {
       // Company-name substring, exact workflow id, or requester name/email
-      // (gap 7 — 409.ai also matches the requesting user).
+      // (gap 7 — 409.ai also matches the requesting user), with the owner half
+      // supplied as a value. See `resolveQueryOwners`: this is the same
+      // predicate as the branch below, and the only form of it Postgres can
+      // answer from the indexes.
+      params.push(likeContains(q), q, filters.qOwnerIds);
+      const like = `$${params.length - 2}`;
+      where.push(
+        `(${alias}company_name ILIKE ${like} OR ${alias}workflow_id = $${params.length - 1}
+          OR ${alias}user_id = ANY($${params.length}))`,
+      );
+    } else {
+      // The fallback: nobody resolved the owners, or there were too many to
+      // enumerate. Correct, and the plan R167 measured at 24ms on 40k rows.
       const ownerRef = `${alias || 'valuations.'}user_id`;
       params.push(likeContains(q), q);
       const like = `$${params.length - 1}`;
@@ -598,7 +675,7 @@ export async function listValuations(
 ): Promise<{ items: ValuationRow[]; total: number; nextCursor: string | null; hasMore: boolean }> {
   if (scope.kind === 'none') return { items: [], total: 0, nextCursor: null, hasMore: false };
 
-  const { whereSql, params } = buildValuationWhere(scope, filters);
+  const { whereSql, params } = buildValuationWhere(scope, await resolveQueryOwners(pool, filters));
 
   // Per-row unread flag (gap 4) for the caller's side of the conversation.
   const readCol = filters.readerSide === 'admin' ? 'admin_read_at' : 'user_read_at';
@@ -736,7 +813,7 @@ export async function countValuationsByGroup(
 
   // Each tab shows its own total, so the state/group filter itself is dropped.
   const { whereSql, params } = buildValuationWhere(scope, {
-    ...filters,
+    ...(await resolveQueryOwners(pool, filters)),
     state: undefined,
     group: undefined,
   });
@@ -782,7 +859,13 @@ export async function namedBucketBreakdown(
   >;
   if (scope.kind === 'none') return counts;
 
-  const base = { ...filters, state: undefined, group: undefined, bucket: undefined, unreadFor: undefined };
+  const base = {
+    ...(await resolveQueryOwners(pool, filters)),
+    state: undefined,
+    group: undefined,
+    bucket: undefined,
+    unreadFor: undefined,
+  };
   const { whereSql, params } = buildValuationWhere(scope, base);
   const readCol = readerSide === 'admin' ? 'admin_read_at' : 'user_read_at';
 
@@ -1005,29 +1088,47 @@ export async function dashboardActivity(
     args.push([...CLIENT_VISIBLE_EVENT_TYPES]);
     visibleTypes = `${whereSql ? ' AND' : ' WHERE'} e.type = ANY($${args.length})`;
   }
+  // Every branch carries its own ORDER BY and LIMIT — see `mergeWindow`. With
+  // the ordering only above the union, both event tables were read *entire*,
+  // hashed against the whole of `valuations`, and top-N sorted to produce
+  // twenty rows: 63ms on a seeded 220k events, on the landing page, growing
+  // with an append-only log that nothing prunes. Each branch now walks its own
+  // `occurred_at DESC` index and stops at the cap.
+  //
+  // Unlike `listActivity`, the join stays *inside* each branch: here it is the
+  // scope predicate, not decoration, so a branch capped before it would cap the
+  // wrong rows.
+  args.push(limit);
+  const limitParam = `$${args.length}`;
   const adminBranch = includeInternal
     ? `
          UNION ALL
-         SELECT a.id, 'admin' AS scope, a.type, a.actor_type::text AS actor_type, a.actor_id,
-                v.id AS valuation_id, v.company_name, v.number, a.occurred_at
-           FROM admin_events a
-           JOIN valuations v ON v.id = a.subject_id
-           ${whereSql}${whereSql ? ' AND' : 'WHERE'} a.subject_type = 'valuation'`
+         (SELECT a.id, 'admin' AS scope, a.type, a.actor_type::text AS actor_type, a.actor_id,
+                 v.id AS valuation_id, v.company_name, v.number, a.occurred_at
+            FROM admin_events a
+            JOIN valuations v ON v.id = a.subject_id
+            ${whereSql}${whereSql ? ' AND' : 'WHERE'} a.subject_type = 'valuation'
+           ORDER BY a.occurred_at DESC, a.id DESC
+           LIMIT ${limitParam})`
     : '';
-  args.push(limit);
 
   const { rows } = await pool.query(
     `SELECT s.*, u.email AS actor_email
        FROM (
-         SELECT e.id, 'valuation' AS scope, e.type, e.actor_type::text AS actor_type, e.actor_id,
-                v.id AS valuation_id, v.company_name, v.number, e.occurred_at
-           FROM valuation_events e
-           JOIN valuations v ON v.id = e.valuation_id
-           ${whereSql}${visibleTypes}${adminBranch}
+         SELECT * FROM (
+         (SELECT e.id, 'valuation' AS scope, e.type, e.actor_type::text AS actor_type, e.actor_id,
+                 v.id AS valuation_id, v.company_name, v.number, e.occurred_at
+            FROM valuation_events e
+            JOIN valuations v ON v.id = e.valuation_id
+            ${whereSql}${visibleTypes}
+           ORDER BY e.occurred_at DESC, e.id DESC
+           LIMIT ${limitParam})${adminBranch}
+         ) b
+          ORDER BY b.occurred_at DESC, b.id DESC
+          LIMIT ${limitParam}
        ) s
        LEFT JOIN users u ON u.id = s.actor_id
-      ORDER BY s.occurred_at DESC, s.id DESC
-      LIMIT $${args.length}`,
+      ORDER BY s.occurred_at DESC, s.id DESC`,
     args,
   );
   return rows.map((row) => ({ ...row, label: eventLabel(row.type as string) })) as never;
@@ -1051,7 +1152,7 @@ export async function exportValuations(
   limit = 10_000,
 ): Promise<Array<Record<string, unknown>>> {
   if (scope.kind === 'none') return [];
-  const { whereSql, params } = buildValuationWhere(scope, filters, 'v.');
+  const { whereSql, params } = buildValuationWhere(scope, await resolveQueryOwners(pool, filters), 'v.');
   params.push(limit);
   const { rows } = await pool.query(
     `SELECT v.id, v.number, v.workflow_id, v.kind, v.state, v.company_name, v.service_name,
