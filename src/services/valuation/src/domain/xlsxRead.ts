@@ -13,6 +13,7 @@
  * stable, and the alternative is a dependency for one file shape.
  */
 
+import { nameColumns, rowByColumn } from './sheetColumns.js';
 import { readZip, ZipReadError } from './zipReader.js';
 
 export class XlsxReadError extends Error {}
@@ -479,6 +480,15 @@ function populatedCells(row: string[]): number {
  * least a class and a share count. A one-column sheet has no such row, so that
  * falls back to the first populated row. Rows where every cell is blank are
  * dropped, matching `parseCsv`.
+ *
+ * The header row is named through `nameColumns`, the same call `parseCsvSheet`
+ * makes, because "matching `parseCsv`" was only true of the blank-header half.
+ * Duplicates were still keyed last-wins here: a Carta workbook with a granted
+ * and an outstanding "Shares" column reported the name twice in the mapping UI,
+ * both entries resolved to the second column, and the first column's numbers
+ * were unreachable — no error, a cap table short by one holding per row. The
+ * CSV path suffixes the repeat to `Shares (2)`; exported as `.xlsx`, which is
+ * what every provider writes by default, the same file did not.
  */
 export function gridToRows(
   grid: string[][],
@@ -488,22 +498,18 @@ export function gridToRows(
   const headerIndex = multiCell === -1 ? grid.findIndex((row) => populatedCells(row) > 0) : multiCell;
   if (headerIndex === -1) return { headers: [], rows: [], lines: [] };
 
-  const headers = grid[headerIndex]!.map((h) => h.trim());
+  const columns = nameColumns(grid[headerIndex]!);
   const rows: Record<string, string>[] = [];
   const lines: number[] = [];
   for (const [offset, row] of grid.slice(headerIndex + 1).entries()) {
     if (!row.some((cell) => cell.trim() !== '')) continue;
-    const obj: Record<string, string> = {};
-    headers.forEach((header, i) => {
-      if (header !== '') obj[header] = (row[i] ?? '').trim();
-    });
-    rows.push(obj);
+    rows.push(rowByColumn(columns, row));
     const index = headerIndex + 1 + offset;
     // Without the sheet's own numbering the grid position is all there is, and
     // it is right for every sheet that declares no gaps.
     lines.push(rowNumbers?.[index] ?? index + 1);
   }
-  return { headers: headers.filter((h) => h !== ''), rows, lines };
+  return { headers: columns.filter((c): c is string => c !== null), rows, lines };
 }
 
 /**

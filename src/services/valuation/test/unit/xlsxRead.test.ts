@@ -227,6 +227,42 @@ describe('xlsxRead', () => {
       expect(gridToRows([])).toEqual({ headers: [], rows: [], lines: [] });
       expect(gridToRows([[''], ['']])).toEqual({ headers: [], rows: [], lines: [] });
     });
+
+    /**
+     * A repeated header is what Carta writes: a granted "Shares" column beside
+     * an outstanding one, or a fund administrator's sheet repeating "Price".
+     * Keyed last-wins, the first of the pair is not merely mislabelled — it is
+     * gone, and the mapping UI offers the name twice with both entries pointing
+     * at the second column. `parseCsvSheet` has suffixed the repeat since the
+     * CSV path was fixed; this reader kept the naive mapping, so the same file
+     * imported differently depending on which format it was saved in.
+     */
+    it('suffixes a repeated header instead of letting the last column win', () => {
+      const { headers, rows } = gridToRows([
+        ['class', 'Shares', 'Shares', 'Price'],
+        ['Common', '1000', '900', '0.10'],
+      ]);
+      expect(headers).toEqual(['class', 'Shares', 'Shares (2)', 'Price']);
+      expect(rows).toEqual([{ class: 'Common', Shares: '1000', 'Shares (2)': '900', Price: '0.10' }]);
+    });
+
+    it('counts repeats after trimming, and numbers the third one too', () => {
+      const { headers, rows } = gridToRows([
+        ['Price', ' Price ', 'Price'],
+        ['1', '2', '3'],
+      ]);
+      expect(headers).toEqual(['Price', 'Price (2)', 'Price (3)']);
+      expect(rows).toEqual([{ Price: '1', 'Price (2)': '2', 'Price (3)': '3' }]);
+    });
+
+    it('does not suffix the blank columns it drops', () => {
+      const { headers, rows } = gridToRows([
+        ['class', '', '', 'shares'],
+        ['Common', 'a', 'b', '10'],
+      ]);
+      expect(headers).toEqual(['class', 'shares']);
+      expect(rows).toEqual([{ class: 'Common', shares: '10' }]);
+    });
   });
 
   describe('readXlsx', () => {

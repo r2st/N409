@@ -4,6 +4,8 @@
  * projection are all unit-testable. The route layer persists the result.
  */
 
+import { nameColumns, rowByColumn } from './sheetColumns.js';
+
 export const CAP_TABLE_EVENT_TYPES = {
   imported: 'cap_table_imported',
 } as const;
@@ -254,36 +256,6 @@ export function sniffDelimiter(text: string): string {
 }
 
 /**
- * Name the columns, given the raw header cells.
- *
- * Two things real exports do that the naive `headers[i]` mapping got wrong:
- *
- *  - **Blank headers.** A trailing comma, or a spacer column between two
- *    blocks, produces an unnamed column. Keying them all on `''` meant the
- *    last such column silently overwrote the others, and `''` then appeared in
- *    the mapping UI as a selectable source. They are dropped instead, matching
- *    what the `.xlsx` reader already does with the same shape.
- *  - **Duplicate headers.** Carta exports both a granted and an outstanding
- *    "Shares" column; a fund administrator's sheet repeats "Price". Last-wins
- *    meant the mapping silently read a column the operator did not pick, and
- *    the preview gave no hint which. Suffixing keeps every column reachable
- *    and visibly distinct.
- *
- * `null` marks a dropped column so the caller can keep header positions
- * aligned with row cells.
- */
-function nameColumns(cells: string[]): Array<string | null> {
-  const seen = new Map<string, number>();
-  return cells.map((cell) => {
-    const name = cell.trim();
-    if (name === '') return null;
-    const priorUses = seen.get(name) ?? 0;
-    seen.set(name, priorUses + 1);
-    return priorUses === 0 ? name : `${name} (${priorUses + 1})`;
-  });
-}
-
-/**
  * Minimal RFC-4180-ish CSV parser: handles quoted fields, escaped quotes and
  * CRLF, sniffs the delimiter, and strips a leading BOM.
  *
@@ -376,13 +348,7 @@ export function parseCsvSheet(text: string): {
 
   const columns = nameColumns(grid[0]!);
   const headers = columns.filter((c): c is string => c !== null);
-  const rows = grid.slice(1).map((cells) => {
-    const obj: Record<string, string> = {};
-    columns.forEach((name, i) => {
-      if (name !== null) obj[name] = (cells[i] ?? '').trim();
-    });
-    return obj;
-  });
+  const rows = grid.slice(1).map((cells) => rowByColumn(columns, cells));
   return { headers, rows, lines: gridLines.slice(1) };
 }
 
