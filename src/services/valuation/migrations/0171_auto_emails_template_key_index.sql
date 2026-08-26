@@ -1,0 +1,34 @@
+-- The one foreign key in this schema that is both unindexed and points at a
+-- table something actually deletes.
+--
+-- R92 measured 86 of 172 foreign keys with no covering index and concluded that
+-- was fine, on the grounds that an unindexed FK is paid for when the *parent*
+-- row is deleted and this schema hard-deletes almost nothing. R154 closed the
+-- other half of that reasoning — an unindexed FK column that is also a filter
+-- predicate is a scan whatever the delete story is — and found no live case.
+--
+-- Neither round tested the premise itself. Crossing the 85 unindexed foreign
+-- keys against every `DELETE FROM` in `src` (30 tables, counting the frozen
+-- list `runHousekeepingSweep` interpolates) leaves exactly one pair:
+-- `communication_templates` is deleted by `deleteCommunicationTemplate`, and
+-- `auto_emails.template_key` references it with nothing behind the column. So
+-- every template deletion asks Postgres to prove no campaign refers to the row,
+-- and Postgres reads the whole campaign table to answer.
+--
+-- Small today, and that is the argument for the index rather than against it:
+-- `auto_emails` is campaign configuration, so the scan is cheap and will stay
+-- cheap, which is exactly why nobody would notice it becoming the reason a
+-- delete is slow. The index costs a few pages and turns the premise R92's whole
+-- conclusion rests on into something `foreignKeyIndexCensus.test.ts` can assert
+-- with an empty exemption list — the crossing set is empty, and a future hard
+-- delete on `users` or `valuations` fails that test instead of quietly making
+-- 60 unindexed foreign keys expensive.
+--
+-- Not the same thing as the `NOT EXISTS` guard already in
+-- `deleteCommunicationTemplate`: that one decides whether the delete is allowed
+-- and returns false rather than a 23503. This one is about what the FK's own
+-- referential-integrity check costs once the delete is permitted, which runs
+-- either way.
+
+CREATE INDEX auto_emails_template_key_idx
+    ON auto_emails (template_key);
