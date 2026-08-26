@@ -24,12 +24,7 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import {
-  PROBLEM_CATALOG,
-  describeProblem,
-  renderProblemTable,
-  statusOrder,
-} from '../src/problemCatalog.js';
+import { PROBLEM_CATALOG, describeProblem, renderProblemTable, statusOrder } from '../src/problemCatalog.js';
 import { problems } from '../src/problem.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
