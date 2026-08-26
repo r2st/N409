@@ -55,6 +55,29 @@ const obj = (v: unknown): Record<string, unknown> =>
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const pct = (v: number): string => `${(v * 100).toFixed(1)}%`;
 
+/**
+ * Thousands separators for the share counts these findings quote, pinned to a
+ * locale rather than left to the host's.
+ *
+ * `n.toLocaleString()` with no argument formats in whatever locale the *server
+ * process* resolved at startup, which ICU takes from `LC_ALL`/`LC_NUMERIC`/
+ * `LANG`. Nothing in this repository sets those; on a box where the unit file,
+ * the shell or the base image supplies `LANG=de_DE.UTF-8`, "8,000,000 common
+ * shares" becomes "8.000.000 common shares" and a delta of +1,500 reads as
+ * +1.500 — which to the reviewer this text is written for is not a different
+ * spelling of the same number, it is a different number by three orders of
+ * magnitude. Health-check details are shown in the workspace and carried into
+ * the review record; the monitor messages next door are quoted verbatim into
+ * the alert email. Every other formatter in this service already names
+ * `en-US`; these seven readings were the ones that did not.
+ *
+ * Same family as `todayLocal()` and the host timezone: an environment variable
+ * nobody in the deployment thinks of as configuration deciding what a document
+ * says. It is latent on a `LANG`-less box, and latent is where it stays only
+ * until someone sets one.
+ */
+const INT = new Intl.NumberFormat('en-US');
+
 /** A date column may arrive as Date or an ISO string; coerce to epoch millis. */
 const dateMs = (v: unknown): number | null => {
   if (!v) return null;
@@ -304,7 +327,7 @@ export function runHealthChecks(args: {
       'Common share count is set',
       commonShares !== null && commonShares > 0 ? 'ok' : 'error',
       commonShares !== null && commonShares > 0
-        ? `${commonShares.toLocaleString()} common shares`
+        ? `${INT.format(commonShares)} common shares`
         : 'Fully diluted common share count is missing — FMV per share cannot be computed',
     );
     const anyWeight = Object.values(weights).some((w) => w !== null);
@@ -331,7 +354,15 @@ export function runHealthChecks(args: {
       reconciles ? 'ok' : 'warning',
       reconciles
         ? 'Cap-table common shares reconcile with the fully diluted common count'
-        : `Cap-table common (${capCommon.toLocaleString()}) exceeds the fully diluted common count (${commonShares.toLocaleString()})`,
+        : // Two ways to fail, and one of them was reported as the other. A cap
+          // table carrying no common class at all — preferred and options
+          // entered, the founders' rows still to come — has `capCommon` zero,
+          // which fails the `> 0` arm above and was then described as a count
+          // that "exceeds" a figure it is plainly below. The analyst sent to
+          // reconcile two numbers found one of them absent.
+          capCommon === 0
+          ? `The cap table has no common class to reconcile against the fully diluted common count (${INT.format(commonShares)})`
+          : `Cap-table common (${INT.format(capCommon)}) exceeds the fully diluted common count (${INT.format(commonShares)})`,
     );
   }
 
@@ -372,7 +403,7 @@ export function runHealthChecks(args: {
       'equity_positive',
       `${equityName} is positive`,
       equity > 0 ? 'ok' : 'error',
-      equity > 0 ? `${equityName} ${equity.toLocaleString()}` : `${equityName} ${equity} is not positive`,
+      equity > 0 ? `${equityName} ${INT.format(equity)}` : `${equityName} ${equity} is not positive`,
     );
   }
   if (fmv !== null && perShareName !== null) {
@@ -432,8 +463,8 @@ export function runHealthChecks(args: {
       'Share counts reconcile',
       ok ? 'ok' : 'warning',
       ok
-        ? `Allocation basis (${fdCommon.toLocaleString()}) = ${what}`
-        : `Allocation basis ${fdCommon.toLocaleString()} ≠ ${what} ${expected.toLocaleString()}`,
+        ? `Allocation basis (${INT.format(fdCommon)}) = ${what}`
+        : `Allocation basis ${INT.format(fdCommon)} ≠ ${what} ${INT.format(expected)}`,
     );
   }
 

@@ -111,6 +111,19 @@ function monthsBetween(startIso: string, now: Date): number {
   return months;
 }
 
+/**
+ * Thousands separators for the figures these messages quote — see the longer
+ * note on `INT` in `domain/healthChecks.ts`.
+ *
+ * These two strings are the ones with the furthest reach: the alert email
+ * quotes a trigger's `message` verbatim to the assigned reviewer, so a host
+ * that resolved a comma-decimal locale mails "The cap table changed by +1.500
+ * shares" for a fifteen-hundred-share move. The `signature` beside it is built
+ * from the raw number and is unaffected, which is what makes this quiet — the
+ * dedupe keeps working and only the sentence a human reads is wrong.
+ */
+const INT = new Intl.NumberFormat('en-US');
+
 function worse(a: TriggerLevel, b: TriggerLevel): TriggerLevel {
   const rank = { green: 0, yellow: 1, red: 2 } as const;
   return rank[a] >= rank[b] ? a : b;
@@ -209,7 +222,7 @@ export function evaluateTriggers(
       type: 'revenue_change',
       level: 'red',
       message:
-        `The company has begun recognising revenue (${Math.round(current.annual_revenue).toLocaleString()} ` +
+        `The company has begun recognising revenue (${INT.format(Math.round(current.annual_revenue))} ` +
         'annualised) — it had none at the valuation date.',
       signature: `revenue:first:${current.annual_revenue}`,
       detail: { baseline: 0, current: current.annual_revenue, pct: null },
@@ -266,7 +279,7 @@ export function evaluateTriggers(
     triggers.push({
       type: 'cap_table_change',
       level: pct > 0.05 ? 'red' : 'yellow',
-      message: `The cap table changed by ${delta > 0 ? '+' : ''}${delta.toLocaleString()} shares since the valuation.`,
+      message: `The cap table changed by ${delta > 0 ? '+' : ''}${INT.format(delta)} shares since the valuation.`,
       signature: `cap_table:${current.fully_diluted_shares}`,
       detail: { baseline: baseline.fully_diluted_shares, current: current.fully_diluted_shares, delta },
     });

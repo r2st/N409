@@ -128,7 +128,37 @@ describe('runHealthChecks', () => {
     // Cap-table common (8M) exceeds a lowered fully diluted common count.
     h.calculation.inputs.inputs.shares_outstanding_common = 5_000_000;
     const report = runHealthChecks(h);
-    expect(byKey(report, 'cap_table_reconciles')?.severity).toBe('warning');
+    const check = byKey(report, 'cap_table_reconciles');
+    expect(check?.severity).toBe('warning');
+    expect(check?.detail).toBe(
+      'Cap-table common (8,000,000) exceeds the fully diluted common count (5,000,000)',
+    );
+  });
+
+  /*
+   * The other way the reconciliation fails, which was reported as this one.
+   *
+   * `reconciles` requires the cap table's common to be both above zero and at
+   * or below the fully diluted count, and a table carrying no common class at
+   * all — preferred and options entered, the founders' rows still to come, the
+   * state an import sits in for as long as it takes to finish it — fails the
+   * first arm. It was then described with the sentence written for the second:
+   * "Cap-table common (0) exceeds the fully diluted common count (8,000,000)",
+   * which is not a near-miss, it is the opposite of the arithmetic it quotes.
+   * The analyst it is addressed to went looking for shares to remove from a
+   * table whose actual problem was shares missing from it.
+   */
+  it('says the common class is absent rather than that zero exceeds the count', () => {
+    const h = healthy();
+    h.calculation.inputs.inputs.share_classes = [
+      { kind: 'preferred', name: 'A', shares: 2_000_000, preference: 5e6 },
+    ] as (typeof h.calculation.inputs.inputs.share_classes)[number][];
+    const check = byKey(runHealthChecks(h), 'cap_table_reconciles');
+    expect(check?.severity).toBe('warning');
+    expect(check?.detail).toBe(
+      'The cap table has no common class to reconcile against the fully diluted common count (8,000,000)',
+    );
+    expect(check?.detail).not.toContain('exceeds');
   });
 
   it('errors when the expected exit precedes the valuation date (temporal)', () => {
