@@ -3,6 +3,7 @@ import helmet from '@fastify/helmet';
 import { z } from 'zod';
 import {
   API_PERMISSIONS_POLICY,
+  bindRequestId,
   createLogger,
   problems,
   MetricsRegistry,
@@ -166,6 +167,21 @@ export function buildApp(): FastifyInstance {
     // header into a contextvar; this was the one hop where the chain broke.
     requestIdHeader: 'x-request-id',
   }) as unknown as FastifyInstance;
+
+  // Bind the request id to the async context, so a line written through
+  // anything other than `req.log` still carries it — `app.log` in a route, a
+  // module-level logger, a hook, or work that outlives the response. Fastify
+  // has already resolved `req.id` from the inbound x-request-id (or minted
+  // one) by the time this fires.
+  //
+  // The mixin that reads it has been on every service's logger since it was
+  // written; only the valuation service ever fed it. In the other two
+  // `currentRequestId()` answered undefined, so the field was quietly absent
+  // from exactly the lines it exists for — the ones with no `req` in scope.
+  app.addHook('onRequest', (req, _reply, done) => {
+    bindRequestId(String(req.id));
+    done();
+  });
   // Security headers (round 74). This was the one Fastify service with none:
   // valuation and web have carried helmet since the B-1 audit and this unit was
   // simply missed, on the reasoning that it is internal.

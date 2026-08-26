@@ -9,6 +9,7 @@ import helmet from '@fastify/helmet';
 import pg from 'pg';
 import {
   REQUEST_ID_HEADER,
+  bindRequestId,
   createLogger,
   probeReady,
   MetricsRegistry,
@@ -307,6 +308,21 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
     // rather than forming its own from a header it cannot vouch for.
     trustProxy: trustedProxies(),
   }) as unknown as FastifyInstance;
+
+  // Bind the request id to the async context, so a line written through
+  // anything other than `req.log` still carries it — `app.log` in a route, a
+  // module-level logger, a hook, or work that outlives the response. Fastify
+  // has already resolved `req.id` from the inbound x-request-id (or minted
+  // one) by the time this fires.
+  //
+  // The mixin that reads it has been on every service's logger since it was
+  // written; only the valuation service ever fed it. In the other two
+  // `currentRequestId()` answered undefined, so the field was quietly absent
+  // from exactly the lines it exists for — the ones with no `req` in scope.
+  app.addHook('onRequest', (req, _reply, done) => {
+    bindRequestId(String(req.id));
+    done();
+  });
   const staticRoot = opts.staticRoot ?? process.env.WEB_STATIC_ROOT ?? defaultStaticRoot;
   const hasStatic = existsSync(staticRoot);
 
