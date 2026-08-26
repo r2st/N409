@@ -17,6 +17,19 @@ Environment=VALUATION_URL=http://127.0.0.1:3001
 ExecStart=/usr/bin/node dist/index.js
 Restart=always
 RestartSec=3
+# ── Shutdown deadline (round 158) ────────────────────────────────────────────
+# Pinned rather than inherited. shared/shutdown.ts runs the graceful path under
+# a 10s deadline and exits either way, and its whole justification is that 10s
+# is "comfortably under systemd's 90s TimeoutStopSec" — a claim about a distro
+# *default*, which is not a thing this repository controls. Stated here, the
+# relationship between the two numbers is a fact of the deploy rather than a
+# coincidence, and it survives a host whose default is something else.
+#
+# 30s, not 90s: the app gives up at 10s, so anything past that is the process
+# failing to exit at all, and deploy.sh waits on this restart. Waiting a further
+# 80s to SIGKILL something already known to be wedged only makes the deploy look
+# hung — the one symptom the bounded shutdown existed to remove.
+TimeoutStopSec=30
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

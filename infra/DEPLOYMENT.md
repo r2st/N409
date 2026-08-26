@@ -534,6 +534,83 @@ Two failure modes that look like "email is broken" but are config, not code:
    must fail — the services now bind loopback, so this holds even if ufw is
    misconfigured).
 
+## Rolling back
+
+Until round 158 this document did not use the word. There was also no mechanism:
+`deploy.sh` shipped `HEAD` and nothing else, and the host's only record of what
+was running — `BUILD_SHA` — is overwritten by the very deploy you would want to
+undo, so by the time anyone needed the previous commit its name had already been
+destroyed.
+
+```bash
+# Undo the last deploy: redeploys the previous verified release.
+HOST=root@204.168.241.124 infra/deploy.sh --apply --rollback
+
+# Or name a commit yourself.
+HOST=root@204.168.241.124 infra/deploy.sh --apply --to=<sha>
+```
+
+**A rollback is an ordinary deploy of an earlier commit.** Same archive, same
+preflight, same restart order, same verification — there is no separate restore
+path, deliberately: a code path only ever exercised when production is already
+broken is one nobody has confidence in. This way the rollback path is the path
+that runs every day.
+
+### What it does not do: the schema
+
+`--rollback` does **not** revert migrations, and nothing here will. The runner
+(`src/services/valuation/src/db/migrate.ts`) is forward-only: there are no
+down-steps to run. So the older code runs against the newer schema.
+
+That is safe, but only because every migration is additive — the newer schema is
+a superset of what the older code expects. `src/db/migrationSafety.ts` is what
+keeps that true, refusing `DROP TABLE`, `DROP COLUMN`, type changes, renames, and
+`NOT NULL` without a `DEFAULT`; `test/unit/migrationSafety.test.ts` runs it over
+all 132 files on every CI run. The same property is what makes the rolling
+restart safe, since valuation migrates while the other four units are still
+serving the previous release.
+
+If you ever genuinely need a destructive change, it is two releases: stop using
+the column, ship that, then remove it — never one migration.
+
+### Where the target comes from
+
+`$REMOTE_DIR/RELEASES`, appended by section 8 of `deploy.sh` **after** a deploy
+verifies. Two files, two different questions:
+
+| File | Answers | Written |
+| --- | --- | --- |
+| `BUILD_SHA` | what is running *now* | every deploy, overwritten |
+| `RELEASES` | what has run, in order | append-only, only after verification |
+
+A SHA written before verification would name a commit that never successfully
+served, and `--rollback` would then roll *forward* into it. So a deploy with
+`SKIP_VERIFY=1` updates `BUILD_SHA` and deliberately leaves `RELEASES` alone.
+
+The target is the entry immediately **before** the running commit's last
+appearance, not simply the newest entry that is not running. That is also why a
+rollback is not itself recorded: with a log of `A,B,C` and `C` running, one
+rollback lands on `B`; the log still reads `A,B,C`, so a second rollback finds
+`B`'s position and lands on `A`. Under "newest entry that isn't running" the
+second rollback would return to `C` — forward, into the release just undone.
+
+Both files are gitignored and `export-ignore`d, so `git archive` cannot ship one
+over the host's, and the deletion sweep skips both by name.
+
+### Limits worth knowing before you need them
+
+- **The commit must exist in your local clone.** The archive ships from there,
+  not from the host. `git fetch` first.
+- **`RELEASES` only starts from the first deploy that wrote it.** On a host
+  deployed before round 158 the first `--rollback` has nothing to resolve and
+  says so; use `--to=<sha>`.
+- **Roll back, then deploy forward, then roll back again** resolves to the
+  commit before the one you just shipped — which may be the release you
+  originally rolled away from. Use `--to=<sha>` when the history is not linear.
+- **A dry run cannot plan a `--rollback`**, because it resolves its target from
+  the host and a dry run does not contact the host. Use `--to=<sha>` to see a
+  full plan, or `--apply`.
+
 ## Service user (audit P1-1)
 
 The five services and the backup job run as the dedicated **`n409`** system user

@@ -60,6 +60,19 @@ export interface ShutdownOptions {
   target?: Pick<NodeJS.Process, 'on' | 'exit'>;
 }
 
+/**
+ * Default cap on graceful shutdown.
+ *
+ * Exported rather than left as a literal because it is half of a contract whose
+ * other half lives in a different language and a different directory: every
+ * `Type=simple` unit in infra/systemd sets `TimeoutStopSec` above this, so the
+ * process always gives up before the supervisor does. `systemdShutdown.ts`
+ * reads this constant to check that, which is what stops the two drifting —
+ * raise the grace to 120s here and the deploy fails, rather than the host
+ * discovering that systemd now SIGKILLs a shutdown that was still working.
+ */
+export const DEFAULT_SHUTDOWN_GRACE_MS = 10_000;
+
 /** The exit code used when shutdown overran its deadline or threw. */
 export const SHUTDOWN_FAILED_EXIT_CODE = 1;
 
@@ -99,7 +112,7 @@ async function runBounded(shutdown: () => Promise<void>, ms: number): Promise<Ou
  */
 export function installShutdownHandlers(log: ShutdownLogger, opts: ShutdownOptions): void {
   const target = opts.target ?? process;
-  const graceMs = opts.graceMs ?? 10_000;
+  const graceMs = opts.graceMs ?? DEFAULT_SHUTDOWN_GRACE_MS;
   const signals = opts.signals ?? (['SIGINT', 'SIGTERM'] as const);
   // A second signal must not start a second shutdown. It is also the operator
   // asking us to hurry up, so it is worth a line saying we heard them.

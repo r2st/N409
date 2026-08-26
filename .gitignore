@@ -75,3 +75,4 @@ e2e/.artifacts/
 # sweep. And on a checkout it gave readBuildInfo() a stale `source: 'file'` to
 # report, where the absence it is designed for reports `unknown` instead.
 BUILD_SHA
+RELEASES

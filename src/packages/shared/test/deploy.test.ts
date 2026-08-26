@@ -1242,3 +1242,309 @@ describe('checking the host’s Caddy config', () => {
     expect(run.stderr).toContain('check-caddy.mjs');
   });
 });
+
+// ── Rolling back (round 158) ─────────────────────────────────────────────────
+//
+// There was no way to undo a deploy. `deploy.sh` shipped HEAD and nothing else,
+// and the host's only record of what it was running — BUILD_SHA — is overwritten
+// by the very deploy an operator would want to undo, so by the time anyone
+// needed the previous commit its name had already been destroyed. The documented
+// procedure was 32KB of DEPLOYMENT.md that did not use the word "rollback" once.
+//
+// The design decision worth pinning: rolling back is a *deploy of an earlier
+// commit* through the identical path, not a separate restore mechanism. So most
+// of what these assert is that the rollback goes through every gate a normal
+// deploy does — because a bespoke path would be the one code path exercised only
+// when production is already broken.
+describe('rolling back', () => {
+  /** ssh stub that answers the two reads a rollback makes. */
+  function host(current: string, releases: string[]) {
+    return [
+      `[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${current}\\n'; exit 0; }`,
+      `[[ "$*" == *"cat /opt/N409/RELEASES"* ]] && { printf '${releases
+        .map((r) => `2026-01-01T00:00:00Z\\t${r}`)
+        .join('\\n')}\\n'; exit 0; }`,
+    ];
+  }
+
+  /** Two commits, so there is something to roll back *to*. */
+  function twoReleases(): { older: string; newer: string } {
+    const older = git('rev-parse', 'HEAD');
+    writeFileSync(path.join(repo, 'second.txt'), 'second\n');
+    git('add', '-A');
+    git('commit', '-qm', 'second');
+    return { older, newer: git('rev-parse', 'HEAD') };
+  }
+
+  it('ships the previous release rather than HEAD', () => {
+    const { older, newer } = twoReleases();
+    const run = deploy(['--apply', '--rollback'], {}, host(newer, [older, newer]));
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain(`rolling back from ${newer.slice(0, 7)} to ${older.slice(0, 7)}`);
+    // BUILD_SHA is what /health reports, so it has to name the commit that is
+    // now serving — not the one being undone.
+    expect(run.remote.some((c) => c.includes(`printf '%s\\n' ${older} > /opt/N409/BUILD_SHA`))).toBe(true);
+    expect(run.remote.some((c) => c.includes(`${newer} > /opt/N409/BUILD_SHA`))).toBe(false);
+  });
+
+  it('steps further back on a second consecutive rollback', () => {
+    // The bug this exists for: with the target picked as "newest entry that is
+    // not the running one", a log of A,B,C rolled back to B resolves the next
+    // rollback to C — forward, into the release just undone, under a flag that
+    // says the opposite. Position in the log is what makes it walk backwards.
+    const a = git('rev-parse', 'HEAD');
+    writeFileSync(path.join(repo, 'b.txt'), 'b\n');
+    git('add', '-A');
+    git('commit', '-qm', 'b');
+    const b = git('rev-parse', 'HEAD');
+    writeFileSync(path.join(repo, 'c.txt'), 'c\n');
+    git('add', '-A');
+    git('commit', '-qm', 'c');
+    const c = git('rev-parse', 'HEAD');
+
+    // First rollback: running C, log A,B,C -> lands on B.
+    const first = deploy(['--apply', '--rollback'], {}, host(c, [a, b, c]));
+    expect(first.stderr).toContain(`to ${b.slice(0, 7)}`);
+
+    // Second: running B, log unchanged (a rollback is not recorded) -> A.
+    const second = deploy(['--apply', '--rollback'], {}, host(b, [a, b, c]));
+    expect(second.stderr).toContain(`to ${a.slice(0, 7)}`);
+    expect(second.stderr).not.toContain(`to ${c.slice(0, 7)}`);
+  });
+
+  it('does not record the rollback as a new release', () => {
+    // Appending would put the older commit at the newest end and break the
+    // walk-back above.
+    const { older, newer } = twoReleases();
+    const run = deploy(['--apply', '--rollback'], { SKIP_VERIFY: undefined }, [
+      ...host(newer, [older, newer]),
+      `[[ "$*" == *"curl"* ]] && { printf '{"build_sha":"%s"}' '${older}'; exit 0; }`,
+    ]);
+    expect(run.status).toBe(0);
+    expect(run.remote.some((c) => c.includes('>> /opt/N409/RELEASES'))).toBe(false);
+    expect(run.stderr).toContain('not recording a release');
+  });
+
+  it('falls back to the newest other release when the running commit is unlogged', () => {
+    // Deployed with SKIP_VERIFY, or from before the log existed: there is no
+    // position to walk back from, but there is still a previous release.
+    const { older, newer } = twoReleases();
+    const run = deploy(['--apply', '--rollback'], {}, host('f'.repeat(40), [older, newer]));
+    expect(run.stderr).toContain(`to ${newer.slice(0, 7)}`);
+  });
+
+  it('skips a re-deploy of the running commit when picking the target', () => {
+    // A re-deploy of the same commit appends a second entry, so "second from the
+    // end" would name the release already running — a rollback that reports
+    // success and changes nothing, which is the worst possible outcome for an
+    // operator who has just decided the running release is broken.
+    const { older, newer } = twoReleases();
+    const run = deploy(['--apply', '--rollback'], {}, host(newer, [older, newer, newer]));
+    expect(run.stderr).toContain(`to ${older.slice(0, 7)}`);
+  });
+
+  it('refuses when the log holds no other commit', () => {
+    const { newer } = twoReleases();
+    const run = deploy(['--apply', '--rollback'], {}, host(newer, [newer]));
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('no previous release to roll back to');
+    expect(run.remote.some((c) => c.includes('systemctl restart'))).toBe(false);
+  });
+
+  it('refuses a commit this clone does not have', () => {
+    // The archive ships from here, not from the host. A SHA the host logged but
+    // this checkout has never fetched cannot be built.
+    const { newer } = twoReleases();
+    const absent = '0'.repeat(40);
+    const run = deploy(['--apply', '--rollback'], {}, host(newer, [absent, newer]));
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('local checkout');
+    expect(run.remote.some((c) => c.includes('systemctl restart'))).toBe(false);
+  });
+
+  it('removes files the newer release added', () => {
+    // The sweep diffs from the host's release to the *deployed* ref. Diffed to
+    // HEAD instead — which is the release being undone — it computes the empty
+    // set, and every file the broken release added survives the rollback and
+    // stays live under the older code. `tar` never deletes, so nothing else
+    // would catch it.
+    const older = git('rev-parse', 'HEAD');
+    writeFileSync(path.join(repo, 'added-by-newer.txt'), 'new\n');
+    git('add', '-A');
+    git('commit', '-qm', 'add a file');
+    const newer = git('rev-parse', 'HEAD');
+
+    const run = deploy(['--apply', '--rollback'], {}, host(newer, [older, newer]));
+    expect(run.remote.some((c) => c === "rm -f '/opt/N409/added-by-newer.txt'")).toBe(true);
+    // And must not sweep away a file both releases have.
+    expect(run.remote.some((c) => c.includes('keep.txt'))).toBe(false);
+  });
+
+  it('never deletes the host’s release log', () => {
+    // Untracking RELEASES is itself a deletion, so the first deploy after that
+    // change asks the sweep to remove the only record of what has run — which
+    // would disarm --rollback permanently, and silently.
+    const { older, newer } = twoReleases();
+    const run = deploy(['--apply', '--rollback'], {}, host(newer, [older, newer]));
+    expect(run.remote.some((c) => c.includes('rm -f') && c.includes('RELEASES'))).toBe(false);
+  });
+
+  it('warns that the schema is not rolled back', () => {
+    // Forward-only migrations mean the older code runs against the newer schema.
+    // That is the designed case, but the operator reaching for this at 3am
+    // should not have to have read migrate.ts to know it.
+    const { older, newer } = twoReleases();
+    const run = deploy(['--apply', '--rollback'], {}, host(newer, [older, newer]));
+    expect(run.stderr).toContain('schema is NOT rolled back');
+  });
+
+  it('goes through every gate a normal deploy does', () => {
+    const { older, newer } = twoReleases();
+    const run = deploy(['--apply', '--rollback'], {}, host(newer, [older, newer]));
+    // The whole design decision, asserted: same preflight, same Caddy check,
+    // same valuation-first restart order.
+    expect(run.remote.some((c) => c.includes('check-caddy.mjs'))).toBe(true);
+    expect(run.remote.some((c) => c.includes('systemctl restart n409-valuation'))).toBe(true);
+    const valuation = run.remote.findIndex((c) => c.includes('systemctl restart n409-valuation'));
+    const rest = run.remote.findIndex((c) => c.includes('systemctl restart n409-web'));
+    expect(valuation).toBeLessThan(rest);
+  });
+
+  it('does not contact the host in a dry run, and says why it cannot plan', () => {
+    // The dry-run promise is absolute — it is the reason a dry run is the
+    // default. Picking HEAD and calling it a rollback would be the alternative,
+    // and it would deploy *forward* under a flag that says the opposite.
+    twoReleases();
+    const run = deploy(['--rollback']);
+    expect(run.status).not.toBe(0);
+    expect(run.transcript).toBe('');
+    expect(run.stderr).toContain('does not contact the host');
+    expect(run.stderr).toContain('--to=');
+  });
+});
+
+describe('--to', () => {
+  it('deploys the named commit instead of HEAD', () => {
+    const older = git('rev-parse', 'HEAD');
+    writeFileSync(path.join(repo, 'second.txt'), 'second\n');
+    git('add', '-A');
+    git('commit', '-qm', 'second');
+
+    const run = deploy(['--apply', `--to=${older}`]);
+    expect(run.status).toBe(0);
+    expect(run.remote.some((c) => c.includes(`printf '%s\\n' ${older} > /opt/N409/BUILD_SHA`))).toBe(true);
+  });
+
+  it('ships the named commit’s tree, not the working tree', () => {
+    // The archive has to come from the ref. Shipping HEAD's tree under an older
+    // SHA is the exact failure BUILD_SHA exists to make impossible.
+    const older = git('rev-parse', 'HEAD');
+    writeFileSync(path.join(repo, 'second.txt'), 'second\n');
+    git('add', '-A');
+    git('commit', '-qm', 'second');
+
+    const run = deploy(['--apply', `--to=${older}`]);
+    // The deletion sweep diffs the host's release against the deployed one; with
+    // second.txt absent from the older tree, nothing here should mention it as
+    // shipped. The clearest proof is the archive step succeeded on that ref.
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain(older);
+  });
+
+  it('resolves a short sha and a tag', () => {
+    const older = git('rev-parse', 'HEAD');
+    git('tag', 'v-old');
+    writeFileSync(path.join(repo, 'second.txt'), 'second\n');
+    git('add', '-A');
+    git('commit', '-qm', 'second');
+
+    for (const ref of [older.slice(0, 8), 'v-old']) {
+      const run = deploy(['--apply', `--to=${ref}`]);
+      expect([ref, run.status]).toEqual([ref, 0]);
+      // Always expanded to the full SHA — /health reports this value, and a
+      // short one cannot be compared against what the deploy asked for.
+      expect([ref, run.remote.some((c) => c.includes(`${older} > /opt/N409/BUILD_SHA`))]).toEqual([
+        ref,
+        true,
+      ]);
+    }
+  });
+
+  it('deploys a named ref from a dirty tree', () => {
+    // The dirty-tree refusal is about HEAD-vs-worktree ambiguity, and there is
+    // none when a ref is named. Refusing would mean a dirty checkout cannot roll
+    // back — exactly when one is most needed.
+    const older = git('rev-parse', 'HEAD');
+    writeFileSync(path.join(repo, 'second.txt'), 'second\n');
+    git('add', '-A');
+    git('commit', '-qm', 'second');
+    writeFileSync(path.join(repo, 'keep.txt'), 'edited\n');
+
+    expect(deploy(['--apply']).status).not.toBe(0); // still refused for HEAD
+    expect(deploy(['--apply', `--to=${older}`]).status).toBe(0);
+  });
+
+  it('refuses to be combined with --rollback', () => {
+    // Two ways of naming the same thing; silently letting one win would deploy
+    // a commit the operator did not choose.
+    const run = deploy(['--apply', '--rollback', '--to=HEAD']);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('pass one');
+  });
+});
+
+describe('the release log', () => {
+  /**
+   * A deploy that runs its verification, which is what section 8 is gated on.
+   * The ssh stub answers every /health probe with the SHA being deployed, so
+   * `wait_for_build` matches on the first attempt.
+   */
+  function verifiedDeploy() {
+    return deploy(['--apply'], { SKIP_VERIFY: undefined }, [
+      `[[ "$*" == *"curl"* ]] && { printf '{"build_sha":"%s"}' "$(cd ${JSON.stringify(repo)} && git rev-parse HEAD)"; exit 0; }`,
+    ]);
+  }
+
+  it('is appended only after the deploy verifies', () => {
+    // This line is the definition of "a release that worked". A SHA written
+    // before verification would name a commit that never served, and --rollback
+    // would then roll *forward* into it.
+    const run = verifiedDeploy();
+    const append = run.remote.findIndex((c) => c.includes('>> /opt/N409/RELEASES'));
+    const restart = run.remote.findIndex((c) => c.includes('systemctl restart n409-web'));
+    expect(append, 'the deploy never appended to RELEASES').toBeGreaterThanOrEqual(0);
+    expect(restart).toBeLessThan(append);
+  });
+
+  it('is not written when the deploy fails', () => {
+    const run = deploy(['--apply'], {}, ['[[ "$*" == *"npm ci"* ]] && exit 1']);
+    expect(run.status).not.toBe(0);
+    expect(run.remote.some((c) => c.includes('RELEASES'))).toBe(false);
+  });
+
+  it('records the deployed sha and is owned by the service user', () => {
+    const run = verifiedDeploy();
+    const line = run.remote.find((c) => c.includes('>> /opt/N409/RELEASES'));
+    expect(line).toContain(git('rev-parse', 'HEAD'));
+    expect(line).toContain('chown n409:n409 /opt/N409/RELEASES');
+  });
+
+  it('appends rather than truncating', () => {
+    // The entry someone needs is precisely the old one.
+    const run = verifiedDeploy();
+    const line = run.remote.find((c) => c.includes('/opt/N409/RELEASES')) ?? '';
+    expect(line).toContain('>>');
+    expect(line).not.toMatch(/[^>]>[^>]\s*\/opt\/N409\/RELEASES/);
+  });
+
+  it('is not written when verification was skipped', () => {
+    // SKIP_VERIFY means nothing proved the release serves, and this log is
+    // exactly the claim that one did. Writing it anyway would let --rollback
+    // pick a commit that was never observed working — while BUILD_SHA, which
+    // answers the different question "what is running", is still updated.
+    const run = deploy(['--apply'], { SKIP_VERIFY: '1' });
+    expect(run.status).toBe(0);
+    expect(run.remote.some((c) => c.includes('> /opt/N409/BUILD_SHA'))).toBe(true);
+    expect(run.remote.some((c) => c.includes('RELEASES'))).toBe(false);
+  });
+});

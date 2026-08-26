@@ -15,9 +15,22 @@ WorkingDirectory=/opt/N409/src/services/ai
 EnvironmentFile=/opt/N409/.env
 Environment=APP_ENV=production
 Environment=ENGINE_URL=http://127.0.0.1:3003
-ExecStart=/opt/N409/src/services/ai/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 3002
+ExecStart=/opt/N409/src/services/ai/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 3002 --timeout-graceful-shutdown 15
 Restart=always
 RestartSec=3
+# ── Shutdown deadline (round 158) ────────────────────────────────────────────
+# Paired with --timeout-graceful-shutdown on ExecStart above, which is the half
+# that was missing. uvicorn's graceful shutdown is unbounded by default: on
+# SIGTERM it waits for in-flight requests with no deadline, and every pipeline here blocks
+# on an LLM for up to 90 seconds.
+# So the process never exited on its own, systemd waited out its 90s default and
+# SIGKILLed — mid-flight, which is precisely the outcome the graceful path
+# exists to avoid. The three Node services have been bounded at 10s since they
+# gained shared/shutdown.ts; this is that same contract, finally symmetric.
+#
+# 30s leaves uvicorn its 15s and a margin. Past that the process is wedged, and
+# deploy.sh is waiting on this restart.
+TimeoutStopSec=30
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

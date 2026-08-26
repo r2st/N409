@@ -39,6 +39,8 @@ import {
   formatBytes,
   listenPort,
   memoryLimitFaults,
+  parseUnitShutdown,
+  shutdownFaults,
   mergeEnvSources,
   parseEnvironmentFile,
   parseUnitFile,
@@ -404,7 +406,7 @@ export function preflight(options: PreflightOptions): PreflightResult {
   // Checked here rather than in a script of its own because this is the one
   // place in the deploy where a "no" is cheap: it runs after the build, before
   // the first restart, and a fault leaves the previous release serving.
-  for (const message of memoryFaults(options, read, list)) faults.push(message);
+  for (const message of unitResourceFaults(options, read, list)) faults.push(message);
 
   return { faults, units };
 }
@@ -434,8 +436,12 @@ const MODELLED_FLOORS: Record<string, () => { bytes: number; why: string }> = {
 };
 
 /**
- * Every `.service` in the install set must declare a bounded ceiling, and the
- * ceilings together must fit the host.
+ * Every `.service` in the install set must declare a bounded memory ceiling and
+ * a bounded stop deadline; the ceilings together must fit the host.
+ *
+ * Both halves are the same kind of rule — a unit that declares no limit gets
+ * the host's default, and the host's default is not something this repository
+ * chose — so they are checked in one pass over the same directories.
  *
  * Separate from the loop above and deliberately so: that one iterates
  * `KNOWN_UNITS`, a hardcoded list, and this one iterates the directories the
@@ -444,7 +450,7 @@ const MODELLED_FLOORS: Record<string, () => { bytes: number; why: string }> = {
  * this function existed: installed by `install-units.sh` onto the same host,
  * validated by nothing.
  */
-function memoryFaults(
+function unitResourceFaults(
   options: PreflightOptions,
   read: (file: string) => string,
   list: (dir: string) => string[],
@@ -475,6 +481,13 @@ function memoryFaults(
       const resources = parseUnitMemory(text);
       ceilings.push({ unit: entry, resources });
       for (const message of memoryLimitFaults(resources)) faults.push({ scope: entry, message });
+      // Same loop, same reason it is this loop: the shutdown contract has to
+      // cover every unit the installer reads, not the hardcoded KNOWN_UNITS
+      // list. `shutdownFaults` scopes itself to long-running units, so the two
+      // oneshot backup jobs pass through it untouched.
+      for (const message of shutdownFaults(parseUnitShutdown(text))) {
+        faults.push({ scope: entry, message });
+      }
 
       const floor = MODELLED_FLOORS[entry]?.();
       const declared = resources.max?.bytes ?? null;

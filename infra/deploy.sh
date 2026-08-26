@@ -62,6 +62,20 @@
 #   infra/deploy.sh                    # dry run — prints the plan, touches nothing
 #   infra/deploy.sh --apply            # deploy HEAD
 #   infra/deploy.sh --apply --allow-dirty
+#   infra/deploy.sh --apply --to=<sha> # deploy a commit you name
+#   infra/deploy.sh --apply --rollback # deploy the previous verified release
+#
+# Rolling back is a deploy of an earlier commit through this same path — same
+# archive, same preflight, same restart order, same verification. There is no
+# separate restore mechanism, because a code path only ever exercised when
+# production is already broken is one nobody has confidence in.
+#
+# --rollback takes its target from $REMOTE_DIR/RELEASES, which section 8 appends
+# to after a deploy verifies. The commit has to exist in *this* clone: the
+# archive ships from here, not from the host. It does NOT roll back the schema —
+# migrations are forward-only and additive, so the older code runs against the
+# newer schema by design (see src/services/valuation/src/db/migrationSafety.ts,
+# which is what keeps "additive" true).
 #
 # Dry run is the default on purpose: this is the one script in the repo whose
 # accidental invocation restarts production.
@@ -92,11 +106,18 @@ VERIFY_INTERVAL="${VERIFY_INTERVAL:-3}"
 
 APPLY=0
 ALLOW_DIRTY=0
+ROLLBACK=0
+# The commit to ship. HEAD unless --to names one, or --rollback resolves one
+# from the host's release log.
+DEPLOY_REF="HEAD"
+EXPLICIT_REF=0
 for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
     --dry-run) APPLY=0 ;;
     --allow-dirty) ALLOW_DIRTY=1 ;;
+    --rollback) ROLLBACK=1 ;;
+    --to=*) DEPLOY_REF="${arg#*=}"; EXPLICIT_REF=1 ;;
     # The header block, however long it grows — a hardcoded line range silently
     # truncates the help the moment anything above is edited.
     -h|--help) sed -n '2,/^[^#]/p' "$0" | sed '$d'; exit 0 ;;
@@ -209,19 +230,6 @@ wait_for_ready() {
 }
 
 # ── 1. What are we deploying? ────────────────────────────────────────────────
-SHA="$($GIT rev-parse HEAD)"
-[[ -n "$SHA" ]] || die "could not resolve HEAD in the local checkout"
-
-# A dirty tree is refused rather than warned about. The archive is built from
-# HEAD, so uncommitted work is silently *not* deployed while BUILD_SHA claims
-# the commit — the deployer's mental model and the host disagree, and /health
-# reports the wrong answer with full confidence.
-if [[ "$ALLOW_DIRTY" -eq 0 ]]; then
-  if [[ -n "$($GIT status --porcelain)" ]]; then
-    die "working tree is dirty — commit, stash, or pass --allow-dirty (the archive is built from HEAD, so uncommitted changes would NOT be deployed while BUILD_SHA claims this commit)"
-  fi
-fi
-
 HOST_DISPLAY="${HOST:-<HOST unset>}"
 if [[ "$APPLY" -eq 1 ]]; then
   [[ -n "${HOST:-}" ]] || die "HOST is required to --apply (e.g. HOST=root@204.168.241.124)"
@@ -247,6 +255,92 @@ if [[ -n "$SSH_KEY" ]]; then
     # resulting "Permission denied" as the host being broken. Same family as the
     # other four traps: it fails quietly, in a way that misdirects the fix.
     die "SSH_KEY names '$SSH_KEY', which is not readable — fix the path, or set SSH_KEY= (empty) to use ssh-agent deliberately"
+  fi
+fi
+
+# ── 1b. Which commit? ────────────────────────────────────────────────────────
+#
+# Normally HEAD, which is what every deploy before rollback existed did. Two
+# things can now name a different one.
+#
+# WHAT ROLLING BACK IS HERE. There is no separate rollback mechanism and
+# deliberately so: rolling back is a deploy of an earlier commit, through the
+# identical path — same archive, same preflight, same restart order, same
+# verification. A bespoke "restore" path would be the one code path in this
+# script that is only ever exercised when production is already broken, and
+# therefore the one nobody has confidence in. This way the rollback path is the
+# path that runs every day.
+#
+# WHAT IT DOES NOT DO: it does not touch the schema. The migration runner is
+# forward-only (src/services/valuation/src/db/migrate.ts) — there are no
+# down-steps to run and nothing here would run them. That is safe only because
+# every migration is additive, so the newer schema is a superset of what the
+# older code expects; `migrationSafety.ts` is what keeps that true, and the
+# warning below is printed because the operator reaching for this at 3am should
+# not have to have read either file.
+if [[ "$ROLLBACK" -eq 1 ]]; then
+  if [[ "$EXPLICIT_REF" -eq 1 ]]; then
+    die "--rollback and --to= are two ways of naming the same thing; pass one. --to=<sha> deploys a commit you name, --rollback picks the previous entry from $REMOTE_DIR/RELEASES."
+  fi
+  if [[ "$APPLY" -eq 0 ]]; then
+    # A dry run does not contact the host — that promise is the reason a dry run
+    # is the default — so the previous release simply cannot be looked up here.
+    # Refusing is the honest answer; picking HEAD and calling it a rollback
+    # would be the dangerous one.
+    die "--rollback resolves its target from $REMOTE_DIR/RELEASES on the host, and a dry run does not contact the host. Pass --to=<sha> to see the full plan for a commit you name, or --apply to roll back for real."
+  fi
+  CURRENT_SHA="$(run_remote "cat $REMOTE_DIR/BUILD_SHA 2>/dev/null || true" | tr -d '"'"'[:space:]'"'"' || true)"
+  RELEASE_LOG="$(run_remote "cat $REMOTE_DIR/RELEASES 2>/dev/null || true" \
+    | awk '{print $NF}' | grep -E '^[0-9a-f]{7,40}$' || true)"
+
+  # The target is the entry immediately *before* the running commit's last
+  # appearance — not merely "the newest entry that isn't the running one".
+  #
+  # The difference only shows up on the second consecutive rollback, which is
+  # exactly when it matters most. Rolling back does not append (see section 8),
+  # so with a log of A,B,C and C running, one rollback lands on B; the log still
+  # reads A,B,C and B is now running, so the next rollback finds B's position and
+  # lands on A. Under "newest entry that isn't running" the second rollback would
+  # find C and roll *forward* into the release the operator had just undone —
+  # under a flag that says the opposite, at the moment they are least able to
+  # check.
+  #
+  # Walking to the last occurrence also absorbs a re-deploy of the same commit,
+  # which appends a second identical entry.
+  ROLLBACK_SHA="$(printf '%s\n' "$RELEASE_LOG" \
+    | awk -v cur="${CURRENT_SHA:-__none__}" '
+        $0 == cur { if (prev != "") target = prev; next }
+        { prev = $0 }
+        END { if (target != "") print target }' || true)"
+
+  # The running commit is not in the log at all — it was deployed with
+  # SKIP_VERIFY, or predates the log. There is no position to walk back from, so
+  # fall back to the newest release that is not the one running.
+  if [[ -z "$ROLLBACK_SHA" ]]; then
+    ROLLBACK_SHA="$(printf '%s\n' "$RELEASE_LOG" | grep -vx "${CURRENT_SHA:-__none__}" | tail -n 1 || true)"
+  fi
+  [[ -n "$ROLLBACK_SHA" ]] || die "no previous release to roll back to — $REMOTE_DIR/RELEASES names no commit other than the one running (${CURRENT_SHA:-<none>}). The log only starts from the first deploy that wrote it; pass --to=<sha> to name a commit directly."
+  DEPLOY_REF="$ROLLBACK_SHA"
+  EXPLICIT_REF=1
+  log "rolling back from ${CURRENT_SHA:0:7} to ${ROLLBACK_SHA:0:7}"
+  log "NOTE: the schema is NOT rolled back. Migrations are forward-only and additive, so the older code runs against the newer schema — which is the designed case, but any migration in between is still applied."
+fi
+
+SHA="$($GIT rev-parse --verify --quiet "${DEPLOY_REF}^{commit}" || true)"
+[[ -n "$SHA" ]] || die "could not resolve '${DEPLOY_REF}' to a commit in the local checkout — a rollback ships from *this* clone, so the commit has to be here. Try 'git fetch' first."
+
+# A dirty tree is refused rather than warned about. The archive is built from
+# HEAD, so uncommitted work is silently *not* deployed while BUILD_SHA claims
+# the commit — the deployer's mental model and the host disagree, and /health
+# reports the wrong answer with full confidence.
+#
+# Skipped when a ref was named explicitly: the worktree is then not the source
+# of the archive under anybody's reading, so there is no mental model for it to
+# disagree with. Refusing here would mean a dirty checkout cannot roll back,
+# which is precisely the situation in which one is most needed.
+if [[ "$ALLOW_DIRTY" -eq 0 && "$EXPLICIT_REF" -eq 0 ]]; then
+  if [[ -n "$($GIT status --porcelain)" ]]; then
+    die "working tree is dirty — commit, stash, or pass --allow-dirty (the archive is built from HEAD, so uncommitted changes would NOT be deployed while BUILD_SHA claims this commit)"
   fi
 fi
 
@@ -280,7 +374,7 @@ TARBALL_STEM="$(mktemp "${TMP_ROOT%/}/n409-deploy-XXXXXX")"
 TARBALL="${TARBALL_STEM}.tar.gz"
 DELETED_LIST=""
 trap 'rm -f "$TARBALL_STEM" "$TARBALL" ${DELETED_LIST:+"$DELETED_LIST"}' EXIT
-$GIT archive --format=tar.gz -o "$TARBALL" HEAD
+$GIT archive --format=tar.gz -o "$TARBALL" "$SHA"
 log "archive: $(wc -c <"$TARBALL" | tr -d ' ') bytes"
 
 # Read before unpacking, not after. The host's BUILD_SHA is the only trustworthy
@@ -312,7 +406,14 @@ if [[ -n "$PREV_SHA" && "$PREV_SHA" != "unknown" ]] && $GIT cat-file -e "${PREV_
   # agree, silently. -z emits raw bytes and never quotes; it needs a file
   # because bash cannot hold a NUL in a variable at all.
   DELETED_LIST="$(mktemp "${TMP_ROOT%/}/n409-deleted-XXXXXX")"
-  $GIT diff --diff-filter=D --name-only -z "$PREV_SHA" HEAD >"$DELETED_LIST" || true
+  # "$SHA", not HEAD. They are the same thing for an ordinary deploy and they
+  # are not for a rollback, where HEAD is the release being *undone*. Diffing to
+  # HEAD there computes the deletions of a commit that is not being shipped —
+  # which for a rollback is usually the empty set — so every file the newer
+  # release added would survive the sweep and stay live under the older code.
+  # That is the exact "tar never deletes" failure this sweep exists to prevent,
+  # reappearing on the one path taken when production is already broken.
+  $GIT diff --diff-filter=D --name-only -z "$PREV_SHA" "$SHA" >"$DELETED_LIST" || true
   DELETED_COUNT="$(tr -cd '\0' <"$DELETED_LIST" | wc -c | tr -d ' ')"
   if [[ "$DELETED_COUNT" -gt 0 ]]; then
     log "removing ${DELETED_COUNT} file(s) deleted since ${PREV_SHA:0:7}"
@@ -325,7 +426,10 @@ if [[ -n "$PREV_SHA" && "$PREV_SHA" != "unknown" ]] && $GIT cat-file -e "${PREV_
       # the file section 6 exists to write. Harmless when the build then
       # succeeds and fatal to the evidence when it does not — the deploy would
       # abort having already erased what the host was running.
-      if [[ "$f" == "BUILD_SHA" ]]; then continue; fi
+      # RELEASES joins it for the same reason and one more: it is the only
+      # record of what has run, so deleting it does not merely lose evidence,
+      # it disarms --rollback.
+      if [[ "$f" == "BUILD_SHA" || "$f" == "RELEASES" ]]; then continue; fi
       # Quoted, because the remote shell re-parses this. Unquoted, a path with
       # a space became several arguments and `rm -f` removed none of them while
       # exiting 0 — the sweep reporting success over a file still live, which is
@@ -554,5 +658,35 @@ done
 
 wait_for_ready "web" "$HEALTH_URL" \
   || die "/ready is not passing after the restart"
+
+# ── 8. Record the release, so the next rollback has a target ─────────────────
+#
+# Appended here and nowhere earlier: this line is the definition of "a release
+# that worked", and every `die` above this point leaves the previous release
+# serving. A SHA written before verification would name a commit that never
+# successfully served, and `--rollback` would then roll *forward* into it — the
+# one thing a rollback must never do.
+#
+# BUILD_SHA answers "what is running"; this answers "what has run". They are
+# different questions and a single file cannot hold both: BUILD_SHA is
+# overwritten on every deploy, so by the time anyone wants the previous release
+# it has already been destroyed by the deploy they want to undo.
+#
+# Append-only, never rewritten, and deliberately not truncated — it is a few
+# dozen bytes per deploy, and the entry someone needs is exactly the old one.
+#
+# A rollback is deliberately NOT recorded. The log is a history of releases as
+# they were rolled *out*, and a rollback returns to a point that is already in
+# it. Appending would put the older commit at the newest end, and the walk-back
+# in section 1b — which reads position, not recency — would then resolve the
+# next rollback to the release that was just undone. Not appending is what makes
+# repeated rollbacks step backwards through the history instead of oscillating
+# between the last two entries.
+if [[ "$ROLLBACK" -eq 1 ]]; then
+  log "not recording a release: this was a rollback to $SHA, which the log already holds"
+else
+  run_remote "printf '%s\t%s\n' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" $SHA >> $REMOTE_DIR/RELEASES \
+    && chown $SERVICE_USER:$SERVICE_USER $REMOTE_DIR/RELEASES"
+fi
 
 log "deployed $SHA and verified live"

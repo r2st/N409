@@ -80,6 +80,7 @@ export {
 export { buildInfo, readBuildInfo, resetBuildInfoCache, UNKNOWN_BUILD, type BuildInfo } from './build.js';
 export { installCrashHandlers, type CrashHandlerLogger, type CrashHandlerOptions } from './crash.js';
 export {
+  DEFAULT_SHUTDOWN_GRACE_MS,
   installShutdownHandlers,
   SHUTDOWN_FAILED_EXIT_CODE,
   type ShutdownLogger,
@@ -142,6 +143,14 @@ export {
   type UnitCeiling,
   type UnitMemory,
 } from './systemdResources.js';
+export {
+  SYSTEMD_DEFAULT_TIMEOUT_STOP_S,
+  parseTimeSpan,
+  parseUnitShutdown,
+  shutdownFaults,
+  type TimeSpan,
+  type UnitShutdown,
+} from './systemdShutdown.js';
 export {
   CGROUP_MEMORY_EVENTS,
   readCgroupMemory,

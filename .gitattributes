@@ -9,3 +9,4 @@
 # sweep computes its diff from the wrong commit — and if the build then fails,
 # the host is left claiming a release it is not running.
 BUILD_SHA export-ignore
+RELEASES export-ignore
