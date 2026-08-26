@@ -17,6 +17,7 @@ import {
   type Column,
 } from '../components/ui';
 import { IntakeLinksPanel } from '../components/IntakeLinksPanel';
+import { useLatestOnly } from '../lib/useLatestOnly';
 import type { ValuationState } from '../lib/types';
 
 /**
@@ -119,45 +120,78 @@ export function FirmDashboardPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
 
+  /*
+   * Its own ticket, not the client list's: these are two different addresses
+   * and neither reply should silence the other. What this one guards is ops
+   * moving between two firms' consoles — `?partner_id=` changes without the
+   * page being torn down — where the firm name, every headline count, the
+   * triage queue and the reviewer workload all come off this one response. The
+   * late reply repaints the lot under the other firm's URL, and there is
+   * nothing on the screen left disagreeing with it. See `useLatestOnly`.
+   */
+  const claimDashboard = useLatestOnly();
+
   useEffect(() => {
+    const current = claimDashboard();
     const path = partnerId
       ? `/firm/dashboard?partner_id=${encodeURIComponent(partnerId)}`
       : '/firm/dashboard';
     api<FirmDashboard>(path)
-      .then(setData)
-      .catch((err) =>
-        setError(
-          err instanceof ApiError && err.status === 403
-            ? 'The firm console is available to firm accounts.'
-            : err instanceof ApiError && err.status === 400
-              ? 'Open a firm from the partner console to see its book.'
-              : 'Could not load the firm console.',
-        ),
+      .then((d) => current() && setData(d))
+      .catch(
+        (err) =>
+          current() &&
+          setError(
+            err instanceof ApiError && err.status === 403
+              ? 'The firm console is available to firm accounts.'
+              : err instanceof ApiError && err.status === 400
+                ? 'Open a firm from the partner console to see its book.'
+                : 'Could not load the firm console.',
+          ),
       );
-  }, [partnerId]);
+  }, [partnerId, claimDashboard]);
+
+  /*
+   * The debounce below cancels a *pending* request, not an in-flight one, so a
+   * search slower than the pause leaves two open at once and nothing orders
+   * their replies. The book of clients is the firm console's answer to "who am
+   * I carrying" — the table, the result count and the pager all come off this
+   * one response — so the late reply repaints another term's clients under the
+   * current one, with a total that belongs to neither and no further request
+   * coming to correct it. Paging has the same shape: two clicks of Next inside
+   * one round trip settle the table on page 2 beneath a pager reading 3.
+   *
+   * Guarded here rather than in the effect because the failure arm needs the
+   * same ticket: an abandoned request that 500s would otherwise put "Could not
+   * load the client list." over a book that loaded fine. See `useLatestOnly`.
+   */
+  const claimClients = useLatestOnly();
 
   const loadClients = useCallback(
     async (nextPage: number, term: string) => {
+      const current = claimClients();
       const query = new URLSearchParams({ page: String(nextPage), per_page: String(CLIENTS_PER_PAGE) });
       if (term.trim()) query.set('search', term.trim());
       if (partnerId) query.set('partner_id', partnerId);
-      const res = await api<{ clients: FirmClient[]; total: number }>(`/firm/clients?${query}`);
-      setClientsError(null);
-      setClients(res.clients);
-      setClientTotal(res.total);
+      try {
+        const res = await api<{ clients: FirmClient[]; total: number }>(`/firm/clients?${query}`);
+        if (!current()) return;
+        setClientsError(null);
+        setClients(res.clients);
+        setClientTotal(res.total);
+      } catch (err) {
+        // Not `setClients([])`: the table's empty text is "No clients yet", so a
+        // firm whose book failed to load was told it has no book.
+        if (!current()) return;
+        setClientsError(err instanceof ApiError ? err.message : 'Could not load the client list.');
+      }
     },
-    [partnerId],
+    [partnerId, claimClients],
   );
 
   // Debounced so typing a client name is one request per pause, not per key.
   useEffect(() => {
-    const timer = setTimeout(() => {
-      // Not `setClients([])`: the table's empty text is "No clients yet", so a
-      // firm whose book failed to load was told it has no book.
-      loadClients(page, search).catch((err: unknown) =>
-        setClientsError(err instanceof ApiError ? err.message : 'Could not load the client list.'),
-      );
-    }, 250);
+    const timer = setTimeout(() => void loadClients(page, search), 250);
     return () => clearTimeout(timer);
   }, [page, search, loadClients]);
 

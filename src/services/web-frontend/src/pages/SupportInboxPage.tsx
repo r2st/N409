@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
+import { useLatestOnly } from '../lib/useLatestOnly';
 import { formatDateTime } from '../lib/format';
 import { Button, EmptyState, ErrorNote, Spinner } from '../components/ui';
 
@@ -22,19 +23,30 @@ export function SupportInboxPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  /*
+   * The scope filter re-issues this without waiting, so the open and resolved
+   * queues can be outstanding at once and the slower reply wins — leaving
+   * resolved messages under the Open tab, with the Resolve button beside every
+   * one of them. See `useLatestOnly`.
+   */
+  const claim = useLatestOnly();
+
   const load = useCallback(async () => {
+    const current = claim();
     try {
       const qs = scope === 'all' ? '' : `?status=${scope}`;
       const { messages: items } = await api<{ messages: SupportMessage[] }>(`/support/messages${qs}`);
+      if (!current()) return;
       setMessages(items);
     } catch (err) {
+      if (!current()) return;
       setError(
         err instanceof ApiError && err.status === 403
           ? 'The support inbox is operations-only.'
           : 'Could not load support messages.',
       );
     }
-  }, [scope]);
+  }, [scope, claim]);
 
   useEffect(() => {
     void load();

@@ -9,6 +9,7 @@ import {
   useFormValidation,
 } from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
+import { useLatestOnly } from '../lib/useLatestOnly';
 import {
   TEMPLATE_CATEGORIES,
   TEMPLATE_CATEGORY_LABELS,
@@ -486,10 +487,19 @@ function TemplatesTab() {
   const [editing, setEditing] = useState<CommunicationTemplate | null | 'new'>();
   const [error, setError] = useState<string | null>(null);
 
+  /*
+   * The category tab strip re-issues this on every click, and nothing orders
+   * the replies: two tabs in quick succession can settle the list on the first
+   * one's templates under the second one's heading. See `useLatestOnly`.
+   */
+  const claim = useLatestOnly();
+
   const load = useCallback(async () => {
+    const current = claim();
     try {
       const qs = category === 'all' ? '' : `?category=${category}`;
       const res = await api<TemplateListResponse>(`/admin/communication-templates${qs}`);
+      if (!current()) return;
       setTemplates(res.templates);
       // Counts always come back over the whole table, so the tab strip does
       // not collapse to "the one I am looking at" once a filter is applied.
@@ -504,7 +514,7 @@ function TemplatesTab() {
           : 'Could not load templates.',
       );
     }
-  }, [category]);
+  }, [category, claim]);
 
   useEffect(() => {
     void load();

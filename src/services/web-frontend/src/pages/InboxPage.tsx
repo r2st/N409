@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { useLatestOnly } from '../lib/useLatestOnly';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { displayName, formatDateTime } from '../lib/format';
@@ -232,22 +233,36 @@ export function InboxPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /*
+   * Four controls feed this one address — the kind tabs, the unread toggle, the
+   * debounced search and the pager — and none of them waits for the reply
+   * already outstanding. The late one repaints the previous filter's messages
+   * under the current tabs, and the unread counts beside them come off the same
+   * response, so the whole panel agrees with itself about the wrong query. See
+   * `useLatestOnly`.
+   */
+  const claim = useLatestOnly();
+
   const load = useCallback(async () => {
+    const current = claim();
     const params = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) });
     if (kind !== 'all') params.set('kind', kind);
     if (unreadOnly) params.set('unread', 'true');
     if (query) params.set('q', query);
     try {
-      setData(await api<InboxResponse>(`/inbox?${params}`));
+      const res = await api<InboxResponse>(`/inbox?${params}`);
+      if (!current()) return;
+      setData(res);
       setError(null);
     } catch (err) {
+      if (!current()) return;
       setError(
         err instanceof ApiError && err.status === 403
           ? 'You do not have access to the shared inbox.'
           : 'Could not load the inbox.',
       );
     }
-  }, [kind, unreadOnly, query, page]);
+  }, [kind, unreadOnly, query, page, claim]);
 
   useEffect(() => {
     void load();

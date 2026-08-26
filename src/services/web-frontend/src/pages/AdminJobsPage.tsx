@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { useLatestOnly } from '../lib/useLatestOnly';
 import { formatDateTime } from '../lib/format';
 import {
   Button,
@@ -172,7 +173,19 @@ export function AdminJobsPage() {
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
 
+  /*
+   * Two loads overlap here more readily than anywhere else on the platform,
+   * because one of them is not the reader's: the fifteen-second poll below
+   * keeps a request in flight whether or not anybody touched a control. Change
+   * the source filter while a poll is outstanding and the poll's reply — the
+   * previous filter's jobs, with the previous filter's total — lands last and
+   * repaints the table under the new filter, where it stays until the next
+   * poll happens to correct it. See `useLatestOnly`.
+   */
+  const claim = useLatestOnly();
+
   const load = useCallback(async () => {
+    const current = claim();
     const params = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) });
     if (source !== 'all') params.set('source', source);
     if (status !== 'all') params.set('status', status);
@@ -182,19 +195,21 @@ export function AdminJobsPage() {
         api<JobStats>('/admin/jobs/stats'),
         api<JobAlertsResponse>('/admin/jobs/alerts?limit=20'),
       ]);
+      if (!current()) return;
       setJobs(list.jobs);
       setTotal(list.total);
       setStats(summary);
       setAlerts(alerting);
       setError(null);
     } catch (err) {
+      if (!current()) return;
       setError(
         err instanceof ApiError && err.status === 403
           ? 'The job monitor is operations-only.'
           : 'Could not load background jobs.',
       );
     }
-  }, [source, status, page]);
+  }, [source, status, page, claim]);
 
   useEffect(() => {
     void load();

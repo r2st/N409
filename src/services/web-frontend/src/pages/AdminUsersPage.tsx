@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { api, apiDownload, ApiError } from '../lib/api';
+import { useLatestOnly } from '../lib/useLatestOnly';
 import { email as emailRule, password as passwordRule, useFormValidation } from '../lib/useFormValidation';
 import { PASSWORD_HINT } from '../lib/passwordPolicy';
 import { useAuth } from '../lib/auth';
@@ -201,7 +202,19 @@ export function AdminUsersPage() {
   const showDeleted = params.get('deleted') === '1';
   const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
 
+  /*
+   * Five controls feed this one address — the search box, the role and partner
+   * pickers, the deleted toggle and the pager — and every one of them re-issues
+   * the request without waiting for the reply already outstanding. The slower
+   * reply lands second and paints the previous filter's users under the current
+   * one, with the pager's total taken from a query nobody is looking at. On a
+   * screen whose whole purpose is deciding who has access, that is a list of
+   * people someone acts on. See `useLatestOnly`.
+   */
+  const claim = useLatestOnly();
+
   const load = useCallback(() => {
+    const current = claim();
     setError(null);
     const query = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) });
     if (q) query.set('q', q);
@@ -209,9 +222,9 @@ export function AdminUsersPage() {
     if (partner) query.set('partner_id', partner);
     if (showDeleted) query.set('include_deleted', 'true');
     api<UserList>(`/users?${query}`)
-      .then(setData)
-      .catch(() => setError('Could not load users.'));
-  }, [q, role, partner, showDeleted, page]);
+      .then((d) => current() && setData(d))
+      .catch(() => current() && setError('Could not load users.'));
+  }, [q, role, partner, showDeleted, page, claim]);
 
   useEffect(() => {
     load();

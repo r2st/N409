@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { useLatestOnly } from '../lib/useLatestOnly';
 import { formatDateTime } from '../lib/format';
 import type { DeliveryState, OutboxEmail, OutboxStatus } from '../lib/types';
 import { Button, EmptyState, ErrorNote, Spinner } from '../components/ui';
@@ -54,19 +55,30 @@ export function EmailOutboxPage() {
   const [scope, setScope] = useState<OutboxStatus | 'all'>('all');
   const [error, setError] = useState<string | null>(null);
 
+  /*
+   * The scope filter re-issues this without waiting, so two scopes can be
+   * outstanding at once and the slower reply wins. What that shows is a set of
+   * queued or failed emails filed under a status none of them has. See
+   * `useLatestOnly`.
+   */
+  const claim = useLatestOnly();
+
   const load = useCallback(async () => {
+    const current = claim();
     try {
       const qs = scope === 'all' ? '' : `?status=${scope}`;
       const { emails: items } = await api<{ emails: OutboxEmail[] }>(`/admin/email-outbox${qs}`);
+      if (!current()) return;
       setEmails(items);
     } catch (err) {
+      if (!current()) return;
       setError(
         err instanceof ApiError && err.status === 403
           ? 'The email outbox is operations-only.'
           : 'Could not load the email outbox.',
       );
     }
-  }, [scope]);
+  }, [scope, claim]);
 
   useEffect(() => {
     void load();
