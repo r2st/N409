@@ -129,11 +129,20 @@ export async function revokeScimToken(pool: pg.Pool, id: string): Promise<boolea
 }
 
 /** Validate a raw SCIM bearer token; records use. Returns true if valid. */
-export async function verifyScimToken(pool: pg.Pool, rawToken: string): Promise<boolean> {
+/**
+ * Verify a SCIM bearer token and stamp its use, returning *which* token it was.
+ *
+ * The id was already selected and thrown away. It is the only thing that can
+ * name the actor behind a SCIM write: these routes have no principal — an IdP
+ * connector holds a bearer token and creates and deactivates accounts with it —
+ * so an audit row for a deprovision would otherwise say "system" and leave a
+ * firm with two directory integrations unable to tell which one did it.
+ */
+export async function verifyScimToken(pool: pg.Pool, rawToken: string): Promise<string | null> {
   const { rows } = await pool.query<{ id: string }>(
     `UPDATE scim_tokens SET last_used_at = now()
       WHERE token_hash = $1 AND revoked_at IS NULL RETURNING id`,
     [hashToken(rawToken)],
   );
-  return rows.length > 0;
+  return rows[0]?.id ?? null;
 }

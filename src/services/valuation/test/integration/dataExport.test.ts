@@ -7,6 +7,7 @@ import { newUlid } from '@n409/shared';
 import { EXPORT_SECTION_LIMIT } from '../../src/repos/dataExport.js';
 import { enqueueEmail } from '../../src/repos/emailOutbox.js';
 import { suppressAddress } from '../../src/repos/emailDelivery.js';
+import { createInvitation } from '../../src/repos/invitations.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
@@ -201,6 +202,72 @@ describe.skipIf(!dbUp)('personal data export', () => {
     // Who lifted a suppression is another person, and Art. 15(4) is the reason
     // that name is not in this person's copy.
     expect(body.email_suppression.rows[0]).not.toHaveProperty('released_by');
+  });
+
+  it('includes what they typed into the public contact form', async () => {
+    // `contact_submissions` has no user id — the form is unauthenticated by
+    // design — so nothing joined it to an account and the census that checks
+    // this export for completeness could not see it: it scanned foreign keys,
+    // and this table identifies a person by their address. It holds a name, an
+    // address, a phone number and free text somebody wrote about themselves.
+    const body0 = (await exportSelf(owner.token)).json();
+    expect(body0.contact_submissions.rows).toHaveLength(0);
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/contact',
+      payload: {
+        name: 'Ada Lovelace',
+        email: owner.email.toUpperCase(), // matched case-insensitively
+        company: 'Analytical Engines',
+        phone: '+15550100100',
+        message: 'Do you value pre-revenue companies?',
+      },
+    });
+    expect(res.statusCode).toBe(201);
+
+    const body = (await exportSelf(owner.token)).json();
+    expect(body.contact_submissions.rows).toHaveLength(1);
+    expect(body.contact_submissions.rows[0]).toMatchObject({
+      name: 'Ada Lovelace',
+      company: 'Analytical Engines',
+      phone: '+15550100100',
+      message: 'Do you value pre-revenue companies?',
+    });
+    // Who in operations picked the message up is another person's data — the
+    // same call this export makes about `released_by` on a suppression.
+    expect(body.contact_submissions.rows[0]).not.toHaveProperty('handled_by');
+  });
+
+  it('includes the invitation that gave them their account, without its token', async () => {
+    const invited = `${newUlid().toLowerCase()}@invite-export.example.com`;
+    const { secret } = await createInvitation(ctx.pool, {
+      email: invited,
+      roles: ['valuation_user'],
+      partnerId: null,
+      invitedBy: admin.id,
+    });
+
+    const accepted = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/accept-invite',
+      payload: {
+        token: secret,
+        password: 'invitation-export-password-1',
+        first_name: 'Grace',
+        last_name: 'Hopper',
+      },
+    });
+    expect(accepted.statusCode).toBe(201);
+
+    const body = (await exportSelf(accepted.json().token as string)).json();
+    expect(body.invitations.rows).toHaveLength(1);
+    expect(body.invitations.rows[0]).toMatchObject({ email: invited, roles: ['valuation_user'] });
+    expect(body.invitations.rows[0].accepted_at).not.toBeNull();
+    // The token is a live capability while the invitation is open, and who
+    // issued it is another person — neither belongs in this copy.
+    expect(body.invitations.rows[0]).not.toHaveProperty('token_sha256');
+    expect(body.invitations.rows[0]).not.toHaveProperty('invited_by');
   });
 
   it('lists a trusted device without the token that makes it trusted', async () => {

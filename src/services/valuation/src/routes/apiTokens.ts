@@ -14,11 +14,21 @@ import {
   TOKEN_PAGE_LIMIT,
 } from '../repos/apiTokens.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import { flagParam } from '../domain/queryFlag.js';
 
 /**
  * M3 feature 14 — partner API token management. Tokens are scoped to a
  * partner; the secret is returned exactly once, on creation.
+ *
+ * Minting and revoking are audited (R159), and were not. `GET
+ * /api/v1/admin/api-tokens` exists precisely because "who currently holds API
+ * credentials" is a question somebody asks — and it answers it as a *snapshot*
+ * of the rows that survive. A token minted and revoked between two readings of
+ * that page left no trace anywhere, which is the shape of the credential you
+ * would most want a trace of. A partner token reads a firm's engagements
+ * without a session and outlives the browser that made it, hence `critical` on
+ * the creation event and `notice` on the revocation.
  */
 /** A live token unused for this long is worth asking about. 90 days. */
 const DORMANT_AFTER_MS = 90 * 86_400_000;
@@ -45,6 +55,14 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
       partnerId,
       createdBy: principal.id,
       name: parsed.data.name,
+    });
+    await recordAdminEvent(deps.pool, {
+      type: 'api_token_created',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'api_token',
+      subjectId: token.id,
+      subjectLabel: parsed.data.name,
+      payload: { partner_id: partnerId },
     });
     // `secret` is shown once and never retrievable again.
     return reply.status(201).send({ token, secret });
@@ -111,6 +129,14 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
       : token.created_by === principal.id;
     if (!allowed) throw problems.notFound();
     await revokeApiToken(deps.pool, id);
+    await recordAdminEvent(deps.pool, {
+      type: 'api_token_revoked',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'api_token',
+      subjectId: id,
+      subjectLabel: token.name,
+      payload: { partner_id: token.partner_id, personal: token.partner_id === null },
+    });
     return reply.status(204).send();
   });
 }

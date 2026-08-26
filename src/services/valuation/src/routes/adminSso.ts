@@ -5,6 +5,7 @@ import { httpsUrl } from '../domain/externalUrl.js';
 import { problems } from '@n409/shared';
 import { canManageUsers } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import { ROLE_KEYS } from '../domain/roles.js';
 import {
   createScimToken,
@@ -20,6 +21,18 @@ import {
  * management. Admin-only (canManageUsers). SAML/SCIM secrets are write-only
  * from the client's perspective — the IdP cert is returned so an admin can
  * confirm it, but SCIM token values are shown only once at creation.
+ *
+ * Every write here is audited (R159), and none was. These are the highest-
+ * leverage writes in the schema: `saml_config` decides which identity provider
+ * every future sign-in is delegated to, so repointing it at another IdP hands
+ * that IdP the ability to assert any employee's address and be believed — and
+ * the JIT provisioning on the other side will mint the account. A SCIM token
+ * is a standing bearer grant to create and deactivate users. Both were
+ * changeable by an administrator with the trail recording nothing, while the
+ * same administrator editing a *report template* left a `template_updated`
+ * row. The event carries which fields moved, never their values: `idp_cert` is
+ * a certificate and `allowed_domain` is configuration, but a payload of
+ * before/after config is not what the trail is for.
  */
 
 const SamlBody = z.object({
@@ -61,6 +74,19 @@ export function registerAdminSsoRoutes(app: FastifyInstance, deps: { pool: pg.Po
       defaultRole: parsed.data.default_role,
       updatedBy: principal.id,
     });
+    await recordAdminEvent(deps.pool, {
+      type: 'sso_config_updated',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'sso_config',
+      subjectId: null,
+      subjectLabel: 'saml',
+      payload: {
+        enabled: config.enabled,
+        fields: Object.keys(parsed.data),
+        allowed_domain: config.allowed_domain,
+        default_role: config.default_role,
+      },
+    });
     return { config };
   });
 
@@ -86,14 +112,27 @@ export function registerAdminSsoRoutes(app: FastifyInstance, deps: { pool: pg.Po
       createdBy: principal.id,
     });
     const { token_hash: _t, ...safe } = row;
+    await recordAdminEvent(deps.pool, {
+      type: 'scim_token_created',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'scim_token',
+      subjectId: row.id,
+      subjectLabel: row.label,
+    });
     // The raw token is returned once and never again.
     return reply.status(201).send({ token: safe, secret: token });
   });
 
   app.delete('/api/v1/admin/sso/scim-tokens/:id', { preHandler: app.authenticate }, async (req, reply) => {
-    requireAdmin(req);
+    const principal = requireAdmin(req);
     const { id } = req.params as { id: string };
     if (!(await revokeScimToken(deps.pool, id))) throw problems.notFound();
+    await recordAdminEvent(deps.pool, {
+      type: 'scim_token_revoked',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'scim_token',
+      subjectId: id,
+    });
     return reply.status(204).send();
   });
 }

@@ -37,11 +37,19 @@ export async function createPasswordResetToken(pool: pg.Pool, userId: string): P
  * who forgot their password, or an admin acting on a compromise — expects
  * every session already out there to stop working.
  */
+/**
+ * Redeem a reset token, returning *who* it belonged to.
+ *
+ * The boolean this used to return was enough for the route's answer and not
+ * enough for its audit record: "a password was reset" with no subject is a row
+ * nobody can act on. A reset is the one credential change that happens without
+ * a session, so it is also the one the trail most needs to name.
+ */
 export async function resetPasswordWithToken(
   pool: pg.Pool,
   rawToken: string,
   passwordDigest: string,
-): Promise<boolean> {
+): Promise<{ userId: string } | null> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<{ user_id: string }>(
       `UPDATE password_reset_tokens SET used_at = now()
@@ -50,19 +58,19 @@ export async function resetPasswordWithToken(
       [hashToken(rawToken)],
     );
     const userId = rows[0]?.user_id;
-    if (!userId) return false;
+    if (!userId) return null;
     const { rowCount } = await client.query(
       `UPDATE users
        SET password_digest = $2, session_epoch = session_epoch + 1
        WHERE id = $1 AND deleted_at IS NULL`,
       [userId, passwordDigest],
     );
-    if ((rowCount ?? 0) === 0) return false;
+    if ((rowCount ?? 0) === 0) return null;
     // A successful reset retires every other outstanding token for the user.
     await client.query(
       `UPDATE password_reset_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`,
       [userId],
     );
-    return true;
+    return { userId };
   });
 }

@@ -8,7 +8,7 @@
 
 import { isIsoCalendarDate } from '@n409/shared';
 import { clampScheduleMonths } from '../domain/vesting.js';
-import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, readJson, withDeadline } from './deadline.js';
+import { IMPORT_TIMEOUT_MS, IntegrationError, OAUTH_TIMEOUT_MS, readJson, withDeadline } from './deadline.js';
 
 export const HRIS_PROVIDERS = ['rippling', 'gusto', 'deel'] as const;
 export type HrisProvider = (typeof HRIS_PROVIDERS)[number];
@@ -108,9 +108,11 @@ export async function exchangeCode(
       signal,
     }),
   );
-  if (!res.ok) throw new Error(`${HRIS_PROVIDER_LABELS[provider]} token exchange failed (${res.status})`);
+  if (!res.ok)
+    throw new IntegrationError(`${HRIS_PROVIDER_LABELS[provider]} token exchange failed (${res.status})`);
   const body = (await readJson(res, HRIS_PROVIDER_LABELS[provider])) as TokenResponse;
-  if (!body.access_token) throw new Error(`${HRIS_PROVIDER_LABELS[provider]} returned no access token`);
+  if (!body.access_token)
+    throw new IntegrationError(`${HRIS_PROVIDER_LABELS[provider]} returned no access token`);
   return {
     accessToken: body.access_token,
     refreshToken: body.refresh_token ?? null,
@@ -277,7 +279,8 @@ export async function fetchRosterAndGrants(
       signal,
     }),
   );
-  if (!res.ok) throw new Error(`${HRIS_PROVIDER_LABELS[provider]} roster fetch failed (${res.status})`);
+  if (!res.ok)
+    throw new IntegrationError(`${HRIS_PROVIDER_LABELS[provider]} roster fetch failed (${res.status})`);
   const payload = await readJson(res, HRIS_PROVIDER_LABELS[provider]);
   const { roster, grants } = mapEmployees(payload);
   return {

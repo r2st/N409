@@ -341,7 +341,14 @@ export function smtpTransport(opts: SmtpTransportOptions, log?: FastifyBaseLogge
         }),
         listUnsubscribe,
       });
-      log?.info({ to: email.to_email, subject: email.subject }, 'email delivered (smtp)');
+      // `emailId`, not the address. The recipient is on the redact list as
+      // `to_email` and was logged here under the key `to`, which pino matches
+      // segment by segment against the *key* — so renaming the field at the
+      // log site is all it takes to undo the redaction, and every delivered
+      // message put a subscriber's address in the clear. The outbox row id
+      // answers the same question ("which message") and is not personal data;
+      // the address is one join away for anyone entitled to it.
+      log?.info({ emailId: email.id, subject: email.subject }, 'email delivered (smtp)');
     },
   };
 }

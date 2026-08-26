@@ -25,6 +25,17 @@ import type pg from 'pg';
  * evidence bundle and the exports, and copying them here would turn an access
  * request into a second, unaudited route to the deliverable.
  *
+ * Two sections reach the subject through their *address* rather than their
+ * primary key, and both are there because the census (`personalDataCensus`)
+ * learned to read contact columns as well as foreign keys: a table that
+ * identifies a person by email is invisible to a scan for FKs to `users`, and
+ * five such tables had never been considered at all.
+ * `contact_submissions` is what somebody typed into the public contact form —
+ * their name, address, phone and message, held under no account and reachable
+ * from nowhere else. `user_invitations` is who invited them, when, to what
+ * role, and whether it lapsed; "how did I come to have an account here" is a
+ * question only that row answers.
+ *
  * "The messages the platform sent them" used to mean the in-app notification
  * list alone, which is the smaller half — the mail is where the platform says
  * most of what it says to a person, and `email_outbox` holds the subject and
@@ -87,6 +98,10 @@ export interface PersonalDataExport {
   emails_sent: ExportSection<Record<string, unknown>>;
   /** Their address on the bounce/complaint list, if it is on it. */
   email_suppression: ExportSection<Record<string, unknown>>;
+  /** What they sent through the public contact form, before any account. */
+  contact_submissions: ExportSection<Record<string, unknown>>;
+  /** Invitations addressed to them: who, when, to what role, what became of it. */
+  invitations: ExportSection<Record<string, unknown>>;
   mentions: ExportSection<Record<string, unknown>>;
   /** When they last looked at each engagement's discussion. */
   comment_reads: ExportSection<Record<string, unknown>>;
@@ -184,6 +199,8 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     notificationPreferences,
     emailsSent,
     emailSuppression,
+    contactSubmissions,
+    invitations,
     mentions,
     commentReads,
     savedViews,
@@ -267,6 +284,42 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
          FROM email_suppressions s
          JOIN users u ON s.to_email = lower(u.email)
         WHERE u.id = $1 ORDER BY s.created_at DESC LIMIT $2`,
+      [userId],
+    ),
+    // The public contact form. `contact_submissions` has no user id — the form
+    // is unauthenticated by design — so it is reached the same way the
+    // suppression list is, by matching the address. It holds a name, an
+    // address, a phone number and free text somebody wrote about themselves,
+    // which makes it some of the most plainly personal data in the schema, and
+    // it was in no access request because nothing joined it to an account.
+    //
+    // `handled_by` and `handled_at` are not selected: who in operations picked
+    // the message up is another person's data, the same call `email_suppression`
+    // makes about `released_by`.
+    section(
+      pool,
+      `SELECT c.id, c.name, c.email, c.company, c.phone, c.message,
+              c.status::text AS status, c.created_at
+         FROM contact_submissions c
+         JOIN users u ON lower(c.email) = lower(u.email)
+        WHERE u.id = $1 ORDER BY c.created_at DESC LIMIT $2`,
+      [userId],
+    ),
+    // How they came to have an account, when it was offered and what became of
+    // it. Also addressed by email — an invitation exists before the account
+    // does, so it cannot be keyed on one.
+    //
+    // `token_sha256` is a live capability to take over the invited seat while
+    // the invitation is open, and is excluded for the reason the reset token is
+    // (Art. 15(4)); `invited_by` names another person and stays in the audit
+    // trail. `roles` is included because "what access was I offered" is about
+    // the subject.
+    section(
+      pool,
+      `SELECT i.id, i.email, i.roles, i.expires_at, i.created_at, i.accepted_at, i.revoked_at
+         FROM user_invitations i
+         JOIN users u ON lower(i.email) = lower(u.email)
+        WHERE u.id = $1 ORDER BY i.created_at DESC LIMIT $2`,
       [userId],
     ),
     // Being named in someone else's comment is a record about this person that
@@ -367,6 +420,8 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     notification_preferences: notificationPreferences,
     emails_sent: emailsSent,
     email_suppression: emailSuppression,
+    contact_submissions: contactSubmissions,
+    invitations,
     mentions,
     comment_reads: commentReads,
     saved_views: savedViews,

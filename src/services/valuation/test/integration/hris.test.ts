@@ -38,13 +38,16 @@ const ROSTER = {
 
 /** Swapped per test; the mock reads it at request time. */
 let rosterBody: unknown = ROSTER;
+/** When set, the roster endpoint answers 503 — a provider-side failure. */
+let rosterFails = false;
 
 function mockFetch() {
   return vi.fn(async (url: string | URL | Request) => {
     const u = String(url);
     if (u.includes('/token'))
       return jsonResponse({ access_token: 'tok', expires_in: 3600, company_id: 'co1' });
-    if (u.includes('/employees')) return jsonResponse(rosterBody);
+    if (u.includes('/employees'))
+      return rosterFails ? jsonResponse({ error: 'upstream' }, 503) : jsonResponse(rosterBody);
     throw new Error(`unexpected fetch ${u}`);
   });
 }
@@ -62,6 +65,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
   });
   beforeEach(() => {
     rosterBody = ROSTER;
+    rosterFails = false;
   });
   afterAll(async () => ctx?.teardown());
 
@@ -186,6 +190,56 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
 
     const { grants } = await listGrants(ctx.pool, v.id);
     expect(grants.map((g) => g.external_id)).toEqual(['good']);
+  });
+
+  it("answers a provider failure in the provider's terms", async () => {
+    // The half of the catch that is safe to forward, and the reason the
+    // forwarding existed: `IntegrationError` messages name who failed and how,
+    // and carry nothing from the response body.
+    const v = await connectedValuation();
+    rosterFails = true;
+    const pull = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+      headers: authHeader(ops.token),
+    });
+    expect(pull.statusCode).toBe(422);
+    expect(pull.json().detail).toBe('Sync failed: Rippling roster fetch failed (503)');
+  });
+
+  it("does not answer a driver error with the driver's wording", async () => {
+    // An options count past int4. `mapGrant` keeps it — it is finite, positive
+    // and has a usable date — so it reaches `options_count integer NOT NULL`
+    // and the insert loop, which has no catch of its own. The route's old
+    // catch-all forwarded whatever it caught, so the analyst was shown
+    // `Sync failed: value "3000000000" is out of range for type integer`:
+    // the driver's wording and a column type, from a code path nobody meant
+    // to publish. The connection's last-error row still records the real one.
+    rosterBody = {
+      companyName: 'Acme',
+      employees: [
+        {
+          id: 'e1',
+          fullName: 'Ada Lovelace',
+          workEmail: 'ada@acme.com',
+          equityGrants: [
+            { id: 'huge', optionsGranted: 3_000_000_000, strikePrice: 1, grantDate: '2026-03-01' },
+          ],
+        },
+      ],
+    };
+    const v = await connectedValuation();
+
+    const pull = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+      headers: authHeader(ops.token),
+    });
+    expect(pull.statusCode).toBe(422);
+    const { detail } = pull.json();
+    expect(detail).toBe("Rippling sync failed \u2014 the details are in the connection's last error");
+    for (const leak of ['integer', 'out of range', 'option_grants', 'options_count', '3000000000'])
+      expect(detail, leak).not.toContain(leak);
   });
 
   it('forbids HRIS import for non-ops users', async () => {

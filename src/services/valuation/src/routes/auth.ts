@@ -261,6 +261,17 @@ export function registerAuthRoutes(
     });
     // Prove ownership of the address before the account is trusted (gap #26).
     sendVerificationEmail(user, req.log);
+    // `user_created`, the same type an administrator minting a seat writes,
+    // with the door in the payload — see the catalog's note. Self-service
+    // sign-up created accounts that the trail had no row for at all.
+    await recordAdminEvent(deps.pool, {
+      type: 'user_created',
+      actor: { actorType: 'human', actorId: user.id },
+      subjectType: 'user',
+      subjectId: user.id,
+      subjectLabel: user.email,
+      payload: { method: 'self_service', roles: user.roles },
+    });
     const token = await issueSession(reply, user);
     return reply.status(201).send({ user: toPublicUser(user), token });
   });
@@ -396,6 +407,17 @@ export function registerAuthRoutes(
       if (bearer && !bearer.startsWith('n409_pat_')) {
         const claims = await verifySession(bearer, deps.jwt);
         await bumpSessionEpoch(deps.pool, claims.sub);
+        // Inside the try on purpose: a logout with no readable session bumps
+        // no epoch and names no subject, and a row that says "somebody signed
+        // out" is not a record of anything. Sign-in was audited from the day
+        // the spine existed and its counterpart never was, which leaves the
+        // trail able to say when a session began and never when it ended.
+        await recordAdminEvent(deps.pool, {
+          type: 'user_logout',
+          actor: { actorType: 'human', actorId: claims.sub },
+          subjectType: 'user',
+          subjectId: claims.sub,
+        });
       }
     } catch {
       /* expired / missing / invalid — cookie is still cleared */
@@ -470,6 +492,22 @@ export function registerAuthRoutes(
     }
 
     const user = await findUserByEmail(deps.pool, email);
+    // Recorded in *both* branches, and before either of them does its work.
+    // The obvious placement — inside the `if` below — would put one extra
+    // insert on the round trip only when the address exists, which is the
+    // timing oracle this whole route is written to avoid (see the note on the
+    // unawaited send). Recording the request either way costs nothing and is
+    // the better record besides: a run of resets requested for addresses that
+    // have no account is enumeration, and it is only visible if the misses are
+    // written down too.
+    await recordAdminEvent(deps.pool, {
+      type: 'user_password_reset_sent',
+      actor: { actorType: 'system', actorId: null, source: 'self_service' },
+      subjectType: 'user',
+      subjectId: user?.id ?? null,
+      subjectLabel: email,
+      payload: { self_service: true, sent: Boolean(user?.password_digest && !user.deleted_at) },
+    });
     // Only real password accounts get a link; SSO-only and deleted accounts
     // are silently skipped so the response never confirms an address.
     if (user?.password_digest && !user.deleted_at) {
@@ -507,8 +545,17 @@ export function registerAuthRoutes(
     await assertPasswordStrong(parsed.data.password);
 
     const digest = await hashPassword(parsed.data.password);
-    const ok = await resetPasswordWithToken(deps.pool, parsed.data.token, digest);
-    if (!ok) throw problems.badRequest('This reset link is invalid, expired, or already used');
+    const reset = await resetPasswordWithToken(deps.pool, parsed.data.token, digest);
+    if (!reset) throw problems.badRequest('This reset link is invalid, expired, or already used');
+    await recordAdminEvent(deps.pool, {
+      type: 'user_password_changed',
+      // Nobody is signed in here — the token is the whole authority — so the
+      // actor is the subject rather than a principal we verified.
+      actor: { actorType: 'human', actorId: reset.userId, source: 'password_reset' },
+      subjectType: 'user',
+      subjectId: reset.userId,
+      payload: { method: 'reset' },
+    });
     return { message: 'Password updated — you can now sign in.' };
   });
 
@@ -524,9 +571,16 @@ export function registerAuthRoutes(
       throw problems.tooManyRequests('Too many verification attempts — try again later');
     }
 
-    const outcome = await verifyEmailWithToken(deps.pool, parsed.data.token);
+    const { outcome, userId } = await verifyEmailWithToken(deps.pool, parsed.data.token);
     if (outcome === 'invalid')
       throw problems.badRequest('This verification link is invalid, expired, or already used');
+    if (outcome === 'verified')
+      await recordAdminEvent(deps.pool, {
+        type: 'user_email_verified',
+        actor: { actorType: 'human', actorId: userId, source: 'email_verification' },
+        subjectType: 'user',
+        subjectId: userId,
+      });
     return {
       status: outcome,
       message:
@@ -569,6 +623,17 @@ export function registerAuthRoutes(
     // changing it may be that someone else holds a token. The caller gets a
     // replacement so they aren't logged out of the tab they're standing in.
     const epoch = await bumpSessionEpoch(deps.pool, user.id);
+    await recordAdminEvent(deps.pool, {
+      type: 'user_password_changed',
+      actor: { actorType: 'human', actorId: user.id },
+      subjectType: 'user',
+      subjectId: user.id,
+      subjectLabel: user.email,
+      // The epoch bump signs every other session out, which is the same effect
+      // `user_sessions_revoked` records when an administrator does it. Named
+      // here rather than written as a second event, so one action is one row.
+      payload: { method: 'change', sessions_revoked: true },
+    });
     return {
       message: 'Password updated. Other sessions have been signed out.',
       token: await issueSession(reply, user, epoch),
@@ -624,6 +689,13 @@ export function registerAuthRoutes(
     if (result.status === 'invalid')
       throw problems.badRequest('This invitation is invalid, expired, or has been revoked');
     if (result.status === 'conflict') throw problems.conflict('An account with this email already exists');
+    await recordAdminEvent(deps.pool, {
+      type: 'invitation_accepted',
+      actor: { actorType: 'human', actorId: result.user.id },
+      subjectType: 'user',
+      subjectId: result.user.id,
+      subjectLabel: result.user.email,
+    });
     const sessionToken = await issueSession(reply, result.user);
     return reply.status(201).send({ user: toPublicUser(result.user), token: sessionToken });
   });

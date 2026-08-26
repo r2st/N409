@@ -222,6 +222,46 @@ export const ADMIN_EVENT_CATALOG = {
   user_data_exported: D('Personal data exported', 'access', 'critical'),
   account_closed: D('Account closed', 'access', 'critical'),
 
+  // ── Identity & access: the self-serve half ──────────────────────────────
+  //
+  // Every type above this line is written by an *admin* route and only by one.
+  // The platform offers a self-serve equivalent of most of them, and the trail
+  // recorded none: an administrator exporting someone's personal data left a
+  // `user_data_exported` row, the person exporting their own left nothing;
+  // an administrator revoking sessions was recorded, a user revoking their own
+  // was not. That is the reverse of what an audit trail is for — the actions
+  // an account takes on itself are the ones an account takeover consists of.
+  //
+  // So the pairs below close the half that was missing, and the credential
+  // lifecycle that had no vocabulary at all. `user_created` and `user_login`
+  // stay one type each and carry `method` in the payload (`self_service`,
+  // `saml_jit`, `scim`) rather than splitting into a type per door: the
+  // question a reader asks is "did this account appear, and how", and one type
+  // with a discriminator answers it without three labels to keep aligned.
+  user_logout: D('User signed out', 'access', 'info'),
+  user_password_changed: D('Password changed', 'access', 'critical'),
+  user_email_verified: D('Email address verified', 'access', 'info'),
+  invitation_accepted: D('Invitation accepted', 'access', 'notice'),
+  // Second factor. Enrolment is a `notice`; *removal* is `critical` — turning
+  // MFA off is a step in every account takeover that gets that far, and it is
+  // the one an owner would want to be asked about afterwards. Regenerating the
+  // backup codes invalidates the old set, so it is a credential replacement
+  // rather than a read.
+  user_mfa_enabled: D('Two-factor authentication enabled', 'access', 'notice'),
+  user_mfa_disabled: D('Two-factor authentication disabled', 'access', 'critical'),
+  user_mfa_backup_codes_regenerated: D('Backup codes regenerated', 'access', 'notice'),
+  // Bearer credentials. A partner API token can read a firm's engagements
+  // without a session and outlives the browser that minted it.
+  api_token_created: D('API token created', 'access', 'critical'),
+  api_token_revoked: D('API token revoked', 'access', 'notice'),
+  // Federation. Repointing `saml_config` at another IdP makes every future
+  // sign-in that IdP's decision, which is the single highest-leverage write in
+  // this schema; a SCIM token is a standing grant to create and deactivate
+  // accounts.
+  sso_config_updated: D('SSO configuration updated', 'access', 'critical'),
+  scim_token_created: D('SCIM token created', 'access', 'critical'),
+  scim_token_revoked: D('SCIM token revoked', 'access', 'notice'),
+
   // ── Partners ────────────────────────────────────────────────────────────
   partner_created: D('Partner created', 'integration', 'notice'),
   partner_updated: D('Partner updated', 'integration', 'notice'),

@@ -28,6 +28,7 @@ import {
   upsertConnection,
   type HrisConnectionRow,
 } from '../repos/hrisConnections.js';
+import { IntegrationError } from '../clients/deadline.js';
 import { createGrant } from '../repos/grants.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -304,7 +305,17 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
     try {
       return await syncHrisConnection({ pool: deps.pool, fetchFn }, connection, { actorId: principal.id });
     } catch (err) {
-      throw problems.unprocessable(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+      // Only a provider-attributable failure is echoed. This catch used to
+      // forward `err.message` whatever it was, and the sync's insert loop has
+      // no catch of its own — so a grant the driver refused answered the
+      // analyst with Postgres's own wording, constraint and column names
+      // included. See `IntegrationError` in clients/deadline.ts.
+      req.log.warn({ err, provider, connectionId: connection.id }, 'HRIS sync failed');
+      throw problems.unprocessable(
+        err instanceof IntegrationError
+          ? `Sync failed: ${err.message}`
+          : `${HRIS_PROVIDER_LABELS[provider]} sync failed — the details are in the connection's last error`,
+      );
     }
   });
 

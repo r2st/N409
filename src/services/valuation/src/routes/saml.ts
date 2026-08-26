@@ -7,6 +7,7 @@ import { setSessionCookie, type SessionCookieConfig } from '../auth/cookies.js';
 import { getSamlConfig, type SamlConfigRow } from '../repos/ssoConfig.js';
 import { consumeSamlAssertion, type SamlAssertionRef } from '../repos/samlReplay.js';
 import { createProvisionedUser, findUserByEmail, type UserWithRoles } from '../repos/users.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import { EmailAddress, MAX_EMAIL_LENGTH } from '../domain/email.js';
 import type { RoleKey } from '../domain/roles.js';
 import { ROLE_KEYS } from '../domain/roles.js';
@@ -260,6 +261,7 @@ export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
 
       // JIT: reuse an existing account (linking it), else provision one.
       let user: UserWithRoles | null = await findUserByEmail(deps.pool, identity.email);
+      const provisioned = !user;
       if (!user) {
         const role = (ROLE_KEYS as readonly string[]).includes(config.default_role)
           ? (config.default_role as RoleKey)
@@ -271,8 +273,34 @@ export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
           provisionedBy: 'saml',
           roles: [role],
         });
+        // An account that appeared because an IdP asserted an address. It is
+        // the only door on this platform that mints a seat with no request
+        // from inside the firm, and it recorded nothing — so "where did this
+        // account come from" had no answer for exactly the accounts whose
+        // origin is furthest from anybody here.
+        await recordAdminEvent(deps.pool, {
+          type: 'user_created',
+          actor: { actorType: 'system', actorId: null, source: 'saml' },
+          subjectType: 'user',
+          subjectId: user.id,
+          subjectLabel: user.email,
+          payload: { method: 'saml_jit', roles: user.roles },
+        });
       }
       if (user.deleted_at) throw problems.forbidden('This account is deactivated');
+
+      // The third sign-in door. Password and Google both wrote `user_login`
+      // from the day the spine existed; this one did not, so a firm that had
+      // moved to SSO — which is every firm large enough to have an auditor
+      // asking — had a trail with no sign-ins in it at all.
+      await recordAdminEvent(deps.pool, {
+        type: 'user_login',
+        actor: { actorType: 'human', actorId: user.id },
+        subjectType: 'user',
+        subjectId: user.id,
+        subjectLabel: user.email,
+        payload: { method: 'saml', provisioned },
+      });
 
       const token = await signSession(
         { sub: user.id, roles: user.roles, partner_id: user.partner_id, session_epoch: user.session_epoch },

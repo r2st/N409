@@ -33,6 +33,44 @@ export const IMPORT_TIMEOUT_MS = 30_000;
  * `Import failed: The operation was aborted due to timeout` — true, but it
  * names neither the provider nor the fact that the delay was on their side.
  */
+/**
+ * An integration failure whose wording is safe to show the person who asked.
+ *
+ * The route that pulls an HRIS roster ended in
+ *
+ *     catch (err) { throw problems.unprocessable(`Sync failed: ${err.message}`) }
+ *
+ * which forwards *whatever was thrown* to the client. That is right for the
+ * errors this file raises — "Rippling did not respond within 30s", "Gusto
+ * returned a non-JSON response" — each of which names the provider and what it
+ * did and carries nothing else. It is wrong for everything else that can be
+ * thrown from inside a sync, and the sync's insert loop has no catch of its
+ * own: one grant with a date Postgres will not take, and the analyst is shown
+ *
+ *     Sync failed: date/time field value out of range: "2026-02-31"
+ *
+ * or, on a unique violation, the name of the index. Driver wording, column
+ * names and constraint names are internal detail, and the catch-all could not
+ * tell them from the two sentences above because both arrive as `Error`.
+ *
+ * So "safe to echo" becomes a type rather than a hope. A route forwards the
+ * message of an `IntegrationError` and answers everything else with its own
+ * constant, having logged the real one.
+ *
+ * Thrown by `withDeadline` and `readJson`, which is where the provider-
+ * attributable failures of every integration client already funnel. The
+ * clients' own `throw new Error(…)` sites are converted per client as their
+ * routes start forwarding; a plain `Error` is the conservative default,
+ * because the cost of the wrong answer is asymmetric — an unhelpful message
+ * on one side, disclosure on the other.
+ */
+export class IntegrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'IntegrationError';
+  }
+}
+
 export async function withDeadline<T>(
   label: string,
   timeoutMs: number,
@@ -42,7 +80,7 @@ export async function withDeadline<T>(
     return await run(AbortSignal.timeout(timeoutMs));
   } catch (err) {
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
-      throw new Error(`${label} did not respond within ${Math.round(timeoutMs / 1000)}s`);
+      throw new IntegrationError(`${label} did not respond within ${Math.round(timeoutMs / 1000)}s`);
     }
     throw err;
   }
@@ -70,10 +108,10 @@ export async function readJson(res: Response, label: string): Promise<Record<str
   try {
     body = await res.json();
   } catch {
-    throw new Error(`${label} returned a non-JSON response`);
+    throw new IntegrationError(`${label} returned a non-JSON response`);
   }
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-    throw new Error(`${label} returned an unexpected response body`);
+    throw new IntegrationError(`${label} returned an unexpected response body`);
   }
   return body as Record<string, unknown>;
 }

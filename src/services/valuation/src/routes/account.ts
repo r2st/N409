@@ -152,6 +152,18 @@ export function registerAccountRoutes(
   app.get('/api/v1/me/data-export', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const bundle = await buildPersonalDataExport(deps.pool, principal.id);
+    // The same event the admin route writes when it answers a request on
+    // somebody's behalf (`adminUsers.ts`). Only that half was recorded, so a
+    // trail asked "who has taken a copy of this person's data" answered with
+    // the administrators and not with the account itself — which is the copy an
+    // account takeover would take. `critical` in the catalog for that reason.
+    await recordAdminEvent(deps.pool, {
+      type: 'user_data_exported',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'user',
+      subjectId: principal.id,
+      payload: { self_service: true, sections: Object.keys(bundle).length },
+    });
     const stamp = bundle.generated_at.slice(0, 10);
     return (
       reply
@@ -214,6 +226,18 @@ export function registerAccountRoutes(
         }
       })();
     }
+    await recordAdminEvent(deps.pool, {
+      type: 'user_updated',
+      actor: { actorType: 'human', actorId: user.id },
+      subjectType: 'user',
+      subjectId: user.id,
+      subjectLabel: user.email,
+      // Field names, not values — this is a profile, and the values are the
+      // personal data the trail exists beside rather than a copy of. The email
+      // change is called out because it is a credential change: it moves where
+      // a password reset is delivered.
+      payload: { self_service: true, fields: Object.keys(patch), email_changed: changingEmail },
+    });
     return { user: toPublicUser(await loadSelf(user.id)) };
   });
 
@@ -229,6 +253,14 @@ export function registerAccountRoutes(
     const epoch = await bumpSessionEpoch(deps.pool, principal.id);
     const user = await loadSelf(principal.id);
     const token = await issueToken(user, epoch);
+    await recordAdminEvent(deps.pool, {
+      type: 'user_sessions_revoked',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'user',
+      subjectId: principal.id,
+      subjectLabel: user.email,
+      payload: { self_service: true },
+    });
     // Refresh this device's cookie to the new epoch so it isn't logged out.
     if (deps.cookie) setSessionCookie(reply, token, deps.cookie);
     return { token, message: 'Other sessions have been signed out.' };
@@ -251,6 +283,14 @@ export function registerAccountRoutes(
       createdBy: principal.id,
       name: parsed.data.name,
     });
+    await recordAdminEvent(deps.pool, {
+      type: 'api_token_created',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'api_token',
+      subjectId: token.id,
+      subjectLabel: parsed.data.name,
+      payload: { personal: true },
+    });
     // `secret` is shown once and never retrievable again.
     return reply.status(201).send({ token, secret });
   });
@@ -263,6 +303,14 @@ export function registerAccountRoutes(
     // 404 rather than 403 for someone else's token — don't confirm it exists.
     if (!token || token.partner_id !== null || token.created_by !== principal.id) throw problems.notFound();
     await revokeApiToken(deps.pool, id);
+    await recordAdminEvent(deps.pool, {
+      type: 'api_token_revoked',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'api_token',
+      subjectId: id,
+      subjectLabel: token.name,
+      payload: { personal: true },
+    });
     return reply.status(204).send();
   });
 

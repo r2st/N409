@@ -16,6 +16,7 @@ import {
   regenerateBackupCodes,
   stageTotpSecret,
 } from '../repos/mfa.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
 
 /**
@@ -26,6 +27,22 @@ import type { SystemSettingsStore } from '../repos/systemSettings.js';
  *
  * Every route is scoped to the authenticated principal; there is no id in any
  * path. Google-SSO accounts defer their MFA to the IdP and cannot enrol here.
+ *
+ * ## The audit record
+ *
+ * This file wrote none until R159. Enrolling a second factor, *removing* one,
+ * and replacing the backup-code set are three of the small number of actions
+ * that decide whether an account can be taken over, and none of them left a
+ * row — while an administrator changing somebody's role, resending an
+ * invitation or editing a prompt all did. A takeover that got as far as a
+ * session would strip the second factor and leave the trail saying nothing had
+ * happened.
+ *
+ * `/setup` deliberately writes no event. It stages a candidate secret that is
+ * inert until `/confirm` verifies a live code against it, is overwritten by the
+ * next `/setup`, and grants nothing on its own; recording it would put a row
+ * against every abandoned QR screen and dilute the three that mean something.
+ * `/confirm` is the moment the factor exists.
  */
 
 const ConfirmBody = z.object({ code: z.string().min(6).max(10) });
@@ -83,6 +100,14 @@ export function registerMfaRoutes(
       throw problems.badRequest('That code is incorrect — check your authenticator and try again');
 
     const backupCodes = await confirmTotpEnrollment(deps.pool, user.id);
+    await recordAdminEvent(deps.pool, {
+      type: 'user_mfa_enabled',
+      actor: { actorType: 'human', actorId: user.id },
+      subjectType: 'user',
+      subjectId: user.id,
+      subjectLabel: user.email,
+      payload: { method: 'totp', backup_codes_issued: backupCodes.length },
+    });
     return { enabled: true, backup_codes: backupCodes };
   });
 
@@ -102,6 +127,14 @@ export function registerMfaRoutes(
       throw problems.badRequest('Password is incorrect');
 
     await disableTotp(deps.pool, user.id);
+    await recordAdminEvent(deps.pool, {
+      type: 'user_mfa_disabled',
+      actor: { actorType: 'human', actorId: user.id },
+      subjectType: 'user',
+      subjectId: user.id,
+      subjectLabel: user.email,
+      payload: { method: 'totp' },
+    });
     return { enabled: false };
   });
 
@@ -117,6 +150,15 @@ export function registerMfaRoutes(
     if (!(await verifyReauthPassword(user.id, parsed.data.password, user.password_digest)))
       throw problems.badRequest('Password is incorrect');
 
-    return { backup_codes: await regenerateBackupCodes(deps.pool, user.id) };
+    const codes = await regenerateBackupCodes(deps.pool, user.id);
+    await recordAdminEvent(deps.pool, {
+      type: 'user_mfa_backup_codes_regenerated',
+      actor: { actorType: 'human', actorId: user.id },
+      subjectType: 'user',
+      subjectId: user.id,
+      subjectLabel: user.email,
+      payload: { issued: codes.length },
+    });
+    return { backup_codes: codes };
   });
 }

@@ -50,7 +50,19 @@ export type VerifyEmailOutcome = 'verified' | 'already_verified' | 'invalid';
  * their email after the link went out, the address no longer matches and the
  * link is rejected.
  */
-export async function verifyEmailWithToken(pool: pg.Pool, rawToken: string): Promise<VerifyEmailOutcome> {
+/**
+ * Redeem a verification token.
+ *
+ * Returns the subject alongside the outcome for the reason
+ * `resetPasswordWithToken` does: the route's audit record needs to name whose
+ * address was verified, and an unauthenticated redeem endpoint has no
+ * principal to take it from. `userId` is null exactly when the outcome is
+ * `invalid` — there was no token, so there is nobody to name.
+ */
+export async function verifyEmailWithToken(
+  pool: pg.Pool,
+  rawToken: string,
+): Promise<{ outcome: VerifyEmailOutcome; userId: string | null }> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<{ user_id: string; email: string }>(
       `UPDATE email_verification_tokens SET used_at = now()
@@ -59,7 +71,7 @@ export async function verifyEmailWithToken(pool: pg.Pool, rawToken: string): Pro
       [hashToken(rawToken)],
     );
     const token = rows[0];
-    if (!token) return 'invalid';
+    if (!token) return { outcome: 'invalid', userId: null };
 
     const { rows: userRows } = await client.query<{ verified: boolean }>(
       `SELECT verified FROM users
@@ -67,8 +79,8 @@ export async function verifyEmailWithToken(pool: pg.Pool, rawToken: string): Pro
       [token.user_id, token.email],
     );
     const user = userRows[0];
-    if (!user) return 'invalid';
-    if (user.verified) return 'already_verified';
+    if (!user) return { outcome: 'invalid', userId: null };
+    if (user.verified) return { outcome: 'already_verified', userId: token.user_id };
 
     await client.query(`UPDATE users SET verified = true WHERE id = $1`, [token.user_id]);
     // A successful verification retires every other outstanding token.
@@ -76,6 +88,6 @@ export async function verifyEmailWithToken(pool: pg.Pool, rawToken: string): Pro
       `UPDATE email_verification_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`,
       [token.user_id],
     );
-    return 'verified';
+    return { outcome: 'verified', userId: token.user_id };
   });
 }

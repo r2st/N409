@@ -30,12 +30,24 @@ export interface EmailTransport {
   send(email: EmailOutboxRow): Promise<void>;
 }
 
-/** Dev/default transport: delivery is just a structured log line. */
+/**
+ * Dev/default transport: delivery is just a structured log line.
+ *
+ * The recipient is deliberately not on it. `to_email` is on the redact list
+ * and this line logged it under the key `to`, which pino matches against the
+ * *key* — so the redaction the list was extended to provide was undone by the
+ * name chosen at the call site. "Dev transport" is not a defence either: this
+ * is what `EMAIL_MODE=smtp` falls back to when `SMTP_HOST` is unset, which is
+ * a state production can reach by a missing environment variable, and it is
+ * what `SMS_MODE=log` uses — where `to_email` carries a *phone number* (see
+ * migration 0051). The outbox id identifies the message; the address is one
+ * join away for anyone entitled to it.
+ */
 export function logTransport(log: FastifyBaseLogger): EmailTransport {
   return {
     async send(email) {
       log.info(
-        { to: email.to_email, subject: email.subject, template: email.template_key },
+        { emailId: email.id, subject: email.subject, template: email.template_key },
         'email delivered (log transport)',
       );
     },
