@@ -179,7 +179,7 @@ describe('AuditorPortalPage bundle', () => {
         engine_version: 'engine/v1.4.2',
       },
     });
-    expect(await screen.findByText('$3.47')).toBeInTheDocument();
+    expect(await screen.findByText('$3.4700')).toBeInTheDocument();
     expect(screen.getByText('$48,250,000.00')).toBeInTheDocument();
     expect(screen.getByText('engine/v1.4.2')).toBeInTheDocument();
   });

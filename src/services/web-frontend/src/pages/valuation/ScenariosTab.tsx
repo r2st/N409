@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatMoney } from '../../lib/pipeline';
-import { formatDateTime } from '../../lib/format';
+import { formatDateTime, formatPerShare } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import {
   Button,
@@ -310,7 +310,7 @@ export function ScenariosTab() {
           accent
           value={
             <>
-              {formatMoney(current.fmv_per_share, currency)}
+              {formatPerShare(current.fmv_per_share, currency)}
               <DeltaBadge delta={preview?.delta.fmv_per_share ?? null} currency={currency} />
             </>
           }
@@ -324,7 +324,10 @@ export function ScenariosTab() {
             </>
           }
         />
-        <StatCard label="Baseline FMV / share" value={formatMoney(boot.baseline.fmv_per_share, currency)} />
+        <StatCard
+          label="Baseline FMV / share"
+          value={formatPerShare(boot.baseline.fmv_per_share, currency)}
+        />
       </div>
 
       {previewError && <ErrorNote>{previewError}</ErrorNote>}
@@ -456,7 +459,7 @@ export function ScenariosTab() {
                   <tr className="border-b border-paper-200 bg-paper-50">
                     <td className="py-2.5 pr-4 font-semibold text-ink-800">Baseline (official)</td>
                     <td className="tnum py-2.5 pr-4">
-                      {formatMoney(saved.baseline.fmv_per_share, currency)}
+                      {formatPerShare(saved.baseline.fmv_per_share, currency)}
                     </td>
                     <td className="tnum py-2.5 pr-4">{formatMoney(saved.baseline.equity_value, currency)}</td>
                     <td className="py-2.5 pr-4 text-ink-400">—</td>
@@ -480,7 +483,7 @@ export function ScenariosTab() {
                           {scenario.label}
                         </span>
                       </td>
-                      <td className="tnum py-2.5 pr-4">{formatMoney(scenario.fmv_per_share, currency)}</td>
+                      <td className="tnum py-2.5 pr-4">{formatPerShare(scenario.fmv_per_share, currency)}</td>
                       <td className="tnum py-2.5 pr-4">{formatMoney(scenario.equity_value, currency)}</td>
                       <td className="py-2.5 pr-4">
                         <DeltaBadge delta={delta} currency={currency} />

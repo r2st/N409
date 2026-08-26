@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
-import { formatDateTime } from '../../lib/format';
+import { formatDateTime, formatPerShare } from '../../lib/format';
 import {
   DOCUMENT_KIND_LABELS,
   formatBytes,
@@ -254,7 +254,7 @@ export function PackageTab() {
                   {c.status}
                 </span>
                 <span className="tnum font-semibold text-ink-900">
-                  {c.status === 'succeeded' ? formatMoney(c.fmv_per_share, currency) : (c.error ?? '—')}
+                  {c.status === 'succeeded' ? formatPerShare(c.fmv_per_share, currency) : (c.error ?? '—')}
                 </span>
                 {c.id === latestCalc?.id && (
                   <span className="rounded-full bg-bond-50 px-2 py-0.5 text-[0.65rem] font-bold text-bond-700 uppercase">

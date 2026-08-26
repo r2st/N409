@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
-import { formatDateTime } from '../../lib/format';
+import { formatDateTime, formatPerShare, moneyFormatter } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { WaterfallChart } from '../../components/charts';
 import { RollforwardPanel } from '../../components/valuation/RollforwardPanel';
@@ -43,14 +43,23 @@ interface BridgeResponse {
   company_name: string;
 }
 
-const money = (v: number) =>
-  `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/**
+ * Every figure on this page is a per-share value or a difference between two of
+ * them, so all of it is struck at the conclusion's own precision and in the
+ * engagement's own currency. Both used to be wrong here: a hard-coded `$` and
+ * two decimals, on the one page whose entire purpose is to decompose a change
+ * in the fourth. A walk from $2.5013 to $2.5104 rendered as $2.50 → $2.51 with
+ * a $0.01 change, and every LMDI contribution under it collapsed to $0.00.
+ */
+const money = (v: number, currency: string | null) => formatPerShare(v, currency);
 
-const driverValue = (key: string, v: number | null): string => {
+const driverValue = (key: string, v: number | null, currency: string | null): string => {
   if (v === null) return '—';
   if (key === 'dlom' || key === 'dloc' || key.startsWith('weight_') || key === 'volatility')
     return `${(v * 100).toFixed(1)}%`;
-  if (key === 'equity_value') return `$${Math.round(v).toLocaleString()}`;
+  // The one aggregate in the table. Whole units — a rounded equity value is
+  // what the exhibits print — but in the engagement's currency, not a `$`.
+  if (key === 'equity_value') return moneyFormatter(currency, { maximumFractionDigits: 0 })(Math.round(v));
   return v.toFixed(2);
 };
 
@@ -148,7 +157,7 @@ export function BridgeTab() {
             {candidates?.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.number} · {formatDateTime(c.created_at)}
-                {c.fmv_per_share ? ` · ${money(Number(c.fmv_per_share))}` : ''}
+                {c.fmv_per_share ? ` · ${money(Number(c.fmv_per_share), valuation.currency)}` : ''}
               </option>
             ))}
           </Select>
@@ -160,11 +169,14 @@ export function BridgeTab() {
       {data && (
         <div className="space-y-6" data-testid="bridge-result">
           <div className="flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
-            <Metric label={`From (${data.from.number})`} value={money(data.bridge.from_fmv)} />
-            <Metric label={`To (${data.to.number})`} value={money(data.bridge.to_fmv)} />
+            <Metric
+              label={`From (${data.from.number})`}
+              value={money(data.bridge.from_fmv, valuation.currency)}
+            />
+            <Metric label={`To (${data.to.number})`} value={money(data.bridge.to_fmv, valuation.currency)} />
             <Metric
               label="Change"
-              value={`${data.bridge.delta >= 0 ? '+' : ''}${money(data.bridge.delta)}`}
+              value={`${data.bridge.delta >= 0 ? '+' : ''}${money(data.bridge.delta, valuation.currency)}`}
               accent={data.bridge.delta >= 0 ? 'up' : 'down'}
             />
             {data.bridge.pct_change !== null && (
@@ -181,7 +193,7 @@ export function BridgeTab() {
               title="Per-share FMV bridge"
               start={{ label: `Prior (${data.from.number})`, value: data.bridge.from_fmv }}
               steps={steps}
-              format={money}
+              format={(v: number) => money(v, valuation.currency)}
             />
           ) : (
             <p className="rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800">
@@ -205,10 +217,14 @@ export function BridgeTab() {
                 {data.bridge.drivers.map((d) => (
                   <tr key={d.key} className="border-b border-paper-200 last:border-0">
                     <td className="px-4 py-2.5 text-ink-700">{d.label}</td>
-                    <td className="tnum px-4 py-2.5 text-right text-ink-600">{driverValue(d.key, d.from)}</td>
-                    <td className="tnum px-4 py-2.5 text-right text-ink-600">{driverValue(d.key, d.to)}</td>
+                    <td className="tnum px-4 py-2.5 text-right text-ink-600">
+                      {driverValue(d.key, d.from, valuation.currency)}
+                    </td>
+                    <td className="tnum px-4 py-2.5 text-right text-ink-600">
+                      {driverValue(d.key, d.to, valuation.currency)}
+                    </td>
                     <td className="tnum px-4 py-2.5 text-right font-semibold text-ink-900">
-                      {d.delta === null ? '—' : driverValue(d.key, d.delta)}
+                      {d.delta === null ? '—' : driverValue(d.key, d.delta, valuation.currency)}
                     </td>
                   </tr>
                 ))}

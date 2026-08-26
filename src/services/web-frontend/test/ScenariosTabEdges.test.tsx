@@ -133,7 +133,7 @@ describe('ScenariosTab — reset', () => {
     await userEvent.clear(dr);
     await userEvent.type(dr, '50');
     await waitFor(() => {
-      expect(screen.getByText('$1.00')).toBeInTheDocument();
+      expect(screen.getByText('$1.0000')).toBeInTheDocument();
     });
 
     await userEvent.click(screen.getByRole('button', { name: 'Reset to baseline' }));
@@ -141,7 +141,7 @@ describe('ScenariosTab — reset', () => {
     expect(dr).toHaveValue('25');
     // The scenario cards fall back to the baseline, and the delta badge goes
     // with them — there is no longer a scenario to be a delta from.
-    expect(screen.queryByText('$1.00')).not.toBeInTheDocument();
+    expect(screen.queryByText('$1.0000')).not.toBeInTheDocument();
     expect(screen.queryByText(/▼/)).not.toBeInTheDocument();
     expect(previewBodies(fetchMock)).toHaveLength(1);
   });
@@ -189,9 +189,9 @@ describe('ScenariosTab — reset', () => {
     // that it was not: a bare assertion here would pass on a component that
     // simply had not re-rendered yet.
     await waitFor(() => {
-      expect(screen.getAllByText('$2.00').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText('$2.0000').length).toBeGreaterThanOrEqual(1);
     });
-    expect(screen.queryByText('$1.00')).not.toBeInTheDocument();
+    expect(screen.queryByText('$1.0000')).not.toBeInTheDocument();
     expect(screen.queryByText(/▼/)).not.toBeInTheDocument();
     expect(screen.queryByText('Recomputing…')).not.toBeInTheDocument();
   });
@@ -384,7 +384,7 @@ describe('ScenariosTab — failures', () => {
 
     expect(await screen.findByText('That scenario could not be computed.')).toBeInTheDocument();
     // The cards stay on the baseline rather than showing a half-applied figure.
-    expect(screen.getAllByText('$2.00').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('$2.0000').length).toBeGreaterThanOrEqual(1);
     expect(dr).toHaveValue('50');
   });
 

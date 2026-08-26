@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
-import { formatDateTime } from '../../lib/format';
+import { formatDateTime, formatPerShare } from '../../lib/format';
 import {
   fieldLabel,
   formatMoney,
@@ -272,7 +272,7 @@ export function CalculationPanel({
           <div className="grid gap-4 sm:grid-cols-3">
             <StatCard
               label="Fair market value / share"
-              value={formatMoney(latest.fmv_per_share, currency)}
+              value={formatPerShare(latest.fmv_per_share, currency)}
               accent
             />
             <StatCard label="Equity value" value={formatMoney(latest.equity_value, currency)} />
@@ -347,7 +347,7 @@ export function CalculationPanel({
                   </span>
                   <span className="tnum font-semibold text-ink-900">
                     {calc.status === 'succeeded'
-                      ? formatMoney(calc.fmv_per_share, currency)
+                      ? formatPerShare(calc.fmv_per_share, currency)
                       : (calc.error ?? 'failed')}
                   </span>
                   {Array.isArray(calc.results?.recomputed) && (

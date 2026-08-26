@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api, ApiError } from '../../lib/api';
+import { formatPerShare } from '../../lib/format';
 import { Button, ErrorNote } from '../ui';
 import { Heatmap, type HeatCell } from '../charts';
 
@@ -56,14 +57,17 @@ const DEFAULT_PAIRS: Array<[ParamName, ParamName]> = [
   ['discount_rate', 'exit_multiple'],
 ];
 
+/**
+ * Every figure this panel prints is a per-share FMV re-struck under a shifted
+ * assumption, so it is printed exactly as the conclusion it is perturbing is.
+ * Struck at 2–4 digits here, which agreed with the conclusion only when the
+ * fourth decimal happened to be significant: a grid cell at $2.5000 and one at
+ * $2.5 are the same number stated to different precisions, and a sensitivity
+ * table is read by comparing cells down a column.
+ */
 function money(v: number | null, currency: string | null): string {
   if (v === null) return '—';
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: currency || 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 4,
-  }).format(v);
+  return formatPerShare(v, currency);
 }
 
 function deltaClass(delta: number | null): string {

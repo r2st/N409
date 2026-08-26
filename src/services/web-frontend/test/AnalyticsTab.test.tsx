@@ -119,7 +119,7 @@ describe('AnalyticsTab', () => {
     for (const title of ['FMV per share', 'DLOM', 'Volatility', 'Revenue multiple']) {
       expect(screen.getAllByText(title).length).toBeGreaterThan(0);
     }
-    expect(screen.getAllByText('$1.42').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('$1.4200').length).toBeGreaterThan(0);
     expect(screen.getAllByText('25.5%').length).toBeGreaterThan(0);
     // Volatility is null in the latest point, so the last *known* value shows.
     expect(screen.getAllByText('62.0%').length).toBeGreaterThan(0);

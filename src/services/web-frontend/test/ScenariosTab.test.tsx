@@ -94,7 +94,7 @@ describe('ScenariosTab', () => {
     expect(await screen.findByText(/Sandbox only/)).toBeInTheDocument();
     expect(screen.getByText('Scenario FMV / share')).toBeInTheDocument();
     // Baseline values fill the stat cards before any preview.
-    expect(screen.getAllByText('$2.00').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('$2.0000').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText(/Discount rate/)).toHaveValue('25');
     expect(screen.getByLabelText(/Terminal growth rate/)).toHaveValue('3');
     expect(screen.getByLabelText(/Comparable multiples/)).toHaveValue('4, 6');
@@ -129,11 +129,11 @@ describe('ScenariosTab', () => {
     );
     expect(String(previewPosts().at(-1)![0])).toContain(`/valuations/${valuation.id}/scenarios/preview`);
 
-    // Only now is the $1.00 on screen necessarily this request's: the stubbed
+    // Only now is the $1.0000 on screen necessarily this request's: the stubbed
     // preview answers every body with the same numbers, so the stat card alone
     // cannot tell which request it is showing.
     await waitFor(() => {
-      expect(screen.getByText('$1.00')).toBeInTheDocument();
+      expect(screen.getByText('$1.0000')).toBeInTheDocument();
     });
     expect(screen.getAllByText(/▼/).length).toBeGreaterThanOrEqual(1);
   });
@@ -169,7 +169,7 @@ describe('ScenariosTab', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('$1.00')).toBeInTheDocument();
+      expect(screen.getByText('$1.0000')).toBeInTheDocument();
     });
     expect(dr).toHaveValue('50');
   });
@@ -222,17 +222,17 @@ describe('ScenariosTab', () => {
 
     await userEvent.type(dr, '50');
     await waitFor(() => {
-      expect(screen.getByText('$1.00')).toBeInTheDocument();
+      expect(screen.getByText('$1.0000')).toBeInTheDocument();
     });
 
     // Only now does the baseline preview answer, out of order and obsolete.
     releaseStale!();
 
-    // It must change nothing: $1.00 is the scenario's, $2.00 the baseline's.
+    // It must change nothing: $1.0000 is the scenario's, $2.0000 the baseline's.
     await waitFor(() => {
       expect(previewPosts().length).toBeGreaterThanOrEqual(2);
     });
-    expect(screen.getByText('$1.00')).toBeInTheDocument();
+    expect(screen.getByText('$1.0000')).toBeInTheDocument();
     expect(screen.getAllByText(/▼/).length).toBeGreaterThanOrEqual(1);
   });
 
@@ -280,7 +280,7 @@ describe('ScenariosTab', () => {
     expect(table).toHaveTextContent('Baseline (official)');
     expect(table).toHaveTextContent('Bear case');
     expect(table).toHaveTextContent('bear');
-    expect(table).toHaveTextContent('$1.00'); // scenario FMV/share
+    expect(table).toHaveTextContent('$1.0000'); // scenario FMV/share
     expect(table).toHaveTextContent('$10,000,000'); // scenario equity vs 20M baseline
     expect(table).toHaveTextContent('▼'); // negative delta badge
 

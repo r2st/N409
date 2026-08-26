@@ -151,6 +151,17 @@ export function formatDateTime(iso: string | null | undefined): string {
 }
 
 /**
+ * Decimal places a per-share conclusion is stated to.
+ *
+ * The engine rounds `fmv_per_share` to four (`engine/compute.py`) and every
+ * server-side rendering of it is struck at exactly four. Named rather than
+ * written as a literal at each call site because the client and the server have
+ * to agree on it, and a shared name is what makes a future change to one of
+ * them visibly a change to a contract. See {@link formatPerShare}.
+ */
+export const PER_SHARE_DIGITS = 4;
+
+/**
  * Money formatting that cannot take the render down.
  *
  * `Intl.NumberFormat` throws a *RangeError* for a currency that is not three
@@ -296,4 +307,50 @@ export function eventLabel(type: string): string {
   const words = type.replace(/[._]+/g, ' ').trim();
   if (words === '') return type;
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * The concluded fair market value of one share, at the precision it was
+ * concluded at.
+ *
+ * The engine rounds `fmv_per_share` to four decimal places and every server-side
+ * rendering of it is struck at exactly four — the report body's
+ * `{{fmv_per_share}}`, the executive summary's headline, Exhibit H's last line,
+ * the FMV-over-time chart, and the workbook's `pershare` cell format. That is
+ * not a house style: a 409A's whole output is one number, and the fourth
+ * decimal is inside it. A grant priced off a $2.5013 conclusion is not priced
+ * off $2.50.
+ *
+ * The app printed it five different ways, and none of them agreed with the
+ * deliverable:
+ *
+ *   - `formatMoney` (dashboard, scenarios, package) drops to *zero* decimals
+ *     once the figure reaches 100, so a $124.5678 conclusion read "$125" —
+ *     rounded up, on the accented headline card;
+ *   - the auditor portal and the portfolio table struck it at two, so the
+ *     external reviewer checking the conclusion saw a different number from the
+ *     PDF they were checking it against;
+ *   - the bridge and the analytics trend struck it at two *and* hard-coded a
+ *     dollar sign, so a sterling engagement's per-share walk was denominated in
+ *     a currency it was never computed in.
+ *
+ * So it is stated once here. Four decimals, always — a trailing zero is
+ * information on a figure whose last digit is load-bearing — and the
+ * engagement's own currency, which is never inferred.
+ *
+ * This is for the *concluded per-share value* only. Aggregates (equity value,
+ * invested amounts) keep {@link formatAmount} and `formatMoney`: widening those
+ * to four decimals pads six-figure totals with digits nobody reads.
+ */
+export function formatPerShare(
+  value: string | number | null | undefined,
+  currency: string | null = 'USD',
+): string {
+  if (value === null || value === undefined || value === '') return '—';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return moneyFormatter(currency, {
+    minimumFractionDigits: PER_SHARE_DIGITS,
+    maximumFractionDigits: PER_SHARE_DIGITS,
+  })(n);
 }

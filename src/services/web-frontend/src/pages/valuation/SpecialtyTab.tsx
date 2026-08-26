@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, apiDownload, ApiError } from '../../lib/api';
-import { formatDateTime, formatNumber } from '../../lib/format';
+import { formatDateTime, formatNumber, formatPerShare } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import {
   Button,
@@ -296,7 +296,9 @@ export function SpecialtyTab() {
                     analyst asking "why did nothing happen" is looking for it. */}
                 {row.error && <span className="min-w-0 flex-1 truncate text-ink-600">{row.error}</span>}
                 {row.fmv_per_share !== null && (
-                  <span className="tnum text-ink-700">{formatNumber(row.fmv_per_share)} / share</span>
+                  <span className="tnum text-ink-700">
+                    {formatPerShare(row.fmv_per_share, valuation.currency)} / share
+                  </span>
                 )}
                 <span className="tnum ml-auto text-xs text-ink-400">{formatDateTime(row.created_at)}</span>
               </li>

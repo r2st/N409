@@ -252,7 +252,7 @@ describe('PortfolioPage (feature 6)', () => {
       expect(screen.getByText('$420,000')).toBeInTheDocument();
       expect(screen.getByText('Total expense')).toBeInTheDocument();
       // And the restricted AMV says which of the two per-share figures it is.
-      expect(screen.getByText('$1.25')).toBeInTheDocument();
+      expect(screen.getByText('$1.2500')).toBeInTheDocument();
       expect(screen.getByText('Actual market value (AMV) per share')).toBeInTheDocument();
     });
 
@@ -282,14 +282,14 @@ describe('PortfolioPage (feature 6)', () => {
       });
       await waitFor(() => expect(screen.getByText('Acme QSBS Co')).toBeInTheDocument());
       expect(screen.queryByText('$999')).not.toBeInTheDocument();
-      expect(screen.queryByText('$9.99')).not.toBeInTheDocument();
+      expect(screen.queryByText('$9.9900')).not.toBeInTheDocument();
     });
 
     it('still draws an older API build that sends no captions', async () => {
       await renderWith(detail);
       await waitFor(() => expect(screen.getByText('Acme Parent')).toBeInTheDocument());
       expect(screen.getAllByText(/\$10,000,000/).length).toBeGreaterThan(0);
-      expect(screen.getByText('$2.50')).toBeInTheDocument();
+      expect(screen.getByText('$2.5000')).toBeInTheDocument();
     });
   });
 

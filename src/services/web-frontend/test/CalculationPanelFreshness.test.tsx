@@ -32,7 +32,7 @@ import type { Calculation } from '../src/lib/pipeline';
 
 const VALUATION_ID = '01JZZZZZZZZZZZZZZZZZZZZZZZ';
 
-/** The run standing before the analyst presses anything. FMV $1.20. */
+/** The run standing before the analyst presses anything. FMV $1.2000. */
 const STANDING: Calculation = {
   id: 'c-standing',
   valuation_id: VALUATION_ID,
@@ -51,7 +51,7 @@ const STANDING: Calculation = {
   created_at: '2026-07-01T00:00:00Z',
 };
 
-/** What the engine returns from the run under test. FMV $3.40, DLOM 15%. */
+/** What the engine returns from the run under test. FMV $3.4000, DLOM 15%. */
 const RECOMPUTED: Calculation = {
   ...STANDING,
   id: 'c-recomputed',
@@ -80,8 +80,8 @@ const FAILED: Calculation = {
 // As `formatMoney` in lib/pipeline renders them. Under 100, so it allows up to
 // four decimals — but the currency style still carries a two-digit minimum, so
 // these keep their trailing zero.
-const STANDING_FMV = '$1.20';
-const RECOMPUTED_FMV = '$3.40';
+const STANDING_FMV = '$1.2000';
+const RECOMPUTED_FMV = '$3.4000';
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -131,7 +131,7 @@ const runCalculation = async () =>
  *
  * Read through the card's own label rather than by searching the page for the
  * figure, because the run history below prints every run's FMV too — and is
- * *supposed* to. A bare `getByText('$1.20')` matches both, so it can neither
+ * *supposed* to. A bare `getByText('$1.2000')` matches both, so it can neither
  * tell the conclusion from the history nor assert that the old figure has left
  * the conclusion while remaining, correctly, in the list.
  */

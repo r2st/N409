@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
-import { formatDate, ordinal } from '../../lib/format';
+import { formatDate, formatPerShare, ordinal } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { CHART_COLORS, LineChart } from '../../components/charts';
 import { EmptyState, ErrorNote, LoadingBlock, Skeleton, SkeletonText } from '../../components/ui';
@@ -28,7 +28,14 @@ interface AnalyticsResponse {
   analytics: { series: Point[]; benchmark: Benchmark; count: number };
 }
 
-const money = (v: number) => `$${v.toFixed(2)}`;
+/**
+ * The trend this chart plots is the same series the report's
+ * "Fair market value per common share over time" chart plots, and that one is
+ * struck at four decimals in the engagement's currency (`historyChart`). Two
+ * decimals and a hard-coded `$` made the two disagree about a company's own
+ * history — the app flattening a $0.0512 → $0.0640 climb onto a line at $0.05.
+ */
+const money = (v: number, currency: string | null) => formatPerShare(v, currency);
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
 const mult = (v: number) => `${v.toFixed(1)}×`;
 const label = (p: Point) => p.valuation_number ?? formatDate(p.as_of);
@@ -103,7 +110,7 @@ export function AnalyticsTab() {
         <LineChart
           title="FMV per share"
           points={points('fmv_per_share')}
-          format={money}
+          format={(v: number) => money(v, valuation.currency)}
           color={CHART_COLORS.green}
         />
         <LineChart title="DLOM" points={points('dlom')} format={pct} color={CHART_COLORS.red} />

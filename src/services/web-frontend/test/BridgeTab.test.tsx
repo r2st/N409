@@ -119,7 +119,7 @@ describe('BridgeTab', () => {
     const options = within(select).getAllByRole('option');
     expect(options[0]).toHaveTextContent(/Select an earlier valuation/);
     expect(options[1]).toHaveTextContent('V-2025-004');
-    expect(options[1]).toHaveTextContent('$1.10');
+    expect(options[1]).toHaveTextContent('$1.1000');
     // A candidate with no concluded FMV is still selectable — the bridge is
     // built server-side and may still have a figure to compare.
     expect(options[2]).toHaveTextContent('V-2025-001');
@@ -165,8 +165,8 @@ describe('BridgeTab', () => {
     // prior FMV legitimately appears twice.
     // The waterfall repeats the opening and closing figures as its bars, so
     // both legitimately appear more than once.
-    expect(result.getAllByText('$1.10').length).toBeGreaterThan(0);
-    expect(result.getAllByText('$1.65').length).toBeGreaterThan(0);
+    expect(result.getAllByText('$1.1000').length).toBeGreaterThan(0);
+    expect(result.getAllByText('$1.6500').length).toBeGreaterThan(0);
   });
 
   it('signs the change so a rise is never mistaken for a fall', async () => {
@@ -174,7 +174,7 @@ describe('BridgeTab', () => {
     renderTab();
     await userEvent.selectOptions(await screen.findByLabelText('Compare against'), CANDIDATES[0]!.id);
     await screen.findByTestId('bridge-result');
-    expect(screen.getByText('+$0.55')).toBeInTheDocument();
+    expect(screen.getByText('+$0.5500')).toBeInTheDocument();
     expect(screen.getByText('+50.0%')).toBeInTheDocument();
   });
 
@@ -191,7 +191,10 @@ describe('BridgeTab', () => {
     await screen.findByTestId('bridge-result');
     // `money` carries the minus inside the figure; the "+" prefix is added
     // only for a rise, so a fall never reads as one.
-    expect(screen.getByText('$-0.20')).toBeInTheDocument();
+    // `-$0.2000`, not `$-0.20`: the sign sat inside the amount while the page
+    // built its own money string, and it moved outside the symbol when the
+    // figure started going through Intl like every other per-share render.
+    expect(screen.getByText('-$0.2000')).toBeInTheDocument();
     expect(screen.getByText('-18.2%')).toBeInTheDocument();
   });
 

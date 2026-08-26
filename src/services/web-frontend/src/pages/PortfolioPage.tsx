@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
-import { moneyFormatter } from '../lib/format';
+import { formatPerShare, moneyFormatter } from '../lib/format';
 import { HelpIcon } from '../components/HelpIcon';
 import {
   Button,
@@ -21,7 +21,12 @@ import { useLatestOnly } from '../lib/useLatestOnly';
 
 /** Engine equity/FMV values are in whole currency units (dollars), not cents. */
 const usd = (v: number, currency: string) => moneyFormatter(currency, { maximumFractionDigits: 0 })(v);
-const usdPrecise = (v: number, currency: string) => moneyFormatter(currency, { minimumFractionDigits: 2 })(v);
+// The per-share column. It was `usdPrecise`, struck at two decimals — neither
+// USD-agnostic nor precise: the figure it prints is a concluded 409A per-share
+// value, and the roll-up showed it a fourth decimal short of the report each
+// subsidiary was actually issued. Named for the figure now, so it cannot be
+// reached for by the next column that merely wants more digits than `usd`.
+const perShare = (v: number, currency: string) => formatPerShare(v, currency);
 
 /**
  * The server's caption dropped into the middle of a sentence.
@@ -411,7 +416,7 @@ export function PortfolioPage() {
                           <FigureCell
                             value={e.fmv_per_share}
                             label={e.per_share_figure}
-                            format={(v) => usdPrecise(v, e.currency)}
+                            format={(v) => perShare(v, e.currency)}
                           />
                         </tr>
                       ))

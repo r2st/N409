@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AuthShell } from '../components/AuthShell';
 import { HelpIcon } from '../components/HelpIcon';
 import { ErrorNote, Spinner } from '../components/ui';
-import { formatDate, moneyFormatter } from '../lib/format';
+import { formatDate, moneyFormatter, PER_SHARE_DIGITS } from '../lib/format';
 import { sanitizeHtml } from '../lib/m2';
 
 interface Section {
@@ -125,6 +125,7 @@ export function AuditorPortalPage() {
               label={perShareLabel}
               value={bundle.conclusion.fmv_per_share ?? '—'}
               currency={bundle.valuation.currency}
+              digits={PER_SHARE_DIGITS}
             />
           )}
           {equityLabel !== null && (
@@ -209,10 +210,32 @@ export function AuditorPortalPage() {
 
 const pct = (v: string | null) => (v === null || v === undefined ? '—' : `${(Number(v) * 100).toFixed(1)}%`);
 
-function Metric({ label, value, currency }: { label: string; value: string; currency?: string }) {
+/**
+ * `digits` exists because this portal is where the figure is *checked*.
+ *
+ * Both money metrics went through one formatter struck at two decimals, and the
+ * per-share conclusion is struck at four everywhere it is issued — the report
+ * body, the executive summary, Exhibit H. So the auditor reconciling a $2.5013
+ * conclusion against the PDF in front of them was shown $2.50 by the very page
+ * built for that reconciliation. The aggregate beside it is genuinely a
+ * two-decimal figure, so the precision is per-metric rather than per-page.
+ */
+function Metric({
+  label,
+  value,
+  currency,
+  digits = 2,
+}: {
+  label: string;
+  value: string;
+  currency?: string;
+  digits?: number;
+}) {
   const display =
     currency && /^-?\d/.test(value)
-      ? moneyFormatter(currency, { maximumFractionDigits: 2 })(Number(value))
+      ? moneyFormatter(currency, { minimumFractionDigits: digits, maximumFractionDigits: digits })(
+          Number(value),
+        )
       : value;
   return (
     <div>
