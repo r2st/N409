@@ -2,8 +2,10 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import {
   BILLING_SUBSCRIPTION_STATUSES,
+  INVOICE_INITIAL_STATUSES,
   invoicePeriod,
   SERVED_SUBSCRIPTION_STATUSES,
+  type InvoiceStatus,
   type PlanLimit,
   type InvoiceLineItem,
 } from '../domain/billing.js';
@@ -179,12 +181,38 @@ export async function findSubscriptionByStripeId(
   return rows[0] ?? null;
 }
 
-export async function cancelSubscription(pool: pg.Pool, stripeSubscriptionId: string): Promise<void> {
-  await pool.query(
-    `UPDATE subscriptions SET status = 'canceled', canceled_at = now()
-      WHERE stripe_subscription_id = $1`,
+/**
+ * The terminal transition, from wherever the subscription was.
+ *
+ * `canceled_at` is stamped once and never moved. It was assigned `now()`
+ * unconditionally, and cancellation has two writers: this one, from
+ * `customer.subscription.deleted`, and {@link upsertSubscription}, from a
+ * `customer.subscription.updated` carrying `status: 'canceled'`. Stripe sends
+ * both for one cancellation and orders neither, so the ordinary sequence —
+ * update first, deleted second — moved the recorded cancellation date forward
+ * to whenever the second delivery happened to land. A redelivery of `deleted`
+ * days later moved it again. That date is the answer to "when did this
+ * customer leave", it is read off the row by the data export and by anyone
+ * reconciling a final period, and a transition into a state the row is already
+ * in must not restate when it happened.
+ *
+ * The status write stays unconditional: 'canceled' over 'canceled' is the same
+ * value, and narrowing the WHERE would only make the statement's terminality
+ * depend on a read. Returns the row so a caller can tell a cancellation from a
+ * subscription id we have never seen.
+ */
+export async function cancelSubscription(
+  pool: pg.Pool,
+  stripeSubscriptionId: string,
+): Promise<SubscriptionRow | null> {
+  const { rows } = await pool.query<SubscriptionRow>(
+    `UPDATE subscriptions
+        SET status = 'canceled', canceled_at = COALESCE(canceled_at, now())
+      WHERE stripe_subscription_id = $1
+      RETURNING *`,
     [stripeSubscriptionId],
   );
+  return rows[0] ?? null;
 }
 
 /**
@@ -298,7 +326,8 @@ export interface InvoiceRow {
   subscription_id: string | null;
   amount_cents: number;
   currency: string;
-  status: 'draft' | 'open' | 'paid' | 'void';
+  /** One of {@link INVOICE_STATUSES}; the column's CHECK names the same four. */
+  status: InvoiceStatus;
   period_start: Date | null;
   period_end: Date | null;
   line_items: InvoiceLineItem[];
@@ -383,6 +412,14 @@ export async function createInvoice(
     paidAt?: Date | null;
   },
 ): Promise<InvoiceRow> {
+  // The CHECK constraint can see the value but not where it came from, so the
+  // one status that is only ever *reached* is refused here instead. An invoice
+  // created `void` is not a record of anything, and it would be indexed,
+  // numbered and rendered exactly like one that is.
+  const status = input.status ?? 'open';
+  if (!(INVOICE_INITIAL_STATUSES as readonly string[]).includes(status)) {
+    throw new Error(`createInvoice: ${status} is not a status an invoice can be created in`);
+  }
   const { rows } = await pool.query<InvoiceRow>(
     `INSERT INTO invoices
        (id, number, user_id, subscription_id, amount_cents, currency, status,
@@ -397,7 +434,7 @@ export async function createInvoice(
       input.subscriptionId ?? null,
       input.amountCents,
       input.currency,
-      input.status ?? 'open',
+      status,
       input.periodStart ?? null,
       input.periodEnd ?? null,
       JSON.stringify(input.lineItems),

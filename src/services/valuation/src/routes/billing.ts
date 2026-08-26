@@ -473,7 +473,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             const lineItems: InvoiceLineItem[] = [
               { description: String(obj.description ?? 'Subscription'), amount_cents: amount },
             ];
-            await createInvoice(deps.pool, {
+            const saved = await createInvoice(deps.pool, {
               number,
               userId,
               subscriptionId,
@@ -486,17 +486,41 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               stripeInvoiceId,
               paidAt: new Date(),
             });
-            // Inside the `!already` guard, which is what makes this send once:
-            // a redelivered `invoice.paid` finds the row and skips the whole
-            // block, and the ledger classifies the ordinary replay before that.
-            await announceInvoicePaid(req.log, {
-              userId,
-              number,
-              amountCents: amount,
-              currency,
-              periodStart,
-              periodEnd,
-            });
+            // Announced from the row that was actually stored, and only by the
+            // delivery that stored it.
+            //
+            // The `!already` guard above is a read followed by a write with
+            // nothing between them, which is the same non-atomicity migration
+            // 0096 removed from the numbering one line down. Stripe sends both
+            // `invoice.paid` and `invoice.payment_succeeded` for one payment,
+            // with different event ids the ledger cannot collapse, and fans
+            // them out together — so both deliveries routinely read `already`
+            // as null, both allocate a sequence number, and both arrive here.
+            //
+            // `createInvoice` is idempotent: the ON CONFLICT declines the
+            // loser's insert and hands back the row already on file. What was
+            // not idempotent was this announcement. It ran on both paths and
+            // quoted the *local* `number` rather than the stored one, so the
+            // subscriber got two receipts for one renewal, one of them naming
+            // an invoice number that exists nowhere — the loser's allocation,
+            // discarded by the conflict, in a sequence an auditor reads as a
+            // count of what was billed.
+            //
+            // `number` is UNIQUE and freshly allocated from a monotonic
+            // counter, so no other row can be carrying it: getting our own
+            // number back is exactly the statement "this delivery inserted the
+            // row", and it is the write itself that says so rather than a
+            // read taken before it.
+            if (saved.number === number) {
+              await announceInvoicePaid(req.log, {
+                userId: saved.user_id,
+                number: saved.number,
+                amountCents: Number(saved.amount_cents),
+                currency: saved.currency,
+                periodStart: saved.period_start,
+                periodEnd: saved.period_end,
+              });
+            }
           }
         } else if (type === 'invoice.payment_failed') {
           // Dunning. A renewal that does not go through is the single most

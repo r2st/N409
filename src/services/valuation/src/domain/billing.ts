@@ -128,6 +128,88 @@ export function invoiceNumber(issuedAtIso: string, sequence: number): string {
   return `INV-${invoicePeriod(issuedAtIso)}-${String(sequence).padStart(4, '0')}`;
 }
 
+// ── The invoice state machine ────────────────────────────────────────────────
+
+/**
+ * Every status an invoice row may hold, in lifecycle order.
+ *
+ * The same four words the column's CHECK constraint names (migration 0080),
+ * written here so that queries, the PDF and the frontend read one list rather
+ * than each restating it. {@link INVOICE_TRANSITIONS} is the other half: the
+ * set of states was already stated in the schema, the edges between them were
+ * stated nowhere at all.
+ */
+export const INVOICE_STATUSES = ['draft', 'open', 'paid', 'void'] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+/**
+ * Legal onward moves, per status. An empty list is terminal.
+ *
+ * Taken from Stripe's own invoice lifecycle, because Stripe is the authority on
+ * every invoice this system records and a local machine that permitted more
+ * would be describing a document we do not issue. A draft is finalised or
+ * abandoned; an open invoice is paid or voided; and both endings are final —
+ * Stripe will not void a paid invoice, and a voided one is never revived. Money
+ * returned after payment is *not* an edge: a refund leaves the invoice `paid`
+ * and comes off the charge, which is why it is recorded as an amount
+ * (`refunded_cents`, migration 0169) rather than as a status.
+ */
+export const INVOICE_TRANSITIONS: Record<InvoiceStatus, readonly InvoiceStatus[]> = {
+  draft: ['open', 'void'],
+  open: ['paid', 'void'],
+  paid: [],
+  void: [],
+};
+
+/**
+ * The statuses a row may be *created* in.
+ *
+ * `void` is excluded because it is only ever reached from somewhere: an invoice
+ * that was voided before it existed is not a record of anything. Enforced by
+ * {@link INVOICE_STATUSES} plus this list rather than by the CHECK, which can
+ * only see the value and not where it came from.
+ */
+export const INVOICE_INITIAL_STATUSES = ['draft', 'open', 'paid'] as const;
+
+/**
+ * The statuses this system actually produces, as opposed to those it permits.
+ *
+ * Exactly one, and stated out loud because the gap between this list and
+ * {@link INVOICE_STATUSES} is the shape of the whole subsystem. Invoices are
+ * not issued here; they are *recorded* here, by the `invoice.paid` /
+ * `invoice.payment_succeeded` branch of the billing webhook, after Stripe has
+ * already taken the money. A row is therefore born in its terminal state and
+ * nothing ever writes to `status` again, so every edge in
+ * {@link INVOICE_TRANSITIONS} is unexercised and `draft`, `open` and `void` are
+ * unreachable.
+ *
+ * That is a real property to depend on — `billingSummary` nets revenue over
+ * `status = 'paid'` and would silently omit an `open` row — and a fragile one
+ * to leave implicit, since it holds only because no second writer exists. The
+ * census in test/integration/billingStateMachine.test.ts asserts it against the
+ * source, so adding one is a decision somebody has to make here rather than a
+ * consequence they discover in a revenue line.
+ */
+export const INVOICE_REACHABLE_STATUSES = ['paid'] as const;
+
+/**
+ * May an invoice in `from` be moved to `to`? Same-status is not a move.
+ *
+ * Read by the census rather than by a handler, and deliberately so: there is no
+ * transition surface to guard because nothing transitions an invoice — see
+ * {@link INVOICE_REACHABLE_STATUSES}. What this and {@link INVOICE_TRANSITIONS}
+ * are for is the moment somebody adds one, at which point the machine it has to
+ * obey is written down instead of being inferred from the handler being added.
+ */
+export function canTransitionInvoice(from: InvoiceStatus, to: InvoiceStatus): boolean {
+  return INVOICE_TRANSITIONS[from].includes(to);
+}
+
+/** Nothing legally follows this status. */
+export function isTerminalInvoiceStatus(status: InvoiceStatus): boolean {
+  return INVOICE_TRANSITIONS[status].length === 0;
+}
+
 export interface InvoiceLineItem {
   description: string;
   amount_cents: number;
