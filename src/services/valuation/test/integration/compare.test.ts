@@ -54,6 +54,23 @@ describe.skipIf(!dbUp)('valuation comparison endpoint', () => {
     return v;
   }
 
+  /** A further succeeded run on an existing valuation, newer than the last. */
+  async function addCalculation(valuationId: string, results: Record<string, unknown>): Promise<void> {
+    await createCalculation(
+      ctx.pool,
+      {
+        valuationId,
+        engineVersion: '1.4.0',
+        status: 'succeeded',
+        inputs: { inputs: { valuation_date: '2025-05-31' } },
+        results,
+        fmvPerShare: Number(results.fmv_per_share ?? 0),
+        createdBy: owner.id,
+      },
+      { ...actor, actorId: owner.id },
+    );
+  }
+
   const compare = (a: string, b: string, token: string) =>
     ctx.app.inject({
       method: 'GET',
@@ -202,6 +219,77 @@ describe.skipIf(!dbUp)('valuation comparison endpoint', () => {
         .map((r) => [r.key, r]),
     );
     expect(rows.get('specialty_amv_per_share')?.delta_display).toBe('+0.2');
+  });
+
+  /*
+   * The same table, one run later.
+   *
+   * The Calculations tab offers the ordinary 409A compute on every kind, so an
+   * EMI engagement's `calculations` rows interleave two shapes in one
+   * `created_at DESC` ordering. Taking simply the newest succeeded run meant a
+   * later 409A compute shadowed the specialty run this comparison exists to
+   * read: `results.specialty` was absent, every specialty row dropped out on
+   * that side alone, and the two engagements were rendered against each other
+   * in a vocabulary only one of them had — a table of figures against dashes,
+   * under a "Change" column that in fact measured which run happened last.
+   */
+  it('reads the specialty run even when an ordinary compute ran after it', async () => {
+    const emiA = await seed(
+      owner.id,
+      'Barrow Instruments',
+      { kind: 'emi', specialty: { umv_per_share: 2.25, amv_per_share: 1.8 } },
+      'GBP',
+      'emi',
+    );
+    const emiB = await seed(
+      owner.id,
+      'Barrow Instruments',
+      { kind: 'emi', specialty: { umv_per_share: 2.5, amv_per_share: 2.0 } },
+      'GBP',
+      'emi',
+    );
+    // B also gets run through the 409A pipeline afterwards. Its result is a
+    // real 409A document — it is simply not what a comparison of two EMI
+    // engagements is asking about.
+    await addCalculation(emiB.id, {
+      fmv_per_share: 9.99,
+      approaches: { market: { weight: 1, equity_value: 5_000_000 } },
+    });
+
+    const res = await compare(emiA.id, emiB.id, owner.token);
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    const rows = new Map(
+      (body.groups as Array<{ rows: Array<{ key: string; delta_display: string | null }> }>)
+        .flatMap((g) => g.rows)
+        .map((r) => [r.key, r]),
+    );
+    // Still the AMV move between the two EMI runs, not a 409A price against a
+    // blank, and not 2.0 against nothing at all.
+    expect(rows.get('specialty_amv_per_share')?.delta_display).toBe('+0.2');
+    expect(rows.has('fmv_per_share')).toBe(false);
+    expect(JSON.stringify(body)).not.toContain('9.99');
+  });
+
+  /*
+   * The fallback, which must stay. An EMI engagement that has only ever run the
+   * ordinary compute has one shape available and no specialty payload to
+   * prefer; refusing to read the run it does have would turn a comparison that
+   * works today into two empty columns.
+   */
+  it('still compares two specialty engagements that only ran the ordinary compute', async () => {
+    const a = await seed(owner.id, 'Calder Optics', { fmv_per_share: 1.2 }, 'GBP', 'emi');
+    const b = await seed(owner.id, 'Calder Optics', { fmv_per_share: 1.5 }, 'GBP', 'emi');
+    const res = await compare(a.id, b.id, owner.token);
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.metric_count).toBeGreaterThan(0);
+    const rows = new Map(
+      (body.groups as Array<{ rows: Array<{ key: string; delta_display: string | null }> }>)
+        .flatMap((g) => g.rows)
+        .map((r) => [r.key, r]),
+    );
+    expect(rows.get('fmv_per_share')?.delta_display).toBe('+£0.3000');
   });
 
   it('refuses two kinds that measure different things', async () => {

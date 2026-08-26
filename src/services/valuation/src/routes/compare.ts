@@ -4,7 +4,11 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
-import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
+import {
+  latestSucceededCalculation,
+  latestSucceededSpecialtyCalculation,
+  type CalculationRow,
+} from '../repos/calculations.js';
 import {
   changedRows,
   comparableKinds,
@@ -14,6 +18,8 @@ import {
   type CompareSide,
 } from '../domain/valuationCompare.js';
 import { kindLabel } from '../domain/valuationSelector.js';
+import { isSpecialtyKind } from '../domain/specialty.js';
+import type { ValuationKind } from '../domain/valuation.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -53,6 +59,51 @@ function sideFor(valuation: ValuationRow, calculation: CalculationRow | null): C
     valuation_date: typeof rawDate === 'string' ? rawDate.slice(0, 10) : null,
     results: calculation?.results ?? null,
   };
+}
+
+/**
+ * The run each side contributes — chosen by shape, not by recency alone.
+ *
+ * One valuation's `calculations` rows come in two shapes: the 409A pipeline
+ * writes `results = { approaches, discounts, … }`, a specialty engine writes
+ * `results = { kind, specialty }`. Nothing keeps them apart — the Calculations
+ * tab offers the ordinary compute on every kind — so on a specialty engagement
+ * the two interleave in one `created_at DESC` ordering, and the newest run is
+ * whichever button was pressed last.
+ *
+ * That is the wrong question here. `compareValuations` reads `results.specialty`
+ * for a specialty pair and the 409A keys for everything else, so taking the
+ * newest run of any shape let a later 409A compute on one side hide the very
+ * payload the comparison exists to diff: every specialty row collapsed to a
+ * figure against a dash, and the "Change" column reported which run happened
+ * last rather than how the two conclusions differ.
+ *
+ * Both sides are asked in the same vocabulary or neither is. When *neither*
+ * engagement has ever run its own engine there is no specialty payload to
+ * prefer, and the ordinary compute both of them do have is a legitimate
+ * comparison — so that case falls back rather than emptying both columns.
+ */
+async function runsToCompare(
+  pool: pg.Pool,
+  left: ValuationRow,
+  right: ValuationRow,
+): Promise<[CalculationRow | null, CalculationRow | null]> {
+  // `comparableKinds` has already refused a mixed pair, so one side's kind
+  // settles the vocabulary for both.
+  if (!isSpecialtyKind(left.kind as ValuationKind)) {
+    return Promise.all([
+      latestSucceededCalculation(pool, left.id),
+      latestSucceededCalculation(pool, right.id),
+    ]);
+  }
+  const [specialtyA, specialtyB, anyA, anyB] = await Promise.all([
+    latestSucceededSpecialtyCalculation(pool, left.id),
+    latestSucceededSpecialtyCalculation(pool, right.id),
+    latestSucceededCalculation(pool, left.id),
+    latestSucceededCalculation(pool, right.id),
+  ]);
+  if (!specialtyA && !specialtyB) return [anyA, anyB];
+  return [specialtyA, specialtyB];
 }
 
 export function registerCompareRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
@@ -99,10 +150,7 @@ export function registerCompareRoutes(app: FastifyInstance, deps: { pool: pg.Poo
       );
     }
 
-    const [calcA, calcB] = await Promise.all([
-      latestSucceededCalculation(deps.pool, left.id),
-      latestSucceededCalculation(deps.pool, right.id),
-    ]);
+    const [calcA, calcB] = await runsToCompare(deps.pool, left, right);
 
     const a = sideFor(left, calcA);
     const b = sideFor(right, calcB);
