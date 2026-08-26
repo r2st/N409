@@ -3,6 +3,7 @@ import { buildZip } from '../../src/export/zip.js';
 import {
   columnIndex,
   excelSerialToIso,
+  looksLikeDateFormat,
   looksLikeXlsx,
   readXlsx,
   XlsxReadError,
@@ -192,6 +193,84 @@ describe('number formats', () => {
 
   it('falls back to plain serials when the styles part is missing', () => {
     expect(read(undefined).rows[0]!.alpha).toBe('45352');
+  });
+
+  /**
+   * A bracketed section is literal text as often as the quoted runs beside it,
+   * and the words it spells are the colour names — every one of which carries a
+   * letter the date-token test looks for. `[Red]` is the one that matters: it
+   * is half of the red-negatives currency format a finance spreadsheet reaches
+   * for on exactly the columns a cap table is made of, so the serial 45,352 —
+   * a share count, a price, a valuation — arrived in the import as the string
+   * "2024-03-01" and there was nothing in the file to explain it.
+   */
+  const NOT_DATE_FORMATS: Array<[label: string, code: string]> = [
+    ['red negatives', '#,##0.00;[Red]-#,##0.00'],
+    ['a yellow number', '[Yellow]#,##0'],
+    ['a magenta number', '[Magenta]0'],
+    ['a white number', '[White]0.0000'],
+    ['a bracketed currency code', '[$USD]#,##0.00'],
+    ['a locale-qualified currency', '[$-409]#,##0.00'],
+    ['a conditional format', '[&gt;1000]0,&quot;K&quot;;0'],
+  ];
+
+  it.each(NOT_DATE_FORMATS)('does not read %s as a date format', (_label, code) => {
+    const styles = `<?xml version="1.0"?><styleSheet>
+      <numFmts><numFmt numFmtId="190" formatCode="${code}"/></numFmts>
+      <cellXfs><xf numFmtId="0"/><xf numFmtId="190"/></cellXfs>
+    </styleSheet>`;
+    expect(read(styles).rows[0]!.alpha).toBe('45352');
+  });
+
+  /**
+   * The other half: dropping every bracketed section outright would lose the
+   * elapsed-time tokens, which are the one thing brackets legitimately hold —
+   * `[h]` is hours-past-24, not a modifier, and a cell carrying it is a time.
+   */
+  const DATE_FORMATS: Array<[label: string, code: string]> = [
+    ['elapsed hours', '[h]:mm:ss'],
+    ['elapsed minutes', '[mm]:ss'],
+    ['a coloured date', '[Red]dd/mm/yyyy'],
+    ['a locale-qualified date', '[$-409]d mmm yyyy'],
+  ];
+
+  it.each(DATE_FORMATS)('still reads %s as a date format', (_label, code) => {
+    const styles = `<?xml version="1.0"?><styleSheet>
+      <numFmts><numFmt numFmtId="191" formatCode="${code}"/></numFmts>
+      <cellXfs><xf numFmtId="0"/><xf numFmtId="191"/></cellXfs>
+    </styleSheet>`;
+    expect(read(styles).rows[0]!.alpha).not.toBe('45352');
+  });
+});
+
+/**
+ * `looksLikeDateFormat` directly, for the cases a whole workbook cannot express
+ * cleanly — an unterminated bracket, and a bracket that only *looks* like an
+ * elapsed-time token.
+ */
+describe('format-code classification', () => {
+  it('keeps only a pure h/m/s run inside brackets as a token', () => {
+    expect(looksLikeDateFormat('[hh]:mm')).toBe(true);
+    expect(looksLikeDateFormat('[ss].0')).toBe(true);
+    // Not a run of one token letter — a modifier that happens to start with one.
+    expect(looksLikeDateFormat('[hms]0')).toBe(false);
+    expect(looksLikeDateFormat('[h2]0')).toBe(false);
+  });
+
+  it('treats an unterminated bracket as ordinary text', () => {
+    expect(looksLikeDateFormat('0.00[')).toBe(false);
+    expect(looksLikeDateFormat('0.00[Red')).toBe(false);
+  });
+
+  it('strips quoted runs before it looks at brackets', () => {
+    expect(looksLikeDateFormat('"[dd]"#,##0')).toBe(false);
+    expect(looksLikeDateFormat('0"[Red]"')).toBe(false);
+  });
+
+  it('strips escapes, so an escaped token letter is still literal', () => {
+    expect(looksLikeDateFormat('\\d\\d0')).toBe(false);
+    // `\[` is a literal bracket, so what follows it is a real day token.
+    expect(looksLikeDateFormat('\\[dd\\]0')).toBe(true);
   });
 });
 

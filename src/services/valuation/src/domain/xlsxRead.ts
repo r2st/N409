@@ -246,9 +246,63 @@ function parseSharedStrings(part: Buffer | undefined): string[] {
 }
 
 /**
+ * A bracketed section that is a *token* rather than a modifier.
+ *
+ * Square brackets in a format code carry two unrelated things. One is elapsed
+ * time — `[h]`, `[mm]`, `[ss]` — which is a genuine time token and the reason
+ * the brackets cannot simply be discarded. Everything else in brackets is a
+ * modifier attached to a format that is not a date at all: a colour
+ * (`[Red]`), a condition (`[>1000]`), or a locale/currency (`[$-409]`,
+ * `[$USD]`).
+ */
+const ELAPSED_TIME_SECTION = /^(h+|m+|s+)$/i;
+
+/**
+ * Does this custom format code render its cell as a date or a time?
+ *
+ * The test is "does a date token survive the literal text", and the literal
+ * text is three things, not one. Quoted runs and backslash escapes were both
+ * stripped; the bracketed modifiers were not, and they are the ones that spell
+ * ordinary words:
+ *
+ *   `#,##0.00;[Red]-#,##0.00`   → the `d` of "Red"
+ *   `[Yellow]#,##0`             → the `y` of "Yellow"
+ *   `[Magenta]0`                → the `m` of "Magenta"
+ *   `[White]0.0000`             → the `h` of "White"
+ *   `[$USD]#,##0.00`            → the `d` and the `s` of "USD"
+ *
+ * Every one of those is a *currency or number* format, and every one of them
+ * was classified as a date — so `cellText` handed the cell to
+ * `excelSerialToIso` and a share count of 45,352 arrived in the import as
+ * "2024-03-01". The red-negative pair is the one that matters: it is what a
+ * spreadsheet reaches for on exactly the columns this reader exists to read,
+ * the money and share columns of a cap table, and the corruption is silent —
+ * the column mapper sees a well-formed string and the row fails validation
+ * (or worse, coerces) for a reason nothing on the page can explain.
+ *
+ * Brackets are therefore dropped like the other literals, with the elapsed-time
+ * sections kept because those are real tokens. Order matters: quoted runs go
+ * first so a `[` inside one cannot open a section, and escapes before brackets
+ * so an escaped `\[` is not read as one.
+ *
+ * An unterminated `[` runs to the end of the code rather than being left as
+ * text. Nothing writes one on purpose, so the question is only which way to be
+ * wrong about a malformed code — and reading `0.00[Red` as a date is the
+ * expensive direction, since that is the failure this function exists to stop.
+ */
+export function looksLikeDateFormat(code: string): boolean {
+  const bare = code
+    .replace(/"[^"]*"/g, '')
+    .replace(/\\./g, '')
+    .replace(/\[([^\]]*)(?:\]|$)/g, (_match, body: string) => (ELAPSED_TIME_SECTION.test(body) ? body : ''));
+  return /[dmyhs]/i.test(bare);
+}
+
+/**
  * `xl/styles.xml` → for each cell format index, whether it renders as a date.
  * Custom formats (numFmtId ≥ 164) are classified by looking for date tokens in
- * the format code, ignoring anything inside a literal quoted section.
+ * the format code, ignoring anything the code carries as literal text — see
+ * {@link looksLikeDateFormat}.
  */
 function parseDateStyles(part: Buffer | undefined): boolean[] {
   if (!part) return [];
@@ -258,8 +312,7 @@ function parseDateStyles(part: Buffer | undefined): boolean[] {
   for (const { tag } of elements(xml, 'numFmt')) {
     const id = Number(attr(tag, 'numFmtId'));
     const code = attr(tag, 'formatCode') ?? '';
-    const bare = code.replace(/"[^"]*"/g, '').replace(/\\./g, '');
-    if (Number.isFinite(id) && /[dmyhs]/i.test(bare)) dateFormatIds.add(id);
+    if (Number.isFinite(id) && looksLikeDateFormat(code)) dateFormatIds.add(id);
   }
 
   const cellXfs = pairedInner(xml, 'cellXfs') ?? '';
