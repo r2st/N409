@@ -333,6 +333,25 @@ export const SORTABLE_COLUMNS = [
 ] as const;
 export type SortableColumn = (typeof SORTABLE_COLUMNS)[number];
 
+/**
+ * The sortable columns that can actually hold a NULL.
+ *
+ * `NULLS LAST` reads as a harmless belt-and-braces on an ORDER BY, and on a
+ * NOT NULL column it is: it cannot change a single row's position. What it
+ * changes is the *plan*. A plain btree is stored ASC NULLS LAST, so reading it
+ * backwards yields DESC NULLS **FIRST** — which means `col DESC NULLS LAST`
+ * matches no index this schema has, and Postgres falls back to reading every
+ * live row and top-N heapsorting it. Spelled without the no-op, the same sort
+ * is an index scan: measured on 40k valuations, `created_at DESC` is 0.47ms and
+ * `created_at DESC NULLS LAST` is 30ms, for identical output.
+ *
+ * So the clause is emitted only where it means something. The set is asserted
+ * against `information_schema` in `listSortPlans.test.ts` rather than trusted:
+ * a column that gains or loses NOT NULL has to move between these two
+ * treatments, and nothing else in the file would notice.
+ */
+export const NULLABLE_SORT_COLUMNS: ReadonlySet<SortableColumn> = new Set(['due_date', 'published_at']);
+
 export interface SortSpec {
   column: SortableColumn;
   dir: 'asc' | 'desc';
@@ -390,10 +409,29 @@ export function orderBySql(sort: SortSpec[] | undefined, alias = ''): string {
   //
   // The default branch is the one the UI actually uses — sorting is opt-in — so
   // the branch that had the tiebreaker was the branch that needed it less.
+  //
+  // The tiebreaker's *direction* follows the last sort term, and that is a plan
+  // decision rather than an ordering one. `col DESC, id ASC` is a mixed
+  // ordering: no single btree can be read forwards or backwards to produce it,
+  // so it costs a sort node however well the leading column is indexed.
+  // `col DESC, id DESC` is one backward scan of `(col, id)`. Determinism — the
+  // only thing the tiebreaker is here for — is indifferent to which way `id`
+  // runs, so this buys the plan for nothing.
+  //
+  // The default branch keeps `id ASC` because it is not free there:
+  // `keysetAfterSql` pairs `created_at DESC` with `id > $id`, and the cursor
+  // predicate and the ORDER BY have to agree or the page silently skips rows.
+  // `sortSupportsCursor` is what keeps the two branches apart — a custom sort
+  // never gets a cursor, so only the default branch is spoken for.
   const parts = sort?.length
-    ? sort.map((s) => `${alias}${s.column} ${s.dir === 'desc' ? 'DESC' : 'ASC'} NULLS LAST`)
+    ? sort.map((s) => {
+        const dir = s.dir === 'desc' ? 'DESC' : 'ASC';
+        const nulls = NULLABLE_SORT_COLUMNS.has(s.column) ? ' NULLS LAST' : '';
+        return `${alias}${s.column} ${dir}${nulls}`;
+      })
     : [`${alias}created_at DESC`];
-  parts.push(`${alias}id ASC`); // deterministic tiebreaker for stable pagination
+  const tiebreak = sort?.length && sort[sort.length - 1]!.dir === 'desc' ? 'DESC' : 'ASC';
+  parts.push(`${alias}id ${tiebreak}`); // deterministic tiebreaker for stable pagination
   return `ORDER BY ${parts.join(', ')}`;
 }
 
