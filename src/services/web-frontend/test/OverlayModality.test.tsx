@@ -134,7 +134,25 @@ describe('the cookie gate does not hide the site it is asking about', () => {
  * page really is unreachable for every input device and not just for the two
  * the dialog happens to intercept.
  */
-const componentsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src/components');
+const srcDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src');
+
+/**
+ * Every `.tsx` under `src`, not just the flat listing of `src/components`.
+ *
+ * The census used to read one directory, non-recursively, which asked its four
+ * questions of `src/components/*.tsx` and of nothing else. `src/pages`,
+ * `src/pages/valuation` and `src/components/valuation` were outside it — 100-odd
+ * files, including every panel in the workbench. No dialog lives there today,
+ * so this widening changes no answer; it removes the place a dialog could be
+ * added tomorrow and be guarded by nothing.
+ */
+function tsxFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return tsxFiles(full);
+    return entry.name.endsWith('.tsx') ? [full] : [];
+  });
+}
 
 interface DialogSource {
   file: string;
@@ -145,12 +163,11 @@ interface DialogSource {
 }
 
 function dialogSources(): DialogSource[] {
-  return readdirSync(componentsDir)
-    .filter((name) => name.endsWith('.tsx'))
-    .map((name) => {
-      const source = readFileSync(path.join(componentsDir, name), 'utf8');
+  return tsxFiles(srcDir)
+    .map((full) => {
+      const source = readFileSync(full, 'utf8');
       return {
-        file: name,
+        file: path.relative(srcDir, full),
         source,
         scrim: source.includes('fixed inset-0'),
         // The attribute, not the word: the files below discuss `aria-modal`
@@ -170,7 +187,13 @@ describe('only a dialog that covers the page may say the page is gone', () => {
       dialogSources()
         .map((d) => d.file)
         .sort(),
-    ).toEqual(['CommandPalette.tsx', 'CookieConsent.tsx', 'HelpIcon.tsx', 'HelpWidget.tsx', 'ui.tsx']);
+    ).toEqual([
+      'components/CommandPalette.tsx',
+      'components/CookieConsent.tsx',
+      'components/HelpIcon.tsx',
+      'components/HelpWidget.tsx',
+      'components/ui.tsx',
+    ]);
   });
 
   it('has no scrimless dialog claiming aria-modal', () => {
@@ -190,6 +213,31 @@ describe('only a dialog that covers the page may say the page is gone', () => {
       .filter((d) => d.traps && !d.scrim)
       .map((d) => d.file);
     expect(trapping).toEqual([]);
+  });
+
+  it('has no dialog claiming aria-modal that lets the keyboard walk out', () => {
+    /*
+     * The fourth quadrant, and the one the census was missing.
+     *
+     * The other three all run from the scrim: an overlay that covers the page
+     * must claim `aria-modal`, and one that does not must claim neither it nor
+     * a Tab trap. None of them asks anything of a dialog that covers the page
+     * and *does* claim it — so `aria-modal="true"` with no trap passed every
+     * check here. That is the ordinary shape of the bug: the attribute is one
+     * line and remembering it is easy, while the trap is a hook you have to
+     * know exists.
+     *
+     * It is also the worst way round. `aria-modal` tells a screen reader to
+     * drop the rest of the document from its buffer, so the content behind is
+     * gone for the user who cannot see it — while Tab still walks a sighted
+     * keyboard user straight out into controls that are now, by the dialog's
+     * own claim, not there. The three dialogs that claim it all trap today;
+     * this is what keeps the fourth from shipping without it.
+     */
+    const untrapped = dialogSources()
+      .filter((d) => d.modal && !d.traps)
+      .map((d) => d.file);
+    expect(untrapped).toEqual([]);
   });
 
   it('has no scrim overlay that forgot to claim it', () => {
