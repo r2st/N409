@@ -289,7 +289,9 @@ describe.skipIf(!dbUp)('personal data export', () => {
       method: 'POST',
       url: '/api/v1/me/tokens',
       headers: authHeader(owner.token),
-      payload: { name: 'export test token' },
+      // R185 made minting a personal token a re-authenticated action; the
+      // password is `seedUser`'s.
+      payload: { name: 'export test token', current_password: 'test-password-123' },
     });
     expect(created.statusCode).toBe(201);
     const secret = created.json().token as string;

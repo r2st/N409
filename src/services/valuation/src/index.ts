@@ -30,6 +30,7 @@ const { retryFailedPipelineRuns } = await import('./hooks/pipelineRetry.js');
 const { runHousekeepingSweep } = await import('./hooks/housekeeping.js');
 const { monitorPool, reportPoolFindings } = await import('./db/poolHealth.js');
 const { reapStalePipelineRuns } = await import('./repos/pipelineRuns.js');
+const { reapStaleAiJobs } = await import('./repos/aiJobs.js');
 const { runDueCapTableSyncs } = await import('./routes/capTableSync.js');
 const { runRetentionSweep } = await import('./routes/retention.js');
 const { runDueHrisSyncs } = await import('./routes/hris.js');
@@ -391,6 +392,25 @@ if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
   reaperTimer = setInterval(() => sweep.run(), Math.min(olderThanMs, 5 * 60_000));
 }
 
+// AI-job reaper (round 186): settle `ai_jobs` rows left at 'running' by a
+// process that stopped existing mid-pipeline — which is every deploy that lands
+// while an extraction is in flight. Unlike the pipeline reaper above this has no
+// enable switch: the rows it settles are unsettleable by anything else, they
+// hold this queue's stall alert open forever, and there is no deployment for
+// which leaving them is the right answer. Runs at boot, because a restart is
+// precisely what creates them, then every five minutes.
+let aiJobReaperTimer: NodeJS.Timeout | undefined;
+{
+  const sweep = scheduleSweep('ai-job-reaper', async () => {
+    const reaped = await reapStaleAiJobs(pool);
+    if (reaped.length > 0) {
+      app.log.warn({ count: reaped.length, jobIds: reaped.map((j) => j.id) }, 'reaped stale AI jobs');
+    }
+  });
+  sweep.run();
+  aiJobReaperTimer = setInterval(() => sweep.run(), 5 * 60_000);
+}
+
 // Cap-table sync scheduler (feature 4): pull connections whose daily/weekly
 // cadence is due. A non-overlapping tick every 15 minutes; per-connection
 // errors are recorded on the row and don't stop the scan.
@@ -494,7 +514,7 @@ let housekeepingTimer: NodeJS.Timeout | undefined;
 }
 
 // This is the service `deploy.sh` restarts and then waits for, and the one with
-// the most that can stall: eleven background timers, a Fastify server draining
+// the most that can stall: twelve background timers, a Fastify server draining
 // in-flight requests (drain.ts, at `preClose` inside the `app.close()` below),
 // and a pg pool that will not end until every checked-out connection comes
 // back. Unbounded, one stuck query held the whole deploy until systemd's 90s
@@ -519,6 +539,7 @@ installShutdownHandlers(app.log, {
     if (emailRetryTimer) clearInterval(emailRetryTimer);
     if (webhookRetryTimer) clearInterval(webhookRetryTimer);
     if (reaperTimer) clearInterval(reaperTimer);
+    if (aiJobReaperTimer) clearInterval(aiJobReaperTimer);
     if (capTableSyncTimer) clearInterval(capTableSyncTimer);
     if (hrisSyncTimer) clearInterval(hrisSyncTimer);
     if (retentionTimer) clearInterval(retentionTimer);

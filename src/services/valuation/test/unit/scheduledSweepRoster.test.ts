@@ -74,6 +74,16 @@ const DECIDED: Record<string, Verdict> = {
     writesValuation: false,
     because: 'fails runs stuck in an active status; it only ever stops work',
   },
+  'ai-job-reaper': {
+    writesValuation: false,
+    // R186's sibling of the one above, and the same reading: it settles
+    // `ai_jobs` rows left running by a process that stopped existing, which is
+    // strictly the removal of work. It writes no valuation column — the
+    // completion event it records is the audit trail of the settlement, and an
+    // archived engagement's orphaned job is exactly as owed a terminal status
+    // as a live one's.
+    because: 'settles AI jobs stuck at running; it only ever stops work',
+  },
   'job-alerts': {
     writesValuation: false,
     because: 'reads job counts and raises alerts; touches no valuation',

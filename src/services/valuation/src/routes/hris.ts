@@ -125,34 +125,77 @@ export async function syncHrisConnection(
   };
   let created = 0;
   let skipped = 0;
-  for (const g of pull.grants) {
-    if (seen.has(g.external_id)) {
-      skipped++;
-      continue;
+  try {
+    for (const g of pull.grants) {
+      if (seen.has(g.external_id)) {
+        skipped++;
+        continue;
+      }
+      await createGrant(
+        deps.pool,
+        {
+          valuationId: connection.valuation_id,
+          granteeName: g.grantee_name,
+          granteeEmail: g.grantee_email,
+          grantDate: g.grant_date,
+          optionsCount: g.options_count,
+          exercisePrice: g.exercise_price,
+          currency: 'USD',
+          vestingTemplate: 'imported',
+          vestingStartDate: g.vesting_start_date,
+          vestingMonths: g.vesting_months,
+          cliffMonths: g.cliff_months,
+          frequencyMonths: g.frequency_months,
+          createdBy: opts.actorId,
+          source: `hris:${connection.provider}`,
+          externalId: g.external_id,
+        },
+        actor,
+      );
+      created++;
+      seen.add(g.external_id);
     }
-    await createGrant(
+  } catch (err) {
+    /*
+     * An import that stops partway (round 186, methodology M5).
+     *
+     * The fetch above is guarded and the whole-connection outcome below is
+     * recorded, but the loop between them was neither, and it is the longest
+     * part of the operation: one INSERT and one audit event per grant, against
+     * a roster that can be hundreds. One row refused — a constraint, a
+     * retired engagement, a pool that ran out mid-import — threw straight past
+     * both bookkeeping writes.
+     *
+     * What that left is the state this round exists to remove. The grants
+     * already written stay written, which is right: they are real, and
+     * `external_id` makes a re-run skip them. What is not right is the
+     * connection, which keeps `status = 'connected'`, keeps whatever
+     * `last_error` it had (usually none), and — because `recordSync` is the
+     * only thing that moves `next_sync_at` — keeps a due date in the past. So
+     * `findDueConnections` picks the same connection up on *every* 15-minute
+     * tick, re-pulling the provider's whole roster each time, and the only
+     * trace of any of it is a `warn` in the scheduler. On screen the connection
+     * reads as healthy and last synced whenever it last succeeded.
+     *
+     * Recording the failure fixes both halves at once: `status = 'error'` takes
+     * the connection out of the due query, so the re-pull stops, and the
+     * message is on the row the client is looking at. Best-effort, like the
+     * fetch handler above it: if this write is what is failing, the original
+     * error is the more useful one to raise.
+     */
+    // How far it got, and not a word of the driver's. `last_error` is returned
+    // verbatim by `toPublic`, so it is subject to the rule `errorBodyDisclosure`
+    // states for every field that reaches a person: an error's own wording is
+    // publishable only when something vouched for it, and what fails here is
+    // Postgres refusing a row — constraint names, column names and the values
+    // it rejected. The count is the part a person can act on; the throw itself
+    // is logged in full by both callers.
+    await recordSyncError(
       deps.pool,
-      {
-        valuationId: connection.valuation_id,
-        granteeName: g.grantee_name,
-        granteeEmail: g.grantee_email,
-        grantDate: g.grant_date,
-        optionsCount: g.options_count,
-        exercisePrice: g.exercise_price,
-        currency: 'USD',
-        vestingTemplate: 'imported',
-        vestingStartDate: g.vesting_start_date,
-        vestingMonths: g.vesting_months,
-        cliffMonths: g.cliff_months,
-        frequencyMonths: g.frequency_months,
-        createdBy: opts.actorId,
-        source: `hris:${connection.provider}`,
-        externalId: g.external_id,
-      },
-      actor,
-    );
-    created++;
-    seen.add(g.external_id);
+      connection.id,
+      `imported ${created} of ${pull.grants.length - skipped} grants, then stopped before finishing`,
+    ).catch(() => undefined);
+    throw err;
   }
 
   const outcome: HrisSyncOutcome = {
@@ -305,10 +348,15 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
       return await syncHrisConnection({ pool: deps.pool, fetchFn }, connection, { actorId: principal.id });
     } catch (err) {
       // Only a provider-attributable failure is echoed. This catch used to
-      // forward `err.message` whatever it was, and the sync's insert loop has
+      // forward `err.message` whatever it was, and the sync's insert loop had
       // no catch of its own — so a grant the driver refused answered the
       // analyst with Postgres's own wording, constraint and column names
       // included. See `IntegrationError` in clients/deadline.ts.
+      //
+      // The other half of that — "the details are in the connection's last
+      // error" — was a promise nothing kept for the insert loop, which threw
+      // past every write that would have put anything there. R186 gave the
+      // loop the catch that makes this sentence true.
       req.log.warn({ err, provider, connectionId: connection.id }, 'HRIS sync failed');
       throw problems.unprocessable(
         err instanceof IntegrationError

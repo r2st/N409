@@ -91,6 +91,99 @@ export async function completeAiJob(
 }
 
 /**
+ * How long an `ai_jobs` row may sit at `running` before a live worker cannot be
+ * the explanation.
+ *
+ * `runAiPipeline` gives the call a whole-request budget of
+ * `AI_PIPELINE_TIMEOUT_MS` (180s, retries included — `postJson` spends one
+ * budget across the ladder), and settles the row on both exits. So the only
+ * ways past that budget are a process that stopped existing between the two
+ * writes, or a settlement write that itself failed. Fifteen minutes is five
+ * times the budget: comfortably clear of a slow-but-live run under any
+ * scheduling delay, and short enough that the queue-stall alert this feeds
+ * still fires on the same day.
+ *
+ * Not an environment variable, deliberately. It is not a policy choice — it is
+ * derived from a constant three files away, and a knob would let the two drift
+ * apart with nothing to notice. Whoever moves `AI_PIPELINE_TIMEOUT_MS` moves
+ * this with it.
+ */
+export const AI_JOB_STALE_MS = 15 * 60_000;
+
+/** The system actor the reaper writes its completion events under. */
+export const AI_JOB_REAPER_ACTOR: EventActor = {
+  actorType: 'system',
+  actorId: 'reaper',
+  source: 'ai-job-reaper',
+};
+
+/**
+ * Fail the AI jobs that no worker can still be running.
+ *
+ * `pipeline_runs` has had a reaper since the auto-pipeline shipped; `ai_jobs`
+ * never did, and it is the queue that most needed one. A row is inserted at
+ * `running` *before* the AI-service call, and every reader treats that as work
+ * in flight: the unified job feed anchors an `ai_job`'s `due_at` at its
+ * `created_at`, `oldestActiveJobs` counts anything active and due, and
+ * `evaluateJobAlerts` compares that age against the queue's `stall_minutes`.
+ * A row orphaned by a restart mid-pipeline — which is every deploy that lands
+ * while an extraction is running — therefore ages without bound, holds the
+ * `ai_job` queue's stall alert open forever, and reads on the AI tab as a run
+ * that is still going. Nothing in the system could ever settle it.
+ *
+ * Locked and skipped like the pipeline reaper, so two instances split the
+ * backlog rather than both writing (and double-eventing) the same rows. The
+ * event is the ordinary completion event with `reaped: true` on it: a reader
+ * of the audit trail should see that the run ended and see who ended it.
+ */
+export async function reapStaleAiJobs(
+  pool: pg.Pool,
+  opts: { olderThanMs?: number; actor?: EventActor; limit?: number } = {},
+): Promise<AiJobRow[]> {
+  const seconds = Math.max(1, Math.floor((opts.olderThanMs ?? AI_JOB_STALE_MS) / 1000));
+  const reason = `job exceeded ${seconds}s while running (reaped)`;
+  const actor = opts.actor ?? AI_JOB_REAPER_ACTOR;
+  return withTransaction(pool, async (client) => {
+    const { rows: stale } = await client.query<AiJobRow>(
+      `SELECT * FROM ai_jobs
+        WHERE status = 'running'
+          AND created_at < now() - ($1 || ' seconds')::interval
+        ORDER BY created_at ASC
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED`,
+      [String(seconds), opts.limit ?? 100],
+    );
+    const reaped: AiJobRow[] = [];
+    for (const job of stale) {
+      const { rows } = await client.query<AiJobRow>(
+        `UPDATE ai_jobs
+            SET status = 'failed', error = $1, completed_at = now()
+          WHERE id = $2 RETURNING *`,
+        [reason, job.id],
+      );
+      await recordEvent(client, {
+        valuationId: job.valuation_id,
+        type: PIPELINE_EVENT_TYPES.aiJobCompleted,
+        actor,
+        payload: {
+          job_id: job.id,
+          pipeline: job.pipeline,
+          status: 'failed',
+          model: null,
+          // Null rather than a computed age: `latency_ms` means how long the
+          // run took, and nobody knows that. What is known is that it stopped
+          // being watched, which `reaped` says.
+          latency_ms: null,
+          reaped: true,
+        },
+      });
+      reaped.push(rows[0]!);
+    }
+    return reaped;
+  });
+}
+
+/**
  * Ceiling on one page of a valuation's agent-run history.
  *
  * Fifty is one busy afternoon: every narrative draft, comp screen and research

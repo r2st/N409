@@ -108,7 +108,11 @@ describe.skipIf(!dbUp)('a second tenant naming the first tenant’s rows', () =>
     expect(partnerToken.statusCode, partnerToken.body).toBe(201);
     ids.partnerToken = partnerToken.json().token.id;
 
-    const personalToken = await as(owner, 'POST', '/api/v1/me/tokens', { name: 'A personal' });
+    // Re-authenticated since R185; the password is `seedUser`'s.
+    const personalToken = await as(owner, 'POST', '/api/v1/me/tokens', {
+      name: 'A personal',
+      current_password: 'test-password-123',
+    });
     expect(personalToken.statusCode, personalToken.body).toBe(201);
     ids.personalToken = personalToken.json().token.id;
 

@@ -279,7 +279,44 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
           total_liabilities: sheet.total_liabilities_cents / 100,
         };
       }
-      await applyEngineInputs(deps.pool, valuation.id, engineInputs, actor);
+      try {
+        await applyEngineInputs(deps.pool, valuation.id, engineInputs, actor);
+      } catch (err) {
+        /*
+         * The apply half of the import (round 186, methodology M5).
+         *
+         * `patchParams` above has already committed — the two writes go to
+         * different columns through different repos, each opening its own
+         * transaction — so a failure here leaves the engagement holding the
+         * ledger's revenue figures without the balance sheet they were pulled
+         * beside. The asset approach reads `inputs.asset.total_assets`; a run
+         * against that state concludes from half an import.
+         *
+         * That is the state on the row. What was on the *screen* was worse:
+         * `recordImport` never ran, so the connection went on reporting its
+         * last successful import, with no error and no hint that anything had
+         * been half-applied. The analyst's next move is to press Import again
+         * and get the same silence.
+         *
+         * Recorded on the connection, like the fetch failure above, and the
+         * request is answered with a 500 rather than the fetch handler's 422:
+         * this is not the provider refusing us, and telling the analyst to
+         * check the provider would send them somewhere the fault is not.
+         * Best-effort for the same reason as every other write in a catch.
+         */
+        await recordImportError(
+          deps.pool,
+          connection.id,
+          'fetched, then failed while applying the figures to this engagement',
+        ).catch((bookErr: unknown) => {
+          req.log.warn({ err: bookErr, connectionId: connection.id }, 'could not record import error');
+        });
+        req.log.error(
+          { err, provider, connectionId: connection.id, valuationId: valuation.id, alert: true },
+          'accounting import applied partway and could not be completed',
+        );
+        throw err;
+      }
       await recordImport(deps.pool, connection.id, financials);
 
       return { imported: financials };

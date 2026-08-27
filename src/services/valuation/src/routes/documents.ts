@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
@@ -18,6 +18,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import {
   createDocument,
   deleteDocument,
+  documentPathInUse,
   findDocumentById,
   listDocuments,
   setDocumentReviewed,
@@ -213,27 +214,75 @@ export async function storeDocument(
   // sha256 is over the plaintext (stable dedup + integrity); the bytes on disk
   // are encrypted when DOCUMENTS_ENCRYPTION_KEY is set (audit B-5 P1).
   const storageRel = path.join(valuation.id, `${sha256.slice(0, 16)}__${filename}`);
-  await writeFile(path.join(documentsDir, storageRel), encodeForStorage(input.buffer));
-
-  return createDocument(
-    pool,
-    {
-      valuationId: valuation.id,
-      kind: input.kind,
-      category: input.category,
-      filename,
-      // Client-declared, so parsed rather than trusted: it is written to a
-      // `text NOT NULL` column and read back out as the download response's own
-      // `Content-Type`. See documents/mediaType.ts — a NUL in a multipart part
-      // header was a 500, and the length was bounded by nothing.
-      contentType: normalizeMediaType(input.contentType),
-      sizeBytes: input.buffer.length,
-      sha256,
-      storagePath: storageRel,
-      uploadedBy,
-    },
-    actor,
+  const abs = path.join(documentsDir, storageRel);
+  // Whether these bytes were already on disk before this upload, asked *before*
+  // the write so the answer is still true afterwards. It is the only thing that
+  // distinguishes "this request created the blob" from "this request overwrote
+  // an identical one", and the rollback below turns on exactly that.
+  const preexisting = await access(abs).then(
+    () => true,
+    () => false,
   );
+  await writeFile(abs, encodeForStorage(input.buffer));
+
+  try {
+    return await createDocument(
+      pool,
+      {
+        valuationId: valuation.id,
+        kind: input.kind,
+        category: input.category,
+        filename,
+        // Client-declared, so parsed rather than trusted: it is written to a
+        // `text NOT NULL` column and read back out as the download response's own
+        // `Content-Type`. See documents/mediaType.ts — a NUL in a multipart part
+        // header was a 500, and the length was bounded by nothing.
+        contentType: normalizeMediaType(input.contentType),
+        sizeBytes: input.buffer.length,
+        sha256,
+        storagePath: storageRel,
+        uploadedBy,
+      },
+      actor,
+    );
+  } catch (err) {
+    /*
+     * The write to disk and the write to the database are two steps, and the
+     * second one fails on its own: a retired-engagement trigger, a foreign key
+     * against a valuation deleted in the meantime, a pool with no connections
+     * left. The upload then answers with an error and the bytes stay on disk
+     * forever, under a path no row names.
+     *
+     * That is not merely litter. A blob nothing references is invisible to
+     * every path that reasons about a client's documents — the retention
+     * sweep, the Art. 15 personal-data export, the purge — so the one operation
+     * that reports having stored nothing is the one that stores a file no
+     * later request can find, list, or erase. `documents.storage_path` is the
+     * whole index of what this directory holds.
+     *
+     * Two conditions before removing it, because the path is content-addressed
+     * and therefore shared by construction: the same bytes under the same name
+     * from any engagement resolve to the same file.
+     *
+     *   * `preexisting` — if the blob was already there, some earlier upload
+     *     put it there and this request only rewrote identical bytes over it.
+     *     Deleting it would break that upload's row, turning a failed upload
+     *     into somebody else's missing document.
+     *   * no live row names it — a concurrent upload of the same bytes may have
+     *     inserted its row in the window between our write and our failure, and
+     *     that row is now pointing at this file.
+     *
+     * When the lookup itself fails — the usual reason being that the database
+     * is the thing that is unwell — the blob is left alone. An orphan is a
+     * bounded cost; deleting a referenced document is not, and this is not the
+     * moment to guess.
+     */
+    if (!preexisting) {
+      const referenced = await documentPathInUse(pool, storageRel).catch(() => true);
+      if (!referenced) await unlink(abs).catch(() => undefined);
+    }
+    throw err;
+  }
 }
 
 /**

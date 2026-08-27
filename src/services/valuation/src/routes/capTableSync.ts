@@ -128,31 +128,66 @@ export async function syncCapTableConnection(
     throw err;
   }
 
-  const existing = await findCapTable(deps.pool, connection.valuation_id);
-  const diff = diffCapTables(existing?.entries ?? [], pulled.entries);
-  const validation = validateCapTable(pulled.entries);
+  let diff, validation, applied;
+  try {
+    const existing = await findCapTable(deps.pool, connection.valuation_id);
+    diff = diffCapTables(existing?.entries ?? [], pulled.entries);
+    validation = validateCapTable(pulled.entries);
 
-  // Apply when asked, or when there is no on-file table to disturb. Never
-  // persist an invalid pull.
-  const applied = validation.valid && (opts.apply || !existing);
-  if (applied) {
-    const actor: EventActor = {
-      actorType: 'system',
-      actorId: `captable-sync:${connection.provider}`,
-      source: 'captable_sync',
-    };
-    await saveCapTable(
+    // Apply when asked, or when there is no on-file table to disturb. Never
+    // persist an invalid pull.
+    applied = validation.valid && (opts.apply || !existing);
+    if (applied) {
+      const actor: EventActor = {
+        actorType: 'system',
+        actorId: `captable-sync:${connection.provider}`,
+        source: 'captable_sync',
+      };
+      await saveCapTable(
+        deps.pool,
+        {
+          valuationId: connection.valuation_id,
+          sourceFormat: connection.provider,
+          entries: pulled.entries,
+          validation,
+          columnMapping: {},
+          createdBy: opts.actorId,
+        },
+        actor,
+      );
+    }
+  } catch (err) {
+    /*
+     * The half of the sync after the pull (round 186, methodology M5).
+     *
+     * The fetch above records its failure and the success below records its
+     * outcome; everything between them recorded nothing. And this half fails
+     * for reasons the pull cannot: `saveCapTable` bumps an optimistic-lock
+     * counter and writes an audit event, so an analyst saving the table in
+     * another tab, a retired engagement, or a pool with nothing left all land
+     * here — after a provider round trip has already been spent.
+     *
+     * Untouched, the connection then keeps `status = 'connected'` and a
+     * `next_sync_at` in the past, because `recordSync` below is the only thing
+     * that moves it. `findDueConnections` re-picks it every 15 minutes and
+     * re-pulls the provider's whole cap table each time, forever, against a
+     * connection whose page says it is healthy. Recording the failure both
+     * stops the loop (an errored connection is not due) and puts the reason in
+     * front of the person who can act on it.
+     *
+     * Not the raw message, unlike the fetch handler above. That one catches an
+     * `IntegrationError` this codebase authored for a caller to read; this one
+     * catches whatever Postgres refused the write with — constraint names,
+     * column names, rejected values. `last_error` is served to the caller
+     * verbatim by `toPublic`, so it carries only text we wrote. The error
+     * itself reaches both callers' log lines intact.
+     */
+    await recordSyncError(
       deps.pool,
-      {
-        valuationId: connection.valuation_id,
-        sourceFormat: connection.provider,
-        entries: pulled.entries,
-        validation,
-        columnMapping: {},
-        createdBy: opts.actorId,
-      },
-      actor,
-    );
+      connection.id,
+      'the provider cap table was pulled but could not be saved',
+    ).catch(() => undefined);
+    throw err;
   }
 
   const summary = {

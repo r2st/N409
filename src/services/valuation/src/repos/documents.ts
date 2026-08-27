@@ -84,6 +84,27 @@ export async function createDocument(
   });
 }
 
+/**
+ * Does any document row still name this blob?
+ *
+ * Storage paths are content-addressed (`<valuationId>/<sha-prefix>__<name>`), so
+ * two uploads of the same bytes under the same name share one file. That makes
+ * "can this file be deleted" a question about rows rather than about the
+ * request that wrote it — see `storeDocument`'s rollback, which is the only
+ * caller.
+ *
+ * `deleted_at` is deliberately not filtered. A soft-deleted document is a row
+ * that can be restored and whose bytes nothing else has removed; treating it as
+ * absent would let a failed upload delete the file underneath it.
+ */
+export async function documentPathInUse(pool: pg.Pool, storagePath: string): Promise<boolean> {
+  const { rows } = await pool.query<{ one: number }>(
+    'SELECT 1 AS one FROM documents WHERE storage_path = $1 LIMIT 1',
+    [storagePath],
+  );
+  return rows.length > 0;
+}
+
 export async function findDocumentById(pool: pg.Pool, id: string): Promise<DocumentRow | null> {
   const { rows } = await pool.query<DocumentRow>(
     'SELECT * FROM documents WHERE id = $1 AND deleted_at IS NULL',

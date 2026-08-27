@@ -216,7 +216,8 @@ describe.skipIf(!dbUp)('identity and credential events reach the audit spine', (
       method: 'POST',
       url: '/api/v1/me/tokens',
       headers: authHeader(user.token),
-      payload: { name: 'audit-fixture' },
+      // Re-authenticated since R185.
+      payload: { name: 'audit-fixture', current_password: PASSWORD },
     });
     expect(created.statusCode).toBe(201);
     const tokenId = created.json().token.id as string;

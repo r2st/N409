@@ -235,8 +235,8 @@ export interface AiPipelineDeps {
  * Runs one AI pipeline end-to-end: prompt-registry lookup, document encoding,
  * the AI-service call, job persistence, and (extract only) auto-applying the
  * engine inputs to params. Shared by the interactive route below and the
- * auto-pipeline orchestrator. On an upstream failure the job is completed as
- * 'failed' and the InternalServiceError is re-thrown for the caller to map.
+ * auto-pipeline orchestrator. Any failure of the call completes the job as
+ * 'failed' and re-throws for the caller to map — no row is left in flight.
  */
 export async function runAiPipeline(
   deps: AiPipelineDeps,
@@ -339,8 +339,9 @@ export async function runAiPipeline(
   });
 
   const startedAt = Date.now();
+  let response: AiPipelineResponse;
   try {
-    const response = await postJson<AiPipelineResponse>(
+    response = await postJson<AiPipelineResponse>(
       'ai-service',
       `${deps.aiUrl}/ai/v1/pipelines/${pipeline}`,
       payload,
@@ -349,53 +350,92 @@ export async function runAiPipeline(
         record: { valuationId: valuation.id, name: `ai ${pipeline}` },
       },
     );
-    const completed = await completeAiJob(
+  } catch (err) {
+    /*
+     * Any failure of the call closes the row (round 186, methodology M5).
+     *
+     * This used to settle the job only for an `InternalServiceError`, and
+     * rethrow everything else over a row left at `status = 'running'`. Nothing
+     * ever comes back for one of those: `ai_jobs` had no reaper, `due_at` on
+     * the unified job feed is the row's `created_at`, and `oldestActiveJobs`
+     * counts anything active and due. So a single non-upstream throw — the
+     * breaker's `acquire` raising something other than `CircuitOpenError`, an
+     * `AbortError` escaping the fetch, an out-of-memory on a large payload —
+     * produced a job that reads as in flight forever, ages forever, and opens a
+     * queue-stall alert that cannot be resolved by anything except a DELETE.
+     *
+     * Settling the row and publishing a *message* are separate questions, and
+     * conflating them is what produced the narrowing. Whether the run is over
+     * does not depend on the error's class: it is over. Whether its wording can
+     * be shown to somebody does — `error` is read back onto the AI tab and the
+     * ops job feed, and `errorBodyDisclosure` states one rule for every
+     * property that reaches a person: text taken from a caught error is
+     * publishable only when something vouched for it. An `InternalServiceError`
+     * carries a detail the upstream wrote for a caller to read; a bare throw
+     * carries one written for whoever is holding the stack, constraint names
+     * and internal topology included. So the row is always settled, only the
+     * vouched-for wording is stored, and the rest is in the log line the caller
+     * already writes around this.
+     *
+     * Best-effort, and the original error is what propagates. A settlement
+     * write that itself fails leaves the row for the reaper, which is exactly
+     * the case the reaper exists for.
+     */
+    await completeAiJob(
       deps.pool,
       job,
       {
-        status: 'succeeded',
-        model: response.model,
-        result: response.result,
+        status: 'failed',
+        error:
+          err instanceof InternalServiceError ? err.message : 'the run ended before the AI service answered',
         latencyMs: Date.now() - startedAt,
       },
       args.actor,
-    );
-    // Auto-apply (409.ai "Set Valuation Parameters"): extracted engine
-    // inputs land in params without a second manual step.
-    //
-    // Nobody is watching this one — the auto-pipeline runs it on upload — so
-    // it is the path that most needs the values checked against the same
-    // bounds hand-entry enforces. `sanitizeExtractedInputs` drops the figures
-    // an analyst could not have typed and reports them rather than the whole
-    // extraction being lost to one bad field.
-    let appliedInputs: Record<string, unknown> | null = null;
-    let rejectedInputs: RejectedInput[] = [];
-    if (pipeline === 'extract' && args.autoApply) {
-      const { applied, rejected } = sanitizeExtractedInputs(response.result?.engine_inputs);
-      rejectedInputs = rejected;
-      if (rejected.length > 0) {
-        deps.log?.warn(
-          { valuationId: valuation.id, jobId: job.id, rejected },
-          'ai extraction proposed engine inputs outside the accepted range; dropping them',
-        );
-      }
-      if (Object.keys(applied).length > 0) {
-        appliedInputs = applied;
-        await applyEngineInputs(deps.pool, valuation.id, applied, args.actor);
-      }
-    }
-    return { job: completed, appliedInputs, rejectedInputs };
-  } catch (err) {
-    if (err instanceof InternalServiceError) {
-      await completeAiJob(
-        deps.pool,
-        job,
-        { status: 'failed', error: err.message, latencyMs: Date.now() - startedAt },
-        args.actor,
+    ).catch((settleErr: unknown) => {
+      deps.log?.error(
+        { err: settleErr, cause: err, jobId: job.id, valuationId: valuation.id },
+        'could not record a failed AI job; left running for the reaper',
       );
-    }
+    });
     throw err;
   }
+
+  const completed = await completeAiJob(
+    deps.pool,
+    job,
+    {
+      status: 'succeeded',
+      model: response.model,
+      result: response.result,
+      latencyMs: Date.now() - startedAt,
+    },
+    args.actor,
+  );
+  // Auto-apply (409.ai "Set Valuation Parameters"): extracted engine
+  // inputs land in params without a second manual step.
+  //
+  // Nobody is watching this one — the auto-pipeline runs it on upload — so
+  // it is the path that most needs the values checked against the same
+  // bounds hand-entry enforces. `sanitizeExtractedInputs` drops the figures
+  // an analyst could not have typed and reports them rather than the whole
+  // extraction being lost to one bad field.
+  let appliedInputs: Record<string, unknown> | null = null;
+  let rejectedInputs: RejectedInput[] = [];
+  if (pipeline === 'extract' && args.autoApply) {
+    const { applied, rejected } = sanitizeExtractedInputs(response.result?.engine_inputs);
+    rejectedInputs = rejected;
+    if (rejected.length > 0) {
+      deps.log?.warn(
+        { valuationId: valuation.id, jobId: job.id, rejected },
+        'ai extraction proposed engine inputs outside the accepted range; dropping them',
+      );
+    }
+    if (Object.keys(applied).length > 0) {
+      appliedInputs = applied;
+      await applyEngineInputs(deps.pool, valuation.id, applied, args.actor);
+    }
+  }
+  return { job: completed, appliedInputs, rejectedInputs };
 }
 
 /** The slice of a calculation the 'qa'/'explain' pipelines receive. */
