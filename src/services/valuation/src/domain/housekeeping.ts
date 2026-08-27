@@ -27,11 +27,19 @@
  *
  * ## What is deliberately not here
  *
- * Anything a person reads. Audit events, activity, notifications and the email
- * outbox all age out through the retention policy engine (`domain/retention.ts`),
- * which has per-type ages, legal holds and an operator to set them. This sweep
- * is for machine bookkeeping with no policy question attached — the distinction
- * being that nobody would ever want to configure the answer.
+ * Anything a person reads. The email outbox ages out through the retention
+ * policy engine (`domain/retention.ts`), which has per-type ages, legal holds
+ * and an operator to set them. This sweep is for machine bookkeeping with no
+ * policy question attached — the distinction being that nobody would ever want
+ * to configure the answer.
+ *
+ * This paragraph used to name audit events, activity and notifications
+ * alongside the outbox, and none of them was true: the retention sweep
+ * implemented one data type out of five, so four of the console's controls
+ * saved and did nothing. What each type is actually subject to is now declared
+ * in `RETENTION_ENFORCEMENT` and held against the sweep by a test, rather than
+ * asserted in prose here — which is how this sentence came to be wrong and
+ * stay wrong.
  */
 
 export interface HousekeepingTarget {

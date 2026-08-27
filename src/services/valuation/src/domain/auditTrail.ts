@@ -302,6 +302,27 @@ export const ADMIN_EVENT_CATALOG = {
   help_article_updated: D('Help article updated', 'output', 'info'),
   help_article_deleted: D('Help article deleted', 'output', 'notice'),
 
+  // ── Data governance ─────────────────────────────────────────────────────
+  //
+  // The whole retention screen wrote nothing here. Setting a policy, placing a
+  // legal hold, releasing one, withdrawing an engagement and bringing it back
+  // are the five most compliance-relevant actions on this platform — the first
+  // decides what gets deleted on a clock, the middle two decide what is exempt
+  // from that, and the last two take a client's work out of the product and put
+  // it back — and `admin_events` could describe an administrator tidying AI
+  // prompts and not any of them.
+  //
+  // `retention_actions` and the `placed_by`/`released_by` columns carried some
+  // of the provenance, but that is a second ledger with a different reader:
+  // "what did this administrator do" is asked of the spine, and the answer
+  // omitted exactly the actions a reviewer came for. All five are `critical`
+  // for the same reason.
+  retention_policy_updated: D('Retention policy updated', 'other', 'critical'),
+  legal_hold_placed: D('Legal hold placed', 'other', 'critical'),
+  legal_hold_released: D('Legal hold released', 'other', 'critical'),
+  valuation_retired: D('Engagement withdrawn', 'lifecycle', 'critical'),
+  valuation_restored: D('Engagement restored', 'lifecycle', 'critical'),
+
   // ── Platform operations ─────────────────────────────────────────────────
   system_settings_updated: D('System settings updated', 'integration', 'critical'),
   job_alert_rule_changed: D('Job alert rule changed', 'integration', 'notice'),

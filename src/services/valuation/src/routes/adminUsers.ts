@@ -16,7 +16,13 @@ import { MAX_EXPORT_ROWS, sendExport, truncationOf } from './exports.js';
 import { hashPassword } from '../auth/password.js';
 import { PASSWORD_MIN_LENGTH, passwordPolicyError } from '../domain/passwordPolicy.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
-import { bumpSessionEpoch, createUser, findUserByEmail, findUserById } from '../repos/users.js';
+import {
+  bumpSessionEpoch,
+  createUser,
+  findUserByEmail,
+  findUserById,
+  type UserWithRoles,
+} from '../repos/users.js';
 import { createPasswordResetToken } from '../repos/passwordResets.js';
 import {
   adminPatchUser,
@@ -31,7 +37,6 @@ import {
   restoreUser,
   softDeleteUser,
   updatePartner,
-  type AdminUserRow,
 } from '../repos/adminUsers.js';
 import {
   createInvitation,
@@ -96,7 +101,33 @@ const PatchBody = z
   .partial()
   .strict();
 
-function toAdminUser(u: AdminUserRow) {
+/**
+ * The shape an administrator is allowed to see of an account.
+ *
+ * An allow-list, and the reason is the five call sites that used to spread the
+ * row instead. `findUserById` and `createUser` are `SELECT u.*` / `RETURNING *`,
+ * so the object they hand back is every column of `users` — and the routes
+ * below returned it with a single field blanked:
+ *
+ *     return { user: { ...updated, password_digest: undefined } };
+ *
+ * A denylist of one, over a table that has grown four credential-shaped columns
+ * since it was written. What went out with the response was `totp_secret` —
+ * the second factor's shared seed, which is the whole of the second factor —
+ * along with `totp_last_counter`, `session_epoch`, `scim_external_id` and
+ * `gclid`. In production the seed is sealed (`auth/mfaCrypto.ts`), so this was
+ * a ciphertext rather than a code generator; in development and test it is
+ * stored as the bare base32 string, which is one paste into an authenticator.
+ *
+ * Either way it is credential material leaving the process, and no admin
+ * screen ever asked for it: the list route has always mapped through this
+ * function, so the same account read two ways disclosed two different things.
+ *
+ * `partner_name` is optional because the single-user reads (`findUserById`)
+ * do not join `partners` and the list read does. Absent reads as null, which
+ * is what the field already meant for a user with no partner.
+ */
+function toAdminUser(u: UserWithRoles & { deleted_at: Date | null; partner_name?: string | null }) {
   return {
     id: u.id,
     email: u.email,
@@ -404,7 +435,7 @@ export function registerAdminUserRoutes(
       roles: body.roles,
     });
     await audit(principal.id, 'user_created', 'user', user.id, user.email, { roles: body.roles });
-    return reply.status(201).send({ user: { ...user, password_digest: undefined } });
+    return reply.status(201).send({ user: toAdminUser(user) });
   });
 
   /**
@@ -479,7 +510,7 @@ export function registerAdminUserRoutes(
       fields: Object.keys(parsed.data),
       ...(parsed.data.roles ? { roles: parsed.data.roles } : {}),
     });
-    return { user: { ...updated, password_digest: undefined } };
+    return { user: updated ? toAdminUser(updated) : null };
   });
 
   /**
@@ -518,7 +549,7 @@ export function registerAdminUserRoutes(
       role,
       promoted_by: principal.id,
     });
-    return { user: { ...updated, password_digest: undefined } };
+    return { user: updated ? toAdminUser(updated) : null };
   });
 
   app.post('/api/v1/users/:id/demote', { preHandler: app.authenticate }, async (req) => {
@@ -548,7 +579,7 @@ export function registerAdminUserRoutes(
       role,
       demoted_by: principal.id,
     });
-    return { user: { ...updated, password_digest: undefined } };
+    return { user: updated ? toAdminUser(updated) : null };
   });
 
   app.delete('/api/v1/users/:id', { preHandler: app.authenticate }, async (req, reply) => {
@@ -573,7 +604,7 @@ export function registerAdminUserRoutes(
     if (!restored) throw problems.notFound('No deactivated user with this id');
     const user = await findUserById(deps.pool, id);
     await audit(principal.id, 'user_restored', 'user', id, user?.email ?? null);
-    return { user: { ...user, password_digest: undefined } };
+    return { user: user ? toAdminUser(user) : null };
   });
 
   /**

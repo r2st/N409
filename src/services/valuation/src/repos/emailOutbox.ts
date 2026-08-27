@@ -260,6 +260,33 @@ export async function claimRetryableEmails(
             SELECT 1 FROM valuations v
              WHERE v.id = email_outbox.valuation_id AND v.archived_at IS NOT NULL
           )
+          -- …and the person it is addressed to must still have an account.
+          --
+          -- The clause above is the same rule for work; this is the rule for
+          -- people, and it was the half that was missing. Closing an account
+          -- (DELETE /api/v1/me, or an admin deactivation) soft-deletes the
+          -- users row, revokes the tokens and bumps the session epoch — and
+          -- did nothing about mail already sitting in the outbox for them. A
+          -- notification queued the hour before, whose first transport attempt
+          -- failed, was delivered by this ladder afterwards: mail to somebody
+          -- who has asked us to stop holding their account, sent after we
+          -- agreed to.
+          --
+          -- The auto-email scanner has always had this guard on the other side
+          -- of the queue (dueCandidates: u.deleted_at IS NULL), so a campaign
+          -- never picked a closed account up — which is exactly what made the
+          -- absence here hard to see. Nothing is enqueued for a closed
+          -- account; a row already enqueued was still sent.
+          --
+          -- Skipped rather than settled, for the reason the archival clause
+          -- gives: restoreUser puts the account back, and a row marked failed
+          -- here could not be un-failed by that. Rows with no to_user_id — an
+          -- invitation, a client contact addressed by address alone — are
+          -- untouched: there is no account to have closed.
+          AND NOT EXISTS (
+            SELECT 1 FROM users u
+             WHERE u.id = email_outbox.to_user_id AND u.deleted_at IS NOT NULL
+          )
           AND (status = 'queued' OR next_attempt_at IS NULL OR next_attempt_at <= now())
           AND (claimed_at IS NULL OR claimed_at < now() - ($3 || ' seconds')::interval)
         -- Oldest first: a backlog larger than the batch must not leave the

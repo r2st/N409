@@ -20,7 +20,29 @@ interface Policy {
   archive_after_days: number | null;
   retention_days: number | null;
   enabled: boolean;
+  /**
+   * What the sweep will actually do with this policy (server-declared).
+   *
+   * Optional so the page still renders against a server that predates the
+   * field; absent reads as "nothing stated", which is what it was.
+   */
+  enforcement?: { archives: boolean; purges: boolean; note: string };
 }
+/**
+ * The one-word verdict in front of the server's note.
+ *
+ * "Not enforced" is deliberately the loud case rather than the quiet one: a
+ * setting that saves and does nothing is the failure this column exists to
+ * make visible, and a reader skimming five rows should be able to find it
+ * without reading five paragraphs.
+ */
+function effectSummary(e: { archives: boolean; purges: boolean }): string {
+  if (e.purges && e.archives) return 'Archives and purges.';
+  if (e.purges) return 'Purges.';
+  if (e.archives) return 'Archives.';
+  return 'Not enforced.';
+}
+
 interface Hold {
   id: string;
   scope: string;
@@ -363,6 +385,11 @@ export function AdminRetentionPage() {
                 <th className="overline px-3 py-2 font-semibold text-ink-400">Archive after (days)</th>
                 <th className="overline px-3 py-2 font-semibold text-ink-400">Retain (days)</th>
                 <th className="overline px-3 py-2 font-semibold text-ink-400">Enabled</th>
+                {/* The column this screen was missing. Four of the five rows
+                    below save three numbers and a checkbox and are read by
+                    nothing, and until the server said so there was no way to
+                    tell them apart from the row that works. */}
+                <th className="overline px-3 py-2 font-semibold text-ink-400">Effect</th>
                 <th />
               </tr>
             </thead>
@@ -373,7 +400,7 @@ export function AdminRetentionPage() {
                   cannot tell it from a table that failed to render. */}
               {policies.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-sm text-ink-400">
+                  <td colSpan={6} className="px-3 py-6 text-center text-sm text-ink-400">
                     No retention policies are configured. Nothing is being archived or purged.
                   </td>
                 </tr>
@@ -419,7 +446,25 @@ export function AdminRetentionPage() {
                       onChange={(e) => setPolicy(p.data_type, { enabled: e.target.checked })}
                     />
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="max-w-sm px-3 py-2 text-xs text-ink-600">
+                    {p.enforcement ? (
+                      <>
+                        <span
+                          className={
+                            p.enforcement.archives || p.enforcement.purges
+                              ? 'font-semibold text-ink-800'
+                              : 'font-semibold text-amber-800'
+                          }
+                        >
+                          {effectSummary(p.enforcement)}
+                        </span>{' '}
+                        {p.enforcement.note}
+                      </>
+                    ) : (
+                      <span className="text-ink-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right align-top">
                     <button
                       type="button"
                       aria-label={`Save the ${p.data_type} retention policy`}

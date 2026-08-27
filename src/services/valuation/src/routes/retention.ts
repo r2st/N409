@@ -6,7 +6,12 @@ import { canManageUsers } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findUserById } from '../repos/users.js';
-import { isDueForArchival, RETENTION_DATA_TYPES } from '../domain/retention.js';
+import {
+  isDueForArchival,
+  RETENTION_DATA_TYPES,
+  RETENTION_ENFORCEMENT,
+  type RetentionDataType,
+} from '../domain/retention.js';
 import { restoreValuations, retireValuations } from '../repos/valuationPurge.js';
 import { firePartnerWebhooksForRetirement } from '../hooks/partnerWebhooks.js';
 import {
@@ -19,9 +24,11 @@ import {
   listRetiredValuations,
   markValuationsArchived,
   placeHold,
+  purgeExpiredOutbox,
   recordActions,
   releaseHold,
   upsertPolicy,
+  type RetentionPolicyRow,
 } from '../repos/retention.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
@@ -77,19 +84,91 @@ async function assertHoldTarget(
 export interface SweepResult {
   archived: number;
   skipped_hold: number;
+  /** Outbox rows deleted under the `email_outbox` policy. */
+  purged: number;
 }
 
 /**
- * Run the archival sweep once: the 'valuation' policy archives valuations past
- * its archive_after_days, skipping any under legal hold. Every decision is
- * logged to retention_actions. Extend here for additional data types.
+ * The `email_outbox` half of the sweep: delete correspondence past its policy.
+ *
+ * Split out rather than inlined because it is the destructive one, and because
+ * its guard is different in kind from the archival guard below. Archival is
+ * reversible and is driven by `archive_after_days`; this is not reversible and
+ * is driven by `retention_days`, so it refuses to act on anything less than an
+ * explicit, enabled number. A policy with `retention_days` null keeps the mail
+ * forever, which is what the column has always meant and what every deployment
+ * has today.
+ *
+ * `email_delivery_events` cascades from the row, so the provider's bounce and
+ * open ledger for a message goes with the message rather than being left
+ * pointing at nothing.
+ *
+ * Recorded in the decision log per row, like the archivals: a delete with no
+ * record of who set the policy that caused it is exactly the gap the log
+ * exists to close. `skipped_hold` is recorded once for the pass rather than per
+ * frozen row — the rows are not deleted, so there is no per-row event to
+ * anchor, and the count is what an operator needs to see.
+ */
+async function sweepOutbox(
+  pool: pg.Pool,
+  policies: RetentionPolicyRow[],
+  opts: { limit?: number },
+): Promise<{ purged: number; skippedHold: number }> {
+  const policy = policies.find((p) => p.data_type === 'email_outbox');
+  if (!policy || !policy.enabled || policy.retention_days === null) {
+    return { purged: 0, skippedHold: 0 };
+  }
+  const { ids, skippedHold } = await purgeExpiredOutbox(pool, policy.retention_days, opts.limit);
+  await recordActions(pool, [
+    ...ids.map((id) => ({
+      dataType: 'email_outbox',
+      action: 'purged' as const,
+      referenceId: id,
+      detail: { retention_days: policy.retention_days },
+    })),
+    ...(skippedHold > 0
+      ? [
+          {
+            dataType: 'email_outbox',
+            action: 'skipped_hold' as const,
+            referenceId: null,
+            detail: { count: skippedHold, retention_days: policy.retention_days },
+          },
+        ]
+      : []),
+  ]);
+  return { purged: ids.length, skippedHold };
+}
+
+/**
+ * Run the sweep once.
+ *
+ * Two policies are enforced: `email_outbox` deletes correspondence past its
+ * `retention_days`, and `valuation` archives engagements past its
+ * `archive_after_days`. Both skip anything an active legal hold covers, and
+ * every decision is logged to `retention_actions`.
+ *
+ * The other three data types are settable and inert by decision, not by
+ * omission — `RETENTION_ENFORCEMENT` in domain/retention.ts says which is
+ * which and why, the policies endpoint serves it so the console can show it,
+ * and `retentionEnforcement.test.ts` holds this function against it. Adding a
+ * branch here without moving the declaration, or the reverse, fails that test.
  */
 export async function runRetentionSweep(
   pool: pg.Pool,
   opts: { limit?: number; log?: FastifyBaseLogger } = {},
 ): Promise<SweepResult> {
-  const result: SweepResult = { archived: 0, skipped_hold: 0 };
+  const result: SweepResult = { archived: 0, skipped_hold: 0, purged: 0 };
   const policies = await listPolicies(pool);
+
+  // The outbox first, and unconditionally on the valuation policy. These are
+  // two independent policies and the archival branch below returns early when
+  // its own is off — which, before this, meant an operator who enabled only
+  // `email_outbox` had enabled nothing at all, twice over.
+  const outbox = await sweepOutbox(pool, policies, opts);
+  result.purged = outbox.purged;
+  result.skipped_hold += outbox.skippedHold;
+
   const valPolicy = policies.find((p) => p.data_type === 'valuation');
   if (!valPolicy || !valPolicy.enabled || valPolicy.archive_after_days === null) return result;
 
@@ -129,7 +208,9 @@ export async function runRetentionSweep(
   await firePartnerWebhooksForRetirement({ pool, log: opts.log }, archived);
 
   result.archived = archived.length;
-  result.skipped_hold = frozen.length;
+  // `+=`: the outbox pass above may already have counted frozen rows of its
+  // own, and one sweep reports one number.
+  result.skipped_hold += frozen.length;
   return result;
 }
 
@@ -140,9 +221,60 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
     return principal;
   };
 
+  /**
+   * One line in the audit spine per governance decision.
+   *
+   * Fire-after-success, like every other `recordAdminEvent` caller: the action
+   * has already happened and the reviewer's record of it must not be the thing
+   * that fails the request.
+   *
+   * `subjectLabel` carries the human name — the data type, the reason, the
+   * company — because the spine is read as prose and a ULID is not one.
+   */
+  const audit = async (
+    actorId: string,
+    type: AdminEventType,
+    subjectType: string,
+    subjectId: string | null,
+    subjectLabel: string | null,
+    payload: Record<string, unknown> = {},
+  ) => {
+    await recordAdminEvent(deps.pool, {
+      type,
+      actor: { actorType: 'human', actorId },
+      subjectType,
+      subjectId,
+      subjectLabel,
+      payload,
+    });
+  };
+
+  /**
+   * The policies, each carrying what the sweep will actually do with it.
+   *
+   * The row alone cannot say. Four of the five data types were settable and
+   * read by nothing, and the console rendered all five identically — three
+   * numbers and a checkbox — so an operator setting an age on `document` saw
+   * the same confirmation as one setting an age on `valuation` and got a
+   * different outcome. `enforcement` is served with the row so the screen can
+   * distinguish them; it is declared in domain/retention.ts and is a constant,
+   * not a column, because it describes the code rather than the deployment.
+   */
   app.get('/api/v1/admin/retention/policies', { preHandler: app.authenticate }, async (req) => {
     requireAdmin(req);
-    return { policies: await listPolicies(deps.pool) };
+    const policies = await listPolicies(deps.pool);
+    return {
+      policies: policies.map((p) => ({
+        ...p,
+        // A data type in the table but not in the enum is a row somebody
+        // inserted by hand; it is reported as unenforced, which is true.
+        enforcement: RETENTION_ENFORCEMENT[p.data_type as RetentionDataType] ?? {
+          archives: false,
+          purges: false,
+          note: 'Not a data type this build knows about; nothing acts on it.',
+        },
+      })),
+    };
   });
 
   app.put('/api/v1/admin/retention/policies/:dataType', { preHandler: app.authenticate }, async (req) => {
@@ -190,6 +322,10 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
       referenceId: parsed.data.scope === 'global' ? null : (parsed.data.reference_id ?? null),
       reason: parsed.data.reason,
       placedBy: principal.id,
+    });
+    await audit(principal.id, 'legal_hold_placed', 'legal_hold', hold.id, parsed.data.reason, {
+      scope: hold.scope,
+      reference_id: hold.reference_id,
     });
     return reply.status(201).send({ hold });
   });

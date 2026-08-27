@@ -1,7 +1,8 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { likeContains } from '../db/like.js';
-import type { RetentionPolicy } from '../domain/retention.js';
+import type { RetentionActionName, RetentionPolicy } from '../domain/retention.js';
+import { EMAIL_MAX_ATTEMPTS } from '../domain/emailRetry.js';
 import { invalidateValuation } from './valuations.js';
 
 // ── Policies ─────────────────────────────────────────────────────────────────
@@ -65,8 +66,9 @@ export const HOLD_PAGE_LIMIT = 200;
  *
  * Holds are never deleted, only released, so this table only grows. Capping it
  * is safe in a way capping a work queue is not: nothing *enforces* a hold from
- * this list. The purge checks `legal_holds` in SQL (see `purgeCandidates`
- * below), so a hold past the cut still blocks deletion even though it is not on
+ * this list. Every sweep checks `legal_holds` in SQL — `findArchivableValuations`
+ * and `purgeExpiredOutbox` below — so a hold past the cut still blocks the
+ * action even though it is not on
  * the page. Active holds are ordered ahead of released ones so the cap cannot
  * push a live hold off the end behind a year of released ones.
  */
@@ -113,7 +115,7 @@ export async function releaseHold(pool: pg.Pool, id: string, releasedBy: string)
 export interface RetentionActionRow {
   id: string;
   data_type: string;
-  action: 'archived' | 'skipped_hold' | 'purge_eligible' | 'restored';
+  action: RetentionActionName;
   reference_id: string | null;
   detail: Record<string, unknown>;
   created_at: Date;
@@ -121,7 +123,7 @@ export interface RetentionActionRow {
 
 export interface RetentionActionInput {
   dataType: string;
-  action: 'archived' | 'skipped_hold' | 'purge_eligible' | 'restored';
+  action: RetentionActionName;
   referenceId: string | null;
   detail?: Record<string, unknown>;
 }
@@ -273,6 +275,122 @@ export async function listActions(pool: pg.Pool, limit = 200): Promise<Retention
     [limit],
   );
   return rows;
+}
+
+/**
+ * The most outbox rows one pass will delete.
+ *
+ * The first pass after an operator enables the policy takes everything that
+ * has accumulated since the table was created, which is not a statement to run
+ * in one transaction against a table the send path writes to. Capping it makes
+ * the backlog drain over successive ticks instead; the sweep runs every six
+ * hours, so a deployment at the cap catches up within a day or two and the
+ * count is in the log line the whole time.
+ */
+export const OUTBOX_PURGE_BATCH = 5_000;
+
+export interface OutboxPurgeResult {
+  /** Rows deleted this pass. */
+  purged: number;
+  /** Rows past their age that an active legal hold protected. */
+  skippedHold: number;
+}
+
+/**
+ * Delete correspondence older than the policy, unless a hold covers it.
+ *
+ * This is the storage-limitation half of feature 10 and it was missing: the
+ * `email_outbox` policy has been settable from the console since the feature
+ * shipped and no code read it, so a table of recipients, subjects and message
+ * bodies grew without bound while a screen said it was governed.
+ *
+ * ## What is eligible
+ *
+ * Only rows that have finished. 'sent' and 'skipped' are terminal; 'failed' is
+ * terminal once the ladder is out of attempts, and a failed row still inside
+ * its attempts is a message the retry sweep is going to try again — deleting
+ * that is losing mail, not ageing it out. A 'queued' row is not eligible at
+ * all, whatever its age: it is either about to be sent or already stranded, and
+ * the stranded case is what `claimRetryableEmails` exists to pick up.
+ *
+ * The age is `created_at`, not `sent_at`, so a row that never went anywhere
+ * ages on the same clock as one that did — otherwise a permanently-failed
+ * message would have a NULL `sent_at` and never expire.
+ *
+ * ## The hold
+ *
+ * Three ways to be frozen, matching `isFrozen` and `findArchivableValuations`:
+ * a global hold stops everything, a `user` hold covers the recipient
+ * (`to_user_id`), and a `valuation` hold covers the engagement the message is
+ * about. Checked in SQL rather than against the paged `listHolds` for the
+ * reason `isValuationFrozen` gives — a hold on page two would otherwise read as
+ * no hold, and that is the direction that deletes.
+ *
+ * A message addressed to an address with no account (`to_user_id IS NULL`)
+ * cannot be covered by a user hold. That is not a gap: a hold names an
+ * aggregate this platform holds, and there is no user aggregate for a client
+ * contact who was mailed an intake link. A global hold still covers them.
+ *
+ * Returns the deleted ids so the caller can log them, and counts the frozen
+ * separately so "nothing was purged" can be told from "nothing was eligible".
+ */
+export async function purgeExpiredOutbox(
+  pool: pg.Pool,
+  retentionDays: number,
+  limit = OUTBOX_PURGE_BATCH,
+): Promise<{ ids: string[]; skippedHold: number }> {
+  /** `$1` days, `$2` max attempts — the same numbering in both statements. */
+  const eligible = `e.created_at < now() - ($1 || ' days')::interval
+    AND e.status <> 'queued'
+    -- Never a row the retry sweep could still take. Spelled as the negation of
+    -- claimRetryableEmails' own conditions rather than as an age, because the
+    -- ages are independent: retention is an operator's number and could be set
+    -- to a day, while the ladder's own window is fixed. Deleting a message that
+    -- was going to be tried again is losing mail, which is the one outcome an
+    -- outbox exists to prevent.
+    --
+    -- A 'failed' row is therefore eligible only once it is out of attempts, or
+    -- hard-bounced, or about an engagement that has been withdrawn — the three
+    -- ways the ladder stops. That last one is the case a pure age would have
+    -- missed in the other direction: those rows are never retried and never
+    -- expire, so they would have been the residue nothing could ever remove.
+    AND (
+      e.status <> 'failed'
+      OR e.attempts >= $2
+      OR (e.bounce_kind IS NOT NULL AND e.bounce_kind <> 'soft')
+      OR EXISTS (
+        SELECT 1 FROM valuations v WHERE v.id = e.valuation_id AND v.archived_at IS NOT NULL
+      )
+    )`;
+  const frozen = `EXISTS (
+    SELECT 1 FROM legal_holds h
+     WHERE h.active
+       AND (h.scope = 'global'
+         OR (h.scope = 'user' AND h.reference_id = e.to_user_id)
+         OR (h.scope = 'valuation' AND h.reference_id = e.valuation_id))
+  )`;
+
+  // Counted before the delete and over the whole eligible set rather than the
+  // batch, because this number is the operator-facing one: "how much is your
+  // hold holding" is not a question about how far through the backlog we are.
+  const { rows: heldRows } = await pool.query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM email_outbox e WHERE ${eligible} AND ${frozen}`,
+    [String(retentionDays), EMAIL_MAX_ATTEMPTS],
+  );
+
+  const { rows } = await pool.query<{ id: string }>(
+    `DELETE FROM email_outbox
+      WHERE id IN (
+        SELECT e.id FROM email_outbox e
+         WHERE ${eligible}
+           AND NOT ${frozen}
+         ORDER BY e.created_at ASC
+         LIMIT $3
+      )
+      RETURNING id`,
+    [String(retentionDays), EMAIL_MAX_ATTEMPTS, Math.min(Math.max(limit, 1), OUTBOX_PURGE_BATCH)],
+  );
+  return { ids: rows.map((r) => r.id), skippedHold: Number(heldRows[0]!.count) };
 }
 
 /**

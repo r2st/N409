@@ -455,7 +455,7 @@ let retentionTimer: NodeJS.Timeout | undefined;
 {
   const sweep = scheduleSweep('retention', async () => {
     const r = await runRetentionSweep(pool, { log: app.log });
-    if (r.archived > 0 || r.skipped_hold > 0) app.log.info(r, 'retention sweep');
+    if (r.archived > 0 || r.skipped_hold > 0 || r.purged > 0) app.log.info(r, 'retention sweep');
   });
   sweep.run();
   retentionTimer = setInterval(() => sweep.run(), 6 * 60 * 60_000);

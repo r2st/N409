@@ -49,6 +49,31 @@ import { RETENTION_DATA_TYPES } from '../../src/domain/retention.js';
  * table it has never been told about. A `KEPT` disposition is allowed and is
  * the point: it makes an unbounded store a written decision instead of an
  * oversight, and it is what somebody would read out when asked.
+ *
+ * ## The other three places personal data appears
+ *
+ * This file is the *storage* axis, and on its own it answers a third of the
+ * question. Three more surfaces carry the same data and each has its own guard,
+ * named here so the set is findable from one place rather than by knowing to
+ * look:
+ *
+ *  - **Log lines** — `packages/shared/test/logger.test.ts`. The redact list is
+ *    field names, and the census there scans the services for any
+ *    `*_email`/`*_phone`/`*_token`/`*_secret`/`*_password` property it has not
+ *    been told about. The Python tier redacts free text by shape instead
+ *    (`services/ai/app/observability.py`), because a formatted message has no
+ *    field names to key off.
+ *  - **Error bodies** — `errorBodyDisclosure.test.ts` and
+ *    `upstreamErrorDisclosure.test.ts`: what a `detail` may repeat back, and
+ *    what an upstream's wording may not carry through.
+ *  - **API responses** — `adminUserDisclosure.test.ts`, on the resource where
+ *    a row of this table is served. It derives the columns that must not go out
+ *    from these same migrations, so a credential column added to `users`
+ *    tomorrow is covered by it without an edit.
+ *
+ * `RETENTION_ENFORCEMENT` (domain/retention.ts, held by
+ * `retentionEnforcement.test.ts`) is the fourth mechanism the dispositions
+ * below can name, and the one that had been settable and unimplemented.
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
