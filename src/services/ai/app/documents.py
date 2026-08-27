@@ -318,6 +318,97 @@ def _xlsx_text(raw: bytes) -> str:
         return "\n\n".join(blocks)
 
 
+# ── Text decoding ────────────────────────────────────────────────────────────
+#
+# `raw.decode("utf-8", errors="replace")` is three assumptions in one call: that
+# the file is text, that the text is UTF-8, and that anything else is close
+# enough. None of them holds for the files an analyst attaches, every failure is
+# silent — `errors="replace"` substitutes rather than raising — and what the
+# substitution produces is fed straight to a model with no operator in the loop
+# to notice. Measured, before this existed:
+#
+#   - **UTF-16**, which is what "Save as → Unicode Text" writes, decoded to
+#     `c\x00l\x00a\x00s\x00s\x00` — every character with a NUL beside it,
+#     because NUL is itself valid UTF-8. The model receives a document that is
+#     half padding and, at 2 bytes per character against `MAX_CHARS_PER_DOC`,
+#     half as much of it.
+#   - **Latin-1 / Windows-1252**, which Excel on Windows writes unless "CSV
+#     UTF-8" is picked, turned `Série A` into `S\ufffdrie A` — a corrupted
+#     security-class name extracted into a cap table as fact.
+#   - **A renamed binary** — a PDF or a password-protected workbook called
+#     `.csv` — was sent to the model as its own bytes.
+#
+# This is the same defect, and the same fix, as `domain/sheetText.ts` in the
+# valuation service; the two readers share no code, so the format bug was a
+# candidate in both. See the note there for what a cap-table importer actually
+# receives.
+
+_BINARY_SIGNATURES: list[tuple[bytes, str]] = [
+    (
+        b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
+        "this is a password-protected or legacy Excel workbook, which cannot be read",
+    ),
+    (b"{\\rtf", "this is RTF, not a spreadsheet or text file"),
+    (b"\x7fELF", "this is a binary executable, not a document"),
+]
+
+
+def _looks_like_utf16(raw: bytes, offset: int) -> bool:
+    """Two bytes per character with a zero high byte, sampled over the head.
+
+    A majority rather than all: a UTF-16 file with an astral character in it has
+    surrogate pairs whose halves are not ASCII, and one emoji in a company name
+    should not decide the encoding.
+    """
+    end = min(len(raw), 1024)
+    zeros = pairs = 0
+    for i in range(offset, end - 1, 2):
+        pairs += 1
+        if raw[i] == 0:
+            zeros += 1
+    return pairs >= 8 and zeros > pairs / 2
+
+
+def decode_text(raw: bytes) -> str:
+    """Decode an attached text-like file, or say what it is instead.
+
+    Raises `ValueError` for bytes that are not text; `extract_texts` turns that
+    into the same `[could not extract text: …]` note every other failure
+    degrades to, which is a statement a reader can act on rather than a page of
+    replacement characters that looks like the document was empty.
+    """
+    for magic, message in _BINARY_SIGNATURES:
+        if raw.startswith(magic):
+            raise ValueError(message)
+    # UTF-32 writes a UTF-16 BOM followed by two more zero bytes, so it is named
+    # rather than mis-decoded as UTF-16 with empty characters between.
+    if raw.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
+        raise ValueError("this file is UTF-32 text — re-save it as UTF-8")
+    if raw.startswith(b"\xff\xfe"):
+        text = raw[2:].decode("utf-16-le", errors="replace")
+    elif raw.startswith(b"\xfe\xff"):
+        text = raw[2:].decode("utf-16-be", errors="replace")
+    elif raw.startswith(b"\xef\xbb\xbf"):
+        text = raw[3:].decode("utf-8", errors="replace")
+    elif _looks_like_utf16(raw, 1):
+        text = raw.decode("utf-16-le", errors="replace")
+    elif _looks_like_utf16(raw, 0):
+        text = raw.decode("utf-16-be", errors="replace")
+    else:
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            # Only bytes that are not valid UTF-8 reach here, so every UTF-8
+            # file decodes exactly as it did before.
+            text = raw.decode("cp1252", errors="replace")
+    # Whatever it was read as, a NUL is not something a document writes: the
+    # file is a container this does not recognise, and sending its bytes to a
+    # model as document text is worse than saying so.
+    if "\x00" in text:
+        raise ValueError("this file is not a document or a text file")
+    return text
+
+
 def extract_texts(documents: list[dict]) -> list[DocText]:
     out: list[DocText] = []
     total = 0
@@ -330,12 +421,34 @@ def extract_texts(documents: list[dict]) -> list[DocText]:
             raw = b""
         name = str(doc.get("filename") or "document")
         try:
-            if name.lower().endswith(".pdf"):
+            # Routed by content first, then by name. A workbook or a PDF
+            # attached under the wrong extension is an ordinary mistake and
+            # both extractors are right here; reading one as text is not.
+            #
+            # OLE2 leads, ahead of every extension: encrypted OOXML is not a ZIP
+            # at all but an OLE2 compound file, so a password-protected `.xlsx`
+            # reached `_xlsx_text` and came back as `zipfile`'s "File is not a
+            # zip file" — which is true of the container and says nothing about
+            # what the reader should do. A real `.xls` renamed `.xlsx` lands in
+            # the same place.
+            if raw.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+                raise ValueError(
+                    "this is a password-protected or legacy Excel workbook, which cannot "
+                    "be read — remove the password, or re-save it as .xlsx"
+                )
+            if raw.startswith(b"%PDF"):
+                text = _pdf_text(raw)
+            elif raw.startswith(b"PK\x03\x04"):
+                # The magic number is the whole test: text never starts with
+                # `PK\x03\x04`, so no `.csv` is caught by this, and a workbook
+                # renamed to one no longer reaches the text decoder.
+                text = _xlsx_text(raw)
+            elif name.lower().endswith(".pdf"):
                 text = _pdf_text(raw)
             elif name.lower().endswith((".xlsx", ".xlsm")):
                 text = _xlsx_text(raw)
             else:
-                text = raw.decode("utf-8", errors="replace")
+                text = decode_text(raw)
         except Exception as exc:  # noqa: BLE001 — degrade, don't fail the run
             text = f"[could not extract text: {exc}]"
         text = text.strip()[:MAX_CHARS_PER_DOC]
