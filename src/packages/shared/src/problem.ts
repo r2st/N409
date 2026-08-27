@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { databaseUnavailableReason } from './failure.js';
 
 /**
  * Scrubs secrets/PII that can slip into a free-text error `message` or `stack`
@@ -381,6 +382,43 @@ export function registerProblemHandler(app: FastifyInstance): void {
     }
     const fastifyErr = err as { statusCode?: number; message?: string; code?: string };
     const status = fastifyErr.statusCode && fastifyErr.statusCode < 500 ? fastifyErr.statusCode : 500;
+    /**
+     * The database could not answer, which is not the same thing as the request
+     * being wrong.
+     *
+     * Every route in this estate reaches Postgres through a pool with a
+     * `statement_timeout`, an `idle_in_transaction_session_timeout` and ten
+     * connections. Each of those bounds exists to make a bad minute survivable,
+     * and each of them raises when it fires: a deadlock the database picked this
+     * transaction to lose (`40P01`), a statement that ran past its ceiling
+     * (`57014`), a connection dropped by a failover (`08006`), a checkout that
+     * waited out `connectionTimeoutMillis` because every client was busy. All
+     * of them are the server being momentarily unable, all of them pass, and
+     * all of them arrived here as `500 urn:n409:problem:internal` — a body
+     * whose catalogued advice is "retry with backoff, and send an
+     * `Idempotency-Key`, the write may have landed". For a rolled-back
+     * transaction that is both alarming and wrong.
+     *
+     * Placed before the 5xx branch and after the `ApiProblem` one, so a route
+     * that already caught its own database error and said something better
+     * keeps saying it. The log line is unchanged in substance — same scrub,
+     * same context — but at `warn` with the SQLSTATE, because a busy database
+     * is not an unhandled error and a page for one is a page nobody keeps.
+     */
+    const dbReason = databaseUnavailableReason(err);
+    if (dbReason !== null) {
+      req.log.warn(
+        { err: scrubError(err), ...requestErrorContext(req), failure_reason: dbReason },
+        'database unavailable',
+      );
+      return reply.status(503).type('application/problem+json').send({
+        type: 'urn:n409:problem:database-unavailable',
+        title: 'Service Unavailable',
+        status: 503,
+        detail: 'The database is temporarily unable to serve this request. Nothing was changed.',
+        instance: req.url,
+      });
+    }
     if (status >= 500) {
       // Scrub the free-text message/stack — pino `redact` only masks structured
       // fields, so secrets interpolated into an Error string would leak (B-1 P3).

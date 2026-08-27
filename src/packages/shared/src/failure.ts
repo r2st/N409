@@ -368,3 +368,63 @@ export function logFailure(
   }
   return failure;
 }
+
+// ── The database, seen from a request handler ────────────────────────────────
+
+/**
+ * The two pool failures that carry no SQLSTATE, because Postgres never saw
+ * them.
+ *
+ * `pg-pool` builds both with `new Error(message)` and nothing else — no `code`,
+ * no `severity` — so every structured branch in {@link classifyFailure} misses
+ * them and they fall through to `permanent('unclassified')`. Matching on the
+ * message is what matching on a message always is: brittle. It is done here
+ * anyway, and narrowly, because the alternative is worse. A pool that has run
+ * out of connections is the single most likely way this service fails under
+ * load, and the answer it gave was a 500 telling the caller the request itself
+ * had gone wrong.
+ *
+ * Anchored rather than substring-matched so an application error that happens
+ * to quote one of these sentences is not mistaken for the driver raising it.
+ */
+const POOL_FAILURES: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
+  // Every client is checked out and `connectionTimeoutMillis` expired waiting.
+  { pattern: /^timeout exceeded when trying to connect$/, reason: 'pg.pool_exhausted' },
+  // A checkout raced the drain at shutdown. Transient in the only sense that
+  // matters to a caller: this instance is going away, another one will answer.
+  { pattern: /^Cannot use a pool after calling end on the pool$/, reason: 'pg.pool_closed' },
+];
+
+/**
+ * Why the database could not answer, or null if this failure is not the
+ * database being unable to answer.
+ *
+ * Deliberately narrower than `isTransient`. Everything this returns non-null
+ * for becomes a 503 at the HTTP boundary (see `registerProblemHandler`), and a
+ * 503 is a claim: *the request was not served because the server could not
+ * serve it, and the same request later can be*. A SQLSTATE the database asks
+ * you to retry is exactly that claim. An `AbortError` is not — the commonest
+ * one in a Fastify handler is the *client* going away — and a 5xx carried on
+ * some upstream's error object is `upstream`'s business, not this one's. Both
+ * of those are transient by `classifyFailure` and neither may reach this.
+ *
+ * So this reads the two structured facts that can only mean the database:
+ * a SQLSTATE in the transient tables above, and the pool's own two messages.
+ * Everything else keeps the 500 it had, which is the conservative direction —
+ * an unrecognised failure claiming to be a retryable database blip would send
+ * clients back at a service whose actual problem is a bug.
+ */
+export function databaseUnavailableReason(err: unknown): string | null {
+  const sqlstate = pgCodeOf(err);
+  if (sqlstate) {
+    if (TRANSIENT_SQLSTATE.has(sqlstate)) return `pg.${sqlstate}`;
+    if (TRANSIENT_SQLSTATE_CLASS.has(sqlstate.slice(0, 2))) return `pg.${sqlstate}`;
+    return null;
+  }
+  if (err instanceof Error && err.name === 'Error') {
+    for (const { pattern, reason } of POOL_FAILURES) {
+      if (pattern.test(err.message)) return reason;
+    }
+  }
+  return null;
+}

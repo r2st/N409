@@ -34,6 +34,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { IntegrationError } from '../clients/deadline.js';
 
 /**
  * Live cap-table sync (feature 4). Flow mirrors the accounting integration:
@@ -116,8 +117,13 @@ export async function syncCapTableConnection(
       deps.fetchFn,
     );
   } catch (err) {
+    // Best-effort, like every other write in a catch: this exists to *record*
+    // the failure it caught, and it is a query against the same pool the pull
+    // may have failed on. A rejection here would replace an accurate provider
+    // error with an unrelated one and lose the original entirely — including
+    // for the scheduler above, which has no client to report it to at all.
     const message = err instanceof Error ? err.message : String(err);
-    await recordSyncError(deps.pool, connection.id, message);
+    await recordSyncError(deps.pool, connection.id, message).catch(() => undefined);
     throw err;
   }
 
@@ -322,8 +328,31 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
           actorId: principal.id,
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw problems.unprocessable(`Sync failed: ${message}`);
+        /**
+         * Only wording this codebase vouched for reaches the client.
+         *
+         * This catch forwarded `err.message` whatever it was, which was written
+         * for the client's own failures — "Carta cap-table fetch failed (503)",
+         * naming a provider and a status and nothing else. What it actually
+         * covers is the whole sync: `saveCapTable` and `recordSync` are inside
+         * it, so a row Postgres refused answered the analyst with the driver's
+         * wording, its constraint name and, in `err.detail`, the offending
+         * values. `IntegrationError` is the type that says a sentence is fit to
+         * publish (clients/deadline.ts); everything else gets a constant, and
+         * the real one goes to the log.
+         *
+         * The identical line in `routes/hris.ts` was fixed when that type was
+         * introduced. This one was not, and `errorBodyDisclosure.test.ts` — the
+         * census written for exactly this shape — could not see it, because
+         * binding the message to a local one statement earlier puts it outside
+         * the argument the scan reads.
+         */
+        req.log.warn({ err, provider, connectionId: connection.id }, 'cap-table sync failed');
+        throw problems.unprocessable(
+          err instanceof IntegrationError
+            ? `Sync failed: ${err.message}`
+            : `${CAP_TABLE_PROVIDER_LABELS[provider]} sync failed — the details are in the connection's last error`,
+        );
       }
       return outcome;
     },

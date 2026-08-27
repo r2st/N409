@@ -103,8 +103,106 @@ export class StripeApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /**
+     * True when Stripe never answered — a refused connection, DNS, a TLS
+     * failure, or our own 20-second deadline firing — rather than answering
+     * with a rejection.
+     *
+     * Carried on the ordinary error type rather than escaping as its own class
+     * for the reason `InternalServiceError.circuitOpen` documents: every call
+     * site already tests `err instanceof StripeApiError`, and a second class
+     * would need each of them found and widened. One that was missed is a
+     * handled outage turning back into a 500.
+     *
+     * It changes what may be said as well as what is caught. `message` on a
+     * rejection is Stripe's own sentence and is written to be read by a person
+     * ("Your card was declined"); on an unreachable Stripe it is ours, because
+     * the transport's version names internal topology —
+     * `getaddrinfo ENOTFOUND api.stripe.com` — and the real one is kept on
+     * `cause` for the log.
+     */
+    readonly unreachable: boolean = false,
+    options?: { cause?: unknown },
   ) {
-    super(message);
+    super(message, options);
+    this.name = 'StripeApiError';
+  }
+}
+
+/** The deadline every call in this file runs under. */
+const STRIPE_TIMEOUT_MS = 20_000;
+
+/**
+ * `fetch` against Stripe, with the failures Stripe cannot report itself turned
+ * into the error type the call sites already handle.
+ *
+ * Node's `fetch` rejects with a `TypeError: fetch failed` when the host is
+ * unreachable and with a `TimeoutError` when `AbortSignal.timeout` fires, and
+ * neither is a `StripeApiError`. Every route below is written as
+ *
+ *     catch (err) { if (err instanceof StripeApiError) { … } throw err }
+ *
+ * so both walked straight past the handling and out through the generic 5xx
+ * handler as `500 urn:n409:problem:internal` — the one answer that tells a
+ * client nothing and an operator nothing. Stripe being down is the single most
+ * predictable failure of a payments integration and it was the one failure the
+ * checkout routes did not have an answer for.
+ *
+ * The status is a claim about what happened, not one Stripe made: 504 when our
+ * clock ran out (the request may well have been accepted and a session may
+ * exist), 503 when the connection never stood up (it certainly did not). Both
+ * are only read by the log; the route maps `unreachable` to its own answer.
+ */
+async function stripeFetch(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(STRIPE_TIMEOUT_MS) });
+  } catch (err) {
+    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      throw new StripeApiError(
+        `Stripe did not respond within ${Math.round(STRIPE_TIMEOUT_MS / 1000)}s`,
+        504,
+        true,
+        { cause: err },
+      );
+    }
+    throw new StripeApiError('Stripe could not be reached', 503, true, { cause: err });
+  }
+}
+
+/**
+ * Stripe's body, read under the same deadline as the headers.
+ *
+ * `AbortSignal.timeout` aborts the body stream too, so a response that arrives
+ * and then stalls mid-JSON rejects *here* rather than at the fetch. Every call
+ * site read the body as `res.json().catch(() => ({}))`, which is right for the
+ * case it was written for — a proxy's HTML error page under a 4xx, where the
+ * status is the whole answer — and turned a mid-body timeout into an empty
+ * object under a 200. The checkout creators then reported that as "Stripe
+ * returned a Checkout Session without an id and url", which describes Stripe
+ * misbehaving rather than us giving up, and sends whoever reads the log to the
+ * wrong place.
+ *
+ * So: `{}` for a body that is not JSON, and the unreachable error for a body
+ * we abandoned. An array or `null` is JSON but not an object, and returning it
+ * would let `json.error` and `json.url` be reads against a non-object; `{}`
+ * makes those a miss rather than a crash.
+ */
+async function stripeBody(res: Response): Promise<Record<string, unknown>> {
+  try {
+    const parsed: unknown = await res.json();
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch (err) {
+    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      throw new StripeApiError(
+        `Stripe did not respond within ${Math.round(STRIPE_TIMEOUT_MS / 1000)}s`,
+        504,
+        true,
+        { cause: err },
+      );
+    }
+    return {};
   }
 }
 
@@ -176,16 +274,15 @@ export async function createCheckoutSession(
       },
     ],
   });
-  const res = await fetch(`${STRIPE_API}/checkout/sessions`, {
+  const res = await stripeFetch(`${STRIPE_API}/checkout/sessions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body,
-    signal: AbortSignal.timeout(20_000),
   });
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  const json = await stripeBody(res);
   if (!res.ok) {
     const err = (json.error ?? {}) as Record<string, unknown>;
     throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);
@@ -232,16 +329,15 @@ export async function createSubscriptionCheckoutSession(
       },
     ],
   });
-  const res = await fetch(`${STRIPE_API}/checkout/sessions`, {
+  const res = await stripeFetch(`${STRIPE_API}/checkout/sessions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body,
-    signal: AbortSignal.timeout(20_000),
   });
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  const json = await stripeBody(res);
   if (!res.ok) {
     const err = (json.error ?? {}) as Record<string, unknown>;
     throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);
@@ -265,16 +361,15 @@ export async function createBillingPortalSession(
   secretKey: string,
   args: { customerId: string; returnUrl: string },
 ): Promise<{ id: string; url: string }> {
-  const res = await fetch(`${STRIPE_API}/billing_portal/sessions`, {
+  const res = await stripeFetch(`${STRIPE_API}/billing_portal/sessions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: encodeForm({ customer: args.customerId, return_url: args.returnUrl }),
-    signal: AbortSignal.timeout(20_000),
   });
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  const json = await stripeBody(res);
   if (!res.ok) {
     const err = (json.error ?? {}) as Record<string, unknown>;
     throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);
@@ -300,13 +395,12 @@ export async function createBillingPortalSession(
  * treat as harmlessly gone.
  */
 export async function expireCheckoutSession(secretKey: string, sessionId: string): Promise<boolean> {
-  const res = await fetch(`${STRIPE_API}/checkout/sessions/${encodeURIComponent(sessionId)}/expire`, {
+  const res = await stripeFetch(`${STRIPE_API}/checkout/sessions/${encodeURIComponent(sessionId)}/expire`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
-    signal: AbortSignal.timeout(20_000),
   });
   return res.ok;
 }
@@ -321,14 +415,11 @@ export interface ChargeReceipt {
  * charge, so we resolve it from the payment intent with the charge expanded.
  */
 export async function retrieveReceipt(secretKey: string, paymentIntentId: string): Promise<ChargeReceipt> {
-  const res = await fetch(
+  const res = await stripeFetch(
     `${STRIPE_API}/payment_intents/${encodeURIComponent(paymentIntentId)}?expand[]=latest_charge`,
-    {
-      headers: { Authorization: `Bearer ${secretKey}` },
-      signal: AbortSignal.timeout(20_000),
-    },
+    { headers: { Authorization: `Bearer ${secretKey}` } },
   );
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  const json = await stripeBody(res);
   if (!res.ok) {
     const err = (json.error ?? {}) as Record<string, unknown>;
     throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);

@@ -180,6 +180,7 @@ export {
   backoffDelayMs,
   classifyFailure,
   classifyStatus,
+  databaseUnavailableReason,
   FAILURE_KIND,
   isTransient,
   logFailure,

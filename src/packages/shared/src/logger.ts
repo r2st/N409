@@ -79,6 +79,7 @@ export const SENSITIVE_FIELDS: readonly string[] = [
   'invited_by_email',
   'member_email',
   'owner_email',
+  'recipient_email',
   'reviewer_email',
   'to_email',
   'uploaded_by_email',
@@ -95,6 +96,11 @@ export const SENSITIVE_FIELDS: readonly string[] = [
   'given_name',
   'family_name',
   'grantee_name',
+  // Not merely a name: `alwaysTemplateVars` falls back to the *address* when it
+  // holds no given name, so this field is an email address for every recipient
+  // whose name we never captured — which is most of the ones a send goes to
+  // from a form.
+  'recipient_name',
   'signer_name',
   'owner_first_name',
   'owner_last_name',

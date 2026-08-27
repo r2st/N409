@@ -19,6 +19,8 @@
  * legitimately slow.
  */
 
+import { parseRetryAfter } from '../domain/partnerWebhooks.js';
+
 /** Token exchange / connection identification — small, latency-sensitive calls. */
 export const OAUTH_TIMEOUT_MS = 10_000;
 
@@ -69,6 +71,43 @@ export class IntegrationError extends Error {
     super(message);
     this.name = 'IntegrationError';
   }
+}
+
+/**
+ * The `IntegrationError` for a provider that answered, and refused.
+ *
+ * Every one of these clients wrote the refusal the same way —
+ * `` throw new Error(`${label} ${what} failed (${res.status})`) `` — which is
+ * accurate and, for the one status that most deserves better, useless. A 429
+ * from Carta or Pulley is not a failure at all: it is the provider naming a
+ * time to come back, usually in a `Retry-After` header nobody read. The analyst
+ * was told "Carta cap-table fetch failed (429)", which reads like a broken
+ * integration and prompts exactly the wrong response — clicking Sync again,
+ * immediately, which is how a rate limit becomes a longer rate limit.
+ *
+ * Only 429 gets its own sentence. Everything else keeps the wording it had,
+ * deliberately: it is what the connection's `last_error` column has recorded
+ * for the life of these integrations, and half a dozen tests read it.
+ *
+ * The type is what lets a route echo the sentence at all — see
+ * {@link IntegrationError}. These messages name a provider, a status and
+ * nothing else, which is the property that made them fit to publish and the
+ * property `new Error` could not state.
+ */
+export function providerRefused(
+  label: string,
+  what: string,
+  res: { status: number; headers: { get(name: string): string | null } },
+): IntegrationError {
+  if (res.status === 429) {
+    const seconds = parseRetryAfter(res.headers.get('retry-after'));
+    return new IntegrationError(
+      seconds === null
+        ? `${label} is rate-limiting us — wait a few minutes and try again.`
+        : `${label} is rate-limiting us — try again in about ${Math.max(1, seconds)}s.`,
+    );
+  }
+  return new IntegrationError(`${label} ${what} failed (${res.status})`);
 }
 
 export async function withDeadline<T>(

@@ -28,6 +28,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { applyEngineInputs, findParams, patchParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { IntegrationError } from '../clients/deadline.js';
 
 /**
  * Accounting software integrations (409.ai §23).
@@ -207,9 +208,29 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
           fetchFn,
         );
       } catch (err) {
+        /**
+         * Same rule as the cap-table sync beside it: an echoed message has to
+         * come from a type whose wording this codebase vouched for. The client
+         * throws `IntegrationError` for everything a provider did — a refusal,
+         * a rate limit, a non-JSON body, a deadline — and those name the
+         * provider and nothing else. Anything else reaching here is ours.
+         *
+         * The `recordImportError` write is now best-effort. It sits in a catch
+         * whose whole job is to report the failure it caught, and it is a query
+         * against the same pool: if the import failed *because* the database is
+         * unwell, this write fails too, and the rejection replaced an accurate
+         * "Xero report fetch failed (503)" with a 500 about something else.
+         */
         const message = err instanceof Error ? err.message : String(err);
-        await recordImportError(deps.pool, connection.id, message);
-        throw problems.unprocessable(`Import failed: ${message}`);
+        await recordImportError(deps.pool, connection.id, message).catch((bookErr: unknown) => {
+          req.log.warn({ err: bookErr, connectionId: connection.id }, 'could not record import error');
+        });
+        req.log.warn({ err, provider, connectionId: connection.id }, 'accounting import failed');
+        throw problems.unprocessable(
+          err instanceof IntegrationError
+            ? `Import failed: ${err.message}`
+            : `${PROVIDER_LABELS[provider]} import failed — the details are in the connection's last error`,
+        );
       }
 
       // Apply to the valuation: revenue params + the full snapshot as engine

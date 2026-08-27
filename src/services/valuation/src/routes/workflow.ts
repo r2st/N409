@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { VALUATION_STATES, type ValuationState } from '../domain/valuation.js';
 import { BULK_ACTIONS, canRestart, canTransition, nextState, RESTART_STATE } from '../domain/workflow.js';
@@ -17,6 +17,7 @@ import { applyValuationState } from '../domain/applyState.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { InternalServiceError } from '../clients/internal.js';
 
 /**
  * Workflow engine routes (M4, P1 #22) + bulk actions (P1 #23). All mutations
@@ -312,10 +313,31 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
           }
         }
       } catch (err) {
+        /**
+         * A 200 body is still a body a client reads.
+         *
+         * Bulk answers per row, so one row's failure is reported inside a
+         * successful response rather than thrown — and that put `err.message`
+         * in the client's hands with none of the care the problem bodies get.
+         * Every transition here writes to Postgres, so what a refused row
+         * actually produced was the driver's wording, its constraint name and
+         * (in `err.detail`) the values it rejected. `errorBodyDisclosure.test`
+         * scans `problems.*` calls and cannot see this at all: the leak is not
+         * in a problem document, it is in the ordinary shape of the answer.
+         *
+         * Narrowed to the two types whose messages are written to be read, the
+         * same way `routes/research.ts` reports its per-topic failures. The
+         * constant is not a loss: a bulk row that fails is retried as a single
+         * request, which answers with the real problem document.
+         */
+        app.log.warn({ err, valuationId: id }, 'bulk transition failed for one row');
         results.push({
           id,
           ok: false,
-          error: err instanceof Error ? err.message : String(err),
+          error:
+            err instanceof ApiProblem || err instanceof InternalServiceError
+              ? err.message
+              : 'This engagement could not be updated.',
         });
       }
     }

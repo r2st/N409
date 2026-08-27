@@ -14,7 +14,7 @@ import {
   StripeApiError,
   verifyWebhookSignature,
 } from '../payments/stripe.js';
-import { checkoutAvailableTo, isSettled } from './payments.js';
+import { checkoutAvailableTo, isSettled, stripeProblem } from './payments.js';
 import {
   billingSummary,
   cancelSubscription,
@@ -115,17 +115,36 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     }
     const user = await findUserById(deps.pool, principal.id);
     const base = deps.publicBaseUrl.replace(/\/$/, '');
-    const session = await createSubscriptionCheckoutSession(deps.stripeSecretKey, {
-      userId: principal.id,
-      planTier: plan.tier,
-      planName: plan.name,
-      amountCents: plan.price_cents,
-      currency: plan.currency,
-      interval: plan.interval,
-      successUrl: `${base}/settings?billing=success`,
-      cancelUrl: `${base}/settings?billing=canceled`,
-      customerEmail: user?.email,
-    });
+    /**
+     * The only one of the three Stripe routes with no catch at all.
+     *
+     * Every failure of this call — Stripe rejecting the parameters, Stripe
+     * being down, our own deadline — came back as `500` with an empty body, on
+     * the button that starts a paid subscription. The other two routes already
+     * answered a rejection properly; this one answered nothing, so a subscriber
+     * who could not start a plan had no way to tell a transient outage from a
+     * misconfigured price and neither did support.
+     */
+    let session;
+    try {
+      session = await createSubscriptionCheckoutSession(deps.stripeSecretKey, {
+        userId: principal.id,
+        planTier: plan.tier,
+        planName: plan.name,
+        amountCents: plan.price_cents,
+        currency: plan.currency,
+        interval: plan.interval,
+        successUrl: `${base}/settings?billing=success`,
+        cancelUrl: `${base}/settings?billing=canceled`,
+        customerEmail: user?.email,
+      });
+    } catch (err) {
+      if (err instanceof StripeApiError) {
+        req.log.warn({ err, unreachable: err.unreachable, planTier: plan.tier }, 'stripe subscribe failed');
+        throw stripeProblem(err);
+      }
+      throw err;
+    }
     return { checkout_url: session.url };
   });
 
@@ -180,13 +199,8 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       return { portal_url: session.url };
     } catch (err) {
       if (err instanceof StripeApiError) {
-        req.log.warn({ err }, 'stripe billing portal session failed');
-        throw new ApiProblem({
-          status: 502,
-          title: 'Bad Gateway',
-          type: 'urn:n409:problem:stripe',
-          detail: `Stripe: ${err.message}`,
-        });
+        req.log.warn({ err, unreachable: err.unreachable }, 'stripe billing portal session failed');
+        throw stripeProblem(err);
       }
       throw err;
     }

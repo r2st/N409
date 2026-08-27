@@ -238,6 +238,19 @@ export const PROBLEM_CATALOG: Readonly<Record<string, ProblemCatalogEntry>> = {
       'budget shared across every key in the organisation.',
     retry: 'after-delay',
   },
+  'urn:n409:problem:document-unreadable': {
+    type: 'urn:n409:problem:document-unreadable',
+    status: '500',
+    title: 'Document Unreadable',
+    summary:
+      'The document row exists but its stored bytes will not read back — they failed decryption or ' +
+      'their recorded SHA-256, so the file is damaged or was sealed with a key this deployment lost.',
+    resolution:
+      'Do not retry: the same bytes fail the same way every time. Re-upload the file. If every ' +
+      'document answers this way it is the encryption key, not the files, and an operator has to ' +
+      'restore `DOCUMENTS_ENCRYPTION_KEY` (or set `_PREVIOUS` to the retired one).',
+    retry: 'never',
+  },
   'urn:n409:problem:upstream': {
     type: 'urn:n409:problem:upstream',
     status: '502',
@@ -254,10 +267,13 @@ export const PROBLEM_CATALOG: Readonly<Record<string, ProblemCatalogEntry>> = {
     type: 'urn:n409:problem:stripe',
     status: '502',
     title: 'Bad Gateway',
-    summary: 'Stripe refused the operation; `detail` carries its reason.',
+    summary:
+      'Stripe refused the operation, or could not be reached at all; `detail` says which and is safe ' +
+      'to show a person.',
     resolution:
-      '`detail` is Stripe’s own message and is safe to show a person. Retry with backoff if it reads ' +
-      'like an outage; a declined card or a rejected parameter will be refused again unchanged.',
+      'Retry with backoff when `detail` says Stripe could not be reached — nothing was charged. When ' +
+      'it carries Stripe’s own message, a declined card or a rejected parameter will be refused again ' +
+      'unchanged and the caller has to act on what it says.',
     retry: 'with-backoff',
   },
   'urn:n409:problem:unavailable': {
@@ -331,6 +347,18 @@ export const PROBLEM_CATALOG: Readonly<Record<string, ProblemCatalogEntry>> = {
       'Neither transient nor the caller’s fault: this deployment has no Stripe key, so retrying cannot ' +
       'help. An operator sets `STRIPE_SECRET_KEY`; until then the payment surfaces are off.',
     retry: 'never',
+  },
+  'urn:n409:problem:database-unavailable': {
+    type: 'urn:n409:problem:database-unavailable',
+    status: '503',
+    title: 'Service Unavailable',
+    summary:
+      'The database could not serve this request in time — a deadlock, a statement past its timeout, ' +
+      'a failover, or every pooled connection busy. The transaction was rolled back.',
+    resolution:
+      'Retry with backoff. No idempotency key is needed and none would help: the statement that failed ' +
+      'was rolled back, so the write did not land. Distinct from `internal`, which cannot promise that.',
+    retry: 'with-backoff',
   },
   'urn:n409:problem:internal': {
     type: 'urn:n409:problem:internal',

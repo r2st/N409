@@ -88,6 +88,34 @@ const stripeUpstream = (detail: string) =>
   });
 
 /**
+ * The client-facing answer for a failed Stripe call, whichever way it failed.
+ *
+ * Two failures wearing one error type, and they owe the reader different
+ * sentences. A rejection carries Stripe's own wording and that wording is the
+ * useful part — "Your card was declined", "No such customer" — so it is passed
+ * through. An unreachable Stripe carries ours, because the transport's message
+ * names a hostname and a syscall; what the person clicking "Pay" needs from it
+ * is the one fact the message does not contain, which is that no money moved.
+ *
+ * Both are 502 `urn:n409:problem:stripe`. The status is the same because the
+ * caller's options are the same — wait and try again — and because a status
+ * split here would put a second thing in the contract to get wrong. What the
+ * body distinguishes is what the person does next, and that is the `detail`.
+ *
+ * Exported so `routes/billing.ts` answers subscriptions and the billing portal
+ * the same way; three routes had three different answers, and one of them had
+ * none at all.
+ */
+export function stripeProblem(err: StripeApiError): ApiProblem {
+  if (err.unreachable) {
+    return stripeUpstream(
+      'Stripe could not be reached, so the payment was not started. Nothing has been charged — try again in a moment.',
+    );
+  }
+  return stripeUpstream(`Stripe: ${err.message}`);
+}
+
+/**
  * Does this Checkout Session's `payment_status` mean the money is in?
  *
  * `paid` and `no_payment_required` (a 100%-discounted session) are settled;
@@ -297,8 +325,8 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         });
       } catch (err) {
         if (err instanceof StripeApiError) {
-          req.log.warn({ err }, 'stripe checkout session failed');
-          throw stripeUpstream(`Stripe: ${err.message}`);
+          req.log.warn({ err, unreachable: err.unreachable }, 'stripe checkout session failed');
+          throw stripeProblem(err);
         }
         throw err;
       }

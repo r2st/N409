@@ -381,16 +381,46 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
     expect(await listPayments(ctx.pool, vid)).toEqual([]);
   });
 
-  it('does not disguise a local failure as a Stripe failure', async () => {
-    // `fetch` rejecting is our network, our DNS, or our timeout. Reporting it
-    // as 502 `urn:n409:problem:stripe` would send whoever is on call to the
-    // Stripe status page for an outage on this side of the connection.
+  /**
+   * A transport failure, and the decision this test reverses.
+   *
+   * It used to assert a 500, on the reasoning that `fetch` rejecting is our
+   * network, our DNS or our timeout, and that answering `urn:n409:problem:stripe`
+   * would send whoever is on call to the Stripe status page for an outage on
+   * this side of the connection. That concern is real. What it protected was
+   * the diagnosis, and what it paid with was the answer: the person who pressed
+   * "Pay now" got an empty 500, on a payment button, with no way to tell a blip
+   * from a bug and no statement that they had not been charged.
+   *
+   * Both are available, because they are answered in different places. The
+   * client gets a 502 whose `detail` is deliberately neutral about whose fault
+   * it is — "Stripe could not be reached" is true whether the break is theirs
+   * or ours — plus the one fact that decides what they do next, which is that
+   * no money moved. The on-call engineer gets the log line, which now carries
+   * `unreachable: true` and the original `getaddrinfo`/`ECONNREFUSED` on the
+   * error's `cause`; before, it carried a stack and the word "fetch failed".
+   *
+   * So the misdirection the old assertion feared is answered by the log
+   * distinguishing the two, not by the client body refusing to say anything.
+   */
+  it('answers a transport failure as an unreachable Stripe, and creates nothing', async () => {
     const vid = await newValuation('Broken Socket Co');
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed'));
+    const spy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      Object.assign(new TypeError('fetch failed'), {
+        cause: Object.assign(new Error('getaddrinfo ENOTFOUND api.stripe.com'), { code: 'ENOTFOUND' }),
+      }),
+    );
 
     const res = await checkout(client.token, vid);
-    expect(res.statusCode).toBe(500);
-    expect(res.json().type).not.toBe('urn:n409:problem:stripe');
+    expect(res.statusCode).toBe(502);
+    expect(res.json().type).toBe('urn:n409:problem:stripe');
+    expect(res.json().detail).toMatch(/Nothing has been charged/);
+    // Neutral about whose network broke, and carrying none of the topology:
+    // the host and the syscall stay in the log.
+    expect(JSON.stringify(res.json())).not.toMatch(/ENOTFOUND|getaddrinfo/);
+    // Not retried — a re-sent create is a second payable session.
+    expect(spy).toHaveBeenCalledTimes(1);
+    // And still no pending row for a session that was never created.
     expect(await listPayments(ctx.pool, vid)).toEqual([]);
   });
 

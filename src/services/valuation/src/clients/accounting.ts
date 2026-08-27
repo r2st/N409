@@ -11,7 +11,15 @@
  * All HTTP goes through an injectable fetch so tests never touch the network.
  */
 
-import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, readJson, readJsonArray, withDeadline } from './deadline.js';
+import {
+  IMPORT_TIMEOUT_MS,
+  IntegrationError,
+  OAUTH_TIMEOUT_MS,
+  providerRefused,
+  readJson,
+  readJsonArray,
+  withDeadline,
+} from './deadline.js';
 
 export const ACCOUNTING_PROVIDERS = ['xero', 'quickbooks', 'freshbooks', 'netsuite', 'sage', 'wave'] as const;
 export type AccountingProvider = (typeof ACCOUNTING_PROVIDERS)[number];
@@ -183,10 +191,12 @@ export async function exchangeCode(
     }),
   );
   if (!res.ok) {
-    throw new Error(`${PROVIDER_LABELS[provider]} token exchange failed (${res.status})`);
+    throw providerRefused(PROVIDER_LABELS[provider], 'token exchange', res);
   }
   const body = (await readJson(res, PROVIDER_LABELS[provider])) as TokenResponse;
-  if (!body.access_token) throw new Error(`${PROVIDER_LABELS[provider]} returned no access token`);
+  if (!body.access_token) {
+    throw new IntegrationError(`${PROVIDER_LABELS[provider]} returned no access token`);
+  }
 
   const tokens: TokenSet = {
     accessToken: body.access_token,
@@ -441,12 +451,12 @@ export async function fetchBalanceSheet(
         signal,
       }),
     );
-    if (!res.ok) throw new Error(`Xero balance sheet fetch failed (${res.status})`);
+    if (!res.ok) throw providerRefused('Xero', 'balance sheet fetch', res);
     return parseXeroBalanceSheet(await readJson(res, label));
   }
   if (provider === 'quickbooks') {
     const realmId = tokens.externalOrgId;
-    if (!realmId) throw new Error('QuickBooks connection is missing its realm id');
+    if (!realmId) throw new IntegrationError('QuickBooks connection is missing its realm id');
     const res = await withDeadline(label, IMPORT_TIMEOUT_MS, (signal) =>
       fetchFn(
         `https://quickbooks.api.intuit.com/v3/company/${encodeURIComponent(realmId)}/reports/BalanceSheet`,
@@ -456,10 +466,10 @@ export async function fetchBalanceSheet(
         },
       ),
     );
-    if (!res.ok) throw new Error(`QuickBooks balance sheet fetch failed (${res.status})`);
+    if (!res.ok) throw providerRefused('QuickBooks', 'balance sheet fetch', res);
     return parseQuickBooksBalanceSheet(await readJson(res, label));
   }
-  throw new Error(`${label} balance sheet import is not supported yet`);
+  throw new IntegrationError(`${label} balance sheet import is not supported yet`);
 }
 
 /** The P&L half of an import. Its failure fails the import. */
@@ -479,14 +489,14 @@ async function fetchProfitAndLoss(
         signal,
       }),
     );
-    if (!res.ok) throw new Error(`Xero report fetch failed (${res.status})`);
+    if (!res.ok) throw providerRefused('Xero', 'report fetch', res);
     return { ...parseXeroProfitAndLoss(await readJson(res, PROVIDER_LABELS[provider])), provider };
   }
   if (provider === 'quickbooks') {
     // Held in a local because TypeScript drops the narrowing above once the
     // property is read inside a callback.
     const realmId = tokens.externalOrgId;
-    if (!realmId) throw new Error('QuickBooks connection is missing its realm id');
+    if (!realmId) throw new IntegrationError('QuickBooks connection is missing its realm id');
     const res = await withDeadline(PROVIDER_LABELS[provider], IMPORT_TIMEOUT_MS, (signal) =>
       fetchFn(
         `https://quickbooks.api.intuit.com/v3/company/${encodeURIComponent(realmId)}/reports/ProfitAndLoss`,
@@ -496,13 +506,13 @@ async function fetchProfitAndLoss(
         },
       ),
     );
-    if (!res.ok) throw new Error(`QuickBooks report fetch failed (${res.status})`);
+    if (!res.ok) throw providerRefused('QuickBooks', 'report fetch', res);
     return {
       ...parseQuickBooksProfitAndLoss(await readJson(res, PROVIDER_LABELS[provider])),
       provider,
     };
   }
-  throw new Error(`${PROVIDER_LABELS[provider]} import is not supported yet`);
+  throw new IntegrationError(`${PROVIDER_LABELS[provider]} import is not supported yet`);
 }
 
 /**
