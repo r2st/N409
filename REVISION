@@ -1,5 +1,149 @@
 176dadc94f4f731b6646d9bbbe67c27fd603fd34
 # N409 revision
+# commit:    61d3724
+# subject:   the chart that outgrew its own wire contract, and the offload that stopped silently
+# previous:  3ed3c78 (the failures that reached a person as an empty 500).
+# includes:  1 commit — R176, a scalability round (M13) over report generation:
+#            seeded cap tables and histories at the platform's own ceilings,
+#            then measured what the render costs and what still fits.
+#
+#            The failure this round is about does not look like a failure, and
+#            that is the whole of why it lasted.
+#
+#            R98 moved the PDF render off the valuation event loop and onto the
+#            report service, because pdfkit is synchronous and a 409A render is
+#            436–661ms during which the API serves nobody. The hop has a wire
+#            schema, `RenderBody`, and the schema carries caps the library it
+#            wraps does not. A payload that outgrows one is a 422 — and a 422 is
+#            not an error here, it is a *fallback*: `clients/reportRender.ts`
+#            renders the identical bytes in-process instead, which is correct,
+#            deliberate, and the thing that makes the offload a latency
+#            dependency rather than an availability one. Correct PDF, correct
+#            route, 200, and the half-second is quietly back. Nothing says so
+#            except `report_render_total{mode="local"}`.
+#
+#            `historyChart` was over one of those caps. It emits one point per
+#            prior valuation of the same client and `historyFor` bounds neither
+#            end of it — the scope is `(partner_id, company_name)`, so the
+#            series grows for the life of the relationship and never shrinks —
+#            against a wire cap of 40 points. A client on its forty-first
+#            valuation therefore lost the offload for *every* render of *every*
+#            report, permanently, from that valuation onward. Measured end to
+#            end rather than reasoned about: 40 points delegate, 41 answer
+#            `too_big` at `summary.charts.2.points` and fall back. The
+#            engagements it hits are the ones with the longest history, which
+#            are the ones with the largest reports.
+#
+#            The cap is now cut at the producer, from the *old* end, because the
+#            question a trend chart answers is how this conclusion compares with
+#            the recent ones. The note states the omission — "the most recent 40
+#            of 47 prior valuations … 7 earlier valuations are not plotted" —
+#            rather than leaving a reader to take a truncated series for the
+#            client's whole history. A schedule that silently drops rows is this
+#            platform's recurring defect and a signed report is the worst place
+#            for it.
+#
+#            The census written for it caught two more. `approachChart` and
+#            `weightingChart` both iterate `results.approaches` with no bound at
+#            all. Neither is reachable from today's engine, which writes four
+#            approaches — but `results` is a JSON column written by whatever
+#            engine version ran, so "four" is a fact about another service's
+#            current release rather than a property of this function's input,
+#            and the cost of being wrong is not a bad chart but the silent
+#            fallback above. They are bounded now, and *differently*, because
+#            the two charts make different claims. The bar chart shows
+#            alternative estimates of one quantity, so its tail is truncated
+#            with the count disclosed — an "other approaches" bar would be a sum
+#            of numbers that must not be added. The donut's entire point is that
+#            the reader can see the weights make a whole without adding them up,
+#            so its tail is *folded* into one slice instead, and its centre goes
+#            on counting approaches rather than arcs.
+#
+#            The four caps had been four literals in one Zod schema, which is
+#            why three producers could grow past them without anything noticing.
+#            They are `CHART_SERIES_LIMITS` now, exported from `pdf.ts` beside
+#            the drawing code that is the actual reason the numbers are what
+#            they are — 40 points is 11pt between markers of radius 2.6 across
+#            the usable width — and read by both the wire schema and the
+#            producers.
+#
+#            What the seeded measurements say about everything else, since a
+#            scalability round that reports only its one bug has not said
+#            whether the rest is safe:
+#
+#            Exhibit F is quadratic in the class count twice over: one row per
+#            breakpoint, and every row names every class participating in that
+#            tranche with its share. Against the real engine's output — 24 KB of
+#            HTML at 26 classes, 69 KB at 50, 235 KB at 100 — the 200,000-
+#            character section cap is crossed between 50 and 100. The only thing
+#            holding it is `EngineInputsBody`'s `share_classes` cap of 50, three
+#            files away, with nothing in it to say that raising it stops the
+#            offload; the engine itself accepts 200. That is now a test against
+#            a committed 50-class allocation from the real engine, so doubling
+#            the legal cap table fails an assertion months before an operator
+#            notices the counter climbing.
+#
+#            The largest document the platform can be *asked* for — 50 authored
+#            chapters at `PutBody`'s 100,000 characters apiece, plus the
+#            schedules — is 4.9 MB against the report service's 8 MB body limit,
+#            54 sections against a cap of 100, and renders in 1.7s holding about
+#            85 MB. Bounded, with room, and the numbers are now assertions.
+#            Memory is the load-bearing half of that: pdfkit is constructed
+#            `bufferPages: true`, so every page stays resident until the running
+#            heads and the contents page can be written, and the output is
+#            accumulated as chunks and then concatenated — the finished document
+#            exists twice at the end. That is the model `MAX_DELEGATED_QUEUED`
+#            and the report unit's `MemoryMax` are sized from, and it is only
+#            safe while the input is bounded.
+#
+#            Report data fetching is O(1) in the engagement, and now says so.
+#            `listQueryScaling.test.ts` makes that argument for every collection
+#            endpoint and the report render is not one — it is a single-row
+#            route that reads eleven tables to answer one request, run as two
+#            waves of `Promise.all`, which is the shape where a loader that
+#            reads one row per peer looks exactly like one that reads one row.
+#            Quadrupling the four things that actually grow on a long-lived
+#            client — prior valuations, guideline companies, workbook cells,
+#            research answers — buys zero extra statements. The FMV trend is the
+#            one report query not keyed on the valuation being rendered, so its
+#            plan is asserted rather than assumed: with `enable_seqscan` off an
+#            index path exists for both the outer scope and the LATERAL that
+#            finds each valuation's latest calculation, which is the half that
+#            would be an N+1 in disguise.
+#
+#            Exports were measured and left alone. `MAX_EXPORT_ROWS`,
+#            `truncationOf`, the `x-export-truncated` header and the visible
+#            notice already do what this round would have asked for.
+#
+#            Deliberate break, each: reverting the `historyChart` slice fails
+#            the delegation case at 41 points with the 40-point case still
+#            green; reverting either approach-chart bound fails the census with
+#            the trend assertions still green; raising `share_classes` past 50
+#            fails the wire-contract headroom assertion.
+#
+# gap:       Three routes build their own WHERE over `valuations v` from
+#            `sameCompanyFilter` and not one of them excludes `archived_at`.
+#            R55/R56 swept `repos/` and these live in `routes/`, so they were
+#            missed by construction. A retired engagement's concluded FMV is
+#            plotted in a *signed* report's trend chart (`historyFor`), is
+#            computed from by the analytics benchmark, and is offered as a
+#            bridge source by `routes/bridge.ts` — where the R57 question
+#            applies, which is not "does a list show it" but "can a write still
+#            be aimed at it". Found while measuring the trend chart, not fixed
+#            here: it is a soft-delete round's work and folding it into a
+#            scalability commit would hide it in the wrong entry. The fix
+#            belongs on the shared fragment rather than in the three callers.
+#
+#            Exhibit F is legible at the cap table it is measured against and
+#            not much past it. At 50 classes one "Participants" cell carries 50
+#            names and percentages — 1,278 characters in a five-column table —
+#            across 70 such rows. That is correct disclosure and an auditor
+#            wants it, but it is a wall rather than a schedule, and the exhibit
+#            would want restructuring (a participation matrix, or the tail
+#            folded) before the class cap is ever raised. Not attempted: it is a
+#            deliverable design change, not a scaling fix.
+
+# N409 revision
 # commit:    3ed3c78
 # subject:   the failures that reached a person as an empty 500, and the census that could not see two of them
 # previous:  712daa0 (the two settlement events one payment sends).
