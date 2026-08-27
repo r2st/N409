@@ -6,6 +6,7 @@ import {
   applyPartnerEmailTemplates,
   emailsForTransition,
   notificationsForTransition,
+  type EmailSpec,
   type PartnerEmailTemplates,
   type Recipient,
   type ValuationSnapshot,
@@ -15,7 +16,15 @@ import { findUsersByIds } from '../repos/users.js';
 import { channelsFor, preferenceOverrides } from '../repos/notificationPreferences.js';
 import { enqueueEmail, markEmail, type EmailOutboxRow } from '../repos/emailOutbox.js';
 import { recordSendFailure } from '../repos/emailDelivery.js';
-import { applyTemplateOverrides, valuationTemplateVars } from '../domain/communications.js';
+import {
+  alwaysTemplateVars,
+  applyTemplateOverrides,
+  valuationLinkVars,
+  valuationTemplateVars,
+} from '../domain/communications.js';
+import type { SupportEmailSource } from './autoEmails.js';
+
+export type { SupportEmailSource };
 import { templateOverrides } from '../repos/communications.js';
 import { firePartnerWebhooksForTransition } from './partnerWebhooks.js';
 
@@ -28,6 +37,29 @@ import { firePartnerWebhooksForTransition } from './partnerWebhooks.js';
 
 export interface EmailTransport {
   send(email: EmailOutboxRow): Promise<void>;
+}
+
+/**
+ * What a caller must carry so a transition's templates can be *rendered*.
+ *
+ * `publicBaseUrl` answers the `link` scope and `settings` answers
+ * `{{support_email}}`. Both optional, and deliberately: a transition must
+ * still be announced when neither is wired — an unset base URL costs a link,
+ * not the message. Extracted as its own type because four route modules and
+ * `applyValuationState` all have to pass them through to `onStateChanged`, and
+ * a spread-out list of two optional fields is how one of them ends up with
+ * only the first.
+ */
+export interface TransitionRenderDeps {
+  publicBaseUrl?: string;
+  settings?: SupportEmailSource;
+}
+
+/** Everything {@link onStateChanged} needs. */
+export interface TransitionDeps extends TransitionRenderDeps {
+  pool: pg.Pool;
+  transport?: EmailTransport;
+  log?: FastifyBaseLogger;
 }
 
 /**
@@ -78,7 +110,7 @@ async function resolveRecipients(
   pool: pg.Pool,
   v: ValuationSnapshot,
   recipients: readonly Recipient[],
-): Promise<Map<Recipient, { id: string; email: string } | null>> {
+): Promise<Map<Recipient, { id: string; email: string; first_name: string | null } | null>> {
   const wanted = recipients.map((r) => [r, userIdFor(v, r)] as const);
   const users = await findUsersByIds(
     pool,
@@ -119,7 +151,7 @@ async function resolveRecipients(
  * dropped notification has nothing else anywhere recording that it was owed.
  */
 export async function onStateChanged(
-  deps: { pool: pg.Pool; transport?: EmailTransport; log?: FastifyBaseLogger },
+  deps: TransitionDeps,
   valuation: ValuationSnapshot,
   to: ValuationState,
 ): Promise<void> {
@@ -145,39 +177,40 @@ export async function onStateChanged(
 }
 
 async function deliverTransitionMessages(
-  deps: { pool: pg.Pool; transport?: EmailTransport; log?: FastifyBaseLogger },
+  deps: TransitionDeps,
   valuation: ValuationSnapshot,
   to: ValuationState,
 ): Promise<void> {
-  let emailSpecs = emailsForTransition(valuation, to);
+  const emailSpecs = emailsForTransition(valuation, to);
   const notifySpecs = notificationsForTransition(valuation, to);
   if (emailSpecs.length === 0 && notifySpecs.length === 0) return;
 
   // DB communication templates (§15.5): enabled rows re-template the built-in
-  // workflow content. Applied before partner overrides so white-label still wins.
-  if (emailSpecs.length > 0) {
-    const overrides = await templateOverrides(
-      deps.pool,
-      emailSpecs.map((s) => s.templateKey),
-    );
-    emailSpecs = applyTemplateOverrides(emailSpecs, overrides, valuationTemplateVars(valuation));
-  }
+  // workflow content. Fetched here, applied per recipient below, because two of
+  // the names a template may use — `recipient_name` above all — are answers
+  // about *who is being written to*, and this transition can address two people.
+  const overrides: Awaited<ReturnType<typeof templateOverrides>> =
+    emailSpecs.length > 0
+      ? await templateOverrides(
+          deps.pool,
+          emailSpecs.map((s) => s.templateKey),
+        )
+      : new Map();
 
   // White-label (improvement 8): partner engagements use the partner's own
   // email templates where defined; missing keys fall back to the defaults.
+  //
+  // The partner's *name* is read on this same row and was then thrown away —
+  // it went into `applyPartnerEmailTemplates`' own vars and nowhere else, so a
+  // DB template on a partner engagement rendered `{{partner_name}}` blank
+  // while the partner's own template beside it rendered it correctly.
+  let partner: { name: string; email_templates: PartnerEmailTemplates } | null = null;
   if (valuation.partner_id && emailSpecs.length > 0) {
     const { rows } = await deps.pool.query<{
       name: string;
       email_templates: PartnerEmailTemplates;
     }>('SELECT name, email_templates FROM partners WHERE id = $1', [valuation.partner_id]);
-    const partner = rows[0];
-    if (partner && Object.keys(partner.email_templates ?? {}).length > 0) {
-      emailSpecs = applyPartnerEmailTemplates(emailSpecs, partner.email_templates, {
-        company_name: valuation.company_name,
-        kind: valuation.kind,
-        partner_name: partner.name,
-      });
-    }
+    partner = rows[0] ?? null;
   }
 
   const recipients = await resolveRecipients(deps.pool, valuation, [
@@ -189,12 +222,64 @@ async function deliverTransitionMessages(
   const recipientIds = [...recipients.values()].filter((u) => u !== null).map((u) => u.id);
   const prefs = await preferenceOverrides(deps.pool, recipientIds);
 
+  // The measurement date is an engine input in `valuation_params` (0041) and
+  // is on no valuation row, so a template naming `{{valuation_date}}` had
+  // nothing to read even though every caller passes a full row. Read only when
+  // some template will actually be re-rendered — the built-in copy names none
+  // of these, so the ordinary transition pays nothing for it.
+  const renders = overrides.size > 0 || Object.keys(partner?.email_templates ?? {}).length > 0;
+  const [valuationDate, supportEmail] = renders
+    ? await Promise.all([
+        deps.pool
+          .query<{ valuation_date: string | null }>(
+            `SELECT engine_inputs->>'valuation_date' AS valuation_date
+               FROM valuation_params WHERE valuation_id = $1`,
+            [valuation.id],
+          )
+          .then((r) => r.rows[0]?.valuation_date ?? null)
+          .catch(() => null),
+        deps.settings?.get('support_email').catch(() => null) ?? null,
+      ])
+    : [null, null];
+
+  /**
+   * This transition's templates, as this one recipient should read them.
+   *
+   * DB override first, partner override second, so white-label still wins —
+   * the order the two were applied in before they moved in here.
+   */
+  const renderFor = (spec: EmailSpec, user: { email: string; first_name?: string | null }): EmailSpec => {
+    if (!renders) return spec;
+    const vars = {
+      ...alwaysTemplateVars({
+        recipient_name: user.first_name,
+        recipient_email: user.email,
+        platform_name: partner?.name,
+        support_email: supportEmail,
+      }),
+      ...valuationLinkVars(deps.publicBaseUrl, valuation.id),
+      ...valuationTemplateVars({
+        ...valuation,
+        valuation_date: valuationDate,
+        partner_name: partner?.name ?? null,
+      }),
+    };
+    const [withDb] = applyTemplateOverrides([spec], overrides, vars);
+    if (!partner || Object.keys(partner.email_templates ?? {}).length === 0) return withDb!;
+    return applyPartnerEmailTemplates([withDb!], partner.email_templates, {
+      company_name: valuation.company_name,
+      kind: valuation.kind,
+      partner_name: partner.name,
+    })[0]!;
+  };
+
   const queued = await withTransaction(deps.pool, async (client) => {
     const out: EmailOutboxRow[] = [];
-    for (const spec of emailSpecs) {
-      const user = recipients.get(spec.recipient);
+    for (const raw of emailSpecs) {
+      const user = recipients.get(raw.recipient);
       if (!user) continue;
-      if (!channelsFor(prefs, user.id, spec.templateKey).email) continue;
+      if (!channelsFor(prefs, user.id, raw.templateKey).email) continue;
+      const spec = renderFor(raw, user);
       out.push(
         await enqueueEmail(client, {
           valuationId: valuation.id,

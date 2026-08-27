@@ -139,6 +139,21 @@ export async function userExists(pool: pg.Pool, id: string): Promise<boolean> {
  * re-reading the same reviewer for every trigger on the same engagement. Ids
  * are de-duplicated here so the caller does not have to.
  */
+/**
+ * Users by id, deactivated accounts excluded.
+ *
+ * Both callers use the result to decide who to *write to* — the state-change
+ * hook resolves the owner and reviewer of a transition, the monitoring sweep
+ * resolves the reviewer to alert — and neither applied the soft delete that
+ * `listUsers`, the firm roster, the reviewer picker, password reset and email
+ * verification all apply. The drip-campaign candidate query grew its own
+ * `u.deleted_at IS NULL` for exactly this reason; these two are the rest of it.
+ * A deactivated account kept receiving workflow email and in-app notifications,
+ * which is the one thing deactivating it was supposed to stop.
+ *
+ * Filtered here rather than at the two call sites so a third caller inherits
+ * the rule instead of rediscovering it.
+ */
 export async function findUsersByIds(
   pool: pg.Pool,
   ids: readonly string[],
@@ -150,7 +165,7 @@ export async function findUsersByIds(
      FROM users u
      LEFT JOIN user_roles ur ON ur.user_id = u.id
      LEFT JOIN roles r ON r.id = ur.role_id
-     WHERE u.id = ANY($1::ulid[])
+     WHERE u.id = ANY($1::ulid[]) AND u.deleted_at IS NULL
      GROUP BY u.id`,
     [unique],
   );

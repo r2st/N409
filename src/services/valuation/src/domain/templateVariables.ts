@@ -53,7 +53,11 @@ export const TEMPLATE_VARIABLES: readonly TemplateVariable[] = [
   {
     name: 'platform_name',
     scope: 'always',
-    description: 'The sending brand — the platform, or the partner firm on a white-labelled send.',
+    // "The partner firm on a white-labelled send" was the wording, and it left
+    // open which signal meant white-labelled — the branding flag, or the
+    // partner having its own email templates. Both send paths brand a partner
+    // engagement as its partner, so that is what this now says.
+    description: 'The sending brand — the partner firm on a partner engagement, the platform otherwise.',
     sample: 'N409',
   },
   {
@@ -119,8 +123,12 @@ export const TEMPLATE_VARIABLES: readonly TemplateVariable[] = [
   {
     name: 'payment_link',
     scope: 'link',
-    description: 'The checkout link for an unpaid engagement.',
-    sample: 'https://app.n409.local/valuations/01JQ…/pay',
+    // The engagement's own page, because checkout is a control on it and there
+    // is no `/pay` route to send anyone to. The sample said there was, and a
+    // sample is what an operator copies out of the palette when they want to
+    // see the shape of the thing.
+    description: 'Where an unpaid engagement is settled — its page, which carries the checkout control.',
+    sample: 'https://app.n409.local/valuations/01JQ…',
   },
   {
     name: 'invitation_link',
@@ -138,7 +146,8 @@ export const TEMPLATE_VARIABLES: readonly TemplateVariable[] = [
     name: 'receipt_link',
     scope: 'link',
     description: "A signed-in link to the itemised receipt for an engagement's payment.",
-    sample: 'https://app.n409.local/valuations/01JQ…/payments',
+    // What `routes/payments.ts` actually builds. `/payments` is not a route.
+    sample: 'https://app.n409.local/valuations/01JQ…',
   },
   {
     name: 'invoice_link',

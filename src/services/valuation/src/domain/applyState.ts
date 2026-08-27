@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type pg from 'pg';
 import { patchValuation, type ValuationRow } from '../repos/valuations.js';
-import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
+import { onStateChanged, type EmailTransport, type TransitionRenderDeps } from '../hooks/stateChange.js';
 import { assertPublishGate, assertPublishGateForWrite } from './publishGate.js';
 import type { EventActor } from '../events/record.js';
 import type { ValuationState } from './valuation.js';
@@ -28,7 +28,7 @@ import type { ValuationState } from './valuation.js';
  * is the state being transitioned from. A caller that batched its reads does;
  * see the bulk executor in routes/workflow.ts.
  */
-export interface ApplyStateDeps {
+export interface ApplyStateDeps extends TransitionRenderDeps {
   pool: pg.Pool;
   transport?: EmailTransport;
   log: FastifyBaseLogger;
@@ -46,6 +46,16 @@ export async function applyValuationState(
     ...(guardVersion ? { expectedVersion: valuation.version } : {}),
     preCommit: assertPublishGateForWrite(valuation.id, to),
   });
-  await onStateChanged({ pool: deps.pool, transport: deps.transport, log: deps.log }, updated, to);
+  await onStateChanged(
+    {
+      pool: deps.pool,
+      transport: deps.transport,
+      log: deps.log,
+      publicBaseUrl: deps.publicBaseUrl,
+      settings: deps.settings,
+    },
+    updated,
+    to,
+  );
   return updated;
 }

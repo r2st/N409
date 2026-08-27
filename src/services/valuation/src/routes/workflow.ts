@@ -12,7 +12,7 @@ import {
   type ValuationRow,
 } from '../repos/valuations.js';
 import { userExists } from '../repos/users.js';
-import type { EmailTransport } from '../hooks/stateChange.js';
+import type { EmailTransport, TransitionRenderDeps } from '../hooks/stateChange.js';
 import { applyValuationState } from '../domain/applyState.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
@@ -100,7 +100,7 @@ export function toBulkInput(body: z.infer<typeof BulkActionBody>): BulkInput {
   };
 }
 
-export interface WorkflowDeps {
+export interface WorkflowDeps extends TransitionRenderDeps {
   pool: pg.Pool;
   transport?: EmailTransport;
 }

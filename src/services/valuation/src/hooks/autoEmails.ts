@@ -1,10 +1,12 @@
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import {
+  alwaysTemplateVars,
   applyPromotionalFooter,
   isCampaignDue,
   isSuppressed,
   renderTemplate,
+  valuationLinkVars,
   valuationTemplateVars,
 } from '../domain/communications.js';
 import {
@@ -36,6 +38,15 @@ import type { EmailTransport } from './stateChange.js';
 const SCAN_LOCK_KEY = 0x6e34_4145; // 'n4AE' — distinct from the migrate lock
 
 /**
+ * Just the one read the rendering needs, rather than the whole settings store,
+ * so a test can pass an object literal and so this hook does not depend on the
+ * store's shape. `SystemSettingsStore` satisfies it structurally.
+ */
+export interface SupportEmailSource {
+  get(key: 'support_email'): Promise<string>;
+}
+
+/**
  * Drip campaign scan (409.ai §15.6). Called on an interval from the service
  * entrypoint and on demand from POST /admin/auto-emails/run. For every
  * enabled campaign, finds valuations that have sat in the trigger state past
@@ -59,6 +70,8 @@ export async function runDueAutoEmails(deps: {
    * a footer rather than with a broken link.
    */
   publicBaseUrl?: string;
+  /** Answers `{{support_email}}`; omitted, the variable renders empty. */
+  settings?: SupportEmailSource;
   /**
    * Candidates read per page. Defaults to AUTO_EMAIL_PAGE_LIMIT, which is well
    * above any plausible backlog — a small value here is how a test exercises
@@ -114,6 +127,7 @@ async function scan(
     log?: FastifyBaseLogger;
     now?: Date;
     publicBaseUrl?: string;
+    settings?: SupportEmailSource;
     pageSize?: number;
   },
 ): Promise<{ queued: number; skipped: number; suppressed: number }> {
@@ -127,6 +141,9 @@ async function scan(
   // event: one is a missing detail to chase, the other is a decision to honour.
   let suppressed = 0;
   const settingsUrl = deps.publicBaseUrl ? `${deps.publicBaseUrl.replace(/\/$/, '')}/settings` : null;
+  // Once per pass, not once per message: it is a cached read, but the scan
+  // renders a whole backlog and the address does not change inside one pass.
+  const supportEmail = (await deps.settings?.get('support_email').catch(() => null)) ?? null;
 
   const campaigns = (await listAutoEmails(db)).filter((c) => c.enabled);
   // One read for every campaign's template rather than one per campaign. The
@@ -169,11 +186,29 @@ async function scan(
           continue;
         }
         const destination = campaign.channel === 'sms' ? candidate.to_phone : candidate.to_email;
-        const vars = valuationTemplateVars({
-          company_name: candidate.company_name,
-          kind: candidate.kind,
-          number: candidate.number,
-        });
+        // Every scope the catalog declares for an engagement-scoped send, not
+        // the three names this scan happened to have in hand. A campaign
+        // template naming `{{due_date}}` or `{{recipient_name}}` previewed
+        // correctly for the operator who wrote it and shipped a blank — or, for
+        // the `always` and `link` scopes, literal braces — to the client.
+        const vars = {
+          ...alwaysTemplateVars({
+            recipient_name: candidate.recipient_name,
+            recipient_email: candidate.to_email,
+            platform_name: candidate.partner_name,
+            support_email: supportEmail,
+          }),
+          ...valuationLinkVars(deps.publicBaseUrl, candidate.valuation_id),
+          ...valuationTemplateVars({
+            company_name: candidate.company_name,
+            kind: candidate.kind,
+            number: candidate.number,
+            valuation_date: candidate.valuation_date,
+            due_date: candidate.due_date,
+            state: candidate.state,
+            partner_name: candidate.partner_name,
+          }),
+        };
         // One transaction: a queued message with no send record would be
         // delivered by the retry sweep and then queued again by the next scan,
         // which is the double-send this is here to prevent. The record counts

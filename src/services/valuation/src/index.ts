@@ -323,11 +323,17 @@ app.metrics.gauge(
 // logs and waits for the next tick.
 let autoEmailTimer: NodeJS.Timeout | undefined;
 if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
+  // The scan renders `{{support_email}}`, so it needs the settings the app's
+  // own store serves. Its own instance rather than a reach into `buildApp`:
+  // this is a sweep on the same pool, and the store is a 5s cache over one row.
+  const { SystemSettingsStore } = await import('./repos/systemSettings.js');
+  const autoEmailSettings = new SystemSettingsStore(pool, undefined, undefined, app.log);
   const scan = scheduleSweep('auto-email', async () => {
     const r = await runDueAutoEmails({
       pool,
       ...emailTransports,
       publicBaseUrl: config.PUBLIC_BASE_URL,
+      settings: autoEmailSettings,
       log: app.log,
     });
     if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');

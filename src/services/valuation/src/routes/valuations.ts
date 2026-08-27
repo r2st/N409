@@ -34,7 +34,7 @@ import {
   type ValuationRow,
 } from '../repos/valuations.js';
 import { userExists } from '../repos/users.js';
-import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
+import { onStateChanged, type EmailTransport, type TransitionRenderDeps } from '../hooks/stateChange.js';
 import { assertPublishGate, assertPublishGateForWrite } from '../domain/publishGate.js';
 import { assertTransition, assertTransitionForWrite } from '../domain/transitionGuard.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -231,7 +231,7 @@ async function loadAuthorized(pool: pg.Pool, principal: Principal, id: string): 
 
 export function registerValuationRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; transport?: EmailTransport },
+  deps: { pool: pg.Pool; transport?: EmailTransport } & TransitionRenderDeps,
 ): void {
   app.post('/api/v1/valuations', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
@@ -396,7 +396,13 @@ export function registerValuationRoutes(
     // M4: state changes fire the auto email workflows + in-app notifications.
     if (parsed.data.state && parsed.data.state !== valuation.state) {
       await onStateChanged(
-        { pool: deps.pool, transport: deps.transport, log: app.log },
+        {
+          pool: deps.pool,
+          transport: deps.transport,
+          log: app.log,
+          publicBaseUrl: deps.publicBaseUrl,
+          settings: deps.settings,
+        },
         updated,
         updated.state,
       );

@@ -43,7 +43,7 @@ import { collectedTotals, disputeStatusOf, refundState, type DisputeStatus } fro
 import { createNotifications } from '../repos/notifications.js';
 import { recordInvoiceRefund } from '../repos/billing.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
-import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
+import { onStateChanged, type EmailTransport, type SupportEmailSource } from '../hooks/stateChange.js';
 import { findUserById, listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
 import { stripeEventKey } from '../domain/stripeEvents.js';
@@ -164,6 +164,8 @@ export interface PaymentDeps {
   stripeSecretKey?: string;
   stripeWebhookSecret?: string;
   publicBaseUrl: string;
+  /** Answers `{{support_email}}` when a state-change template is re-rendered. */
+  settings?: SupportEmailSource;
   /** Settlement can move the workflow, and a state change sends mail. */
   transport?: EmailTransport;
 }
@@ -992,7 +994,13 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
           // webhooks and the notification matrix see this transition too.
           if (advancing) {
             await onStateChanged(
-              { pool: deps.pool, transport: deps.transport, log: req.log },
+              {
+                pool: deps.pool,
+                transport: deps.transport,
+                log: req.log,
+                publicBaseUrl: deps.publicBaseUrl,
+                settings: deps.settings,
+              },
               updated,
               'paid',
             );

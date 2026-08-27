@@ -503,7 +503,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
   registerMfaRoutes(app, { pool, settings });
   registerSystemSettingsRoutes(app, { pool, settings });
-  registerValuationRoutes(app, { pool, transport });
+  registerValuationRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL, settings });
   // M1 — core pipeline
   registerTaskRoutes(app, { pool });
   // Improvement 2 — auto-pipeline on upload (extract → param fill → draft calc)
@@ -692,9 +692,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     capabilityConfig: config,
   });
   // M4 — operations polish
-  registerWorkflowRoutes(app, { pool, transport });
+  registerWorkflowRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL, settings });
   // P1 #6 — review queue + approve/request-changes decisions
-  registerReviewRoutes(app, { pool, transport });
+  registerReviewRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL, settings });
   registerTemplateRoutes(app, { pool });
   registerNotificationRoutes(app, { pool });
   registerEmailDeliveryRoutes(app, { pool, webhookSecret: config.EMAIL_WEBHOOK_SECRET });
@@ -746,6 +746,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     transport,
     smsTransport,
     publicBaseUrl: config.PUBLIC_BASE_URL,
+    settings,
   });
   // Beyond-parity #1 — audit-defense evidence bundle (final-status §4.4)
   registerEvidenceRoutes(app, { pool });
@@ -770,6 +771,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     stripeWebhookSecret: config.STRIPE_WEBHOOK_SECRET,
     publicBaseUrl: config.PUBLIC_BASE_URL,
     transport,
+    settings,
   });
   // Feature 7 — subscription / retainer billing + invoicing
   registerBillingRoutes(app, {

@@ -299,6 +299,25 @@ export interface DueCandidate {
    * round-trip for consent would do so once per hit.
    */
   marketing_email: boolean;
+  /**
+   * The rest of what `valuationTemplateVars` and `alwaysTemplateVars` answer.
+   *
+   * The scan rendered its templates from `company_name`, `kind` and `number`
+   * alone, so `{{valuation_date}}`, `{{due_date}}`, `{{state_label}}` and
+   * `{{partner_name}}` — every one of them declared in the catalog and filled
+   * in the operator's preview — arrived at the client as an empty gap in a
+   * sentence. They are all one join or one column away from a query this path
+   * was already running once per page.
+   *
+   * `valuation_date` is the measurement date out of `valuation_params`
+   * (0041) rather than a column on the valuation, which is where the preview
+   * route reads it from too.
+   */
+  recipient_name: string | null;
+  valuation_date: string | null;
+  due_date: Date | null;
+  state: string;
+  partner_name: string | null;
 }
 
 /**
@@ -365,6 +384,10 @@ export async function dueCandidates(
   const { rows } = await db.query<DueCandidate>(
     `SELECT v.id AS valuation_id, v.company_name, v.kind, v.number::text AS number,
             v.user_id, u.email AS to_email, u.phone AS to_phone,
+            u.first_name AS recipient_name, v.due_date, v.state,
+            p.name AS partner_name,
+            (SELECT vp.engine_inputs->>'valuation_date' FROM valuation_params vp
+              WHERE vp.valuation_id = v.id) AS valuation_date,
             COALESCE(
               (SELECT max(e.occurred_at) FROM valuation_events e
                WHERE e.valuation_id = v.id AND e.type = 'state_changed'),
@@ -385,6 +408,7 @@ export async function dueCandidates(
             ) AS marketing_email
      FROM valuations v
      JOIN users u ON u.id = v.user_id
+     LEFT JOIN partners p ON p.id = v.partner_id
      WHERE v.archived_at IS NULL AND u.deleted_at IS NULL
        AND v.state = $2 AND ${conditionSql[campaign.condition] ?? 'false'} ${cursorSql}
      ORDER BY v.id ASC

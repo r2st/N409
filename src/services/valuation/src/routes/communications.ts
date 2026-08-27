@@ -15,6 +15,7 @@ import {
 } from '../domain/communications.js';
 import { TEMPLATE_VARIABLES, previewTemplate, unknownPlaceholders } from '../domain/templateVariables.js';
 import { valuationTemplateVars } from '../domain/communications.js';
+import type { SupportEmailSource } from '../hooks/autoEmails.js';
 import { findValuationById } from '../repos/valuations.js';
 import {
   createAutoEmail,
@@ -108,6 +109,8 @@ export function registerCommunicationRoutes(
     smsTransport?: EmailTransport;
     /** Where a promotional message's unsubscribe footer points. */
     publicBaseUrl?: string;
+    /** Answers `{{support_email}}` in a campaign template. */
+    settings?: SupportEmailSource;
   },
 ): void {
   const requireOps = (req: Parameters<typeof requirePrincipal>[0]) => {
@@ -401,6 +404,7 @@ export function registerCommunicationRoutes(
       transport: deps.transport,
       smsTransport: deps.smsTransport,
       publicBaseUrl: deps.publicBaseUrl,
+      settings: deps.settings,
       log: req.log,
     });
     return result;

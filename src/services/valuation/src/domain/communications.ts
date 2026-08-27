@@ -155,6 +155,71 @@ export function applyPromotionalFooter(
 
 export type TemplateVars = Record<string, string | number | null | undefined>;
 
+// ── The scopes a real send has to answer, and the preview already did ────────
+
+/**
+ * The platform's own name, and the fallback for `platform_name`.
+ *
+ * The same string `PLATFORM_BRANDING.name` carries and the built-in
+ * transactional copy hard-codes ("Reset your N409 password"). Duplicated here
+ * rather than imported so this module stays free of the branding domain, and
+ * pinned by a test against `PLATFORM_BRANDING` so the two cannot drift.
+ */
+export const PLATFORM_NAME = 'N409';
+
+/**
+ * The `always` scope of TEMPLATE_VARIABLES — the three names every template may
+ * use, whatever sends it.
+ *
+ * These were declared in the catalog, offered in the editor's palette, and
+ * filled in the preview from `sampleTemplateVars()` — and supplied by no send
+ * path at all. `renderTemplate` leaves an unknown name verbatim, which is the
+ * right treatment of a misspelling and exactly the wrong one here: the name is
+ * spelled correctly and nobody was answering it, so a template reading
+ * "Hi {{recipient_name}}" previewed as "Hi Dana" and was delivered, to the
+ * client, as "Hi {{recipient_name}}".
+ *
+ * Supplied here rather than at each call site so the three names cannot be
+ * answered at one send and left as braces at the next.
+ */
+export function alwaysTemplateVars(v: {
+  /** The recipient's given name, when we hold one. */
+  recipient_name?: string | null;
+  /** Fallen back to when we do not — the catalog promises the address, not a gap. */
+  recipient_email: string;
+  /** The partner firm on a white-labelled send; the platform otherwise. */
+  platform_name?: string | null;
+  /** From system settings; only ever blank if that read failed. */
+  support_email?: string | null;
+}): TemplateVars {
+  const name = v.recipient_name?.trim();
+  return {
+    recipient_name: name && name.length > 0 ? name : v.recipient_email,
+    platform_name: v.platform_name?.trim() || PLATFORM_NAME,
+    support_email: v.support_email ?? '',
+  };
+}
+
+/**
+ * The `link` scope an engagement-scoped send can answer from the id alone.
+ *
+ * `payment_link` is the engagement's own page and not a `/pay` route, because
+ * there is no `/pay` route: checkout is a control on the detail page, which is
+ * also where `receipt_link` already points (`routes/payments.ts`). One spelling
+ * of "where the client goes to settle this", so the link in a campaign email
+ * and the link in a receipt cannot disagree.
+ *
+ * An absent base URL renders both as empty rather than as braces. Neither is
+ * good, and PUBLIC_BASE_URL is required in production precisely so neither
+ * happens — but a sentence with a gap in it is recoverable and a client
+ * emailing support about "{{payment_link}}" is not.
+ */
+export function valuationLinkVars(baseUrl: string | null | undefined, valuationId: string): TemplateVars {
+  const base = baseUrl ? baseUrl.replace(/\/$/, '') : null;
+  const link = base ? `${base}/valuations/${valuationId}` : '';
+  return { valuation_link: link, payment_link: link };
+}
+
 /**
  * {{placeholder}} substitution; unknown placeholders survive verbatim.
  *

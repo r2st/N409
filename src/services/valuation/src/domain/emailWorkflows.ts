@@ -48,6 +48,18 @@ export interface ValuationSnapshot {
   assigned_reviewer_id: string | null;
   /** Present on full rows — enables white-label email overrides (improvement 8). */
   partner_id?: string | null;
+  /**
+   * Also present on full rows, and every `onStateChanged` caller passes one.
+   *
+   * Declared rather than left to arrive unannounced through `ValuationRow`'s
+   * index signature: `valuationTemplateVars` reads all three, so until they
+   * were named here a template using `{{due_date}}` worked only by accident of
+   * what the callers happened to hand over, and would have started rendering
+   * blank the day one of them narrowed its argument.
+   */
+  number?: string | number | null;
+  due_date?: Date | string | null;
+  state?: string | null;
 }
 
 export interface EmailSpec {

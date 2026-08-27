@@ -10,7 +10,7 @@ import { createComment } from '../repos/comments.js';
 import { listReviewQueue } from '../repos/reviews.js';
 import { findValuationById, patchValuation } from '../repos/valuations.js';
 import { assertPublishGate, assertPublishGateForWrite } from '../domain/publishGate.js';
-import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
+import { onStateChanged, type EmailTransport, type TransitionRenderDeps } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
@@ -39,7 +39,7 @@ function requireOps(principal: Principal): void {
 
 export function registerReviewRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; transport?: EmailTransport },
+  deps: { pool: pg.Pool; transport?: EmailTransport } & TransitionRenderDeps,
 ): void {
   /** The queue of valuations awaiting a review decision, with signature rollups. */
   app.get('/api/v1/reviews', { preHandler: app.authenticate }, async (req) => {
@@ -103,7 +103,17 @@ export function registerReviewRoutes(
         },
       }),
     );
-    await onStateChanged({ pool: deps.pool, transport: deps.transport, log: app.log }, updated, target);
+    await onStateChanged(
+      {
+        pool: deps.pool,
+        transport: deps.transport,
+        log: app.log,
+        publicBaseUrl: deps.publicBaseUrl,
+        settings: deps.settings,
+      },
+      updated,
+      target,
+    );
     return { valuation: updated, decision };
   });
 }
