@@ -56,6 +56,34 @@ export interface ChartPoint {
  * board's first question about a new number is how it compares with the last
  * one, and a trend answers that in the space a sentence would take.
  */
+/**
+ * How many marks a series of each shape may carry.
+ *
+ * These are *legibility* limits, not storage limits, which is why they live
+ * beside the drawing code rather than beside the wire schema that enforces
+ * them. Each one is the point past which the renderer below stops producing a
+ * chart and starts producing a smear: a bar chart draws one labelled row per
+ * point down the page, a donut separates its slices on lightness alone from a
+ * five-step grey ramp, a waterfall gives every step a column and a connector,
+ * and a line chart plots a marker every `plotWidth / n` points across about
+ * 450pt of usable width — at 40 that is 11pt between markers of radius 2.6.
+ *
+ * They are exported because three files have to agree on them and only one of
+ * them can see why the numbers are what they are. `RenderBody` (app.ts) turns
+ * them into the wire contract, and the valuation service's chart builders have
+ * to respect the same numbers when they assemble a series — a producer that
+ * does not is not caught by anything at build time and shows up as a 422 that
+ * falls back to in-process rendering, which is a silent performance regression
+ * rather than a visible failure. Before this existed the caps were four literals
+ * in one Zod schema and `historyChart` had grown past one of them.
+ */
+export const CHART_SERIES_LIMITS = {
+  bar: 20,
+  waterfall: 10,
+  donut: 12,
+  line: 40,
+} as const;
+
 export type ChartSpec =
   | {
       type: 'bar';

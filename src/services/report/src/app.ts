@@ -17,7 +17,7 @@ import {
   registerProblemHandler,
   registerRequestDrain,
 } from '@n409/shared';
-import { renderReportPdf, verifyFontAssets } from './pdf.js';
+import { CHART_SERIES_LIMITS, renderReportPdf, verifyFontAssets } from './pdf.js';
 
 /**
  * Report service (M2): stateless PDF rendering for valuation reports.
@@ -42,14 +42,14 @@ const ChartSpec = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('bar'),
     title: z.string().min(1).max(200),
-    points: z.array(ChartPoint).max(20),
+    points: z.array(ChartPoint).max(CHART_SERIES_LIMITS.bar),
     note: z.string().max(400).optional(),
   }),
   z.object({
     type: z.literal('waterfall'),
     title: z.string().min(1).max(200),
     start: ChartPoint,
-    steps: z.array(ChartPoint).max(10),
+    steps: z.array(ChartPoint).max(CHART_SERIES_LIMITS.waterfall),
     end_label: z.string().min(1).max(120),
     end_value: z.number().finite().optional(),
     end_display: z.string().max(60).optional(),
@@ -58,7 +58,7 @@ const ChartSpec = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('donut'),
     title: z.string().min(1).max(200),
-    slices: z.array(ChartPoint).max(12),
+    slices: z.array(ChartPoint).max(CHART_SERIES_LIMITS.donut),
     center: z.string().max(40).optional(),
     center_note: z.string().max(60).optional(),
     note: z.string().max(400).optional(),
@@ -66,7 +66,7 @@ const ChartSpec = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('line'),
     title: z.string().min(1).max(200),
-    points: z.array(ChartPoint).max(40),
+    points: z.array(ChartPoint).max(CHART_SERIES_LIMITS.line),
     note: z.string().max(400).optional(),
   }),
 ]);

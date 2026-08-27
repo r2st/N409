@@ -1,4 +1,4 @@
-import type { ReportPdfSummary, ChartSpec } from '@n409/report/pdf';
+import { CHART_SERIES_LIMITS, type ReportPdfSummary, type ChartSpec } from '@n409/report/pdf';
 import type { CalculationRow } from '../repos/calculations.js';
 import { stageLabel } from './developmentStage.js';
 import { volatilityNarrative } from './volatility.js';
@@ -190,7 +190,7 @@ export function marketableValuePerShare(results: ResultsShape): number | null {
 export function approachChart(results: ResultsShape, currency: string): ChartSpec | null {
   const approaches = results.approaches;
   if (!approaches || typeof approaches !== 'object') return null;
-  const points = Object.entries(approaches)
+  const weighted_ = Object.entries(approaches)
     .map(([key, value]) => ({
       label: APPROACH_LABELS[key] ?? key,
       weight: num(value?.weight) ?? 0,
@@ -198,9 +198,33 @@ export function approachChart(results: ResultsShape, currency: string): ChartSpe
     }))
     .filter((p) => p.weight > 0)
     .sort((a, b) => b.value - a.value);
-  if (points.length === 0) return null;
+  if (weighted_.length === 0) return null;
+
+  /*
+   * Bounded at the renderer's series limit, and *truncated* rather than
+   * aggregated: a bar chart of equity value by approach shows alternative
+   * estimates of one quantity, so an "other approaches" bar would be a sum of
+   * numbers that must not be added. The largest are the ones a reviewer
+   * challenges, so the largest are what survives, and the note says how many
+   * did not.
+   *
+   * Unreachable from today's engine, which writes four approaches. That is a
+   * fact about another service's current version rather than a property of this
+   * function's input — `results` is a JSON column written by whatever version
+   * ran — and the cost of it being wrong is not a bad chart but a 422 on the
+   * render hop, which falls back silently to blocking this event loop.
+   */
+  const points = weighted_.slice(0, CHART_SERIES_LIMITS.bar);
+  const dropped = weighted_.length - points.length;
 
   const weighted = num(results.equity_value);
+  const conclusion =
+    weighted !== null ? `Weighted concluded equity value: ${formatCurrency(weighted, currency, 0)}.` : null;
+  const omission =
+    dropped > 0
+      ? `The ${points.length} largest of ${weighted_.length} weighted approaches; ${dropped} smaller ` +
+        `${dropped === 1 ? 'approach is' : 'approaches are'} not plotted.`
+      : null;
   return {
     type: 'bar',
     title: 'Equity value by approach',
@@ -209,10 +233,7 @@ export function approachChart(results: ResultsShape, currency: string): ChartSpe
       value: p.value,
       display: formatCurrency(p.value, currency, 0),
     })),
-    note:
-      weighted !== null
-        ? `Weighted concluded equity value: ${formatCurrency(weighted, currency, 0)}.`
-        : undefined,
+    note: [conclusion, omission].filter((n): n is string => n !== null).join(' ') || undefined,
   };
 }
 
@@ -228,15 +249,38 @@ export function approachChart(results: ResultsShape, currency: string): ChartSpe
 export function weightingChart(results: ResultsShape): ChartSpec | null {
   const approaches = results.approaches;
   if (!approaches || typeof approaches !== 'object') return null;
-  const slices = Object.entries(approaches)
+  const all = Object.entries(approaches)
     .map(([key, value]) => ({
       label: APPROACH_LABELS[key] ?? key,
       weight: num(value?.weight) ?? 0,
     }))
-    .filter((s) => s.weight > 0);
+    .filter((s) => s.weight > 0)
+    .sort((a, b) => b.weight - a.weight);
   // A single approach at 100% is a full ring saying nothing the sentence
   // above it does not already say.
-  if (slices.length < 2) return null;
+  if (all.length < 2) return null;
+
+  /*
+   * Bounded at the renderer's series limit by *folding* the tail rather than
+   * dropping it, which is the opposite of what the bar chart above does and for
+   * the reason this chart exists: the whole point of showing weights as a ring
+   * is that the reader can see them sum to one without adding anything up. A
+   * truncated ring makes that false, and a ring that is quietly not a whole is
+   * worse than four bars.
+   *
+   * Weights are addends — unlike the equity values beside them — so the fold is
+   * arithmetically honest as well as visually necessary.
+   */
+  const slices =
+    all.length <= CHART_SERIES_LIMITS.donut
+      ? all
+      : [
+          ...all.slice(0, CHART_SERIES_LIMITS.donut - 1),
+          {
+            label: `Other approaches (${all.length - CHART_SERIES_LIMITS.donut + 1})`,
+            weight: all.slice(CHART_SERIES_LIMITS.donut - 1).reduce((sum, s) => sum + s.weight, 0),
+          },
+        ];
 
   return {
     type: 'donut',
@@ -246,7 +290,9 @@ export function weightingChart(results: ResultsShape): ChartSpec | null {
       value: s.weight,
       display: formatPercent(s.weight, 0),
     })),
-    center: `${slices.length}`,
+    // The number of approaches, not the number of arcs: a folded tail must not
+    // make the centre understate how many approaches were weighted.
+    center: `${all.length}`,
     center_note: 'approaches',
     note: 'Weights applied to each approach in concluding equity value.',
   };
@@ -268,8 +314,38 @@ export interface HistoryPoint {
  * Suppressed below two points, where a "trend" would be a single dot.
  */
 export function historyChart(history: readonly HistoryPoint[], currency: string): ChartSpec | null {
-  const points = history.filter((h) => Number.isFinite(h.fmv_per_share));
-  if (points.length < 2) return null;
+  const all = history.filter((h) => Number.isFinite(h.fmv_per_share));
+  if (all.length < 2) return null;
+
+  /*
+   * The trend is one point per prior valuation and `historyFor` bounds neither
+   * end of it: the scope is every valuation of this company under this firm, so
+   * the series grows for the whole life of the client relationship and never
+   * shrinks. Past `CHART_SERIES_LIMITS.line` that is two separate problems.
+   *
+   * The visible one is the plot: markers of radius 2.6 spaced `plotWidth / n`
+   * apart across about 450pt stop being a line and become a bar of ink.
+   *
+   * The one that has no symptom is the wire contract. `RenderBody` enforces the
+   * same limit, so the first client to reach it made every render of every
+   * report for that company a 422 — and a 422 is not a failure, it is a
+   * *fallback*: `clients/reportRender.ts` renders the identical bytes
+   * in-process instead, blocking the valuation event loop for the whole render.
+   * Correct PDF, correct route, and the half-second the offload exists to
+   * remove quietly back, on the engagements with the longest history and so the
+   * largest reports. Nothing but `report_render_total{mode="local"}` says so.
+   *
+   * So the series is cut to the limit here, at the producer, where the reason
+   * for the number is legible — and cut from the *old* end, because the
+   * question this chart answers is how the new conclusion compares with the
+   * recent ones. The note then states the omission rather than leaving the
+   * reader to take a truncated series for the client's whole history: a
+   * schedule that silently drops rows is the defect this platform keeps finding
+   * (see the `truncated` flag on every list endpoint), and it is worse in a
+   * signed report than in a list.
+   */
+  const points = all.slice(-CHART_SERIES_LIMITS.line);
+  const omitted = all.length - points.length;
 
   return {
     type: 'line',
@@ -279,7 +355,11 @@ export function historyChart(history: readonly HistoryPoint[], currency: string)
       value: p.fmv_per_share,
       display: formatCurrency(p.fmv_per_share, currency, 4),
     })),
-    note: 'Concluded FMV of each prior valuation of this company, oldest first.',
+    note:
+      omitted === 0
+        ? 'Concluded FMV of each prior valuation of this company, oldest first.'
+        : `Concluded FMV of the most recent ${points.length} of ${all.length} prior valuations of ` +
+          `this company, oldest first; ${omitted} earlier ${omitted === 1 ? 'valuation is' : 'valuations are'} not plotted.`,
   };
 }
 
