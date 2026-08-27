@@ -1,5 +1,203 @@
 176dadc94f4f731b6646d9bbbe67c27fd603fd34
 # N409 revision
+# commit:    3ed3c78
+# subject:   the failures that reached a person as an empty 500, and the census that could not see two of them
+# previous:  712daa0 (the two settlement events one payment sends).
+# includes:  1 commit — R175, an integration-stress round (M5) over Stripe, the
+#            database, document storage and the third-party cap-table pull.
+#
+#            R165 ran the same methodology and took the failures that arrive
+#            wearing a success's clothes. This one took the opposite half: the
+#            failures that are perfectly well signalled and had no answer, so
+#            they walked past every catch that was written for them and out
+#            through the generic handler. The symptom is identical in all four
+#            and is the thing the acceptance criteria name — `500` with a body
+#            that carries no `detail` by design, on the surfaces where a person
+#            most needs to be told something.
+#
+#            Stripe. The client turns every *response* into a `StripeApiError`
+#            and always has: a declined card, a bad price, an HTML 5xx page, a
+#            200 that is not a session. What it never had was an answer for
+#            Stripe not answering. Node's `fetch` rejects a refused connection
+#            with `TypeError: fetch failed` and a fired `AbortSignal.timeout`
+#            with a `TimeoutError`, and neither is a `StripeApiError` — so both
+#            went straight through three separate
+#            `catch (err) { if (err instanceof StripeApiError) … throw err }`
+#            blocks. Stripe being down is the most predictable failure a
+#            payments integration has, and it was the one failure the checkout
+#            routes had nothing to say about. `stripeFetch` now converts them at
+#            the boundary and flags them `unreachable`, which is carried on the
+#            existing error type rather than a new class for the reason
+#            `InternalServiceError.circuitOpen` gives: a second class needs every
+#            call site widened, and one that was missed is a handled outage
+#            turning back into a 500. The message on an unreachable Stripe is
+#            ours rather than the transport's — `getaddrinfo ENOTFOUND
+#            api.stripe.com` names internal topology — and the real cause rides
+#            on `cause` for the log.
+#
+#            `POST /api/v1/billing/subscribe` had no catch at all, so even an
+#            ordinary Stripe rejection was an empty 500 on the button that
+#            starts a recurring plan. The two that did catch now answer through
+#            one helper, so the three routes stop having three answers.
+#
+#            One assertion was reversed rather than added, and it deserves
+#            stating. `paymentsCheckout.test.ts` deliberately required the 500,
+#            on the reasoning that a rejecting `fetch` may be *our* network and
+#            that answering `urn:n409:problem:stripe` would send whoever is on
+#            call to the Stripe status page for a break on this side. The
+#            concern is real; what it protected was the diagnosis, and what it
+#            paid with was the answer. Both are available, because they are
+#            answered in different places: the client gets a 502 whose detail is
+#            neutral about whose network broke ("Stripe could not be reached")
+#            and states the fact that decides what they do next, which is that
+#            nothing was charged; the on-call engineer gets a log line carrying
+#            `unreachable: true` and the original syscall, where before there
+#            was a stack and the words "fetch failed".
+#
+#            The database. Every route reaches Postgres through a pool with four
+#            bounds on it — a statement timeout, an idle-in-transaction timeout,
+#            a connection timeout, ten clients — each of which exists to make a
+#            bad minute survivable and each of which *raises* when it fires. A
+#            deadlock the database picked this transaction to lose, a statement
+#            past its ceiling, a failover, a checkout that waited out
+#            `connectionTimeoutMillis` because every client was busy: all of them
+#            arrived as `urn:n409:problem:internal`, whose catalogued advice is
+#            "retry with backoff, and send an `Idempotency-Key`, the write may
+#            have landed". For a transaction the database itself rolled back
+#            that is both alarming and false. `classifyFailure` has known these
+#            SQLSTATEs since the round that wrote it and nothing had ever asked
+#            it at the HTTP boundary.
+#
+#            `databaseUnavailableReason` is deliberately narrower than
+#            `isTransient`, and the narrowness is the design. What it returns
+#            non-null for becomes a 503, and a 503 is a claim — the request was
+#            not served, and the same request later can be. A SQLSTATE the
+#            database asks you to retry is exactly that claim; an `AbortError`
+#            is not (the commonest one in a Fastify handler is the client going
+#            away) and an upstream's 5xx riding on an error object is
+#            `upstream`'s business. So it reads two structured facts and nothing
+#            else: the transient SQLSTATE tables, and the two pool failures
+#            Postgres never saw. Those two are matched on their message, which
+#            is what matching on a message always is — brittle, anchored, and
+#            done anyway, because `pg-pool` builds both with a bare
+#            `new Error(message)` and pool exhaustion is the likeliest way this
+#            service fails under load.
+#
+#            Document storage. The download route has always handled the file
+#            being *gone*. The two ways it can be present and unusable had no
+#            handling, and they are the two that happen without anybody deleting
+#            anything: storage is AES-GCM, so a write truncated by a full disk
+#            or a snapshot taken mid-write fails the authentication tag; and a
+#            deployment whose `DOCUMENTS_ENCRYPTION_KEY` was rotated without
+#            `_PREVIOUS` fails every encrypted blob at once. The second is a
+#            whole-deployment incident and looked exactly like the first, which
+#            is to say like nothing. `documents.sha256` is the other half: it has
+#            been written at every upload and never read since, so on a
+#            deployment storing blobs in the clear — where there is no tag to
+#            fail — corrupted bytes came back under the right filename and
+#            content type and were served as the document. Both now answer
+#            `document-unreadable` with the one instruction that helps
+#            (re-upload; retrying will not) and log with `alert: true`, because a
+#            file this platform accepted and can no longer return is data loss.
+#
+#            The cap-table pull, and the census that should have caught it.
+#            `IntegrationError` exists so a route can echo a caught message: the
+#            type is the statement that the wording names a provider and a
+#            status and nothing else. `routes/hris.ts` was converted when it was
+#            introduced. `routes/capTableSync.ts` and `routes/accounting.ts`
+#            were not, and both still ended in the line the type's own docstring
+#            quotes as the bug. For the cap-table pull that catch spans the whole
+#            sync — `saveCapTable` and `recordSync` are inside it — so a row
+#            Postgres refused answered the analyst with the driver's wording, its
+#            constraint name, and on `err.detail` the values it rejected.
+#
+#            `errorBodyDisclosure.test.ts` is the census written for exactly
+#            that line, and it reported success on both of them for four rounds.
+#            It reads the argument of the `problems.*` call, and both routes
+#            bind the message one statement earlier:
+#
+#                const message = err instanceof Error ? err.message : String(err);
+#                throw problems.unprocessable(`Sync failed: ${message}`);
+#
+#            The argument names no error, so it matched nothing. The census now
+#            resolves a one-hop local binding — one hop, and only for a bare
+#            identifier, because the value is not depth but that the *shortest*
+#            evasion no longer works — and the binding's text joins the statement
+#            so a guard written into it still excuses the echo, which is where
+#            both fixed routes now put theirs.
+#
+#            It grew a second half as well, for a leak it could not have seen at
+#            all. `POST /api/v1/valuations/bulk` answers per row, so a row's
+#            failure is reported inside a *200*: `{ results: [{ ok: false,
+#            error }] }`, with `err.message` verbatim and no problem-document
+#            rule applying because it is not a problem document. Every
+#            transition in that loop writes to Postgres. The new scan reads the
+#            property spellings that end up in front of a person and holds them
+#            to the same rule; the `(?<![.\w])` in its pattern is load-bearing,
+#            without which the `message` in `err.message : String(err)` reads as
+#            a property name and the ternary's colon as its assignment, and
+#            three ordinary bindings are reported as published bodies.
+#
+#            Third-party rate limits got the one thing they were missing.
+#            "Carta cap-table fetch failed (429)" reads like a broken
+#            integration and prompts the response that makes it worse, which is
+#            clicking Sync again immediately; `Retry-After` was sitting in the
+#            response unread. Only 429 gets a new sentence — every other status
+#            keeps the wording `last_error` has held for the life of these
+#            integrations, which half a dozen tests read.
+#
+#            Two best-effort writes were made best-effort. `recordSyncError` and
+#            `recordImportError` sit in catches whose whole job is to report the
+#            failure they caught, and both are queries against the same pool: if
+#            the operation failed *because* the database was unwell, the write
+#            failed too and replaced an accurate provider error with an
+#            unrelated one. Same containment `sendTransactionalEmail` already
+#            documents.
+#
+#            Deliberate break, each: reverting the `readStoredBlob` call fails
+#            three of six storage assertions; reverting either route catch fails
+#            the census by file and the containment assertions beside it;
+#            removing the pool-message branch fails the exhaustion case with the
+#            SQLSTATE cases still green.
+#
+#            Considered and not done: an `Idempotency-Key` on the Checkout
+#            creates. Stripe's own recommendation, and a deterministic key over
+#            the quote would turn a timed-out create into the same session
+#            rather than a second payable one. It was rejected because the key
+#            lives 24 hours and `expireCheckoutSession` exists: an engagement
+#            that expires a session and then re-opens the same quote would be
+#            handed back the expired one, which is a new failure in exchange for
+#            a narrow one the `findLiveCheckout` guard and R165's unreconciled-
+#            settlement path already cover.
+#
+#            Also fixed in passing, and not part of the round: `logger.test.ts`
+#            was red on `main` before this work started. `recipient_email` had
+#            been added to `communications.ts` without a `SENSITIVE_FIELDS`
+#            entry. `recipient_name` went in beside it, which the census does
+#            not police — `_name` is dominated on this platform by things that
+#            are not people — but which `alwaysTemplateVars` falls back to the
+#            *address* for whenever no given name was captured, so it is an
+#            email field wearing a name's column.
+#
+# gap:       Two integrations still answer a provider outage with 422. A 4xx
+#            says the request is unacceptable and should not be repeated, which
+#            is the opposite of what "Carta is down" means; the cap-table pull
+#            and the accounting import both say it, and `hris.ts` has said it
+#            since it was written. The wording is now safe and the status is
+#            still wrong, and changing it is a client-contract change rather
+#            than a fix — `CapTableSyncPanel` and two siblings branch on
+#            `ApiError`, not on status, so nothing breaks, but the partner API's
+#            documented catalogue would need the new answer.
+#
+#            The document integrity check reads `sha256` on download and nowhere
+#            else. Every other reader of a stored blob — the AI pipeline's
+#            `encodeDocuments`, the QA route — skips a file it cannot decrypt and
+#            says so, which is right, but none of them would notice bytes that
+#            decrypt to something other than what was uploaded. A plaintext
+#            deployment whose blob was corrupted therefore still feeds the model
+#            the wrong document; only the download refuses it.
+
+# N409 revision
 # commit:    712daa0
 # subject:   the two settlement events one payment sends, and a receipt naming an invoice nobody had
 # previous:  22ec813 (the status a table documented and the code never sent).
