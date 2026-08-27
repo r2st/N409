@@ -96,6 +96,12 @@ interface UploadedSheet {
    * track what the reader sees in Excel.
    */
   lines: number[];
+  /**
+   * Rows the sheet holds, which is `rows.length` unless the upload was cut at
+   * the 2,000-row cap. The reader stops building rows there, so this is the
+   * only thing that can say how much was left behind.
+   */
+  total_rows: number;
 }
 interface Upload {
   filename: string;
@@ -506,7 +512,8 @@ export function CapTableTab() {
               )}
               {upload.truncated && (
                 <p className="text-xs text-amber-700">
-                  Only the first 2,000 rows were read. Split the file if the cap table is longer.
+                  Only the first 2,000 of {(sheet?.total_rows ?? 0).toLocaleString()} rows were read.
+                  Split the file if the cap table is longer.
                 </p>
               )}
               {sheet?.rows.length === 0 && (

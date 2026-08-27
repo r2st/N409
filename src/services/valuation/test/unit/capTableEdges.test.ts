@@ -140,8 +140,8 @@ describe('parseCsvSheet — rows that are not the shape of the header', () => {
   });
 
   it('answers a sheet with nothing in it with empty everything', () => {
-    expect(parseCsvSheet('')).toEqual({ headers: [], rows: [], lines: [] });
-    expect(parseCsvSheet('\n\n  \n')).toEqual({ headers: [], rows: [], lines: [] });
+    expect(parseCsvSheet('')).toEqual({ headers: [], rows: [], lines: [], totalRows: 0 });
+    expect(parseCsvSheet('\n\n  \n')).toEqual({ headers: [], rows: [], lines: [], totalRows: 0 });
   });
 });
 

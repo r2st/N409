@@ -496,6 +496,141 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
       });
       expect(res.statusCode).toBe(404);
     });
+
+    /**
+     * Files built to break the reader, at the endpoint that receives them.
+     *
+     * The unit half is `test/unit/capTableAdversarialImport.test.ts`; this is
+     * the half that says the refusals reach the caller as a 422 with something
+     * to act on, rather than as a 500 or — worse — as a 200 reporting an empty
+     * cap table for a file that was never read.
+     */
+    describe('adversarial uploads', () => {
+      it('names a password-protected workbook instead of reading it as text', async () => {
+        // Encrypted OOXML is an OLE2 compound file, so the ZIP check says no,
+        // and the extension is `.xlsx`, which the legacy-format branch does not
+        // list — so it fell through to being parsed as delimited text and came
+        // back 200 with no rows. Same bytes as the `.xls` case above; what
+        // changed is that the extension no longer decides.
+        const res = await uploadFile(app, uploadUrl(), client.token, {
+          filename: 'captable.xlsx',
+          content: Buffer.concat([
+            Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+            Buffer.alloc(600),
+          ]),
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        });
+        expect(res.statusCode).toBe(422);
+        expect(res.json().detail ?? res.json().title).toMatch(/password-protected or legacy/i);
+      });
+
+      it('reads a UTF-16 CSV, which is what "Save as Unicode Text" writes', async () => {
+        const res = await uploadFile(app, uploadUrl(), client.token, {
+          filename: 'captable.csv',
+          content: Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(CSV, 'utf16le')]),
+          contentType: 'text/csv',
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.json().sheets[0].headers).toEqual(['class', 'shares', 'price', 'invested']);
+        expect(res.json().sheets[0].rows).toHaveLength(3);
+      });
+
+      it('reads a Windows-1252 CSV without corrupting the security class', async () => {
+        const ansi = Buffer.from([
+          ...Buffer.from('class,shares\nS'),
+          0xe9,
+          ...Buffer.from('rie A,1000\n'),
+        ]);
+        const res = await uploadFile(app, uploadUrl(), client.token, {
+          filename: 'captable.csv',
+          content: ansi,
+          contentType: 'text/csv',
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.json().sheets[0].rows[0].class).toBe('Série A');
+      });
+
+      it('refuses a header row wider than a worksheet rather than laying it out', async () => {
+        const res = await uploadFile(app, uploadUrl(), client.token, {
+          filename: 'wide.csv',
+          content: ','.repeat(20_000),
+          contentType: 'text/csv',
+        });
+        expect(res.statusCode).toBe(422);
+        expect(res.json().detail ?? res.json().title).toMatch(/more than 16,384 columns/);
+      });
+
+      it('says how many rows a truncated upload really had', async () => {
+        const rows = Array.from({ length: 2500 }, (_, i) => `Class ${i},1000,0.10,`).join('\n');
+        const res = await uploadFile(app, uploadUrl(), client.token, {
+          filename: 'big.csv',
+          content: `class,shares,price,invested\n${rows}`,
+          contentType: 'text/csv',
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.json().truncated).toBe(true);
+        // The reply carries 2,000 rows and the count of what it left behind —
+        // the reader stops building at the cap, so `rows.length` can no longer
+        // answer that question on its own.
+        expect(res.json().sheets[0].rows).toHaveLength(2000);
+        expect(res.json().sheets[0].total_rows).toBe(2500);
+      });
+
+      it('refuses a shifted row by naming the cell, on the save path', async () => {
+        const res = await app.inject({
+          method: 'PUT',
+          url: `/api/v1/valuations/${valuationId}/cap-table`,
+          headers: authHeader(client.token),
+          payload: {
+            format: 'generic',
+            csv: 'class,shares,price\nSeries A, Inc,1000,2.50\nCommon,5000,0.10\n',
+          },
+        });
+        expect(res.statusCode).toBe(422);
+        const issue = res
+          .json()
+          .validation.issues.find((i: { code: string }) => i.code === 'unreadable_number');
+        expect(issue.row).toBe(2);
+        expect(issue.message).toContain('the share count column reads "Inc"');
+      });
+    });
+  });
+
+  describe('importing the same file twice', () => {
+    const twiceUrl = () => `/api/v1/valuations/${valuationId}/cap-table`;
+
+    it('replaces the table rather than appending to it, and bumps the version', async () => {
+      // The import is an upsert keyed by valuation, so re-importing a corrected
+      // export is the ordinary workflow and must not double every holding. The
+      // version moves because the row was written — that is what an If-Match
+      // from another editor is checked against.
+      const first = await app.inject({
+        method: 'PUT',
+        url: twiceUrl(),
+        headers: authHeader(client.token),
+        payload: { format: 'generic', csv: CSV },
+      });
+      expect(first.statusCode).toBe(200);
+      const firstVersion = first.json().cap_table.version;
+
+      const second = await app.inject({
+        method: 'PUT',
+        url: twiceUrl(),
+        headers: authHeader(client.token),
+        payload: { format: 'generic', csv: CSV },
+      });
+      expect(second.statusCode).toBe(200);
+      expect(second.json().cap_table.entries).toHaveLength(first.json().cap_table.entries.length);
+      expect(second.json().cap_table.version).toBe(firstVersion + 1);
+
+      const stored = await app.inject({
+        method: 'GET',
+        url: twiceUrl(),
+        headers: authHeader(client.token),
+      });
+      expect(stored.json().cap_table.entries).toHaveLength(3);
+      expect(stored.json().cap_table.validation.summary.fully_diluted_shares).toBe(11_000_000);
+    });
   });
 
   it('hides the cap table from an unrelated client', async () => {

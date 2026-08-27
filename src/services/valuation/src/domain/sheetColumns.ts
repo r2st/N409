@@ -21,17 +21,34 @@
  *    both entries resolved to the same cells. Suffixing keeps every column
  *    reachable and visibly distinct.
  *
+ * The suffix has to avoid the names already in the row as well as the ones it
+ * has already minted, which counting uses of each name alone does not do. A
+ * sheet carrying `Shares (2)`, `Shares`, `Shares` — the shape left behind when
+ * somebody has already disambiguated one pair of columns by hand, or when a
+ * previous export of this same file is re-exported — named its third column
+ * `Shares (2)` as well, and `rowByColumn` then wrote one over the other. That is
+ * the identical last-wins loss this suffixing exists to prevent, reintroduced by
+ * the repair: the first column's numbers became unreachable, no error was
+ * raised, and the mapping UI again listed one name for two columns.
+ *
+ * So a candidate that is already spoken for moves on to the next number, and
+ * every name this returns is unique by construction.
+ *
  * `null` marks a dropped column so the caller can keep header positions
  * aligned with row cells.
  */
 export function nameColumns(cells: readonly string[]): Array<string | null> {
-  const seen = new Map<string, number>();
+  const uses = new Map<string, number>();
+  const taken = new Set<string>();
   return cells.map((cell) => {
     const name = cell.trim();
     if (name === '') return null;
-    const priorUses = seen.get(name) ?? 0;
-    seen.set(name, priorUses + 1);
-    return priorUses === 0 ? name : `${name} (${priorUses + 1})`;
+    let n = (uses.get(name) ?? 0) + 1;
+    let candidate = n === 1 ? name : `${name} (${n})`;
+    while (taken.has(candidate)) candidate = `${name} (${++n})`;
+    uses.set(name, n);
+    taken.add(candidate);
+    return candidate;
   });
 }
 

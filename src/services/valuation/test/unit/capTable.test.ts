@@ -110,8 +110,8 @@ describe('capTable', () => {
     });
 
     it('has nothing to say about an empty file', () => {
-      expect(parseCsvSheet('')).toEqual({ headers: [], rows: [], lines: [] });
-      expect(parseCsvSheet('\n\n')).toEqual({ headers: [], rows: [], lines: [] });
+      expect(parseCsvSheet('')).toEqual({ headers: [], rows: [], lines: [], totalRows: 0 });
+      expect(parseCsvSheet('\n\n')).toEqual({ headers: [], rows: [], lines: [], totalRows: 0 });
     });
   });
 

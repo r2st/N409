@@ -130,6 +130,8 @@ interface UploadedSheet {
   headers: string[];
   rows: Record<string, string>[];
   lines: number[];
+  /** Rows the sheet holds — not `rows.length` once the server cut it at the cap. */
+  total_rows: number;
 }
 interface Upload {
   filename: string;
@@ -671,6 +673,7 @@ describe('CapTableTab', () => {
       headers: ['Security', 'Quantity'],
       rows: [{ Security: 'Common Stock', Quantity: '8000000' }],
       lines: [2],
+      total_rows: 1,
       ...over,
     });
     const uploaded = (over: Partial<Upload> = {}): Upload => ({
@@ -861,16 +864,20 @@ describe('CapTableTab', () => {
       ]);
     });
 
-    it('warns that a long workbook was cut short rather than importing part of it silently', async () => {
+    it('warns that a long workbook was cut short, and says how long it was', async () => {
+      // "Only the first 2,000 rows were read" leaves the reader to guess
+      // whether that was most of the file or a tenth of it. The server counts
+      // every row even though it builds only the ones it returns, precisely so
+      // this line can name the figure.
       mockApi([
         capTable({ cap_table: null, can_edit: true }),
         formats(),
-        uploadRoute(() => json(uploaded({ truncated: true }))),
+        uploadRoute(() => json(uploaded({ truncated: true, sheets: [sheet({ total_rows: 12_500 })] }))),
       ]);
       renderTab();
       const user = await openImporter();
       await uploadFile(user);
-      expect(await screen.findByText(/Only the first 2,000 rows were read/)).toBeInTheDocument();
+      expect(await screen.findByText(/Only the first 2,000 of 12,500 rows were read/)).toBeInTheDocument();
     });
 
     it('removes the upload and returns to the paste box', async () => {

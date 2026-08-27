@@ -7,6 +7,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import {
   CAP_TABLE_FIELDS,
+  CsvReadError,
   FORMAT_PRESETS,
   parseCapTable,
   parseCsvSheet,
@@ -15,6 +16,7 @@ import {
   validateCapTable,
   type ColumnMapping,
 } from '../domain/capTable.js';
+import { decodeSheetText, SheetTextError } from '../domain/sheetText.js';
 import { buildCapTableGraph } from '../domain/capTableGraph.js';
 import { findCapTable, saveCapTable } from '../repos/capTables.js';
 import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
@@ -101,6 +103,22 @@ function resolveMapping(format: string, overrides?: Record<string, string>): Col
 }
 
 /**
+ * Whatever the readers raise for a file they cannot read, as a 422.
+ *
+ * `XlsxReadError`, `CsvReadError` and `SheetTextError` all mean the same thing
+ * — the bytes are not a sheet this can import — and all three are reachable
+ * from the same two endpoints. Left to escape they are 500s, which says the
+ * server broke rather than that the file cannot be read, and they are one
+ * upload away for anybody.
+ */
+function asUnreadableFile(err: unknown, filename?: string): never {
+  if (err instanceof XlsxReadError || err instanceof CsvReadError || err instanceof SheetTextError) {
+    throw problems.unprocessable(err.message, filename === undefined ? undefined : { filename });
+  }
+  throw err;
+}
+
+/**
  * Parse the body into rows + resolved mapping + the source line of each row.
  *
  * The lines come from whichever half supplied the rows: parsed here for raw
@@ -122,21 +140,40 @@ function parseInput(body: z.infer<typeof ImportBody>): {
     return { rows: body.rows, mapping, sourceLines };
   }
   if (body.csv) {
-    const sheet = parseCsvSheet(body.csv);
+    // Only the rows that can be imported are built. The count of the rest is
+    // what the refusal below needs, and materialising 300,000 records to
+    // report a number cost 138 MB of heap per request — see `parseCsvSheet`.
+    const sheet = parseCsvSheet(body.csv, { maxRows: MAX_UPLOAD_ROWS });
     // Refused rather than truncated, because this parse feeds the PUT as well
     // as the preview, and silently storing the first 2,000 rows of somebody's
     // cap table is the one outcome worse than refusing it. `/upload` may
     // truncate because it persists nothing and reports `truncated`; here the
     // honest answer names the limit, exactly as zod does for `rows`.
-    if (sheet.rows.length > MAX_UPLOAD_ROWS) {
+    if (sheet.totalRows > MAX_UPLOAD_ROWS) {
       throw problems.unprocessable(
-        `The pasted CSV has ${sheet.rows.length} rows; at most ${MAX_UPLOAD_ROWS} can be imported at once`,
-        { rows: sheet.rows.length, limit: MAX_UPLOAD_ROWS },
+        `The pasted CSV has ${sheet.totalRows} rows; at most ${MAX_UPLOAD_ROWS} can be imported at once`,
+        { rows: sheet.totalRows, limit: MAX_UPLOAD_ROWS },
       );
     }
     return { rows: sheet.rows, mapping, sourceLines: sheet.lines };
   }
   return { rows: [], mapping };
+}
+
+/**
+ * `parseInput` with the pasted-CSV reader's refusals turned into 422s.
+ *
+ * Both endpoints that parse a body go through here. A pasted CSV is parsed by
+ * the same bounded reader an upload is, so text wider than a worksheet raises
+ * from inside the handler rather than from the upload branch that already had
+ * a catch.
+ */
+function readInput(body: z.infer<typeof ImportBody>): ReturnType<typeof parseInput> {
+  try {
+    return parseInput(body);
+  } catch (err) {
+    asUnreadableFile(err);
+  }
 }
 
 export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
@@ -189,14 +226,15 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
       rows: Record<string, string>[];
       /** Source line of each row — echoed back on import so errors can cite it. */
       lines: number[];
+      /** Rows the sheet holds, which is `rows.length` unless the reader stopped early. */
+      totalRows: number;
     }>;
 
     if (looksLikeXlsx(buffer)) {
       try {
-        sheets = readXlsx(buffer);
+        sheets = readXlsx(buffer).map((s) => ({ ...s, totalRows: s.rows.length }));
       } catch (err) {
-        if (err instanceof XlsxReadError) throw problems.unprocessable(err.message, { filename });
-        throw err;
+        asUnreadableFile(err, filename);
       }
       if (sheets.length === 0) throw problems.unprocessable('The workbook has no readable sheets');
     } else if (/\.(xls|xlsm|xlsb|numbers|ods)$/i.test(filename)) {
@@ -206,26 +244,38 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
         { filename },
       );
     } else {
-      // Anything else is read as delimited text. The parser strips the BOM and
+      // Anything else is read as delimited text. `decodeSheetText` decides what
+      // encoding that text is in and refuses a file that is not text at all —
+      // a password-protected workbook is neither a ZIP nor a `.xls`, so it
+      // reached this branch and was read as CSV. The parser strips the BOM and
       // sniffs the delimiter, and reports the header row itself: deriving the
       // columns from `Object.keys(rows[0])` lost them entirely for a file with
       // headers and no data rows, and put them in enumeration rather than
       // source order for every other file.
-      const sheet = parseCsvSheet(buffer.toString('utf8'));
-      sheets = [{ name: filename, ...sheet }];
+      try {
+        const sheet = parseCsvSheet(decodeSheetText(buffer), { maxRows: MAX_UPLOAD_ROWS });
+        sheets = [{ name: filename, ...sheet }];
+      } catch (err) {
+        asUnreadableFile(err, filename);
+      }
     }
 
-    const truncated = sheets.some((s) => s.rows.length > MAX_UPLOAD_ROWS);
+    // From the row count of the file, not of the reply: the CSV reader stops
+    // building rows at the cap, so `rows.length` can no longer tell whether
+    // anything was left behind.
+    const truncated = sheets.some((s) => s.totalRows > MAX_UPLOAD_ROWS);
     return {
       filename,
       source: looksLikeXlsx(buffer) ? 'xlsx' : 'csv',
       truncated,
-      sheets: sheets.map((s) => ({
+      sheets: sheets.map(({ totalRows, ...s }) => ({
         ...s,
         rows: s.rows.slice(0, MAX_UPLOAD_ROWS),
         // Truncated in step with `rows`, so the two stay parallel — the import
         // path drops them entirely if they ever disagree.
         lines: s.lines.slice(0, MAX_UPLOAD_ROWS),
+        /** Rows the sheet holds, so a truncated reply says how much it left. */
+        total_rows: totalRows,
       })),
     };
   });
@@ -240,7 +290,7 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
       throw problems.forbidden('Only the client or ops can import a cap table');
     const parsed = ImportBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid import', { errors: parsed.error.issues });
-    const { rows, mapping, sourceLines } = parseInput(parsed.data);
+    const { rows, mapping, sourceLines } = readInput(parsed.data);
     const entries = parseCapTable(rows, mapping, sourceLines);
     return { entries, validation: validateCapTable(entries), mapping };
   });
@@ -267,7 +317,7 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const parsed = ImportBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid import', { errors: parsed.error.issues });
 
-    const { rows, mapping, sourceLines } = parseInput(parsed.data);
+    const { rows, mapping, sourceLines } = readInput(parsed.data);
     const entries = parseCapTable(rows, mapping, sourceLines);
     const validation = validateCapTable(entries);
     if (!validation.valid) {

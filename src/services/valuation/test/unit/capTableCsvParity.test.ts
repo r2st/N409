@@ -60,6 +60,11 @@ const FIXTURES: Array<{ name: string; csv: string; headers: string[] }> = [
     headers: ['Shares', 'Shares (2)', 'Price'],
   },
   {
+    name: 'a repeat whose suffix a column of the sheet already answers to',
+    csv: 'Shares (2),Shares,Shares\n1,2,3',
+    headers: ['Shares (2)', 'Shares', 'Shares (3)'],
+  },
+  {
     name: 'a blank column between two real ones',
     csv: 'Class,,Units\nCommon,,100',
     headers: ['Class', 'Units'],

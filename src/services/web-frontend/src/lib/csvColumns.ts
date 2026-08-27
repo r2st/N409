@@ -27,7 +27,10 @@
  *   - **Repeated names.** Two columns called "Shares" are named `Shares` and
  *     `Shares (2)` by the server. The browser listed `Shares` twice, and both
  *     entries mapped to the first one, so the second column could not be
- *     reached at all.
+ *     reached at all. A suffix has to dodge the names already in the header as
+ *     well as the ones it has minted — `Shares (2), Shares, Shares` mints a
+ *     second `Shares (2)` otherwise — which is the same rule, and the same
+ *     fix, as the server's `nameColumns`.
  *
  * This file is the browser's half written to the server's rules. It is a
  * deliberate duplicate: `domain/capTable.ts` lives in a Node service that
@@ -113,14 +116,18 @@ export function csvColumns(text: string): string[] {
   const body = text.replace(/^\uFEFF/, '');
   const cells = firstRecord(body, sniffDelimiter(body));
   if (!cells) return [];
-  const seen = new Map<string, number>();
+  const uses = new Map<string, number>();
+  const taken = new Set<string>();
   const out: string[] = [];
   for (const cell of cells) {
     const name = cell.trim();
     if (name === '') continue;
-    const priorUses = seen.get(name) ?? 0;
-    seen.set(name, priorUses + 1);
-    out.push(priorUses === 0 ? name : `${name} (${priorUses + 1})`);
+    let n = (uses.get(name) ?? 0) + 1;
+    let candidate = n === 1 ? name : `${name} (${n})`;
+    while (taken.has(candidate)) candidate = `${name} (${++n})`;
+    uses.set(name, n);
+    taken.add(candidate);
+    out.push(candidate);
   }
   return out;
 }

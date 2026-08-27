@@ -41,6 +41,14 @@ const FIXTURES: Array<{ name: string; header: string[]; data: string[] }> = [
     data: ['Common', '1', '2', '3'],
   },
   {
+    // The suffix has to dodge the names already in the header as well as the
+    // ones it has minted: counting uses of each name alone gave this sheet two
+    // columns called `Shares (2)`, and the second silently overwrote the first.
+    name: 'a repeat whose suffix a column of the sheet already answers to',
+    header: ['Shares (2)', 'Shares', 'Shares'],
+    data: ['1', '2', '3'],
+  },
+  {
     name: 'a repeat that only matches after trimming',
     header: ['Class', 'Price', ' Price '],
     data: ['Common', '1', '2'],

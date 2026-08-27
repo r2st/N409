@@ -37,6 +37,27 @@ export interface CapTableEntry {
   liquidation_multiple: number | null;
   seniority: number | null;
   conversion_ratio: number | null;
+  /**
+   * Mapped numeric columns whose cell held something this could not read as a
+   * number, keyed by field and carrying the text that was there.
+   *
+   * Every numeric column parses to `number | null`, and until this existed
+   * `null` said two different things: the cell was empty, or the cell held
+   * `TBD`. The first is ordinary — real exports leave the amount column blank
+   * — and the second is a column pointed at the wrong place, a row shifted by
+   * an unquoted comma, or a notation the parser does not know. Both were
+   * treated as "not provided", so the second imported as a *default*: a share
+   * count of 0 with a warning, a liquidation preference of 1x, a conversion
+   * ratio of 1.
+   *
+   * That is a wrong number rather than a missing one, and nothing downstream
+   * can tell. `validateCapTable` turns each of these into an error naming the
+   * row, the column and the text, which is the last point at which the
+   * importer still knows what the cell actually said.
+   *
+   * Absent when every mapped cell read cleanly, which is the ordinary case.
+   */
+  unreadable_numbers?: Partial<Record<NumericCapTableField, string>>;
 }
 
 /** Canonical fields the importer maps source columns onto. */
@@ -51,6 +72,19 @@ export const CAP_TABLE_FIELDS = [
   'conversion_ratio',
 ] as const;
 export type CapTableField = (typeof CAP_TABLE_FIELDS)[number];
+
+/** The fields whose cells are read as numbers rather than as text. */
+export type NumericCapTableField = Exclude<CapTableField, 'security_class' | 'class_type'>;
+
+/** How each numeric field is named in a message to whoever uploaded the sheet. */
+const NUMERIC_FIELD_LABELS: Record<NumericCapTableField, string> = {
+  shares: 'share count',
+  price_per_share: 'price per share',
+  invested_amount: 'invested amount',
+  liquidation_multiple: 'liquidation preference',
+  seniority: 'seniority',
+  conversion_ratio: 'conversion ratio',
+};
 
 export type ColumnMapping = Partial<Record<CapTableField, string>>;
 
@@ -202,6 +236,101 @@ export function parseNumericCell(value: unknown): number | null {
   return negated && n !== 0 ? -n : n;
 }
 
+/**
+ * Text a sheet uses to say "there is no figure here".
+ *
+ * A blank cell and a cell reading `N/A` mean the same thing and neither is an
+ * error: a common-stock row has no issue price, and the sheet says so with a
+ * dash, an `n/a` or an Excel error left over from a formula that divided by an
+ * empty cell. Every one of these parses to `null` through
+ * {@link parseNumericCell} already — what this list decides is whether that
+ * `null` is *reported*. Without it, hardening the unreadable-cell path would
+ * have refused the most ordinary export there is.
+ *
+ * Compared lower-cased and trimmed. The `#`-prefixed entries are Excel's own
+ * error strings, which arrive as literal text once a workbook is saved as CSV
+ * (inside a workbook they are `t="e"` cells and the reader already blanks
+ * them).
+ */
+const NOT_A_FIGURE = new Set([
+  '-',
+  '--',
+  '\u2013',
+  '\u2014',
+  '.',
+  '?',
+  'na',
+  'n/a',
+  'n.a.',
+  'n/a.',
+  'none',
+  'null',
+  'nil',
+  'tbd',
+  'tbc',
+  '#n/a',
+  '#value!',
+  '#ref!',
+  '#div/0!',
+  '#name?',
+  '#num!',
+  '#null!',
+]);
+
+/** Does this cell say "no figure" rather than carrying one this failed to read? */
+function meansNoFigure(text: string): boolean {
+  return text === '' || NOT_A_FIGURE.has(text.toLowerCase());
+}
+
+/**
+ * A liquidation preference cell, which is written `2x` at least as often as `2`.
+ *
+ * "1x", "2x", "1.5x" is how a term sheet says it, how a cap table's own column
+ * *header* says it ("Liquidation Preference (1x)"), and how several
+ * administrators export the column. `parseNumericCell` reads none of them —
+ * `Number('2x')` is `NaN` — so every one arrived as `null`, and a `null`
+ * multiple defaults to 1x. A 2x preference therefore imported as 1x: the
+ * preference stack, the waterfall's payout to that class, and the residual left
+ * for common were all wrong, the table validated clean, and the one warning
+ * raised said the row "has no liquidation preference", which was a statement
+ * about a cell that plainly had one.
+ *
+ * Only this column reads the suffix. `2x` in a share count or a price is not a
+ * notation anything writes, and would be a shifted row rather than a multiple.
+ */
+export function parseMultipleCell(value: unknown): number | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const body = /^(.*[^\s])\s*[x\u00d7]$/i.exec(trimmed)?.[1];
+    if (body !== undefined) return parseNumericCell(body);
+  }
+  return parseNumericCell(value);
+}
+
+/**
+ * A conversion-ratio cell, which is written `1:1` at least as often as `1`.
+ *
+ * A ratio is a ratio, and a hand-built sheet writes it with the colon. `1:1`
+ * parsed to `null` and defaulted to 1, which is the right answer by luck; `2:1`
+ * parsed to `null` and defaulted to 1 as well, which understates the
+ * fully-diluted count and so overstates every holder's ownership percentage and
+ * the per-share price the valuation divides out.
+ *
+ * A non-positive or unreadable denominator is not a ratio, and is left for the
+ * unreadable-cell path to report rather than being turned into an Infinity.
+ */
+export function parseRatioCell(value: unknown): number | null {
+  if (typeof value === 'string' && value.includes(':')) {
+    const parts = value.split(':');
+    if (parts.length !== 2) return null;
+    const numerator = parseNumericCell(parts[0]);
+    const denominator = parseNumericCell(parts[1]);
+    if (numerator === null || denominator === null || denominator <= 0) return null;
+    return numerator / denominator;
+  }
+  return parseNumericCell(value);
+}
+
 /** Infer the class type from the security name when it isn't a column. */
 export function inferClassType(name: string): CapTableClassType {
   const n = name.toLowerCase();
@@ -278,17 +407,69 @@ export function sniffDelimiter(text: string): string {
  * the reader has open. Every real export has blank spacer lines, so this is the
  * common case rather than an edge.
  */
-export function parseCsvSheet(text: string): {
+export class CsvReadError extends Error {}
+
+/**
+ * The most columns one record may have — Excel's own XFD limit, which is what
+ * {@link MAX_COLUMN} bounds the workbook reader by.
+ *
+ * Delimited text has no such limit of its own, and a record's width is set by
+ * one byte per field: `','.repeat(10_485_760)` is a single header line inside
+ * the route's 10 MB upload cap that builds a ten-million-entry array and
+ * returns *no rows at all* — measured, 247 MB of heap and a third of a second
+ * of blocked event loop for a file the importer then reports as empty. Text
+ * with more columns than a worksheet has is not a sheet anyone is importing.
+ */
+export const MAX_CSV_COLUMNS = 16_384;
+
+/**
+ * The most cells one parse may materialise, across every row it keeps.
+ *
+ * The row and column bounds each hold one dimension and neither holds their
+ * product: 2,000 rows of 5,000 columns is legal under both. This is the
+ * counterpart to `MAX_GRID_CELLS` in the workbook reader, and generous by the
+ * same margin — a large real cap table is 2,000 rows of a few tens of columns,
+ * some 100,000 cells.
+ */
+export const MAX_CSV_CELLS = 2_000_000;
+
+export function parseCsvSheet(
+  text: string,
+  options: {
+    /**
+     * Data rows to materialise. Records past it are counted into `totalRows`
+     * and discarded, so a caller that is going to keep 2,000 rows does not pay
+     * for 300,000 first — see `totalRows`.
+     */
+    maxRows?: number;
+  } = {},
+): {
   headers: string[];
   rows: Record<string, string>[];
   lines: number[];
+  /**
+   * Data rows the text holds, which is `rows.length` unless `maxRows` cut it
+   * short. Both callers need the true figure and neither needs the rows: the
+   * upload endpoint reports `truncated`, and the pasted-CSV path refuses the
+   * import naming how many rows were sent.
+   *
+   * It exists because those two are the whole reason 10 MB of text was ever
+   * parsed into 300,000 records — a 138 MB allocation, per concurrent upload,
+   * to answer a question a counter answers.
+   */
+  totalRows: number;
 } {
   const body = text.replace(/^\uFEFF/, '');
   const delimiter = sniffDelimiter(body);
+  const maxRows = options.maxRows ?? Number.POSITIVE_INFINITY;
 
   const grid: string[][] = [];
   /** Source line of each kept row, parallel to `grid`. */
   const gridLines: number[] = [];
+  /** Records with anything in them, header included — `totalRows` is this less the header. */
+  let records = 0;
+  /** Cells `grid` holds, against {@link MAX_CSV_CELLS}. */
+  let cells = 0;
   /**
    * The physical line of the file, and the physical line the record now being
    * read began on. They are two counters because a record is not a line: a
@@ -306,13 +487,35 @@ export function parseCsvSheet(text: string): {
   let field = '';
   let row: string[] = [];
   let inQuotes = false;
-  /** Flush the record in progress, keeping the line it started on. */
-  const endRow = () => {
+  /** Close the field in progress, bounding how wide one record may get. */
+  const pushField = () => {
+    if (row.length >= MAX_CSV_COLUMNS) {
+      throw new CsvReadError(
+        `A row has more than ${MAX_CSV_COLUMNS.toLocaleString('en-US')} columns, ` +
+          'the most a worksheet has',
+      );
+    }
     row.push(field);
     field = '';
+  };
+  /** Flush the record in progress, keeping the line it started on. */
+  const endRow = () => {
+    pushField();
     if (row.some((f) => f.trim() !== '')) {
-      grid.push(row);
-      gridLines.push(rowStart);
+      records += 1;
+      // The header is not one of `maxRows`, so a cap of 2,000 keeps 2,001
+      // records. Past that the record is counted and dropped: nothing reads it
+      // and materialising it is the whole cost this bound exists to avoid.
+      if (grid.length <= maxRows) {
+        cells += row.length;
+        if (cells > MAX_CSV_CELLS) {
+          throw new CsvReadError(
+            `This file needs more than ${MAX_CSV_CELLS.toLocaleString('en-US')} cells to lay out`,
+          );
+        }
+        grid.push(row);
+        gridLines.push(rowStart);
+      }
     }
     row = [];
   };
@@ -334,8 +537,7 @@ export function parseCsvSheet(text: string): {
     } else if (c === '"') {
       inQuotes = true;
     } else if (c === delimiter) {
-      row.push(field);
-      field = '';
+      pushField();
     } else if (c === '\n' || c === '\r') {
       if (c === '\r' && body[i + 1] === '\n') i++;
       endRow();
@@ -344,12 +546,12 @@ export function parseCsvSheet(text: string): {
     } else field += c;
   }
   if (field !== '' || row.length > 0) endRow();
-  if (grid.length === 0) return { headers: [], rows: [], lines: [] };
+  if (grid.length === 0) return { headers: [], rows: [], lines: [], totalRows: 0 };
 
   const columns = nameColumns(grid[0]!);
   const headers = columns.filter((c): c is string => c !== null);
   const rows = grid.slice(1).map((cells) => rowByColumn(columns, cells));
-  return { headers, rows, lines: gridLines.slice(1) };
+  return { headers, rows, lines: gridLines.slice(1), totalRows: Math.max(0, records - 1) };
 }
 
 /** Header-keyed rows only — the shape most callers want. */
@@ -390,9 +592,33 @@ export function parseCapTable(
   const entries: CapTableEntry[] = [];
   for (const [index, row] of rows.entries()) {
     const name = String(readCell(row, mapping.security_class) ?? '').trim();
-    const sharesRaw = parseNumericCell(readCell(row, mapping.shares));
-    // Skip blank rows / totals rows with no class and no shares.
-    if (name === '' && sharesRaw === null) continue;
+    /**
+     * Read one mapped numeric column, keeping *why* it came back null.
+     *
+     * `unreadable` is the text that was in the cell when there was text and it
+     * did not parse — see `CapTableEntry.unreadable_numbers`. A cell that is
+     * empty, or that says `N/A` in one of the ways sheets say it, is a figure
+     * that was not supplied and reports nothing.
+     */
+    const unreadable: Partial<Record<NumericCapTableField, string>> = {};
+    const read = (
+      field: NumericCapTableField,
+      parse: (value: unknown) => number | null = parseNumericCell,
+    ): number | null => {
+      const raw = readCell(row, mapping[field]);
+      const value = parse(raw);
+      if (value === null) {
+        const text = raw === null || raw === undefined ? '' : String(raw).trim();
+        if (!meansNoFigure(text)) unreadable[field] = text;
+      }
+      return value;
+    };
+
+    const sharesRaw = read('shares');
+    // Skip blank rows / totals rows with no class and no shares. A cell that
+    // held something unreadable is not blank, so such a row is kept and
+    // reported rather than dropped on the floor.
+    if (name === '' && sharesRaw === null && Object.keys(unreadable).length === 0) continue;
     const typeCell = String(readCell(row, mapping.class_type) ?? '')
       .trim()
       .toLowerCase();
@@ -400,17 +626,19 @@ export function parseCapTable(
       typeCell === 'common' || typeCell === 'preferred' || typeCell === 'option' || typeCell === 'warrant'
         ? (typeCell as CapTableClassType)
         : inferClassType(name);
-    entries.push({
+    const entry: CapTableEntry = {
       source_row: sourceLines?.[index],
       security_class: name,
       class_type: classType,
       shares: sharesRaw ?? 0,
-      price_per_share: parseNumericCell(readCell(row, mapping.price_per_share)),
-      invested_amount: parseNumericCell(readCell(row, mapping.invested_amount)),
-      liquidation_multiple: parseNumericCell(readCell(row, mapping.liquidation_multiple)),
-      seniority: parseNumericCell(readCell(row, mapping.seniority)),
-      conversion_ratio: parseNumericCell(readCell(row, mapping.conversion_ratio)),
-    });
+      price_per_share: read('price_per_share'),
+      invested_amount: read('invested_amount'),
+      liquidation_multiple: read('liquidation_multiple', parseMultipleCell),
+      seniority: read('seniority'),
+      conversion_ratio: read('conversion_ratio', parseRatioCell),
+    };
+    if (Object.keys(unreadable).length > 0) entry.unreadable_numbers = unreadable;
+    entries.push(entry);
   }
   return entries;
 }
@@ -577,6 +805,36 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
     const where = { security_class: e.security_class, row: e.source_row };
     const at = e.source_row === undefined ? '' : `Row ${e.source_row}: `;
 
+    /*
+     * A mapped numeric column that held text.
+     *
+     * Raised before anything else about the row because it explains the rest:
+     * an unreadable share count is *also* a zero share count, an unreadable
+     * multiple is also an absent one, and the warnings those would raise
+     * describe the defaults rather than the sheet. They are suppressed below,
+     * so each bad cell is reported once, as the error it is.
+     *
+     * Errors rather than warnings. Every one of these otherwise imports as a
+     * silent default — 0 shares, a 1x preference, a 1:1 ratio — and every one
+     * of those defaults is a number the valuation goes on to divide by. The
+     * three shapes this catches in the wild are a column mapped to the wrong
+     * place, a row shifted one cell along by an unquoted comma in a company
+     * name, and a notation the parser does not know; only the importer can
+     * still tell the reader which cell, on which row, said what.
+     */
+    for (const field of CAP_TABLE_FIELDS) {
+      const text = e.unreadable_numbers?.[field as NumericCapTableField];
+      if (text === undefined) continue;
+      issues.push({
+        ...where,
+        severity: 'error',
+        code: 'unreadable_number',
+        message:
+          `${at}the ${NUMERIC_FIELD_LABELS[field as NumericCapTableField]} column reads ` +
+          `"${text}", which is not a number.`,
+      });
+    }
+
     if (e.security_class === '') {
       issues.push({
         ...where,
@@ -601,7 +859,7 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
         code: 'bad_shares',
         message: `${at}"${e.security_class}" has an invalid share count.`,
       });
-    } else if (e.shares === 0) {
+    } else if (e.shares === 0 && e.unreadable_numbers?.shares === undefined) {
       // A warning rather than an error, unlike the negative money below: zero
       // is a real thing for a row to say (a retired class, an option pool with
       // nothing left in it) and refusing the import would lose the other
@@ -624,7 +882,7 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
 
     if (e.class_type === 'preferred') {
       const mult = e.liquidation_multiple ?? 1;
-      if (e.liquidation_multiple === null) {
+      if (e.liquidation_multiple === null && e.unreadable_numbers?.liquidation_multiple === undefined) {
         issues.push({
           ...where,
           severity: 'warning',
