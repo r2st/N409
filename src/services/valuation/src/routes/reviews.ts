@@ -78,7 +78,24 @@ export function registerReviewRoutes(
 
     await assertPublishGate(deps.pool, valuation.id, target);
     const actor = { actorType: 'human' as const, actorId: principal.id, source: 'review' };
+    /*
+     * `target` was derived from the state this route read, so the write has to
+     * be conditional on the row still being at it — the same rule, and the same
+     * one line, as every other derived transition (`applyValuationState`).
+     *
+     * A review decision is the transition most likely to be issued twice. The
+     * button is on a queue two reviewers work at once, the decision carries a
+     * comment so the request is slow enough to overlap, and both duplicates
+     * looked like successes: two reviewers approving one `drafted` file both
+     * read `drafted`, both wrote `draft_accepted`, and the spine recorded two
+     * `state_changed` events and two `review_decision`s for one move, with
+     * `onStateChanged` firing the client's email twice. The sharper version is
+     * the disagreement — an approve and a request-changes crossing — where the
+     * later write silently overwrote the earlier decision at whatever state it
+     * had reached.
+     */
     const updated = await patchValuation(deps.pool, valuation, { state: target }, actor, {
+      expectedVersion: valuation.version,
       preCommit: assertPublishGateForWrite(valuation.id, target),
     });
 

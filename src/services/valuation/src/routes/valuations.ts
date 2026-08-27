@@ -387,7 +387,30 @@ export function registerValuationRoutes(
       parsed.data as Record<string, unknown>,
       actorFor(principal),
       {
-        expectedVersion,
+        /*
+         * `If-Match` is opt-in for an ordinary field save, and cannot be for a
+         * state write.
+         *
+         * The transition is judged against `valuation.state`, and the
+         * `state_changed` event records that value as the `from` of the move.
+         * A caller whose read has been overtaken therefore does not merely
+         * apply a stale edit — it writes an audit line describing a transition
+         * that did not happen, out of a state the row left before the request
+         * arrived. The table check below refuses the edge that is illegal from
+         * the live row and the one that has already reached the target, but
+         * `reviewed → review` is a legal edge and a stale `completed → review`
+         * lands on it silently, spine and client email included.
+         *
+         * So a body carrying `state` supplies its own version when the caller
+         * did not, which is the rule every derived transition follows (see
+         * `applyValuationState`). It costs nothing uncontended: `valuation` was
+         * read by this request.
+         */
+        ...(expectedVersion !== undefined
+          ? { expectedVersion }
+          : parsed.data.state
+            ? { expectedVersion: valuation.version }
+            : {}),
         // Both gates re-run under the row lock, in the same order. The two
         // checks above answer for the uncontended case; these answer for the
         // row as it stands at the moment of the UPDATE.

@@ -137,30 +137,28 @@ function fromPrefetch(rows: ReadonlyMap<string, ValuationRow>, id: string): Valu
 
 export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps): void {
   /**
-   * `guardVersion` makes the write conditional on the row still being at the
-   * version it was read at.
+   * Every transition here is conditional on the row still being at the version
+   * it was read at — see `applyValuationState`, which now guards for all of its
+   * callers rather than for the one that asked.
    *
-   * The single-id routes below do not need it and do not pass it: each loads the
-   * valuation and writes it in the next statement, so the state the transition
-   * was judged against is the state being transitioned from. That is the case
-   * `PatchOptions.expectedVersion` documents as not needing a guard.
-   *
-   * The bulk executor is not that case, and stopped being it when the reads were
-   * batched. See {@link executeBulk}.
+   * The bulk executor is the caller that asked, and the reason is written up
+   * under {@link executeBulk}: its reads are batched at the top of the request
+   * and its writes run the length of it. The single-id routes below read and
+   * write one statement apart, which narrows that window without closing it —
+   * two holders of one read is what a double-clicked button produces, and it
+   * used to buy a duplicate transition with its own client email.
    */
   const applyState = async (
     valuation: ValuationRow,
     to: ValuationState,
     principal: Principal,
     source: string,
-    guardVersion = false,
   ): Promise<ValuationRow> =>
     applyValuationState(
       { pool: deps.pool, transport: deps.transport, log: app.log },
       valuation,
       to,
       actorFor(principal, source),
-      guardVersion,
     );
 
   app.post('/api/v1/valuations/:id/workflow/advance', { preHandler: app.authenticate }, async (req) => {
@@ -264,8 +262,8 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
      * overwriting the concurrent move without a trace. `expectedVersion` refuses
      * that write instead: `patchValuation` bumps `version` on every state write
      * and nothing else writes `state`, so a row that moved fails this one id with
-     * the conflict the single-id routes would have raised. A per-id failure is
-     * what the results array below exists to carry.
+     * the conflict the single-id routes now raise too. A per-id failure is what
+     * the results array below exists to carry.
      */
     const prefetched = await findValuationsByIds(deps.pool, ids.filter(isUlid));
 
@@ -278,21 +276,21 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
             if (!canTransition(valuation.state, state!)) {
               throw problems.conflict(`Illegal transition ${valuation.state} → ${state}`);
             }
-            const updated = await applyState(valuation, state!, principal, 'bulk', true);
+            const updated = await applyState(valuation, state!, principal, 'bulk');
             results.push({ id, ok: true, state: updated.state });
             break;
           }
           case 'advance': {
             const next = nextState(valuation.state, { paidStatus: valuation.paid_status });
             if (!next) throw problems.conflict(`Cannot auto-advance from '${valuation.state}'`);
-            const updated = await applyState(valuation, next, principal, 'bulk', true);
+            const updated = await applyState(valuation, next, principal, 'bulk');
             results.push({ id, ok: true, state: updated.state });
             break;
           }
           case 'restart': {
             if (!canRestart(valuation.state))
               throw problems.conflict(`Cannot restart from '${valuation.state}'`);
-            const updated = await applyState(valuation, RESTART_STATE, principal, 'bulk', true);
+            const updated = await applyState(valuation, RESTART_STATE, principal, 'bulk');
             results.push({ id, ok: true, state: updated.state });
             break;
           }

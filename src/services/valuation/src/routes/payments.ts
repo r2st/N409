@@ -44,7 +44,8 @@ import { collectedTotals, disputeStatusOf, refundState, type DisputeStatus } fro
 import { createNotifications } from '../repos/notifications.js';
 import { recordInvoiceRefund } from '../repos/billing.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
-import { onStateChanged, type EmailTransport, type SupportEmailSource } from '../hooks/stateChange.js';
+import type { EmailTransport, SupportEmailSource } from '../hooks/stateChange.js';
+import { applyValuationState } from '../domain/applyState.js';
 import { findUserById, listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
 import { parseStripeEvent, stripeEventKey } from '../domain/stripeEvents.js';
@@ -1004,13 +1005,6 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         if (valuation && valuation.paid_status === 'unpaid') {
           const amount =
             typeof session.amount_total === 'number' ? session.amount_total : Number(payment.amount_cents);
-          // Payment is the gate between "the client has given us everything"
-          // and "an analyst has picked it up", and crossing it is exactly what
-          // the `paid` state records. Only from `completed`: money landing on a
-          // file already in review, or on one that never reached the gate,
-          // says nothing about where the work has got to, and rewinding it to
-          // `paid` would be a lie the dashboard then has to be read around.
-          const advancing = valuation.state === 'completed';
           const updated = await patchValuation(
             deps.pool,
             valuation,
@@ -1018,7 +1012,6 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
               paid_status: 'paid',
               amount_cents: amount,
               paid_at: new Date(),
-              ...(advancing ? { state: 'paid' } : {}),
               // Express is a promise that only starts costing us once the
               // money is in, so the SLA moves here and not at checkout — an
               // abandoned or bounced express order must not leave a
@@ -1029,20 +1022,58 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
             },
             { actorType: 'system', source: 'stripe' },
           );
-          // Same hook every other path into a state runs through, so partner
-          // webhooks and the notification matrix see this transition too.
-          if (advancing) {
-            await onStateChanged(
-              {
-                pool: deps.pool,
-                transport: deps.transport,
-                log: req.log,
-                publicBaseUrl: deps.publicBaseUrl,
-                settings: deps.settings,
-              },
-              updated,
-              'paid',
-            );
+          /*
+           * The lifecycle move is a second decision, not a field on the first.
+           *
+           * Payment is the gate between "the client has given us everything"
+           * and "an analyst has picked it up", and crossing it is what the
+           * `paid` state records — only from `completed`, because money landing
+           * on a file already in review, or on one that never reached the gate,
+           * says nothing about where the work has got to.
+           *
+           * It used to be `...(advancing ? { state: 'paid' } : {})` inside the
+           * patch above, with `advancing` read off the row this handler loaded
+           * before it wrote anything. That is the one read in this service that
+           * cannot be made narrow: Stripe delivers whenever it likes, and an
+           * analyst picking the file up in the same second is the *expected*
+           * interleaving rather than a contrived one. `review → paid` is not an
+           * edge the lifecycle table has, and nothing on this path consulted the
+           * table, so the webhook could walk an engagement backwards out of
+           * review — recorded as `completed → paid` and dropping it out of the
+           * review queue.
+           *
+           * Deciding it from `updated` fixes both halves. That row is what the
+           * money UPDATE returned, so its `state` is the live state at the
+           * moment the money landed and its `version` is current; and
+           * `applyValuationState` is the shared door, so this transition now
+           * gets the same version guard, publish gate and `onStateChanged` as
+           * every other one.
+           *
+           * The money write stays unconditional and stays first. A refused
+           * advance must not roll back a settlement Stripe has already taken —
+           * `claimed` above says there is exactly one of these deliveries, so
+           * throwing here would lose the paid fields for good.
+           */
+          if (updated.state === 'completed') {
+            try {
+              await applyValuationState(
+                {
+                  pool: deps.pool,
+                  transport: deps.transport,
+                  log: req.log,
+                  publicBaseUrl: deps.publicBaseUrl,
+                  settings: deps.settings,
+                },
+                updated,
+                'paid',
+                { actorType: 'system', source: 'stripe' },
+              );
+            } catch (err) {
+              req.log.warn(
+                { err, valuationId: updated.id, paymentId: payment.id },
+                'payment settled but the engagement moved before it could be advanced to paid',
+              );
+            }
           }
         }
         // Outside the `paid_status === 'unpaid'` branch on purpose. That branch

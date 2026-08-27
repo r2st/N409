@@ -84,6 +84,30 @@ export function assertTransitionForWrite(
     // not this guard's failure to report — the UPDATE below raises the conflict
     // the caller's version check exists for.
     if (!live) return;
+    /*
+     * Somebody else already made this move.
+     *
+     * `assertTransition` reads `from === to` as a no-op and lets it through,
+     * which is right for the question it is asked before the write — a PATCH
+     * naming the state the caller can see is not an attempt to leave it, and
+     * `patchValuation` drops it from the diff before a transaction is opened.
+     * It is the wrong answer here. This guard only runs once the diff is
+     * non-empty, so the caller read some *other* state: `live === to` means the
+     * transition it is about to write has already been written by someone else,
+     * between its read and this lock.
+     *
+     * Letting it through wrote the move a second time — a duplicate
+     * `state_changed` naming a `from` the row had already left, a second
+     * `onStateChanged`, and the client emailed twice for one move. The version
+     * guard on the write refuses this too and refuses it a moment later; this
+     * says which of the two things went wrong, since "already at `review`" and
+     * "somebody changed something" send an operator to different places.
+     */
+    if (live === to) {
+      throw problems.conflict(
+        `This valuation is already '${to}' — someone else made that change while you were working.`,
+      );
+    }
     assertTransition(live, to);
   };
 }

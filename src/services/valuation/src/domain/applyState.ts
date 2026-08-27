@@ -22,11 +22,30 @@ import type { ValuationState } from './valuation.js';
  * written without it is a state change the rest of the system never learns
  * about.
  *
- * `guardVersion` makes the write conditional on the row still being at the
- * version it was read at. A caller that loads a valuation and writes it in the
- * next statement does not need it — the state the transition was judged against
- * is the state being transitioned from. A caller that batched its reads does;
- * see the bulk executor in routes/workflow.ts.
+ * The write is conditional on the row still being at the version it was read
+ * at, always, for every caller.
+ *
+ * It used to be an opt-in the bulk executor turned on and the single-engagement
+ * routes left off, on the reasoning that a caller which loads a valuation and
+ * writes it in the next statement is judging the transition against the state it
+ * is transitioning from. That reasoning holds for one request at a time and for
+ * nothing else, and this is a *derived* transition — `advance` reads its target
+ * out of `AUTO_ADVANCE`, `restart` out of `RESTART_STATE`, a review decision out
+ * of `decisionTarget`, all keyed on the state that was read. Two holders of one
+ * read are the ordinary case: a double-clicked button, a retried request, two
+ * operators on the same worklist row.
+ *
+ * Both things that then went wrong are silent. Two callers who both read
+ * `completed` both write `review`: the row lands where it should, and the spine
+ * records the transition twice, `onStateChanged` runs twice, and the client is
+ * emailed twice for one move. And a caller whose read has since been overtaken
+ * writes its target over a row that is further on — `completed → review` applied
+ * to a file already at `reviewed` walks it *backwards*, recorded as a transition
+ * out of a state it left two moves ago.
+ *
+ * `patchValuation` bumps `version` on every write, so a row that moved fails
+ * this write with the 409 the second caller should have had. Nothing else writes
+ * `state`; see `stateTransitionGuards.test.ts`.
  */
 export interface ApplyStateDeps extends TransitionRenderDeps {
   pool: pg.Pool;
@@ -39,11 +58,10 @@ export async function applyValuationState(
   valuation: ValuationRow,
   to: ValuationState,
   actor: EventActor,
-  guardVersion = false,
 ): Promise<ValuationRow> {
   await assertPublishGate(deps.pool, valuation.id, to);
   const updated = await patchValuation(deps.pool, valuation, { state: to }, actor, {
-    ...(guardVersion ? { expectedVersion: valuation.version } : {}),
+    expectedVersion: valuation.version,
     preCommit: assertPublishGateForWrite(valuation.id, to),
   });
   await onStateChanged(
