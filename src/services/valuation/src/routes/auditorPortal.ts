@@ -16,7 +16,13 @@ import {
   redeemAuditorToken,
   revokeAuditorAccess,
   toPublic,
+  verifyAuditorToken,
 } from '../repos/auditorAccess.js';
+import { createComment } from '../repos/comments.js';
+import { createNotifications } from '../repos/notifications.js';
+import { listUserIdsWithRoles } from '../repos/users.js';
+import { AUDITOR_NOTE_ROLES } from '../domain/roles.js';
+import type { ValuationHub } from '../realtime/hub.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
@@ -37,6 +43,30 @@ const CreateBody = z.object({
 const RedeemBody = z.object({ token: z.string().min(1) });
 
 /**
+ * What an auditor can put on the record, and the three things they ever want to
+ * say about a deliverable they have been sent.
+ *
+ * Not a workflow state. Recording an auditor's disposition as an engagement
+ * state would make an outside party — one holding a link, with no account and
+ * no seat in the firm — able to move a valuation through its lifecycle, and the
+ * lifecycle is exactly where the QA gate and the signature live. It is a
+ * heading on a message: it tells the reviewer whether to read this now, and it
+ * is the reviewer who then acts.
+ */
+const DISPOSITIONS = {
+  question: 'Auditor question',
+  change_requested: 'Auditor requested a change',
+  approved: 'Auditor signed off',
+} as const;
+type Disposition = keyof typeof DISPOSITIONS;
+
+const NoteBody = z.object({
+  token: z.string().min(1),
+  disposition: z.enum(['question', 'change_requested', 'approved']),
+  body: z.string().trim().min(1).max(20_000),
+});
+
+/**
  * The portal redeem route authenticates with nothing but the link's token, so
  * an unlimited endpoint is an oracle for guessing one — and a hit returns an
  * entire client valuation. 30 per IP per 10 minutes: an auditor reloads the
@@ -47,7 +77,7 @@ const PORTAL_RATE_WINDOW_MS = 10 * 60 * 1000;
 
 export function registerAuditorPortalRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; publicBaseUrl: string; limiter?: FixedWindowRateLimiter },
+  deps: { pool: pg.Pool; publicBaseUrl: string; limiter?: FixedWindowRateLimiter; hub?: ValuationHub },
 ): void {
   const limiter = deps.limiter ?? new FixedWindowRateLimiter(PORTAL_RATE_LIMIT, PORTAL_RATE_WINDOW_MS);
   const loadManageable = async (principal: Principal, id: string) => {
@@ -175,6 +205,23 @@ export function registerAuditorPortalRoutes(
         : null;
     }
 
+    /*
+     * Why there is no report, when there is no report.
+     *
+     * `report: null` carries two entirely different facts and the portal could
+     * not tell them apart, so it rendered nothing at all and said nothing —
+     * which is the third possibility a reader assumes: that the page is broken,
+     * or that they are being refused. An auditor sent a link and shown a
+     * company name with no document underneath it has no way to know whether to
+     * wait, to ask, or to report a fault, and no account through which to find
+     * out. The states are the server's to distinguish, so it does.
+     */
+    const reportStatus: 'available' | 'not_shared' | 'not_started' = report
+      ? 'available'
+      : reportShared
+        ? 'not_started'
+        : 'not_shared';
+
     // Assumptions: methodology params + the analyst-entered engine inputs, plus
     // the concluded figures from the latest calculation.
     const params = await findParams(deps.pool, valuation.id);
@@ -203,6 +250,7 @@ export function registerAuditorPortalRoutes(
     const { reviews: qa, truncated: qaTruncated } = await listQaReviews(deps.pool, valuation.id);
 
     return {
+      report_status: reportStatus,
       valuation: {
         id: valuation.id,
         number: valuation.number,
@@ -248,6 +296,126 @@ export function registerAuditorPortalRoutes(
         assumptions_recorded: assumptions !== null,
       },
       access_expires_at: access.expires_at,
+      /** Whether this link may write back — see the notes route below. */
+      can_submit_notes: valuation.archived_at === null,
     };
+  });
+
+  /**
+   * The auditor's half of the review, which did not exist.
+   *
+   * The portal served a report, a conclusion, the assumptions and the QA record
+   * to an outside reviewer and gave them nowhere to put the answer. Every other
+   * route into this engagement's thread requires an account, and an auditor is
+   * the one reader defined by not having one — so a reviewer who found a
+   * problem in a signed deliverable had to leave the product, find someone's
+   * email address, and describe which valuation they meant. That round trip is
+   * the whole reason the link was minted, and it happened entirely off the
+   * record: nothing in the engagement's audit trail showed that an auditor had
+   * ever raised anything.
+   *
+   * The note lands in the engagement's own comment thread as an `email`-kind
+   * comment. That kind is not a guess at the transport — it is this platform's
+   * vocabulary for a message from a correspondent with no account (see
+   * `visibleCommentKinds`), which is exactly what this is, and it is the kind
+   * the thread already renders with the sender's name rather than an avatar.
+   * Ops-visible, like every other message of that kind: an auditor's finding is
+   * addressed to the engagement team, and routing it to the client before an
+   * analyst has read it would forward a criticism of our own work.
+   *
+   * What the auditor may *not* do here is move the engagement. See DISPOSITIONS.
+   */
+  app.post('/api/v1/auditor/portal/notes', async (req, reply) => {
+    // The same limiter and the same window as the read. A write is at least as
+    // good an oracle for guessing a token as a read is, and it is worth less to
+    // the honest caller: an auditor writes a note once, and reloads the page a
+    // dozen times to write it.
+    const { allowed, resetAt } = limiter.check(req.ip);
+    if (!allowed) {
+      throw problems.tooManyRequests(
+        'Too many requests — please try again later',
+        Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
+      );
+    }
+    const parsed = NoteBody.safeParse(req.body);
+    if (!parsed.success) throw invalidBody('Invalid note', parsed.error);
+    const { token, disposition, body } = parsed.data;
+
+    // Verified rather than redeemed: submitting a note is not opening the link,
+    // and `access_count` is what ops read to decide whether a link is still in
+    // use. See `verifyAuditorToken`.
+    const access = await verifyAuditorToken(deps.pool, token);
+    if (!access) throw problems.unauthorized('This auditor link is invalid, expired, or revoked');
+
+    const valuation = await findValuationById(deps.pool, access.valuation_id);
+    // Not a bare 404. The reader is outside the product with no account to ask
+    // from, and a bare "Not Found" on a link that just rendered a report is
+    // indistinguishable to them from a bug in the form they typed into — so it
+    // reads as "resend it" rather than "ask for a new link".
+    if (!valuation)
+      throw problems.notFound('The valuation this link was issued for is no longer available.');
+    // The same refusal the read gives, for the same reason and in the same
+    // words: a withdrawn engagement is not accepting anything, and an auditor
+    // whose note vanished into one would have no way to discover that.
+    if (valuation.archived_at !== null) throw problems.notFound(RETIRED);
+
+    const heading = DISPOSITIONS[disposition as Disposition];
+    // The label is what ops named this link when they minted it — the auditor's
+    // firm, usually. It is the only identity the holder of a token has, so a
+    // link minted without one says so rather than being attributed to nobody.
+    const from = access.label?.trim() ? `Auditor · ${access.label.trim()}` : 'Auditor (unlabelled link)';
+
+    const { comment } = await createComment(
+      deps.pool,
+      {
+        valuationId: valuation.id,
+        kind: 'email',
+        authorId: null,
+        body,
+        emailMeta: { from, subject: heading },
+        // Not `email_received`. See CreateCommentInput.eventType: the kind says
+        // how it arrived, this says what happened.
+        eventType: 'auditor_note_received',
+      },
+      { actorType: 'system', actorId: access.id, source: 'auditor_portal' },
+    );
+    deps.hub?.broadcast(valuation.id, 'comment', { comment_id: comment.id, kind: comment.kind });
+
+    /*
+     * Somebody has to be told, or this is a message in a thread nobody opened.
+     *
+     * The assigned reviewer because it is their file, and AUDITOR_NOTE_ROLES
+     * because an engagement with no reviewer assigned — or one whose reviewer
+     * has left — must not be the case where an auditor's finding is silently
+     * filed. Best-effort: the note is already committed and reporting a
+     * notification failure as a 5xx would tell the auditor their submission had
+     * failed when it had not, and the obvious response to that is to send it
+     * again.
+     */
+    try {
+      const recipients = new Set([
+        ...(valuation.assigned_reviewer_id ? [valuation.assigned_reviewer_id] : []),
+        ...(await listUserIdsWithRoles(deps.pool, AUDITOR_NOTE_ROLES)),
+      ]);
+      await createNotifications(
+        deps.pool,
+        [...recipients].map((userId) => ({
+          userId,
+          valuationId: valuation.id,
+          type: 'auditor_note_received',
+          title: `${heading} — ${valuation.company_name}`,
+          body: `${from} on ${valuation.number}: ${body.slice(0, 300)}`,
+        })),
+      );
+    } catch (err) {
+      req.log.warn({ err, valuationId: valuation.id }, 'auditor note notification failed');
+    }
+
+    // Echoed back so the portal can show the auditor what it recorded rather
+    // than only that it succeeded — a submission whose only feedback is the
+    // form clearing reads as a submission that was lost.
+    return reply.status(201).send({
+      note: { disposition, heading, from, body, created_at: comment.created_at },
+    });
   });
 }

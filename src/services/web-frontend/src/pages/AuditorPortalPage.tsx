@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { AuthShell } from '../components/AuthShell';
 import { HelpIcon } from '../components/HelpIcon';
-import { ErrorNote, ListTruncationNote, Spinner } from '../components/ui';
+import { Button, ErrorNote, Field, inputClass, ListTruncationNote, Spinner } from '../components/ui';
+import { required, useFormValidation } from '../lib/useFormValidation';
 import { formatDate, moneyFormatter, PER_SHARE_DIGITS } from '../lib/format';
 import { sanitizeHtml } from '../lib/m2';
 
@@ -56,7 +57,50 @@ interface Bundle {
     assumptions_recorded: boolean;
   };
   access_expires_at: string;
+  /**
+   * Why there is no report, when `report` is null.
+   *
+   * `null` carried two entirely different facts — the engagement has not shared
+   * a draft yet, and it has shared one but nobody has written it — and this
+   * page rendered nothing for either. An auditor sent a link and shown a
+   * company name with no document under it assumes the third possibility: that
+   * the page is broken, or that they are being refused. They have no account
+   * through which to find out which.
+   *
+   * Optional because a bundle from a build that predates it carries neither
+   * key; those fall back to saying nothing specific rather than guessing.
+   */
+  report_status?: 'available' | 'not_shared' | 'not_started';
+  /** False on an engagement that can no longer accept a note. */
+  can_submit_notes?: boolean;
 }
+
+type Disposition = 'question' | 'change_requested' | 'approved';
+
+/**
+ * What an auditor can say, in the order they are likely to need it.
+ *
+ * Deliberately not a workflow control: none of these moves the engagement, and
+ * the copy says who acts next so that "Sign off" cannot read as a button that
+ * publishes something. See DISPOSITIONS in routes/auditorPortal.ts.
+ */
+const DISPOSITIONS: Array<{ value: Disposition; label: string; hint: string }> = [
+  {
+    value: 'question',
+    label: 'Ask a question',
+    hint: 'Goes to the engagement team as a question — nothing changes until they answer.',
+  },
+  {
+    value: 'change_requested',
+    label: 'Request a change',
+    hint: 'Flags something you believe is wrong. The reviewer decides what to do about it.',
+  },
+  {
+    value: 'approved',
+    label: 'Record your sign-off',
+    hint: 'Records that you reviewed this with no exceptions. It does not publish or approve anything itself.',
+  },
+];
 
 /**
  * External auditor portal (feature 8). Public, token-authenticated, read-only
@@ -66,17 +110,27 @@ interface Bundle {
 export function AuditorPortalPage() {
   const [bundle, setBundle] = useState<Bundle | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /*
+   * Kept so the note form can post it back.
+   *
+   * Read from the fragment once, on mount, rather than re-read at submit time:
+   * the fragment is the one part of the URL a stray navigation can drop, and a
+   * submit that silently fails because the token has gone from the address bar
+   * is the worst version of the dead end this form exists to close.
+   */
+  const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token');
-    if (!token) {
+    const fromHash = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token');
+    if (!fromHash) {
       setError('This auditor link is missing its access token.');
       return;
     }
+    setToken(fromHash);
     fetch('/api/v1/auditor/portal', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ token: fromHash }),
     })
       .then(async (res) => {
         if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? 'Access denied');
@@ -160,6 +214,27 @@ export function AuditorPortalPage() {
         </Card>
       )}
 
+      {!bundle.report && bundle.report_status && (
+        /*
+         * The section that used to render as nothing at all.
+         *
+         * An auditor is holding a link somebody sent them on purpose; a page
+         * with a company name and no document is not "there is no report yet"
+         * to them, it is "this is broken" or "I am being refused". Both wrong
+         * readings end the journey here, because there is no account to log
+         * into and ask from. Naming which of the two it is turns a dead end
+         * into a wait — and the note form below is how they say so if it is
+         * not.
+         */
+        <Card title="Report">
+          <p data-testid="auditor-report-absent" className="text-sm text-ink-600">
+            {bundle.report_status === 'not_shared'
+              ? 'The valuation report has not been shared yet. The engagement team shares it once the draft is ready — the conclusion and assumptions above are already final enough to review, and this section will fill in without you needing a new link.'
+              : 'The engagement has reached the stage where the report is shared, but no version has been written yet. It will appear here when it is.'}
+          </p>
+        </Card>
+      )}
+
       {bundle.report && (
         <Card title={`Report — ${bundle.report.status}`}>
           {bundle.report.content.sections.map((s, i) => (
@@ -182,6 +257,13 @@ export function AuditorPortalPage() {
         </Card>
       )}
 
+      {/*
+       * No empty-state card here, deliberately, unlike the report above. The
+       * report is what the auditor was sent the link *for*, so its absence is
+       * the one that reads as a fault; a review section that is simply not
+       * there is not a claim about anything. Pinned by
+       * "omits the review card when the valuation has not been reviewed".
+       */}
       {bundle.qa.length > 0 && (
         <Card title="Audit-defense review">
           {bundle.qa.map((q) => (
@@ -216,7 +298,149 @@ export function AuditorPortalPage() {
           />
         </Card>
       )}
+
+      {token && bundle.can_submit_notes !== false && <NoteForm token={token} />}
     </div>
+  );
+}
+
+/**
+ * The auditor's half of the review, which the portal did not have.
+ *
+ * Everything above this is read-only, and every other way into the engagement's
+ * thread needs an account — which is the one thing an auditor holding a link
+ * does not have. So a reviewer who found a problem in a signed deliverable had
+ * to leave the product, find an email address, and describe which valuation
+ * they meant, and none of it reached the engagement's record.
+ *
+ * The submitted note is echoed back rather than the form merely clearing: a
+ * submission whose only feedback is an empty box is a submission the sender
+ * cannot tell landed, and the obvious response to that is to send it again.
+ */
+function NoteForm({ token }: { token: string }) {
+  const [disposition, setDisposition] = useState<Disposition>('question');
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState<{ heading: string; body: string } | null>(null);
+
+  const chosen = DISPOSITIONS.find((d) => d.value === disposition)!;
+
+  /*
+   * The shared validator rather than the browser's, like every other form here
+   * — and rather than a submit button that is simply disabled while the box is
+   * empty. A disabled control states that something is wrong without saying
+   * what, and the reader it states it to is an auditor with no account to ask
+   * from. Naming the box is the same choice the onboarding funnel makes.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(
+    { body },
+    { body: required('body', 'Your note') },
+  );
+
+  const submit = handleSubmit(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/v1/auditor/portal/notes', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token, disposition, body: body.trim() }),
+      });
+      if (!res.ok) {
+        throw new Error(
+          (await res.json().catch(() => ({}))).detail ?? 'Your note could not be sent. Please try again.',
+        );
+      }
+      const { note } = await res.json();
+      setSent({ heading: note.heading, body: note.body });
+      // Cleared only after the reply, so a failure leaves the text where the
+      // auditor can retry it rather than making them write it again.
+      setBody('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Your note could not be sent. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  return (
+    <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+      <h2 className="overline mb-1 text-ink-400">Respond</h2>
+      <p className="mb-4 text-sm text-ink-600">
+        Anything you put here goes to the engagement team and is recorded against this valuation. You will not
+        get a reply on this page — they will contact you directly.
+      </p>
+
+      {sent && (
+        <div
+          role="status"
+          data-testid="auditor-note-sent"
+          className="mb-4 rounded-md border border-bond-200 bg-bond-50 px-3.5 py-3 text-sm text-bond-800"
+        >
+          <div className="font-semibold">Sent — recorded as “{sent.heading}”.</div>
+          <p className="mt-1 whitespace-pre-wrap text-bond-700">{sent.body}</p>
+          <p className="mt-2 text-xs text-bond-700">
+            You can send another note from this link at any time until it expires.
+          </p>
+        </div>
+      )}
+
+      {error && (
+        <div className="mb-4">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
+
+      <form onSubmit={submit} className="space-y-4" noValidate>
+        <fieldset>
+          <legend className="mb-2 text-xs font-semibold text-ink-700">What is this?</legend>
+          <div className="flex flex-wrap gap-2">
+            {DISPOSITIONS.map((d) => (
+              <label
+                key={d.value}
+                className={`tap-area cursor-pointer rounded-md border px-3.5 py-2 text-sm font-semibold ${
+                  disposition === d.value
+                    ? 'border-bond-600 bg-bond-50 text-bond-800'
+                    : 'border-ink-200 bg-surface text-ink-700 hover:border-bond-400'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="disposition"
+                  value={d.value}
+                  checked={disposition === d.value}
+                  onChange={() => setDisposition(d.value)}
+                  className="sr-only"
+                />
+                {d.label}
+              </label>
+            ))}
+          </div>
+          {/* Said before they write, not after they send: "Record your
+              sign-off" beside a report is exactly the control someone expects
+              to publish something, and it does not. */}
+          <p className="mt-2 text-xs text-ink-500">{chosen.hint}</p>
+        </fieldset>
+
+        <Field label="Your note" error={errorFor('body')}>
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            onBlur={blurHandler('body')}
+            rows={5}
+            maxLength={20_000}
+            required
+            placeholder="Cite the exhibit or figure you mean — the team sees this against the valuation, not in an inbox."
+            className={inputClass}
+          />
+        </Field>
+
+        <Button type="submit" disabled={busy}>
+          {busy ? 'Sending…' : 'Send to the engagement team'}
+        </Button>
+      </form>
+    </section>
   );
 }
 

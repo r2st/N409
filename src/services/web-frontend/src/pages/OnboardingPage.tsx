@@ -62,6 +62,14 @@ export function OnboardingPage() {
   // the empty first screen before restoring, which is the flash of "we lost
   // your request" this exists to prevent.
   const [restored] = useState(() => loadDraft());
+  /*
+   * Whether the resumed-request note is still on screen.
+   *
+   * Separate from `restored` because discarding has to leave the *fact* that a
+   * draft was restored alone — the wizard has to be able to say "we dropped it"
+   * rather than simply never mentioning it again.
+   */
+  const [resumeDismissed, setResumeDismissed] = useState(false);
   const [step, setStep] = useState(restored?.step ?? 0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -232,13 +240,68 @@ export function OnboardingPage() {
        * bug; naming it turns the same screen into a reassurance — and tells a
        * client returning from a cancelled checkout that nothing was lost.
        */}
-      {restored && (
-        <p
+      {restored && !resumeDismissed && (
+        <div
           data-testid="onboarding-resumed"
           className="mt-5 rounded-md border border-sky-200 bg-sky-50 px-3.5 py-2.5 text-sm text-sky-900"
         >
-          Picking up where you left off — your request for{' '}
-          <span className="font-semibold">{restored.valuation.company_name}</span> is saved.
+          <p>
+            Picking up where you left off — your request for{' '}
+            <span className="font-semibold">{restored.valuation.company_name}</span> is saved.
+          </p>
+          {/*
+           * The way out, which there was not one of.
+           *
+           * Resuming is right nine times out of ten, and the tenth is a client
+           * who abandoned a request — a cancelled checkout, a wrong company
+           * name, a change of mind — and has come back to start a different
+           * one. There was no control anywhere on this page to do that: the
+           * draft outlives the visit inside the tab session, the wizard has no
+           * Back, and the only exit was to walk the abandoned request forward
+           * to its congratulations screen and press "Open my valuation" for a
+           * company they did not want. Someone in that position types the new
+           * company name over the old one at the first box they can reach,
+           * which is how one client ends up with two engagements — the exact
+           * duplicate the draft exists to prevent.
+           *
+           * The engagement itself is not touched. It was created server-side
+           * the moment they left step 1, and deleting it from a "start over"
+           * button would be this screen discarding real work on a click. It is
+           * in their valuations list, and the copy says so.
+           */}
+          <button
+            type="button"
+            onClick={() => {
+              clearDraft();
+              setResumeDismissed(true);
+              setStep(0);
+              setValuation(null);
+              setQuote(null);
+              setQuoteFailed(false);
+              setPaymentNote(null);
+              setUploaded({});
+              setError(null);
+              setForm({ company_name: '', kind: '409a', currency: 'USD' });
+            }}
+            className="tap-area mt-1.5 cursor-pointer font-semibold text-sky-800 underline hover:text-sky-900"
+          >
+            Start a different request instead
+          </button>
+        </div>
+      )}
+      {resumeDismissed && (
+        <p
+          role="status"
+          data-testid="onboarding-discarded"
+          className="mt-5 rounded-md border border-paper-300 bg-paper-100 px-3.5 py-2.5 text-sm text-ink-700"
+        >
+          Starting fresh. Your earlier request for{' '}
+          <span className="font-semibold">{restored?.valuation.company_name}</span> has not been cancelled —
+          it is still in{' '}
+          <Link to="/valuations" className="font-semibold text-bond-600 hover:text-bond-700">
+            your valuations
+          </Link>
+          .
         </p>
       )}
       {error && (

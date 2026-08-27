@@ -3,6 +3,7 @@ import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { OPERATIONS_EVENT_TYPES, type CommentKind } from '../domain/operations.js';
+import type { ValuationEventType } from '../domain/auditTrail.js';
 import { invalidateValuationAfter } from './valuations.js';
 
 export interface CommentRow {
@@ -82,6 +83,19 @@ export interface CreateCommentInput {
   body: string;
   pinned?: boolean;
   emailMeta?: { from?: string; subject?: string; message_id?: string };
+  /**
+   * What the audit trail should call this, when the kind is not the whole story.
+   *
+   * `kind` says how the message reaches the thread — `email` is the vocabulary
+   * for a correspondent with no account — and that is what decides visibility
+   * and how the thread renders it. It is not always what *happened*: an
+   * auditor's note arrives through the same accountless door as an inbound
+   * email and is not one, and recording it as `email_received` would put "Email
+   * received" in the audit trail of the engagement it was written about.
+   *
+   * Defaults to the kind's own type, so every existing caller is unchanged.
+   */
+  eventType?: ValuationEventType;
 }
 
 /**
@@ -128,7 +142,10 @@ export async function createComment(
       await recordEvent(client, {
         valuationId: input.valuationId,
         type:
-          input.kind === 'email' ? OPERATIONS_EVENT_TYPES.emailReceived : OPERATIONS_EVENT_TYPES.commentAdded,
+          input.eventType ??
+          (input.kind === 'email'
+            ? OPERATIONS_EVENT_TYPES.emailReceived
+            : OPERATIONS_EVENT_TYPES.commentAdded),
         actor,
         payload: {
           comment_id: comment.id,

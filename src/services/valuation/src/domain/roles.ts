@@ -84,3 +84,18 @@ export const BILLING_ALERT_ROLES: readonly RoleKey[] = ['admin', 'god', 'supervi
  * work in the queue, and widening it is how the notification list becomes noise.
  */
 export const JOB_ALERT_ROLES: readonly RoleKey[] = ['admin', 'god', 'supervisor'];
+
+/**
+ * Who hears that an outside auditor has put something on the record.
+ *
+ * The engagement's assigned reviewer is notified regardless — it is their file
+ * — and this is the set that covers the case the reviewer cannot: an
+ * engagement nobody is assigned to, or one whose reviewer has moved on. An
+ * auditor note is the one inbound message on this platform with a deadline
+ * attached to somebody else's audit, so it must not be able to land in a thread
+ * nobody is watching.
+ *
+ * `main_reviewer` over the whole reviewer group for the reason the two sets
+ * above give: a note every reviewer gets is a note none of them owns.
+ */
+export const AUDITOR_NOTE_ROLES: readonly RoleKey[] = ['admin', 'god', 'supervisor', 'main_reviewer'];

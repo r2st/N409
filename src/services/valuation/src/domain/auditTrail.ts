@@ -166,6 +166,13 @@ export const EVENT_CATALOG = {
   draft_ready: D('Draft ready for review', 'output', 'notice', 'client'),
   evidence_bundle_exported: D('Evidence bundle exported', 'output', 'notice'),
 
+  // The auditor's half of the review round trip. `notice` rather than `info`:
+  // it is an outside reviewer putting something on the record about a
+  // deliverable, which is the kind of entry a later reader of this trail is
+  // looking for. Internal — it is addressed to the engagement team, and the
+  // thread it lands in (`email` kind) is ops-visible for the same reason.
+  auditor_note_received: D('Auditor note received', 'review', 'notice'),
+
   // ── Access & integration ────────────────────────────────────────────────
   email_received: D('Email received', 'access', 'info'),
   monitoring_enabled: D('Monitoring enabled', 'integration', 'info', 'client'),

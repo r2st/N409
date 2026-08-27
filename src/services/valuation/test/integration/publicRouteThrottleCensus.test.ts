@@ -222,6 +222,19 @@ const CENSUS: Record<string, Verdict> = {
     limit: 30,
     request: post('/api/v1/auditor/portal', { token: GUESS }),
   },
+  // Shares the portal's limiter and window: a write is at least as good an
+  // oracle for guessing a token as a read is, and it is worth less to the
+  // honest caller — an auditor writes a note once and reloads the page a dozen
+  // times to write it.
+  'POST /api/v1/auditor/portal/notes': {
+    kind: 'throttled',
+    limit: 30,
+    request: post('/api/v1/auditor/portal/notes', {
+      token: GUESS,
+      disposition: 'question',
+      body: 'a note',
+    }),
+  },
   'POST /api/v1/board/resolution': {
     kind: 'throttled',
     limit: 30,

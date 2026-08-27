@@ -104,6 +104,11 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
   // client filling in a firm's intake form. Each redeems a single-purpose
   // token and is behind a per-IP limiter.
   { method: 'POST', url: '/api/v1/auditor/portal', reason: 'authenticated by the auditor access token' },
+  {
+    method: 'POST',
+    url: '/api/v1/auditor/portal/notes',
+    reason: 'authenticated by the auditor access token',
+  },
   { method: 'POST', url: '/api/v1/board/resolution', reason: 'authenticated by the board signing token' },
   { method: 'POST', url: '/api/v1/board/sign', reason: 'authenticated by the board signing token' },
   { method: 'POST', url: '/api/v1/intake/portal', reason: 'authenticated by the intake link token' },

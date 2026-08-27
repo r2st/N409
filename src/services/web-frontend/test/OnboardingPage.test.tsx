@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { OnboardingPage } from '../src/pages/OnboardingPage';
+import { ONBOARDING_DRAFT_KEY } from '../src/lib/onboardingDraft';
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -131,6 +132,54 @@ describe('OnboardingPage (guided client funnel)', () => {
       expect(screen.getByTestId('onboarding-resumed')).toHaveTextContent('Acme Robotics, Inc.');
       expect(screen.getByRole('button', { name: /with card/i })).toBeInTheDocument();
       expect(screen.queryByPlaceholderText('Acme Robotics, Inc.')).not.toBeInTheDocument();
+    });
+
+    it('offers a way out of a resumed request, and starts genuinely clean', async () => {
+      /*
+       * Resuming is right nine times out of ten. The tenth is a client who
+       * abandoned a request — a cancelled checkout, a wrong company name, a
+       * change of mind — and came back to start a different one, and there was
+       * no control anywhere on the page to do it: the draft outlives the visit
+       * inside the tab session, the wizard has no Back, and the only exit was
+       * to walk the abandoned request forward to its congratulations screen and
+       * press "Open my valuation" for a company they did not want.
+       *
+       * Someone in that position types the new name over the old one at the
+       * first box they can reach, which produces a second engagement for one
+       * client — the exact duplicate the draft was added to prevent.
+       */
+      const user = userEvent.setup();
+      stubQuote();
+
+      const first = renderPage();
+      await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme Robotics, Inc.');
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /with card/i })).toBeInTheDocument());
+      first.unmount();
+
+      renderPage();
+      expect(screen.getByTestId('onboarding-resumed')).toHaveTextContent('Acme Robotics, Inc.');
+      await user.click(screen.getByRole('button', { name: /start a different request/i }));
+
+      // Back at step 1 with an empty box — not the old company name sitting in
+      // a field that now writes to a different engagement.
+      const box = screen.getByPlaceholderText('Acme Robotics, Inc.');
+      expect(box).toHaveValue('');
+      expect(screen.queryByTestId('onboarding-resumed')).toBeNull();
+
+      // And it says what became of the request they walked away from. Silently
+      // dropping it reads as having cancelled it, which is the one thing this
+      // button must not be mistaken for — the engagement exists server-side.
+      const note = screen.getByTestId('onboarding-discarded');
+      expect(note).toHaveTextContent('Acme Robotics, Inc.');
+      expect(note).toHaveTextContent(/has not been cancelled/i);
+      expect(within(note).getByRole('link', { name: /your valuations/i })).toHaveAttribute(
+        'href',
+        '/valuations',
+      );
+
+      // The draft is gone from storage too, so a remount does not resurrect it.
+      expect(sessionStorage.getItem(ONBOARDING_DRAFT_KEY)).toBeNull();
     });
 
     it('parks on the uploads step before handing the browser to Stripe', async () => {

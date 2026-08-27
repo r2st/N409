@@ -602,10 +602,17 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     publicBaseUrl: config.PUBLIC_BASE_URL,
     limiter: deps.clientIntakeLimiter,
   });
+  // Improvement 4 — realtime collaboration: presence + live comment pushes.
+  // Declared here rather than beside `registerStreamRoutes` because the auditor
+  // portal below also broadcasts into it, and it registers first.
+  const hub = deps.hub ?? new ValuationHub();
   registerAuditorPortalRoutes(app, {
     pool,
     publicBaseUrl: config.PUBLIC_BASE_URL,
     limiter: deps.auditorPortalLimiter,
+    // The portal writes into the engagement's comment thread, so an open
+    // workspace sees an auditor's note arrive the same way it sees a client's.
+    hub,
   });
   // Feature 9 — enterprise SSO: SAML 2.0 SP + SCIM 2.0 provisioning
   registerSamlRoutes(app, { pool, jwt, publicBaseUrl: config.PUBLIC_BASE_URL, cookie: sessionCookie });
@@ -632,8 +639,6 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // report body; the same deps registerAiRoutes runs on.
     ai: { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR, log: app.log },
   });
-  // Improvement 4 — realtime collaboration: presence + live comment pushes
-  const hub = deps.hub ?? new ValuationHub();
   registerStreamRoutes(app, { pool, hub, revalidateMs: deps.streamRevalidateMs });
   // Let a request that is already being served finish before `close()` takes
   // its socket away — Fastify 5 does not, see drain.ts. Registered here rather

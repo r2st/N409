@@ -68,6 +68,27 @@ export async function revokeAuditorAccess(
  * Resolve a raw token to a live (unrevoked, unexpired) access row, recording
  * the access. Returns null for an invalid / revoked / expired token.
  */
+/**
+ * The same validity test as {@link redeemAuditorToken}, without counting it.
+ *
+ * `access_count` and `last_accessed_at` answer "how often has this auditor
+ * opened the link", and ops read both off the access list to decide whether a
+ * link is still in use. A write from the portal — the auditor submitting a note
+ * — is not an opening, and redeeming for it would inflate the one figure the
+ * list exists to report, on the auditors who engage with the work the most.
+ */
+export async function verifyAuditorToken(
+  pool: pg.Pool,
+  rawToken: string,
+): Promise<AuditorAccessRow | null> {
+  const { rows } = await pool.query<AuditorAccessRow>(
+    `SELECT * FROM auditor_access
+      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()`,
+    [hashToken(rawToken)],
+  );
+  return rows[0] ?? null;
+}
+
 export async function redeemAuditorToken(pool: pg.Pool, rawToken: string): Promise<AuditorAccessRow | null> {
   const { rows } = await pool.query<AuditorAccessRow>(
     `UPDATE auditor_access

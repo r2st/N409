@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { formatCents } from '../lib/format';
 import type { Payment, Valuation } from '../lib/types';
+import { loadDraft } from '../lib/onboardingDraft';
 import { Button, Spinner } from '../components/ui';
 
 /**
@@ -14,6 +15,28 @@ import { Button, Spinner } from '../components/ui';
 
 const POLL_MS = 2000;
 const MAX_POLLS = 15; // ~30s before we stop and reassure instead
+
+/**
+ * Whether this redirect is the return leg of the guided onboarding funnel.
+ *
+ * The funnel writes its draft parked on the *uploads* step immediately before
+ * `window.location.assign(checkout_url)`, and says why in a comment on that
+ * line: "Parked on the uploads step, which is where a client who has just paid
+ * — or just cancelled — should land." Nothing ever took them there. Stripe
+ * returns to these two pages, and both offered the valuation page and the
+ * dashboard, so the funnel a client was halfway through simply ended at the
+ * payment step, with its six-document checklist never shown and its saved
+ * place used only if the client happened to press the browser's back button.
+ *
+ * Matched on the valuation id rather than on the draft merely existing: a
+ * client can have a funnel open for one company and be paying an invoice for
+ * another from the billing page, and sending them into the wrong request is
+ * worse than the dead end this closes.
+ */
+function resumesOnboarding(valuationId: string | null): boolean {
+  if (!valuationId) return false;
+  return loadDraft()?.valuation.id === valuationId;
+}
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -107,16 +130,35 @@ export function PaymentSuccessPage({ pollMs = POLL_MS }: { pollMs?: number }) {
             View Stripe receipt ↗
           </a>
         )}
-        <div className="flex justify-center gap-3">
-          <Link to={`/valuations/${valuationId}`}>
-            <Button>Open my valuation</Button>
-          </Link>
-          <Link
-            to="/dashboard"
-            className="inline-flex items-center rounded-md px-4 py-2 text-sm font-semibold text-ink-600 hover:text-ink-900"
-          >
-            Go to dashboard
-          </Link>
+        <div className="flex flex-wrap justify-center gap-3">
+          {resumesOnboarding(valuationId) ? (
+            <>
+              {/* Back into the funnel they were in, on the step it parked
+                  itself on. Uploading is also the single most useful thing
+                  they can do next — the draft waits on those documents. */}
+              <Link to="/onboarding">
+                <Button>Continue — upload your documents</Button>
+              </Link>
+              <Link
+                to={`/valuations/${valuationId}`}
+                className="inline-flex items-center rounded-md px-4 py-2 text-sm font-semibold text-ink-600 hover:text-ink-900"
+              >
+                Skip for now
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link to={`/valuations/${valuationId}`}>
+                <Button>Open my valuation</Button>
+              </Link>
+              <Link
+                to="/dashboard"
+                className="inline-flex items-center rounded-md px-4 py-2 text-sm font-semibold text-ink-600 hover:text-ink-900"
+              >
+                Go to dashboard
+              </Link>
+            </>
+          )}
         </div>
       </Shell>
     );
@@ -130,10 +172,19 @@ export function PaymentSuccessPage({ pollMs = POLL_MS }: { pollMs?: number }) {
           Stripe accepted your payment, but our confirmation is taking longer than usual. The status on your
           valuation will update automatically — no action needed.
         </p>
-        <div className="flex justify-center">
-          <Link to={`/valuations/${valuationId}`}>
-            <Button>Open my valuation</Button>
-          </Link>
+        <div className="flex flex-wrap justify-center gap-3">
+          {/* The confirmation is late, not the request. Someone mid-funnel
+              still has documents to give us, and waiting for a webhook is not
+              a reason to strand them here. */}
+          {resumesOnboarding(valuationId) ? (
+            <Link to="/onboarding">
+              <Button>Continue — upload your documents</Button>
+            </Link>
+          ) : (
+            <Link to={`/valuations/${valuationId}`}>
+              <Button>Open my valuation</Button>
+            </Link>
+          )}
         </div>
       </Shell>
     );
@@ -161,22 +212,44 @@ export function PaymentCancelPage() {
         No charge was made. You can pay any time from the valuation page — or skip it and we will settle by
         invoice instead.
       </p>
-      <div className="flex justify-center gap-3">
-        {valuationId ? (
-          <Link to={`/valuations/${valuationId}`}>
-            <Button>Back to my valuation</Button>
-          </Link>
+      <div className="flex flex-wrap justify-center gap-3">
+        {/*
+         * The case the funnel parked for most explicitly. A client who backed
+         * out of the card form has not abandoned the request — the funnel's own
+         * payment step offers "Skip for now" as an ordinary choice — and
+         * cancelling used to be the one action that dropped them out of it.
+         */}
+        {resumesOnboarding(valuationId) ? (
+          <>
+            <Link to="/onboarding">
+              <Button>Continue without paying now</Button>
+            </Link>
+            <Link
+              to={`/valuations/${valuationId}`}
+              className="inline-flex items-center rounded-md px-4 py-2 text-sm font-semibold text-ink-600 hover:text-ink-900"
+            >
+              Back to my valuation
+            </Link>
+          </>
         ) : (
-          <Link to="/valuations">
-            <Button>Back to my valuations</Button>
-          </Link>
+          <>
+            {valuationId ? (
+              <Link to={`/valuations/${valuationId}`}>
+                <Button>Back to my valuation</Button>
+              </Link>
+            ) : (
+              <Link to="/valuations">
+                <Button>Back to my valuations</Button>
+              </Link>
+            )}
+            <Link
+              to="/dashboard"
+              className="inline-flex items-center rounded-md px-4 py-2 text-sm font-semibold text-ink-600 hover:text-ink-900"
+            >
+              Go to dashboard
+            </Link>
+          </>
         )}
-        <Link
-          to="/dashboard"
-          className="inline-flex items-center rounded-md px-4 py-2 text-sm font-semibold text-ink-600 hover:text-ink-900"
-        >
-          Go to dashboard
-        </Link>
       </div>
     </Shell>
   );
