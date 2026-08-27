@@ -27,6 +27,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { maybeStartAutoPipeline, type AutoPipelineDeps } from '../pipeline/autoPipeline.js';
 import { checkUploadType } from '../documents/fileType.js';
+import { normalizeMediaType } from '../documents/mediaType.js';
 import { scanUpload, UploadRejected, type ScanPolicy } from '../documents/virusScan.js';
 import { decodeFromStorage, encodeForStorage } from '../storage/documentEncryption.js';
 import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
@@ -221,7 +222,11 @@ export async function storeDocument(
       kind: input.kind,
       category: input.category,
       filename,
-      contentType: input.contentType || 'application/octet-stream',
+      // Client-declared, so parsed rather than trusted: it is written to a
+      // `text NOT NULL` column and read back out as the download response's own
+      // `Content-Type`. See documents/mediaType.ts — a NUL in a multipart part
+      // header was a 500, and the length was bounded by nothing.
+      contentType: normalizeMediaType(input.contentType),
       sizeBytes: input.buffer.length,
       sha256,
       storagePath: storageRel,

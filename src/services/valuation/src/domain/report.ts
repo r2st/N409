@@ -2282,9 +2282,54 @@ export function fillTemplateVars(text: string, vars: Readonly<Record<string, unk
      * Only a lone period is absorbed — the `(?!\.)` leaves an ellipsis, which
      * `reportReadiness` reads as an unfilled figure, exactly as it found it.
      */
-    if (stop === undefined) return filled;
-    return filled.endsWith('.') ? filled : `${filled}.`;
+    if (stop === undefined) return defang(filled);
+    return defang(filled.endsWith('.') ? filled : `${filled}.`);
   });
+}
+
+/**
+ * A substituted value may not itself become a marker (round 182).
+ *
+ * A report body is filled twice, by this same function, at two different times:
+ * `instantiateTemplate` resolves the five {@link TEMPLATE_VAR_NAMES} once at
+ * draft time and the result is *stored*, and `fillFigures` resolves
+ * `{{fmv_per_share}}`, `{{dlom}}` and the rest of the calculation against that
+ * stored body on every render. Two passes over one syntax, with a client-typed
+ * string substituted in the first of them and read by the second.
+ *
+ * `company_name` is `z.string().min(1).max(300)` and nothing else, so a client
+ * could type one. An engagement opened for a company named
+ * `{{fmv_per_share}} Holdings` had that spelling written verbatim into the
+ * stored body of eleven sections — `escapeTemplateVars` escapes HTML and a
+ * brace is not HTML — and the render pass then did what it is for:
+ *
+ *   "the fair market value of the common stock of <strong>$4.7100 Holdings</strong>"
+ *
+ * in the identifying sentence of a 409A deliverable, in the one field the
+ * module's own note says no reviewer re-derives. The other direction is worse
+ * for being quieter: a name spelling a marker that is *not* a figure —
+ * `{{net_income}} Ltd` — survives both passes verbatim, and `reportReadiness`
+ * reads a surviving marker as a figure the calculation failed to supply, so the
+ * report is held back as unready for a reason that is not true and that editing
+ * the prose cannot fix.
+ *
+ * Collapsed rather than refused, which is the opposite of what this estate does
+ * with a NUL byte (domain/nulBytes.ts) and right for the opposite reason. A NUL
+ * cannot be stored or displayed, so there is nothing to preserve and refusing is
+ * the honest answer. `{{` can be both; what it cannot be is *inert*, because a
+ * later pass over the same text will read it. So it is defanged where it is
+ * used, which is what `safeFilename` does with a path separator and
+ * `sanitizeHeaderValue` with a CRLF — the same class of problem and the same
+ * answer. `{{Anything}} Holdings` reads back as `{Anything} Holdings`: still
+ * recognisably what was typed, and no longer a sentence the renderer will
+ * rewrite.
+ *
+ * Only the doubled brace is touched. A single `{` is not marker syntax and a
+ * body carrying JSON or a code sample keeps it.
+ */
+function defang(filled: string): string {
+  if (!filled.includes('{{') && !filled.includes('}}')) return filled;
+  return filled.replace(/\{\{+/g, '{').replace(/\}\}+/g, '}');
 }
 
 /**
@@ -2349,7 +2394,14 @@ export function escapeTemplateVars(vars: Readonly<Record<string, unknown>>): Rec
 export function instantiateTemplate(template: ReportTemplate, vars: ReportTemplateVars): ReportContent {
   const htmlVars = escapeTemplateVars(vars);
   return {
-    title: `${template.name} — ${vars.company_name}`,
+    // Through the same fill as everything else, and not by interpolation: the
+    // title is filled *again* at render (`fillFigures` fills `content.title`),
+    // so a company name spelling a marker reached the deliverable's own title
+    // by the one path that skipped the defang. See `defang`.
+    title: fillTemplateVars('{{name}} — {{company_name}}', {
+      name: template.name,
+      company_name: vars.company_name,
+    }),
     sections: template.sections.map((s) => ({
       key: s.key,
       heading: fillTemplateVars(s.heading, vars),

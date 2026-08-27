@@ -37,7 +37,7 @@ import {
 import { createNotifications } from '../repos/notifications.js';
 import { listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
-import { stripeEventKey } from '../domain/stripeEvents.js';
+import { parseStripeEvent, stripeEventKey } from '../domain/stripeEvents.js';
 import { classifyStripeEvent, recordStripeEvent } from '../repos/stripeEvents.js';
 import {
   formatMoneyCents,
@@ -398,14 +398,15 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       ) {
         throw problems.badRequest('Invalid Stripe signature');
       }
-      let event: { type?: string; data?: { object?: Record<string, unknown> } };
-      try {
-        event = JSON.parse(raw.toString('utf8')) as typeof event;
-      } catch {
-        throw problems.badRequest('Invalid webhook payload');
-      }
-      const obj = event.data?.object ?? {};
-      const type = event.type ?? '';
+      // Parsed, not cast — see domain/stripeEvents.ts. A body of `null` was a
+      // TypeError here (`event.data` on nothing), and a NUL byte in the event
+      // id or the object id was a 500 out of the ledger insert below, which to
+      // Stripe is a delivery it retries for days rather than an answer.
+      const envelope = parseStripeEvent(raw);
+      if ('error' in envelope) throw problems.badRequest(envelope.error);
+      const event = envelope.raw as { type?: string; data?: { object?: Record<string, unknown> } };
+      const obj = envelope.object;
+      const type = envelope.type;
 
       // Stripe delivers at least once and orders nothing. The handlers below
       // are each idempotent by their own means, which makes a replay harmless

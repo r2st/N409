@@ -34,15 +34,78 @@ export function sniffCategory(buffer: Buffer): SniffedCategory {
   )
     return 'executable'; // Mach-O
 
-  // Text-ish: look for an HTML marker or reject on NUL bytes (binary).
+  // Text-ish: look for a markup marker or reject on NUL bytes (binary).
   const head = buffer.subarray(0, 512);
   if (head.includes(0x00)) return 'unknown'; // NUL → not text
   const text = head.toString('utf8').trimStart().toLowerCase();
-  if (text.startsWith('<!doctype html') || text.startsWith('<html') || text.startsWith('<script')) {
-    return 'html';
-  }
   if (text.startsWith('#!')) return 'executable'; // shebang script
+  if (isMarkup(text)) return 'html';
   return 'text';
+}
+
+/**
+ * The prologue a markup document may carry before its first real element, and
+ * which the marker test used to be defeated by (round 182).
+ *
+ * The test was `text.startsWith('<html')` on the trimmed head, which asks
+ * whether the file *begins* with markup rather than whether it *is* markup.
+ * Everything HTML and XML allow in front of the root element evaded it:
+ *
+ *   <!-- anything --><html><script>…       → sniffed as plain text
+ *   <?xml version="1.0"?><svg …>           → sniffed as plain text
+ *
+ * so a script-carrying document uploaded as `.csv` passed the very check whose
+ * job is "HTML content uploaded as a .csv file" — the one place a text
+ * extension's content is examined at all, because a `.csv` has no signature to
+ * check it against. Skipping the prologue costs one loop and the evasion goes
+ * with it.
+ *
+ * A leading UTF-8 BOM needs nothing here: `U+FEFF` is `<ZWNBSP>` in the
+ * WhiteSpace production, so `trimStart` has already removed it.
+ */
+const PROLOGUES = [
+  { open: '<!--', close: '-->' },
+  // XML declaration or processing instruction: `<?xml version="1.0"?>`.
+  { open: '<?', close: '?>' },
+] as const;
+
+/** Markers that make the element after the prologue markup a browser executes. */
+const MARKUP_MARKERS = ['<!doctype html', '<html', '<script', '<svg'] as const;
+
+/**
+ * Whether the head reads as markup.
+ *
+ * The `unterminated` case is markup rather than text, and that is the whole
+ * point of doing this in a loop. Bounding the skip to the 512-byte head is what
+ * makes the check cheap, and a bound is a thing an upload can be padded past:
+ * `<!--` followed by six hundred bytes of filler and then `<html><script>` has
+ * no `-->` inside the window, so a reader that gave up and called it text would
+ * have swapped one evasion for another with more steps. A file whose very first
+ * characters open an HTML comment or an XML declaration is not a cap table
+ * under any reading, terminated within the window or not.
+ */
+function isMarkup(text: string): boolean {
+  let rest = text;
+  for (;;) {
+    const before = rest;
+    for (const { open, close } of PROLOGUES) {
+      if (!rest.startsWith(open)) continue;
+      const end = rest.indexOf(close, open.length);
+      if (end < 0) return true; // unterminated inside the head — see above
+      rest = rest.slice(end + close.length);
+      break;
+    }
+    // A non-HTML doctype (`<!DOCTYPE svg …>`) is prologue; the HTML one is a
+    // marker in its own right and must not be skipped past.
+    if (rest.startsWith('<!doctype ') && !rest.startsWith('<!doctype html')) {
+      const end = rest.indexOf('>');
+      if (end < 0) return true;
+      rest = rest.slice(end + 1);
+    }
+    rest = rest.trimStart();
+    if (rest === before) break;
+  }
+  return MARKUP_MARKERS.some((marker) => rest.startsWith(marker));
 }
 
 /** Extension → the content categories that are legitimate for it. */

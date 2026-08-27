@@ -46,7 +46,7 @@ import { sendTransactionalEmail } from '../email/transactional.js';
 import { onStateChanged, type EmailTransport, type SupportEmailSource } from '../hooks/stateChange.js';
 import { findUserById, listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
-import { stripeEventKey } from '../domain/stripeEvents.js';
+import { parseStripeEvent, stripeEventKey } from '../domain/stripeEvents.js';
 import { classifyStripeEvent, recordStripeEvent } from '../repos/stripeEvents.js';
 
 /**
@@ -848,13 +848,15 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         throw problems.badRequest('Invalid Stripe signature');
       }
 
-      let event: { type?: string; data?: { object?: Record<string, unknown> } };
-      try {
-        event = JSON.parse(raw.toString('utf8')) as typeof event;
-      } catch {
-        throw problems.badRequest('Invalid webhook payload');
-      }
-      const session = event.data?.object ?? {};
+      // Parsed, not cast: `null`, a bare string, and a numeric `type` are all
+      // valid JSON that this handler used to read as an event and answer with a
+      // 500, and a NUL byte anywhere in it reached the ledger's `text` columns
+      // — the one hook that would have caught it cannot see past the raw-buffer
+      // parser above. See domain/stripeEvents.ts.
+      const envelope = parseStripeEvent(raw);
+      if ('error' in envelope) throw problems.badRequest(envelope.error);
+      const event = envelope.raw as { type?: string; data?: { object?: Record<string, unknown> } };
+      const session = envelope.object;
       const sessionId = typeof session.id === 'string' ? session.id : null;
 
       // Stripe delivers at least once. Every handler below already answers a

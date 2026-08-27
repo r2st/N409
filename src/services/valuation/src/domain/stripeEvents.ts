@@ -13,6 +13,8 @@
  * migration 0155 for why.
  */
 
+import { findNulByte } from './nulBytes.js';
+
 /** Which endpoint received the delivery. */
 export type StripeEndpoint = 'payments' | 'billing';
 
@@ -157,4 +159,89 @@ export function stripeEventKey(event: unknown, endpoint: StripeEndpoint): Stripe
     objectId: objectIdOf(type, object),
     eventCreated: createdAt(e.created),
   };
+}
+
+/**
+ * The parsed envelope both webhook routes act on.
+ *
+ * `type` is always a string and `object` always a plain object, so the branches
+ * downstream can read them without re-checking — which is what they were
+ * already doing, on values that had never been checked once.
+ */
+export interface StripeEventEnvelope {
+  type: string;
+  object: Record<string, unknown>;
+  /** The whole parsed body, for `stripeEventKey` and the handlers' own reads. */
+  raw: Record<string, unknown>;
+}
+
+/** A JSON value that is an object and not an array or null. */
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * Parse a signed webhook body into an envelope, or say why it is not one.
+ *
+ * Both routes did `JSON.parse(raw.toString('utf8'))` with a cast to
+ * `{ type?: string; data?: { object?: … } }`, inside a `try` that caught only
+ * the parse, and then read the result as though the cast were a check. It is
+ * not one, and three shapes of *valid JSON* went straight through it to a 500
+ * (round 182):
+ *
+ *   * `null` — a body of the four characters `null` parses fine, and
+ *     `event.data?.object` is a TypeError on it. Optional chaining guards a
+ *     missing `data`, not a missing `event`.
+ *   * `"hello"`, `[1,2,3]`, `42` — anything that is not an object. The two
+ *     routes survived these by accident, in different ways; they are refused
+ *     here because a Stripe event is an object and a body that is not one is
+ *     not an event.
+ *   * `{"type": 123}` — `event.type?.startsWith('checkout.session.')` on a
+ *     number is "startsWith is not a function". The cast promised a string; the
+ *     wire promised nothing.
+ *
+ * And one shape that reached the database instead of the handler:
+ *
+ *   * a NUL byte anywhere in the event. The global `preValidation` hook that
+ *     refuses `U+0000` before it can reach a `text` column (domain/nulBytes.ts)
+ *     is blind to these two endpoints by construction: each registers a
+ *     `parseAs: 'buffer'` content parser so the raw bytes survive for signature
+ *     verification, so `req.body` is a Buffer at hook time and the hook — which
+ *     skips Buffers deliberately, they are bytes on purpose — sees nothing. The
+ *     strings only exist after the `JSON.parse` *inside* the handler, and both
+ *     `event.id` and the object id go into `stripe_events`, whose columns are
+ *     `text`. An event id carrying one was a 500 on both endpoints.
+ *
+ * That last one is the one worth being loud about, because a 500 to Stripe is
+ * not a 500 to a person: it is a delivery Stripe will retry for days, on a
+ * schedule nobody is watching, against a row that will never insert. A 400 ends
+ * it — Stripe records the endpoint's refusal and stops.
+ *
+ * Only reachable behind a verified signature, so this is not an unauthenticated
+ * surface; it is a correctness one. A webhook endpoint receives every event on
+ * the Stripe account, the account is not exclusively ours, and "Stripe would
+ * never send that" is the assumption the cast was already making.
+ */
+export function parseStripeEvent(raw: Buffer): StripeEventEnvelope | { error: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.toString('utf8'));
+  } catch {
+    return { error: 'Invalid webhook payload' };
+  }
+  if (!isPlainObject(parsed)) return { error: 'Invalid webhook payload: not a JSON object' };
+
+  const nul = findNulByte(parsed);
+  if (nul !== null) {
+    return {
+      error: `Invalid webhook payload: field ${nul} contains a NUL byte, which cannot be stored`,
+    };
+  }
+
+  const type = parsed.type;
+  if (type !== undefined && typeof type !== 'string') {
+    return { error: 'Invalid webhook payload: type is not a string' };
+  }
+  const data = parsed.data;
+  const object = isPlainObject(data) && isPlainObject(data.object) ? data.object : {};
+  return { type: type ?? '', object, raw: parsed };
 }
