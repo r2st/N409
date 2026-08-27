@@ -300,6 +300,11 @@ describe('CompanyTab — what the apply is allowed to change', () => {
 
   it('shows the agent failure and re-enables the button', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      // The tag panel is a sibling on this tab (R178) and it reports a load
+      // failure of its own, so answering its GET with a profile would put a
+      // second alert on the screen and make the assertion below ambiguous —
+      // about the tags, not about the agent this test is exercising.
+      if (String(url).includes('/tags')) return jsonResponse({ tags: [], categories: [] });
       if ((init?.method ?? 'GET') === 'GET') return jsonResponse({ profile: BLANK_PROFILE });
       if (String(url).includes('/apply')) return jsonResponse({}, 200);
       return new Response(JSON.stringify({ status: 502, detail: 'The model was unreachable.' }), {

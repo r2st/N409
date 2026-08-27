@@ -126,14 +126,16 @@ describe('ValuationsPage tag filter', () => {
     expect(await screen.findByLabelText('Filter by tag')).toHaveValue('saas');
   });
 
-  it('hides the control when the catalogue could not be loaded', async () => {
+  it('says the vocabulary could not be loaded rather than dropping the filter silently', async () => {
     mockApi({ catalogueFails: true });
     renderPage();
 
-    // The rest of the page is fine, so there is no banner — but an empty
-    // dropdown would say this firm classifies nothing, which is a claim about
-    // the data made out of a failed GET.
+    // Three distinct things, and the page has to pick the right one. An empty
+    // dropdown would claim this firm classifies nothing. A banner would say the
+    // list is broken, and it is not. Silence would tell an operator who knows
+    // the tags exist that the filter was taken away.
     await screen.findByLabelText('Filter by state');
     expect(screen.queryByLabelText('Filter by tag')).not.toBeInTheDocument();
+    expect(await screen.findByText(/tag vocabulary could not be loaded/)).toBeInTheDocument();
   });
 });

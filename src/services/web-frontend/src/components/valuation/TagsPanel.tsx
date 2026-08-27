@@ -262,7 +262,7 @@ export function TagsPanel({
                     onClick={() =>
                       void (tag.source === 'ai' ? decide(tag.slug, 'rejected') : remove(tag.slug))
                     }
-                    className="cursor-pointer rounded-full px-2 py-0.5 text-xs text-ink-500 hover:bg-bond-100 hover:text-ink-800 disabled:cursor-not-allowed"
+                    className="tap-area cursor-pointer rounded-full px-2 py-0.5 text-xs text-ink-500 hover:bg-bond-100 hover:text-ink-800 disabled:cursor-not-allowed"
                     // An AI row is rejected rather than deleted, so the two
                     // controls are named for what they actually do. One label
                     // over both would make the refusal look like a bug.
@@ -293,7 +293,7 @@ export function TagsPanel({
                     type="button"
                     disabled={busy !== null}
                     onClick={() => void decide(tag.slug, 'accepted')}
-                    className="cursor-pointer rounded-full px-2 py-0.5 text-xs text-ink-500 hover:bg-paper-300 hover:text-ink-800 disabled:cursor-not-allowed"
+                    className="tap-area cursor-pointer rounded-full px-2 py-0.5 text-xs text-ink-500 hover:bg-paper-300 hover:text-ink-800 disabled:cursor-not-allowed"
                     aria-label={`Accept ${tag.label}`}
                   >
                     Accept

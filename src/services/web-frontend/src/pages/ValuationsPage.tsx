@@ -160,10 +160,17 @@ export function ValuationsPage() {
   /**
    * The tag vocabulary, for the filter picker. Never a hard-coded list: it is
    * served precisely so the picker and the `tagging` agent read one catalogue.
-   * A failure leaves it empty and the filter renders nothing rather than an
-   * empty dropdown that looks like "this firm uses no tags".
+   * A failure leaves it empty, which hides the picker — an empty dropdown would
+   * read as "this firm uses no tags" — and `tagsFailed` below says so in words.
    */
   const [tagCategories, setTagCategories] = useState<TagCatalogueCategory[]>([]);
+  /**
+   * Same distinction the reviewer and organisation rosters draw. A vocabulary
+   * that failed to load and a firm that classifies nothing produce the same
+   * empty picker, and hiding it silently tells an operator who knows the tags
+   * exist that the filter was removed. Named, so the page can say which it is.
+   */
+  const [tagsFailed, setTagsFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportNote, setExportNote] = useState<string | null>(null);
@@ -256,12 +263,16 @@ export function ValuationsPage() {
   useEffect(loadCounts, [loadCounts]);
 
   useEffect(() => {
-    api<{ categories: TagCatalogueCategory[] }>('/tag-catalogue')
-      .then((res) => setTagCategories(res.categories))
-      // Static vocabulary, no pagination, and nothing on this page depends on
-      // it beyond one optional filter — so a failure hides the control rather
-      // than raising a banner over a list that is otherwise entirely fine.
-      .catch(() => setTagCategories([]));
+    api<{ categories?: TagCatalogueCategory[] }>('/tag-catalogue')
+      // `res.categories` and not `res.categories ?? []` was a crash rather than
+      // a missing filter: a 200 with the field absent put `undefined` into
+      // state, and `.length` on it threw during render, taking the whole list
+      // page down through the route boundary. A filter is optional; the page
+      // it sits on is not.
+      .then((res) => setTagCategories(Array.isArray(res.categories) ? res.categories : []))
+      // Not a banner: the list beside it is entirely fine and one optional
+      // filter is missing. But not silence either — see `tagsFailed`.
+      .catch(() => setTagsFailed(true));
   }, []);
 
   useEffect(() => {
@@ -801,6 +812,12 @@ export function ValuationsPage() {
         <p className="mt-3 text-sm text-ink-400">
           The reviewer list could not be loaded, so reviewers cannot be filtered on or assigned in bulk right
           now. Reload the page to try again.
+        </p>
+      )}
+      {tagsFailed && (
+        <p className="mt-3 text-sm text-ink-400">
+          The tag vocabulary could not be loaded, so engagements cannot be filtered by tag right now.
+          Reload the page to try again.
         </p>
       )}
       {partnersFailed && (

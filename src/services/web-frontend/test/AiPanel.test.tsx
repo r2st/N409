@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AiPanel } from '../src/components/valuation/AiPanel';
+import { AI_PIPELINES, AI_PIPELINE_META } from '../src/lib/pipeline';
 
 /**
  * The AI panel runs the pipelines and shows what came back, with provenance.
@@ -98,16 +99,26 @@ describe('AiPanel', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('Could not load AI runs.');
     });
 
+    /**
+     * Driven from `AI_PIPELINES` rather than from a list retyped here. The
+     * literal `5` was the count on the day it was written, and R178 found four
+     * agents that were fully built and had no control anywhere — adding them
+     * failed this on the number rather than on anything being wrong, which is
+     * the assertion asking to be rephrased. What actually has to hold is that
+     * every agent on the tab is named, described and runnable.
+     */
     it('offers every pipeline, described', async () => {
       mockApi();
       renderPanel();
       await screen.findByText('No AI runs yet');
-      expect(screen.getByText('Missing data check')).toBeInTheDocument();
-      expect(screen.getByText('Data extraction')).toBeInTheDocument();
-      expect(screen.getByText('Public comparables')).toBeInTheDocument();
-      expect(screen.getByText('Summarize attachments')).toBeInTheDocument();
-      expect(screen.getByText('Plain-English explanation')).toBeInTheDocument();
-      expect(screen.getAllByRole('button', { name: 'Run' })).toHaveLength(5);
+      for (const pipeline of AI_PIPELINES) {
+        const meta = AI_PIPELINE_META[pipeline];
+        expect(screen.getByText(meta.label), pipeline).toBeInTheDocument();
+        expect(screen.getByText(meta.description), pipeline).toBeInTheDocument();
+      }
+      expect(screen.getAllByRole('button', { name: 'Run' })).toHaveLength(AI_PIPELINES.length);
+      // Not vacuous on an empty registry, and not silently reduced to one card.
+      expect(AI_PIPELINES.length).toBeGreaterThanOrEqual(6);
     });
   });
 

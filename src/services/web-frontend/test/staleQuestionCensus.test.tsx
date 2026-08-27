@@ -130,7 +130,15 @@ const outboxEmail = (id: string, status: string, subject: string) => ({
 
 describe('a filter change must not leave the previous answer on screen', () => {
   it('the email outbox drops the sent rows when Failed is selected', async () => {
-    const { pending } = holdSecondRequest({ emails: [outboxEmail('1', 'sent', 'SENT ROW')] });
+    // `holdSecondMatching` rather than `holdSecondRequest`: R178 put the
+    // suppression list on this page, so the outbox is no longer the only thing
+    // it fetches and "the second request" is no longer the second scope. The
+    // hold has to name the endpoint whose reply is being delayed.
+    const { pending } = holdSecondMatching(/\/admin\/email-outbox/, (url) =>
+      url.includes('/suppressions')
+        ? { suppressions: [], truncated: false }
+        : { emails: [outboxEmail('1', 'sent', 'SENT ROW')] },
+    );
     render(
       <MemoryRouter>
         <EmailOutboxPage />

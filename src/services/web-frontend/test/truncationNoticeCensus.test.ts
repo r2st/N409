@@ -61,6 +61,9 @@ const CONSUMERS: Record<string, { renders?: string[]; why?: string }> = {
   '/api/v1/monitors': { renders: ['src/pages/MonitorsPage.tsx'] },
   '/api/v1/admin/api-tokens': { renders: ['src/pages/AdminApiTokensPage.tsx'] },
   '/api/v1/admin/documents/triage': { renders: ['src/pages/AdminDocumentsPage.tsx'] },
+  // R178 gave this list its first reader and its first flag on the same day —
+  // it was capped and silent before, which is why it appears here as new.
+  '/api/v1/admin/email/suppressions': { renders: ['src/components/SuppressionList.tsx'] },
   '/api/v1/admin/data-remediation': { renders: ['src/pages/AdminDataRemediationPage.tsx'] },
   '/api/v1/firm/attention': { renders: ['src/pages/FirmDashboardPage.tsx'] },
   '/api/v1/firm/dashboard': { renders: ['src/pages/FirmDashboardPage.tsx'] },

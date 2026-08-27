@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
+import { useLatestOnly } from '../lib/useLatestOnly';
+import { useClearOnChange } from '../lib/useClearOnChange';
 import { formatDateTime } from '../lib/format';
 import { Button, ErrorNote, ListTruncationNote, LoadingBlock, SkeletonTable } from './ui';
 
@@ -57,15 +59,31 @@ export function SuppressionList() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
+  /*
+   * `includeReleased` moves this effect's URL and nothing orders the replies,
+   * so the released-inclusive answer can land under an unchecked box and the
+   * other way round. What that shows is a row marked "Released" in a list whose
+   * own control says released rows are hidden — and the operator's next move is
+   * to look for a Release button that is not there. See `useLatestOnly`.
+   */
+  const claim = useLatestOnly();
+
   const load = useCallback(async () => {
+    const current = claim();
     setError(null);
     try {
-      const res = await api<{ suppressions: Suppression[]; truncated: boolean }>(
+      const res = await api<{ suppressions?: Suppression[]; truncated?: boolean }>(
         `/admin/email/suppressions?include_released=${includeReleased ? 'true' : 'false'}`,
       );
+      // A 200 with the wrong shape is the failure that reaches the render:
+      // `undefined` in `rows` throws on `.length` and takes the outbox page
+      // down with it. Reported as a failed load, which is what it is.
+      if (!current()) return;
+      if (!Array.isArray(res.suppressions)) throw new TypeError('malformed suppression payload');
       setRows(res.suppressions);
-      setTruncated(res.truncated);
+      setTruncated(res.truncated === true);
     } catch (err) {
+      if (!current()) return;
       // A suppression list that failed to load and an empty one are the same
       // picture and opposite facts, and the empty one is reassuring.
       setError(
@@ -75,7 +93,14 @@ export function SuppressionList() {
       );
       setRows(null);
     }
-  }, [includeReleased]);
+  }, [includeReleased, claim]);
+
+  // The checkbox is the question; the table is the answer to it. Without this
+  // the un-released list sits under a ticked "Show released" box for a whole
+  // round trip, unmarked — and `load` is shared with Refresh and with the
+  // re-read after a release, so clearing inside the loader would flash a
+  // skeleton over an answer that had not changed. See `useClearOnChange`.
+  useClearOnChange(String(includeReleased), () => setRows(null));
 
   useEffect(() => {
     void load();

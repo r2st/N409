@@ -45,6 +45,7 @@ const REGISTER: Record<string, { mechanism: Mechanism; question: string }> = {
   },
   'pages/CommunicationsPage.tsx': { mechanism: 'clear-hook', question: 'template category' },
   'pages/EmailOutboxPage.tsx': { mechanism: 'clear-hook', question: 'delivery scope' },
+  'components/SuppressionList.tsx': { mechanism: 'clear-hook', question: 'show released' },
   'pages/InboxPage.tsx': { mechanism: 'clear-hook', question: 'kind, unread only, search, page' },
   'pages/PartnerDetailPage.tsx': { mechanism: 'clear-hook', question: 'engagement page' },
   'pages/SupportInboxPage.tsx': { mechanism: 'clear-hook', question: 'triage scope' },
