@@ -8,9 +8,11 @@ import {
   ErrorNote,
   Field,
   ListTruncationNote,
+  LoadError,
   Select,
   Spinner,
   TextInput,
+  useRetry,
 } from '../components/ui';
 import { HelpIcon } from '../components/HelpIcon';
 
@@ -371,6 +373,7 @@ function InstrumentDetail({
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [sensitivity, setSensitivity] = useState<Array<{ shift: number; value: number }> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -399,7 +402,7 @@ function InstrumentDetail({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   /**
    * Persist the edited parameters. Throws on failure — deliberately.
@@ -556,7 +559,7 @@ function InstrumentDetail({
   // An error with nothing loaded still has to be shown. Returning the spinner
   // on `!instrument` alone left a failed detail fetch spinning forever with the
   // reason set in state and never rendered.
-  if (!instrument) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
+  if (!instrument) return error ? <LoadError message={error} {...retryProps} /> : <Spinner />;
   const cur = instrument.currency;
 
   return (

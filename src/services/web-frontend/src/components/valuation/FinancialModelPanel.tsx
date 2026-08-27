@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { api, ApiError, ifMatch } from '../../lib/api';
 import { paramsVersionKey, useRowVersion } from '../../lib/rowVersion';
 import type { EngineInputs, ShareClassInput } from '../../lib/pipeline';
-import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../ui';
+import { Button, ErrorNote, Field, LoadError, Select, Spinner, TextInput, useRetry } from '../ui';
 
 /**
  * Financial model editor — hand-enter the full engine input document so an
@@ -239,6 +239,7 @@ const headingClass = 'overline mb-5 text-ink-400';
 export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: string; readOnly: boolean }) {
   const [form, setForm] = useState<FormState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   /**
@@ -267,9 +268,9 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
-  if (!form) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
+  if (!form) return error ? <LoadError message={error} {...retryProps} /> : <Spinner />;
 
   const problem = modelProblem(form);
 

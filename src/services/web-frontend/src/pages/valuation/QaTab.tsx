@@ -7,10 +7,12 @@ import {
   EmptyState,
   ErrorNote,
   ListTruncationNote,
+  LoadError,
   LoadingBlock,
   Skeleton,
   SkeletonText,
   WriteGate,
+  useRetry,
 } from '../../components/ui';
 
 type QaStatus = 'pass' | 'warn' | 'fail';
@@ -83,6 +85,7 @@ export function QaTab() {
   const { valuation, retired } = useWorkspace();
   const [data, setData] = useState<QaResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [running, setRunning] = useState<'checks' | 'ai' | null>(null);
 
   const load = useCallback(async () => {
@@ -95,7 +98,7 @@ export function QaTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const run = async (ai: boolean) => {
     setRunning(ai ? 'ai' : 'checks');
@@ -110,7 +113,7 @@ export function QaTab() {
     }
   };
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   // Gate banner, the two run buttons, then the latest review panel.
   if (!data)
     return (

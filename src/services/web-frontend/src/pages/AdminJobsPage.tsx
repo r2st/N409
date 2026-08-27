@@ -8,6 +8,7 @@ import {
   Button,
   EmptyState,
   ErrorNote,
+  LoadError,
   LoadingBlock,
   Pagination,
   ResultCount,
@@ -15,6 +16,7 @@ import {
   Spinner,
   StatCard,
   pageCountOf,
+  useRetry,
 } from '../components/ui';
 
 /**
@@ -175,6 +177,7 @@ export function AdminJobsPage() {
   const [status, setStatus] = useState<'all' | JobStatus>('all');
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
 
   /*
    * Two loads overlap here more readily than anywhere else on the platform,
@@ -216,7 +219,7 @@ export function AdminJobsPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   useEffect(() => {
     setPage(1);
@@ -241,7 +244,7 @@ export function AdminJobsPage() {
 
   // The wait replaces the feed, not the page: a bare `<Spinner />` here took
   // the status chips and the source picker with it.
-  if (!stats) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
+  if (!stats) return error ? <LoadError message={error} {...retryProps} /> : <Spinner />;
 
   return (
     <div>

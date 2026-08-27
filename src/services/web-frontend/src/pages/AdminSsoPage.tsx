@@ -3,7 +3,16 @@ import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
-import { Button, ErrorNote, Field, ListTruncationNote, Spinner, TextInput } from '../components/ui';
+import {
+  Button,
+  ErrorNote,
+  Field,
+  ListTruncationNote,
+  LoadError,
+  Spinner,
+  TextInput,
+  useRetry,
+} from '../components/ui';
 
 interface SamlConfig {
   enabled: boolean;
@@ -42,6 +51,7 @@ export function AdminSsoPage() {
   const [tokensTruncated, setTokensTruncated] = useState(false);
   const [minted, setMinted] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -63,9 +73,9 @@ export function AdminSsoPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
-  if (!config) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
+  if (!config) return error ? <LoadError message={error} {...retryProps} /> : <Spinner />;
 
   const set = (key: keyof SamlConfig) => (value: string | boolean) =>
     setConfig((c) => (c ? { ...c, [key]: value } : c));

@@ -7,10 +7,12 @@ import {
   EmptyState,
   ErrorNote,
   ListTruncationNote,
+  LoadError,
   LoadingBlock,
   Skeleton,
   SkeletonText,
   WriteGate,
+  useRetry,
 } from '../../components/ui';
 
 type Severity = 'ok' | 'info' | 'warning' | 'error';
@@ -84,6 +86,7 @@ export function HealthTab() {
   const { valuation, retired } = useWorkspace();
   const [data, setData] = useState<HealthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [running, setRunning] = useState(false);
 
   const load = useCallback(async () => {
@@ -96,7 +99,7 @@ export function HealthTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const run = async () => {
     setRunning(true);
@@ -111,7 +114,7 @@ export function HealthTab() {
     }
   };
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data)
     return (
       <LoadingBlock label="Loading health checks…" className="space-y-6">

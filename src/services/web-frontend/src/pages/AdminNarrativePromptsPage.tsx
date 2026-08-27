@@ -8,10 +8,12 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  inputClass,
+  LoadError,
   Select,
   Spinner,
   TextInput,
-  inputClass,
+  useRetry,
 } from '../components/ui';
 
 /**
@@ -258,6 +260,7 @@ function SectionCard({
 function PreviewPanel({ kind }: { kind: ValuationKind }) {
   const [sections, setSections] = useState<ResolvedSection[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
 
   useEffect(() => {
     setSections(null);
@@ -265,9 +268,9 @@ function PreviewPanel({ kind }: { kind: ValuationKind }) {
     api<{ sections: ResolvedSection[] }>(`/admin/narrative-prompts/preview/${kind}`)
       .then((d) => setSections(d.sections))
       .catch(() => setError('Could not load the preview.'));
-  }, [kind]);
+  }, [kind, token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!sections) return <Spinner />;
 
   return (
@@ -309,6 +312,7 @@ export function AdminNarrativePromptsPage() {
   const [kinds, setKinds] = useState<ValuationKind[]>([]);
   const [selected, setSelected] = useState<string>(BASE);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
@@ -329,7 +333,7 @@ export function AdminNarrativePromptsPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const onDirtyChange = useCallback((id: string, dirty: boolean) => {
     setDirtyIds((prev) => {
@@ -364,7 +368,7 @@ export function AdminNarrativePromptsPage() {
     setSelected(next);
   };
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!prompts) return <Spinner />;
 
   const isBase = selected === BASE;

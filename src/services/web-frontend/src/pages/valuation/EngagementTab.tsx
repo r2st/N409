@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, ErrorNote, Select, Spinner, WriteGate } from '../../components/ui';
+import { Button, ErrorNote, LoadError, Select, Spinner, WriteGate, useRetry } from '../../components/ui';
 
 /**
  * Engagement lifecycle panel (feature 8). Shows the current stage + SLA, the
@@ -66,6 +66,7 @@ export function EngagementTab() {
   const { valuation, retired } = useWorkspace();
   const [view, setView] = useState<EngagementView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState(false);
   const [target, setTarget] = useState('');
 
@@ -80,7 +81,7 @@ export function EngagementTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const advance = async (stage?: string) => {
     setError(null);
@@ -100,7 +101,7 @@ export function EngagementTab() {
   };
 
   if (!view && !error) return <Spinner />;
-  if (!view) return <ErrorNote>{error}</ErrorNote>;
+  if (!view) return <LoadError message={error} {...retryProps} />;
 
   const { sla, stages, durations } = view;
   const currentIdx = stages.findIndex((s) => s.key === view.engagement.current_stage);

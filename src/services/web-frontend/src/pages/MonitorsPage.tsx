@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
-import { KindBadge, EmptyState, ErrorNote, Spinner } from '../components/ui';
+import { EmptyState, KindBadge, LoadError, Spinner, useRetry } from '../components/ui';
 import { MONITOR_TONE } from './valuation/MonitoringTab';
 
 /**
@@ -25,6 +25,7 @@ export function MonitorsPage() {
   const [monitors, setMonitors] = useState<MonitorSummary[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
 
   useEffect(() => {
     void api<{ monitors: MonitorSummary[]; truncated: boolean }>('/monitors')
@@ -33,9 +34,9 @@ export function MonitorsPage() {
         setTruncated(r.truncated);
       })
       .catch(() => setError('Could not load monitored valuations.'));
-  }, []);
+  }, [token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!monitors) return <Spinner />;
 
   const attention = monitors.filter((m) => m.status !== 'green').length;

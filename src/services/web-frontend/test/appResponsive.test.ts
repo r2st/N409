@@ -118,13 +118,13 @@ describe('app data tables stay within a 375px viewport', () => {
     // re-measured: its status cell now carries a refund/chargeback sentence
     // instead of one short token, which no longer fits the budget, so it went
     // into an overflow-x-auto box like the invoice table beside it.
-    ['pages/SettingsPage.tsx:543', 228], // personal API tokens
-    ['pages/FundPortfolioPage.tsx:770', 292], // position mark history
-    ['pages/AdminSsoPage.tsx:224', 261], // SCIM tokens — label · created · state · revoke
+    ['pages/SettingsPage.tsx:560', 228], // personal API tokens
+    ['pages/FundPortfolioPage.tsx:773', 292], // position mark history
+    ['pages/AdminSsoPage.tsx:234', 261], // SCIM tokens — label · created · state · revoke
     // Legal holds — scope · reason · state · release. Re-measured after the
     // action column gained an in-flight label: "Releasing…" is three glyphs
     // wider than "Release", which is the widest this cell now gets.
-    ['pages/AdminRetentionPage.tsx:480', 297],
+    ['pages/AdminRetentionPage.tsx:483', 297],
   ]);
 
   it('gives every table of four or more columns somewhere to scroll', () => {

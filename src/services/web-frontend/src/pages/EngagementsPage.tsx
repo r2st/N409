@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
-import { KindBadge, EmptyState, ErrorNote, ListTruncationNote, Spinner } from '../components/ui';
+import { EmptyState, KindBadge, ListTruncationNote, LoadError, Spinner, useRetry } from '../components/ui';
 import { SLA_TONE } from './valuation/EngagementTab';
 
 /**
@@ -44,6 +44,7 @@ export function EngagementsPage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
 
   useEffect(() => {
     void api<{ engagements: EngagementSummary[]; stages: Stage[]; truncated: boolean }>('/engagements')
@@ -53,9 +54,9 @@ export function EngagementsPage() {
         setTruncated(r.truncated);
       })
       .catch(() => setError('Could not load the engagement pipeline.'));
-  }, []);
+  }, [token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!engagements) return <Spinner />;
 
   const overdue = engagements.filter((e) => e.sla.overdue).length;

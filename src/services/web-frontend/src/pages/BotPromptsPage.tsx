@@ -8,10 +8,12 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  inputClass,
   ListTruncationNote,
+  LoadError,
   Spinner,
   TextInput,
-  inputClass,
+  useRetry,
 } from '../components/ui';
 
 export interface BotPrompt {
@@ -391,6 +393,7 @@ export function BotPromptsPage() {
   const [prompts, setPrompts] = useState<BotPrompt[] | null>(null);
   const [models, setModels] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
 
   const load = useCallback(async () => {
     try {
@@ -410,9 +413,9 @@ export function BotPromptsPage() {
     api<{ models: string[] }>('/admin/prompts/models')
       .then((d) => setModels(d.models))
       .catch(() => {});
-  }, [load]);
+  }, [load, token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!prompts) return <Spinner />;
 
   return (

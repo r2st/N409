@@ -3,7 +3,14 @@ import { api, ApiError } from '../../lib/api';
 import { filenameStem, useDownload } from '../../lib/useDownload';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { ErrorNote, LoadingBlock, Skeleton, SkeletonCardList, SkeletonStatStrip } from '../../components/ui';
+import {
+  LoadError,
+  LoadingBlock,
+  Skeleton,
+  SkeletonCardList,
+  SkeletonStatStrip,
+  useRetry,
+} from '../../components/ui';
 
 /**
  * Per-valuation change history (GET /valuations/:id/audit-trail). The event
@@ -117,6 +124,7 @@ export function AuditTrailTab() {
   const { valuation } = useWorkspace();
   const [data, setData] = useState<AuditResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   // Not `error`: that one replaces the tab, and a failed export is no reason to
   // take the change log itself away from whoever was reading it.
   const download = useDownload();
@@ -138,9 +146,9 @@ export function AuditTrailTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   // Summary strip, filter row and a page of entry cards — the whole shape is
   // fixed, only the numbers in it are not.
   if (!data)

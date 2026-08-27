@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import type { CalculationDetail, CalculationStep } from '../../lib/pipeline';
-import { ErrorNote, Spinner } from '../ui';
+import { LoadError, Spinner, useRetry } from '../ui';
 
 /**
  * The calculation step inspector (409.ai gap §1.3).
@@ -94,6 +94,7 @@ export function CalculationInspector({
 }) {
   const [detail, setDetail] = useState<CalculationDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [showRaw, setShowRaw] = useState(false);
 
   useEffect(() => {
@@ -110,9 +111,9 @@ export function CalculationInspector({
     return () => {
       cancelled = true;
     };
-  }, [valuationId, calculationId]);
+  }, [valuationId, calculationId, token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!detail) return <Spinner />;
 
   const { calculation, steps, traced } = detail;

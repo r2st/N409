@@ -8,10 +8,12 @@ import {
   ErrorNote,
   Field,
   inputClass,
+  LoadError,
   Select,
   Spinner,
   TextInput,
   WriteGate,
+  useRetry,
 } from '../../components/ui';
 import { useWorkspace } from './ValuationWorkspace';
 import { TagsPanel } from '../../components/valuation/TagsPanel';
@@ -153,6 +155,7 @@ export function CompanyTab() {
   const ops = isOps(user);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -193,9 +196,9 @@ export function CompanyTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!draft) return <Spinner />;
 
   const set = (key: keyof Draft) => (value: string) => {

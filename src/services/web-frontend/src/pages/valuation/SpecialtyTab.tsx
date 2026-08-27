@@ -9,10 +9,12 @@ import {
   Field,
   inputClass,
   ListTruncationNote,
+  LoadError,
   LoadingBlock,
   Skeleton,
   SkeletonText,
   WriteGate,
+  useRetry,
 } from '../../components/ui';
 
 /**
@@ -125,6 +127,7 @@ export function SpecialtyTab() {
   const { valuation, retired } = useWorkspace();
   const [data, setData] = useState<SpecialtyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [running, setRunning] = useState(false);
   const [overrides, setOverrides] = useState('');
   const [overrideError, setOverrideError] = useState<string | null>(null);
@@ -139,7 +142,7 @@ export function SpecialtyTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const run = async () => {
     setOverrideError(null);
@@ -179,7 +182,7 @@ export function SpecialtyTab() {
     }
   };
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data)
     return (
       <LoadingBlock label="Loading specialty engine…" className="space-y-6">

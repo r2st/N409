@@ -3,7 +3,7 @@ import { api } from '../../lib/api';
 import { formatDate, formatPerShare, ordinal } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { CHART_COLORS, LineChart } from '../../components/charts';
-import { EmptyState, ErrorNote, LoadingBlock, Skeleton, SkeletonText } from '../../components/ui';
+import { EmptyState, LoadError, LoadingBlock, Skeleton, SkeletonText, useRetry } from '../../components/ui';
 
 interface Point {
   as_of: string;
@@ -49,14 +49,15 @@ export function AnalyticsTab() {
   const { valuation } = useWorkspace();
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
 
   useEffect(() => {
     api<AnalyticsResponse>(`/valuations/${valuation.id}/analytics`)
       .then(setData)
       .catch(() => setError('Could not load analytics.'));
-  }, [valuation.id]);
+  }, [valuation.id, token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   // Four trend charts on a two-column grid, then the benchmark panel.
   if (!data)
     return (

@@ -11,9 +11,11 @@ import {
   ErrorNote,
   Field,
   ListTruncationNote,
+  LoadError,
   Select,
   Spinner,
   TextInput,
+  useRetry,
 } from '../components/ui';
 
 /** Report template management (M4) — versioned templates like 409a.v54. Ops only. */
@@ -37,6 +39,7 @@ export function TemplatesPage() {
   const [templates, setTemplates] = useState<ReportTemplate[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [actionError, setActionError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: '', kind: '409a', body: '' });
@@ -62,7 +65,7 @@ export function TemplatesPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const run = async (fn: () => Promise<unknown>) => {
     setActionError(null);
@@ -106,7 +109,7 @@ export function TemplatesPage() {
     });
   });
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!templates) return <Spinner />;
 
   const names = [...new Set(templates.map((t) => t.name))];

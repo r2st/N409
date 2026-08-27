@@ -8,11 +8,13 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  LoadError,
   Select,
   Spinner,
   StatCard,
   TextInput,
   WriteGate,
+  useRetry,
 } from '../../components/ui';
 
 interface Baseline {
@@ -152,6 +154,7 @@ export function ScenariosTab() {
   const { valuation, retired } = useWorkspace();
   const [boot, setBoot] = useState<BaselineResponse | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setBootError(null));
   const [knobs, setKnobs] = useState<Knobs | null>(null);
   const [defaults, setDefaults] = useState<Knobs | null>(null);
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
@@ -190,7 +193,7 @@ export function ScenariosTab() {
       }
     })();
     void loadSaved();
-  }, [valuation.id, loadSaved]);
+  }, [valuation.id, loadSaved, token]);
 
   const saveScenario = async () => {
     if (!knobs || !defaults) return;
@@ -278,7 +281,7 @@ export function ScenariosTab() {
     setComputing(false);
   };
 
-  if (bootError) return <ErrorNote>{bootError}</ErrorNote>;
+  if (bootError) return <LoadError message={bootError} {...retryProps} />;
   if (!boot) return <Spinner />;
 
   if (!boot.baseline || !knobs || !defaults) {

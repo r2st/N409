@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, LoadingBlock, Skeleton, SkeletonText } from '../../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  LoadError,
+  LoadingBlock,
+  Skeleton,
+  SkeletonText,
+  useRetry,
+} from '../../components/ui';
 
 type GapSeverity = 'blocking' | 'important' | 'optional';
 type GapCategory = 'questionnaire' | 'documents' | 'financials' | 'cap_table' | 'parameters';
@@ -77,6 +86,7 @@ export function CompletenessTab() {
   const { valuation } = useWorkspace();
   const [data, setData] = useState<CompletenessReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
@@ -91,7 +101,7 @@ export function CompletenessTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -99,7 +109,7 @@ export function CompletenessTab() {
     setRefreshing(false);
   };
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data)
     return (
       <LoadingBlock label="Checking what's still needed…" className="space-y-6">

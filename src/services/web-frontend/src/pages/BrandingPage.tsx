@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { useBrandingRefresh, type Branding } from '../lib/branding';
-import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+import { Button, ErrorNote, Field, LoadError, Spinner, TextInput, useRetry } from '../components/ui';
 import {
   email as emailRule,
   httpsUrl,
@@ -135,6 +135,7 @@ export function BrandingPage() {
   const [data, setData] = useState<SettingsResponse | null>(null);
   const [draft, setDraft] = useState<BrandingSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const refreshBranding = useBrandingRefresh();
@@ -154,7 +155,7 @@ export function BrandingPage() {
               : 'Could not load branding.',
         ),
       );
-  }, []);
+  }, [token]);
 
   /*
    * Hoisted above the loading returns because it is a hook: it has to run on
@@ -164,7 +165,7 @@ export function BrandingPage() {
    */
   const { errorFor, blurHandler, handleSubmit } = useFormValidation(draft ?? EMPTY_SETTINGS, BRANDING_RULES);
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data || !draft) return <Spinner />;
 
   const dirty = (Object.keys(draft) as Array<keyof BrandingSettings>).filter(

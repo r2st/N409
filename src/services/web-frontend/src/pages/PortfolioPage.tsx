@@ -10,12 +10,14 @@ import {
   ErrorNote,
   Field,
   ListTruncationNote,
+  LoadError,
   LoadingBlock,
   Select,
   SkeletonStatStrip,
   SkeletonTable,
   Spinner,
   TextInput,
+  useRetry,
 } from '../components/ui';
 import { useLatestOnly } from '../lib/useLatestOnly';
 
@@ -133,6 +135,7 @@ export function PortfolioPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<OrgDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [name, setName] = useState('');
   const [type, setType] = useState('holding_company');
   const [busy, setBusy] = useState(false);
@@ -156,7 +159,7 @@ export function PortfolioPage() {
 
   useEffect(() => {
     void loadOrgs();
-  }, [loadOrgs]);
+  }, [loadOrgs, token]);
 
   useEffect(() => {
     if (!selected) {
@@ -201,7 +204,7 @@ export function PortfolioPage() {
     }
   };
 
-  if (!orgs) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
+  if (!orgs) return error ? <LoadError message={error} {...retryProps} /> : <Spinner />;
 
   // Only meaningful for a single-currency organization; a mixed one gets a
   // per-currency breakdown below instead of one mislabelled sum.

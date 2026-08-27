@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { moneyFormatter } from '../../lib/format';
-import { Button, EmptyState, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  InfoTooltip,
+  LoadError,
+  Select,
+  Spinner,
+  TextInput,
+  useRetry,
+} from '../ui';
 
 /**
  * Where the DCF's cash flows come from.
@@ -142,6 +153,7 @@ export function ProjectionPanel({
 }) {
   const [data, setData] = useState<ProjectionResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
@@ -165,7 +177,7 @@ export function ProjectionPanel({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const run = async (work: () => Promise<unknown>, failure: string) => {
     setBusy(true);
@@ -302,7 +314,7 @@ export function ProjectionPanel({
       );
     }, 'Could not adopt the forecast as the valuation’s cash flows.');
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data) return <Spinner />;
 
   const latest = data.projections[0] ?? null;

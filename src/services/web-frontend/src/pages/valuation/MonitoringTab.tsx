@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Spinner, WriteGate } from '../../components/ui';
+import { Button, EmptyState, ErrorNote, LoadError, Spinner, WriteGate, useRetry } from '../../components/ui';
 
 /**
  * Valuation monitoring panel (feature 10). Enable monitoring on a completed
@@ -49,6 +49,7 @@ export function MonitoringTab() {
   const navigate = useNavigate();
   const [data, setData] = useState<MonitorResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -61,7 +62,7 @@ export function MonitoringTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
@@ -92,7 +93,7 @@ export function MonitoringTab() {
   };
 
   if (!data && !error) return <Spinner />;
-  if (!data) return <ErrorNote>{error}</ErrorNote>;
+  if (!data) return <LoadError message={error} {...retryProps} />;
 
   const monitored = data.monitor?.enabled;
 

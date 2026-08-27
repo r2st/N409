@@ -34,6 +34,7 @@ import {
   ErrorNote,
   Field,
   ListTruncationNote,
+  LoadError,
   LoadingBlock,
   Select,
   ShowMoreRows,
@@ -43,6 +44,7 @@ import {
   TextInput,
   WriteGate,
   useListWindow,
+  useRetry,
 } from '../../components/ui';
 
 /**
@@ -175,6 +177,7 @@ function VestingTimeline({ timeline, total }: { timeline: VestingPoint[]; total:
 function GrantDetailPanel({ valuationId, grant }: { valuationId: string; grant: Grant }) {
   const [detail, setDetail] = useState<GrantDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   useEffect(() => {
     let live = true;
     void api<GrantDetail>(`/valuations/${valuationId}/grants/${grant.id}`)
@@ -188,9 +191,9 @@ function GrantDetailPanel({ valuationId, grant }: { valuationId: string; grant: 
     return () => {
       live = false;
     };
-  }, [valuationId, grant.id]);
+  }, [valuationId, grant.id, token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!detail) return <Spinner />;
   const { currency } = grant;
   return (

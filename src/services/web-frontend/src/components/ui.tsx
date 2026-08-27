@@ -34,10 +34,21 @@ const buttonStyles: Record<ButtonVariant, string> = {
 export function Button({
   variant = 'primary',
   className = '',
+  ref,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: ButtonVariant;
+  /**
+   * Declared explicitly for the same reason `TextInput`'s is: React 19 passes
+   * `ref` through as an ordinary prop, but `ButtonHTMLAttributes` does not
+   * declare one, so a caller that needs the node — `LoadError` puts focus back
+   * on its retry button — could not ask for it without a type error.
+   */
+  ref?: Ref<HTMLButtonElement>;
+}) {
   return (
     <button
+      ref={ref}
       {...props}
       // `touch:min-h-11` — 44px under a finger. The designed height is 36px
       // (py-2 on a 14px line), which is comfortable for a cursor and under the
@@ -492,6 +503,93 @@ export function ErrorNote({ children }: { children: ReactNode }) {
       {children}
     </div>
   );
+}
+
+/**
+ * A load that failed, and the way back from it.
+ *
+ * Fifty-nine surfaces across the product answered a failed read with
+ * `if (error) return <ErrorNote>{error}</ErrorNote>` — the whole tab, panel or
+ * page replaced by one red line and nothing else. Every one of those is a dead
+ * end: the request that failed is the one the effect fired on mount, the effect
+ * has no reason to run again, and the surface has no control that would make it.
+ * The only way forward is a full browser reload, which the note does not
+ * suggest and which costs the reader their scroll position, their filters and
+ * every other panel on the page.
+ *
+ * A dropped connection, a rolling deploy and a 500 all look like this, and all
+ * three are usually over by the time the reader has finished reading the
+ * sentence. So the note carries the retry, and the retry is in-place: it
+ * re-runs the surface's own load, not the document.
+ *
+ * `refocus` is the half that is easy to leave out. Retrying unmounts this note
+ * — the surface goes back to its spinner — and if the retry fails the note is
+ * mounted again as a *different* element, so the button the reader just pressed
+ * is gone and focus has fallen to `<body>`. A keyboard user retrying a service
+ * that is still coming up would tab in from the top of the page for every
+ * attempt. {@link useRetry} passes `refocus` on every attempt after the first,
+ * which puts focus back on the button the reader was already on; on the first
+ * failure it is false, because focus should never jump on a page load.
+ */
+export function LoadError({
+  message,
+  onRetry,
+  refocus = false,
+  retryLabel = 'Retry',
+}: {
+  message: ReactNode;
+  /** Re-runs the surface's own load. Required: a note without one is the bug. */
+  onRetry: () => void;
+  /** Move focus to the retry button on mount — see above. */
+  refocus?: boolean;
+  retryLabel?: string;
+}) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (refocus) buttonRef.current?.focus();
+    // Mount-time only: re-focusing on a later render would fight the reader.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <ErrorNote>
+      <span className="flex flex-wrap items-center justify-between gap-3">
+        <span>{message}</span>
+        <Button ref={buttonRef} variant="ghost" onClick={onRetry} className="shrink-0">
+          {retryLabel}
+        </Button>
+      </span>
+    </ErrorNote>
+  );
+}
+
+/**
+ * The other half of {@link LoadError}: the token a surface's load effect hangs
+ * off so that pressing Retry runs it again.
+ *
+ * `reset` is the caller's own "forget the failure" — normally `setError(null)`.
+ * It is called *before* the token changes so the note comes down and the
+ * surface's existing spinner branch takes over for the duration of the attempt;
+ * without it the effect re-runs behind a note that never moves, and a retry
+ * that succeeds leaves the surface stuck on a stale error.
+ *
+ *   const { token, retryProps } = useRetry(() => setError(null));
+ *   useEffect(() => { … }, [valuationId, token]);
+ *   if (error) return <LoadError message={error} {...retryProps} />;
+ */
+export function useRetry(reset?: () => void): {
+  /** Add to the load effect's dependency list. */
+  token: number;
+  /** Spread onto `LoadError`. */
+  retryProps: { onRetry: () => void; refocus: boolean };
+} {
+  const [token, setToken] = useState(0);
+  const resetRef = useRef(reset);
+  resetRef.current = reset;
+  const onRetry = useCallback(() => {
+    resetRef.current?.();
+    setToken((n) => n + 1);
+  }, []);
+  return { token, retryProps: { onRetry, refocus: token > 0 } };
 }
 
 /**

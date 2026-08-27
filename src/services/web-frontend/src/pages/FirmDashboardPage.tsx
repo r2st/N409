@@ -6,8 +6,9 @@ import {
   DataTable,
   EmptyState,
   ErrorNote,
-  Pagination,
+  LoadError,
   pageCountOf,
+  Pagination,
   ResultCount,
   Spinner,
   StatCard,
@@ -15,6 +16,7 @@ import {
   TableSkeleton,
   TextInput,
   type Column,
+  useRetry,
 } from '../components/ui';
 import { IntakeLinksPanel } from '../components/IntakeLinksPanel';
 import { useLatestOnly } from '../lib/useLatestOnly';
@@ -113,6 +115,7 @@ export function FirmDashboardPage() {
 
   const [data, setData] = useState<FirmDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
 
   const [clients, setClients] = useState<FirmClient[] | null>(null);
   const [clientsError, setClientsError] = useState<string | null>(null);
@@ -149,7 +152,7 @@ export function FirmDashboardPage() {
                 : 'Could not load the firm console.',
           ),
       );
-  }, [partnerId, claimDashboard]);
+  }, [partnerId, claimDashboard, token]);
 
   /*
    * The debounce below cancels a *pending* request, not an in-flight one, so a
@@ -206,7 +209,7 @@ export function FirmDashboardPage() {
     return () => clearTimeout(timer);
   }, [page, search, loadClients]);
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data) return <Spinner />;
 
   const { summary, attention, team } = data;

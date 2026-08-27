@@ -8,7 +8,16 @@ import {
 } from '../../lib/m2';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, ErrorNote, Field, Spinner, TextInput, WriteGate } from '../../components/ui';
+import {
+  Button,
+  ErrorNote,
+  Field,
+  LoadError,
+  Spinner,
+  TextInput,
+  WriteGate,
+  useRetry,
+} from '../../components/ui';
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return '—';
@@ -117,6 +126,7 @@ export function OverwritesTab() {
   const [schema, setSchema] = useState<OverwriteSchema | null>(null);
   const [overwrites, setOverwrites] = useState<Overwrite[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -135,11 +145,11 @@ export function OverwritesTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const byKey = useMemo(() => new Map((overwrites ?? []).map((o) => [o.field_key, o])), [overwrites]);
 
-  if (error && !schema) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !schema) return <LoadError message={error} {...retryProps} />;
   if (!schema || !overwrites) return <Spinner />;
 
   const save = async (

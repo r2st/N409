@@ -15,7 +15,16 @@ import { useUnsavedChanges } from '../../lib/unsavedChanges';
 import { useWorkspace } from './ValuationWorkspace';
 import { RichTextEditor } from '../../components/RichTextEditor';
 import { ExplanationCard } from '../../components/valuation/ExplanationCard';
-import { Button, EmptyState, ErrorNote, Spinner, TextInput, WriteGate } from '../../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  LoadError,
+  Spinner,
+  TextInput,
+  WriteGate,
+  useRetry,
+} from '../../components/ui';
 
 const STATUS_LABELS: Record<Report['status'], string> = {
   draft: 'Draft',
@@ -91,6 +100,7 @@ export function ReportTab() {
   const [loaded, setLoaded] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   /**
@@ -134,7 +144,7 @@ export function ReportTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   // Editing happens in place and saving is explicit, so until this point the
   // only thing standing between a half-written chapter and the tab strip was
@@ -143,7 +153,7 @@ export function ReportTab() {
   useUnsavedChanges(dirty, 'This report has unsaved edits. Leave the page and they will be lost.');
 
   if (!loaded) return <Spinner />;
-  if (error && !report) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !report) return <LoadError message={error} {...retryProps} />;
   if (!report || !content) {
     return (
       <EmptyState title="No report yet">

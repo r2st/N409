@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatDate, moneyFormatter } from '../../lib/format';
-import { Button, EmptyState, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  InfoTooltip,
+  LoadError,
+  Select,
+  Spinner,
+  TextInput,
+  useRetry,
+} from '../ui';
 
 /**
  * Roll-forward — the bridge from the prior 409A to this one.
@@ -137,6 +148,7 @@ export function RollforwardPanel({
   const [candidatesFailed, setCandidatesFailed] = useState(false);
   const candidates = given ?? fetched;
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -162,7 +174,7 @@ export function RollforwardPanel({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   useEffect(() => {
     if (given !== undefined) return;
@@ -293,7 +305,7 @@ export function RollforwardPanel({
     setAdjustments((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   const dropAdjustment = (key: number) => setAdjustments((rows) => rows.filter((r) => r.key !== key));
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data) return <Spinner />;
 
   const latest = data.runs[0] ?? null;

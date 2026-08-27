@@ -4,13 +4,23 @@ import { api, ApiError } from '../lib/api';
 import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { formatDate } from '../lib/format';
 import type { Partner } from '../lib/types';
-import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  LoadError,
+  Spinner,
+  TextInput,
+  useRetry,
+} from '../components/ui';
 
 /** Admin console for partner organisations (P0 #1 + full management P1 #7). */
 export function AdminPartnersPage() {
   const [partners, setPartners] = useState<Partner[] | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [formError, setFormError] = useState<string | null>(null);
   const [draft, setDraft] = useState({ name: '', key: '' });
   const [creating, setCreating] = useState(false);
@@ -33,7 +43,7 @@ export function AdminPartnersPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   /*
    * The key cannot be changed later, so a typo here is permanent — which is
@@ -91,7 +101,7 @@ export function AdminPartnersPage() {
     await patch(p.id, { archived: true }, 'Could not archive the partner.');
   };
 
-  if (error && !partners) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !partners) return <LoadError message={error} {...retryProps} />;
   if (!partners) return <Spinner />;
 
   const visible = showArchived ? partners : partners.filter((p) => !p.archived_at);

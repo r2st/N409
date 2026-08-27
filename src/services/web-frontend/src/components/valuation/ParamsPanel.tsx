@@ -3,7 +3,17 @@ import { api, ApiError, ifMatch } from '../../lib/api';
 import { numberRange, optional, useFormValidation, type Rules } from '../../lib/useFormValidation';
 import { weightsProblem, type ValuationParams } from '../../lib/pipeline';
 import { paramsVersionKey, useRowVersion } from '../../lib/rowVersion';
-import { Button, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../ui';
+import {
+  Button,
+  ErrorNote,
+  Field,
+  InfoTooltip,
+  LoadError,
+  Select,
+  Spinner,
+  TextInput,
+  useRetry,
+} from '../ui';
 import { HelpIcon } from '../HelpIcon';
 import {
   CONTROL_PREMIUM_STUDIES,
@@ -297,6 +307,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const [params, setParams] = useState<ValuationParams | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [scenarios, setScenarios] = useState<ScenarioRow[]>([]);
@@ -389,7 +400,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   /*
    * Everything from here to the loading return is a pure reading of the form,
@@ -526,7 +537,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
     pwerm: numberRange('pwerm', 0, 1, 'PWERM weight'),
   });
 
-  if (!form || !params) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
+  if (!form || !params) return error ? <LoadError message={error} {...retryProps} /> : <Spinner />;
 
   const set = (key: keyof FormState) => (value: string | boolean) => {
     setSaved(false);

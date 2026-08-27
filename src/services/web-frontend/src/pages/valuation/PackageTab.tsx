@@ -12,7 +12,7 @@ import {
   TASK_STATUS_LABELS,
 } from '../../lib/pipeline';
 import type { AiPipeline, DocumentKind, ReviewTaskKind, ReviewTaskStatus } from '../../lib/pipeline';
-import { ErrorNote, ListTruncationNote, Spinner } from '../../components/ui';
+import { ListTruncationNote, LoadError, Spinner, useRetry } from '../../components/ui';
 import { useWorkspace } from './ValuationWorkspace';
 
 interface PackageDocument {
@@ -149,6 +149,7 @@ export function PackageTab() {
   const { valuation } = useWorkspace();
   const [pkg, setPkg] = useState<PackageData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
 
   useEffect(() => {
     let cancelled = false;
@@ -162,9 +163,9 @@ export function PackageTab() {
     return () => {
       cancelled = true;
     };
-  }, [valuation.id]);
+  }, [valuation.id, token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!pkg) return <Spinner />;
 
   const base = `/valuations/${valuation.id}`;

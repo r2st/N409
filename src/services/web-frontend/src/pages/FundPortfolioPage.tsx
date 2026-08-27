@@ -19,9 +19,11 @@ import {
   Field,
   InfoTooltip,
   ListTruncationNote,
+  LoadError,
   Select,
   Spinner,
   TextInput,
+  useRetry,
 } from '../components/ui';
 import { HelpIcon } from '../components/HelpIcon';
 
@@ -289,6 +291,7 @@ function FundDetailView({
   const [deleting, setDeleting] = useState(false);
   const [nav, setNav] = useState<Nav | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [showPos, setShowPos] = useState(false);
   /** See `creating` on the page above — the same re-entry, one row lower. */
   const [adding, setAdding] = useState(false);
@@ -318,7 +321,7 @@ function FundDetailView({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   /**
    * Rename the portfolio.
@@ -409,7 +412,7 @@ function FundDetailView({
   // branch below it: a fund whose detail never arrives has `detail === null`
   // forever, so an error rendered only under `detail` is an error nobody sees.
   // A 403 or a deleted fund span the same failure as a slow network.
-  if (error && !detail) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !detail) return <LoadError message={error} {...retryProps} />;
   if (!detail) return <Spinner />;
   const { fund, positions } = detail;
   const cur = fund.currency;

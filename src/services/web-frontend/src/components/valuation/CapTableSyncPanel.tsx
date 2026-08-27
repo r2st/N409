@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
-import { Button, ErrorNote, Select, Spinner } from '../ui';
+import { Button, ErrorNote, LoadError, Select, Spinner, useRetry } from '../ui';
 
 type Provider = 'carta' | 'pulley';
 type Frequency = 'manual' | 'daily' | 'weekly';
@@ -60,6 +60,7 @@ export function CapTableSyncPanel({
 }) {
   const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState<string | null>(null);
   const [pending, setPending] = useState<{ provider: Provider; outcome: SyncOutcome } | null>(null);
 
@@ -74,7 +75,7 @@ export function CapTableSyncPanel({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const connect = async (provider: Provider) => {
     setError(null);
@@ -138,7 +139,7 @@ export function CapTableSyncPanel({
 
   // Before the spinner: a failed load sets the error and leaves `providers`
   // null, so the ErrorNote below this return would never render.
-  if (error && !providers) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !providers) return <LoadError message={error} {...retryProps} />;
   if (!providers) return <Spinner />;
 
   return (

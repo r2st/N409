@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, ifMatch } from '../../lib/api';
 import { paramsVersionKey, useRowVersion } from '../../lib/rowVersion';
-import { Button, ErrorNote, Field, InfoTooltip, Spinner, TextInput } from '../ui';
+import { Button, ErrorNote, Field, InfoTooltip, LoadError, Spinner, TextInput, useRetry } from '../ui';
 
 /**
  * The discount-rate build-up.
@@ -107,6 +107,7 @@ const EMPTY_BETA: BetaRow = { ticker: '', beta: '', debt_to_equity: '' };
 export function WaccPanel({ valuationId, readOnly }: { valuationId: string; readOnly: boolean }) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [preview, setPreview] = useState<WaccResult | null>(null);
@@ -168,7 +169,7 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const set = (key: keyof typeof form) => (value: string) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -276,7 +277,7 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
     }
   };
 
-  if (error && !loaded) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !loaded) return <LoadError message={error} {...retryProps} />;
   if (!loaded) return <Spinner />;
 
   return (

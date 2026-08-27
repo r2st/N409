@@ -5,7 +5,15 @@ import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { isOps, isPartner } from '../lib/rbac';
 import { formatDateTime, formatCents } from '../lib/format';
-import { EmptyState, ErrorNote, KindBadge, ListTruncationNote, Spinner, StatCard } from '../components/ui';
+import {
+  EmptyState,
+  KindBadge,
+  ListTruncationNote,
+  LoadError,
+  Spinner,
+  StatCard,
+  useRetry,
+} from '../components/ui';
 import { SubscriptionSection } from '../components/SubscriptionSection';
 import type { ValuationKind } from '../lib/types';
 
@@ -68,14 +76,15 @@ export function BillingPage() {
   const { user } = useAuth();
   const [billing, setBilling] = useState<Billing | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
 
   useEffect(() => {
     api<{ billing: Billing }>('/me/billing')
       .then((d) => setBilling(d.billing))
       .catch(() => setError('Could not load your billing history.'));
-  }, []);
+  }, [token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!billing) return <Spinner />;
 
   const scopeNote = isOps(user)

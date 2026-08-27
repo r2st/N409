@@ -3,7 +3,7 @@ import { api, ApiError } from '../lib/api';
 import { email as emailRule, numberRange, optional, useFormValidation } from '../lib/useFormValidation';
 import { formatDateTime } from '../lib/format';
 import type { SystemSettings, SystemSettingsResponse } from '../lib/types';
-import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+import { Button, ErrorNote, Field, LoadError, Spinner, TextInput, useRetry } from '../components/ui';
 import { CapabilityRoster } from '../components/CapabilityRoster';
 
 /**
@@ -64,6 +64,7 @@ export function AdminSettingsPage() {
   const [data, setData] = useState<SystemSettingsResponse | null>(null);
   const [draft, setDraft] = useState<SystemSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -74,7 +75,7 @@ export function AdminSettingsPage() {
         setDraft(d.settings);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load system settings.'));
-  }, []);
+  }, [token]);
 
   /*
    * Above the early returns — hooks cannot be called conditionally — so the
@@ -100,7 +101,7 @@ export function AdminSettingsPage() {
     },
   );
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data || !draft) return <Spinner />;
 
   const editable = data.editable;

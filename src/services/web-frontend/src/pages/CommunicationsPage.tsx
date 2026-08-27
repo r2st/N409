@@ -28,12 +28,14 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  inputClass,
+  LoadError,
   LoadingBlock,
   Select,
   SkeletonTable,
   Spinner,
   TextInput,
-  inputClass,
+  useRetry,
 } from '../components/ui';
 
 /**
@@ -899,6 +901,7 @@ function AutoEmailsTab() {
   const [templates, setTemplates] = useState<CommunicationTemplate[]>([]);
   const [editing, setEditing] = useState<AutoEmail | null | 'new'>();
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [runResult, setRunResult] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -920,7 +923,7 @@ function AutoEmailsTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const toggle = async (c: AutoEmail) => {
     try {
@@ -953,7 +956,7 @@ function AutoEmailsTab() {
     }
   };
 
-  if (error && !campaigns) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !campaigns) return <LoadError message={error} {...retryProps} />;
   if (!campaigns) return <Spinner />;
 
   return (

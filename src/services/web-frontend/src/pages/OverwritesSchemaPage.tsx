@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { OVERWRITE_CATEGORY_LABELS, type OverwriteSchema } from '../lib/m2';
-import { ErrorNote, ResultCount, Spinner, StatCard, TextInput } from '../components/ui';
+import { LoadError, ResultCount, Spinner, StatCard, TextInput, useRetry } from '../components/ui';
 
 const CLASS_TONES: Record<string, string> = {
   numeric: 'bg-sky-50 text-sky-800 ring-sky-200',
@@ -16,6 +16,7 @@ const CLASS_TONES: Record<string, string> = {
 export function OverwritesSchemaPage() {
   const [schema, setSchema] = useState<OverwriteSchema | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<string | null>(null);
 
@@ -25,7 +26,7 @@ export function OverwritesSchemaPage() {
       .catch((err) =>
         setError(err instanceof ApiError ? err.message : 'Could not load the overwrites schema.'),
       );
-  }, []);
+  }, [token]);
 
   const fields = useMemo(() => {
     if (!schema) return [];
@@ -40,7 +41,7 @@ export function OverwritesSchemaPage() {
     );
   }, [schema, query, category]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!schema) return <Spinner />;
 
   return (

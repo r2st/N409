@@ -3,7 +3,7 @@ import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { formatCents, formatDate } from '../lib/format';
-import { Button, EmptyState, ErrorNote, ListTruncationNote, Spinner } from './ui';
+import { Button, EmptyState, ErrorNote, ListTruncationNote, LoadError, Spinner, useRetry } from './ui';
 
 interface Plan {
   tier: string;
@@ -125,6 +125,7 @@ export function SubscriptionSection() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [mine, setMine] = useState<MySub | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -142,7 +143,7 @@ export function SubscriptionSection() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const subscribe = async (tier: string) => {
     setError(null);
@@ -180,7 +181,7 @@ export function SubscriptionSection() {
   // Before the spinner, not after: the load sets an error and leaves `mine`
   // null, so an error rendered only in the loaded markup below is one the
   // customer never sees — the billing section just spins.
-  if (error && !mine) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !mine) return <LoadError message={error} {...retryProps} />;
   if (!mine) return <Spinner />;
 
   return (

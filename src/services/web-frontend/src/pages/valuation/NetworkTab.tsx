@@ -4,11 +4,12 @@ import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import {
   EmptyState,
-  ErrorNote,
+  LoadError,
   LoadingBlock,
   Skeleton,
   SkeletonCardList,
   Spinner,
+  useRetry,
 } from '../../components/ui';
 
 /**
@@ -112,6 +113,7 @@ function Payload({ label, value }: { label: string; value: unknown }) {
 function ItemDetail({ valuationId, itemId }: { valuationId: string; itemId: string }) {
   const [detail, setDetail] = useState<NetworkItemDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
 
   useEffect(() => {
     let cancelled = false;
@@ -127,9 +129,9 @@ function ItemDetail({ valuationId, itemId }: { valuationId: string; itemId: stri
     return () => {
       cancelled = true;
     };
-  }, [valuationId, itemId]);
+  }, [valuationId, itemId, token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!detail) return <Spinner />;
 
   return (
@@ -158,6 +160,7 @@ export function NetworkTab() {
   const { valuation } = useWorkspace();
   const [data, setData] = useState<NetworkPage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [service, setService] = useState('');
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState<string | null>(null);
@@ -175,9 +178,9 @@ export function NetworkTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!data)
     return (
       <LoadingBlock label="Loading network log…" className="space-y-6">

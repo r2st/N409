@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import type { OptionalCapability } from '../lib/types';
-import { ErrorNote, Skeleton } from './ui';
+import { LoadError, Skeleton, useRetry } from './ui';
 
 /**
  * What the platform is not doing.
@@ -32,6 +32,7 @@ const SEVERITY_NOTE: Record<OptionalCapability['severity'], string> = {
 export function CapabilityRoster() {
   const [rows, setRows] = useState<OptionalCapability[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
 
   useEffect(() => {
     api<{ capabilities: OptionalCapability[] }>('/admin/capabilities')
@@ -39,11 +40,11 @@ export function CapabilityRoster() {
       .catch((err) =>
         setError(err instanceof ApiError ? err.message : 'Could not load the integration status.'),
       );
-  }, []);
+  }, [token]);
 
   // The error wins over the skeleton. A panel that spins forever after a failed
   // load is the swept bug of rounds 12 and 16.
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!rows) return <Skeleton className="h-24 w-full" />;
 
   const ordered = [...rows].sort((a, b) => {

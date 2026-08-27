@@ -3,7 +3,16 @@ import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { all, optional, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { formatDate } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  LoadError,
+  Spinner,
+  TextInput,
+  useRetry,
+} from '../components/ui';
 import { RichTextEditor } from '../components/RichTextEditor';
 
 /**
@@ -72,6 +81,7 @@ const CLOSED_EDITOR: EditorState = emptyEditor();
 export function AdminBlogPage() {
   const [posts, setPosts] = useState<BlogPost[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -90,7 +100,7 @@ export function AdminBlogPage() {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, token]);
 
   const openEdit = (p: BlogPost) =>
     setEditor({
@@ -189,7 +199,7 @@ export function AdminBlogPage() {
     }
   };
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!posts) return <Spinner />;
 
   return (

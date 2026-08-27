@@ -6,10 +6,12 @@ import {
   Button,
   ErrorNote,
   ListTruncationNote,
+  LoadError,
   ResultCount,
   Select,
   Spinner,
   TextInput,
+  useRetry,
 } from '../components/ui';
 
 interface Policy {
@@ -75,6 +77,7 @@ export function AdminRetentionPage() {
   const [retired, setRetired] = useState<{ valuations: RetiredValuation[]; total: number } | null>(null);
   const [retiredQuery, setRetiredQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [note, setNote] = useState<string | null>(null);
   const [holdForm, setHoldForm] = useState({ scope: 'valuation', reference_id: '', reason: '' });
   const [retireForm, setRetireForm] = useState({ id: '', reason: '' });
@@ -127,9 +130,9 @@ export function AdminRetentionPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
-  if (!policies) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
+  if (!policies) return error ? <LoadError message={error} {...retryProps} /> : <Spinner />;
 
   const savePolicy = (p: Policy) =>
     run(`policy:${p.data_type}`, async () => {

@@ -4,7 +4,14 @@ import { api, ApiError } from '../../lib/api';
 import { filenameStem, useDownload } from '../../lib/useDownload';
 import { formatDate, formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { ErrorNote, LoadingBlock, Skeleton, SkeletonStatStrip, SkeletonText } from '../../components/ui';
+import {
+  LoadError,
+  LoadingBlock,
+  Skeleton,
+  SkeletonStatStrip,
+  SkeletonText,
+  useRetry,
+} from '../../components/ui';
 
 interface ProgressStage {
   key: string;
@@ -168,6 +175,7 @@ export function ProgressTab() {
   const { valuation } = useWorkspace();
   const [progress, setProgress] = useState<ProgressResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   // Separate from `error`, which replaces the whole tab: a download that failed
   // is no reason to take the progress the client came here to read away.
   const download = useDownload();
@@ -180,9 +188,9 @@ export function ProgressTab() {
         setError(err instanceof ApiError ? err.message : 'Could not load progress.');
       }
     })();
-  }, [valuation.id]);
+  }, [valuation.id, token]);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!progress)
     return (
       <LoadingBlock label="Loading progress…" className="space-y-8">

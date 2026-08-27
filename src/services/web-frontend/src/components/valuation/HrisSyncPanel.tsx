@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
-import { Button, ErrorNote, Select, Spinner } from '../ui';
+import { Button, ErrorNote, LoadError, Select, Spinner, useRetry } from '../ui';
 
 type Provider = 'rippling' | 'gusto' | 'deel';
 type Frequency = 'manual' | 'daily' | 'weekly';
@@ -32,6 +32,7 @@ interface PullResult {
 export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string; onImported: () => void }) {
   const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -46,7 +47,7 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const connect = async (provider: Provider) => {
     setError(null);
@@ -113,7 +114,7 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
 
   // Before the spinner: a failed load sets the error and leaves `providers`
   // null, so the ErrorNote below this return would never render.
-  if (error && !providers) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !providers) return <LoadError message={error} {...retryProps} />;
   if (!providers) return <Spinner />;
 
   return (

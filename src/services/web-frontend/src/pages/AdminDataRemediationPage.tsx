@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { formatDateTime, formatNumber } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Spinner, StatCard } from '../components/ui';
+import { Button, EmptyState, LoadError, Spinner, StatCard, useRetry } from '../components/ui';
 
 /**
  * Data remediation (design §7.4).
@@ -99,6 +99,7 @@ function pct(value: string | null): string {
 export function AdminDataRemediationPage() {
   const [data, setData] = useState<Remediation | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -117,7 +118,7 @@ export function AdminDataRemediationPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -151,7 +152,7 @@ export function AdminDataRemediationPage() {
     }
   };
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!data) return <Spinner />;
 
   const backsolves = data.stale_backsolves;

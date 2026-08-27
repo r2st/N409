@@ -8,7 +8,7 @@ import {
   type WorkbookSheet,
 } from '../../lib/m2';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Spinner, WriteGate } from '../../components/ui';
+import { Button, EmptyState, ErrorNote, LoadError, Spinner, WriteGate, useRetry } from '../../components/ui';
 
 type CellKey = `${string}|${string}|${string}`;
 const cellKey = (sheet: string, row: string, col: string): CellKey => `${sheet}|${row}|${col}`;
@@ -109,6 +109,7 @@ export function WorkbookTab() {
   const [highlight, setHighlight] = useState<CellKey | null>(null);
   const [drafts, setDrafts] = useState<Map<CellKey, string>>(new Map());
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -143,12 +144,12 @@ export function WorkbookTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const sheet = useMemo(() => sheets?.find((s) => s.key === activeSheet) ?? null, [sheets, activeSheet]);
   const dirty = drafts.size > 0;
 
-  if (error && !sheets) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !sheets) return <LoadError message={error} {...retryProps} />;
   if (!sheets) return <Spinner />;
   /**
    * A workbook with no sheets is a real response — the engine has not run yet,

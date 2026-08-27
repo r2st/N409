@@ -8,10 +8,12 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  LoadError,
   Select,
   Spinner,
   TextInput,
   WriteGate,
+  useRetry,
 } from '../../components/ui';
 import { FieldWarnings, ValidationSummary } from '../../components/ValidationNotes';
 import { answerFromControl, controlValue } from '../../lib/intakeAnswers';
@@ -66,6 +68,7 @@ export function IntakeTab() {
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [step, setStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState(false);
   const [reminderNote, setReminderNote] = useState<string | null>(null);
 
@@ -97,7 +100,7 @@ export function IntakeTab() {
         setSchemaFailed(true);
       });
     void load();
-  }, [load, valuation.kind]);
+  }, [load, valuation.kind, token]);
 
   const setField = (key: string, value: unknown) => setAnswers((a) => ({ ...a, [key]: value }));
 
@@ -162,7 +165,7 @@ export function IntakeTab() {
   // Ahead of the spinner: `load` records the failure in `error`, but `data`
   // stays null on a failed load, so returning the spinner first left the tab
   // spinning forever on a 403 or a 503 with the explanation already in hand.
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!schema || !data) return <Spinner />;
 
   const canEdit = data.can_edit && !retired;

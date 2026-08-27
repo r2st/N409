@@ -2,7 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { formatDate } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Select, Spinner, StatCard } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  LoadError,
+  Select,
+  Spinner,
+  StatCard,
+  useRetry,
+} from '../components/ui';
 
 /**
  * Legacy document triage (design §9.2).
@@ -63,6 +72,7 @@ export function AdminDocumentsPage() {
   const [data, setData] = useState<TriageListing | null>(null);
   const [choices, setChoices] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -86,7 +96,7 @@ export function AdminDocumentsPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const chosen = Object.entries(choices).filter(([, category]) => category !== '');
 
@@ -130,7 +140,7 @@ export function AdminDocumentsPage() {
     }
   };
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data) return <Spinner />;
 
   const overLimit = chosen.length > data.max_assign;

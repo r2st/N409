@@ -9,8 +9,10 @@ import {
   ErrorNote,
   Field,
   ListTruncationNote,
+  LoadError,
   Spinner,
   TextInput,
+  useRetry,
 } from '../components/ui';
 import { RichTextEditor } from '../components/RichTextEditor';
 import type { HelpArticle } from './HelpPage';
@@ -54,6 +56,7 @@ export function AdminHelpPage() {
   const [articles, setArticles] = useState<HelpArticle[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -78,7 +81,7 @@ export function AdminHelpPage() {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, token]);
 
   const openEdit = (a: HelpArticle) =>
     setEditor({
@@ -151,7 +154,7 @@ export function AdminHelpPage() {
     }
   };
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!articles) return <Spinner />;
 
   return (
