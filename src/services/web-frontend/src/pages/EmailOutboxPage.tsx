@@ -6,6 +6,7 @@ import { useClearOnChange } from '../lib/useClearOnChange';
 import { formatDateTime } from '../lib/format';
 import type { DeliveryState, OutboxEmail, OutboxStatus } from '../lib/types';
 import { Button, EmptyState, ErrorNote, LoadingBlock, SkeletonTable } from '../components/ui';
+import { SuppressionList } from '../components/SuppressionList';
 
 /**
  * `sent` is deliberately not green. It means the relay accepted the message,
@@ -241,6 +242,14 @@ export function EmailOutboxPage() {
           </table>
         </div>
       )}
+
+      {/*
+       * The recovery path for a `skipped` row above. It is on this page rather
+       * than a page of its own because the two are read in one motion: the
+       * reason to look at the suppression list is a message the platform
+       * declined to send, and that message is in the table.
+       */}
+      <SuppressionList />
     </div>
   );
 }

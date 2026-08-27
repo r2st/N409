@@ -17,6 +17,7 @@ import type {
 } from '../lib/types';
 import { tabListKeyDown, tabProps } from '../lib/rovingFocus';
 import { useLatestOnly } from '../lib/useLatestOnly';
+import type { TagCatalogueCategory } from '../lib/tags';
 import {
   Button,
   EmptyState,
@@ -61,6 +62,11 @@ const FILTER_KEYS = [
   'due_from',
   'due_to',
   'unread',
+  // Engagement tags (parity gap #23). The API takes a comma-separated set and
+  // requires every one of them to be *accepted*, so this key is plural even
+  // though the control below sets one at a time — a URL somebody hand-edits to
+  // `tags=saas,pre_revenue` keeps working, and the picker shows the first.
+  'tags',
 ] as const;
 
 /**
@@ -151,6 +157,13 @@ export function ValuationsPage() {
   const [partnersFailed, setPartnersFailed] = useState(false);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnersCapped, setPartnersCapped] = useState(false);
+  /**
+   * The tag vocabulary, for the filter picker. Never a hard-coded list: it is
+   * served precisely so the picker and the `tagging` agent read one catalogue.
+   * A failure leaves it empty and the filter renders nothing rather than an
+   * empty dropdown that looks like "this firm uses no tags".
+   */
+  const [tagCategories, setTagCategories] = useState<TagCatalogueCategory[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportNote, setExportNote] = useState<string | null>(null);
@@ -241,6 +254,15 @@ export function ValuationsPage() {
   }, [claimCounts, filterQuery]);
 
   useEffect(loadCounts, [loadCounts]);
+
+  useEffect(() => {
+    api<{ categories: TagCatalogueCategory[] }>('/tag-catalogue')
+      .then((res) => setTagCategories(res.categories))
+      // Static vocabulary, no pagination, and nothing on this page depends on
+      // it beyond one optional filter — so a failure hides the control rather
+      // than raising a banner over a list that is otherwise entirely fine.
+      .catch(() => setTagCategories([]));
+  }, []);
 
   useEffect(() => {
     if (!ops) return;
@@ -537,6 +559,33 @@ export function ValuationsPage() {
             </option>
           ))}
         </Select>
+        {tagCategories.length > 0 && (
+          <Select
+            aria-label="Filter by tag"
+            /*
+             * `tags` is a set on the wire and one value here. Reading the first
+             * of a hand-written multi-tag URL rather than blanking the control
+             * keeps the two consistent in the direction that matters: the list
+             * really is filtered, and the picker says so with the tag doing
+             * most of the work rather than showing "Any tag" over a filtered
+             * list, which reads as a bug.
+             */
+            value={(params.get('tags') ?? '').split(',')[0]}
+            onChange={(e) => setFilter('tags', e.target.value)}
+            className="!w-auto min-w-40"
+          >
+            <option value="">Any tag</option>
+            {tagCategories.map((category) => (
+              <optgroup key={category.category} label={category.label}>
+                {category.tags.map((t) => (
+                  <option key={t.slug} value={t.slug} title={t.definition}>
+                    {t.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </Select>
+        )}
         {ops && (
           <>
             <Select

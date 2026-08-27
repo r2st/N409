@@ -340,18 +340,32 @@ export async function releaseSuppression(
   return (rowCount ?? 0) > 0;
 }
 
+export const SUPPRESSION_PAGE_LIMIT = 500;
+
+/**
+ * The cap reports itself, like every other list on the platform.
+ *
+ * It was a bare `LIMIT $1` returning a bare array, which is the one shape both
+ * cap censuses are blind to: `silentCapCensus` skips a parameterised limit
+ * because that is normally where the flag lives, and the frontend's truncation
+ * census keys on a flag being present, so an endpoint with none is not a
+ * truncating endpoint as far as it can tell. Between them an address that fell
+ * off the end of this list was an address nobody would find and nobody could
+ * release — and the whole reason to read this list is to release something.
+ */
 export async function listSuppressions(
   pool: pg.Pool,
   opts: { includeReleased?: boolean; limit?: number } = {},
-): Promise<SuppressionRow[]> {
+): Promise<{ suppressions: SuppressionRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), SUPPRESSION_PAGE_LIMIT);
   const { rows } = await pool.query<SuppressionRow>(
     `SELECT * FROM email_suppressions
       ${opts.includeReleased ? '' : 'WHERE released_at IS NULL'}
       ORDER BY created_at DESC
       LIMIT $1`,
-    [Math.min(opts.limit ?? 100, 500)],
+    [limit + 1],
   );
-  return rows;
+  return { suppressions: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 /* ------------------------------------------------------------------ *

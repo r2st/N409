@@ -99,9 +99,39 @@ export interface ValuationDocument {
   reviewed_by?: string | null;
 }
 
-/** Pipelines runnable from the AI tab. 'qa' runs from the QA tab instead, so
- * the deterministic checks and the publish-gate review always ride along. */
-export const AI_PIPELINES = ['missing_data', 'extract', 'comparables', 'summarize', 'explain'] as const;
+/**
+ * Pipelines runnable from the AI tab. 'qa' runs from the QA tab instead, so
+ * the deterministic checks and the publish-gate review always ride along.
+ *
+ * Not every agent the server can run belongs here — four have a better home and
+ * are launched from it, each beside the data it writes: `company_profile` from
+ * the Company tab, `comp_selection` from Comparables, `tagging` from the tag
+ * panel, and `report_narrative` from the Report tab, which reaches it through
+ * `POST /report/narrative` rather than by name. What distinguishes those from
+ * the ones listed here is an apply route: an agent whose output the server can
+ * merge into a row belongs next to that row, and an agent whose output a person
+ * has to read and act on belongs on the AI tab.
+ *
+ * `aiPipelineReach.test.ts` is what stops the next agent being shipped with no
+ * home at all — which is how `cap_table`, `assumptions`, `audit_defense` and
+ * `roll_forward` were all fully built and unreachable until R178.
+ */
+export const AI_PIPELINES = [
+  'missing_data',
+  'extract',
+  'comparables',
+  'summarize',
+  'explain',
+  // R178 — four agents that were fully built (Python agent, prompt row, route)
+  // and had no control anywhere in the product. `cap_table` and `assumptions`
+  // would each read better beside the data they speak about, but neither has an
+  // apply route to wire to a form, so their honest home is here: run it, read
+  // the output, type the conclusion in yourself.
+  'cap_table',
+  'assumptions',
+  'audit_defense',
+  'roll_forward',
+] as const;
 export type AiPipeline = (typeof AI_PIPELINES)[number] | 'qa';
 
 export const AI_PIPELINE_META: Record<AiPipeline, { label: string; description: string }> = {
@@ -124,6 +154,26 @@ export const AI_PIPELINE_META: Record<AiPipeline, { label: string; description: 
   explain: {
     label: 'Plain-English explanation',
     description: 'Explains the methodology and result in founder-friendly language (needs a calculation).',
+  },
+  cap_table: {
+    label: 'Cap table structuring',
+    description:
+      'Reads the uploaded cap-table documents and structures the share classes, preferences and option pools (needs a document).',
+  },
+  assumptions: {
+    label: 'Assumption recommendations',
+    description:
+      'Recommends DLOM, approach weights, time to exit, discount rate and volatility, each with a range, the reasoning and a benchmark.',
+  },
+  audit_defense: {
+    label: 'Audit defense memo',
+    description:
+      'Anticipates the challenges an IRS reviewer or auditor would raise, drafts evidence-backed answers, and is candid about the weak points (needs a calculation).',
+  },
+  roll_forward: {
+    label: 'Roll-forward diff',
+    description:
+      'Diffs the prior valuation against the new data and proposes what carries forward and what has to be re-derived.',
   },
   qa: {
     label: 'QA review',

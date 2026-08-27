@@ -78,6 +78,38 @@ describe.skipIf(!dbUp)('a capped list says it was capped', () => {
   });
 
   /**
+   * The eleventh, found in R178 and invisible to both censuses that exist to
+   * catch this. `silentCapCensus` skips a parameterised `LIMIT $n` because that
+   * is normally where the flag lives; the frontend's truncation census keys on
+   * a flag being present in the route, so an endpoint carrying none is not a
+   * truncating endpoint as far as it can tell. The suppression list had a
+   * clamped page size, a bare array, and neither guard could see it.
+   *
+   * It matters more than most: this list is read in order to find one address
+   * and lift it. A suppressed address past the cap is one nobody can find and
+   * therefore nobody can release, and the symptom at the other end is a client
+   * who has silently stopped receiving their own report.
+   */
+  it('flags the suppression list, which is read to find one address', async () => {
+    const body = await get('/api/v1/admin/email/suppressions');
+    expect(Array.isArray(body.suppressions)).toBe(true);
+    expect(body).toHaveProperty('truncated', false);
+
+    // The cap the repo states, reached through the route's own clamp rather
+    // than by seeding five hundred rows — the same path a caller paging
+    // deliberately takes.
+    await ctx.pool.query(
+      `INSERT INTO email_suppressions (to_email, reason, detail)
+       VALUES ('one@capped.example', 'hard', 'seeded'), ('two@capped.example', 'hard', 'seeded')
+       ON CONFLICT (to_email) DO NOTHING`,
+    );
+    const page = await get('/api/v1/admin/email/suppressions?limit=1');
+    expect((page.suppressions as unknown[]).length).toBe(1);
+    expect(page, 'a short page has to say it is short').toHaveProperty('truncated', true);
+    await ctx.pool.query(`DELETE FROM email_suppressions WHERE detail = 'seeded'`);
+  });
+
+  /**
    * The billing page is the sharpest case: `payments` is not only drawn as a
    * table, it is summed into "total paid", and `unpaid_valuations.length` is a
    * stat card. Past either cap the page stated a number rather than showing a

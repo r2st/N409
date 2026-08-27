@@ -15,6 +15,7 @@ import {
   deliveryStatsByTemplate,
   listDeliveryEvents,
   listSuppressions,
+  SUPPRESSION_PAGE_LIMIT,
   recordDeliveryEvent,
   releaseSuppression,
   suppressAddress,
@@ -42,7 +43,7 @@ const StatsQuery = z.object({
 
 const SuppressionsQuery = z.object({
   include_released: flagParam(false),
-  limit: z.coerce.number().int().min(1).max(500).default(100),
+  limit: z.coerce.number().int().min(1).max(SUPPRESSION_PAGE_LIMIT).default(100),
 });
 
 const SuppressBody = z.object({
@@ -149,12 +150,10 @@ export function registerEmailDeliveryRoutes(
     if (!isOps(principal)) throw problems.forbidden('The suppression list is operations-only');
     const parsed = SuppressionsQuery.safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
-    return {
-      suppressions: await listSuppressions(deps.pool, {
-        includeReleased: parsed.data.include_released,
-        limit: parsed.data.limit,
-      }),
-    };
+    return listSuppressions(deps.pool, {
+      includeReleased: parsed.data.include_released,
+      limit: parsed.data.limit,
+    });
   });
 
   app.post('/api/v1/admin/email/suppressions', { preHandler: app.authenticate }, async (req) => {
