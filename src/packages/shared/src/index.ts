@@ -58,12 +58,7 @@ export {
   SENSITIVE_QUERY_PARAMS,
   type RequestApiToken,
 } from './problem.js';
-export {
-  describeIssues,
-  issuePath,
-  validationDetail,
-  type ValidationIssue,
-} from './validationDetail.js';
+export { describeIssues, issuePath, validationDetail, type ValidationIssue } from './validationDetail.js';
 export {
   API_PERMISSIONS_POLICY,
   WEB_PERMISSIONS_POLICY,

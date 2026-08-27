@@ -276,7 +276,7 @@ export function registerOperationsRoutes(
         partner_id: z.string().min(1).max(64).optional(),
       })
       .safeParse(req.query ?? {});
-    if (!query.success) throw problems.badRequest('invalid query');
+    if (!query.success) throw invalidQuery(query.error);
     const deliveries = await listFailedDeliveries(deps.pool, {
       limit: query.data.limit,
       partnerId: query.data.partner_id,

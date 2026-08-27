@@ -336,8 +336,7 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
     const { id } = req.params as { id: string };
     refuseIfRetired(await loadValuation(id), 'accepting changes');
     const parsed = SettingsBody.safeParse(req.body);
-    if (!parsed.success)
-      throw invalidBody('Invalid ASC 718 settings', parsed.error);
+    if (!parsed.success) throw invalidBody('Invalid ASC 718 settings', parsed.error);
     const b = parsed.data;
     const settings = await upsertAsc718Settings(deps.pool, id, {
       companyType: b.company_type,
@@ -360,8 +359,7 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
     refuseIfRetired(valuation, 'accepting changes');
 
     const parsed = Body.safeParse(req.body);
-    if (!parsed.success)
-      throw invalidBody('Invalid ASC 718 request', parsed.error);
+    if (!parsed.success) throw invalidBody('Invalid ASC 718 request', parsed.error);
     const b = parsed.data;
 
     if (b.grants.length === 0 && !b.espp?.length && !b.rsu?.length && !b.tsr?.length) {

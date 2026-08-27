@@ -230,8 +230,7 @@ export function registerAuthRoutes(
       throw problems.forbidden('Self-service registration is currently closed');
 
     const parsed = RegisterBody.safeParse(req.body);
-    if (!parsed.success)
-      throw invalidBody('Invalid registration', parsed.error);
+    if (!parsed.success) throw invalidBody('Invalid registration', parsed.error);
     const { email, password, first_name, last_name } = parsed.data;
 
     // Checked after parsing (so the key is a real address) but before the scrypt

@@ -221,8 +221,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     await loadInstrument(id);
     const parsed = CreditTermsBody.safeParse(req.body);
-    if (!parsed.success)
-      throw invalidBody('Invalid credit terms', parsed.error);
+    if (!parsed.success) throw invalidBody('Invalid credit terms', parsed.error);
     const b = parsed.data;
     const creditTerms = await upsertCreditTerms(deps.pool, id, {
       rating: b.rating ?? null,
@@ -240,8 +239,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     const instrument = await loadInstrument(id);
     const parsed = ValueBody.safeParse(req.body ?? {});
-    if (!parsed.success)
-      throw invalidBody('Invalid value request', parsed.error);
+    if (!parsed.success) throw invalidBody('Invalid value request', parsed.error);
 
     // Engine params = stored instrument params + credit terms (for the credit-
     // spread path) + the caller's per-run overrides.

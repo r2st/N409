@@ -284,9 +284,21 @@ export const problems = {
    * the `required_access` vocabulary this carries.
    */
   forbidden: (detail = 'Not allowed', extensions?: Record<string, unknown>) =>
-    new ApiProblem({ status: 403, title: 'Forbidden', type: 'urn:n409:problem:forbidden', detail, extensions }),
+    new ApiProblem({
+      status: 403,
+      title: 'Forbidden',
+      type: 'urn:n409:problem:forbidden',
+      detail,
+      extensions,
+    }),
   notFound: (detail = 'Resource not found', extensions?: Record<string, unknown>) =>
-    new ApiProblem({ status: 404, title: 'Not Found', type: 'urn:n409:problem:not-found', detail, extensions }),
+    new ApiProblem({
+      status: 404,
+      title: 'Not Found',
+      type: 'urn:n409:problem:not-found',
+      detail,
+      extensions,
+    }),
   conflict: (detail?: string) =>
     new ApiProblem({ status: 409, title: 'Conflict', type: 'urn:n409:problem:conflict', detail }),
   unprocessable: (detail?: string, extensions?: Record<string, unknown>) =>

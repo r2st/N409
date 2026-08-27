@@ -157,8 +157,7 @@ export function registerAuditTrailRoutes(app: FastifyInstance, deps: { pool: pg.
     { preHandler: app.authenticate },
     async (req) => {
       const parsed = HistoryQuery.safeParse(req.query);
-      if (!parsed.success)
-        throw invalidQuery(parsed.error, 'A field name is required');
+      if (!parsed.success) throw invalidQuery(parsed.error, 'A field name is required');
 
       const { entries, includeInternal } = await loadTrail(req);
       const visible = filterAuditEntries(entries, { includeInternal });

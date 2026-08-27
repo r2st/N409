@@ -465,7 +465,8 @@ export function registerDocumentRoutes(
       const doc = await loadDocument(deps.pool, valuation.id, documentId);
 
       // Ops can prune anything; everyone else only what they uploaded.
-      if (!isOps(principal) && doc.uploaded_by !== principal.id) throw forbidden('Deleting this document', 'own-record');
+      if (!isOps(principal) && doc.uploaded_by !== principal.id)
+        throw forbidden('Deleting this document', 'own-record');
       await deleteDocument(deps.pool, doc, actorFor(principal));
       return reply.status(204).send();
     },

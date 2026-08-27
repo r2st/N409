@@ -640,8 +640,7 @@ export function registerReportRoutes(
     const expectedVersion = expectedReportVersion(req.headers['if-match']);
 
     const parsed = PutBody.safeParse(req.body);
-    if (!parsed.success)
-      throw invalidBody('Invalid report content', parsed.error);
+    if (!parsed.success) throw invalidBody('Invalid report content', parsed.error);
 
     const report = await loadOrCreateReport(deps.pool, principal, valuation);
     const content = sanitizeContent(parsed.data.content);
@@ -702,8 +701,7 @@ export function registerReportRoutes(
     const expectedVersion = expectedReportVersion(req.headers['if-match']);
 
     const parsed = RevertBody.safeParse(req.body);
-    if (!parsed.success)
-      throw invalidBody('Invalid revert request', parsed.error);
+    if (!parsed.success) throw invalidBody('Invalid revert request', parsed.error);
 
     const report = await findReportByValuation(deps.pool, valuation.id);
     const target = report ? await getVersion(deps.pool, report.id, parsed.data.version) : null;

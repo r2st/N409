@@ -40,7 +40,7 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { partnerId } = req.params as { partnerId: string };
     if (!isUlid(partnerId)) throw problems.notFound();
-    if (!canManageTokens(principal, partnerId)) throw forbidden('Listing that partner\'s API tokens', 'ops');
+    if (!canManageTokens(principal, partnerId)) throw forbidden("Listing that partner's API tokens", 'ops');
     return { tokens: await listApiTokens(deps.pool, partnerId) };
   });
 
@@ -48,7 +48,8 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { partnerId } = req.params as { partnerId: string };
     if (!isUlid(partnerId)) throw problems.notFound();
-    if (!canManageTokens(principal, partnerId)) throw forbidden('Creating an API token for that partner', 'ops');
+    if (!canManageTokens(principal, partnerId))
+      throw forbidden('Creating an API token for that partner', 'ops');
 
     const parsed = z.object({ name: z.string().min(1).max(200) }).safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid token', parsed.error);

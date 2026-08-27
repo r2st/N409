@@ -85,8 +85,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
   app.post('/api/v1/organizations', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = CreateOrgBody.safeParse(req.body);
-    if (!parsed.success)
-      throw invalidBody('Invalid organization', parsed.error);
+    if (!parsed.success) throw invalidBody('Invalid organization', parsed.error);
     if (parsed.data.parent_org_id) await loadOwnedOrg(principal, parsed.data.parent_org_id);
     const org = await createOrganization(deps.pool, {
       name: parsed.data.name,

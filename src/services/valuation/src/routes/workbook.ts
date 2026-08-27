@@ -115,8 +115,7 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
     refuseIfRetired(await authorize(deps.pool, principal, id), 'accepting workbook edits');
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success)
-      throw invalidBody('Invalid workbook patch', parsed.error);
+    if (!parsed.success) throw invalidBody('Invalid workbook patch', parsed.error);
 
     const errors = parsed.data.cells
       .map((c) => ({ cell: c, error: validateCellRef(c.sheet, c.row_key, c.column_key) }))

@@ -390,8 +390,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       const position = await findPosition(deps.pool, id, pid);
       if (!position) throw problems.notFound();
       const parsed = RollForwardBody.safeParse(req.body);
-      if (!parsed.success)
-        throw invalidBody('Invalid roll-forward', parsed.error);
+      if (!parsed.success) throw invalidBody('Invalid roll-forward', parsed.error);
       const b = parsed.data;
       const { marks } = await listMarks(deps.pool, pid);
       const prior = marks[0];
@@ -524,8 +523,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     await loadFund(id);
     const parsed = WaterfallBody.safeParse(req.body);
-    if (!parsed.success)
-      throw invalidBody('Invalid waterfall request', parsed.error);
+    if (!parsed.success) throw invalidBody('Invalid waterfall request', parsed.error);
     const terms = await findLpTerms(deps.pool, id);
     if (!terms) throw problems.unprocessable('Set the fund LP terms before running the waterfall');
     const waterfall = await engine('/engine/v1/fund-waterfall', {
@@ -548,8 +546,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     await loadFund(id);
     const parsed = CalibrateBody.safeParse(req.body);
-    if (!parsed.success)
-      throw invalidBody('Invalid calibration request', parsed.error);
+    if (!parsed.success) throw invalidBody('Invalid calibration request', parsed.error);
     const b = parsed.data;
     const calibration = await engine('/engine/v1/fund-calibrate', {
       round_price_per_share: b.round_price_per_share,

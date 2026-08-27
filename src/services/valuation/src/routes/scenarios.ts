@@ -195,8 +195,7 @@ export function registerScenarioRoutes(
     refuseIfRetired(valuation, 'accepting new runs');
 
     const parsed = PreviewBody.safeParse(req.body ?? {});
-    if (!parsed.success)
-      throw invalidBody('Invalid scenario inputs', parsed.error);
+    if (!parsed.success) throw invalidBody('Invalid scenario inputs', parsed.error);
 
     const calc = await sandboxBaseline(valuation.id);
     if (!calc) throw problems.unprocessable(await noBaselineReason(valuation));
@@ -333,7 +332,8 @@ export function registerScenarioRoutes(
       const scenario = await findScenarioById(deps.pool, scenarioId);
       if (!scenario || scenario.valuation_id !== valuation.id) throw problems.notFound();
       // Ops can prune anything; everyone else only what they saved.
-      if (!isOps(principal) && scenario.created_by !== principal.id) throw forbidden('Deleting this scenario', 'own-record');
+      if (!isOps(principal) && scenario.created_by !== principal.id)
+        throw forbidden('Deleting this scenario', 'own-record');
       await deleteScenario(deps.pool, scenario, actorFor(principal));
       return reply.status(204).send();
     },

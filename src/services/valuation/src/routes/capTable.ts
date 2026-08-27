@@ -25,6 +25,7 @@ import { looksLikeXlsx, readXlsx, XlsxReadError } from '../domain/xlsxRead.js';
 import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 /**
  * Cap-table integration (feature 9). Import a CSV (Carta / Pulley / generic)
@@ -362,7 +363,7 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     { preHandler: app.authenticate },
     async (req) => {
       const principal = requirePrincipal(req);
-      if (!isOps(principal)) throw problems.forbidden('Operations-only');
+      if (!isOps(principal)) throw forbidden('Reading the waterfall inputs', 'ops');
       const { id } = req.params as { id: string };
       await loadReadable(deps.pool, id, principal);
       const table = await findCapTable(deps.pool, id);
