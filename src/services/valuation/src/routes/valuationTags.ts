@@ -20,6 +20,7 @@ import {
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Engagement tags — 409.ai parity gap #23.
@@ -134,7 +135,7 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     refuseIfRetired(valuation, 'accepting changes');
 
     const body = AddBody.safeParse(req.body ?? {});
-    if (!body.success) throw problems.unprocessable('Invalid tag', { errors: body.error.issues });
+    if (!body.success) throw invalidBody('Invalid tag', body.error);
 
     const def = TAGS_BY_SLUG.get(body.data.slug);
     if (!def) {
@@ -179,7 +180,7 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     refuseIfRetired(valuation, 'accepting changes');
 
     const body = DecideBody.safeParse(req.body ?? {});
-    if (!body.success) throw problems.unprocessable('Invalid decision', { errors: body.error.issues });
+    if (!body.success) throw invalidBody('Invalid decision', body.error);
 
     const existing = await findValuationTag(deps.pool, id, params.data.slug);
     if (!existing) throw problems.notFound();

@@ -18,6 +18,7 @@ import {
   type ProjectionYear,
 } from '../repos/projections.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * The financial projection — the build behind the DCF's cash flows.
@@ -328,9 +329,7 @@ export function registerProjectionRoutes(
 
     const parsed = ProjectionRunBody.safeParse(req.body ?? {});
     if (!parsed.success) {
-      throw problems.unprocessable('Invalid projection assumptions', {
-        errors: parsed.error.issues,
-      });
+      throw invalidBody('Invalid projection assumptions', parsed.error);
     }
     // `none` is the engine's way of asking for no terminal value, and it
     // reads it as the absence of one; sending the string through keeps the

@@ -70,6 +70,7 @@ export {
   quotePrice,
   RAISE_BANDS,
 } from '../domain/pricing.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 const paymentsUnavailable = (detail: string) =>
   new ApiProblem({
@@ -248,7 +249,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
 
       const parsed = CheckoutBody.safeParse(req.body ?? {});
       if (!parsed.success) {
-        throw problems.unprocessable('Invalid checkout', { errors: parsed.error.issues });
+        throw invalidBody('Invalid checkout', parsed.error);
       }
       // The quote is computed from the flags on every checkout, never taken
       // from the client. `amount_cents` remains an ops-only override and now

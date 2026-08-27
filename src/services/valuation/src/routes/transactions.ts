@@ -17,6 +17,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Transaction & funding-round history (M4, P1 #24). Reads follow valuation
@@ -95,7 +96,7 @@ export function registerTransactionRoutes(app: FastifyInstance, deps: { pool: pg
     refuseIfRetired(valuation, 'accepting changes');
 
     const parsed = RoundBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid round', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid round', parsed.error);
     const b = parsed.data;
     const round = await createRound(
       deps.pool,
@@ -124,7 +125,7 @@ export function registerTransactionRoutes(app: FastifyInstance, deps: { pool: pg
     if (!isUlid(roundId)) throw problems.notFound();
 
     const parsed = RoundPatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
     const b = parsed.data;
     const round = await updateRound(
       deps.pool,
@@ -177,7 +178,7 @@ export function registerTransactionRoutes(app: FastifyInstance, deps: { pool: pg
     requireWriteAccess(principal, valuation);
 
     const parsed = TransactionBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid transaction', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid transaction', parsed.error);
     const b = parsed.data;
     const transaction = await createTransaction(
       deps.pool,

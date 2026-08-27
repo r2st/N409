@@ -18,6 +18,7 @@ import {
 } from '../repos/documents.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import type { EventActor } from '../events/record.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Legacy document triage (design §9.2, P2-16).
@@ -60,7 +61,7 @@ export function registerAdminDocumentRoutes(app: FastifyInstance, deps: { pool: 
     const parsed = z
       .object({ limit: z.coerce.number().int().min(1).max(500).default(200) })
       .safeParse(req.query ?? {});
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
 
     const [rows, total] = await Promise.all([
       listUnfiledDocuments(deps.pool, { limit: parsed.data.limit }),
@@ -124,7 +125,7 @@ export function registerAdminDocumentRoutes(app: FastifyInstance, deps: { pool: 
       })
       .safeParse(req.body ?? {});
     if (!parsed.success) {
-      throw problems.unprocessable('Invalid assignment', { errors: parsed.error.issues });
+      throw invalidBody('Invalid assignment', parsed.error);
     }
 
     const results: Array<{

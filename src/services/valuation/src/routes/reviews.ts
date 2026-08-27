@@ -14,6 +14,7 @@ import { onStateChanged, type EmailTransport, type TransitionRenderDeps } from '
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * P1 #6 — the review workflow's verbs. "Approve" and "request changes" wrap
@@ -46,7 +47,7 @@ export function registerReviewRoutes(
     const principal = requirePrincipal(req);
     requireOps(principal);
     const parsed = QueueQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const q = parsed.data;
 
     const { items, total } = await listReviewQueue(deps.pool, {
@@ -67,7 +68,7 @@ export function registerReviewRoutes(
     refuseIfRetired(valuation, 'accepting review decisions');
 
     const parsed = DecisionBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid decision', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid decision', parsed.error);
     const { decision, comment } = parsed.data;
 
     const target = decisionTarget(valuation.state, decision);

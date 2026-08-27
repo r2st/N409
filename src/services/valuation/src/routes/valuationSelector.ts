@@ -9,6 +9,7 @@ import {
   SELECTOR_SUBJECTS,
   SELECTOR_TRIGGERS,
 } from '../domain/valuationSelector.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * "Which valuation do I need?" (remaining-gaps §selector). Public: the quiz
@@ -34,7 +35,7 @@ export function registerValuationSelectorRoutes(app: FastifyInstance): void {
   app.post('/api/v1/valuation-selector', async (req) => {
     const parsed = SelectorBody.safeParse(req.body ?? {});
     if (!parsed.success) {
-      throw problems.unprocessable('Invalid selector answers', { errors: parsed.error.issues });
+      throw invalidBody('Invalid selector answers', parsed.error);
     }
     const result = selectValuationKinds(parsed.data);
     return {

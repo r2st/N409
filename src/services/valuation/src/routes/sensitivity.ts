@@ -10,6 +10,7 @@ import { buildCalculationInputs, engineParams } from './calculations.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /** The five levers the engine sensitivity endpoint understands. */
 const ENGINE_PARAMETERS = [
@@ -70,7 +71,7 @@ export function registerSensitivityRoutes(
     refuseIfRetired(valuation, 'accepting sensitivity runs');
 
     const parsed = Body.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid assumptions', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid assumptions', parsed.error);
     const b = parsed.data;
 
     let dlom = b.dlom;
@@ -125,7 +126,7 @@ export function registerSensitivityRoutes(
     if (!paramsRow) throw problems.notFound();
 
     const parsed = ModelBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid options', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid options', parsed.error);
     const b = parsed.data;
 
     const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, b.inputs);

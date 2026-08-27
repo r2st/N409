@@ -29,6 +29,7 @@ import {
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Engagement lifecycle management (feature 8). Ops-only: track the stage an
@@ -87,7 +88,7 @@ export function registerEngagementRoutes(
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
+      throw invalidQuery(parsedQuery.error);
     }
     const { engagements: rows, truncated } = await listActiveEngagements(deps.pool, {
       limit: parsedQuery.data.limit,
@@ -130,7 +131,7 @@ export function registerEngagementRoutes(
     const { id } = req.params as { id: string };
     refuseIfRetired(await loadValuation(deps.pool, id), 'accepting stage advances');
     const parsed = AdvanceBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid stage', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid stage', parsed.error);
 
     const engagement = await ensureEngagement(deps.pool, id, {
       actorType: 'human',
@@ -161,7 +162,7 @@ export function registerEngagementRoutes(
     const { id } = req.params as { id: string };
     refuseIfRetired(await loadValuation(deps.pool, id), 'accepting engagement changes');
     const parsed = AssignBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid analyst', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid analyst', parsed.error);
     if (parsed.data.analyst_id && !isUlid(parsed.data.analyst_id)) {
       throw problems.unprocessable('Invalid analyst id');
     }

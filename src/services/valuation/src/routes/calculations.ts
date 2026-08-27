@@ -27,6 +27,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { RECALC_APPROACHES } from '../domain/approaches.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * UI approach names → engine approach keys (per-subsystem recalculate).
@@ -411,7 +412,7 @@ export function registerCalculationRoutes(
     if (!paramsRow) throw problems.notFound();
 
     const parsed = ComputeBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid inputs', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid inputs', parsed.error);
 
     // Inputs = AI-extracted engine inputs, then analyst-applied inputs
     // (extraction auto-apply), then AI comparables multiples, then the
@@ -478,7 +479,7 @@ export function registerCalculationRoutes(
     if (!paramsRow) throw problems.notFound();
 
     const parsed = ComputeBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid inputs', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid inputs', parsed.error);
 
     const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, parsed.data.inputs);
 

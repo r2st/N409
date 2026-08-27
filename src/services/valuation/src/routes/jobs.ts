@@ -17,6 +17,7 @@ import { runJobAlertScan } from '../hooks/jobAlerts.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { flagParam } from '../domain/queryFlag.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * The background job monitor (409.ai's Published Tasks page).
@@ -48,7 +49,7 @@ export function registerJobRoutes(app: FastifyInstance, deps: { pool: pg.Pool })
   app.get('/api/v1/admin/jobs', { preHandler: app.authenticate }, async (req) => {
     requireOps(req);
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const q = parsed.data;
     if (q.valuation_id && !isUlid(q.valuation_id)) throw problems.badRequest('Invalid valuation_id');
 
@@ -74,7 +75,7 @@ export function registerJobRoutes(app: FastifyInstance, deps: { pool: pg.Pool })
           .default(24),
       })
       .safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
 
     const [stats, oldest] = await Promise.all([
       jobStats(deps.pool, parsed.data.since_hours),
@@ -109,7 +110,7 @@ export function registerJobRoutes(app: FastifyInstance, deps: { pool: pg.Pool })
         limit: z.coerce.number().int().min(1).max(100).default(50),
       })
       .safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
 
     const [alerts, rules] = await Promise.all([
       listJobAlerts(deps.pool, { openOnly: parsed.data.open, limit: parsed.data.limit }),
@@ -151,7 +152,7 @@ export function registerJobRoutes(app: FastifyInstance, deps: { pool: pg.Pool })
     if (!(JOB_SOURCES as readonly string[]).includes(source)) throw problems.notFound();
 
     const parsed = RulePatch.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid rule', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid rule', parsed.error);
 
     const rule = await updateJobAlertRule(deps.pool, source as JobSource, {
       enabled: parsed.data.enabled,

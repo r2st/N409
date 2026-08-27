@@ -15,6 +15,8 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { Principal } from '../auth/rbac.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 const PutBody = z
   .object({
@@ -31,7 +33,7 @@ function actorFor(principal: Principal): EventActor {
 
 /** Working-data access: analyst/ops only, and the valuation must be in scope. */
 async function loadForWorkingData(pool: pg.Pool, principal: Principal, id: string): Promise<ValuationRow> {
-  if (!canEditWorkingData(principal)) throw problems.forbidden();
+  if (!canEditWorkingData(principal)) throw forbidden('Reading working data', 'working-data');
   if (!isUlid(id)) throw problems.notFound();
   const valuation = await findValuationById(pool, id);
   if (
@@ -47,7 +49,7 @@ export function registerOverwriteRoutes(app: FastifyInstance, deps: { pool: pg.P
   // Self-documenting schema explorer (features.md §3.6) — the 68-field set.
   app.get('/api/v1/overwrites/schema', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!canEditWorkingData(principal)) throw problems.forbidden();
+    if (!canEditWorkingData(principal)) throw forbidden('Reading the overwrite schema', 'working-data');
     return {
       categories: OVERWRITE_CATEGORIES.map((key) => ({
         key,
@@ -76,7 +78,7 @@ export function registerOverwriteRoutes(app: FastifyInstance, deps: { pool: pg.P
     if (!def) throw problems.notFound(`Unknown overwrite field '${field_key}'`);
 
     const parsed = PutBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid overwrite', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid overwrite', parsed.error);
 
     const invalid = validateOverwriteValue(def, parsed.data.value);
     if (invalid) throw problems.unprocessable(`Invalid value for '${field_key}': ${invalid}`);

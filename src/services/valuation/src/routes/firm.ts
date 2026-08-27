@@ -8,6 +8,7 @@ import { firmAttentionCandidates, firmClients, firmSummary, firmTeam } from '../
 import { findBrandingByPartnerId } from '../repos/branding.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
+import { invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Firm-level administration — one console for a valuation firm's whole book,
@@ -51,7 +52,7 @@ export function registerFirmRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
 
   app.get('/api/v1/firm/dashboard', { preHandler: app.authenticate }, async (req) => {
     const parsed = QueryWithPartner.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query');
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const partnerId = resolveFirm(req, parsed.data.partner_id);
 
     // `now` is taken once and passed down, so every reason on the page is
@@ -91,7 +92,7 @@ export function registerFirmRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
       page: pageParam(),
       per_page: z.coerce.number().int().min(1).max(100).default(25),
     }).safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query');
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const partnerId = resolveFirm(req, parsed.data.partner_id);
 
     const { page, per_page: perPage, search } = parsed.data;
@@ -106,7 +107,7 @@ export function registerFirmRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
   /** The full attention queue, for when 25 is not all of it. */
   app.get('/api/v1/firm/attention', { preHandler: app.authenticate }, async (req) => {
     const parsed = QueryWithPartner.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query');
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const partnerId = resolveFirm(req, parsed.data.partner_id);
 
     const { candidates, truncated } = await firmAttentionCandidates(

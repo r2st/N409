@@ -8,6 +8,7 @@ import {
   NoEvidenceError,
   SAFE_HARBOR_DISCLAIMER,
 } from '../domain/fmvEstimator.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * The free 409A estimator behind `/tools/409a-valuation-calculator`.
@@ -42,7 +43,7 @@ export function registerFmvEstimatorRoutes(app: FastifyInstance): void {
   app.post('/api/v1/fmv-estimator', async (req) => {
     const parsed = EstimatorBody.safeParse(req.body ?? {});
     if (!parsed.success) {
-      throw problems.unprocessable('Invalid estimator inputs', { errors: parsed.error.issues });
+      throw invalidBody('Invalid estimator inputs', parsed.error);
     }
     try {
       return {

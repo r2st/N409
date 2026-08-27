@@ -23,6 +23,7 @@ import { findValuationById } from '../repos/valuations.js';
 import { buildEntityTree, consolidate, labelEntities } from '../domain/portfolio.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Multi-entity / fund portfolio (feature 6). An organization (holding company
@@ -85,7 +86,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const principal = requirePrincipal(req);
     const parsed = CreateOrgBody.safeParse(req.body);
     if (!parsed.success)
-      throw problems.unprocessable('Invalid organization', { errors: parsed.error.issues });
+      throw invalidBody('Invalid organization', parsed.error);
     if (parsed.data.parent_org_id) await loadOwnedOrg(principal, parsed.data.parent_org_id);
     const org = await createOrganization(deps.pool, {
       name: parsed.data.name,
@@ -102,7 +103,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const parsed = z
       .object({ limit: z.coerce.number().int().min(1).max(ORG_PAGE_LIMIT).default(ORG_PAGE_LIMIT) })
       .safeParse(req.query ?? {});
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     return listOrganizations(deps.pool, isOps(principal) ? null : principal.id, {
       limit: parsed.data.limit,
     });
@@ -127,7 +128,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const query = EntityQuery.safeParse(req.query ?? {});
-    if (!query.success) throw problems.badRequest('Invalid query', { errors: query.error.issues });
+    if (!query.success) throw invalidQuery(query.error);
     const org = await loadOwnedOrg(principal, id);
     const { entities, truncated } = await loadEntities(org.id, query.data.limit);
     return {
@@ -149,7 +150,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const { id } = req.params as { id: string };
     await loadOwnedOrg(principal, id);
     const parsed = UpdateOrgBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid update', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid update', parsed.error);
     if (parsed.data.parent_org_id) {
       if (parsed.data.parent_org_id === id)
         throw problems.unprocessable('An organization cannot be its own parent');
@@ -188,7 +189,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const { id } = req.params as { id: string };
     await loadOwnedOrg(principal, id);
     const query = DeleteQuery.safeParse(req.query ?? {});
-    if (!query.success) throw problems.badRequest('Invalid query', { errors: query.error.issues });
+    if (!query.success) throw invalidQuery(query.error);
     const holding = await organizationContents(deps.pool, id);
     if (!query.data.detach && (holding.entities > 0 || holding.children > 0)) {
       throw problems.conflict(
@@ -211,7 +212,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const query = EntityQuery.safeParse(req.query ?? {});
-    if (!query.success) throw problems.badRequest('Invalid query', { errors: query.error.issues });
+    if (!query.success) throw invalidQuery(query.error);
     const org = await loadOwnedOrg(principal, id);
     const { entities, truncated } = await loadEntities(org.id, query.data.limit);
     return {
@@ -229,7 +230,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const { id } = req.params as { id: string };
     const org = await loadOwnedOrg(principal, id);
     const parsed = AssignBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid assignment', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid assignment', parsed.error);
     await loadEditableValuation(principal, parsed.data.valuation_id);
     await assignValuationToOrg(deps.pool, parsed.data.valuation_id, org.id, parsed.data.entity_type);
     return reply.status(204).send();
@@ -254,7 +255,7 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const { id } = req.params as { id: string };
     refuseIfRetired(await loadEditableValuation(principal, id), 'accepting changes');
     const parsed = EntityBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid entity', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid entity', parsed.error);
     if (parsed.data.parent_valuation_id) {
       // A standalone company with a parent is a contradiction the roll-up has
       // no reading of: `consolidate` eliminates on the type, so the link would

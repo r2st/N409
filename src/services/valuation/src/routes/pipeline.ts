@@ -10,6 +10,7 @@ import { isExtractable, startPipelineRun, type AutoPipelineDeps } from '../pipel
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 const ToggleBody = z.object({ auto_pipeline: z.boolean() });
 
@@ -83,7 +84,7 @@ export function registerPipelineRoutes(
     const valuation = await loadValuation(principal, id);
     refuseIfRetired(valuation, 'accepting changes');
     const body = ToggleBody.safeParse(req.body ?? {});
-    if (!body.success) throw problems.unprocessable('Invalid body', { errors: body.error.issues });
+    if (!body.success) throw invalidBody('Invalid body', body.error);
     const updated = await setValuationAutoPipeline(
       deps.pool,
       valuation,

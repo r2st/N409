@@ -20,6 +20,7 @@ import { calculationPayload, runAiPipeline, type AiPipelineDeps } from './ai.js'
 import { InternalServiceError, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Quality-assurance gate (IMPROVEMENTS_RESEARCH §4.3): deterministic
@@ -67,7 +68,7 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     refuseIfRetired(valuation, 'accepting changes');
 
     const body = RunBody.safeParse(req.body ?? {});
-    if (!body.success) throw problems.unprocessable('Invalid options', { errors: body.error.issues });
+    if (!body.success) throw invalidBody('Invalid options', body.error);
 
     const calculation = await latestSucceededCalculation(deps.pool, valuation.id);
     if (!calculation) {

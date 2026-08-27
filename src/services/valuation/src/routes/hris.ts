@@ -34,6 +34,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * HRIS / payroll integration for ASC 718 (feature 11). OAuth2 connect + pull of
@@ -255,9 +256,7 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
   app.get('/api/v1/hris/callback', async (req, reply) => {
     const parsedQuery = CallbackQuery.safeParse(req.query);
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid callback parameters', {
-        errors: parsedQuery.error.issues,
-      });
+      throw invalidQuery(parsedQuery.error, 'Invalid callback parameters');
     }
     const q = parsedQuery.data;
     if (!q.state) throw problems.badRequest('Missing state');
@@ -330,7 +329,7 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
       const valuation = await loadAuthorized(principal, id);
       refuseIfRetired(valuation, 'accepting integration changes');
       const parsed = FrequencyBody.safeParse(req.body);
-      if (!parsed.success) throw problems.unprocessable('Invalid frequency', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidBody('Invalid frequency', parsed.error);
       const connection = await findConnection(deps.pool, valuation.id, provider);
       if (!connection || connection.status === 'revoked') {
         throw problems.unprocessable(`${HRIS_PROVIDER_LABELS[provider]} is not connected`);

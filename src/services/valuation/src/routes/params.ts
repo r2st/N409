@@ -9,6 +9,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Weights are accepted with up to 4 decimal places and must sum to exactly 1
@@ -467,7 +468,7 @@ export function registerParamsRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 
     const parsed = ParamsPatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid params', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid params', parsed.error);
 
     const check = checkParamInvariants(current, parsed.data);
     if (!check.ok) throw problems.unprocessable(check.detail);

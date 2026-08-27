@@ -15,6 +15,7 @@ import {
   SCIM_TOKEN_PAGE_LIMIT,
   upsertSamlConfig,
 } from '../repos/ssoConfig.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Admin SSO configuration (feature 9): SAML IdP settings + SCIM token
@@ -60,7 +61,7 @@ export function registerAdminSsoRoutes(app: FastifyInstance, deps: { pool: pg.Po
   app.put('/api/v1/admin/sso/saml', { preHandler: app.authenticate }, async (req) => {
     const principal = requireAdmin(req);
     const parsed = SamlBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid SAML config', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid SAML config', parsed.error);
     if (parsed.data.enabled && (!parsed.data.idp_sso_url || !parsed.data.idp_cert)) {
       throw problems.unprocessable('An IdP SSO URL and signing certificate are required to enable SAML');
     }
@@ -98,7 +99,7 @@ export function registerAdminSsoRoutes(app: FastifyInstance, deps: { pool: pg.Po
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
+      throw invalidQuery(parsedQuery.error);
     }
     const { tokens, truncated } = await listScimTokens(deps.pool, { limit: parsedQuery.data.limit });
     return { tokens, truncated, page_limit: SCIM_TOKEN_PAGE_LIMIT };

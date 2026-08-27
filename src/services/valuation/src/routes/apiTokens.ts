@@ -16,6 +16,8 @@ import {
 import { requirePrincipal } from '../plugins/auth.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { flagParam } from '../domain/queryFlag.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 /**
  * M3 feature 14 — partner API token management. Tokens are scoped to a
@@ -38,7 +40,7 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { partnerId } = req.params as { partnerId: string };
     if (!isUlid(partnerId)) throw problems.notFound();
-    if (!canManageTokens(principal, partnerId)) throw problems.forbidden();
+    if (!canManageTokens(principal, partnerId)) throw forbidden('Listing that partner\'s API tokens', 'ops');
     return { tokens: await listApiTokens(deps.pool, partnerId) };
   });
 
@@ -46,10 +48,10 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { partnerId } = req.params as { partnerId: string };
     if (!isUlid(partnerId)) throw problems.notFound();
-    if (!canManageTokens(principal, partnerId)) throw problems.forbidden();
+    if (!canManageTokens(principal, partnerId)) throw forbidden('Creating an API token for that partner', 'ops');
 
     const parsed = z.object({ name: z.string().min(1).max(200) }).safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid token', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid token', parsed.error);
 
     const { token, secret } = await createApiToken(deps.pool, {
       partnerId,
@@ -93,7 +95,7 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
         limit: z.coerce.number().int().min(1).max(TOKEN_PAGE_LIMIT).default(TOKEN_PAGE_LIMIT),
       })
       .safeParse(req.query ?? {});
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
 
     // The rows are a page; the figures are the platform. Counting in SQL rather
     // than over `tokens` is what lets the read be bounded without the security

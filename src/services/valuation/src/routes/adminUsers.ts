@@ -57,6 +57,8 @@ import { EmailAddress } from '../domain/email.js';
 import { pageParam } from '../domain/pagination.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { isUniqueViolation } from '../db/pgError.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 const ListQuery = z.object({
   q: z.string().max(200).optional(),
@@ -148,7 +150,7 @@ export function registerAdminUserRoutes(
   const baseUrl = (deps.publicBaseUrl ?? 'http://localhost:3000').replace(/\/$/, '');
   const requireUserAdmin = (req: Parameters<typeof requirePrincipal>[0]) => {
     const principal = requirePrincipal(req);
-    if (!canManageUsers(principal)) throw problems.forbidden();
+    if (!canManageUsers(principal)) throw forbidden('Administering users', 'user-admin');
     return principal;
   };
 
@@ -212,7 +214,7 @@ export function registerAdminUserRoutes(
   app.post('/api/v1/users/invite', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireUserAdmin(req);
     const parsed = InviteBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid invitation', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid invitation', parsed.error);
     const { email, roles, partner_id } = parsed.data;
     assertPartnerScopeConsistent(roles, partner_id ?? null);
     if (partner_id) await assertAssignablePartner(partner_id);
@@ -276,7 +278,7 @@ export function registerAdminUserRoutes(
   app.get('/api/v1/users', { preHandler: app.authenticate }, async (req) => {
     requireUserAdmin(req);
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const { page, per_page, q, role, partner_id, include_deleted } = parsed.data;
 
     const { items, total } = await listUsers(deps.pool, {
@@ -293,7 +295,7 @@ export function registerAdminUserRoutes(
   app.get('/api/v1/users/export', { preHandler: app.authenticate }, async (req, reply) => {
     requireUserAdmin(req);
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const { q, role, partner_id, include_deleted } = parsed.data;
 
     /*
@@ -349,7 +351,7 @@ export function registerAdminUserRoutes(
    */
   app.get('/api/v1/users/options', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden();
+    if (!isOps(principal)) throw forbidden('Listing user options', 'ops');
     const parsed = z
       .object({
         group: z.enum(['ops', 'partner']).default('ops'),
@@ -357,7 +359,7 @@ export function registerAdminUserRoutes(
         limit: z.coerce.number().int().min(1).max(PICKER_LIMIT).default(PICKER_LIMIT),
       })
       .safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query');
+    if (!parsed.success) throw invalidQuery(parsed.error);
     return listUserOptions(deps.pool, parsed.data.group, {
       q: parsed.data.q,
       limit: parsed.data.limit,
@@ -367,7 +369,7 @@ export function registerAdminUserRoutes(
   app.post('/api/v1/users', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireUserAdmin(req);
     const parsed = CreateBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid user', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid user', parsed.error);
     const body = parsed.data;
     assertPartnerScopeConsistent(body.roles, body.partner_id ?? null);
     if (body.partner_id) await assertAssignablePartner(body.partner_id);
@@ -453,7 +455,7 @@ export function registerAdminUserRoutes(
     if (!existing) throw problems.notFound();
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
 
     // An admin cannot strip their own admin access — prevents lockouts.
     if (id === principal.id && parsed.data.roles && !parsed.data.roles.some((r) => USER_ADMIN_ROLES.has(r)))
@@ -494,7 +496,7 @@ export function registerAdminUserRoutes(
     const { id } = req.params as { id: string };
     if (!isUlid(id)) throw problems.notFound();
     const parsed = RoleMutationBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid role', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid role', parsed.error);
     const { role } = parsed.data;
 
     const existing = await findUserById(deps.pool, id);
@@ -524,7 +526,7 @@ export function registerAdminUserRoutes(
     const { id } = req.params as { id: string };
     if (!isUlid(id)) throw problems.notFound();
     const parsed = RoleMutationBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid role', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid role', parsed.error);
     const { role } = parsed.data;
 
     const existing = await findUserById(deps.pool, id);
@@ -636,7 +638,7 @@ export function registerAdminUserRoutes(
 
   app.get('/api/v1/partners', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden();
+    if (!isOps(principal)) throw forbidden('Listing partners', 'ops');
     const parsed = z
       .object({
         include_archived: flagParam(false),
@@ -644,7 +646,7 @@ export function registerAdminUserRoutes(
         limit: z.coerce.number().int().min(1).max(PICKER_LIMIT).default(PICKER_LIMIT),
       })
       .safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query');
+    if (!parsed.success) throw invalidQuery(parsed.error);
     return listPartners(deps.pool, {
       includeArchived: parsed.data.include_archived,
       q: parsed.data.q,
@@ -690,7 +692,7 @@ export function registerAdminUserRoutes(
           .regex(/^[a-z0-9-]+$/),
       })
       .safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid partner', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid partner', parsed.error);
     try {
       const partner = await createPartner(deps.pool, parsed.data);
       await audit(principal.id, 'partner_created', 'partner', partner.id, partner.name);
@@ -733,7 +735,7 @@ export function registerAdminUserRoutes(
       .partial()
       .strict()
       .safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid partner', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid partner', parsed.error);
 
     const patch = { ...parsed.data };
     if (patch.subdomain != null) {
@@ -793,7 +795,7 @@ export function registerAdminUserRoutes(
         per_page: z.coerce.number().int().min(1).max(100).default(25),
       })
       .safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const q = parsed.data;
 
     const { items, total } = await listValuations(
@@ -814,7 +816,7 @@ export function registerAdminUserRoutes(
    */
   app.get('/api/v1/roles', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden();
+    if (!isOps(principal)) throw forbidden('Listing roles', 'ops');
     return { roles: ROLE_DEFS, capabilities: CAPABILITIES };
   });
 

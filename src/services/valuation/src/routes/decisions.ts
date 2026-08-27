@@ -12,6 +12,7 @@ import {
 import { findValuationById } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Audit-defense methodology decision log (IMPROVEMENTS_RESEARCH §5.3): every
@@ -49,7 +50,7 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: { pool: pg.Po
     refuseIfRetired(valuation, 'accepting changes');
 
     const parsed = DecisionBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid decision', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid decision', parsed.error);
 
     const supersedes = parsed.data.supersedes ?? null;
     if (supersedes !== null) {

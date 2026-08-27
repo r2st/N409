@@ -18,6 +18,7 @@ import {
   toPublic,
 } from '../repos/auditorAccess.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * External auditor portal (feature 8). An ops user (or the valuation owner)
@@ -90,7 +91,7 @@ export function registerAuditorPortalRoutes(
     const valuation = await loadManageable(principal, id);
     if (valuation.archived_at !== null) throw problems.conflict(RETIRED);
     const parsed = CreateBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     const expiresAt = new Date(Date.now() + parsed.data.expires_in_days * 24 * 60 * 60 * 1000);
     const { access, token } = await createAuditorAccess(deps.pool, {
@@ -136,7 +137,7 @@ export function registerAuditorPortalRoutes(
       );
     }
     const parsed = RedeemBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
     const access = await redeemAuditorToken(deps.pool, parsed.data.token);
     if (!access) throw problems.unauthorized('This auditor link is invalid, expired, or revoked');
 

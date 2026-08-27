@@ -12,6 +12,7 @@ import type { EventActor } from '../events/record.js';
 import { pageParam } from '../domain/pagination.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 const CreateBody = z.object({
   kind: z.enum(REVIEW_TASK_KINDS),
@@ -82,7 +83,7 @@ export function registerTaskRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     refuseIfRetired(valuation, 'accepting tasks');
 
     const parsed = CreateBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid task', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid task', parsed.error);
     await assertAssigneeExists(deps.pool, parsed.data.assignee_id);
 
     const task = await createTask(
@@ -115,7 +116,7 @@ export function registerTaskRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     const principal = requirePrincipal(req);
     requireOps(principal);
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const q = parsed.data;
 
     const { items, total } = await listTasks(deps.pool, {
@@ -138,7 +139,7 @@ export function registerTaskRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     if (!task) throw problems.notFound();
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
     if ('assignee_id' in parsed.data) await assertAssigneeExists(deps.pool, parsed.data.assignee_id);
 
     const updated = await patchTask(

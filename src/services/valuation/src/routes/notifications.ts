@@ -10,6 +10,7 @@ import { listOutbox } from '../repos/emailOutbox.js';
 import { deliveryStateOf } from '../domain/emailDelivery.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * In-app notifications (M4, P2 #27). Strictly per-user: every query is scoped
@@ -45,7 +46,7 @@ export function registerNotificationRoutes(app: FastifyInstance, deps: { pool: p
   app.get('/api/v1/notifications', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const [notifications, unread] = await Promise.all([
       listNotifications(deps.pool, principal.id, {
         unreadOnly: parsed.data.unread,
@@ -85,7 +86,7 @@ export function registerNotificationRoutes(app: FastifyInstance, deps: { pool: p
   app.put('/api/v1/me/notification-preferences', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = PreferencesBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid preferences', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid preferences', parsed.error);
     await replacePreferences(deps.pool, principal.id, parsed.data.preferences);
     return { preferences: await getPreferenceMatrix(deps.pool, principal.id) };
   });
@@ -95,7 +96,7 @@ export function registerNotificationRoutes(app: FastifyInstance, deps: { pool: p
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden('Email outbox is operations-only');
     const parsed = OutboxQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const emails = await listOutbox(deps.pool, {
       status: parsed.data.status,
       valuationId: parsed.data.valuation_id,

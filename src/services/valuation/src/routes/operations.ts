@@ -31,6 +31,8 @@ import {
 import { retryDueDeliveries } from '../hooks/partnerWebhooks.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { optionalCapabilities, type CapabilityConfig } from '../domain/optionalCapabilities.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 const DateOnly = z
   .string()
@@ -118,7 +120,7 @@ export function registerOperationsRoutes(
   app.get('/api/v1/valuations/counts', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = ValuationFilterQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const mode = z.object({ buckets: z.enum(['groups', 'named']).default('groups') }).safeParse(req.query);
     if (!mode.success) throw problems.badRequest('Invalid buckets mode');
 
@@ -154,7 +156,7 @@ export function registerOperationsRoutes(
     const parsed = z
       .object({ created_from: DateOnly.optional(), created_to: DateOnly.optional() })
       .safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
 
     const scope = valuationScope(principal);
     const dashboardFilters = { createdFrom: parsed.data.created_from, createdTo: parsed.data.created_to };
@@ -210,7 +212,7 @@ export function registerOperationsRoutes(
     const source = await findValuationById(deps.pool, id);
     if (!source || !canReadValuation(principal, { userId: source.user_id, partnerId: source.partner_id }))
       throw problems.notFound();
-    if (!canCreateValuation(principal)) throw problems.forbidden();
+    if (!canCreateValuation(principal)) throw forbidden('Creating a valuation', 'ops');
     // Judgement, and the least obvious of these: cloning does not modify the
     // retired file, it reads one. It is refused anyway because of what the read
     // is *for* — a clone starts new billable work seeded from an engagement the
@@ -242,14 +244,14 @@ export function registerOperationsRoutes(
    */
   app.get('/api/v1/admin/webhooks/deliveries/stats', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden();
+    if (!isOps(principal)) throw forbidden('Reading webhook delivery statistics', 'ops');
     return deliveryBacklogStats(deps.pool);
   });
 
   /** On-demand sweep — the same code path the interval runs (index.ts). */
   app.post('/api/v1/admin/webhooks/retry', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden();
+    if (!isOps(principal)) throw forbidden('Retrying webhook deliveries', 'ops');
     return retryDueDeliveries({ pool: deps.pool, log: req.log });
   });
 
@@ -267,7 +269,7 @@ export function registerOperationsRoutes(
    */
   app.get('/api/v1/admin/webhooks/deliveries/failed', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden();
+    if (!isOps(principal)) throw forbidden('Listing failed webhook deliveries', 'ops');
     const query = z
       .object({
         limit: z.coerce.number().int().min(1).max(500).optional(),
@@ -299,14 +301,14 @@ export function registerOperationsRoutes(
    */
   app.post('/api/v1/admin/webhooks/deliveries/replay', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden();
+    if (!isOps(principal)) throw forbidden('Replaying a webhook delivery', 'ops');
     const body = z
       .object({
         ids: z.array(z.string().min(1).max(64)).max(1000).optional(),
         partner_id: z.string().min(1).max(64).optional(),
       })
       .safeParse(req.body ?? {});
-    if (!body.success) throw problems.unprocessable('Invalid body', { errors: body.error.issues });
+    if (!body.success) throw invalidBody('Invalid body', body.error);
     const replayed = await replayFailedDeliveries(deps.pool, {
       ids: body.data.ids,
       partnerId: body.data.partner_id,
@@ -342,7 +344,7 @@ export function registerOperationsRoutes(
    */
   app.get('/api/v1/admin/db/slow-queries', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden();
+    if (!isOps(principal)) throw forbidden('Reading slow-query statistics', 'ops');
     const stats = deps.queryStats;
     // Instrumentation is wired in index.ts, so a test app or a future entry
     // point can legitimately have none. Report that rather than 500.
@@ -396,11 +398,11 @@ export function registerOperationsRoutes(
    */
   app.get('/api/v1/admin/system/metrics', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden();
+    if (!isOps(principal)) throw forbidden('Reading system metrics', 'ops');
     const parsed = z
       .object({ window_minutes: z.coerce.number().int().min(1).max(60).optional() })
       .safeParse(req.query ?? {});
-    if (!parsed.success) throw problems.badRequest('Invalid query');
+    if (!parsed.success) throw invalidQuery(parsed.error);
 
     const scope = valuationScope(principal);
     const [counts, throughput, webhooks] = await Promise.all([
@@ -449,14 +451,14 @@ export function registerOperationsRoutes(
    */
   app.get('/api/v1/admin/capabilities', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden();
+    if (!isOps(principal)) throw forbidden('Reading the capability report', 'ops');
     if (!deps.capabilityConfig) throw problems.serviceUnavailable('Capability roster is not wired');
     return { capabilities: optionalCapabilities(deps.capabilityConfig) };
   });
 
   app.get('/api/v1/admin/db/pool', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden();
+    if (!isOps(principal)) throw forbidden('Reading connection-pool statistics', 'ops');
     const health = deps.poolHealth;
     return {
       monitored: Boolean(health),

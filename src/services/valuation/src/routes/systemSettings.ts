@@ -6,6 +6,7 @@ import { publicSubset, SYSTEM_SETTINGS_DEFAULTS, SYSTEM_SETTINGS_SCHEMA } from '
 import { readSettingRows, type SystemSettingsStore } from '../repos/systemSettings.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /** A PUT may carry any subset of the known keys; unknown keys are rejected. */
 const PatchBody = SYSTEM_SETTINGS_SCHEMA.partial().strict();
@@ -50,7 +51,7 @@ export function registerSystemSettingsRoutes(
       throw problems.forbidden('Only administrators can change system settings');
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid settings', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid settings', parsed.error);
     if (Object.keys(parsed.data).length === 0) throw problems.unprocessable('No settings to update');
 
     const settings = await deps.settings.write(parsed.data, principal.id);

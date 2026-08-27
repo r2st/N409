@@ -7,6 +7,7 @@ import { pageParam } from '../domain/pagination.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findNetworkItem, listNetworkItems } from '../repos/networkItems.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * The network log for one engagement (409.ai §11, "Network Items").
@@ -49,7 +50,7 @@ export function registerNetworkItemRoutes(app: FastifyInstance, deps: { pool: pg
     const { id } = req.params as { id: string };
     await loadValuation(principal, id);
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const { service, page, per_page: perPage } = parsed.data;
 
     // The page carries its own per-tier counts: the tab strip has to show what

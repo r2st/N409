@@ -29,6 +29,7 @@ import {
   type ComparableFiguresSource,
 } from '../domain/comparables.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Network Items — the guideline-company peer set (design §4.5).
@@ -215,7 +216,7 @@ export function registerComparableRoutes(
     refuseIfRetired(valuation, 'accepting changes');
 
     const parsed = CreateBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid comparable', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid comparable', parsed.error);
     const body = parsed.data;
 
     let excludeReason: string | null;
@@ -268,7 +269,7 @@ export function registerComparableRoutes(
 
     const parsed = PatchBody.safeParse(req.body ?? {});
     if (!parsed.success) {
-      throw problems.unprocessable('Invalid comparable', { errors: parsed.error.issues });
+      throw invalidBody('Invalid comparable', parsed.error);
     }
     const body = parsed.data;
     const current = await findComparableItem(deps.pool, valuation.id, itemId);
@@ -380,7 +381,7 @@ export function registerComparableRoutes(
       refuseIfRetired(valuation, 'accepting new runs');
 
       const parsed = ScreenBody.safeParse(req.body ?? {});
-      if (!parsed.success) throw problems.unprocessable('Invalid screen', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidBody('Invalid screen', parsed.error);
 
       const overwrites = await listOverwrites(deps.pool, valuation.id);
       const value = (key: string): number | null => {

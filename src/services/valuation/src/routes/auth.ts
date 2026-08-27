@@ -55,6 +55,7 @@ import { emailVerificationEmail, passwordResetEmail } from '../domain/emailWorkf
 import { sendTransactionalEmail, sendTransactionalEmailInBackground } from '../email/transactional.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 const RegisterBody = z.object({
   email: EmailAddress,
@@ -230,7 +231,7 @@ export function registerAuthRoutes(
 
     const parsed = RegisterBody.safeParse(req.body);
     if (!parsed.success)
-      throw problems.unprocessable('Invalid registration', { errors: parsed.error.issues });
+      throw invalidBody('Invalid registration', parsed.error);
     const { email, password, first_name, last_name } = parsed.data;
 
     // Checked after parsing (so the key is a real address) but before the scrypt
@@ -278,7 +279,7 @@ export function registerAuthRoutes(
 
   app.post('/api/v1/auth/login', async (req, reply) => {
     const parsed = LoginBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid login', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid login', parsed.error);
     const { email, password } = parsed.data;
 
     // Throttle credential brute-force / stuffing (audit B-1 P1): 10 attempts /
@@ -343,7 +344,7 @@ export function registerAuthRoutes(
   // TOTP code or a one-time backup code, and (optionally) remember the device.
   app.post('/api/v1/auth/mfa/verify', async (req, reply) => {
     const parsed = MfaVerifyBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     let userId: string;
     try {
@@ -484,7 +485,7 @@ export function registerAuthRoutes(
 
   app.post('/api/v1/auth/forgot-password', async (req, reply) => {
     const parsed = ForgotPasswordBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
     const email = parsed.data.email;
 
     if (!allow(`email:${email.toLowerCase()}`, 3, HOUR_MS) || !allow(`ip:${req.ip}`, 30, HOUR_MS)) {
@@ -533,7 +534,7 @@ export function registerAuthRoutes(
 
   app.post('/api/v1/auth/reset-password', async (req) => {
     const parsed = ResetPasswordBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     // Bounds token guessing. The tokens are long random secrets, so this is a
     // belt-and-braces limit — but an unbounded redeem endpoint also lets an
@@ -565,7 +566,7 @@ export function registerAuthRoutes(
   // URLs/server logs — the SPA reads it from the fragment and posts it here.
   app.post('/api/v1/auth/verify-email', async (req) => {
     const parsed = VerifyEmailBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     if (!allow(`verify-email-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
       throw problems.tooManyRequests('Too many verification attempts — try again later');
@@ -608,7 +609,7 @@ export function registerAuthRoutes(
   app.post('/api/v1/auth/change-password', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = ChangePasswordBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
     await assertPasswordStrong(parsed.data.new_password);
 
     const user = await findUserById(deps.pool, principal.id);
@@ -646,7 +647,7 @@ export function registerAuthRoutes(
   // the link's fragment and posts it here to show who the invite is for.
   app.post('/api/v1/auth/invite-info', async (req) => {
     const parsed = InviteTokenBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     // Same token space as accept-invite below, and it answers "is this token
     // real?" directly — limiting only the redeem route would leave the
@@ -662,7 +663,7 @@ export function registerAuthRoutes(
 
   app.post('/api/v1/auth/accept-invite', async (req, reply) => {
     const parsed = AcceptInviteBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid invitation', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid invitation', parsed.error);
     const { token, password, first_name, last_name } = parsed.data;
 
     // Accepting an invite mints an account, so an unbounded endpoint is both a

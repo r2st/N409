@@ -74,6 +74,8 @@ import {
   TestWebhookResponse,
   UploadDocumentResponse,
 } from '../domain/partnerApiContract.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 /**
  * Partner API (improvement 6): a stable, versioned surface for programmatic
@@ -364,7 +366,7 @@ export function registerPartnerApiRoutes(
   /** apiKeyGuard has already rejected session bearers and personal tokens. */
   const requireToken = (req: FastifyRequest): { principal: Principal; token: PartnerApiToken } => {
     const principal = requirePrincipal(req);
-    if (!req.apiToken?.partnerId) throw problems.forbidden();
+    if (!req.apiToken?.partnerId) throw forbidden('This partner API endpoint', 'partner-token');
     return { principal, token: { tokenId: req.apiToken.tokenId, partnerId: req.apiToken.partnerId } };
   };
 
@@ -657,7 +659,7 @@ export function registerPartnerApiRoutes(
     async (req, reply) => {
       const { principal, token } = requireToken(req);
       const parsed = CreateBody.safeParse(req.body);
-      if (!parsed.success) throw problems.unprocessable('Invalid valuation', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidBody('Invalid valuation', parsed.error);
       return withIdempotency(req, reply, token, async () => {
         const valuation = await createValuation(
           deps.pool,
@@ -716,7 +718,7 @@ export function registerPartnerApiRoutes(
     async (req) => {
       const { token } = requireToken(req);
       const parsed = ListQuery.safeParse(req.query);
-      if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidQuery(parsed.error);
       const cursor = parsed.data.cursor === undefined ? null : decodeCursor(parsed.data.cursor);
       if (parsed.data.cursor !== undefined && !cursor) {
         throw problems.badRequest('Invalid cursor — pass a `next_cursor` from a previous response');
@@ -837,7 +839,7 @@ export function registerPartnerApiRoutes(
       refuseIfRetired(valuation, 'accepting edits');
 
       const parsed = UpdateBody.safeParse(req.body ?? {});
-      if (!parsed.success) throw problems.unprocessable('Invalid update', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidBody('Invalid update', parsed.error);
       if (Object.keys(parsed.data).length === 0) {
         // An empty body is far more likely to be a client that built the patch
         // wrong than a deliberate no-op, and answering 200 to it would report
@@ -980,7 +982,7 @@ export function registerPartnerApiRoutes(
       const valuation = await loadScoped(token, id);
       refuseIfRetired(valuation, 'accepting documents');
       const parsed = UploadBody.safeParse(req.body);
-      if (!parsed.success) throw problems.unprocessable('Invalid upload', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidBody('Invalid upload', parsed.error);
 
       // Validate base64 encoding — Buffer.from silently skips invalid chars
       if (!/^[A-Za-z0-9+/]*={0,2}$/.test(parsed.data.content_base64)) {
@@ -1177,7 +1179,7 @@ export function registerPartnerApiRoutes(
     async (req, reply) => {
       const { principal, token } = requireToken(req);
       const parsed = WebhookBody.safeParse(req.body);
-      if (!parsed.success) throw problems.unprocessable('Invalid webhook', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidBody('Invalid webhook', parsed.error);
       if (!isValidWebhookUrl(parsed.data.url)) {
         throw problems.unprocessable(
           'Webhook URL must be a public http(s) endpoint — loopback, private and link-local addresses are not delivered to',
@@ -1266,7 +1268,7 @@ export function registerPartnerApiRoutes(
       const webhook = await findWebhook(deps.pool, token.partnerId, id);
       if (!webhook) throw problems.notFound();
       const parsed = DeliveriesQuery.safeParse(req.query);
-      if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidQuery(parsed.error);
       // A cursor we did not write is the caller's error, not a 500 from the
       // driver failing to cast it — and saying so by name is the difference
       // between "fix your pagination loop" and "the API is broken".

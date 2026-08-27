@@ -16,6 +16,7 @@ import { findParamsByValuationIds } from '../repos/params.js';
 import { buildCalculationInputs, runCalculation } from './calculations.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import type { EventActor } from '../events/record.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Data remediation (design §7.4, P0-7 and P0-8).
@@ -66,7 +67,7 @@ export function registerDataRemediationRoutes(
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
+      throw invalidQuery(parsedQuery.error);
     }
     const { limit } = parsedQuery.data;
     const [backsolves, qaReviews] = await Promise.all([
@@ -118,7 +119,7 @@ export function registerDataRemediationRoutes(
       .object({ valuation_ids: z.array(z.string()).min(1).max(MAX_RERUN) })
       .safeParse(req.body ?? {});
     if (!parsed.success) {
-      throw problems.unprocessable('Invalid re-run request', { errors: parsed.error.issues });
+      throw invalidBody('Invalid re-run request', parsed.error);
     }
 
     // Eligibility is resolved against the ids asked for, not against a page of

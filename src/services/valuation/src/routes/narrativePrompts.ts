@@ -15,6 +15,7 @@ import {
 } from '../repos/narrativePrompts.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Narrative prompt library management (migration 0114). The sibling of the Bot
@@ -90,7 +91,7 @@ export function registerNarrativePromptRoutes(app: FastifyInstance, deps: { pool
 
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) {
-      throw problems.unprocessable('Invalid narrative prompt', { errors: parsed.error.issues });
+      throw invalidBody('Invalid narrative prompt', parsed.error);
     }
     const updated = await patchNarrativePrompt(deps.pool, id, parsed.data, principal.id);
     if (!updated) throw problems.notFound();

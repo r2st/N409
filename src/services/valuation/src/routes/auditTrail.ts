@@ -19,6 +19,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
 import { checkWindowOrder, dateWindowFields } from '../domain/dateWindow.js';
 import { sendExport } from './exports.js';
+import { invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Per-valuation audit trail: the raw event spine enriched with category,
@@ -85,7 +86,7 @@ export function registerAuditTrailRoutes(app: FastifyInstance, deps: { pool: pg.
 
   app.get('/api/v1/valuations/:id/audit-trail', { preHandler: app.authenticate }, async (req) => {
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const q = parsed.data;
 
     const { entries, includeInternal, truncated } = await loadTrail(req, {
@@ -157,7 +158,7 @@ export function registerAuditTrailRoutes(app: FastifyInstance, deps: { pool: pg.
     async (req) => {
       const parsed = HistoryQuery.safeParse(req.query);
       if (!parsed.success)
-        throw problems.badRequest('A field name is required', { errors: parsed.error.issues });
+        throw invalidQuery(parsed.error, 'A field name is required');
 
       const { entries, includeInternal } = await loadTrail(req);
       const visible = filterAuditEntries(entries, { includeInternal });

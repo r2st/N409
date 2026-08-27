@@ -86,6 +86,26 @@ interface Route {
 }
 
 /**
+ * The two spellings of "this line can answer 403".
+ *
+ * It was one — `problems.forbidden` — until R180 replaced twenty-eight bare
+ * `problems.forbidden()` calls, whose entire message was the words "Not
+ * allowed", with `forbidden(action, kind)` from `domain/accessProblem.ts`.
+ * That refactor took thirty-one privileged routes out of this census's sight
+ * in a single commit, including eight on the admin console: the guards were
+ * still there and still threw 403, and the scan looking for them reported them
+ * as unguarded. Which is the *safe* direction to fail, and it is still a
+ * census that has stopped measuring what it claims to.
+ *
+ * The optional `problems.` prefix rather than two alternatives, because the
+ * helper is deliberately named the same thing — a guard reading `throw
+ * forbidden('Creating a valuation', 'ops')` should be recognisable as one on
+ * sight, and the pattern that recognises it should not have to be a list that
+ * grows every time somebody wraps it again.
+ */
+const RAISES_403 = /\b(?:problems\.)?forbidden\(/;
+
+/**
  * Every function in a file whose body throws `problems.forbidden` — the
  * authorization guards, whatever they happen to be named. Resolving them per
  * file rather than matching a fixed list of names is what makes this survive a
@@ -102,7 +122,7 @@ function guardsIn(source: string): Set<string> {
     // without parsing TypeScript.
     const rest = source.slice(match.index, match.index + 1600);
     const end = rest.search(/\n(?:export )?(?:function|const)\s+\w/);
-    if (/problems\.forbidden/.test(end > 0 ? rest.slice(0, end) : rest)) guards.add(name);
+    if (RAISES_403.test(end > 0 ? rest.slice(0, end) : rest)) guards.add(name);
   }
   return guards;
 }
@@ -137,7 +157,7 @@ const PRIVILEGED = ALL.filter((r) => PRIVILEGED_PREFIXES.some((p) => r.url.start
 
 /** Does this handler run something that can throw 403 before it answers? */
 function authorizes(route: Route): boolean {
-  if (/problems\.forbidden/.test(route.body)) return true;
+  if (RAISES_403.test(route.body)) return true;
   const called = [...route.body.matchAll(/\b(\w+)\s*\(/g)].map((m) => m[1]);
   return called.some((name) => name !== undefined && route.guards.has(name));
 }

@@ -164,7 +164,17 @@ describe.skipIf(!dbUp)('sensitivity routes', () => {
       ]) {
         const res = await grid(bad);
         expect(res.statusCode, JSON.stringify(bad)).toBe(422);
-        expect(res.json().detail).toBe('Invalid assumptions');
+        // Each case spoils exactly one key of GOOD_BODY, so the message has to
+        // name that key. Asserting only the `Invalid assumptions` prefix would
+        // pass on the answer this route used to give — eight different bad
+        // inputs, one indistinguishable sentence, and an analyst left to guess
+        // which of the eight assumptions on the form the engine refused.
+        const spoiled = Object.keys(bad).find(
+          (k) => bad[k as keyof typeof bad] !== GOOD_BODY[k as keyof typeof GOOD_BODY],
+        );
+        expect(res.json().detail, JSON.stringify(bad)).toMatch(
+          new RegExp(`^Invalid assumptions — ${spoiled}: `),
+        );
       }
     });
 
@@ -256,7 +266,10 @@ describe.skipIf(!dbUp)('sensitivity routes', () => {
     it('rejects an unknown lever', async () => {
       const res = await model({ parameters: ['not_a_lever'] });
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toBe('Invalid options');
+      // The lever is named, and so is the set it had to come from — the two
+      // facts a caller needs to fix the call without reading the docs.
+      expect(res.json().detail).toMatch(/^Invalid options — parameters\[0\]: /);
+      expect(res.json().detail).toContain('discount_rate');
     });
 
     it('rejects out-of-range span and steps', async () => {

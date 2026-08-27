@@ -49,6 +49,7 @@ import { withTransaction } from '../db/pool.js';
 import { calendarDate } from '../domain/calendarDate.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { specialtyRunKind } from '../domain/specialty.js';
+import { invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Real-time valuation monitoring (feature 10). Ops enable monitoring on a
@@ -245,7 +246,7 @@ export function registerMonitoringRoutes(
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
+      throw invalidQuery(parsedQuery.error);
     }
     const { monitors, truncated } = await listEnabledMonitors(deps.pool, {
       limit: parsedQuery.data.limit,

@@ -15,6 +15,8 @@ import { listWorkbookCells, patchWorkbookCells } from '../repos/workbook.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { Principal } from '../auth/rbac.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 const PatchBody = z
   .object({
@@ -36,7 +38,7 @@ const PatchBody = z
   .strict();
 
 async function authorize(pool: pg.Pool, principal: Principal, id: string): Promise<ValuationRow> {
-  if (!canEditWorkingData(principal)) throw problems.forbidden();
+  if (!canEditWorkingData(principal)) throw forbidden('Reading the workbook', 'working-data');
   if (!isUlid(id)) throw problems.notFound();
   const valuation = await findValuationById(pool, id);
   if (
@@ -114,7 +116,7 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
 
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success)
-      throw problems.unprocessable('Invalid workbook patch', { errors: parsed.error.issues });
+      throw invalidBody('Invalid workbook patch', parsed.error);
 
     const errors = parsed.data.cells
       .map((c) => ({ cell: c, error: validateCellRef(c.sheet, c.row_key, c.column_key) }))

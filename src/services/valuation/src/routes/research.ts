@@ -32,6 +32,7 @@ import {
   type ResearchTopic,
 } from '../domain/research.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Web-grounded market research (design §12.3).
@@ -220,7 +221,7 @@ export function registerResearchRoutes(app: FastifyInstance, deps: { pool: pg.Po
 
     const parsed = RunBody.safeParse(req.body ?? {});
     if (!parsed.success) {
-      throw problems.unprocessable('Invalid research request', { errors: parsed.error.issues });
+      throw invalidBody('Invalid research request', parsed.error);
     }
     const { topic } = parsed.data;
     const def = RESEARCH_TOPIC_DEFS[topic];

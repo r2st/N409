@@ -29,6 +29,7 @@ import { emailVerificationEmail } from '../domain/emailWorkflows.js';
 import { NullablePhone } from '../domain/phone.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Self-service account management: the things a signed-in user does to their
@@ -180,7 +181,7 @@ export function registerAccountRoutes(
   app.patch('/api/v1/me', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = ProfileBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid profile', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid profile', parsed.error);
 
     const user = await loadSelf(principal.id);
     const { current_password, ...patch } = parsed.data;
@@ -276,7 +277,7 @@ export function registerAccountRoutes(
   app.post('/api/v1/me/tokens', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = TokenBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid token', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid token', parsed.error);
 
     const { token, secret } = await createApiToken(deps.pool, {
       partnerId: null,
@@ -324,7 +325,7 @@ export function registerAccountRoutes(
   app.delete('/api/v1/me', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = CloseAccountBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     const user = await loadSelf(principal.id);
     if (user.password_digest) {

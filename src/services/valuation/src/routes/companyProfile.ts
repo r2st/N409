@@ -10,6 +10,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Company profile editor (remaining-gaps §3 #6, 409.ai "modal_ui_data"):
@@ -113,7 +114,7 @@ export function registerCompanyProfileRoutes(app: FastifyInstance, deps: { pool:
       const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 
       const parsed = PatchBody.safeParse(req.body);
-      if (!parsed.success) throw problems.unprocessable('Invalid profile', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidBody('Invalid profile', parsed.error);
       if (Object.keys(parsed.data).length === 0) {
         throw problems.unprocessable('Provide at least one field to update');
       }

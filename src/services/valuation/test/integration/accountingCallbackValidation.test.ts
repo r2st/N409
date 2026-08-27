@@ -36,31 +36,31 @@ describe.skipIf(!dbUp)('accounting OAuth callback — query validation', () => {
   it('refuses an over-long state instead of handing it to the verifier', async () => {
     const res = await callback(`state=${'a'.repeat(4097)}`);
     expect(res.statusCode).toBe(400);
-    expect(res.json().detail).toBe('Invalid callback parameters');
+    expect(res.json().detail).toMatch(/^Invalid callback parameters — state: /);
   });
 
   it('refuses an over-long code', async () => {
     const res = await callback(`state=abc&code=${'c'.repeat(4097)}`);
     expect(res.statusCode).toBe(400);
-    expect(res.json().detail).toBe('Invalid callback parameters');
+    expect(res.json().detail).toMatch(/^Invalid callback parameters — code: /);
   });
 
   it('refuses an over-long realmId before it can reach external_org_id', async () => {
     const res = await callback(`state=abc&code=x&realmId=${'r'.repeat(129)}`);
     expect(res.statusCode).toBe(400);
-    expect(res.json().detail).toBe('Invalid callback parameters');
+    expect(res.json().detail).toMatch(/^Invalid callback parameters — realmId: /);
   });
 
   it('refuses an over-long error', async () => {
     const res = await callback(`state=abc&error=${'e'.repeat(257)}`);
     expect(res.statusCode).toBe(400);
-    expect(res.json().detail).toBe('Invalid callback parameters');
+    expect(res.json().detail).toMatch(/^Invalid callback parameters — error: /);
   });
 
   it('refuses a repeated parameter, which arrives as an array', async () => {
     const res = await callback('state=one&state=two');
     expect(res.statusCode).toBe(400);
-    expect(res.json().detail).toBe('Invalid callback parameters');
+    expect(res.json().detail).toMatch(/^Invalid callback parameters — state: /);
   });
 
   it('still reports a missing state as such', async () => {

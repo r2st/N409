@@ -26,6 +26,8 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { ValuationHub } from '../realtime/hub.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 const PostBody = z.object({
   kind: z.enum(['chat', 'note']),
@@ -101,11 +103,11 @@ export function registerCommentRoutes(
         limit: z.coerce.number().int().min(1).max(COMMENT_PAGE_LIMIT).default(COMMENT_PAGE_LIMIT),
       })
       .safeParse(req.query ?? {});
-    if (!query.success) throw problems.badRequest('Invalid query');
+    if (!query.success) throw invalidQuery(query.error);
 
     let kinds = visibleCommentKinds(principal);
     if (query.data.kind) {
-      if (!kinds.has(query.data.kind)) throw problems.forbidden();
+      if (!kinds.has(query.data.kind)) throw forbidden('Reading that comment thread', 'ops');
       kinds = new Set<CommentKind>([query.data.kind]);
     }
     const { comments, truncated } = await listComments(deps.pool, id, kinds, {
@@ -121,11 +123,11 @@ export function registerCommentRoutes(
     refuseIfRetired(valuation, 'accepting comments');
 
     const parsed = PostBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid comment', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid comment', parsed.error);
     const { kind, body, pinned } = parsed.data;
 
     if (!canPostComment(principal, { userId: valuation.user_id, partnerId: valuation.partner_id }, kind))
-      throw problems.forbidden();
+      throw forbidden('Posting that kind of comment', 'ops');
     if (pinned && kind !== 'note') throw problems.unprocessable('Only sticky notes can be pinned');
 
     const { comment } = await createComment(
@@ -146,7 +148,7 @@ export function registerCommentRoutes(
     const comment = await loadEditable(deps.pool, principal, commentId);
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
     if (parsed.data.pinned !== undefined && comment.kind !== 'note')
       throw problems.unprocessable('Only sticky notes can be pinned');
 
@@ -169,7 +171,7 @@ export function registerCommentRoutes(
     // must still be able to see the valuation AND this comment kind
     await loadReadable(pool, principal, comment.valuation_id);
     if (!visibleCommentKinds(principal).has(comment.kind)) throw problems.notFound();
-    if (!canEditComment(principal, comment)) throw problems.forbidden();
+    if (!canEditComment(principal, comment)) throw forbidden('Editing this comment', 'own-record');
     return comment;
   }
 
@@ -182,10 +184,10 @@ export function registerCommentRoutes(
    */
   app.post('/api/v1/inbox/email', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
-    if (!canIngestEmail(principal)) throw problems.forbidden();
+    if (!canIngestEmail(principal)) throw forbidden('Ingesting an inbound email', 'ops');
 
     const parsed = InboxBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid email', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid email', parsed.error);
     const email = parsed.data;
 
     let valuation: ValuationRow | null = null;

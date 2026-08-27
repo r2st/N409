@@ -16,6 +16,7 @@ import { InternalServiceError, postJson, toProblem } from '../clients/internal.j
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { int4Version } from '../domain/int4.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Bot Prompts management (remaining-gaps §3 #4, §6 P1 #8): the DB-backed
@@ -106,7 +107,7 @@ export function registerPromptRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     await loadPrompt(deps.pool, id);
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid prompt', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid prompt', parsed.error);
     const updated = await updatePrompt(deps.pool, id, parsed.data, principal.id);
     if (!updated) throw problems.notFound();
     await recordAdminEvent(deps.pool, {
@@ -136,7 +137,7 @@ export function registerPromptRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
+      throw invalidQuery(parsedQuery.error);
     }
     const { versions, truncated } = await listPromptVersions(deps.pool, id, {
       limit: parsedQuery.data.limit,
@@ -153,7 +154,7 @@ export function registerPromptRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     await loadPrompt(deps.pool, id);
 
     const parsed = RevertBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid revert', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid revert', parsed.error);
     const prompt = await revertPrompt(deps.pool, id, parsed.data.version, principal.id);
     if (!prompt) throw problems.notFound(`No version ${parsed.data.version} for this prompt`);
     await recordAdminEvent(deps.pool, {
@@ -175,7 +176,7 @@ export function registerPromptRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     const prompt = await loadPrompt(deps.pool, id);
 
     const parsed = TestBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid test input', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid test input', parsed.error);
 
     try {
       const response = await postJson<AiTestResponse>('ai-service', `${deps.aiUrl}/ai/v1/test`, {

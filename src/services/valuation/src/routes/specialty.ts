@@ -26,6 +26,7 @@ import {
 } from '../domain/specialty.js';
 import type { ValuationKind } from '../domain/valuation.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Specialty report-type pipeline (remaining-gaps §report-types): one route
@@ -114,7 +115,7 @@ export function registerSpecialtyRoutes(
     const kind = requireSpecialty(valuation.kind as ValuationKind);
 
     const parsed = RunBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid inputs', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid inputs', parsed.error);
 
     const questionnaire = await findQuestionnaire(deps.pool, id);
     let request;

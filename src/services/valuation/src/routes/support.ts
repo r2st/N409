@@ -5,6 +5,7 @@ import { isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { createSupportMessage, listSupportMessages, setSupportMessageStatus } from '../repos/support.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * In-app support (remaining-gaps §3 #8, the Intercom-style widget): any
@@ -30,7 +31,7 @@ export function registerSupportRoutes(app: FastifyInstance, deps: { pool: pg.Poo
   app.post('/api/v1/support/messages', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = CreateBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid message', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid message', parsed.error);
     const message = await createSupportMessage(deps.pool, {
       userId: principal.id,
       subject: parsed.data.subject,
@@ -44,7 +45,7 @@ export function registerSupportRoutes(app: FastifyInstance, deps: { pool: pg.Poo
   app.get('/api/v1/support/messages', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const filters = isOps(principal)
       ? { status: parsed.data.status }
       : { status: parsed.data.status, userId: principal.id };
@@ -57,7 +58,7 @@ export function registerSupportRoutes(app: FastifyInstance, deps: { pool: pg.Poo
     const { id } = req.params as { id: string };
     if (!isUlid(id)) throw problems.notFound();
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
     const message = await setSupportMessageStatus(deps.pool, id, parsed.data.status, principal.id);
     if (!message) throw problems.notFound();
     return { message };

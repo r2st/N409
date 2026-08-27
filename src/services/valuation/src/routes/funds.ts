@@ -30,6 +30,7 @@ import {
 } from '../repos/funds.js';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
 import { findValuationById } from '../repos/valuations.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * ASC 820 fund-holdings valuation (feature: ASC 820 Fund Holdings).
@@ -194,7 +195,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const parsed = FundBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid fund', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid fund', parsed.error);
     const b = parsed.data;
     const fund = await createFund(deps.pool, {
       name: b.name,
@@ -211,7 +212,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const parsed = z
       .object({ limit: z.coerce.number().int().min(1).max(FUND_PAGE_LIMIT).default(FUND_PAGE_LIMIT) })
       .safeParse(req.query ?? {});
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     return listFunds(deps.pool, { limit: parsed.data.limit });
   });
 
@@ -235,7 +236,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     await loadFund(id);
     const parsed = FundPatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid fund', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid fund', parsed.error);
     const b = parsed.data;
     const fund = await updateFund(deps.pool, id, {
       name: b.name,
@@ -276,7 +277,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     await loadFund(id);
     const parsed = PositionBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid position', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid position', parsed.error);
     const b = parsed.data;
     const position = await createPosition(deps.pool, {
       fundId: id,
@@ -295,7 +296,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     await loadFund(id);
     if (!isUlid(pid) || !(await findPosition(deps.pool, id, pid))) throw problems.notFound();
     const parsed = PositionPatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid position', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid position', parsed.error);
     const b = parsed.data;
     const position = await updatePosition(deps.pool, id, pid, {
       companyName: b.company_name,
@@ -343,7 +344,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const position = await findPosition(deps.pool, id, pid);
     if (!position) throw problems.notFound();
     const parsed = MarkBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid mark', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid mark', parsed.error);
     const b = parsed.data;
 
     // Assemble the method-specific engine inputs; default to the position's
@@ -390,7 +391,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       if (!position) throw problems.notFound();
       const parsed = RollForwardBody.safeParse(req.body);
       if (!parsed.success)
-        throw problems.unprocessable('Invalid roll-forward', { errors: parsed.error.issues });
+        throw invalidBody('Invalid roll-forward', parsed.error);
       const b = parsed.data;
       const { marks } = await listMarks(deps.pool, pid);
       const prior = marks[0];
@@ -464,7 +465,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     await loadFund(id);
     const parsed = LinkBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid link', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid link', parsed.error);
 
     const valuationId = parsed.data.valuation_id;
     if (valuationId !== null) {
@@ -502,7 +503,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     await loadFund(id);
     const parsed = LpTermsBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid LP terms', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid LP terms', parsed.error);
     const b = parsed.data;
     const lpTerms = await upsertLpTerms(deps.pool, id, {
       committedCapital: b.committed_capital,
@@ -524,7 +525,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     await loadFund(id);
     const parsed = WaterfallBody.safeParse(req.body);
     if (!parsed.success)
-      throw problems.unprocessable('Invalid waterfall request', { errors: parsed.error.issues });
+      throw invalidBody('Invalid waterfall request', parsed.error);
     const terms = await findLpTerms(deps.pool, id);
     if (!terms) throw problems.unprocessable('Set the fund LP terms before running the waterfall');
     const waterfall = await engine('/engine/v1/fund-waterfall', {
@@ -548,7 +549,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     await loadFund(id);
     const parsed = CalibrateBody.safeParse(req.body);
     if (!parsed.success)
-      throw problems.unprocessable('Invalid calibration request', { errors: parsed.error.issues });
+      throw invalidBody('Invalid calibration request', parsed.error);
     const b = parsed.data;
     const calibration = await engine('/engine/v1/fund-calibrate', {
       round_price_per_share: b.round_price_per_share,

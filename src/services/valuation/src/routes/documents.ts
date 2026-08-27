@@ -31,6 +31,8 @@ import { scanUpload, UploadRejected, type ScanPolicy } from '../documents/virusS
 import { decodeFromStorage, encodeForStorage } from '../storage/documentEncryption.js';
 import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 
@@ -373,7 +375,7 @@ export function registerDocumentRoutes(
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
     const parsed = z.object({ category: z.enum(DOCUMENT_CATEGORIES).optional() }).safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     return { documents: await listDocuments(deps.pool, valuation.id, parsed.data) };
   });
 
@@ -444,7 +446,7 @@ export function registerDocumentRoutes(
       if (!isOps(principal)) throw problems.forbidden('Marking a document reviewed is operations-only');
 
       const parsed = z.object({ reviewed: z.boolean().default(true) }).safeParse(req.body ?? {});
-      if (!parsed.success) throw problems.unprocessable('Invalid body', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidBody('Invalid body', parsed.error);
 
       await loadDocument(deps.pool, valuation.id, documentId);
       const document = await setDocumentReviewed(deps.pool, documentId, parsed.data.reviewed, principal.id);
@@ -463,7 +465,7 @@ export function registerDocumentRoutes(
       const doc = await loadDocument(deps.pool, valuation.id, documentId);
 
       // Ops can prune anything; everyone else only what they uploaded.
-      if (!isOps(principal) && doc.uploaded_by !== principal.id) throw problems.forbidden();
+      if (!isOps(principal) && doc.uploaded_by !== principal.id) throw forbidden('Deleting this document', 'own-record');
       await deleteDocument(deps.pool, doc, actorFor(principal));
       return reply.status(204).send();
     },

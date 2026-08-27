@@ -23,6 +23,8 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { kindLabel } from '../domain/valuationSelector.js';
+import { invalidBody } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 /**
  * Improvement 3 — client-facing what-if scenario sandbox. Clients clone the
@@ -194,7 +196,7 @@ export function registerScenarioRoutes(
 
     const parsed = PreviewBody.safeParse(req.body ?? {});
     if (!parsed.success)
-      throw problems.unprocessable('Invalid scenario inputs', { errors: parsed.error.issues });
+      throw invalidBody('Invalid scenario inputs', parsed.error);
 
     const calc = await sandboxBaseline(valuation.id);
     if (!calc) throw problems.unprocessable(await noBaselineReason(valuation));
@@ -255,7 +257,7 @@ export function registerScenarioRoutes(
     refuseIfRetired(valuation, 'accepting changes');
 
     const parsed = SaveBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid scenario', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid scenario', parsed.error);
     const { name, label, ...knobs } = parsed.data;
 
     if ((await countScenarios(deps.pool, valuation.id)) >= MAX_SCENARIOS) {
@@ -331,7 +333,7 @@ export function registerScenarioRoutes(
       const scenario = await findScenarioById(deps.pool, scenarioId);
       if (!scenario || scenario.valuation_id !== valuation.id) throw problems.notFound();
       // Ops can prune anything; everyone else only what they saved.
-      if (!isOps(principal) && scenario.created_by !== principal.id) throw problems.forbidden();
+      if (!isOps(principal) && scenario.created_by !== principal.id) throw forbidden('Deleting this scenario', 'own-record');
       await deleteScenario(deps.pool, scenario, actorFor(principal));
       return reply.status(204).send();
     },

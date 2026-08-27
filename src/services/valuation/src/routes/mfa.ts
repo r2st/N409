@@ -18,6 +18,7 @@ import {
 } from '../repos/mfa.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Self-service TOTP 2FA enrolment for the signed-in user (feature: MFA/2FA).
@@ -87,7 +88,7 @@ export function registerMfaRoutes(
   app.post('/api/v1/account/mfa/confirm', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = ConfirmBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     const user = await findUserById(deps.pool, principal.id);
     if (!user) throw problems.unauthorized();
@@ -116,7 +117,7 @@ export function registerMfaRoutes(
   app.post('/api/v1/account/mfa/disable', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = PasswordBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     const user = await findUserById(deps.pool, principal.id);
     if (!user) throw problems.unauthorized();
@@ -142,7 +143,7 @@ export function registerMfaRoutes(
   app.post('/api/v1/account/mfa/backup-codes', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = PasswordBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     const user = await findUserById(deps.pool, principal.id);
     if (!user) throw problems.unauthorized();

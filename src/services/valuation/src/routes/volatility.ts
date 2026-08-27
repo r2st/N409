@@ -33,6 +33,7 @@ import {
   type VolatilitySeries,
 } from '../domain/volatility.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Selected volatility — the derivation behind sigma.
@@ -227,7 +228,7 @@ export function registerVolatilityRoutes(
 
       const parsed = EstimateBody.safeParse(req.body ?? {});
       if (!parsed.success) {
-        throw problems.unprocessable('Invalid volatility request', { errors: parsed.error.issues });
+        throw invalidBody('Invalid volatility request', parsed.error);
       }
       const { method, window_days, manual_override } = parsed.data;
 

@@ -71,6 +71,20 @@ interface Parse {
  * The declaration can sit well above the `.safeParse(` — prettier wraps a long
  * inline schema across a dozen lines — hence the backward search for the name.
  */
+/**
+ * The `domain/validationProblem.ts` helpers, and the `problems.<kind>` each one
+ * raises.
+ *
+ * These are what a route throws now instead of `problems.badRequest('Invalid
+ * query', { errors: … })`. The mapping is one-way and fixed at the helper, so
+ * this table is a restatement of that file rather than a guess about it — and
+ * `answers the status its helper promises` below is what keeps the two honest.
+ */
+const VALIDATION_HELPERS: ReadonlyMap<string, string> = new Map([
+  ['invalidQuery', 'badRequest'],
+  ['invalidBody', 'unprocessable'],
+]);
+
 function parses(): { found: Parse[]; unresolved: string[] } {
   const found: Parse[] = [];
   const unresolved: string[] = [];
@@ -106,18 +120,36 @@ function parses(): { found: Parse[]; unresolved: string[] } {
       // can name the branch rather than its address. `[^)\n]*` stops at the
       // first close paren, which is the whole argument list for every throw in
       // the directory that takes one — and empty for the many that take none.
+      //
+      // Two spellings, and the second one is the reason this comment exists.
+      // R180 moved every schema-rejection throw behind `invalidQuery` /
+      // `invalidBody` so the failing *field names* could reach `detail`, and
+      // this scan — which had only ever known `problems.<kind>(` — stopped
+      // seeing 213 of the 218 parses it audits. It did not fail closed. The
+      // `!success` guard still matched, the 120-character window walked past
+      // the unrecognised throw, and it paired each parse with whatever the
+      // *happy path* threw a few lines later: four body parses were reported
+      // as answering `conflict` or `notFound`, and the rest as unresolved.
+      // A census that a refactor can quietly blind is the shape this codebase
+      // keeps a register of, so the helpers are named here rather than the
+      // scan being loosened to "the next throw".
       const guard = new RegExp(
-        `!${name}\\.success\\)?\\s*(?:\\{\\s*)?[\\s\\S]{0,120}?throw problems\\.([a-zA-Z]+)\\(([^)\n]*)`,
+        `!${name}\\.success\\)?\\s*(?:\\{\\s*)?[\\s\\S]{0,120}?` +
+          `throw (?:problems\\.([a-zA-Z]+)|(${[...VALIDATION_HELPERS.keys()].join('|')}))\\(([^)\n]*)`,
       ).exec(window);
       if (!guard) {
         unresolved.push(`${at} (no !${name}.success branch)`);
         return;
       }
+      const raiser = guard[1] ?? guard[2]!;
       found.push({
         at,
-        key: `${entry.name}:${guard[1]!}(${guard[2]!.trim()})`,
+        key: `${entry.name}:${raiser}(${guard[3]!.trim()})`,
         source,
-        kind: guard[1]!,
+        // A helper's *status* is the thing being audited, and it is fixed by
+        // the helper rather than by the call site — which is exactly why the
+        // rollout could not change any route's status by accident.
+        kind: guard[1] ?? VALIDATION_HELPERS.get(guard[2]!)!,
       });
     });
   }
@@ -184,6 +216,20 @@ describe('query-string validation answers 400, everywhere', () => {
         byBody.find((f) => f.key === key)?.kind,
         `${key} no longer throws ${kind} — drop it from NOT_422_BY_DESIGN`,
       ).toBe(kind);
+    }
+  });
+
+  it('answers the status its helper promises', () => {
+    // VALIDATION_HELPERS is a restatement of another file, which is the kind of
+    // duplication that rots silently: flip `invalidQuery` to 422 and every
+    // assertion above keeps passing, because they read the status from this
+    // table rather than from the code. So read the helper's own source and
+    // check the two agree.
+    const helpers = readFileSync(path.resolve(routesDir, '../domain/validationProblem.ts'), 'utf8');
+    for (const [helper, kind] of VALIDATION_HELPERS) {
+      const body = new RegExp(`export function ${helper}\\([^)]*\\)[^{]*\\{([\\s\\S]*?)\\n\\}`).exec(helpers);
+      expect(body, `${helper} is not defined in domain/validationProblem.ts`).not.toBeNull();
+      expect(body![1], `${helper} no longer raises problems.${kind}`).toContain(`problems.${kind}(`);
     }
   });
 

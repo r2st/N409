@@ -20,6 +20,8 @@ import {
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { isUniqueViolation } from '../db/pgError.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 /**
  * White-label branding (migration 0091).
@@ -173,7 +175,7 @@ export function registerBrandingRoutes(
   app.get('/api/v1/branding/settings', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = z.object({ partner_id: z.string().optional() }).safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query');
+    if (!parsed.success) throw invalidQuery(parsed.error);
 
     const partnerId = parsed.data.partner_id ?? principal.partnerId;
     if (!partnerId) throw problems.notFound('No tenant to brand');
@@ -192,7 +194,7 @@ export function registerBrandingRoutes(
   app.patch('/api/v1/branding', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const query = z.object({ partner_id: z.string().optional() }).safeParse(req.query);
-    if (!query.success) throw problems.badRequest('Invalid query');
+    if (!query.success) throw invalidQuery(query.error);
 
     // Ops act on a named tenant; a firm administrator acts on their own and may
     // not name one at all — passing someone else's id is a 403, not a silent
@@ -203,7 +205,7 @@ export function registerBrandingRoutes(
       throw problems.forbidden('You cannot manage this tenant’s branding');
 
     const parsed = BRANDING_PATCH_SCHEMA.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid branding', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid branding', parsed.error);
     if (Object.keys(parsed.data).length === 0) throw problems.unprocessable('No branding to update');
 
     // The schema checks the shape; this checks that the name is one we are
@@ -306,7 +308,7 @@ export function registerBrandingRoutes(
   /** Ops-only: which tenants have taken their brand live. */
   app.get('/api/v1/branding/tenants', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!canManageUsers(principal)) throw problems.forbidden();
+    if (!canManageUsers(principal)) throw forbidden('Listing branded tenants', 'user-admin');
     const { rows } = await deps.pool.query<{ id: string; name: string; key: string; enabled: boolean }>(
       `SELECT id, coalesce(brand_name, name) AS name, key, white_label_enabled AS enabled
          FROM partners WHERE archived_at IS NULL ORDER BY white_label_enabled DESC, name ASC`,

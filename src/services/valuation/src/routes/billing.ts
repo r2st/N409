@@ -48,6 +48,7 @@ import {
   usageView,
   type InvoiceLineItem,
 } from '../domain/billing.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Subscription / retainer billing (feature 7). Recurring Stripe Checkout for
@@ -103,7 +104,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       throw billingUnavailable('Payments are not configured');
     }
     const parsed = SubscribeBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid plan', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid plan', parsed.error);
 
     const plan = await findPlan(deps.pool, parsed.data.plan_tier);
     if (!plan) throw problems.notFound();
@@ -217,7 +218,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
+      throw invalidQuery(parsedQuery.error);
     }
     // The summary is its own query rather than a reduce over the two pages
     // below: capping what the screen lists must not move what the screen says.

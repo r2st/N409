@@ -35,6 +35,7 @@ import {
 } from '../domain/vesting.js';
 import { int4Positive } from '../domain/int4.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Grant management (feature 6). Grants can only be issued once the board has
@@ -145,7 +146,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
       .object({ limit: z.coerce.number().int().min(1).max(GRANT_PAGE_LIMIT).default(GRANT_PAGE_LIMIT) })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
+      throw invalidQuery(parsedQuery.error);
     }
     const asOf = new Date();
     const { grants, truncated } = await listGrants(deps.pool, id, { limit: parsedQuery.data.limit });
@@ -162,7 +163,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     refuseIfRetired(valuation, 'accepting changes');
 
     const parsed = CreateBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid grant', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid grant', parsed.error);
 
     const resolution = await findResolutionByValuation(deps.pool, id);
     if (!resolution || resolution.status !== 'approved') {
@@ -275,7 +276,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     if (!grant || grant.valuation_id !== id) throw problems.notFound();
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
     const patch = parsed.data as Record<string, unknown>;
 
     // Switching the template has to move the schedule with it. `updateGrant`

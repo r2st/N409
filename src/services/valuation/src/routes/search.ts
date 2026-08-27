@@ -5,6 +5,7 @@ import { problems } from '@n409/shared';
 import { isOps, valuationScope } from '../auth/rbac.js';
 import { searchDocuments, searchUsers, searchValuations } from '../repos/search.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Global search (M4, P2 #32). One query box across valuations (company name,
@@ -30,7 +31,7 @@ export function registerSearchRoutes(app: FastifyInstance, deps: { pool: pg.Pool
   app.get('/api/v1/search', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = SearchQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const { q, limit, type } = parsed.data;
     const scope = valuationScope(principal);
     const wants = (t: SearchType) => type === undefined || type === t;

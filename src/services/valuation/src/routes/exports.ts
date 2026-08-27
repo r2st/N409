@@ -21,6 +21,7 @@ import { listWorkbookCells } from '../repos/workbook.js';
 import { latestCalculationForKind } from '../repos/calculations.js';
 import { listOverwrites } from '../repos/overwrites.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * CSV / PDF / XLSX export of the valuations list (M3 feature 16 + M4 P2), plus
@@ -234,7 +235,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
   app.get('/api/v1/valuations/export', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = ExportQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const { format } = parsed.data;
     /*
      * The reader's side of the read marker, which is the second half of the

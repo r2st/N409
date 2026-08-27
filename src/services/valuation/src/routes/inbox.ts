@@ -15,6 +15,7 @@ import {
 } from '../repos/inbox.js';
 import { findValuationById } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * The shared inbox (409.ai §17) — every engagement thread in one list, with
@@ -79,7 +80,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
   app.get('/api/v1/inbox', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const q = parsed.data;
 
     const page = await listInbox(deps.pool, principal, {
@@ -110,7 +111,7 @@ export function registerInboxRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
   app.post('/api/v1/inbox/read', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = z.object({ valuation_id: z.string() }).safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid body', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid body', parsed.error);
     if (!isUlid(parsed.data.valuation_id)) throw problems.notFound();
 
     const valuation = await findValuationById(deps.pool, parsed.data.valuation_id);

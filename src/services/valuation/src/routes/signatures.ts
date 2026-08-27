@@ -7,6 +7,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { deleteSignature, listSignatures, upsertSignature } from '../repos/signatures.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Signature workflow (remaining-gaps §3 #3): 409.ai gates publish behind
@@ -53,7 +54,7 @@ export function registerSignatureRoutes(app: FastifyInstance, deps: { pool: pg.P
     }
 
     const parsed = SignBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid signature', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid signature', parsed.error);
 
     const signature = await upsertSignature(deps.pool, {
       valuationId: id,

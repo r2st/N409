@@ -23,6 +23,7 @@ import {
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { flagParam } from '../domain/queryFlag.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Delivery reporting, the suppression list, and provider event ingest (0163).
@@ -105,7 +106,7 @@ export function registerEmailDeliveryRoutes(
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden('Delivery statistics are operations-only');
     const parsed = StatsQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
 
     const [totals, byTemplate] = await Promise.all([
       deliveryStats(deps.pool, parsed.data.days),
@@ -149,7 +150,7 @@ export function registerEmailDeliveryRoutes(
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden('The suppression list is operations-only');
     const parsed = SuppressionsQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     return listSuppressions(deps.pool, {
       includeReleased: parsed.data.include_released,
       limit: parsed.data.limit,
@@ -160,7 +161,7 @@ export function registerEmailDeliveryRoutes(
     const principal = requirePrincipal(req);
     if (!canManageUsers(principal)) throw problems.forbidden('Only administrators can suppress an address');
     const parsed = SuppressBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid suppression', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid suppression', parsed.error);
 
     await suppressAddress(deps.pool, {
       address: parsed.data.address,
@@ -215,7 +216,7 @@ export function registerEmailDeliveryRoutes(
       // diverge: an address this service accepted a suppression for is by
       // construction one it will accept a release for.
       const parsed = z.object({ address: SuppressBody.shape.address }).safeParse(req.body);
-      if (!parsed.success) throw problems.unprocessable('Invalid address', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidBody('Invalid address', parsed.error);
       const released = await releaseSuppression(deps.pool, parsed.data.address, principal.id);
       if (!released) throw problems.notFound('No active suppression for that address');
 
@@ -294,7 +295,7 @@ export function registerEmailDeliveryRoutes(
       }
       const parsed = WebhookBody.safeParse(body);
       if (!parsed.success) {
-        throw problems.unprocessable('Invalid delivery events', { errors: parsed.error.issues });
+        throw invalidBody('Invalid delivery events', parsed.error);
       }
 
       let applied = 0;

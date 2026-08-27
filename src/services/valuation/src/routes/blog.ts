@@ -17,6 +17,7 @@ import {
 } from '../repos/blogPosts.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * The marketing blog (design §16.2, P2-20).
@@ -249,7 +250,7 @@ export function registerBlogRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
   app.post('/api/v1/admin/blog/posts', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireOps(req);
     const parsed = PostBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid post', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid post', parsed.error);
     if (await findPostBySlug(deps.pool, parsed.data.slug)) {
       throw problems.conflict('A post with this slug already exists');
     }
@@ -272,7 +273,7 @@ export function registerBlogRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     if (!existing) throw problems.notFound();
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
     if (parsed.data.slug && parsed.data.slug !== existing.slug) {
       if (await findPostBySlug(deps.pool, parsed.data.slug)) {
         throw problems.conflict('A post with this slug already exists');

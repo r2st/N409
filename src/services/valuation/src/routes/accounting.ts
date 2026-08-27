@@ -29,6 +29,7 @@ import { applyEngineInputs, findParams, patchParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { IntegrationError } from '../clients/deadline.js';
+import { invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Accounting software integrations (409.ai §23).
@@ -140,9 +141,7 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
   app.get('/api/v1/accounting/callback', async (req, reply) => {
     const parsedQuery = CallbackQuery.safeParse(req.query);
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid callback parameters', {
-        errors: parsedQuery.error.issues,
-      });
+      throw invalidQuery(parsedQuery.error, 'Invalid callback parameters');
     }
     const q = parsedQuery.data;
     if (!q.state) throw problems.badRequest('Missing state');

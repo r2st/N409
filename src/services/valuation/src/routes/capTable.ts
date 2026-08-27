@@ -24,6 +24,7 @@ import { listRounds } from '../repos/transactions.js';
 import { looksLikeXlsx, readXlsx, XlsxReadError } from '../domain/xlsxRead.js';
 import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Cap-table integration (feature 9). Import a CSV (Carta / Pulley / generic)
@@ -289,7 +290,7 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (!canEdit(principal, valuation))
       throw problems.forbidden('Only the client or ops can import a cap table');
     const parsed = ImportBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid import', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid import', parsed.error);
     const { rows, mapping, sourceLines } = readInput(parsed.data);
     const { entries, totals } = parseCapTableSheet(rows, mapping, sourceLines);
     return { entries, validation: validateCapTable(entries, totals), mapping };
@@ -315,7 +316,7 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 
     const parsed = ImportBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid import', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid import', parsed.error);
 
     const { rows, mapping, sourceLines } = readInput(parsed.data);
     const { entries, totals } = parseCapTableSheet(rows, mapping, sourceLines);

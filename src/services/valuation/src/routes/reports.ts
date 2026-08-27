@@ -63,6 +63,8 @@ import type { EventActor } from '../events/record.js';
 import { contentDisposition } from './documents.js';
 import type { Principal } from '../auth/rbac.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 const SectionSchema = z
   .object({
@@ -108,7 +110,7 @@ async function loadValuation(pool: pg.Pool, principal: Principal, id: string): P
 
 /** Ops-only load for editing operations. */
 async function loadForEdit(pool: pg.Pool, principal: Principal, id: string): Promise<ValuationRow> {
-  if (!canEditWorkingData(principal)) throw problems.forbidden();
+  if (!canEditWorkingData(principal)) throw forbidden('Editing the report', 'working-data');
   return loadValuation(pool, principal, id);
 }
 
@@ -639,7 +641,7 @@ export function registerReportRoutes(
 
     const parsed = PutBody.safeParse(req.body);
     if (!parsed.success)
-      throw problems.unprocessable('Invalid report content', { errors: parsed.error.issues });
+      throw invalidBody('Invalid report content', parsed.error);
 
     const report = await loadOrCreateReport(deps.pool, principal, valuation);
     const content = sanitizeContent(parsed.data.content);
@@ -701,7 +703,7 @@ export function registerReportRoutes(
 
     const parsed = RevertBody.safeParse(req.body);
     if (!parsed.success)
-      throw problems.unprocessable('Invalid revert request', { errors: parsed.error.issues });
+      throw invalidBody('Invalid revert request', parsed.error);
 
     const report = await findReportByValuation(deps.pool, valuation.id);
     const target = report ? await getVersion(deps.pool, report.id, parsed.data.version) : null;
@@ -797,7 +799,7 @@ export function registerReportRoutes(
     if (!deps.ai) throw problems.unprocessable('The narrative agent is not configured');
 
     const parsed = NarrativeBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid options', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid options', parsed.error);
 
     const report = await loadOrCreateReport(deps.pool, principal, valuation);
     const version = await getVersion(deps.pool, report.id, report.current_version);

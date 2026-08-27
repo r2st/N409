@@ -18,6 +18,7 @@ import {
 import { findPartnerById } from '../repos/adminUsers.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { isUniqueViolation } from '../db/pgError.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * `saved_views` carries two unique indexes (migration 0088), and a write can
@@ -152,7 +153,7 @@ export function registerSavedViewRoutes(app: FastifyInstance, deps: { pool: pg.P
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
+      throw invalidQuery(parsedQuery.error);
     }
     const { views, truncated } = await listVisibleViews(deps.pool, {
       userId: principal.id,
@@ -171,7 +172,7 @@ export function registerSavedViewRoutes(app: FastifyInstance, deps: { pool: pg.P
   app.post('/api/v1/saved-views', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = CreateBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid view', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid view', parsed.error);
     const body = parsed.data;
 
     if (body.visibility === 'shared' && !isOps(principal)) {
@@ -207,7 +208,7 @@ export function registerSavedViewRoutes(app: FastifyInstance, deps: { pool: pg.P
     if (!existing || existing.owner_id !== principal.id) throw problems.notFound();
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid view', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid view', parsed.error);
     const body = parsed.data;
     if (body.visibility === 'shared' && !isOps(principal)) {
       throw problems.forbidden('Only the operations team can share a view');

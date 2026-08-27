@@ -18,6 +18,7 @@ import {
 } from '../repos/reportTemplates.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Report template management (M4, P1 #20). Versioned like "409a.v53":
@@ -91,7 +92,7 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
   app.get('/api/v1/report-templates', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const { templates, truncated } = await listTemplates(deps.pool, parsed.data);
     return { templates: templates.map(serialize), truncated, page_limit: TEMPLATE_PAGE_LIMIT };
   });
@@ -100,7 +101,7 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     requireOps(principal);
     const parsed = CreateBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid template', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid template', parsed.error);
     const template = await createTemplateVersion(deps.pool, {
       ...parsed.data,
       createdBy: principal.id,
@@ -122,7 +123,7 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const template = await loadTemplate(deps.pool, id);
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
     if (template.status !== 'draft') {
       throw problems.conflict('Only draft templates are editable — create a new version instead');
     }

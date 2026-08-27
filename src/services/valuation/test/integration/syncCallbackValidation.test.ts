@@ -41,7 +41,7 @@ describe.skipIf(!dbUp)('sync OAuth callbacks — query validation', () => {
       it('refuses a repeated state, which arrives as an array', async () => {
         const res = await callback('state=one&state=two');
         expect(res.statusCode).toBe(400);
-        expect(res.json().detail).toBe('Invalid callback parameters');
+        expect(res.json().detail).toMatch(/^Invalid callback parameters — state: /);
       });
 
       it('refuses a repeated code before it is spent at the token endpoint', async () => {
@@ -49,43 +49,43 @@ describe.skipIf(!dbUp)('sync OAuth callbacks — query validation', () => {
         // provider saw a code the authorization step never issued.
         const res = await callback('state=not-a-jwt&code=a&code=b');
         expect(res.statusCode).toBe(400);
-        expect(res.json().detail).toBe('Invalid callback parameters');
+        expect(res.json().detail).toMatch(/^Invalid callback parameters — code: /);
       });
 
       it('refuses a repeated company_id before it can reach external_company_id', async () => {
         const res = await callback('state=not-a-jwt&code=x&company_id=1&company_id=2');
         expect(res.statusCode).toBe(400);
-        expect(res.json().detail).toBe('Invalid callback parameters');
+        expect(res.json().detail).toMatch(/^Invalid callback parameters — company_id: /);
       });
 
       it('refuses a repeated error', async () => {
         const res = await callback('state=not-a-jwt&error=denied&error=denied');
         expect(res.statusCode).toBe(400);
-        expect(res.json().detail).toBe('Invalid callback parameters');
+        expect(res.json().detail).toMatch(/^Invalid callback parameters — error: /);
       });
 
       it('refuses an over-long state instead of handing it to the verifier', async () => {
         const res = await callback(`state=${'a'.repeat(4097)}`);
         expect(res.statusCode).toBe(400);
-        expect(res.json().detail).toBe('Invalid callback parameters');
+        expect(res.json().detail).toMatch(/^Invalid callback parameters — state: /);
       });
 
       it('refuses an over-long code', async () => {
         const res = await callback(`state=abc&code=${'c'.repeat(4097)}`);
         expect(res.statusCode).toBe(400);
-        expect(res.json().detail).toBe('Invalid callback parameters');
+        expect(res.json().detail).toMatch(/^Invalid callback parameters — code: /);
       });
 
       it('refuses an over-long company_id', async () => {
         const res = await callback(`state=abc&code=x&company_id=${'r'.repeat(129)}`);
         expect(res.statusCode).toBe(400);
-        expect(res.json().detail).toBe('Invalid callback parameters');
+        expect(res.json().detail).toMatch(/^Invalid callback parameters — company_id: /);
       });
 
       it('refuses an over-long error', async () => {
         const res = await callback(`state=abc&error=${'e'.repeat(257)}`);
         expect(res.statusCode).toBe(400);
-        expect(res.json().detail).toBe('Invalid callback parameters');
+        expect(res.json().detail).toMatch(/^Invalid callback parameters — error: /);
       });
 
       it('reports the errors that failed validation', async () => {
@@ -124,7 +124,7 @@ describe.skipIf(!dbUp)('sync OAuth callbacks — query validation', () => {
         // handler would have answered "Missing state" here. Ordering matters:
         // the schema runs first and names the real problem.
         const res = await callback('state=a&state=b&code=x');
-        expect(res.json().detail).toBe('Invalid callback parameters');
+        expect(res.json().detail).toMatch(/^Invalid callback parameters — state: /);
       });
     });
   }

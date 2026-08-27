@@ -17,6 +17,7 @@ import {
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { updateArticle } from '../repos/helpArticles.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Help / knowledge base (P2 #10): any signed-in user reads published
@@ -61,7 +62,7 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
       .object({ limit: z.coerce.number().int().min(1).max(ARTICLE_PAGE_LIMIT).default(ARTICLE_PAGE_LIMIT) })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
+      throw invalidQuery(parsedQuery.error);
     }
     const { limit } = parsedQuery.data;
     // The limit is part of the key: without it the first caller's page size is
@@ -113,7 +114,7 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
   app.post('/api/v1/admin/help/articles', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireOps(req);
     const parsed = ArticleBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid article', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid article', parsed.error);
     if (await findArticleBySlug(deps.pool, parsed.data.slug))
       throw problems.conflict('An article with this slug already exists');
 
@@ -135,7 +136,7 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     if (!existing) throw problems.notFound();
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
     if (parsed.data.slug && parsed.data.slug !== existing.slug) {
       if (await findArticleBySlug(deps.pool, parsed.data.slug))
         throw problems.conflict('An article with this slug already exists');

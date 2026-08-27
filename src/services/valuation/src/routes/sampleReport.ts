@@ -6,6 +6,7 @@ import { sampleReportOutline } from '../domain/sampleReport.js';
 import { SAMPLE_FIGURES, SAMPLE_NOTICE, sampleReportPdfInput } from '../domain/sampleReportPdf.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { renderReportPdf } from '../clients/reportRender.js';
+import { invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * "See a sample report" (`/sample-report`). Public: it is the page that shows
@@ -73,7 +74,7 @@ export function registerSampleReportRoutes(
   app.get('/api/v1/sample-report', async (req) => {
     const parsed = z.object({ kind: z.enum(VALUATION_KINDS).default('409a') }).safeParse(req.query ?? {});
     if (!parsed.success) {
-      throw problems.badRequest('Invalid kind', { errors: parsed.error.issues });
+      throw invalidQuery(parsed.error, 'Invalid kind');
     }
     return {
       outline: sampleReportOutline(parsed.data.kind),
@@ -101,9 +102,7 @@ export function registerSampleReportRoutes(
     }
     const parsed = z.object({ kind: z.enum(PDF_KINDS).default('409a') }).safeParse(req.query ?? {});
     if (!parsed.success) {
-      throw problems.badRequest('No sample is published for that report kind', {
-        errors: parsed.error.issues,
-      });
+      throw invalidQuery(parsed.error, 'No sample is published for that report kind');
     }
     const pdf = await renderReportPdf(sampleReportPdfInput(parsed.data.kind));
     return (

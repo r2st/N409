@@ -35,6 +35,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { IntegrationError } from '../clients/deadline.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Live cap-table sync (feature 4). Flow mirrors the accounting integration:
@@ -260,9 +261,7 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
   app.get('/api/v1/cap-table-sync/callback', async (req, reply) => {
     const parsedQuery = CallbackQuery.safeParse(req.query);
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid callback parameters', {
-        errors: parsedQuery.error.issues,
-      });
+      throw invalidQuery(parsedQuery.error, 'Invalid callback parameters');
     }
     const q = parsedQuery.data;
     if (!q.state) throw problems.badRequest('Missing state');
@@ -312,7 +311,7 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       // service is read this way; this one was the exception.
       const parsedBody = PullBody.safeParse(req.body ?? {});
       if (!parsedBody.success) {
-        throw problems.unprocessable('Invalid pull body', { errors: parsedBody.error.issues });
+        throw invalidBody('Invalid pull body', parsedBody.error);
       }
       const body = parsedBody.data;
 
@@ -368,7 +367,7 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       const valuation = await loadAuthorized(principal, id);
       refuseIfRetired(valuation, 'accepting cap table changes');
       const parsed = FrequencyBody.safeParse(req.body);
-      if (!parsed.success) throw problems.unprocessable('Invalid frequency', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidBody('Invalid frequency', parsed.error);
       const connection = await findConnection(deps.pool, valuation.id, provider);
       if (!connection || connection.status === 'revoked') {
         throw problems.unprocessable(`${CAP_TABLE_PROVIDER_LABELS[provider]} is not connected`);

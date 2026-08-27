@@ -46,6 +46,8 @@ import { int4Positive } from '../domain/int4.js';
 import { visibleCommentKinds } from '../auth/operations.js';
 import { loadValuationCounters } from '../repos/valuationCounters.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { forbidden } from '../domain/accessProblem.js';
 
 const CreateBody = z.object({
   kind: z.enum(VALUATION_KINDS),
@@ -235,10 +237,10 @@ export function registerValuationRoutes(
 ): void {
   app.post('/api/v1/valuations', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
-    if (!canCreateValuation(principal)) throw problems.forbidden();
+    if (!canCreateValuation(principal)) throw forbidden('Creating a valuation', 'ops');
 
     const parsed = CreateBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid valuation', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid valuation', parsed.error);
     const body = parsed.data;
 
     // Non-ops principals always create for themselves, inside their own partner scope.
@@ -280,7 +282,7 @@ export function registerValuationRoutes(
   app.get('/api/v1/valuations', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const { page, per_page } = parsed.data;
 
     const sort = parseSort(parsed.data.sort);
@@ -347,7 +349,7 @@ export function registerValuationRoutes(
     const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
 
     const allowed = patchableFields(principal, toRef(valuation));
     const requested = Object.keys(parsed.data);
@@ -437,7 +439,7 @@ export function registerValuationRoutes(
         limit: z.coerce.number().int().min(1).max(EVENT_PAGE_LIMIT).default(EVENT_PAGE_LIMIT),
       })
       .safeParse(req.query ?? {});
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
 
     // One more than asked for, so "there are older events" is answered by the
     // same query rather than by a second COUNT over the same rows.

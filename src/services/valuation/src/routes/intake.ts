@@ -23,6 +23,7 @@ import { VALUATION_KINDS, type ValuationKind } from '../domain/valuation.js';
 import { REQUIRED_DOCUMENT_KINDS } from '../domain/progress.js';
 import { findQuestionnaire, saveQuestionnaire, submitQuestionnaire } from '../repos/intake.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Client self-service portal (feature 7): a guided intake questionnaire, a
@@ -67,7 +68,7 @@ export function registerIntakeRoutes(
   // so existing callers see exactly what they always saw.
   app.get('/api/v1/intake/schema', { preHandler: app.authenticate }, async (req) => {
     const parsed = z.object({ kind: z.enum(VALUATION_KINDS).default('409a') }).safeParse(req.query ?? {});
-    if (!parsed.success) throw problems.badRequest('Invalid kind', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error, 'Invalid kind');
     const kind = parsed.data.kind;
     return {
       kind,
@@ -109,7 +110,7 @@ export function registerIntakeRoutes(
     }
     refuseIfRetired(valuation, 'accepting questionnaire answers');
     const parsed = SaveBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid answers', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid answers', parsed.error);
 
     const kind = valuation.kind as ValuationKind;
     const sections = intakeSectionsFor(kind);

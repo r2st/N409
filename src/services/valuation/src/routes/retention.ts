@@ -23,6 +23,7 @@ import {
   releaseHold,
   upsertPolicy,
 } from '../repos/retention.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Data retention + legal hold administration (feature 10). Admin-only. The
@@ -149,7 +150,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
     const { dataType } = req.params as { dataType: string };
     if (!(RETENTION_DATA_TYPES as readonly string[]).includes(dataType)) throw problems.notFound();
     const parsed = PolicyBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid policy', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid policy', parsed.error);
     const policy = await upsertPolicy(deps.pool, {
       dataType,
       archiveAfterDays: parsed.data.archive_after_days,
@@ -168,7 +169,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
+      throw invalidQuery(parsedQuery.error);
     }
     const { holds, truncated } = await listHolds(deps.pool, { limit: parsedQuery.data.limit });
     return { holds, truncated, page_limit: HOLD_PAGE_LIMIT };
@@ -177,7 +178,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
   app.post('/api/v1/admin/retention/holds', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireAdmin(req);
     const parsed = HoldBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid hold', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid hold', parsed.error);
     if (parsed.data.scope !== 'global' && !parsed.data.reference_id) {
       throw problems.unprocessable('A valuation/user hold needs a reference_id');
     }
@@ -228,7 +229,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
   app.get('/api/v1/admin/retention/valuations/retired', { preHandler: app.authenticate }, async (req) => {
     requireAdmin(req);
     const parsed = RetiredQuery.safeParse(req.query ?? {});
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const { rows, total } = await listRetiredValuations(deps.pool, parsed.data);
     return { valuations: rows, total, limit: parsed.data.limit ?? 50 };
   });
@@ -266,7 +267,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
     const { id } = req.params as { id: string };
     if (!isUlid(id)) throw problems.notFound();
     const parsed = RetireBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid body', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid body', parsed.error);
 
     const valuation = await findValuationById(deps.pool, id);
     if (!valuation) throw problems.notFound();
@@ -337,7 +338,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
       const { id } = req.params as { id: string };
       if (!isUlid(id)) throw problems.notFound();
       const parsed = RestoreBody.safeParse(req.body ?? {});
-      if (!parsed.success) throw problems.unprocessable('Invalid body', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidBody('Invalid body', parsed.error);
 
       const valuation = await findValuationById(deps.pool, id);
       if (!valuation) throw problems.notFound();

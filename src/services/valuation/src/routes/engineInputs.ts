@@ -10,6 +10,7 @@ import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import type { EventActor } from '../events/record.js';
 import { boundedNonNegative, boundedPositive, boundedSigned } from '../domain/finite.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Analyst-entered financial model (`valuation_params.engine_inputs`).
@@ -439,9 +440,7 @@ export function registerEngineInputsRoutes(app: FastifyInstance, deps: { pool: p
 
     const parsed = EngineInputsBody.safeParse(req.body ?? {});
     if (!parsed.success) {
-      throw problems.unprocessable('Invalid financial model inputs', {
-        errors: parsed.error.issues,
-      });
+      throw invalidBody('Invalid financial model inputs', parsed.error);
     }
 
     const updated = await applyEngineInputs(

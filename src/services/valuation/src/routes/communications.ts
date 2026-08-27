@@ -36,6 +36,7 @@ import type { EmailTransport } from '../hooks/stateChange.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { isUniqueViolation } from '../db/pgError.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Communication templates + auto email campaigns (409.ai §15.5/§15.6).
@@ -160,7 +161,7 @@ export function registerCommunicationRoutes(
         channel: z.enum(['email', 'sms']).optional(),
       })
       .safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid filter', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error, 'Invalid filter');
     const templates = await listCommunicationTemplates(deps.pool, parsed.data);
     return {
       templates: templates.map((t) => ({
@@ -195,7 +196,7 @@ export function registerCommunicationRoutes(
   app.post('/api/v1/admin/communication-templates', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireOps(req);
     const parsed = TemplateBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid template', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid template', parsed.error);
     if (parsed.data.channel === 'email' && !parsed.data.subject)
       throw problems.unprocessable('Email templates need a subject');
     if (await findTemplateByKey(deps.pool, parsed.data.key))
@@ -214,7 +215,7 @@ export function registerCommunicationRoutes(
     if (!existing) throw problems.notFound();
 
     const parsed = TemplatePatch.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
     if (existing.channel === 'email' && parsed.data.subject === '')
       throw problems.unprocessable('Email templates need a subject');
 
@@ -279,7 +280,7 @@ export function registerCommunicationRoutes(
           body: z.string().max(20_000).optional(),
         })
         .safeParse(req.body ?? {});
-      if (!parsed.success) throw problems.unprocessable('Invalid preview', { errors: parsed.error.issues });
+      if (!parsed.success) throw invalidBody('Invalid preview', parsed.error);
 
       let vars: TemplateVars = { ...parsed.data.vars };
       if (parsed.data.valuation_id) {
@@ -341,7 +342,7 @@ export function registerCommunicationRoutes(
   app.post('/api/v1/admin/auto-emails', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireOps(req);
     const parsed = AutoEmailBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid campaign', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid campaign', parsed.error);
 
     const template = await findTemplateByKey(deps.pool, parsed.data.template_key);
     if (!template) throw problems.unprocessable('Unknown template_key');
@@ -370,7 +371,7 @@ export function registerCommunicationRoutes(
     if (!existing) throw problems.notFound();
 
     const parsed = AutoEmailPatch.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
 
     const templateKey = parsed.data.template_key ?? existing.template_key;
     const channel = parsed.data.channel ?? existing.channel;

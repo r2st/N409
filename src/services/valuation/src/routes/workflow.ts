@@ -18,6 +18,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { InternalServiceError } from '../clients/internal.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Workflow engine routes (M4, P1 #22) + bulk actions (P1 #23). All mutations
@@ -197,7 +198,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     refuseIfRetired(valuation, 'accepting workflow changes');
 
     const parsed = ReassignBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid reassign', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid reassign', parsed.error);
     const reviewerId = parsed.data.reviewer_id;
     if (reviewerId !== null && (!isUlid(reviewerId) || !(await userExists(deps.pool, reviewerId)))) {
       throw problems.unprocessable('Unknown reviewer', { errors: [{ path: ['reviewer_id'] }] });
@@ -352,7 +353,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     const principal = requirePrincipal(req);
     requireOps(principal);
     const parsed = BulkBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid bulk action', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid bulk action', parsed.error);
     return executeBulk(principal, { ...parsed.data, ids: dedupeIds(parsed.data.ids) });
   });
 
@@ -360,7 +361,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     const principal = requirePrincipal(req);
     requireOps(principal);
     const parsed = BulkActionBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid bulk action', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid bulk action', parsed.error);
     return executeBulk(principal, toBulkInput(parsed.data));
   });
 }

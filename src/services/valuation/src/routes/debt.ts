@@ -23,6 +23,7 @@ import {
 } from '../repos/debtInstruments.js';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
 import { findValuationById } from '../repos/valuations.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Debt / credit instrument valuation (feature: Debt Valuation Engine). A new
@@ -121,7 +122,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const parsed = InstrumentBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid instrument', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid instrument', parsed.error);
     const b = parsed.data;
     const instrument = await createInstrument(deps.pool, {
       name: b.name,
@@ -177,7 +178,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     await loadInstrument(id);
     const parsed = UpdateBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid update', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid update', parsed.error);
     const instrument = await updateInstrument(deps.pool, id, {
       name: parsed.data.name,
       params: parsed.data.params,
@@ -194,7 +195,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     await loadInstrument(id);
     const parsed = LinkBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid link', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid link', parsed.error);
 
     const valuationId = parsed.data.valuation_id;
     if (valuationId !== null) {
@@ -221,7 +222,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     await loadInstrument(id);
     const parsed = CreditTermsBody.safeParse(req.body);
     if (!parsed.success)
-      throw problems.unprocessable('Invalid credit terms', { errors: parsed.error.issues });
+      throw invalidBody('Invalid credit terms', parsed.error);
     const b = parsed.data;
     const creditTerms = await upsertCreditTerms(deps.pool, id, {
       rating: b.rating ?? null,
@@ -240,7 +241,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const instrument = await loadInstrument(id);
     const parsed = ValueBody.safeParse(req.body ?? {});
     if (!parsed.success)
-      throw problems.unprocessable('Invalid value request', { errors: parsed.error.issues });
+      throw invalidBody('Invalid value request', parsed.error);
 
     // Engine params = stored instrument params + credit terms (for the credit-
     // spread path) + the caller's per-run overrides.

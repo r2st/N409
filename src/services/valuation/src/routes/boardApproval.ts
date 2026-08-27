@@ -29,6 +29,7 @@ import {
   type BoardResolutionRow,
   type BoardSignoffRow,
 } from '../repos/boardApprovals.js';
+import { invalidBody } from '../domain/validationProblem.js';
 
 /**
  * Board approval workflow (feature 5). Ops generate a board resolution from the
@@ -196,7 +197,7 @@ export function registerBoardApprovalRoutes(
 
     const parsed = GenerateBody.safeParse(req.body ?? {});
     if (!parsed.success) {
-      throw problems.unprocessable('Invalid resolution', { errors: parsed.error.issues });
+      throw invalidBody('Invalid resolution', parsed.error);
     }
 
     const calc = await latestSucceededCalculation(deps.pool, id);
@@ -295,7 +296,7 @@ export function registerBoardApprovalRoutes(
     }
 
     const parsed = MemberBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid member', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid member', parsed.error);
 
     const { token, hash } = mintSignoffToken();
     let member: BoardSignoffRow;
@@ -410,7 +411,7 @@ export function registerBoardApprovalRoutes(
   app.post('/api/v1/board/sign', async (req) => {
     throttlePublic(req);
     const parsed = SignBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid sign-off', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid sign-off', parsed.error);
     const member = await findSignoffByTokenHash(deps.pool, hashToken(parsed.data.token));
     if (!member) throw problems.notFound(DEAD_TOKEN_DETAIL);
     if (member.status !== 'pending') {

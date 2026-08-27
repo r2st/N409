@@ -7,6 +7,7 @@ import { listActivity } from '../repos/activityLog.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
 import { checkWindowOrder, dateWindowFields } from '../domain/dateWindow.js';
+import { invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Global activity audit viewer (P2 #12): one ops-only feed over
@@ -34,7 +35,7 @@ export function registerAdminEventRoutes(app: FastifyInstance, deps: { pool: pg.
     if (!isOps(principal)) throw problems.forbidden('The activity log is operations-only');
 
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     const q = parsed.data;
 
     const { items, total } = await listActivity(deps.pool, {

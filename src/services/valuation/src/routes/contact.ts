@@ -11,6 +11,7 @@ import {
 } from '../repos/contactSubmissions.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Public marketing contact form (409.ai gap #28). Anyone can POST a message
@@ -55,7 +56,7 @@ export function registerContactRoutes(
       );
     }
     const parsed = CreateBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid message', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid message', parsed.error);
     const submission = await createContactSubmission(deps.pool, {
       name: parsed.data.name,
       email: parsed.data.email,
@@ -71,7 +72,7 @@ export function registerContactRoutes(
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden('Contact submissions are operations-only');
     const parsed = ListQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidQuery(parsed.error);
     return listContactSubmissions(deps.pool, { status: parsed.data.status });
   });
 
@@ -81,7 +82,7 @@ export function registerContactRoutes(
     const { id } = req.params as { id: string };
     if (!isUlid(id)) throw problems.notFound();
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
     const submission = await setContactSubmissionStatus(deps.pool, id, parsed.data.status, principal.id);
     if (!submission) throw problems.notFound();
     return { submission };

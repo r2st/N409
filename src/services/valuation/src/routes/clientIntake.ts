@@ -36,6 +36,7 @@ import {
   toPublicLink,
 } from '../repos/clientIntake.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 /**
  * Firm-branded client intake.
@@ -120,11 +121,11 @@ export function registerClientIntakeRoutes(
   app.post('/api/v1/firm/intake-links', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const query = PartnerQuery.safeParse(req.query);
-    if (!query.success) throw problems.badRequest('Invalid query');
+    if (!query.success) throw invalidQuery(query.error);
     const partnerId = resolveFirm(principal, query.data.partner_id);
 
     const parsed = CreateBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     const expiresAt = new Date(Date.now() + parsed.data.expires_in_days * 24 * 60 * 60 * 1000);
     const minted = await createIntakeLink(deps.pool, {
@@ -154,7 +155,7 @@ export function registerClientIntakeRoutes(
   app.get('/api/v1/firm/intake-links', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const query = PartnerQuery.safeParse(req.query);
-    if (!query.success) throw problems.badRequest('Invalid query');
+    if (!query.success) throw invalidQuery(query.error);
     const partnerId = resolveFirm(principal, query.data.partner_id);
 
     const now = new Date();
@@ -169,7 +170,7 @@ export function registerClientIntakeRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const query = PartnerQuery.safeParse(req.query);
-    if (!query.success) throw problems.badRequest('Invalid query');
+    if (!query.success) throw invalidQuery(query.error);
     const partnerId = resolveFirm(principal, query.data.partner_id);
 
     const row = await findIntakeLink(deps.pool, partnerId, id);
@@ -200,11 +201,11 @@ export function registerClientIntakeRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const query = PartnerQuery.safeParse(req.query);
-    if (!query.success) throw problems.badRequest('Invalid query');
+    if (!query.success) throw invalidQuery(query.error);
     const partnerId = resolveFirm(principal, query.data.partner_id);
 
     const parsed = ConvertBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     const existing = await findIntakeLink(deps.pool, partnerId, id);
     if (!existing) throw problems.notFound();
@@ -242,7 +243,7 @@ export function registerClientIntakeRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const query = PartnerQuery.safeParse(req.query);
-    if (!query.success) throw problems.badRequest('Invalid query');
+    if (!query.success) throw invalidQuery(query.error);
     const partnerId = resolveFirm(principal, query.data.partner_id);
 
     if (!(await revokeIntakeLink(deps.pool, partnerId, id))) throw problems.notFound();
@@ -271,7 +272,7 @@ export function registerClientIntakeRoutes(
   app.post('/api/v1/intake/portal', async (req) => {
     rateLimit(req.ip);
     const parsed = TokenBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     const link = await redeemIntakeToken(deps.pool, parsed.data.token);
     if (!link) throw problems.unauthorized('This intake link is invalid, expired, or withdrawn');
@@ -300,7 +301,7 @@ export function registerClientIntakeRoutes(
   app.post('/api/v1/intake/portal/answers', async (req) => {
     rateLimit(req.ip);
     const parsed = SaveBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     const answers = filterIntakeAnswers(parsed.data.answers);
     const link = await saveIntakeAnswers(deps.pool, parsed.data.token, answers);
@@ -320,7 +321,7 @@ export function registerClientIntakeRoutes(
   app.post('/api/v1/intake/portal/submit', async (req) => {
     rateLimit(req.ip);
     const parsed = TokenBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     // Read first so an incomplete form gets a useful 422 rather than being
     // rejected as though its link were dead.
