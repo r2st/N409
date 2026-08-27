@@ -101,13 +101,38 @@ export function isEntryPrice(plan: Pick<PlanLimit, 'interval'>): boolean {
   return plan.interval === 'one_time';
 }
 
-/** Human money for line items / invoice display. */
+/**
+ * Human money for line items / invoice display, from integer minor units.
+ *
+ * `Intl.NumberFormat` throws a `RangeError` on a currency code it cannot
+ * parse, and every currency reaching this function came off a Stripe webhook as
+ * `String(obj.currency ?? 'usd')` and was stored in a `text` column with no
+ * constraint on it. So a code in any other shape was not a badly formatted
+ * amount, it was an exception — thrown from the invoice PDF renderer, from the
+ * refund notification, and from the dunning message, i.e. from three places
+ * whose failure is a customer not being told something about their own money.
+ *
+ * The browser's formatter (web-frontend lib/format.moneyFormatter) has fallen
+ * back rather than thrown since it was written, printing the amount with the
+ * code beside it — which is what `Intl` itself does for a well-formed code it
+ * does not recognise. This is the same rule on the server, so the two halves of
+ * one figure cannot disagree about whether it is renderable.
+ */
 export function formatMoneyCents(cents: number, currency: string): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currency.toUpperCase(),
-    minimumFractionDigits: 2,
-  }).format(cents / 100);
+  const code = (currency || 'usd').trim().toUpperCase();
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: code,
+      minimumFractionDigits: 2,
+    }).format(cents / 100);
+  } catch {
+    const plain = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(cents / 100);
+    return `${code} ${plain}`;
+  }
 }
 
 /**

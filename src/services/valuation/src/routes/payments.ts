@@ -743,9 +743,16 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         ownerId: valuation?.user_id ?? null,
         type: 'payment_partially_refunded',
         title: `Partial refund — ${valuation?.company_name ?? 'valuation'}`,
+        // Through the money formatter every other notification on this path
+        // uses. Dividing by 100 inline is not the same thing: it dropped the
+        // symbol, the grouping and the trailing zeros, so an $11.90 refund
+        // against a $1,190.00 payment read "11.9 usd of 1190" — three
+        // ambiguities in one sentence about money, in a message sent to the
+        // client and to the billing group.
         body:
-          `${state.refundedCents / 100} ${payment.currency} of ${Number(payment.amount_cents) / 100} ` +
-          `was refunded. The engagement remains paid.`,
+          `${formatMoneyCents(state.refundedCents, payment.currency)} of ` +
+          `${formatMoneyCents(Number(payment.amount_cents), payment.currency)} was refunded. ` +
+          `The engagement remains paid.`,
       });
     }
     return { received: true, refunded: state.fullyRefunded };

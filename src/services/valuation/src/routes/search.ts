@@ -1,7 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { problems } from '@n409/shared';
 import { isOps, valuationScope } from '../auth/rbac.js';
 import { searchDocuments, searchUsers, searchValuations } from '../repos/search.js';
 import { requirePrincipal } from '../plugins/auth.js';

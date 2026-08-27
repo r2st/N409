@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createInvoice, nextInvoiceSequence } from '../../src/repos/billing.js';
 import { invoiceNumber } from '../../src/domain/billing.js';
-import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { interceptPoolQueries, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 const WEBHOOK_SECRET = 'whsec_test_secret';
@@ -129,13 +129,15 @@ describe.skipIf(!dbUp)('invoice numbering under concurrency', () => {
 
     // Break the write the handler depends on, without touching the signature
     // path — the failure has to happen during handling, not validation.
-    const original = ctx.pool.query.bind(ctx.pool);
-    const failing = (...args: unknown[]) => {
-      const sql = typeof args[0] === 'string' ? args[0] : ((args[0] as { text?: string })?.text ?? '');
-      if (sql.includes('INSERT INTO invoices')) return Promise.reject(new Error('connection terminated'));
-      return (original as (...a: unknown[]) => unknown)(...args);
-    };
-    (ctx.pool as unknown as { query: unknown }).query = failing;
+    //
+    // Through `interceptPoolQueries` rather than by replacing `pool.query`: the
+    // insert runs inside a transaction now, i.e. on a client from
+    // `pool.connect()`, and a hook on the pool alone would stage nothing and
+    // let this pass by not firing.
+    const restore = interceptPoolQueries(ctx.pool, (sql) => {
+      if (sql.includes('INSERT INTO invoices')) throw new Error('connection terminated');
+      return undefined;
+    });
     try {
       const res = await ctx.app.inject({
         method: 'POST',
@@ -145,7 +147,7 @@ describe.skipIf(!dbUp)('invoice numbering under concurrency', () => {
       });
       expect(res.statusCode).toBeGreaterThanOrEqual(500);
     } finally {
-      (ctx.pool as unknown as { query: unknown }).query = original;
+      restore();
     }
 
     // Nothing was recorded, which is the point: the event is still outstanding

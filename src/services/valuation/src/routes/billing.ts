@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { ApiProblem, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { renderReportPdf } from '../clients/reportRender.js';
 import { isOps } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -18,11 +18,11 @@ import { checkoutAvailableTo, isSettled, stripeProblem } from './payments.js';
 import {
   billingSummary,
   cancelSubscription,
-  createInvoice,
   findActiveSubscription,
   findInvoice,
   findInvoiceByStripeId,
   findPlan,
+  findPlanForSubscription,
   findStripeCustomerId,
   INVOICE_PAGE_LIMIT,
   listAllInvoices,
@@ -30,7 +30,7 @@ import {
   listInvoicesForUser,
   listPlans,
   markSubscriptionPastDue,
-  nextInvoiceSequence,
+  recordPaidInvoice,
   SUBSCRIPTION_PAGE_LIMIT,
   upsertSubscription,
 } from '../repos/billing.js';
@@ -41,9 +41,7 @@ import { parseStripeEvent, stripeEventKey } from '../domain/stripeEvents.js';
 import { classifyStripeEvent, recordStripeEvent } from '../repos/stripeEvents.js';
 import {
   formatMoneyCents,
-  invoiceNumber,
   invoicePaidMessage,
-  invoicePeriod,
   invoiceSections,
   usageView,
   type InvoiceLineItem,
@@ -153,7 +151,12 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
   app.get('/api/v1/me/subscription', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const sub = await findActiveSubscription(deps.pool, principal.id);
-    const plan = sub ? await findPlan(deps.pool, sub.plan_tier) : null;
+    // The plan this subscription is *on*, not the one still on sale. A tier
+    // retired from the catalogue leaves its subscribers where they are, and
+    // looking theirs up through `findPlan` — which filters `active = true` —
+    // returned null, which `usageView` reads as *unlimited*. See
+    // findPlanForSubscription.
+    const plan = sub ? await findPlanForSubscription(deps.pool, sub.plan_tier) : null;
     const usage = sub
       ? usageView({ valuation_limit: plan?.valuation_limit ?? null, valuations_used: sub.valuations_used })
       : null;
@@ -282,6 +285,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     log: FastifyBaseLogger,
     userId: string,
     amountDueCents: number,
+    currency: string,
   ): Promise<void> {
     try {
       const amount = Number.isFinite(amountDueCents) && amountDueCents > 0 ? amountDueCents : 0;
@@ -297,7 +301,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
           title: 'Your subscription payment did not go through',
           body:
             (amount
-              ? `A payment of ${formatMoneyCents(amount, 'usd')} was declined. `
+              ? `A payment of ${formatMoneyCents(amount, currency)} was declined. `
               : 'A payment was declined. ') +
             'Update your card from the billing page to keep your plan active.',
         },
@@ -460,7 +464,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         } else if (type === 'invoice.paid' || type === 'invoice.payment_succeeded') {
           const stripeSubId = typeof obj.subscription === 'string' ? obj.subscription : null;
           const meta = (obj.metadata ?? {}) as Record<string, string>;
-          let userId = meta.user_id ?? null;
+          let userId = typeof meta.user_id === 'string' ? meta.user_id : null;
           let subscriptionId: string | null = null;
           if (stripeSubId) {
             const { rows } = await deps.pool.query<{ id: string; user_id: string }>(
@@ -473,61 +477,96 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             }
           }
           const stripeInvoiceId = typeof obj.id === 'string' ? obj.id : null;
-          // Stripe delivers at least once. Checking first means a redelivery
-          // costs nothing instead of allocating a sequence number it then
-          // discards on the ON CONFLICT — which would leave a gap in a
-          // numbering an auditor reads as a count of what was billed.
+          /**
+           * The amount, checked before anything is written.
+           *
+           * `invoices.amount_cents` is an `integer` holding whole minor units,
+           * and this was `Number(obj.amount_paid ?? obj.amount_due ?? 0)` fed
+           * straight to it. A field that is not a whole number of cents — a
+           * fraction, a string that does not parse, an object — became NaN or a
+           * decimal that the driver refuses, which surfaced as a bare 500 out
+           * of the insert. To Stripe a 500 is not an answer, it is a delivery
+           * to retry for days; and every retry allocated another invoice number
+           * on its way to the same failure. So one unstorable amount walked the
+           * sequence forward indefinitely and was never reported to anyone.
+           *
+           * 400 instead: an amount this system cannot store is a permanent
+           * property of the event, redelivery cannot fix it, and Stripe records
+           * the refusal and stops. The log line is the one that says a payment
+           * went unrecorded, which is the fact worth waking somebody for.
+           */
+          const rawAmount = obj.amount_paid ?? obj.amount_due ?? 0;
+          const amount = typeof rawAmount === 'number' ? rawAmount : NaN;
+          if (!Number.isInteger(amount) || amount < 0) {
+            req.log.error(
+              { alert: true, actorType: 'system', source: 'stripe', stripeInvoiceId, amount: rawAmount },
+              'stripe invoice carried an amount that is not whole minor units — not recorded',
+            );
+            throw problems.badRequest(
+              'Invalid webhook payload: invoice amount is not a whole number of minor units',
+            );
+          }
+          /**
+           * And the account it belongs to.
+           *
+           * `meta.user_id` is whatever the event says. When the subscription
+           * lookup above answers, that is the authority and this never applies;
+           * when it does not — an invoice raised outside a subscription, or one
+           * against a subscription this platform never recorded — the metadata
+           * was written into `invoices.user_id` unchecked. That column is a
+           * `ulid` with a foreign key to `users`, so a value in neither shape
+           * was the same permanent 5xx-and-burn-a-number loop as the amount
+           * above, on an event that is very often simply not ours: a webhook
+           * endpoint receives every invoice on the Stripe account.
+           *
+           * Resolved to a real user or dropped. Dropping is the pre-existing
+           * behaviour for an invoice with no user at all (`if (userId && …)`),
+           * and it is the right one — there is no account to bill, so there is
+           * nothing to record.
+           */
+          const owner = userId && isUlid(userId) ? await findUserById(deps.pool, userId) : null;
+          userId = owner?.id ?? null;
+          // Stripe delivers at least once, and sends both `invoice.paid` and
+          // `invoice.payment_succeeded` for one payment. Reading first keeps a
+          // sequential redelivery cheap; `recordPaidInvoice` is what makes the
+          // concurrent one safe, by re-reading under a lock it holds through
+          // the allocation and the insert.
           const already = await findInvoiceByStripeId(deps.pool, stripeInvoiceId);
           if (userId && !already) {
-            const issuedIso = new Date().toISOString();
-            const seq = await nextInvoiceSequence(deps.pool, invoicePeriod(issuedIso));
-            const amount = Number(obj.amount_paid ?? obj.amount_due ?? 0);
-            const number = invoiceNumber(issuedIso, seq);
             const currency = String(obj.currency ?? 'usd');
             const periodStart = tsToDate(obj.period_start);
             const periodEnd = tsToDate(obj.period_end);
             const lineItems: InvoiceLineItem[] = [
               { description: String(obj.description ?? 'Subscription'), amount_cents: amount },
             ];
-            const saved = await createInvoice(deps.pool, {
-              number,
+            const { invoice: saved, created } = await recordPaidInvoice(deps.pool, {
               userId,
               subscriptionId,
               amountCents: amount,
               currency,
-              status: 'paid',
               periodStart,
               periodEnd,
               lineItems,
               stripeInvoiceId,
-              paidAt: new Date(),
             });
             // Announced from the row that was actually stored, and only by the
             // delivery that stored it.
             //
             // The `!already` guard above is a read followed by a write with
-            // nothing between them, which is the same non-atomicity migration
-            // 0096 removed from the numbering one line down. Stripe sends both
-            // `invoice.paid` and `invoice.payment_succeeded` for one payment,
-            // with different event ids the ledger cannot collapse, and fans
-            // them out together — so both deliveries routinely read `already`
-            // as null, both allocate a sequence number, and both arrive here.
+            // nothing between them. Stripe sends both `invoice.paid` and
+            // `invoice.payment_succeeded` for one payment, with different event
+            // ids the ledger cannot collapse, and fans them out together — so
+            // both deliveries routinely read `already` as null and both arrive
+            // here. The announcement ran on both paths and quoted a locally
+            // allocated number rather than the stored one, so the subscriber
+            // got two receipts for one renewal, one of them naming an invoice
+            // number that exists nowhere.
             //
-            // `createInvoice` is idempotent: the ON CONFLICT declines the
-            // loser's insert and hands back the row already on file. What was
-            // not idempotent was this announcement. It ran on both paths and
-            // quoted the *local* `number` rather than the stored one, so the
-            // subscriber got two receipts for one renewal, one of them naming
-            // an invoice number that exists nowhere — the loser's allocation,
-            // discarded by the conflict, in a sequence an auditor reads as a
-            // count of what was billed.
-            //
-            // `number` is UNIQUE and freshly allocated from a monotonic
-            // counter, so no other row can be carrying it: getting our own
-            // number back is exactly the statement "this delivery inserted the
-            // row", and it is the write itself that says so rather than a
-            // read taken before it.
-            if (saved.number === number) {
+            // `created` is the write itself saying which delivery wrote the
+            // row — decided inside `recordPaidInvoice`'s transaction, under the
+            // lock that also stops the loser allocating a number it will not
+            // use. See that function for what the loser's allocation cost.
+            if (created) {
               await announceInvoicePaid(req.log, {
                 userId: saved.user_id,
                 number: saved.number,
@@ -549,7 +588,19 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
           const stripeSubId = typeof obj.subscription === 'string' ? obj.subscription : null;
           if (stripeSubId) {
             const sub = await markSubscriptionPastDue(deps.pool, stripeSubId);
-            if (sub) await alertPaymentFailed(req.log, sub.user_id, Number(obj.amount_due ?? 0));
+            // The invoice's own currency, not the platform's. The amount is
+            // read off the Stripe event and the currency sits beside it on the
+            // same object; passing 'usd' regardless rendered a declined €480
+            // renewal as "$480.00" in the one message whose whole job is to
+            // tell the subscriber which payment to go and fix.
+            if (sub) {
+              await alertPaymentFailed(
+                req.log,
+                sub.user_id,
+                Number(obj.amount_due ?? 0),
+                String(obj.currency ?? 'usd'),
+              );
+            }
           }
         }
       } catch (err) {

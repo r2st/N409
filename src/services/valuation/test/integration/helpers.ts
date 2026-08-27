@@ -97,6 +97,67 @@ export interface TestApp {
 }
 
 /**
+ * Intercept every query the app makes on this pool, pooled clients included.
+ *
+ * Several suites stage a race or a failure by replacing `pool.query`. That
+ * reaches only the calls made directly on the pool: work done inside a
+ * transaction runs on a client from `pool.connect()`, whose `query` is a
+ * different function, so a hook installed the old way silently stopped firing
+ * the moment a handler was moved into a transaction — and the test went on
+ * passing, having staged nothing. (`recordPaidInvoice` is exactly that move.)
+ *
+ * `hook` is called with the SQL text before each query runs; return a value to
+ * answer the query without touching the database, or `undefined` to let it
+ * through. Returns a restore function.
+ */
+export function interceptPoolQueries(
+  pool: pg.Pool,
+  hook: (sql: string, phase: 'before' | 'after') => Promise<unknown> | unknown,
+): () => void {
+  const originalQuery = pool.query.bind(pool);
+  const originalConnect = pool.connect.bind(pool) as () => Promise<pg.PoolClient>;
+  const sqlOf = (arg: unknown) => (typeof arg === 'string' ? arg : ((arg as { text?: string })?.text ?? ''));
+
+  const wrap =
+    (run: (...args: unknown[]) => unknown) =>
+    async (...args: unknown[]) => {
+      const sql = sqlOf(args[0]);
+      const short = await hook(sql, 'before');
+      if (short !== undefined) return short;
+      const result = await (run(...args) as Promise<unknown>);
+      await hook(sql, 'after');
+      return result;
+    };
+
+  (pool as unknown as { query: unknown }).query = wrap(originalQuery as (...a: unknown[]) => unknown);
+  // Only the promise form is wrapped. `pool.query` itself checks a client out
+  // through `pool.connect(callback)`, so wrapping the callback form would both
+  // hook every query twice and — if the callback were dropped, as the obvious
+  // `async () => …` replacement does — hang every `pool.query` in the process
+  // forever.
+  (pool as unknown as { connect: unknown }).connect = (...args: unknown[]) => {
+    if (typeof args[0] === 'function') {
+      return (originalConnect as unknown as (...a: unknown[]) => unknown)(...args);
+    }
+    return originalConnect().then((client) => {
+      const clientQuery = client.query.bind(client);
+      (client as unknown as { query: unknown }).query = wrap(clientQuery as (...a: unknown[]) => unknown);
+      const release = client.release.bind(client);
+      (client as unknown as { release: unknown }).release = (...a: unknown[]) => {
+        (client as unknown as { query: unknown }).query = clientQuery;
+        return (release as (...x: unknown[]) => unknown)(...a);
+      };
+      return client;
+    });
+  };
+
+  return () => {
+    (pool as unknown as { query: unknown }).query = originalQuery;
+    (pool as unknown as { connect: unknown }).connect = originalConnect;
+  };
+}
+
+/**
  * Stands in for the AI/engine `/ready` probes. `status` drives every probe;
  * pass 503 (or throw) to model a downstream outage.
  */

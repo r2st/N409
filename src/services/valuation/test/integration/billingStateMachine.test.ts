@@ -24,7 +24,7 @@ import {
   upsertSubscription,
 } from '../../src/repos/billing.js';
 import { listNotifications } from '../../src/repos/notifications.js';
-import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { interceptPoolQueries, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * The billing state machine, stated and then exercised.
@@ -154,17 +154,42 @@ describe('the invoice status census', () => {
   });
 
   it('creates invoices in exactly the statuses it declares reachable', () => {
+    const files = sourceFiles();
+    const repo = files.find((f) => f.file === path.join('repos', 'billing.ts'));
+    expect(repo, 'repos/billing.ts was not scanned').toBeTruthy();
+
+    /**
+     * The status the *repo* pins, read out of the statement rather than
+     * restated here.
+     *
+     * There are two invoice writers now. `createInvoice` takes the status as an
+     * argument, so its call sites are what this census reads. `recordPaidInvoice`
+     * — the webhook's one, which numbers and inserts inside a transaction so a
+     * failure cannot burn a sequence number — does not: it writes a settled
+     * invoice and nothing else, and the status is a literal in its INSERT. A
+     * census that only knew the first one went vacuous the moment the webhook
+     * moved, which is precisely the failure it exists to make loud.
+     */
+    const pinned = /INSERT INTO invoices[\s\S]{0,600}?VALUES\s*\([^)]*?'([a-z]+)'/i.exec(repo!.text);
+    expect(pinned, 'recordPaidInvoice no longer pins a status in its INSERT').toBeTruthy();
+
     const written = new Set<string>();
-    for (const { file, text } of sourceFiles()) {
+    let callSites = 0;
+    for (const { file, text } of files) {
       if (file === path.join('repos', 'billing.ts')) continue; // the definition, not a caller
       // The status handed to createInvoice at each call site.
       for (const m of text.matchAll(/createInvoice\(([\s\S]{0,600}?)\n\s*\}\)/g)) {
+        callSites += 1;
         const status = /\bstatus:\s*'([a-z]+)'/.exec(m[1]!);
         written.add(status ? status[1]! : 'open'); // the repo's default
       }
+      for (const _ of text.matchAll(/recordPaidInvoice\(/g)) {
+        callSites += 1;
+        written.add(pinned![1]!);
+      }
     }
     // A census that matched nothing would pass by having nothing left to ask.
-    expect(written.size, 'no createInvoice call site was found — the scan is vacuous').toBeGreaterThan(0);
+    expect(callSites, 'no invoice-creating call site was found — the scan is vacuous').toBeGreaterThan(0);
     expect([...written].sort()).toEqual([...INVOICE_REACHABLE_STATUSES].sort());
   });
 });
@@ -342,24 +367,28 @@ describe.skipIf(!dbUp)('invoice transitions', () => {
     const id = `in_lost_race_${uniq()}`;
     const winnersNumber = `INV-RACE-${uniq()}`;
 
-    const original = ctx.pool.query.bind(ctx.pool);
     let staged = false;
-    (ctx.pool as unknown as { query: unknown }).query = async (...args: unknown[]) => {
-      const sql = typeof args[0] === 'string' ? args[0] : ((args[0] as { text?: string })?.text ?? '');
-      const result = await (original as (...a: unknown[]) => Promise<unknown>)(...args);
+    let restore = () => {};
+    restore = interceptPoolQueries(ctx.pool, async (sql, phase) => {
       // After the sequence has been allocated and before the invoice is
       // inserted — the one instant at which the two deliveries are both live.
-      if (!staged && sql.includes('INSERT INTO invoice_sequences')) {
+      // The winner is written on an unhooked connection, so it stands in for a
+      // writer that never took the advisory lock: a backfill, a fixture, an
+      // older process mid-deploy. The lock orders two of these handlers against
+      // each other; it cannot bind somebody who does not take it, and losing
+      // that way must still cost no invoice number.
+      if (!staged && phase === 'after' && sql.includes('INSERT INTO invoice_sequences')) {
         staged = true;
-        await (original as (...a: unknown[]) => Promise<unknown>)(
+        restore();
+        await ctx.pool.query(
           `INSERT INTO invoices (id, user_id, number, amount_cents, currency, status,
                                  issued_at, line_items, stripe_invoice_id)
            VALUES ($1, $2, $3, $4, 'usd', 'paid', now(), '[]', $5)`,
           [newUlid(), subscriber.id, winnersNumber, 2_000_000, id],
         );
       }
-      return result;
-    };
+      return undefined;
+    });
 
     try {
       const res = await billingWebhook({
@@ -371,7 +400,7 @@ describe.skipIf(!dbUp)('invoice transitions', () => {
       });
       expect(res.statusCode).toBe(200);
     } finally {
-      (ctx.pool as unknown as { query: unknown }).query = original;
+      restore();
     }
 
     // One invoice, and it is the one that won.

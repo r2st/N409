@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newUlid } from '@n409/shared';
 import { createPayment, findPaymentBySessionId, markPayment } from '../../src/repos/payments.js';
 import { findInvoiceByStripeId } from '../../src/repos/billing.js';
+import { formatMoneyCents } from '../../src/domain/billing.js';
 import { priceForKind } from '../../src/routes/payments.js';
 import { listNotifications } from '../../src/repos/notifications.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
@@ -164,7 +165,17 @@ describe.skipIf(!dbUp)('refunds and chargebacks', () => {
       expect(payment?.status).toBe('succeeded');
       expect(Number(payment?.refunded_cents)).toBe(20_000);
       expect(await paidStatus(vid)).toBe('paid');
-      expect(await notificationsFor(client.id, 'payment_partially_refunded', vid)).toHaveLength(1);
+      const [notice] = await notificationsFor(client.id, 'payment_partially_refunded', vid);
+      expect(notice).toBeTruthy();
+      // Through the money formatter, like every other notification on this
+      // path. Dividing by 100 inline — which is what this did — dropped the
+      // symbol, the grouping and the trailing zeros, so a $200.00 refund
+      // against a $1,190.00 payment read "200 usd of 1190": three ambiguities
+      // in one sentence about money, sent to the client and to the billing
+      // group.
+      expect(notice!.body).toContain(formatMoneyCents(20_000, 'usd'));
+      expect(notice!.body).toContain(formatMoneyCents(PRICE, 'usd'));
+      expect(notice!.body).not.toMatch(/\b\d+ usd\b/);
     });
 
     it('a redelivered refund is idempotent — one revocation, one alert', async () => {

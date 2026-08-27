@@ -68,6 +68,64 @@ const subscribed = (over: Record<string, unknown> = {}) => ({
   },
 });
 
+/**
+ * Every money figure in one table, through one formatter.
+ *
+ * The amount column had its own `Intl.NumberFormat` and the refund line under
+ * it used `formatCents`, so the two disagreed about the reader's locale and
+ * about what an unparseable currency code is. `invoices.currency` is a `text`
+ * column fed by `String(obj.currency)` off a Stripe webhook, and `Intl` throws
+ * a RangeError on a code it cannot parse — from a render, which takes the whole
+ * billing section down rather than one cell.
+ */
+describe('money on the invoice table', () => {
+  it('renders an unparseable currency instead of taking the section down', async () => {
+    mockApi(
+      subscribed({
+        invoices: [
+          {
+            id: 'inv_1',
+            number: 'INV-202608-0001',
+            amount_cents: 119000,
+            currency: 'not-a-currency',
+            status: 'paid',
+            issued_at: '2026-08-01T00:00:00.000Z',
+          },
+        ],
+      }),
+    );
+    render(<SubscriptionSection />);
+    expect(await screen.findByText('INV-202608-0001')).toBeTruthy();
+    expect(screen.getByText(/1,190\.00/)).toBeTruthy();
+  });
+
+  it('states the amount and the refund note under it the same way', async () => {
+    mockApi(
+      subscribed({
+        invoices: [
+          {
+            id: 'inv_2',
+            number: 'INV-202608-0002',
+            amount_cents: 119000,
+            currency: 'usd',
+            status: 'paid',
+            issued_at: '2026-08-01T00:00:00.000Z',
+            refunded_cents: 119000,
+            refunded_at: '2026-08-09T00:00:00.000Z',
+          },
+        ],
+      }),
+    );
+    render(<SubscriptionSection />);
+    expect(await screen.findByText('INV-202608-0002')).toBeTruthy();
+    // The amount cell and the refund line quote the same figure identically —
+    // one formatter, so a locale or a fallback cannot move one and not the
+    // other.
+    expect(screen.getByText('$1,190.00')).toBeTruthy();
+    expect(screen.getByTestId('invoice-refund-note').textContent).toContain('$1,190.00');
+  });
+});
+
 describe('SubscriptionSection (feature 7)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();

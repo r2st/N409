@@ -90,8 +90,20 @@ export function invoiceRefundNote(inv: {
   return `${full ? 'Refunded' : 'Partially refunded'} ${formatCents(refundedCents, inv.currency)}${when}${net}`;
 }
 
-const money = (cents: number, currency = 'usd') =>
-  new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100);
+/**
+ * Every figure on this screen, through the one formatter.
+ *
+ * There was a local `money()` here as well as the `formatCents` the refund note
+ * beside it already used, and the two disagree in two ways that both land in
+ * one table row. The local one pinned `en-US`, so a reader outside it saw the
+ * invoice amount as "$20,000.00" and the refund line under it as "20.000,00 $";
+ * and it fed the currency code straight to `Intl`, which throws a RangeError on
+ * one it cannot parse — a code that arrives from a Stripe webhook into a `text`
+ * column with no constraint on it, and would take the whole billing section
+ * down rather than one cell. `formatCents` falls back and renders `—` for a
+ * missing figure instead of `$0.00`.
+ */
+const money = (cents: number, currency = 'usd') => formatCents(cents, currency);
 const per = (i: string) => (i === 'year' ? '/yr' : i === 'month' ? '/mo' : '');
 
 /**

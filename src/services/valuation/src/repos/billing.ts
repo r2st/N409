@@ -1,8 +1,10 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { withTransaction } from '../db/pool.js';
 import {
   BILLING_SUBSCRIPTION_STATUSES,
   INVOICE_INITIAL_STATUSES,
+  invoiceNumber,
   invoicePeriod,
   SERVED_SUBSCRIPTION_STATUSES,
   type InvoiceStatus,
@@ -29,6 +31,39 @@ export async function findPlan(pool: pg.Pool, tier: string): Promise<PlanLimit |
   const { rows } = await pool.query<PlanLimit>(
     `SELECT tier, name, valuation_limit, price_cents, currency, interval
        FROM plan_limits WHERE tier = $1 AND active = true`,
+    [tier],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * The plan a subscription is *on*, as opposed to one that may still be bought.
+ *
+ * The same row without the `active` filter, and the distinction is the whole
+ * point of having two functions. `active` is a catalogue flag: it says a tier
+ * is still on sale, not that the accounts already on it have stopped being on
+ * it. Retiring a tier while its subscribers see out their term is the ordinary
+ * way a price list changes, and `subscriptions.plan_tier` has a foreign key to
+ * `plan_limits.tier`, so the row is still there to be read.
+ *
+ * Read through {@link findPlan}, it was not. `/me/subscription` looked the
+ * subscriber's own plan up in the catalogue, got null the moment the tier was
+ * deactivated, and passed `valuation_limit: null` to `usageView` — where null
+ * means *unlimited*. So the screen told a retainer subscriber they had
+ * unlimited valuations and `remaining: null`, while `consumeValuation` — which
+ * joins `plan_limits` with no `active` filter, as does the ops dashboard —
+ * went on refusing the thirteenth with a 402 they had just been told could not
+ * happen. Nothing had changed for that customer except a flag on a row they
+ * cannot see.
+ *
+ * An absent plan meaning "no limit" is the permissive reading of missing data,
+ * and it is the reading that makes this class of bug silent; the fix is to stop
+ * the plan going missing, since the foreign key guarantees it cannot.
+ */
+export async function findPlanForSubscription(pool: pg.Pool, tier: string): Promise<PlanLimit | null> {
+  const { rows } = await pool.query<PlanLimit>(
+    `SELECT tier, name, valuation_limit, price_cents, currency, interval
+       FROM plan_limits WHERE tier = $1`,
     [tier],
   );
   return rows[0] ?? null;
@@ -474,6 +509,150 @@ export async function findInvoiceByStripeId(
     stripeInvoiceId,
   ]);
   return rows[0] ?? null;
+}
+
+/** The insert lost to a writer that did not take the lock; see below. */
+class InvoiceAlreadyRecorded extends Error {}
+
+/**
+ * Record a settled Stripe invoice, numbering it, in one transaction.
+ *
+ * Replaces the check → allocate → insert the billing webhook did with three
+ * separate round trips. Each step was individually right and the sequence was
+ * not, because the number an invoice carries is allocated from a counter that
+ * only ever goes up, and the two ways out of that sequence without an invoice
+ * both leave the counter moved:
+ *
+ *   * **A failure after allocation.** Anything that made the insert throw — an
+ *     amount Stripe reported as something other than whole minor units, a
+ *     `user_id` no longer on file, a pool blip — burned a number and answered
+ *     Stripe with a 5xx. The 5xx is deliberate, it is how a transient failure
+ *     gets redelivered; but a *permanent* one is then redelivered for days, and
+ *     each attempt burns another number. One malformed event walked the
+ *     sequence forward indefinitely.
+ *
+ *   * **The duplicate that lost.** Stripe sends `invoice.paid` *and*
+ *     `invoice.payment_succeeded` for one payment, with different event ids the
+ *     ledger cannot collapse, and fans them out together. The route's
+ *     `findInvoiceByStripeId` guard is a read with a write after it, so both
+ *     deliveries routinely saw no invoice, both allocated, and the `ON CONFLICT`
+ *     declined the loser's insert — a burned number on the ordinary path, for
+ *     every renewal that arrived concurrently.
+ *
+ * A gap is not cosmetic. The numbering is what an auditor reads as a count of
+ * what was billed, and INV-202608-0004 following INV-202608-0002 is a question
+ * with no answer in this system: the invoice it names was never issued and
+ * nothing records that it was not.
+ *
+ * Both are closed by the same two things. The advisory lock is taken on the
+ * Stripe invoice id, so concurrent deliveries about one invoice serialise and
+ * the second sees the first's row rather than allocating against it — the
+ * counter's own row lock cannot do this, since it is only taken *at* allocation,
+ * after the point where the loser has already decided to allocate. And the
+ * allocation now shares a transaction with the insert, so a failure rolls the
+ * counter back with it: the number is spent only by the row that carries it.
+ *
+ * `created` says whether this call is the one that wrote the row, which is what
+ * the caller announces on — the write itself saying so, rather than a read
+ * taken before it.
+ */
+export async function recordPaidInvoice(
+  pool: pg.Pool,
+  input: {
+    userId: string;
+    subscriptionId: string | null;
+    amountCents: number;
+    currency: string;
+    periodStart: Date | null;
+    periodEnd: Date | null;
+    lineItems: InvoiceLineItem[];
+    stripeInvoiceId: string | null;
+    issuedAt?: Date;
+    paidAt?: Date | null;
+  },
+): Promise<{ invoice: InvoiceRow; created: boolean }> {
+  // Whole minor units, checked here as well as at the route. The column is
+  // `integer`, so a fraction or a NaN is refused by the driver rather than
+  // rounded — and refused *after* the number has been allocated, which is the
+  // gap above. Stated as a precondition so no future caller has to rediscover
+  // that the two facts are connected.
+  if (!Number.isInteger(input.amountCents)) {
+    throw new Error(`recordPaidInvoice: amount_cents must be whole minor units, got ${input.amountCents}`);
+  }
+  return withTransaction(pool, async (tx) => {
+    if (input.stripeInvoiceId) {
+      // Keyed on the Stripe invoice, so two deliveries about one payment
+      // serialise and unrelated renewals do not. Transaction-scoped, so it is
+      // released by the COMMIT or the ROLLBACK either way.
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [input.stripeInvoiceId]);
+      const { rows } = await tx.query<InvoiceRow>('SELECT * FROM invoices WHERE stripe_invoice_id = $1', [
+        input.stripeInvoiceId,
+      ]);
+      if (rows[0]) return { invoice: rows[0], created: false };
+    }
+
+    const issuedAt = input.issuedAt ?? new Date();
+    const issuedIso = issuedAt.toISOString();
+    const period = invoicePeriod(issuedIso);
+    const { rows: seqRows } = await tx.query<{ seq: number }>(
+      `INSERT INTO invoice_sequences (period, seq) VALUES ($1, 1)
+       ON CONFLICT (period) DO UPDATE SET seq = invoice_sequences.seq + 1
+       RETURNING seq`,
+      [period],
+    );
+    const number = invoiceNumber(issuedIso, seqRows[0]!.seq);
+
+    // `issued_at` is written rather than defaulted, so the month in the number
+    // and the month the row says it was issued in are the same instant — the
+    // column's `now()` is the database's clock at COMMIT and could fall on the
+    // other side of a month boundary from the period allocated above.
+    //
+    // `ON CONFLICT DO NOTHING` behind the lock, which is belt and braces rather
+    // than the mechanism: the lock is what makes two of *these* calls order
+    // themselves, and it cannot bind a writer that does not take it — a
+    // backfill, a fixture, an older process mid-deploy. Losing that way must
+    // still not burn a number, so the conflict aborts the transaction and the
+    // allocation rolls back with it; the row already on file is read afterwards
+    // and returned as somebody else's.
+    const { rows } = await tx.query<InvoiceRow>(
+      `INSERT INTO invoices
+         (id, number, user_id, subscription_id, amount_cents, currency, status,
+          period_start, period_end, line_items, stripe_invoice_id, issued_at, paid_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'paid',$7,$8,$9,$10,$11,$12)
+       ON CONFLICT (stripe_invoice_id) DO NOTHING
+       RETURNING *`,
+      [
+        newUlid(),
+        number,
+        input.userId,
+        input.subscriptionId,
+        input.amountCents,
+        input.currency,
+        input.periodStart,
+        input.periodEnd,
+        JSON.stringify(input.lineItems),
+        input.stripeInvoiceId,
+        issuedAt,
+        input.paidAt ?? issuedAt,
+      ],
+    );
+    if (!rows[0]) throw new InvoiceAlreadyRecorded();
+    return { invoice: rows[0], created: true };
+  }).catch(async (err: unknown) => {
+    if (!(err instanceof InvoiceAlreadyRecorded)) throw err;
+    const existing = await findInvoiceByStripeId(pool, input.stripeInvoiceId);
+    if (existing) return { invoice: existing, created: false };
+    // The conflict fired and the row it conflicted with is gone. Only
+    // `stripe_invoice_id` and `number` are UNIQUE here and the number was
+    // freshly allocated under a counter nothing else writes, so this is not a
+    // state the schema admits — and returning something would mean inventing
+    // an invoice.
+    throw new Error(
+      `recordPaidInvoice: insert conflicted but no invoice exists for stripe_invoice_id=${String(
+        input.stripeInvoiceId,
+      )}`,
+    );
+  });
 }
 
 export async function findInvoice(pool: pg.Pool, id: string): Promise<InvoiceRow | null> {
