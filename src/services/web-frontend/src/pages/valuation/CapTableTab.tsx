@@ -512,8 +512,8 @@ export function CapTableTab() {
               )}
               {upload.truncated && (
                 <p className="text-xs text-amber-700">
-                  Only the first 2,000 of {(sheet?.total_rows ?? 0).toLocaleString()} rows were read.
-                  Split the file if the cap table is longer.
+                  Only the first 2,000 of {(sheet?.total_rows ?? 0).toLocaleString()} rows were read. Split
+                  the file if the cap table is longer.
                 </p>
               )}
               {sheet?.rows.length === 0 && (

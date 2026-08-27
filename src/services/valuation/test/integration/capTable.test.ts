@@ -536,11 +536,7 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
       });
 
       it('reads a Windows-1252 CSV without corrupting the security class', async () => {
-        const ansi = Buffer.from([
-          ...Buffer.from('class,shares\nS'),
-          0xe9,
-          ...Buffer.from('rie A,1000\n'),
-        ]);
+        const ansi = Buffer.from([...Buffer.from('class,shares\nS'), 0xe9, ...Buffer.from('rie A,1000\n')]);
         const res = await uploadFile(app, uploadUrl(), client.token, {
           filename: 'captable.csv',
           content: ansi,
@@ -630,6 +626,163 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
       });
       expect(stored.json().cap_table.entries).toHaveLength(3);
       expect(stored.json().cap_table.validation.summary.fully_diluted_shares).toBe(11_000_000);
+    });
+
+    /**
+     * The stored table must not grow a phantom class on the way through, and
+     * the figure it reports must survive being read back.
+     *
+     * The unit tests pin the parser; this pins the round trip that actually
+     * happens — the sheet a customer uploads has a totals row on it, the PUT
+     * persists what it read, and `findCapTable` re-derives the validation on
+     * every read. A totals row imported as a holding doubles the denominator
+     * *in the database*, where every later consumer — the workbook, the
+     * monitoring baseline, the engine feed — reads it as fact.
+     */
+    it('persists the holdings of a sheet and not its total', async () => {
+      const withTotal = [
+        'class,shares,price,invested',
+        'Common,6000000,0.10,600000',
+        '"Series A Preferred",4000000,1.00,4000000',
+        'Total (fully diluted),10000000,,4600000',
+      ].join('\n');
+
+      const put = await app.inject({
+        method: 'PUT',
+        url: twiceUrl(),
+        headers: authHeader(client.token),
+        payload: { format: 'generic', csv: withTotal },
+      });
+      expect(put.statusCode).toBe(200);
+      expect(put.json().cap_table.entries.map((e: any) => e.security_class)).toEqual([
+        'Common',
+        'Series A Preferred',
+      ]);
+      expect(put.json().cap_table.validation.summary.fully_diluted_shares).toBe(10_000_000);
+
+      // Re-read: the validation is recomputed from the entries, so the number
+      // on the screen has to be the same one the import reported.
+      const stored = await app.inject({
+        method: 'GET',
+        url: twiceUrl(),
+        headers: authHeader(client.token),
+      });
+      expect(stored.json().cap_table.entries).toHaveLength(2);
+      expect(stored.json().cap_table.validation.summary.fully_diluted_shares).toBe(10_000_000);
+      // The file-dependent issues are not persisted — they cannot be re-derived
+      // from entries, so storing them would only be to lose them on read.
+      const codes = stored.json().cap_table.validation.issues.map((i: any) => i.code);
+      expect(codes).not.toContain('totals_row_skipped');
+    });
+
+    it('tells the uploader on the preview that the total row was set aside', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${valuationId}/cap-table/preview`,
+        headers: authHeader(client.token),
+        payload: {
+          format: 'generic',
+          csv: 'class,shares,price\nCommon,6000000,0.10\nTotal,9000000,',
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const issues = res.json().validation.issues;
+      expect(issues.map((i: any) => i.code)).toContain('totals_row_skipped');
+      // 6,000,000 read against a stated 9,000,000 — a row went missing, which
+      // is the whole reason to look at the total at all.
+      const mismatch = issues.find((i: any) => i.code === 'totals_row_mismatch');
+      expect(mismatch.message).toContain('states 9,000,000 shares');
+      expect(res.json().validation.valid).toBe(true);
+    });
+  });
+
+  /**
+   * Two imports of the same cap table in flight at once.
+   *
+   * The PUT's first `await` is a pooled query (`loadReadable`), so overlapping
+   * `inject`s genuinely interleave here rather than serialising — see the
+   * project note on when `inject` stages a real race. What must hold is that
+   * the table is a *replacement* under concurrency as much as it is in
+   * sequence: `cap_tables` is keyed by valuation and written whole, so the
+   * losing writer must be overwritten rather than merged with.
+   */
+  describe('concurrent imports', () => {
+    let raceValuationId: string;
+
+    beforeAll(async () => {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: '409a', company_name: 'RaceCo' },
+      });
+      raceValuationId = created.json().valuation.id;
+    });
+
+    const raceUrl = () => `/api/v1/valuations/${raceValuationId}/cap-table`;
+    const putCsv = (csv: string, headers: Record<string, string> = {}) =>
+      app.inject({
+        method: 'PUT',
+        url: raceUrl(),
+        headers: { ...authHeader(client.token), ...headers },
+        payload: { format: 'generic', csv },
+      });
+
+    it('does not double the table when the same file is imported twice at once', async () => {
+      const [a, b] = await Promise.all([putCsv(CSV), putCsv(CSV)]);
+      expect([a.statusCode, b.statusCode]).toEqual([200, 200]);
+
+      const stored = await app.inject({
+        method: 'GET',
+        url: raceUrl(),
+        headers: authHeader(client.token),
+      });
+      // Three classes, not six: the upsert is keyed by valuation, so the second
+      // writer replaces the first rather than appending to it.
+      expect(stored.json().cap_table.entries).toHaveLength(3);
+      expect(stored.json().cap_table.validation.summary.fully_diluted_shares).toBe(11_000_000);
+      // Both writes landed, so the counter moved twice — which is what makes a
+      // third editor's `If-Match` notice that anything happened at all.
+      expect(stored.json().cap_table.version).toBeGreaterThanOrEqual(2);
+    });
+
+    it('stores one of two different files whole, never a blend of them', async () => {
+      const other = ['class,shares,price', 'Founders Common,7777777,0.01'].join('\n');
+      await Promise.all([putCsv(CSV), putCsv(other)]);
+
+      const stored = await app.inject({
+        method: 'GET',
+        url: raceUrl(),
+        headers: authHeader(client.token),
+      });
+      const names = stored.json().cap_table.entries.map((e: any) => e.security_class);
+      // `entries` is one JSONB document written in one statement, so the row
+      // holds exactly one of the two imports. A blend would mean a cap table
+      // that was never uploaded by anybody.
+      expect([['Founders Common'], ['Common', 'Series A Preferred', 'Option Pool']]).toContainEqual(names);
+      // And the summary agrees with the entries beside it, whichever won.
+      const expected = names.length === 1 ? 7_777_777 : 11_000_000;
+      expect(stored.json().cap_table.validation.summary.fully_diluted_shares).toBe(expected);
+    });
+
+    it('lets exactly one of two guarded imports through', async () => {
+      const seed = await putCsv(CSV);
+      const etag = seed.headers.etag as string;
+      expect(etag).toBeTruthy();
+
+      // Both editors read the same version and both save. `saveCapTable` takes
+      // `FOR UPDATE` before it checks, so the second blocks, then sees the
+      // version the first bumped and is refused — rather than both passing the
+      // check and the later commit silently winning.
+      const [a, b] = await Promise.all([
+        putCsv(CSV, { 'if-match': etag }),
+        putCsv(CSV, { 'if-match': etag }),
+      ]);
+      const statuses = [a.statusCode, b.statusCode].sort();
+      expect(statuses).toEqual([200, 409]);
+
+      const loser = [a, b].find((r) => r.statusCode === 409)!;
+      expect(loser.json().detail ?? loser.json().title).toMatch(/changed by someone else/i);
     });
   });
 

@@ -170,11 +170,16 @@ describe('capTable', () => {
     });
 
     it('skips blank/total rows', () => {
+      // Both of them, which this has always been named for and only ever
+      // checked the first of: `Total` was kept as a security class, and the
+      // assertion of 1 entry pinned it there. See the totals-row group in
+      // `capTableAdversarialImport` for what that cost on a sheet whose totals
+      // row carried the sum rather than a blank.
       const rows = [
         { class: '', shares: '' },
         { class: 'Total', shares: '' },
       ];
-      expect(parseCapTable(rows, presetByKey('generic')!.mapping)).toHaveLength(1);
+      expect(parseCapTable(rows, presetByKey('generic')!.mapping)).toHaveLength(0);
     });
 
     it('numbers each entry with its line in the sheet, not its place in the output', () => {

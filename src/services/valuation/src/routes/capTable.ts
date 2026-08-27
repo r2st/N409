@@ -9,7 +9,7 @@ import {
   CAP_TABLE_FIELDS,
   CsvReadError,
   FORMAT_PRESETS,
-  parseCapTable,
+  parseCapTableSheet,
   parseCsvSheet,
   presetByKey,
   toWaterfallInputs,
@@ -291,8 +291,8 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const parsed = ImportBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid import', { errors: parsed.error.issues });
     const { rows, mapping, sourceLines } = readInput(parsed.data);
-    const entries = parseCapTable(rows, mapping, sourceLines);
-    return { entries, validation: validateCapTable(entries), mapping };
+    const { entries, totals } = parseCapTableSheet(rows, mapping, sourceLines);
+    return { entries, validation: validateCapTable(entries, totals), mapping };
   });
 
   // Import + persist. Blocks on hard validation errors.
@@ -318,10 +318,25 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (!parsed.success) throw problems.unprocessable('Invalid import', { errors: parsed.error.issues });
 
     const { rows, mapping, sourceLines } = readInput(parsed.data);
-    const entries = parseCapTable(rows, mapping, sourceLines);
+    const { entries, totals } = parseCapTableSheet(rows, mapping, sourceLines);
+    /*
+     * Two validations, deliberately.
+     *
+     * `reported` knows what the sheet's totals row said and is what a refusal
+     * quotes back; `stored` is derived from the entries alone. The stored
+     * `validation` column is a cache that `findCapTable` re-derives on every
+     * read — `withFreshValidation`, pinned by test — so an issue that depends on
+     * the uploaded file, which the totals checks do, can only be persisted to be
+     * silently dropped the next time anybody looks at the row. Writing the
+     * reproducible one keeps the column meaning what it claims to mean.
+     *
+     * Nothing is lost by the split: the totals checks are warnings, so they
+     * cannot change `valid`, and the import screen reads them from the preview.
+     */
+    const reported = validateCapTable(entries, totals);
     const validation = validateCapTable(entries);
-    if (!validation.valid) {
-      throw problems.unprocessable('Cap table has validation errors', { validation });
+    if (!reported.valid) {
+      throw problems.unprocessable('Cap table has validation errors', { validation: reported });
     }
     const table = await saveCapTable(
       deps.pool,

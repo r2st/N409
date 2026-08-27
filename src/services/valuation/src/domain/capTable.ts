@@ -589,7 +589,90 @@ export function parseCapTable(
   mapping: ColumnMapping,
   sourceLines?: readonly number[],
 ): CapTableEntry[] {
+  return parseCapTableSheet(rows, mapping, sourceLines).entries;
+}
+
+/**
+ * A row of the sheet that states a total rather than holding a security.
+ *
+ * Kept rather than discarded because the figure on it is a checksum over the
+ * import — see {@link validateCapTable}. `shares` is what its share column
+ * said, or null when it had none.
+ */
+export interface CapTableTotalsRow {
+  /** The line of the uploaded sheet, when it is known. */
+  source_row?: number;
+  /** The label as written, for quoting back at whoever uploaded the file. */
+  label: string;
+  shares: number | null;
+}
+
+/**
+ * Words a totals row's label is built from once its parenthetical is dropped.
+ *
+ * The tail is a closed list, and that is what keeps a security class out of
+ * it: `Total (fully diluted)`, `Total Shares Outstanding` and `Total Preferred`
+ * are totals rows, while `Total Return Preferred` — every word of which but one
+ * is on this list — is a class, and is imported as one.
+ */
+const TOTALS_TAIL =
+  /^(?:shares?|outstanding|issued|fully|diluted|fd|capitali[sz]ation|cap|equity|classes|class|securities|common|preferred|options?|warrants?|converted|basis|all|of|and|on|as)$/;
+
+/**
+ * Does this row say "here is the sum of the rows above" rather than naming a
+ * security?
+ *
+ * Every real cap-table export ends with one — Carta, Pulley, the workbook this
+ * platform writes itself — and until this existed each one imported as a
+ * *security class*: a phantom holding whose share count was, by construction,
+ * the sum of every genuine class. That doubles the fully-diluted count, which
+ * halves every ownership percentage and halves the per-share price the 409A
+ * concludes, and the table validated clean while it did so. `parseCapTable`
+ * has always carried the comment "skip blank rows / totals rows", and skipped
+ * only rows with neither a name nor a share count — which a totals row, having
+ * both, was never one of.
+ *
+ * Matching is on the label alone rather than on the arithmetic. A subtotal does
+ * not equal the sum of everything above it, a total over a class this import
+ * dropped does not either, and both are still totals rows; making the sum a
+ * condition of recognising one would let exactly the rows that indicate a
+ * problem through as securities. The arithmetic is used for what it is good
+ * for instead — a check on the import, applied after the fact.
+ */
+function isTotalsLabel(name: string): boolean {
+  const words = name
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    // Punctuation and digits go: `TOTAL:`, `Total —`, `Total 2024` are all the
+    // same row, and a stray `*` footnote marker is not a word.
+    .replace(/[^a-z\s-]/g, ' ')
+    .replace(/[\s-]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter((w) => w !== '');
+  let i = 0;
+  if (words[i] === 'grand' || words[i] === 'sub') i += 1;
+  const head = words[i];
+  if (head === undefined || !/^(?:totals?|subtotals?|sum)$/.test(head)) return false;
+  return words.slice(i + 1).every((w) => TOTALS_TAIL.test(w));
+}
+
+/**
+ * {@link parseCapTable}, keeping the totals rows it set aside.
+ *
+ * Both are exported because the route needs the totals and every other caller
+ * needs the entries; the totals feed `validateCapTable`, which is the only
+ * thing that can tell whoever uploaded the file that the sheet's own total
+ * disagrees with what was read out of it.
+ */
+export function parseCapTableSheet(
+  rows: Record<string, unknown>[],
+  mapping: ColumnMapping,
+  sourceLines?: readonly number[],
+): { entries: CapTableEntry[]; totals: CapTableTotalsRow[] } {
   const entries: CapTableEntry[] = [];
+  const totals: CapTableTotalsRow[] = [];
   for (const [index, row] of rows.entries()) {
     const name = String(readCell(row, mapping.security_class) ?? '').trim();
     /**
@@ -615,10 +698,16 @@ export function parseCapTable(
     };
 
     const sharesRaw = read('shares');
-    // Skip blank rows / totals rows with no class and no shares. A cell that
-    // held something unreadable is not blank, so such a row is kept and
-    // reported rather than dropped on the floor.
+    // Skip blank rows: no class, no shares. A cell that held something
+    // unreadable is not blank, so such a row is kept and reported rather than
+    // dropped on the floor.
     if (name === '' && sharesRaw === null && Object.keys(unreadable).length === 0) continue;
+    // A row that states a total is not a security — see `isTotalsLabel`. Set
+    // aside rather than dropped: the figure on it checks the import.
+    if (isTotalsLabel(name)) {
+      totals.push({ source_row: sourceLines?.[index], label: name, shares: sharesRaw });
+      continue;
+    }
     const typeCell = String(readCell(row, mapping.class_type) ?? '')
       .trim()
       .toLowerCase();
@@ -640,7 +729,7 @@ export function parseCapTable(
     if (Object.keys(unreadable).length > 0) entry.unreadable_numbers = unreadable;
     entries.push(entry);
   }
-  return entries;
+  return { entries, totals };
 }
 
 export interface CapTableIssue {
@@ -777,7 +866,19 @@ export function fullyDilutedShares(entries: readonly CapTableEntry[]): number {
  * and option pool. Errors make the table invalid (block save); warnings note
  * defaulted or missing figures.
  */
-export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
+export function validateCapTable(
+  entries: CapTableEntry[],
+  /**
+   * The totals rows `parseCapTableSheet` set aside, when the caller has them.
+   *
+   * Optional because most callers do not: `findCapTable` re-derives validation
+   * from stored entries alone, and by then the sheet is long gone. The checks
+   * below are therefore additive — a validation computed without them says
+   * everything it said before, which is what keeps the stored `validation`
+   * column reproducible on read.
+   */
+  totals: readonly CapTableTotalsRow[] = [],
+): CapTableValidation {
   const issues: CapTableIssue[] = [];
   const summary: CapTableSummary = {
     total_shares: 0,
@@ -1031,6 +1132,74 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
       code: 'no_option_pool',
       message: 'No option pool detected in the cap table.',
     });
+  }
+
+  /*
+   * The totals rows the sheet carried, and what they say about this import.
+   *
+   * Reported at all because a row silently dropped is indistinguishable from a
+   * row silently mis-read: whoever uploaded a 40-class sheet and got 39 classes
+   * back is owed the reason, in the one place that still knows it.
+   */
+  for (const t of totals) {
+    const at = t.source_row === undefined ? '' : `Row ${t.source_row}: `;
+    issues.push({
+      severity: 'warning',
+      code: 'totals_row_skipped',
+      security_class: t.label,
+      row: t.source_row,
+      message:
+        `${at}"${t.label}" states a total rather than a holding, and was not imported ` +
+        'as a security class.',
+    });
+  }
+
+  /*
+   * The sheet's own total, used as a checksum over everything above it.
+   *
+   * This is the one figure in the file that is a statement about the *import*
+   * rather than about a holding, and it is free: if the rows that were read sum
+   * to something other than what the sheet says they sum to, then either a row
+   * was not read, a share count was read wrongly, or the shares column is
+   * mapped one column off. All three are silent otherwise — each produces a
+   * table of plausible, finite, internally consistent numbers — and all three
+   * change the denominator the 409A divides by.
+   *
+   * Checked against both bases because the column means one of two things
+   * depending on who wrote the sheet: the raw sum of the shares column, or the
+   * fully-diluted count with conversion applied. Agreeing with either is
+   * agreement; a sheet is not asked to say which it meant.
+   *
+   * A warning rather than an error. The reasons a legitimate total may differ
+   * are real — it may cover a class that the mapping deliberately excludes, or
+   * be rounded, or be stale in the source sheet — and refusing the import would
+   * make this cross-check a liability rather than a safety net. The last totals
+   * row carrying a figure is the grand total; earlier ones are subtotals and
+   * are not summed over the whole table.
+   */
+  const grandTotal = [...totals].reverse().find((t) => t.shares !== null);
+  if (grandTotal?.shares != null && entries.length > 0) {
+    const stated = grandTotal.shares;
+    const tolerance = Math.max(0.5, Math.abs(stated) * 1e-9);
+    const agrees =
+      Math.abs(stated - summary.total_shares) <= tolerance ||
+      Math.abs(stated - summary.fully_diluted_shares) <= tolerance;
+    if (!agrees) {
+      const at = grandTotal.source_row === undefined ? '' : `Row ${grandTotal.source_row}: `;
+      issues.push({
+        severity: 'warning',
+        code: 'totals_row_mismatch',
+        security_class: grandTotal.label,
+        row: grandTotal.source_row,
+        message:
+          `${at}the sheet's "${grandTotal.label}" row states ` +
+          `${stated.toLocaleString('en-US')} shares, but the ${entries.length} ` +
+          `${entries.length === 1 ? 'row' : 'rows'} imported sum to ` +
+          `${summary.total_shares.toLocaleString('en-US')} ` +
+          `(${summary.fully_diluted_shares.toLocaleString('en-US')} as converted). ` +
+          'Check that every row was read and that the shares column is mapped correctly.',
+      });
+    }
   }
 
   return { valid: !issues.some((i) => i.severity === 'error'), issues, summary };

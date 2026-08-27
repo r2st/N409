@@ -5,10 +5,12 @@ import {
   MAX_CSV_CELLS,
   MAX_CSV_COLUMNS,
   parseCapTable,
+  parseCapTableSheet,
   parseCsvSheet,
   parseMultipleCell,
   parseRatioCell,
   validateCapTable,
+  fullyDilutedShares,
   type CapTableIssue,
 } from '../../src/domain/capTable.js';
 import { decodeSheetText, SheetTextError } from '../../src/domain/sheetText.js';
@@ -47,8 +49,8 @@ const MAPPING = {
 /** Parse + validate one CSV through the whole pipeline, as the route does. */
 function importCsv(csv: string) {
   const sheet = parseCsvSheet(csv, { maxRows: 2000 });
-  const entries = parseCapTable(sheet.rows, MAPPING, sheet.lines);
-  return { sheet, entries, validation: validateCapTable(entries) };
+  const { entries, totals } = parseCapTableSheet(sheet.rows, MAPPING, sheet.lines);
+  return { sheet, entries, totals, validation: validateCapTable(entries, totals) };
 }
 
 const codes = (issues: CapTableIssue[]) => issues.map((i) => `${i.severity}/${i.code}`);
@@ -170,11 +172,7 @@ describe('adversarial imports — duplicate headers', () => {
     // import is re-exported. Counting uses of each name gave the third column
     // `Shares (2)` as well, and the last one written won — which is exactly the
     // silent column loss the suffixing was added to prevent.
-    expect(nameColumns(['Shares (2)', 'Shares', 'Shares'])).toEqual([
-      'Shares (2)',
-      'Shares',
-      'Shares (3)',
-    ]);
+    expect(nameColumns(['Shares (2)', 'Shares', 'Shares'])).toEqual(['Shares (2)', 'Shares', 'Shares (3)']);
     expect(rowByColumn(nameColumns(['Shares (2)', 'Shares', 'Shares']), ['a', 'b', 'c'])).toEqual({
       'Shares (2)': 'a',
       Shares: 'b',
@@ -199,9 +197,11 @@ describe('adversarial imports — wrong types in numeric columns', () => {
     // no issue price and no liquidation preference — and refusing them would
     // refuse the most ordinary cap table there is.
     const { entries, validation } = importCsv(
-      ['class,type,shares,price,invested,liq', 'Common,common,5000,,,', 'Founders,common,1000,N/A,-,#N/A'].join(
-        '\n',
-      ),
+      [
+        'class,type,shares,price,invested,liq',
+        'Common,common,5000,,,',
+        'Founders,common,1000,N/A,-,#N/A',
+      ].join('\n'),
     );
     expect(entries.every((e) => e.unreadable_numbers === undefined)).toBe(true);
     expect(errorsOf(validation.issues)).toEqual([]);
@@ -529,5 +529,255 @@ describe('adversarial imports — workbook shapes', () => {
     expect(() => readXlsx(buildZip([{ name: 'readme.txt', data: 'not a workbook' }]))).toThrow(
       /xl\/workbook\.xml is missing/,
     );
+  });
+});
+
+describe('adversarial imports — the totals row every real export carries', () => {
+  /**
+   * A cap table is a list of holdings with a sum printed under it, and the sum
+   * is not a holding. Carta writes one, Pulley writes one, and the workbook
+   * this platform exports writes `Total (fully diluted)` with `SUM(C..)` beside
+   * it — so the round trip of downloading the workbook, editing a share count
+   * and uploading it again went through this path too.
+   *
+   * Imported as a security class, that row holds by construction the sum of
+   * every real class: the fully-diluted count doubles, so every ownership
+   * percentage halves and so does the per-share price the 409A concludes. It is
+   * the exact failure this file exists to find — a finite, plausible, clean-
+   * validating wrong number — and the unit test guarding it was called "skips
+   * blank/total rows" while asserting that the total row was kept.
+   */
+  const withTotal = [
+    'class,shares,price',
+    'Common,6000000,0.10',
+    'Series A,4000000,1.00',
+    'Total,10000000,',
+  ].join('\n');
+
+  it('does not import the sum of the table as a holding in the table', () => {
+    const { entries, validation } = importCsv(withTotal);
+    expect(entries.map((e) => e.security_class)).toEqual(['Common', 'Series A']);
+    // The figure the whole thing is for: 10,000,000, not the 20,000,000 that
+    // counting the total row as a class produced.
+    expect(validation.summary.fully_diluted_shares).toBe(10_000_000);
+    expect(validation.summary.total_shares).toBe(10_000_000);
+    expect(validation.summary.class_count).toBe(2);
+  });
+
+  it('says it dropped the row rather than dropping it silently', () => {
+    const { validation } = importCsv(withTotal);
+    const issue = validation.issues.find((i) => i.code === 'totals_row_skipped');
+    expect(issue?.severity).toBe('warning');
+    expect(issue?.row).toBe(4);
+    expect(issue?.message).toContain('"Total" states a total rather than a holding');
+    // A warning, so an ordinary export still imports.
+    expect(validation.valid).toBe(true);
+  });
+
+  it("recognises the spellings a real export writes, and the platform's own", () => {
+    for (const label of [
+      'Total',
+      'TOTAL',
+      'Totals',
+      'Total:',
+      'Total (fully diluted)',
+      'Total [FD]',
+      'Total shares',
+      'Total Shares Outstanding',
+      'Total fully diluted',
+      'Grand Total',
+      'Grand total shares',
+      'Subtotal',
+      'Sub-total',
+      'Total Preferred',
+      'Total common',
+      'Sum',
+      'Total *',
+    ]) {
+      const { entries } = importCsv(`class,shares,price\nCommon,6000000,0.10\n${label},6000000,`);
+      expect(
+        entries.map((e) => e.security_class),
+        label,
+      ).toEqual(['Common']);
+    }
+  });
+
+  /**
+   * The other half of the rule, and the more important one: a tail of ordinary
+   * words is what makes a label a total, so a security class that merely begins
+   * with the word is still a security class. Dropping a real holding would be a
+   * worse bug than the one being fixed — it would understate the denominator
+   * instead of overstating it, just as silently.
+   */
+  it('keeps a security class whose name merely starts with the word', () => {
+    for (const label of [
+      'Total Return Preferred',
+      'Total Access Series B',
+      'Totality Holdings LLC',
+      'Sumitomo Series C',
+      'Subtotal Systems Inc Common',
+    ]) {
+      const { entries } = importCsv(`class,shares,price\nCommon,6000000,0.10\n${label},1000,0.5`);
+      expect(
+        entries.map((e) => e.security_class),
+        label,
+      ).toEqual(['Common', label]);
+    }
+  });
+
+  it('uses the stated total as a checksum, and says so when it disagrees', () => {
+    // The sheet totals 10,000,000; the rows read sum to 9,000,000. Either a row
+    // was not read or a share count was — both are otherwise silent.
+    const { validation } = importCsv(
+      ['class,shares,price', 'Common,6000000,0.10', 'Series A,3000000,1.00', 'Total,10000000,'].join('\n'),
+    );
+    const issue = validation.issues.find((i) => i.code === 'totals_row_mismatch');
+    expect(issue?.severity).toBe('warning');
+    expect(issue?.message).toContain('states 10,000,000 shares');
+    expect(issue?.message).toContain('sum to 9,000,000');
+  });
+
+  it('raises no mismatch when the total agrees on either basis', () => {
+    // Raw sum: 6,000,000 + 4,000,000. As-converted: the Series A converts 2:1,
+    // so 6,000,000 + 8,000,000. A sheet may total either, and is asked to
+    // declare neither.
+    const raw = importCsv(
+      [
+        'class,shares,price,conv',
+        'Common,6000000,0.10,',
+        'Series A,4000000,1.00,2:1',
+        'Total,10000000,,',
+      ].join('\n'),
+    );
+    expect(raw.validation.summary.fully_diluted_shares).toBe(14_000_000);
+    expect(codes(raw.validation.issues)).not.toContain('warning/totals_row_mismatch');
+
+    const converted = importCsv(
+      [
+        'class,shares,price,conv',
+        'Common,6000000,0.10,',
+        'Series A,4000000,1.00,2:1',
+        'Total (fully diluted),14000000,,',
+      ].join('\n'),
+    );
+    expect(codes(converted.validation.issues)).not.toContain('warning/totals_row_mismatch');
+  });
+
+  it('checks against the grand total rather than the last subtotal', () => {
+    const { validation } = importCsv(
+      [
+        'class,shares,price',
+        'Common,6000000,0.10',
+        'Total common,6000000,',
+        'Series A,4000000,1.00',
+        'Total preferred,4000000,',
+        'Grand Total,10000000,',
+      ].join('\n'),
+    );
+    expect(validation.summary.fully_diluted_shares).toBe(10_000_000);
+    expect(codes(validation.issues)).not.toContain('warning/totals_row_mismatch');
+    expect(validation.issues.filter((i) => i.code === 'totals_row_skipped')).toHaveLength(3);
+  });
+
+  it('does not invent a checksum for a table that has no totals row', () => {
+    const { totals, validation } = importCsv('class,shares,price\nCommon,6000000,0.10');
+    expect(totals).toEqual([]);
+    expect(codes(validation.issues)).not.toContain('warning/totals_row_mismatch');
+    expect(codes(validation.issues)).not.toContain('warning/totals_row_skipped');
+  });
+
+  it('reads the workbook this platform exports back into the table it came from', () => {
+    /*
+     * The round trip the export exists for: download the valuation workbook,
+     * change a share count, upload it again. The Cap table sheet's headers and
+     * its `Total (fully diluted)` footer are written by
+     * `export/valuationWorkbook.ts`; this reproduces that shape rather than
+     * importing the exporter, because what is being tested is that the importer
+     * survives the *file*, whatever wrote it.
+     */
+    const [sheet] = readXlsx(
+      workbookOf(
+        sheetRows([
+          ['class', 'type', 'shares', 'price', 'invested', 'liq', 'sen', 'conv'],
+          ['Common', 'common', '6000000', '0.0001', '', '', '', ''],
+          ['Series A Preferred', 'preferred', '4000000', '1.25', '5000000', '1', '1', '1'],
+          ['Total (fully diluted)', '', '10000000', '', '5000000', '', '', ''],
+        ]),
+      ),
+    );
+    const { entries, totals } = parseCapTableSheet(sheet?.rows ?? [], MAPPING, sheet?.lines);
+    const validation = validateCapTable(entries, totals);
+    expect(entries.map((e) => e.security_class)).toEqual(['Common', 'Series A Preferred']);
+    expect(fullyDilutedShares(entries)).toBe(10_000_000);
+    expect(validation.valid).toBe(true);
+    expect(codes(validation.issues)).not.toContain('warning/totals_row_mismatch');
+  });
+});
+
+describe('adversarial imports — importing the same file twice', () => {
+  const csv = [
+    'class,type,shares,price,invested,liq,sen,conv',
+    'Common,common,6000000,0.0001,,,,',
+    'Série A,preferred,4000000,"1,25","5.000.000","2x",1,"2:1"',
+    'Total,,10000000,,,,,',
+  ].join('\n');
+
+  /**
+   * The importer is a pure function of the bytes, and the reason to pin that is
+   * that it stopped being obvious once it grew state to be wrong about: a
+   * `Map` of column-name uses, a `Set` of names already minted, running cell
+   * and record counters, and a list of totals rows. Any of those leaking across
+   * a call — or any dependence on `Date`, iteration order or a module-level
+   * accumulator — makes the second import of a file differ from the first,
+   * which for a cap table is a silently different denominator.
+   */
+  it('reads identically however many times it is read', () => {
+    const once = importCsv(csv);
+    const twice = importCsv(csv);
+    const thrice = importCsv(csv);
+    expect(twice.entries).toEqual(once.entries);
+    expect(thrice.entries).toEqual(once.entries);
+    expect(twice.validation).toEqual(once.validation);
+    expect(twice.totals).toEqual(once.totals);
+  });
+
+  it('is unaffected by another file having been read in between', () => {
+    const before = importCsv(csv);
+    importCsv('shares,shares,shares\n1,2,3\nTotal,9,');
+    importCsv('class,shares\nOnly,1');
+    expect(importCsv(csv).entries).toEqual(before.entries);
+  });
+
+  /**
+   * Duplicate-header suffixing is the state most likely to leak, because it is
+   * the only part of the reader that mints names rather than reading them.
+   */
+  it('names duplicate columns the same way on every pass', () => {
+    const header = ['Shares (2)', 'Shares', 'Shares', 'Shares (3)'];
+    const first = nameColumns(header);
+    expect(nameColumns(header)).toEqual(first);
+    expect(new Set(first).size).toBe(header.length);
+  });
+
+  /**
+   * Re-importing what a previous import produced. The entries are round-tripped
+   * through JSON because that is how they are stored and read back, and a
+   * validation re-derived from them has to agree with the one computed at
+   * import time — `findCapTable` recomputes it on every read, so the two
+   * disagreeing means the number on the screen changes when nothing did.
+   */
+  it('re-derives the stored validation from the entries alone', () => {
+    const { entries, validation, totals } = importCsv(csv);
+    const stored = JSON.parse(JSON.stringify(entries)) as typeof entries;
+    const rederived = validateCapTable(stored);
+    expect(rederived.summary).toEqual(validation.summary);
+    // The totals issues are the whole of the difference, and they are the ones
+    // that cannot survive: they are statements about the uploaded file, not
+    // about the entries. The route persists the re-derived form for exactly
+    // this reason.
+    const fileOnly = new Set(['totals_row_skipped', 'totals_row_mismatch']);
+    expect(codes(rederived.issues)).toEqual(codes(validation.issues.filter((i) => !fileOnly.has(i.code))));
+    expect(rederived.valid).toBe(validation.valid);
+    expect(validateCapTable(stored, totals).issues).toEqual(validation.issues);
   });
 });
