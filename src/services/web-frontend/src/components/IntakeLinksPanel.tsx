@@ -3,7 +3,18 @@ import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { formatDate, KIND_LABELS } from '../lib/format';
 import { VALUATION_KINDS, type ValuationKind } from '../lib/types';
-import { Button, DataTable, ErrorNote, Field, Modal, Select, Spinner, TextInput, type Column } from './ui';
+import {
+  Button,
+  DataTable,
+  ErrorNote,
+  Field,
+  ListTruncationNote,
+  Modal,
+  Select,
+  Spinner,
+  TextInput,
+  type Column,
+} from './ui';
 
 /**
  * Client intake links — the firm's side of the intake form.
@@ -117,6 +128,8 @@ function answerText(value: unknown): string {
 
 export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
   const [links, setLinks] = useState<IntakeLink[] | null>(null);
+  /** True when the firm has sent more links than this page carries. */
+  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -138,8 +151,9 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await api<{ links: IntakeLink[] }>(scoped('/firm/intake-links'));
+      const res = await api<{ links: IntakeLink[]; truncated: boolean }>(scoped('/firm/intake-links'));
       setLinks(res.links);
+      setTruncated(res.truncated);
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 403
@@ -443,13 +457,24 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
         {links === null ? (
           <Spinner />
         ) : (
-          <DataTable
-            columns={columns}
-            rows={links}
-            rowKey={(row) => row.id}
-            caption="Client intake links"
-            empty="No intake link yet — send one to start a client off."
-          />
+          <>
+            <DataTable
+              columns={columns}
+              rows={links}
+              rowKey={(row) => row.id}
+              caption="Client intake links"
+              empty="No intake link yet — send one to start a client off."
+            />
+            {/* Used and revoked links stay on the roster, so this list is the
+                firm's whole history of asking rather than its open pipeline. A
+                link missing from it reads as a client nobody has invited. */}
+            <ListTruncationNote
+              truncated={truncated}
+              shown={links.length}
+              noun="intake links"
+              hint="the oldest links are not listed"
+            />
+          </>
         )}
       </div>
 

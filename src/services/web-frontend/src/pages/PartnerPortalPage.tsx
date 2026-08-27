@@ -12,6 +12,7 @@ import {
   EmptyState,
   ErrorNote,
   KindBadge,
+  ListTruncationNote,
   Spinner,
   StatCard,
   StateBadge,
@@ -27,6 +28,8 @@ export function PartnerPortalPage() {
   const { user } = useAuth();
   const [valuations, setValuations] = useState<Valuation[] | null>(null);
   const [tokens, setTokens] = useState<ApiToken[] | null>(null);
+  /** True when the partner holds more tokens than this page carries. */
+  const [tokensTruncated, setTokensTruncated] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -52,8 +55,11 @@ export function PartnerPortalPage() {
 
   const loadTokens = useCallback(() => {
     if (!partnerId || !canMint) return;
-    api<{ tokens: ApiToken[] }>(`/partners/${partnerId}/tokens`)
-      .then((res) => setTokens(res.tokens))
+    api<{ tokens: ApiToken[]; truncated: boolean }>(`/partners/${partnerId}/tokens`)
+      .then((res) => {
+        setTokens(res.tokens);
+        setTokensTruncated(res.truncated);
+      })
       .catch(() => setTokenError('Could not load API tokens.'));
   }, [partnerId, canMint]);
 
@@ -270,6 +276,13 @@ export function PartnerPortalPage() {
             </div>
           )}
           {tokens && tokens.length === 0 && <p className="mt-5 text-sm text-ink-400">No tokens yet.</p>}
+          {/* Revoked keys stay for the audit trail, so this list only grows. */}
+          <ListTruncationNote
+            truncated={tokensTruncated}
+            shown={tokens?.length ?? 0}
+            noun="API tokens"
+            hint="the oldest keys are not listed"
+          />
         </section>
       )}
     </div>

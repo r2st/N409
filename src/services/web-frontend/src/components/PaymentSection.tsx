@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { formatDate, formatCents } from '../lib/format';
 import type { Payment, PaymentQuote, Valuation } from '../lib/types';
-import { Button, ErrorNote } from './ui';
+import { Button, ErrorNote, ListTruncationNote } from './ui';
 
 /**
  * Stripe checkout entry point (remaining-gaps §3 #1). Unpaid valuations get a
@@ -261,14 +261,21 @@ function settlementNote(p: Payment): string | null {
 export function PaymentHistory({ valuation }: { valuation: Valuation }) {
   const [payments, setPayments] = useState<Payment[] | null>(null);
   const [failed, setFailed] = useState(false);
+  /**
+   * True when the engagement has more payment rows than this page carries. A
+   * row per checkout attempt, kept whether it completed or not, so the ledger
+   * grows with abandoned card forms as well as with payments.
+   */
+  const [truncated, setTruncated] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    void api<{ payments: Payment[] }>(`/valuations/${valuation.id}/payments`)
+    void api<{ payments: Payment[]; truncated: boolean }>(`/valuations/${valuation.id}/payments`)
       .then((res) => {
         if (cancelled) return;
         setFailed(false);
         setPayments(res.payments);
+        setTruncated(res.truncated);
       })
       .catch(() => {
         // Not `setPayments([])`: this section hides itself when there is
@@ -366,6 +373,12 @@ export function PaymentHistory({ valuation }: { valuation: Valuation }) {
           </tbody>
         </table>
       </div>
+      <ListTruncationNote
+        truncated={truncated}
+        shown={payments.length}
+        noun="payment records"
+        hint="the oldest attempts are not listed"
+      />
     </section>
   );
 }

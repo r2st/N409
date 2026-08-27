@@ -2,7 +2,18 @@ import { useCallback, useEffect, useState } from 'react';
 import { required, useFormValidation } from '../../lib/useFormValidation';
 import { api, ApiError } from '../../lib/api';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput, WriteGate } from '../../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  ListTruncationNote,
+  LoadError,
+  Spinner,
+  TextInput,
+  WriteGate,
+  useRetry,
+} from '../../components/ui';
 import { VolatilityPanel } from '../../components/valuation/VolatilityPanel';
 
 /**
@@ -96,6 +107,13 @@ interface ComparablesResponse {
   market_method: string | null;
   market_horizon: string | null;
   can_edit: boolean;
+  /**
+   * True when the peer set runs past `page_limit`. It matters more here than
+   * on most lists: `statistics` is a median over the page, so a truncated set
+   * states a multiple the whole set does not have.
+   */
+  truncated: boolean;
+  page_limit: number;
 }
 
 const MULTIPLE_ORDER: MultipleKey[] = ['ev_revenue_ltm', 'ev_revenue_ntm', 'ev_ebitda_ltm', 'ev_ebitda_ntm'];
@@ -128,6 +146,7 @@ export function ComparablesTab() {
   const { valuation, retired } = useWorkspace();
   const [data, setData] = useState<ComparablesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState(false);
   /** The row whose exclusion reason is being collected, if any. */
   const [excluding, setExcluding] = useState<string | null>(null);
@@ -145,7 +164,7 @@ export function ComparablesTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const run = async (work: () => Promise<unknown>, failure: string) => {
     setBusy(true);
@@ -303,7 +322,7 @@ export function ComparablesTab() {
     }
   });
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data) return <Spinner />;
 
   const included = data.comparables.filter((c) => c.included);
@@ -543,6 +562,15 @@ export function ComparablesTab() {
           </table>
         </div>
       )}
+
+      {/* Included peers sort first, so a truncated set has dropped its
+          excluded tail — the half an auditor asks about. */}
+      <ListTruncationNote
+        truncated={data.truncated}
+        shown={data.comparables.length}
+        noun="comparables"
+        hint="the multiples above are struck on the peers listed"
+      />
 
       <WriteGate closed={retired}>
         {excluding && (

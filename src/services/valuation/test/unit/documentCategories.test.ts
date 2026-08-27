@@ -136,20 +136,22 @@ describe('document categories', () => {
   it('reports every bucket, including the empty ones', () => {
     // An empty bucket is the thing the client needs to see, so filtering to
     // the ones with uploads would hide exactly the useful half.
-    const summary = summarizeCategories([]);
+    const summary = summarizeCategories(new Map());
     expect(summary).toHaveLength(13);
     expect(summary.every((s) => s.count === 0)).toBe(true);
     expect(summary.filter((s) => !s.satisfied).map((s) => s.key)).toEqual(['captable_documents']);
   });
 
   it('counts uploads per bucket and clears the required one', () => {
-    const docs: Array<{ category: DocumentCategory }> = [
-      { category: 'captable_documents' },
-      { category: 'monthly_income_statements' },
-      { category: 'monthly_income_statements' },
-      { category: 'monthly_income_statements' },
-    ];
-    const byKey = new Map(summarizeCategories(docs).map((s) => [s.key, s]));
+    // Counts rather than rows: `documentCoverage` answers this in SQL now, so
+    // the checklist stays exact on an engagement whose file list is a page.
+    // Counting a page here would have reported a bucket as unsatisfied
+    // because its uploads sat past `DOCUMENT_PAGE_LIMIT`.
+    const counts = new Map<DocumentCategory, number>([
+      ['captable_documents', 1],
+      ['monthly_income_statements', 3],
+    ]);
+    const byKey = new Map(summarizeCategories(counts).map((s) => [s.key, s]));
     expect(byKey.get('monthly_income_statements')!.count).toBe(3);
     expect(byKey.get('captable_documents')!.satisfied).toBe(true);
     expect(byKey.get('annual_income_statements')!.count).toBe(0);

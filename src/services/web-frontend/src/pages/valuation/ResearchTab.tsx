@@ -9,12 +9,15 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  ListTruncationNote,
+  LoadError,
   LoadingBlock,
   Select,
   Skeleton,
   SkeletonText,
   TextInput,
   WriteGate,
+  useRetry,
 } from '../../components/ui';
 
 /**
@@ -72,6 +75,9 @@ interface ResearchResponse {
   research: ResearchRow[];
   stale_days: number;
   can_run: boolean;
+  /** True when more research rows exist than this page carries. */
+  truncated: boolean;
+  page_limit: number;
 }
 
 function Citations({ citations }: { citations: Citation[] }) {
@@ -244,6 +250,7 @@ export function ResearchTab() {
   const [topicsFailed, setTopicsFailed] = useState(false);
   const [data, setData] = useState<ResearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [running, setRunning] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -256,7 +263,7 @@ export function ResearchTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   useEffect(() => {
     if (!ops) return;
@@ -291,7 +298,7 @@ export function ResearchTab() {
     }
   };
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data)
     return (
       <LoadingBlock label="Loading market research…" className="space-y-6">
@@ -374,6 +381,15 @@ export function ResearchTab() {
             <Citations citations={row.citations} />
           </section>
         ))}
+
+      {/* Newest first, so a truncated log has lost the oldest research —
+          the supersede chain an auditor reads backwards through. */}
+      <ListTruncationNote
+        truncated={data.truncated}
+        shown={data.research.length}
+        noun="research answers"
+        hint="the earliest runs are not listed"
+      />
 
       {byTopic.size > 0 && data.research.some((r) => !r.grounded) && (
         <p className="text-xs text-ink-400">

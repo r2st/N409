@@ -15,7 +15,16 @@ import { useAuth } from '../lib/auth';
 import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, formatDateTime, initials } from '../lib/format';
 import type { ApiToken, User } from '../lib/types';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  ListTruncationNote,
+  Select,
+  Spinner,
+  TextInput,
+} from '../components/ui';
 import { PhoneInput, phoneFieldError } from '../components/PhoneInput';
 import { MfaCard } from '../components/MfaCard';
 import { ThemeToggle } from '../components/ThemeToggle';
@@ -449,6 +458,11 @@ function NotificationPreferencesCard() {
 function ApiTokensCard() {
   const { user } = useAuth();
   const [tokens, setTokens] = useState<ApiToken[] | null>(null);
+  /**
+   * Revoked tokens are kept for the audit trail, so this list only grows —
+   * and a live token past the page reads as a credential nobody holds.
+   */
+  const [tokensTruncated, setTokensTruncated] = useState(false);
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [minted, setMinted] = useState<{ name: string; secret: string } | null>(null);
@@ -464,8 +478,11 @@ function ApiTokensCard() {
   const needsPassword = user?.sso_provider !== 'google';
 
   const load = () =>
-    api<{ tokens: ApiToken[] }>('/me/tokens')
-      .then((d) => setTokens(d.tokens))
+    api<{ tokens: ApiToken[]; truncated: boolean }>('/me/tokens')
+      .then((d) => {
+        setTokens(d.tokens);
+        setTokensTruncated(d.truncated);
+      })
       .catch(() => setError('Could not load your API tokens.'));
 
   useEffect(() => {
@@ -567,6 +584,12 @@ function ApiTokensCard() {
           </tbody>
         </table>
       )}
+      <ListTruncationNote
+        truncated={tokensTruncated}
+        shown={live.length}
+        noun="tokens"
+        hint="revoke the ones you no longer use"
+      />
 
       <form onSubmit={create} className="mt-5 max-w-md space-y-4" noValidate>
         <Field label="New token name" error={errorFor('name')}>

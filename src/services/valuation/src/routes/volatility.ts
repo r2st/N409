@@ -208,6 +208,11 @@ export function registerVolatilityRoutes(
       // tickers in it is the reason the button cannot work, and saying so here
       // is cheaper than a 422 after the press.
       eligible_tickers: peerPage.items.filter((p) => p.included && p.ticker !== null).map((p) => p.ticker!),
+      // The tickers an estimate would be struck on come off a page of the peer
+      // set, so a set past the cap would measure volatility over fewer peers
+      // than the engagement holds — and the resulting figure would carry no
+      // sign of it.
+      peers_truncated: peerPage.truncated,
       can_edit: isOps(principal),
     };
   });

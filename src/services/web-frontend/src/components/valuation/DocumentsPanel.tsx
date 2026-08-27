@@ -9,7 +9,16 @@ import {
   type DocumentKind,
   type ValuationDocument,
 } from '../../lib/pipeline';
-import { Button, EmptyState, ErrorNote, LoadingBlock, Select, Skeleton, SkeletonDividedList } from '../ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  ListTruncationNote,
+  LoadingBlock,
+  Select,
+  Skeleton,
+  SkeletonDividedList,
+} from '../ui';
 
 /**
  * Mirrors MAX_DOCUMENT_BYTES on the upload route.
@@ -53,6 +62,8 @@ export function DocumentsPanel({
   canUpload?: boolean;
 }) {
   const [documents, setDocuments] = useState<ValuationDocument[] | null>(null);
+  /** True when the engagement holds more files than this page carries. */
+  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** One line per file that did not upload, so a batch names its own failures. */
   const [rejected, setRejected] = useState<string[]>([]);
@@ -65,10 +76,12 @@ export function DocumentsPanel({
 
   const load = useCallback(async () => {
     try {
-      const { documents: docs } = await api<{ documents: ValuationDocument[] }>(
-        `/valuations/${valuationId}/documents`,
-      );
+      const { documents: docs, truncated: more } = await api<{
+        documents: ValuationDocument[];
+        truncated: boolean;
+      }>(`/valuations/${valuationId}/documents`);
       setDocuments(docs);
+      setTruncated(more);
     } catch {
       setError('Could not load documents.');
     }
@@ -339,6 +352,17 @@ export function DocumentsPanel({
           ))}
         </ul>
       )}
+
+      {/* The intake checklist beside this list counts every file in SQL, so a
+          short page here does not make a bucket read as empty — but a file
+          somebody uploaded and cannot find would still read as a file that
+          never arrived. */}
+      <ListTruncationNote
+        truncated={truncated}
+        shown={documents?.length ?? 0}
+        noun="documents"
+        hint="filter by category to reach the rest"
+      />
     </div>
   );
 }

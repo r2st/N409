@@ -140,6 +140,46 @@ const CONSUMERS: Record<string, { renders?: string[]; why?: string }> = {
   '/api/v1/valuations/:id/audit-trail.csv': {
     renders: ['src/pages/valuation/AuditTrailTab.tsx'],
   },
+  // ── R187: the lists that had no cap at all ──────────────────────────────
+  // Every entry below was an uncapped `SELECT` returning an array — invisible
+  // to *both* censuses, because the frontend one keys on the flag and the
+  // repo-side `silentCapCensus` keys on a literal `LIMIT`. A query with
+  // neither had nothing to be asked about. See the valuation service's
+  // `test/unit/unboundedListCensus.test.ts`, which asks the third question:
+  // which uncapped multi-row reads are uncapped *on purpose*, and why.
+  '/api/v1/valuations/:id/documents': { renders: ['src/components/valuation/DocumentsPanel.tsx'] },
+  '/api/v1/valuations/:id/decisions': { renders: ['src/pages/valuation/DecisionsTab.tsx'] },
+  '/api/v1/valuations/:id/research': { renders: ['src/pages/valuation/ResearchTab.tsx'] },
+  '/api/v1/valuations/:id/comparables': { renders: ['src/pages/valuation/ComparablesTab.tsx'] },
+  '/api/v1/valuations/:id/comparables/screen': { renders: ['src/pages/valuation/ComparablesTab.tsx'] },
+  '/api/v1/valuations/:id/comparables/refresh': { renders: ['src/pages/valuation/ComparablesTab.tsx'] },
+  '/api/v1/valuations/:id/ai/comp_selection/apply': {
+    renders: ['src/pages/valuation/ComparablesTab.tsx'],
+  },
+  '/api/v1/valuations/:id/rounds': { renders: ['src/components/FundingHistory.tsx'] },
+  '/api/v1/valuations/:id/transactions': { renders: ['src/components/FundingHistory.tsx'] },
+  '/api/v1/valuations/:id/payments': { renders: ['src/components/PaymentSection.tsx'] },
+  '/api/v1/valuations/:id/auditor-access': {
+    renders: ['src/components/valuation/AuditorAccessPanel.tsx'],
+  },
+  '/api/v1/valuations/:id/volatility': { renders: ['src/components/valuation/VolatilityPanel.tsx'] },
+  '/api/v1/firm/intake-links': { renders: ['src/components/IntakeLinksPanel.tsx'] },
+  '/api/v1/me/tokens': { renders: ['src/pages/SettingsPage.tsx'] },
+  '/api/v1/partners/:partnerId/tokens': {
+    renders: ['src/pages/PartnerDetailPage.tsx', 'src/pages/PartnerPortalPage.tsx'],
+  },
+  '/api/v1/me/subscription': {
+    why: 'A name collision in the detector, not a cap: this handler is next to `/api/v1/me/billing` in `routes/billing.ts` and the segment split attributes that endpoint’s `listInvoicesForUser` page to it. `/me/billing` is the response that carries the invoice ledger, and BillingPage renders its notice.',
+  },
+  '/api/v1/valuations/:id/cap-table/graph': {
+    why: 'The graph draws a node per financing round and the response carries `truncated` for that reason, but CapTableTab renders the notice for the upload response it already maps above — one file, one notice, and the census matches by file.',
+  },
+  '/api/v1/valuations/:id/ai/:pipeline': {
+    why: 'Not a list response. It runs a pipeline and returns a job; the document page inside `buildAiPayload` is the corpus handed to the model, which `encodeDocuments` already bounds by a character budget — the cap makes that bound explicit rather than introducing one. What the run read is recorded in the job’s `document_ids`.',
+  },
+  '/api/v1/valuations/:id/volatility/estimate': {
+    why: 'The POST behind the button on VolatilityPanel, which renders the peer-set notice beside it — the estimate is struck on the tickers that panel lists, and the notice is on the list rather than on the result.',
+  },
   '/api/v1/valuations/:id/evidence-bundle': {
     why: 'Not a screen. The bundle carries its caps as a `truncated` object inside the manifest written into the archive, which is the artefact an auditor reads; there is no rendered list to annotate.',
   },

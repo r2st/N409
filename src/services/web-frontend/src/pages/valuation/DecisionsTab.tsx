@@ -8,10 +8,13 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  ListTruncationNote,
+  LoadError,
   Select,
   Spinner,
   TextInput,
   WriteGate,
+  useRetry,
 } from '../../components/ui';
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -41,6 +44,9 @@ interface Decision {
 interface DecisionsResponse {
   decisions: Decision[];
   categories: string[];
+  /** True when the log runs past `page_limit` — the log is append-only. */
+  truncated: boolean;
+  page_limit: number;
 }
 
 /**
@@ -53,6 +59,7 @@ export function DecisionsTab() {
   const { valuation, retired } = useWorkspace();
   const [data, setData] = useState<DecisionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [saving, setSaving] = useState(false);
   const [category, setCategory] = useState('approach_selection');
   const [decision, setDecision] = useState('');
@@ -69,7 +76,7 @@ export function DecisionsTab() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(
     { decision, rationale },
@@ -107,7 +114,7 @@ export function DecisionsTab() {
     }
   });
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data) return <Spinner />;
 
   // Newest last in the API (audit order); show newest first here.
@@ -163,6 +170,15 @@ export function DecisionsTab() {
             ))}
           </ol>
         )}
+        {/* The oldest end is the page that survives, so a truncated log is
+            missing its most recent decisions — including any that supersede
+            one still shown as live. */}
+        <ListTruncationNote
+          truncated={data.truncated}
+          shown={decisions.length}
+          noun="decisions"
+          hint="the most recent entries are not listed"
+        />
       </div>
 
       <aside>

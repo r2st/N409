@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
-import { Button, EmptyState, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  InfoTooltip,
+  ListTruncationNote,
+  LoadError,
+  Select,
+  Spinner,
+  TextInput,
+  useRetry,
+} from '../ui';
 
 /**
  * Where the expected volatility comes from.
@@ -80,6 +92,8 @@ interface VolatilityResponse {
   applied_volatility: number | null;
   eligible_tickers: string[];
   can_edit: boolean;
+  /** True when the peer set behind `eligible_tickers` ran past its page. */
+  peers_truncated: boolean;
 }
 
 const pct = (v: number | null | undefined, digits = 1): string =>
@@ -88,6 +102,7 @@ const pct = (v: number | null | undefined, digits = 1): string =>
 export function VolatilityPanel({ valuationId }: { valuationId: string }) {
   const [data, setData] = useState<VolatilityResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [method, setMethod] = useState<string>('historical');
@@ -105,7 +120,7 @@ export function VolatilityPanel({ valuationId }: { valuationId: string }) {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const run = async (work: () => Promise<unknown>, failure: string) => {
     setBusy(true);
@@ -163,7 +178,7 @@ export function VolatilityPanel({ valuationId }: { valuationId: string }) {
       );
     }, 'Could not adopt the estimate as the valuation assumption.');
 
-  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data) return <Spinner />;
 
   const latest = data.estimates[0] ?? null;
@@ -272,6 +287,17 @@ export function VolatilityPanel({ valuationId }: { valuationId: string }) {
             <Button onClick={estimate} disabled={busy || data.eligible_tickers.length === 0}>
               Estimate
             </Button>
+          </div>
+          {/* Not a list this panel draws, but the set the button measures
+              over — a figure struck on a page of the peer set is a figure
+              nobody can reconcile to the peer set. */}
+          <div className="sm:col-span-4">
+            <ListTruncationNote
+              truncated={data.peers_truncated}
+              shown={data.eligible_tickers.length}
+              noun="peer tickers"
+              hint="an estimate is struck on the tickers listed"
+            />
           </div>
           {data.eligible_tickers.length === 0 && (
             <p className="text-sm text-ink-400 sm:col-span-4">

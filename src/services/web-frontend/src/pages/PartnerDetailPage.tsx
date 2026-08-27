@@ -19,12 +19,15 @@ import {
   ErrorNote,
   Field,
   KindBadge,
+  ListTruncationNote,
+  LoadError,
+  pageCountOf,
   Pagination,
   Spinner,
-  StateBadge,
   StatCard,
+  StateBadge,
   TextInput,
-  pageCountOf,
+  useRetry,
 } from '../components/ui';
 
 const GROUP_ORDER = ['open', 'in_review', 'drafted', 'published', 'closed'] as const;
@@ -224,6 +227,8 @@ interface ApiToken {
  */
 function ApiTokenPanel({ partnerId }: { partnerId: string }) {
   const [tokens, setTokens] = useState<ApiToken[] | null>(null);
+  /** True when the partner holds more tokens than this page carries. */
+  const [tokensTruncated, setTokensTruncated] = useState(false);
   const [name, setName] = useState('');
   const [issued, setIssued] = useState<{ name: string; secret: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -237,8 +242,13 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
   const load = useCallback(async () => {
     const current = claim();
     try {
-      const { tokens: rows } = await api<{ tokens: ApiToken[] }>(`/partners/${partnerId}/tokens`);
-      if (current()) setTokens(rows);
+      const { tokens: rows, truncated } = await api<{ tokens: ApiToken[]; truncated: boolean }>(
+        `/partners/${partnerId}/tokens`,
+      );
+      if (current()) {
+        setTokens(rows);
+        setTokensTruncated(truncated);
+      }
     } catch {
       if (current()) setError('Could not load API tokens.');
     }
@@ -379,6 +389,14 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
           </table>
         </div>
       )}
+      {/* Revoked rows stay for the audit trail, so this list only grows —
+          and a live key past the page reads as a credential nobody holds. */}
+      <ListTruncationNote
+        truncated={tokensTruncated}
+        shown={tokens?.length ?? 0}
+        noun="API tokens"
+        hint="the oldest keys are not listed"
+      />
     </section>
   );
 }
@@ -504,6 +522,7 @@ export function PartnerDetailPage() {
   const navigate = useNavigate();
   const [partner, setPartner] = useState<PartnerDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { token, retryProps } = useRetry(() => setError(null));
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [brandColor, setBrandColor] = useState('');
@@ -547,7 +566,7 @@ export function PartnerDetailPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   /*
    * Three forms share this page, each with a different amount of nothing
@@ -636,7 +655,7 @@ export function PartnerDetailPage() {
 
   const emailTemplates = useFormValidation(templateValues, templateRules);
 
-  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (error) return <LoadError message={error} {...retryProps} />;
   if (!partner) return <Spinner />;
 
   const patch = async (body: Record<string, unknown>, failure: string) => {

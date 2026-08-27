@@ -4,7 +4,7 @@ import { api, ApiError } from '../lib/api';
 import { formatDate, formatCents, formatNumber } from '../lib/format';
 import { TRANSACTION_KINDS } from '../lib/types';
 import type { FundingRound, ValuationTransaction } from '../lib/types';
-import { Button, ErrorNote, Field, Select, TextInput } from './ui';
+import { Button, ErrorNote, Field, ListTruncationNote, Select, TextInput } from './ui';
 
 /** Transaction & funding-round history per valuation (M4). */
 
@@ -32,6 +32,12 @@ export function FundingHistory({
   const [rounds, setRounds] = useState<FundingRound[] | null>(null);
   const [transactions, setTransactions] = useState<ValuationTransaction[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Whether each book ran past its page. Both are ordered oldest-first — a
+   * financing history that starts in the middle is not a financing history —
+   * so what a truncated list is missing is the recent end.
+   */
+  const [truncated, setTruncated] = useState({ rounds: false, transactions: false });
   const [busy, setBusy] = useState(false);
   const [addingRound, setAddingRound] = useState(false);
   const [addingTxn, setAddingTxn] = useState(false);
@@ -54,11 +60,14 @@ export function FundingHistory({
   const load = useCallback(async () => {
     try {
       const [r, t] = await Promise.all([
-        api<{ rounds: FundingRound[] }>(`/valuations/${valuationId}/rounds`),
-        api<{ transactions: ValuationTransaction[] }>(`/valuations/${valuationId}/transactions`),
+        api<{ rounds: FundingRound[]; truncated: boolean }>(`/valuations/${valuationId}/rounds`),
+        api<{ transactions: ValuationTransaction[]; truncated: boolean }>(
+          `/valuations/${valuationId}/transactions`,
+        ),
       ]);
       setRounds(r.rounds);
       setTransactions(t.transactions);
+      setTruncated({ rounds: r.truncated, transactions: t.truncated });
     } catch {
       setError('Could not load funding history.');
     }
@@ -278,6 +287,12 @@ export function FundingHistory({
           </table>
         </div>
       )}
+      <ListTruncationNote
+        truncated={truncated.rounds}
+        shown={rounds?.length ?? 0}
+        noun="financing rounds"
+        hint="the most recent rounds are not listed"
+      />
 
       <div className="mt-7 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-ink-800">Share transactions</h3>
@@ -394,6 +409,12 @@ export function FundingHistory({
           </table>
         </div>
       )}
+      <ListTruncationNote
+        truncated={truncated.transactions}
+        shown={transactions?.length ?? 0}
+        noun="transactions"
+        hint="the most recent trades are not listed"
+      />
     </section>
   );
 }

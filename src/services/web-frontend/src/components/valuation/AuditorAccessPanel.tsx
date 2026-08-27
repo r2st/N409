@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
-import { Button, ErrorNote, Field, Select, TextInput } from '../ui';
+import { Button, ErrorNote, Field, ListTruncationNote, Select, TextInput } from '../ui';
 
 interface Access {
   id: string;
@@ -19,6 +19,8 @@ interface Access {
  */
 export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
   const [links, setLinks] = useState<Access[] | null>(null);
+  /** True when the engagement has more auditor grants than this page carries. */
+  const [truncated, setTruncated] = useState(false);
   const [label, setLabel] = useState('');
   const [days, setDays] = useState('30');
   const [minted, setMinted] = useState<{ id: string; url: string } | null>(null);
@@ -27,8 +29,11 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
 
   const load = useCallback(async () => {
     try {
-      const r = await api<{ access: Access[] }>(`/valuations/${valuationId}/auditor-access`);
+      const r = await api<{ access: Access[]; truncated: boolean }>(
+        `/valuations/${valuationId}/auditor-access`,
+      );
       setLinks(r.access);
+      setTruncated(r.truncated);
     } catch {
       setError('Could not load auditor links.');
     }
@@ -167,6 +172,14 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
           </table>
         </div>
       )}
+      {/* Revoked and expired grants stay for the audit trail, so this list
+          only grows. A grant missing from it reads as access nobody gave. */}
+      <ListTruncationNote
+        truncated={truncated}
+        shown={links?.length ?? 0}
+        noun="auditor links"
+        hint="the oldest grants are not listed"
+      />
     </section>
   );
 }
