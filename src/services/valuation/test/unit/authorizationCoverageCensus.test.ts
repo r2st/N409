@@ -36,6 +36,16 @@ import { PARTNER_API_ENDPOINTS, PARTNER_API_PREFIX } from '../../src/routes/part
  * the third: the handler must reach something that consults the caller before
  * it answers.
  *
+ * What it cannot see is the same thing its three siblings cannot: whether the
+ * expression it found is the one doing the work. `GET /api/v1/tasks` reads
+ * `principal.id` to resolve `?assignee=me` *and* calls `requireOps`; delete the
+ * `requireOps` and the sweep still passes, because the principal is still an
+ * input. That is a deliberate floor rather than an oversight — a scan strict
+ * enough to tell a filter from a guard would have to understand the handler —
+ * and it is why `crossTenantResourceAccess` and the per-surface integration
+ * suites exist. This asks the question that can be asked of every route at
+ * once; they ask the sharper one of the routes that matter most.
+ *
  * The second half is the part no individual sweep can do. Each of the four
  * decides what it owns by testing the URL, and the four predicates were written
  * at different times by different rounds; a route whose URL satisfies none of

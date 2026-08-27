@@ -603,7 +603,9 @@ describe.skipIf(!dbUp)('partner API', () => {
         method: 'POST',
         url: '/api/v1/me/tokens',
         headers: authHeader(client.token),
-        payload: { name: 'my script' },
+        // Minting is re-authenticated — see routes/account.ts. `seedUser`'s
+        // password.
+        payload: { name: 'my script', current_password: 'test-password-123' },
       });
       expect(minted.statusCode).toBe(201);
       const secret = minted.json().secret as string;

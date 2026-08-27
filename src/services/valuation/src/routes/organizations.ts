@@ -257,7 +257,10 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
    *
    * 404 rather than 409: to a caller who may see both rows, "that engagement is
    * not in this organization" and "that engagement is not there" are the same
-   * fact about this URL.
+   * fact about this URL. With a detail rather than bare, for the same reason —
+   * this is precisely the case `errorMessageQuality`'s bare-404 ratchet is
+   * written for, a 404 on a sub-resource whose parent the caller can already
+   * see, where nothing is being protected by saying nothing.
    */
   app.delete(
     '/api/v1/organizations/:id/entities/:valuationId',
@@ -267,7 +270,8 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
       const { id, valuationId } = req.params as { id: string; valuationId: string };
       const org = await loadOwnedOrg(principal, id);
       const valuation = await loadEditableValuation(principal, valuationId);
-      if (valuation.organization_id !== org.id) throw problems.notFound();
+      if (valuation.organization_id !== org.id)
+        throw problems.notFound('That engagement is not part of this organization.');
       await assignValuationToOrg(deps.pool, valuationId, null);
       return reply.status(204).send();
     },
