@@ -175,10 +175,26 @@ def _req(value, name: str, *, positive: bool = False) -> float:
     return out
 
 
-def _time_to_exit(params: dict, inputs: dict) -> float:
+def _time_to_exit(params: dict, inputs: dict) -> tuple[float, str]:
+    """The option horizon, and which of three places it came from.
+
+    The basis travels because the third place is not an input at all. Absent
+    both `inputs.time_to_exit_years` and `params.exit_timeline` the engine
+    substitutes `DEFAULT_TIME_TO_EXIT_YEARS`, writes it into
+    `results.assumptions.time_to_exit_years`, and the figure is then
+    indistinguishable from one the analyst chose — while driving both the
+    Black-Scholes allocation and any model DLOM. On the cap table in
+    `test_calculation_provenance.py` the concluded FMV moves from $0.5720 at one
+    year to $0.6133 at seven, and the Chaffee DLOM from 23% to 42%, so a
+    silently substituted three years is a conclusion nobody made.
+
+    `validate._check_dates` says nothing about it either: with neither field set
+    its `years` is None and it returns before any band check, so the payload
+    clears preflight and the substitution happens afterwards.
+    """
     override = _num(inputs.get("time_to_exit_years"), "time_to_exit_years")
     if override is not None:
-        return max(override, 0.0)
+        return max(override, 0.0), "input_override"
     exit_timeline = params.get("exit_timeline")
     if exit_timeline:
         try:
@@ -191,10 +207,38 @@ def _time_to_exit(params: dict, inputs: dict) -> float:
             # cleared. `date.fromisoformat` rejects a datetime string outright.
             raw_valuation = inputs.get("valuation_date") or date.today()
             valuation_date = date.fromisoformat(str(raw_valuation)[:10])
-            return max((exit_date - valuation_date).days / 365.25, 0.0)
+            return max((exit_date - valuation_date).days / 365.25, 0.0), "exit_timeline"
         except ValueError:
             raise EngineInputError("exit_timeline / valuation_date must be YYYY-MM-DD") from None
-    return DEFAULT_TIME_TO_EXIT_YEARS
+    return DEFAULT_TIME_TO_EXIT_YEARS, "engine_default"
+
+
+def _risk_free_rate(inputs: dict) -> tuple[float, str]:
+    """The rate the option models discount at, and whether it was supplied.
+
+    Asked as `is None` rather than the `_num(...) or DEFAULT_RISK_FREE_RATE`
+    this replaces, which read a supplied rate of exactly zero as "not supplied"
+    and discounted at 4% instead. Zero is not an exotic input: it is where the
+    euro area, Switzerland and Japan sat for years, and where the front of the
+    USD curve sat through 2020-21 — the vintage of a great many valuations this
+    engine re-runs. `validate` says so out loud, since `RISK_FREE_BAND` starts
+    at 0.0 and therefore passes a zero rate without even a warning, so the two
+    layers disagreed about the same number: preflight called it plausible and
+    the calculation threw it away.
+
+    Nothing disclosed the swap. `results.assumptions.risk_free_rate` reported
+    the 4% the engine chose, not the 0% the analyst typed, and on the reference
+    cap table in `test_calculation_provenance.py` that is a concluded FMV of
+    $0.3393 against the $0.2802 the stated inputs produce — 21% high, in the
+    direction that over-prices employee options.
+
+    The same shape is why `monte_carlo` spells its seed default out rather than
+    writing `or DEFAULT_SEED`; this is the risk-free rate catching up.
+    """
+    rate = _num(inputs.get("risk_free_rate"), "risk_free_rate")
+    if rate is None:
+        return DEFAULT_RISK_FREE_RATE, "engine_default"
+    return rate, "input"
 
 
 def _weights(params: dict) -> dict[str, float]:
@@ -807,7 +851,7 @@ def _pwerm_allocation(inputs: dict) -> dict:
     debt = _num(inputs.get("debt"), "debt") or 0.0
     default_rate = _num(pwerm_in.get("discount_rate"), "pwerm.discount_rate")
     if default_rate is None:
-        default_rate = _num(inputs.get("risk_free_rate"), "risk_free_rate") or DEFAULT_RISK_FREE_RATE
+        default_rate, _ = _risk_free_rate(inputs)
 
     allocation = allocate_pwerm(
         scenarios if isinstance(scenarios, list) else [],
@@ -861,7 +905,7 @@ def _compute_pwerm(params: dict, inputs: dict, trace: Trace | None = None) -> di
 
     # Expected (probability-weighted) time to exit drives any model DLOM.
     t = allocation["expected_time_to_exit_years"]
-    r = _num(inputs.get("risk_free_rate"), "risk_free_rate") or DEFAULT_RISK_FREE_RATE
+    r, r_basis = _risk_free_rate(inputs)
     volatility = _num(inputs.get("volatility"), "volatility", positive=True)
     if selects_model_dlom(params) and volatility is None:
         raise EngineInputError("volatility is required for the selected model DLOM")
@@ -884,6 +928,11 @@ def _compute_pwerm(params: dict, inputs: dict, trace: Trace | None = None) -> di
         "assumptions": {
             "expected_time_to_exit_years": t,
             "risk_free_rate": r,
+            # No `time_to_exit_basis`: PWERM takes its horizon from the
+            # scenarios' own probability-weighted times, so there is no engine
+            # fallback to disclose. The rate has one — it is read straight off
+            # `inputs.risk_free_rate` — so that half is reported.
+            "risk_free_rate_basis": r_basis,
             "volatility": volatility,
         },
         "discounts": _discounts_block(d),
@@ -891,7 +940,20 @@ def _compute_pwerm(params: dict, inputs: dict, trace: Trace | None = None) -> di
         "fully_diluted_basis": "cap_table_common",
         "fmv_per_share": round(fmv_per_share, 4),
     }
-    return {"engine_version": ENGINE_VERSION, "results": results}
+    # Outside `results`, for the reason `trace` is: `results` is the persisted
+    # answer and `results.fmv_per_share` is the conclusion, rounded to the four
+    # decimals every surface prints it at. This is that same figure before the
+    # rounding, and it exists for the one consumer that divides two runs against
+    # each other — `sensitivity`, whose `delta_from_base` is a ratio and
+    # therefore inherits the quantum of whatever it divides. Reading the 4-dp
+    # conclusion made that quantum 1e-4/FMV, which on a sub-cent common share is
+    # ~2% — reported to six decimals. It is not a second conclusion and must not
+    # be printed as one.
+    return {
+        "engine_version": ENGINE_VERSION,
+        "results": results,
+        "fmv_per_share_unrounded": fmv_per_share,
+    }
 
 
 def _weighted_equity(
@@ -945,8 +1007,8 @@ def _weighted_equity(
             )
 
     weights = _weights(params)
-    t = _time_to_exit(params, inputs)
-    r = _num(inputs.get("risk_free_rate"), "risk_free_rate") or DEFAULT_RISK_FREE_RATE
+    t, t_basis = _time_to_exit(params, inputs)
+    r, r_basis = _risk_free_rate(inputs)
     cash = _num(inputs.get("cash"), "cash") or 0.0
     debt = _num(inputs.get("debt"), "debt") or 0.0
 
@@ -1138,7 +1200,13 @@ def _weighted_equity(
             ],
             "weight_total": sum(w for w in weight_by_approach.values() if w > 0),
         },
-        outputs={"equity_value": equity_value, "time_to_exit_years": t, "risk_free_rate": r},
+        outputs={
+            "equity_value": equity_value,
+            "time_to_exit_years": t,
+            "time_to_exit_basis": t_basis,
+            "risk_free_rate": r,
+            "risk_free_rate_basis": r_basis,
+        },
     )
 
     return {
@@ -1147,7 +1215,9 @@ def _weighted_equity(
         "weight_by_approach": weight_by_approach,
         "market_movement": market_movement_applied,
         "t": t,
+        "t_basis": t_basis,
         "r": r,
+        "r_basis": r_basis,
         "cash": cash,
         "debt": debt,
     }
@@ -1460,6 +1530,15 @@ def _compute_opm(
         "assumptions": {
             "time_to_exit_years": round(t, 4),
             "risk_free_rate": r,
+            # Where the two option-model assumptions came from. Neither is
+            # required, so either can be a number the engine chose: `t` falls
+            # back to DEFAULT_TIME_TO_EXIT_YEARS and `r` to
+            # DEFAULT_RISK_FREE_RATE, and the figures above report the
+            # substitute exactly as they would report an analyst's entry. See
+            # `_time_to_exit` and `_risk_free_rate` for how much the concluded
+            # FMV moves across each one's plausible range.
+            "time_to_exit_basis": we["t_basis"],
+            "risk_free_rate_basis": we["r_basis"],
             "volatility": alloc["volatility"],
             # Two volatilities, named. `volatility` is the enterprise figure the
             # allocation ran on; this is the one the discount ran on. They are
@@ -1476,7 +1555,12 @@ def _compute_opm(
     _attach_class_volatility(results, alloc)
     if recompute is not None:
         results["recomputed"] = sorted(recompute)
-    return {"engine_version": ENGINE_VERSION, "results": results}
+    # `fmv_per_share_unrounded` outside `results` — see `_compute_pwerm`.
+    return {
+        "engine_version": ENGINE_VERSION,
+        "results": results,
+        "fmv_per_share_unrounded": fmv_per_share,
+    }
 
 
 def _compute_cvm(
@@ -1510,6 +1594,9 @@ def _compute_cvm(
         "assumptions": {
             "time_to_exit_years": round(t, 4),
             "risk_free_rate": r,
+            # Where the two figures above came from — see `_compute_opm`.
+            "time_to_exit_basis": we["t_basis"],
+            "risk_free_rate_basis": we["r_basis"],
             "volatility": volatility,
         },
         "discounts": _discounts_block(d),
@@ -1525,7 +1612,12 @@ def _compute_cvm(
     _attach_market_movement(results, we)
     if recompute is not None:
         results["recomputed"] = sorted(recompute)
-    return {"engine_version": ENGINE_VERSION, "results": results}
+    # `fmv_per_share_unrounded` outside `results` — see `_compute_pwerm`.
+    return {
+        "engine_version": ENGINE_VERSION,
+        "results": results,
+        "fmv_per_share_unrounded": fmv_per_share,
+    }
 
 
 def _compute_monte_carlo(
@@ -1579,6 +1671,9 @@ def _compute_monte_carlo(
         "assumptions": {
             "time_to_exit_years": round(t, 4),
             "risk_free_rate": r,
+            # Where the two figures above came from — see `_compute_opm`.
+            "time_to_exit_basis": we["t_basis"],
+            "risk_free_rate_basis": we["r_basis"],
             "volatility": volatility,
         },
         "discounts": _discounts_block(d),
@@ -1592,7 +1687,12 @@ def _compute_monte_carlo(
     _attach_market_movement(results, we)
     if recompute is not None:
         results["recomputed"] = sorted(recompute)
-    return {"engine_version": ENGINE_VERSION, "results": results}
+    # `fmv_per_share_unrounded` outside `results` — see `_compute_pwerm`.
+    return {
+        "engine_version": ENGINE_VERSION,
+        "results": results,
+        "fmv_per_share_unrounded": fmv_per_share,
+    }
 
 
 def _compute_hybrid(
@@ -1660,6 +1760,13 @@ def _compute_hybrid(
         "assumptions": {
             "time_to_exit_years": t_blend,
             "risk_free_rate": r,
+            # "hybrid_blend" rather than the OPM leg's own basis: the figure
+            # beside it is `blend_hybrid`'s weighted horizon, not `_time_to_exit`'s
+            # output, so naming that output's provenance here would label a
+            # number this document does not print. The leg's own basis is
+            # `we["t_basis"]` and rides on the trace's weighting step.
+            "time_to_exit_basis": "hybrid_blend",
+            "risk_free_rate_basis": we["r_basis"],
             "volatility": volatility,
             "dlom_volatility": dlom_vol,
             "dlom_volatility_basis": vol_basis,
@@ -1673,7 +1780,12 @@ def _compute_hybrid(
     _attach_class_volatility(results, opm_alloc)
     if recompute is not None:
         results["recomputed"] = sorted(recompute)
-    return {"engine_version": ENGINE_VERSION, "results": results}
+    # `fmv_per_share_unrounded` outside `results` — see `_compute_pwerm`.
+    return {
+        "engine_version": ENGINE_VERSION,
+        "results": results,
+        "fmv_per_share_unrounded": fmv_per_share,
+    }
 
 
 def _assert_finite_results(node, path: str = "results") -> None:

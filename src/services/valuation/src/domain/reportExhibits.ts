@@ -1803,9 +1803,35 @@ export function allocationExhibit(
   const volatility = num(assumptions?.volatility);
   const rf = num(assumptions?.risk_free_rate);
   const t = num(assumptions?.time_to_exit_years) ?? num(assumptions?.expected_time_to_exit_years);
+  /*
+   * Two of these three can be figures nobody chose.
+   *
+   * Neither the exit horizon nor the risk-free rate is a required input, and
+   * with both absent the engine substitutes its own — three years and 4% — and
+   * reports them under `assumptions` exactly as it reports an analyst's entry.
+   * Printed bare in this table they read as the appraiser's stated basis, which
+   * is the assertion this exhibit exists to make and the one thing it must not
+   * make falsely: T sets the option horizon and the model DLOM together, and
+   * across the band a 409A would accept it is a materially different opinion.
+   *
+   * The engine now says which it was (`*_basis`, added with the provenance
+   * labels — see `compute._time_to_exit` and `compute._risk_free_rate`), so the
+   * exhibit says so too. Absent on every calculation stored before those labels
+   * existed, which reads as "not stated" and prints as it always did.
+   */
+  const defaulted = (basis: unknown): string =>
+    text(basis) === 'engine_default' ? ' (engine default — not supplied)' : '';
   if (volatility !== null) inputRows.push(['Expected volatility (σ)', formatPercent(volatility, 1)]);
-  if (t !== null) inputRows.push(['Expected time to liquidity (T)', `${t.toFixed(2)} years`]);
-  if (rf !== null) inputRows.push(['Risk-free rate (r)', formatPercent(rf, 2)]);
+  if (t !== null)
+    inputRows.push([
+      'Expected time to liquidity (T)',
+      `${t.toFixed(2)} years${defaulted(assumptions?.time_to_exit_basis)}`,
+    ]);
+  if (rf !== null)
+    inputRows.push([
+      'Risk-free rate (r)',
+      `${formatPercent(rf, 2)}${defaulted(assumptions?.risk_free_rate_basis)}`,
+    ]);
   const equity = num(results.equity_value);
   if (equity !== null) inputRows.push(['Equity value allocated', formatCurrency(equity, currency, 0)]);
 

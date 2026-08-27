@@ -1351,6 +1351,53 @@ describe('allocation exhibit', () => {
     expect(seen).toContain('4.20%'); // risk-free rate
   });
 
+  it('marks a horizon and a rate the engine chose rather than the appraiser', () => {
+    // Neither is a required input. With both absent the engine substitutes its
+    // own — and reports them under `assumptions` exactly as it reports an
+    // analyst's entry, so printed bare this table asserts a basis nobody set.
+    const seen = plain(
+      allocationExhibit(
+        {
+          ...RESULTS,
+          assumptions: {
+            ...RESULTS.assumptions,
+            time_to_exit_basis: 'engine_default',
+            risk_free_rate_basis: 'engine_default',
+          },
+        },
+        CONTEXT,
+      )!.html,
+    );
+    expect(seen).toContain('3.50 years (engine default — not supplied)');
+    expect(seen).toContain('4.20% (engine default — not supplied)');
+  });
+
+  it('says nothing extra about an assumption the analyst did supply', () => {
+    const seen = plain(
+      allocationExhibit(
+        {
+          ...RESULTS,
+          assumptions: {
+            ...RESULTS.assumptions,
+            time_to_exit_basis: 'exit_timeline',
+            risk_free_rate_basis: 'input',
+          },
+        },
+        CONTEXT,
+      )!.html,
+    );
+    expect(seen).not.toContain('engine default');
+  });
+
+  it('prints as it always did for a calculation stored before the labels existed', () => {
+    // Absent is not the same as `engine_default`: every valuation computed
+    // before the provenance labels shipped has no basis on it at all, and this
+    // exhibit must not assert something about them either way.
+    const seen = plain(allocationExhibit(RESULTS, CONTEXT)!.html);
+    expect(seen).toContain('3.50 years');
+    expect(seen).not.toContain('engine default');
+  });
+
   it('gives each class its value and value per share', () => {
     const seen = plain(allocationExhibit(RESULTS, CONTEXT)!.html);
     expect(seen).toContain('$14,625,184');

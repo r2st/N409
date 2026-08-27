@@ -98,7 +98,11 @@ def _base_value(name: str, params: dict, inputs: dict) -> float | None:
         return v if v is not None else (0.0 if _income(inputs) else None)
     if name == "time_to_exit":
         try:
-            return _time_to_exit(params, inputs)
+            # `_time_to_exit` returns (years, basis); the lever is the number.
+            # The basis is a disclosure about where the base case came from and
+            # says nothing about the swept points, every one of which is an
+            # explicit override written by `_apply`.
+            return _time_to_exit(params, inputs)[0]
         except EngineInputError:
             return None
     if name == "exit_multiple":
@@ -185,12 +189,29 @@ def _steps(base: float, span: float, steps: int) -> list[float]:
     return [round(lo + (hi - lo) * i / (steps - 1), 8) for i in range(steps)]
 
 
-def _fmv(params: dict, inputs: dict) -> tuple[float | None, float | None, str | None]:
+def _fmv(params: dict, inputs: dict) -> tuple[float | None, float | None, float | None, str | None]:
+    """One run: the reported FMV, the unrounded one, and the equity value.
+
+    Two per-share figures because they answer different questions. The reported
+    `results.fmv_per_share` is the conclusion at the four decimals every surface
+    prints, and it is what a cell of this table shows. The unrounded one is what
+    `delta_from_base` divides — a ratio inherits the quantum of its operands,
+    and 1e-4 against a sub-cent common share is a 2% step, which is 20,000 times
+    the six decimals the delta was being reported to. On the reference cap table
+    in `test_calculation_provenance.py` a swept volatility that really moves the
+    conclusion +85.65% was published as +83.67%.
+    """
     try:
-        res = compute(params, inputs)["results"]
-        return res.get("fmv_per_share"), res.get("equity_value"), None
+        out = compute(params, inputs)
+        res = out["results"]
+        return (
+            res.get("fmv_per_share"),
+            out.get("fmv_per_share_unrounded"),
+            res.get("equity_value"),
+            None,
+        )
     except EngineInputError as exc:
-        return None, None, str(exc)
+        return None, None, None, str(exc)
 
 
 def _one_way(
@@ -200,14 +221,14 @@ def _one_way(
     for value in _steps(base_value, span, steps):
         mutated = _variant(inputs)
         _apply(name, value, params, mutated)
-        fmv, equity, error = _fmv(params, mutated)
+        fmv, exact, equity, error = _fmv(params, mutated)
         points.append(
             {
                 "value": value,
                 "fmv_per_share": fmv,
                 "equity_value": equity,
-                "delta_from_base": round(fmv / base_fmv - 1, 6)
-                if fmv is not None and base_fmv
+                "delta_from_base": round(exact / base_fmv - 1, 6)
+                if exact is not None and base_fmv
                 else None,
                 **({"error": error} if error else {}),
             }
@@ -235,12 +256,12 @@ def _two_way(
             mutated = _variant(inputs)
             _apply(row, rv, params, mutated)
             _apply(col, cv, params, mutated)
-            fmv, _equity, error = _fmv(params, mutated)
+            fmv, exact, _equity, error = _fmv(params, mutated)
             cells.append(
                 {
                     "fmv_per_share": fmv,
-                    "delta_from_base": round(fmv / base_fmv - 1, 6)
-                    if fmv is not None and base_fmv
+                    "delta_from_base": round(exact / base_fmv - 1, 6)
+                    if exact is not None and base_fmv
                     else None,
                     **({"error": error} if error else {}),
                 }
@@ -278,8 +299,12 @@ def sensitivity(
 
     # Base case must compute — a sensitivity around a broken valuation is
     # meaningless, so surface that error directly.
-    base_fmv, base_equity, base_error = _fmv(params, inputs)
-    if base_error is not None or base_fmv is None:
+    # Two figures again, and the denominator is the unrounded one: `base_exact`
+    # divides every delta in the response, `base_fmv` is only reported. Dividing
+    # by the 4-dp conclusion shifted every delta in the table by the same
+    # amount, so the error did not even average out across the sweep.
+    base_fmv, base_exact, base_equity, base_error = _fmv(params, inputs)
+    if base_error is not None or base_fmv is None or base_exact is None:
         raise EngineInputError(f"base valuation does not compute: {base_error or 'no FMV'}")
 
     # Every lever's base, resolved once. `time_to_exit` in particular re-parses
@@ -303,7 +328,7 @@ def sensitivity(
         if base_value is None:
             skipped.append(name)
             continue
-        one_way.append(_one_way(name, base_value, base_fmv, params, inputs, span, steps))
+        one_way.append(_one_way(name, base_value, base_exact, params, inputs, span, steps))
 
     # Refused up front rather than de-duped below, because a list this long
     # cannot be anything but repetition — and saying so beats silently
@@ -348,7 +373,7 @@ def sensitivity(
             skipped_two_way.append([row, col])
             continue
         two_way_tables.append(
-            _two_way(row, col, row_base, col_base, params, inputs, base_fmv, span, steps)
+            _two_way(row, col, row_base, col_base, params, inputs, base_exact, span, steps)
         )
 
     return {

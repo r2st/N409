@@ -31,6 +31,11 @@ from datetime import date
 
 from .anomalies import detect_anomalies
 from .approaches import DCF_TERMINAL_METHODS
+# Imported rather than restated. These two are what `compute` substitutes
+# when the payload omits the assumption, and the warnings below quote the
+# figure the caller will actually get — a second copy here would drift from
+# the engine's and tell the analyst a number the calculation does not use.
+from .compute import DEFAULT_RISK_FREE_RATE, DEFAULT_TIME_TO_EXIT_YEARS
 from .dloc import (
     CONTROL_PREMIUM_STUDIES,
     DLOC_METHODS,
@@ -846,7 +851,20 @@ def _check_cap_table(
         )
 
     rate = _finite(inputs.get("risk_free_rate"))
-    if rate is not None and not RISK_FREE_BAND[0] <= rate <= RISK_FREE_BAND[1]:
+    if inputs.get("risk_free_rate") is None:
+        # Absent is not the same as fine. `compute._risk_free_rate` substitutes
+        # DEFAULT_RISK_FREE_RATE and the result document then reports the
+        # substitute under `assumptions.risk_free_rate`, where it is
+        # indistinguishable from a rate the analyst chose. Saying so here is the
+        # only point before the number is concluded at which anyone is told.
+        c.warn(
+            "engine_default",
+            "inputs.risk_free_rate",
+            "no risk-free rate was supplied — the engine will discount at "
+            f"{DEFAULT_RISK_FREE_RATE:.0%}",
+            "Use the Treasury yield matching the time to exit.",
+        )
+    elif rate is not None and not RISK_FREE_BAND[0] <= rate <= RISK_FREE_BAND[1]:
         c.warn(
             "outside_band",
             "inputs.risk_free_rate",
@@ -1464,6 +1482,18 @@ def _check_dates(c: _Collector, params: dict, inputs: dict) -> None:
             )
 
     if years is None:
+        # Neither `inputs.time_to_exit_years` nor `params.exit_timeline`, so
+        # this returned silently and `compute._time_to_exit` then substituted
+        # DEFAULT_TIME_TO_EXIT_YEARS. It is the single largest undisclosed lever
+        # in the payload — it sets both the Black-Scholes horizon and any model
+        # DLOM — so its absence is reported rather than passed over.
+        c.warn(
+            "engine_default",
+            "params.exit_timeline",
+            "no exit date or time to exit was supplied — the engine will assume "
+            f"{DEFAULT_TIME_TO_EXIT_YEARS:g} years",
+            "Set params.exit_timeline, or inputs.time_to_exit_years directly.",
+        )
         return
     if years <= 0:
         c.warn(
