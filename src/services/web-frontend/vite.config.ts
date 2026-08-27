@@ -5,7 +5,8 @@ import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { buildRobotsTxt, buildSitemapXml } from './src/lib/sitemap';
-import { buildManifest, prerenderPages, withFontPreloads } from './src/lib/prerender';
+import { buildManifest, prerenderPages, withFontPreloads, withRoutePreloads } from './src/lib/prerender';
+import { routeModuleFor } from './src/lib/routeChunks';
 import { allPageMeta } from './src/lib/pageMetaRoutes';
 
 /**
@@ -73,14 +74,27 @@ function seoFilesPlugin(baseUrl: string): Plugin {
  */
 function prerenderPlugin(baseUrl: string): Plugin {
   let outDir = 'dist';
+  let root = process.cwd();
   let enabled = false;
+  /** Source module (absolute path) → the chunk Rollup emitted for it, plus that
+   * chunk's own static imports. Collected in `generateBundle`, where the chunk
+   * graph exists; `closeBundle` only has the files on disk. */
+  let chunkForModule = new Map<string, string[]>();
   return {
     name: 'n409-prerender',
     apply: 'build',
     configResolved(config) {
+      root = config.root;
       outDir = path.resolve(config.root, config.build.outDir);
       // SSR/library passes reuse this config but emit no index.html.
       enabled = !config.build.ssr;
+    },
+    generateBundle(_options, bundle) {
+      chunkForModule = new Map();
+      for (const output of Object.values(bundle)) {
+        if (output.type !== 'chunk' || !output.facadeModuleId) continue;
+        chunkForModule.set(output.facadeModuleId, [output.fileName, ...output.imports]);
+      }
     },
     closeBundle() {
       if (!enabled) return;
@@ -104,17 +118,23 @@ function prerenderPlugin(baseUrl: string): Plugin {
       shell = withFontPreloads(shell, assets);
 
       const pages = prerenderPages(shell, baseUrl, allPageMeta());
+      let preloaded = 0;
       for (const page of pages) {
+        // A route with no registry entry, or one already in the entry chunk,
+        // gets no extra preload — it costs a round trip, not a broken page.
+        const moduleId = routeModuleFor(page.route);
+        const chunks = moduleId ? (chunkForModule.get(path.resolve(root, moduleId)) ?? []) : [];
+        if (chunks.length > 0) preloaded += 1;
         const dest = path.join(outDir, page.fileName);
         mkdirSync(path.dirname(dest), { recursive: true });
-        writeFileSync(dest, page.html, 'utf8');
+        writeFileSync(dest, withRoutePreloads(page.html, chunks), 'utf8');
       }
       writeFileSync(
         path.join(outDir, 'prerender-manifest.json'),
         `${JSON.stringify(buildManifest(pages), null, 2)}\n`,
         'utf8',
       );
-      this.info?.(`prerendered ${pages.length} marketing routes`);
+      this.info?.(`prerendered ${pages.length} marketing routes; ${preloaded} carry their own chunk preload`);
     },
   };
 }

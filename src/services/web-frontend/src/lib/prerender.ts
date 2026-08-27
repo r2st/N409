@@ -48,6 +48,34 @@ export function withFontPreloads(html: string, assetFileNames: string[]): string
   return html.replace(/<head>/i, `<head>\n    ${preloads}`);
 }
 
+/**
+ * `<link rel="modulepreload">` tags for a route's own chunk and its imports.
+ *
+ * The shell already modulepreloads what the *entry* statically imports. Every
+ * route below the landing page is lazy, so its chunk is invisible to the
+ * preload scanner: the browser learns about `PricingPage.js` only after it has
+ * fetched and run `index.js`. On a prerendered document — where the HTML is
+ * already the finished page — that is a wasted serial round trip in front of
+ * the paint. Naming the chunk in the head lets both downloads overlap.
+ *
+ * `fileNames` is the route chunk followed by the chunks it statically imports;
+ * anything the shell already references is skipped, so a chunk is never
+ * preloaded twice.
+ */
+export function routePreloadTags(fileNames: readonly string[], shell: string): string {
+  return fileNames
+    .filter((name) => !shell.includes(`/${name}`))
+    .map((name) => `<link rel="modulepreload" crossorigin href="/${name}" />`)
+    .join('\n    ');
+}
+
+/** Insert a route's own module preloads immediately after `<head>`. */
+export function withRoutePreloads(html: string, fileNames: readonly string[]): string {
+  const tags = routePreloadTags(fileNames, html);
+  if (!tags) return html;
+  return html.replace(/<head>/i, `<head>\n    ${tags}`);
+}
+
 /** Where a prerendered route's document is written, relative to the outDir. */
 export function outputPathFor(routePath: string): string {
   if (routePath === '/') return 'index.html';
