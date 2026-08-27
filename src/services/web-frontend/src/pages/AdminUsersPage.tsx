@@ -163,7 +163,7 @@ const CLOSED_EDITOR: EditorState = emptyEditor('create');
 /** Pending / accepted / revoked / expired, in display terms. */
 function invitationStatus(i: Invitation): { label: string; tone: string } {
   if (i.accepted_at) return { label: 'Accepted', tone: 'bg-bond-50 text-bond-700 ring-bond-200' };
-  if (i.revoked_at) return { label: 'Revoked', tone: 'bg-paper-200 text-ink-400 ring-ink-200' };
+  if (i.revoked_at) return { label: 'Revoked', tone: 'bg-paper-200 text-ink-500 ring-ink-200' };
   if (new Date(i.expires_at).getTime() < Date.now())
     return { label: 'Expired', tone: 'bg-amber-50 text-amber-800 ring-amber-200' };
   return { label: 'Pending', tone: 'bg-sky-50 text-sky-800 ring-sky-200' };

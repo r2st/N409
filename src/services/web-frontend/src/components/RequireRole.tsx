@@ -13,7 +13,7 @@ import type { User } from '../lib/types';
 export function AccessDenied() {
   return (
     <div className="mx-auto max-w-md py-16 text-center" role="alert">
-      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-paper-200 text-ink-400">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-paper-200 text-ink-500">
         <svg
           aria-hidden="true"
           width="22"

@@ -329,7 +329,7 @@ export function WorkbookTab() {
                   >
                     {row.label}
                     {row.kind === 'derived' && (
-                      <span className="ml-2 rounded bg-paper-200 px-1.5 py-0.5 text-[0.65rem] font-semibold text-ink-400 uppercase">
+                      <span className="ml-2 rounded bg-paper-200 px-1.5 py-0.5 text-[0.65rem] font-semibold text-ink-500 uppercase">
                         calc
                       </span>
                     )}

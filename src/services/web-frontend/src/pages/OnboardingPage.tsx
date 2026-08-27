@@ -41,7 +41,7 @@ function Stepper({ current }: { current: number }) {
                 ? 'bg-bond-600 text-bond-fg'
                 : i === current
                   ? 'bg-ink-900 text-paper-50'
-                  : 'bg-paper-200 text-ink-400'
+                  : 'bg-paper-200 text-ink-500'
             }`}
           >
             {i < current ? '✓' : i + 1}

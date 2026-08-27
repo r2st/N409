@@ -726,7 +726,7 @@ export function PartnerDetailPage() {
             )}
             {partner.name}
             {partner.archived_at && (
-              <span className="rounded-full bg-paper-200 px-2.5 py-1 text-xs font-semibold text-ink-400 ring-1 ring-inset ring-ink-200">
+              <span className="rounded-full bg-paper-200 px-2.5 py-1 text-xs font-semibold text-ink-500 ring-1 ring-inset ring-ink-200">
                 Archived
               </span>
             )}

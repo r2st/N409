@@ -731,7 +731,7 @@ function Progress({
                 <span
                   aria-hidden
                   className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[0.65rem] font-bold ${
-                    s.complete ? 'text-white' : 'bg-paper-200 text-ink-400'
+                    s.complete ? 'text-white' : 'bg-paper-200 text-ink-500'
                   }`}
                   style={s.complete ? { backgroundColor: firm.accent, color: firm.accent_fg } : undefined}
                 >
@@ -752,7 +752,7 @@ function Progress({
             >
               <span
                 aria-hidden
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-paper-200 text-[0.65rem] font-bold text-ink-400"
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-paper-200 text-[0.65rem] font-bold text-ink-500"
               >
                 {reviewStep + 1}
               </span>

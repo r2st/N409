@@ -22,7 +22,7 @@ function StatusPill({ status }: { status: ReportTemplate['status'] }) {
   const styles = {
     draft: 'bg-amber-50 text-amber-800 ring-amber-200',
     active: 'bg-bond-50 text-bond-700 ring-bond-200',
-    archived: 'bg-paper-200 text-ink-400 ring-ink-200',
+    archived: 'bg-paper-200 text-ink-500 ring-ink-200',
   } as const;
   return (
     <span

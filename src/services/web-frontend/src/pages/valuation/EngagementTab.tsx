@@ -135,7 +135,7 @@ export function EngagementTab() {
                     ? 'bg-bond-100 text-bond-700'
                     : i === currentIdx
                       ? `${SLA_TONE[sla.level]} ring-1 ring-inset`
-                      : 'bg-paper-200 text-ink-400'
+                      : 'bg-paper-200 text-ink-500'
                 }`}
               >
                 {s.label}

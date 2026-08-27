@@ -129,10 +129,10 @@ function StageStepper({ stages }: { stages: ProgressStage[] }) {
             <span
               className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${
                 stage.status === 'done'
-                  ? 'bg-emerald-500 text-bond-fg'
+                  ? 'bg-emerald-700 text-bond-fg'
                   : stage.status === 'current'
                     ? 'bg-bond-600 text-bond-fg'
-                    : 'bg-paper-200 text-ink-400'
+                    : 'bg-paper-200 text-ink-500'
               }`}
             >
               {stage.status === 'done' ? '✓' : index + 1}
@@ -259,7 +259,7 @@ export function ProgressTab() {
                 <span
                   aria-hidden
                   className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[10px] font-bold ${
-                    item.uploaded ? 'bg-emerald-500 text-bond-fg' : 'bg-paper-200 text-ink-400'
+                    item.uploaded ? 'bg-emerald-700 text-bond-fg' : 'bg-paper-200 text-ink-500'
                   }`}
                 >
                   {item.uploaded ? '✓' : '·'}

@@ -53,7 +53,7 @@ const STATUS_TONES: Record<BillingPayment['status'], string> = {
   succeeded: 'bg-bond-50 text-bond-700 ring-bond-200',
   pending: 'bg-sky-50 text-sky-800 ring-sky-200',
   failed: 'bg-red-50 text-red-700 ring-red-200',
-  expired: 'bg-paper-200 text-ink-400 ring-ink-200',
+  expired: 'bg-paper-200 text-ink-500 ring-ink-200',
   refunded: 'bg-amber-50 text-amber-800 ring-amber-200',
 };
 
