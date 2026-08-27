@@ -298,10 +298,10 @@ describe('adversarial imports — encoding', () => {
   it('reads UTF-8 with and without a byte-order mark', () => {
     expect(decodeSheetText(Buffer.from(csv, 'utf8'))).toBe(csv);
     expect(decodeSheetText(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(csv, 'utf8')]))).toBe(
-      `﻿${csv}`,
+      `\ufeff${csv}`,
     );
     // The BOM is stripped once, by the parser, on every path into it.
-    expect(parseCsvSheet(`﻿${csv}`).headers).toEqual(['class', 'shares']);
+    expect(parseCsvSheet(`\ufeff${csv}`).headers).toEqual(['class', 'shares']);
   });
 
   it('reads UTF-16 in both byte orders, with a mark and without one', () => {

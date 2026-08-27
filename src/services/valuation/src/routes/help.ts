@@ -39,9 +39,11 @@ const ArticleBody = z.object({
   published: z.boolean().default(true),
 });
 
-const PatchBody = ArticleBody.partial().refine((v) => Object.keys(v).length > 0, {
-  message: 'empty patch',
-});
+const PatchBody = ArticleBody.partial()
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, {
+    message: 'empty patch',
+  });
 
 export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   // Read-through cache (IMPROVEMENTS_RESEARCH §6): the HelpWidget fetches the

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
+import { calendarDate } from '../domain/calendarRange.js';
 import type { AdminEventType } from '../domain/auditTrail.js';
 import { conditionalJson, isUlid, problems, TtlCache } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
@@ -88,12 +89,14 @@ const PostBody = z.object({
     .nullable()
     .default(null),
   published: z.boolean().default(false),
-  published_at: z.coerce.date().nullable().default(null),
+  published_at: calendarDate().nullable().default(null),
 });
 
-const PatchBody = PostBody.partial().refine((v) => Object.keys(v).length > 0, {
-  message: 'empty patch',
-});
+const PatchBody = PostBody.partial()
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, {
+    message: 'empty patch',
+  });
 
 /**
  * Reading time in whole minutes, at 220 words a minute.

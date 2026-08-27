@@ -9,6 +9,7 @@ import {
   createLogger,
   ErrorRates,
   MetricsRegistry,
+  problems,
   registerHealth,
   registerHttpMetrics,
   registerMetricsEndpoint,
@@ -151,6 +152,7 @@ import { probeReady, setNetworkSink } from './clients/internal.js';
 import { configureReportRenderer, registerReportRenderMetrics } from './clients/reportRender.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
+import { findNulByte } from './domain/nulBytes.js';
 
 export interface AppDeps {
   config: Config;
@@ -289,6 +291,35 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // x-request-id — or minted one — by the time onRequest fires.
   app.addHook('onRequest', (req, _reply, done) => {
     bindRequestId(String(req.id));
+    done();
+  });
+
+  /**
+   * Refuse a request carrying a NUL byte, before any handler can hand one to
+   * the driver.
+   *
+   * Global rather than per-schema because the exposure is per-*column*, not per
+   * route: `U+0000` has no UTF-8 encoding Postgres will store, so every string
+   * that reaches a `text`, `jsonb` or array parameter is a candidate and there
+   * are several hundred of them. A guard on the boundary is one place to be
+   * right; the alternative is a `.refine` on every `z.string()` in the service
+   * and a census to keep them there. See domain/nulBytes.ts.
+   *
+   * `preValidation` is the first hook with a parsed body, and the byte only
+   * exists once the body is parsed — a JSON client sends the escape sequence,
+   * not the byte. Query strings arrive decoded, so `%00` is caught here too.
+   *
+   * This runs ahead of route-level authentication, so an unauthenticated caller
+   * sending one gets 400 rather than 401. That is the same ordering Fastify's
+   * own schema validation has, and the refusal discloses nothing: it names a
+   * field of the caller's own request.
+   */
+  app.addHook('preValidation', (req, _reply, done) => {
+    const at = findNulByte(req.body) ?? findNulByte(req.query);
+    if (at) {
+      done(problems.badRequest(`Field ${at} contains a NUL byte, which cannot be stored`));
+      return;
+    }
     done();
   });
 

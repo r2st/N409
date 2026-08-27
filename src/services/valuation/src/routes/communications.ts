@@ -60,6 +60,7 @@ const TemplateBody = z.object({
 
 const TemplatePatch = TemplateBody.omit({ key: true, channel: true })
   .partial()
+  .strict()
   .refine((v) => Object.keys(v).length > 0, { message: 'empty patch' });
 
 const AutoEmailBody = z.object({
@@ -99,6 +100,7 @@ const AutoEmailBody = z.object({
 
 const AutoEmailPatch = AutoEmailBody.omit({ name: true })
   .partial()
+  .strict()
   .refine((v) => Object.keys(v).length > 0, { message: 'empty patch' });
 
 export function registerCommunicationRoutes(

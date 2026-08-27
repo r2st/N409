@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import type { z } from 'zod';
+import { calendarDate } from './calendarRange.js';
 
 /**
  * The `from`/`to` half of a query string, checked for being a window at all.
@@ -37,8 +38,14 @@ export function checkWindowOrder(
   });
 }
 
-/** `from`/`to`, as both audit query schemas declare them. */
+/**
+ * `from`/`to`, as both audit query schemas declare them.
+ *
+ * `calendarDate()` rather than `z.coerce.date()`: the ordering check above only
+ * runs once both bounds parse, and a bound outside Postgres's timestamp range
+ * parses fine and then 500s in the driver. See domain/calendarRange.ts.
+ */
 export const dateWindowFields = {
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
+  from: calendarDate().optional(),
+  to: calendarDate().optional(),
 };
