@@ -1,13 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  AUDIT_DEFENCE_RATE_USD,
-  PRICING_FAQ,
-  PRODUCTS,
-  RAISE_BANDS,
-  formatUsd,
-  quote,
-} from '../../lib/marketing';
+import { AUDIT_DEFENCE_RATE_USD, PRICING_FAQ, PRODUCTS, formatUsd } from '../../lib/marketing';
+import { RAISE_BANDS, quote } from '../../lib/marketingContent';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
 import { FaqAccordion } from '../../components/FaqAccordion';

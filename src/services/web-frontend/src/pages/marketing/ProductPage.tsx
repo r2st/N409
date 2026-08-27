@@ -1,11 +1,13 @@
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { FUNDING_STAGES, PROCESS_STEPS, PRODUCTS, formatUsd, productBySlug } from '../../lib/marketing';
+import { PRODUCTS, formatUsd, productBySlug } from '../../lib/marketing';
+import { PROCESS_STEPS } from '../../lib/marketingContent';
+import { FUNDING_STAGE_DETAILS } from '../../lib/marketingContent';
 // The long-form copy is its own module (40 kB, read only here) so it stays out
 // of the first-paint chunk — see `lib/productContent.ts`.
 import { productContent } from '../../lib/productContent';
 import { BookACallSection } from './MarketingSections';
 import { Seo } from '../../components/Seo';
-import { productPageMeta } from '../../lib/pageMeta';
+import { productPageMeta } from '../../lib/pageMetaRoutes';
 import { FaqAccordion } from '../../components/FaqAccordion';
 
 /**
@@ -223,7 +225,7 @@ export function ProductPage() {
             weight, what the capital structure does to the number, and what it typically costs.
           </p>
           <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {FUNDING_STAGES.map((stage) => (
+            {FUNDING_STAGE_DETAILS.map((stage) => (
               <Link
                 key={stage.slug}
                 to={`/409a-valuation/${stage.slug}`}

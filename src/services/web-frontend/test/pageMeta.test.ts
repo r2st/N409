@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { pageMeta } from '../src/lib/pageMeta';
 import {
   allPageMeta,
   comparePageMeta,
-  pageMeta,
   partnerSegmentPageMeta,
   productPageMeta,
   stagePageMeta,
-} from '../src/lib/pageMeta';
+} from '../src/lib/pageMetaRoutes';
 import { marketingRoutes } from '../src/lib/routes';
 import { COMPARISONS, FUNDING_STAGES, PARTNER_SEGMENTS, PRODUCTS } from '../src/lib/marketing';
 

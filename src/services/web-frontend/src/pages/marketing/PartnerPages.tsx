@@ -1,15 +1,10 @@
 import { Link, Navigate, useParams } from 'react-router-dom';
-import {
-  PARTNER_FAQ,
-  PARTNER_MODELS,
-  PARTNER_SEGMENTS,
-  PROCESS_STEPS,
-  partnerModelByKey,
-  partnerSegmentBySlug,
-  productBySlug,
-} from '../../lib/marketing';
+import { PARTNER_FAQ, productBySlug } from '../../lib/marketing';
+import { PARTNER_MODELS, PROCESS_STEPS, partnerModelByKey } from '../../lib/marketingContent';
+import { PARTNER_SEGMENT_DETAILS, partnerSegmentBySlug } from '../../lib/marketingContent';
 import { Seo } from '../../components/Seo';
-import { partnerSegmentPageMeta, pageMeta } from '../../lib/pageMeta';
+import { pageMeta } from '../../lib/pageMeta';
+import { partnerSegmentPageMeta } from '../../lib/pageMetaRoutes';
 import { FaqAccordion } from '../../components/FaqAccordion';
 import { siteConfig } from '../../lib/siteConfig';
 
@@ -124,7 +119,7 @@ export function PartnersPage() {
             Four kinds of partner, four different reasons
           </h2>
           <div className="mt-8 grid gap-4 sm:grid-cols-2">
-            {PARTNER_SEGMENTS.map((segment) => (
+            {PARTNER_SEGMENT_DETAILS.map((segment) => (
               <Link
                 key={segment.slug}
                 to={`/partners/${segment.slug}`}
@@ -303,7 +298,7 @@ export function PartnerSegmentPage() {
             Not quite you? Try one of these
           </h2>
           <div className="mt-8 grid gap-4 sm:grid-cols-3">
-            {PARTNER_SEGMENTS.filter((s) => s.slug !== segment.slug).map((other) => (
+            {PARTNER_SEGMENT_DETAILS.filter((s) => s.slug !== segment.slug).map((other) => (
               <Link
                 key={other.slug}
                 to={`/partners/${other.slug}`}

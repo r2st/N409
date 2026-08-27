@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { ApiReference } from '../../components/ApiReference';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
-import { PARTNER_API, WEBHOOK_EVENTS } from '../../lib/marketing';
+import { PARTNER_API, WEBHOOK_EVENTS } from '../../lib/marketingContent';
 import { siteConfig } from '../../lib/siteConfig';
 
 /**

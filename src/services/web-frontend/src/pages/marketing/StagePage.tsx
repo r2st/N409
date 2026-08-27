@@ -1,13 +1,9 @@
 import { Link, Navigate, useParams } from 'react-router-dom';
-import {
-  FUNDING_STAGES,
-  PROCESS_STEPS,
-  formatUsd,
-  fundingStageBySlug,
-  stagePriceRangeCents,
-} from '../../lib/marketing';
+import { formatUsd } from '../../lib/marketing';
+import { PROCESS_STEPS } from '../../lib/marketingContent';
+import { FUNDING_STAGE_DETAILS, fundingStageBySlug, stagePriceRangeCents } from '../../lib/marketingContent';
 import { Seo } from '../../components/Seo';
-import { stagePageMeta } from '../../lib/pageMeta';
+import { stagePageMeta } from '../../lib/pageMetaRoutes';
 import { FaqAccordion } from '../../components/FaqAccordion';
 
 /**
@@ -30,7 +26,7 @@ export function StagePage() {
   const { fromCents, toCents } = stagePriceRangeCents(stage);
   const price =
     fromCents === toCents ? `${formatUsd(fromCents)}` : `${formatUsd(fromCents)} – ${formatUsd(toCents)}`;
-  const others = FUNDING_STAGES.filter((s) => s.slug !== stage.slug);
+  const others = FUNDING_STAGE_DETAILS.filter((s) => s.slug !== stage.slug);
 
   return (
     <div>

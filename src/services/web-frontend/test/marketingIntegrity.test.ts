@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { PARTNER_LOGOS, STATS, TESTIMONIALS } from '../src/lib/marketing';
 import { PRODUCT_CONTENT } from '../src/lib/productContent';
-import { allPageMeta } from '../src/lib/pageMeta';
+import { allPageMeta } from '../src/lib/pageMetaRoutes';
 
 /**
  * Guards on what the public site is allowed to claim.

@@ -3,15 +3,13 @@ import { render, screen, within } from '@testing-library/react';
 import { HelmetProvider } from 'react-helmet-async';
 import { MemoryRouter } from 'react-router-dom';
 import { ValuationCostPage, ValuationGuidePage, WhenDoYouNeedPage } from '../src/pages/marketing/GuidePages';
+import { VALUATION_TRIGGERS, formatUsd, productBySlug } from '../src/lib/marketing';
 import {
   COST_DRIVERS,
   GUIDE_SECTIONS,
   MARKET_PRICE_BANDS,
   NONCOMPLIANCE_CONSEQUENCES,
-  VALUATION_TRIGGERS,
-  formatUsd,
-  productBySlug,
-} from '../src/lib/marketing';
+} from '../src/lib/marketingContent';
 import { pageMeta } from '../src/lib/pageMeta';
 import { marketingRoutes } from '../src/lib/routes';
 

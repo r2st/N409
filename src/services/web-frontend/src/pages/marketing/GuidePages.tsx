@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { VALUATION_TRIGGERS, AUDIT_DEFENCE_RATE_USD, formatUsd, productBySlug } from '../../lib/marketing';
 import {
   COST_DRIVERS,
   EXPRESS_DELIVERY_CENTS,
@@ -7,11 +8,7 @@ import {
   GUIDE_SECTIONS,
   MARKET_PRICE_BANDS,
   NONCOMPLIANCE_CONSEQUENCES,
-  VALUATION_TRIGGERS,
-  AUDIT_DEFENCE_RATE_USD,
-  formatUsd,
-  productBySlug,
-} from '../../lib/marketing';
+} from '../../lib/marketingContent';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
 

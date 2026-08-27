@@ -6,7 +6,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { buildRobotsTxt, buildSitemapXml } from './src/lib/sitemap';
 import { buildManifest, prerenderPages, withFontPreloads } from './src/lib/prerender';
-import { allPageMeta } from './src/lib/pageMeta';
+import { allPageMeta } from './src/lib/pageMetaRoutes';
 
 /**
  * Client-visible config sourced from the build environment (409.ai §23/§24).

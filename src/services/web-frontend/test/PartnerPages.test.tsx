@@ -11,14 +11,10 @@ const configMock = vi.hoisted(() => ({ current: { socialLinks: [] } as SiteConfi
 vi.mock('../src/lib/siteConfig', () => ({ siteConfig: () => configMock.current }));
 
 import { PartnerSegmentPage, PartnersPage } from '../src/pages/marketing/PartnerPages';
-import {
-  PARTNER_FAQ,
-  PARTNER_MODELS,
-  PARTNER_SEGMENTS,
-  partnerSegmentBySlug,
-  productBySlug,
-} from '../src/lib/marketing';
-import { pageMeta } from '../src/lib/pageMeta';
+import { PARTNER_FAQ, PARTNER_SEGMENTS, productBySlug } from '../src/lib/marketing';
+import { PARTNER_MODELS } from '../src/lib/marketingContent';
+import { PARTNER_SEGMENT_DETAILS, partnerSegmentBySlug } from '../src/lib/marketingContent';
+import { anyPageMeta } from '../src/lib/pageMetaRoutes';
 import { marketingRoutes } from '../src/lib/routes';
 
 /**
@@ -73,7 +69,7 @@ describe('partner pages: registration', () => {
   });
 
   it.each(['/partners', ...SLUGS.map((s) => `/partners/${s}`)])('%s has head metadata', (path) => {
-    const meta = pageMeta(path)!;
+    const meta = anyPageMeta(path)!;
     expect(meta).toBeDefined();
     expect(meta.title).toBeTruthy();
     expect(meta.description.length).toBeGreaterThan(80);
@@ -150,7 +146,7 @@ describe('partner segment pages', () => {
   });
 
   it('names every recommended model and product that exists', () => {
-    for (const segment of PARTNER_SEGMENTS) {
+    for (const segment of PARTNER_SEGMENT_DETAILS) {
       expect(PARTNER_MODELS.map((m) => m.key)).toContain(segment.recommendedModel);
       for (const slug of segment.productSlugs) {
         expect(productBySlug(slug), `${segment.slug} → ${slug}`).toBeDefined();
@@ -172,7 +168,7 @@ describe('the programme quotes no terms nobody has set', () => {
     // this expectation together.
     const copy = [
       ...PARTNER_MODELS.flatMap((m) => [m.summary, m.youDo, m.weDo, m.brand, ...m.capabilities]),
-      ...PARTNER_SEGMENTS.flatMap((s) => [s.problem, s.heroSubhead, ...s.bullets]),
+      ...PARTNER_SEGMENT_DETAILS.flatMap((s) => [s.problem, s.heroSubhead, ...s.bullets]),
     ].join(' ');
     expect(copy).not.toMatch(/\$\s?\d/);
     expect(copy).not.toMatch(/\b\d+\s?%\b/);

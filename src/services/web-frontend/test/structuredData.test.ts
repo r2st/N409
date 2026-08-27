@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { COMPARISONS, PRODUCTS } from '../src/lib/marketing';
-import { allPageMeta, comparePageMeta, productPageMeta } from '../src/lib/pageMeta';
+import { allPageMeta, comparePageMeta, productPageMeta } from '../src/lib/pageMetaRoutes';
 import { breadcrumbJsonLd, websiteJsonLd } from '../src/lib/seo';
 import { buildHeadTags, renderHeadTags } from '../src/lib/headTags';
 

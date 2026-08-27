@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { FOUNDER_QUESTIONS, PROVIDER_CATEGORIES } from '../../lib/marketing';
+import { FOUNDER_QUESTIONS, PROVIDER_CATEGORIES } from '../../lib/marketingContent';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
 

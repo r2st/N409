@@ -4,15 +4,10 @@ import { HelmetProvider } from 'react-helmet-async';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { StagePage } from '../src/pages/marketing/StagePage';
 import { ProductPage } from '../src/pages/marketing/ProductPage';
-import {
-  FUNDING_STAGES,
-  RAISE_BANDS,
-  formatUsd,
-  fundingStageBySlug,
-  productBySlug,
-  stagePriceRangeCents,
-} from '../src/lib/marketing';
-import { pageMeta } from '../src/lib/pageMeta';
+import { FUNDING_STAGES, formatUsd, productBySlug } from '../src/lib/marketing';
+import { RAISE_BANDS } from '../src/lib/marketingContent';
+import { FUNDING_STAGE_DETAILS, fundingStageBySlug, stagePriceRangeCents } from '../src/lib/marketingContent';
+import { anyPageMeta } from '../src/lib/pageMetaRoutes';
 import { marketingRoutes } from '../src/lib/routes';
 
 /**
@@ -49,7 +44,7 @@ describe('stage pages: registration', () => {
   });
 
   it.each(SLUGS)('/409a-valuation/%s has head metadata and a stage FAQ', (slug) => {
-    const meta = pageMeta(`/409a-valuation/${slug}`)!;
+    const meta = anyPageMeta(`/409a-valuation/${slug}`)!;
     expect(meta).toBeDefined();
     expect(meta.title).toContain('409A valuation');
     // The FAQ questions are why the page ranks, so they must reach the markup.
@@ -59,7 +54,7 @@ describe('stage pages: registration', () => {
   });
 
   it('names the 409A product page as the breadcrumb parent', () => {
-    const json = JSON.stringify(pageMeta('/409a-valuation/series-b')!.jsonLd);
+    const json = JSON.stringify(anyPageMeta('/409a-valuation/series-b')!.jsonLd);
     expect(json).toContain('/products/409a-valuation');
   });
 });
@@ -90,9 +85,9 @@ describe('stage pages: rendering', () => {
   });
 
   it('gives each stage a distinct hero and search description', () => {
-    const subheads = FUNDING_STAGES.map((s) => s.heroSubhead);
+    const subheads = FUNDING_STAGE_DETAILS.map((s) => s.heroSubhead);
     expect(new Set(subheads).size).toBe(subheads.length);
-    const blurbs = FUNDING_STAGES.map((s) => s.searchBlurb);
+    const blurbs = FUNDING_STAGE_DETAILS.map((s) => s.searchBlurb);
     expect(new Set(blurbs).size).toBe(blurbs.length);
   });
 });
@@ -100,7 +95,7 @@ describe('stage pages: rendering', () => {
 describe('stage pricing is derived, not written', () => {
   it('quotes the 409A entry price plus the stage’s own raise-band uplift', () => {
     const base = productBySlug('409a-valuation')!.priceCents;
-    for (const stage of FUNDING_STAGES) {
+    for (const stage of FUNDING_STAGE_DETAILS) {
       const { fromCents, toCents } = stagePriceRangeCents(stage);
       expect(fromCents).toBe(base + RAISE_BANDS[stage.bandRange[0]]!.upliftCents);
       expect(toCents).toBe(base + RAISE_BANDS[stage.bandRange[1]]!.upliftCents);

@@ -4,9 +4,10 @@ import { HelmetProvider } from 'react-helmet-async';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ProductPage } from '../src/pages/marketing/ProductPage';
 import { WhichValuationPage } from '../src/pages/marketing/WhichValuationPage';
-import { PRODUCTS, QUIZ_OPTIONS, productBySlug } from '../src/lib/marketing';
+import { PRODUCTS, productBySlug } from '../src/lib/marketing';
+import { QUIZ_OPTIONS } from '../src/lib/marketingContent';
 import { productContent } from '../src/lib/productContent';
-import { pageMeta } from '../src/lib/pageMeta';
+import { anyPageMeta } from '../src/lib/pageMetaRoutes';
 import { marketingRoutes } from '../src/lib/routes';
 
 /**
@@ -49,7 +50,7 @@ describe('every catalogued product is a complete page', () => {
 
   it.each(PRODUCTS.map((p) => p.slug))('%s is routed and described', (slug) => {
     expect(marketingRoutes().map((r) => r.path)).toContain(`/products/${slug}`);
-    expect(pageMeta(`/products/${slug}`)).toBeDefined();
+    expect(anyPageMeta(`/products/${slug}`)).toBeDefined();
   });
 });
 

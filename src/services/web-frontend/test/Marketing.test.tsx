@@ -9,15 +9,8 @@ import { ProductPage } from '../src/pages/marketing/ProductPage';
 import { WhichValuationPage } from '../src/pages/marketing/WhichValuationPage';
 import { ComparePage } from '../src/pages/marketing/ComparePage';
 import { CompareHubPage } from '../src/pages/marketing/CompareHubPage';
-import {
-  AUDIT_DEFENCE_RATE_USD,
-  COMPARISONS,
-  PRICING_FAQ,
-  PRODUCTS,
-  RAISE_BANDS,
-  formatUsd,
-  quote,
-} from '../src/lib/marketing';
+import { AUDIT_DEFENCE_RATE_USD, COMPARISONS, PRICING_FAQ, PRODUCTS, formatUsd } from '../src/lib/marketing';
+import { RAISE_BANDS, quote } from '../src/lib/marketingContent';
 import { PRODUCT_CONTENT } from '../src/lib/productContent';
 
 function renderAt(path: string) {

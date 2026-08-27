@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { HelmetProvider } from 'react-helmet-async';
 import { MemoryRouter } from 'react-router-dom';
 import { DevelopersPage } from '../src/pages/marketing/DevelopersPage';
-import { PARTNER_API, WEBHOOK_EVENTS } from '../src/lib/marketing';
+import { PARTNER_API, WEBHOOK_EVENTS } from '../src/lib/marketingContent';
 import { pageMeta } from '../src/lib/pageMeta';
 import { marketingRoutes } from '../src/lib/routes';
 

@@ -1,7 +1,7 @@
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { comparisonBySlug } from '../../lib/marketing';
+import { comparisonBySlug } from '../../lib/marketingContent';
 import { Seo } from '../../components/Seo';
-import { comparePageMeta } from '../../lib/pageMeta';
+import { comparePageMeta } from '../../lib/pageMetaRoutes';
 
 /** Competitor comparison landing page (409.ai §22.6) — data-driven. */
 export function ComparePage() {

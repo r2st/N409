@@ -1,5 +1,5 @@
 import { buildHeadTags, escapeHtml, renderHeadTags } from './headTags';
-import { allPageMeta } from './pageMeta';
+import { allPageMeta } from './pageMetaRoutes';
 import type { HeadInput } from './headTags';
 
 /**

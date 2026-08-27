@@ -1,27 +1,13 @@
 import {
-  COMPARISONS,
-  FUNDING_STAGES,
   MIN_PRODUCT_PRICE_CENTS,
   PARTNER_FAQ,
-  PARTNER_SEGMENTS,
   PRICING_FAQ,
   PRODUCTS,
   VALUATION_TRIGGERS,
-  comparisonBySlug,
   formatUsd,
-  fundingStageBySlug,
-  partnerSegmentBySlug,
   productBySlug,
-  stagePriceRangeCents,
 } from './marketing';
-import {
-  SITE_TAGLINE,
-  breadcrumbJsonLd,
-  faqJsonLd,
-  organizationJsonLd,
-  productJsonLd,
-  websiteJsonLd,
-} from './seo';
+import { SITE_TAGLINE, faqJsonLd, organizationJsonLd } from './seo';
 import type { HeadInput } from './headTags';
 
 /**
@@ -37,15 +23,15 @@ import type { HeadInput } from './headTags';
  */
 
 /** Breadcrumb root. Every trail starts at the homepage. */
-const HOME_CRUMB = { name: 'Home', path: '/' };
+export const HOME_CRUMB = { name: 'Home', path: '/' };
 
 /**
  * The comparison hub. It is a real page that links to every individual
  * comparison, so it is the genuine crawlable parent of `/compare/:slug` — worth
  * naming once here rather than duplicating the title in two places.
  */
-const COMPARE_HUB_PATH = '/compare/409a-valuation-providers';
-const COMPARE_HUB_TITLE = '409A valuation providers compared';
+export const COMPARE_HUB_PATH = '/compare/409a-valuation-providers';
+export const COMPARE_HUB_TITLE = '409A valuation providers compared';
 
 /**
  * The 409A's own list price, for the cost page's description.
@@ -58,7 +44,7 @@ const COMPARE_HUB_TITLE = '409A valuation providers compared';
 const NINE_A_PRICE_CENTS = productBySlug('409a-valuation')!.priceCents;
 
 /** Static (non-parameterised) marketing routes. */
-function staticPages(): HeadInput[] {
+export function staticPages(): HeadInput[] {
   return [
     {
       path: '/',
@@ -162,124 +148,17 @@ function staticPages(): HeadInput[] {
 }
 
 /**
- * Metadata for a single product landing page.
+ * Look up a **statically described** page's metadata by canonical path.
  *
- * Three nodes: Product (the offer), BreadcrumbList (so a result reads
- * `n409.ai › 409A Valuation` instead of a raw path) and WebSite (so the result
- * is attributed to the brand). There is no `/products` index page, so the trail
- * is Home → product — inventing an intermediate crumb would point crawlers at a
- * URL that 404s.
- */
-export function productPageMeta(slug: string): HeadInput | undefined {
-  const product = productBySlug(slug);
-  if (!product) return undefined;
-  const path = `/products/${product.slug}`;
-  return {
-    path,
-    title: product.name,
-    description: product.description,
-    type: 'product',
-    jsonLd: [
-      productJsonLd(product),
-      breadcrumbJsonLd([HOME_CRUMB, { name: product.name, path }]),
-      websiteJsonLd(),
-    ],
-  };
-}
-
-/**
- * Metadata for a funding-stage landing page.
+ * The four slug-driven families are deliberately not searched here. Each of
+ * those pages already knows its own slug and calls its own builder in
+ * `pageMetaRoutes.ts`; routing them through this lookup instead meant every
+ * caller — including the landing page, on the critical path — built the
+ * metadata for all forty-seven published routes and threw forty-six away.
+ * `allPageMeta()` is still the union, for the prerenderer and the sitemap.
  *
- * The parent crumb is the 409A product page, which links to every stage — the
- * trail a search result reads is `n409.ai › 409A Valuation › Series B`. The
- * stage FAQ is marked up because those questions are the reason the page ranks;
- * the price in the description is derived so it cannot drift from checkout.
+ * Returns undefined for an unknown path, and for a slug-driven one.
  */
-export function stagePageMeta(slug: string): HeadInput | undefined {
-  const stage = fundingStageBySlug(slug);
-  if (!stage) return undefined;
-  const path = `/409a-valuation/${stage.slug}`;
-  const { fromCents, toCents } = stagePriceRangeCents(stage);
-  const price =
-    fromCents === toCents ? formatUsd(fromCents) : `${formatUsd(fromCents)}–${formatUsd(toCents)}`;
-  const product = productBySlug('409a-valuation')!;
-  return {
-    path,
-    title: `${stage.name} 409A valuation`,
-    description: `${stage.searchBlurb} Typically ${price}, drafted in 24 hours.`,
-    jsonLd: [
-      faqJsonLd(stage.faq),
-      breadcrumbJsonLd([
-        HOME_CRUMB,
-        { name: product.name, path: `/products/${product.slug}` },
-        { name: `${stage.name} 409A valuation`, path },
-      ]),
-      websiteJsonLd(),
-    ],
-  };
-}
-
-/**
- * Metadata for a partner-segment page. `/partners` links to all four, so it is
- * the real parent of the trail.
- */
-export function partnerSegmentPageMeta(slug: string): HeadInput | undefined {
-  const segment = partnerSegmentBySlug(slug);
-  if (!segment) return undefined;
-  const path = `/partners/${segment.slug}`;
-  return {
-    path,
-    title: `Partner with N409 — ${segment.name}`,
-    description: segment.searchBlurb,
-    jsonLd: [
-      faqJsonLd(segment.faq),
-      breadcrumbJsonLd([
-        HOME_CRUMB,
-        { name: 'Partner programme', path: '/partners' },
-        { name: segment.name, path },
-      ]),
-      websiteJsonLd(),
-    ],
-  };
-}
-
-/**
- * Metadata for a single competitor comparison page. The hub at
- * COMPARE_HUB_PATH links to every one of these, so it is a real parent and the
- * breadcrumb is a three-step trail.
- */
-export function comparePageMeta(slug: string): HeadInput | undefined {
-  const comparison = comparisonBySlug(slug);
-  if (!comparison) return undefined;
-  const path = `/compare/${comparison.slug}`;
-  const title = `N409 vs ${comparison.competitor}`;
-  return {
-    path,
-    title,
-    description: comparison.summary,
-    jsonLd: [
-      breadcrumbJsonLd([
-        HOME_CRUMB,
-        { name: COMPARE_HUB_TITLE, path: COMPARE_HUB_PATH },
-        { name: title, path },
-      ]),
-      websiteJsonLd(),
-    ],
-  };
-}
-
-/** Every prerenderable marketing page, in sitemap order. */
-export function allPageMeta(): HeadInput[] {
-  return [
-    ...staticPages(),
-    ...PRODUCTS.map((p) => productPageMeta(p.slug)!),
-    ...FUNDING_STAGES.map((s) => stagePageMeta(s.slug)!),
-    ...PARTNER_SEGMENTS.map((s) => partnerSegmentPageMeta(s.slug)!),
-    ...COMPARISONS.map((c) => comparePageMeta(c.slug)!),
-  ];
-}
-
-/** Look up metadata by canonical path. Returns undefined for unknown routes. */
 export function pageMeta(path: string): HeadInput | undefined {
-  return allPageMeta().find((p) => p.path === path);
+  return staticPages().find((p) => p.path === path);
 }

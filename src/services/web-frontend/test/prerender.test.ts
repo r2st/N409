@@ -10,7 +10,8 @@ import {
   renderRouteHtml,
   withFontPreloads,
 } from '../src/lib/prerender';
-import { allPageMeta, pageMeta } from '../src/lib/pageMeta';
+import { pageMeta } from '../src/lib/pageMeta';
+import { allPageMeta } from '../src/lib/pageMetaRoutes';
 import { marketingRoutes } from '../src/lib/routes';
 
 const ORIGIN = 'https://x.io';

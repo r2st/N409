@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { QUIZ_OPTIONS, formatUsd, productBySlug } from '../../lib/marketing';
+import { formatUsd, productBySlug } from '../../lib/marketing';
+import { QUIZ_OPTIONS } from '../../lib/marketingContent';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
 
