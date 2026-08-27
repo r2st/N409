@@ -1,5 +1,126 @@
 176dadc94f4f731b6646d9bbbe67c27fd603fd34
 # N409 revision
+# commit:    c919a95
+# subject:   the assumptions nobody chose, and the ratio of two rounded conclusions
+# previous:  61d3724 (the chart that outgrew its own wire contract).
+# includes:  1 commit — R177, a correctness round (M2) over the calculation
+#            engine: one concluded FMV traced backwards through every
+#            transformation to the inputs it came from.
+#
+#            The method is the finding. Every existing test of this chain checks
+#            the engine against itself — the weighted equity equals the weighted
+#            sum the same run produced, the FMV equals common equity over the
+#            share count the same run reported — and all of them are satisfied
+#            by an engine whose arithmetic has moved. So the chain was re-derived
+#            outside it, with the test carrying its own Black-Scholes and its own
+#            Chaffee put, and the four approaches, the allocation and both
+#            discounts checked one step at a time. Forty-one of those assertions
+#            passed against the engine as it stood, which is the result worth
+#            having: the arithmetic is right. Three things around it were not.
+#
+#            A risk-free rate of exactly zero was read as "not supplied". The
+#            idiom was `_num(...) or DEFAULT_RISK_FREE_RATE` at three sites, and
+#            0.0 is falsy, so a stated zero was discounted at 4% instead. This is
+#            the same shape `monte_carlo` documents for its seed — "zero is an
+#            ordinary seed" — and the risk-free rate is a worse place for it:
+#            zero is where the euro area, Switzerland and Japan sat for years and
+#            where the front of the USD curve sat through 2020-21, which is the
+#            vintage of a great many valuations this engine re-runs. Nothing
+#            disclosed the swap, because `assumptions.risk_free_rate` reported
+#            the 4% the engine chose rather than the 0% the analyst typed. On the
+#            reference cap table that is a concluded FMV of $0.3393 against the
+#            $0.2802 the stated inputs produce, 21% high, in the direction that
+#            over-prices employee options. `validate` had already declared the
+#            input plausible — RISK_FREE_BAND starts at 0.0 — so the two layers
+#            disagreed about the same number, which is this platform's recurring
+#            defect rather than a new one.
+#
+#            The larger version of the same thing: neither the exit horizon nor
+#            the risk-free rate is a required input, and with both absent the
+#            engine substitutes its own and writes the substitute into
+#            `assumptions` where it is indistinguishable from a choice somebody
+#            made. `_check_dates` returned before any band check when neither
+#            field was set, so preflight passed in silence and the substitution
+#            happened afterwards. The horizon is the single largest undisclosed
+#            lever in the payload — it sets the Black-Scholes term and the model
+#            DLOM together — and across the band a 409A would accept it is a 7%
+#            swing in the conclusion and a 23%-to-42% swing in the Chaffee
+#            discount. Three answers rather than one: `assumptions` now carries
+#            `time_to_exit_basis` and `risk_free_rate_basis`, preflight warns
+#            `engine_default`, and Exhibit F prints "(engine default — not
+#            supplied)" beside a figure the appraiser did not set. The last one
+#            matters most: the exhibit's whole assertion is that these are the
+#            stated basis of the opinion.
+#
+#            Third, and the one the rounding work came out of. A rounding site is
+#            presentational or load-bearing depending on who reads the field, not
+#            on how the call is written — so a site can change category with
+#            nobody editing the line. `sensitivity.delta_from_base` divided two
+#            copies of `results.fmv_per_share`, which is the conclusion at four
+#            decimals, and that made a four-year-old presentational rounding
+#            load-bearing the day the ratio was written. A ratio inherits its
+#            operands' quantum scaled by 1/FMV: 0.01% on a $1 share, 2% on a
+#            half-cent one, which is the ordinary shape for an early-stage
+#            company with a heavy preference stack — and it was published to six
+#            decimals. Measured rather than reasoned about: a swept point that
+#            really moves the conclusion +85.65% was reported as +83.67%, and
+#            because the base divided the same way the error did not average out
+#            across the sweep. `compute` now returns `fmv_per_share_unrounded`
+#            beside `results`, outside it for the reason `trace` is outside it —
+#            `results` is the persisted answer, it is diffed between runs and
+#            rendered into a signed report, and a second per-share figure inside
+#            it reads as a second conclusion.
+#
+#            docs/engine-rounding-policy.md states the two kinds, tables the ten
+#            load-bearing sites in the FMV chain, and states the rule they are
+#            held to: load-bearing rounding must not move the conclusion by half
+#            its last reported place, and the document must reproduce its own
+#            conclusion from the figures printed beside it. That second clause is
+#            why the concluded DLOM is quantised *before* it is applied rather
+#            than after — a reviewer multiplying the reported per-share by the
+#            reported discounts has to land on the reported answer, and the
+#            model's unquantised output stays one place wider in `dlom_detail`.
+#
+#            The census that keeps the table honest found two omissions in the
+#            document on its first run: `hybrid.py` rounds a `common_per_share`
+#            that is presentational (its blend is struck from the unrounded
+#            legs), and `pwerm.py` calls a per-class intermediate
+#            `fmv_per_share` — the same key as the conclusion, at a different
+#            precision, meaning a different thing. Both are now written down.
+#
+#            Deliberate break, each: restoring `or DEFAULT_RISK_FREE_RATE` fails
+#            the zero-rate assertion and the six provenance assertions; restoring
+#            the rounded numerator in `sensitivity` fails the delta assertions
+#            against an oracle that does not read the new field; rounding any
+#            allocation path's `common_per_share` to four places fails the
+#            precision census; adding a sixth allocation module fails the
+#            document census until the table names it.
+#
+# gap:       The trace was run against the OPM path end to end and against the
+#            other four for reproducibility only. CVM, PWERM, hybrid and Monte
+#            Carlo each have their own allocation arithmetic, and none of it is
+#            re-derived outside the engine the way the OPM's is — they are
+#            covered by self-consistency and by `test_allocation_model_free_invariants`,
+#            which is the blind spot this round was written about.
+#
+#            `auto_volatility` rounds an analyst's own volatility to four
+#            decimals on its way past — `estimate_volatility` returns
+#            `round(manual_override, 4)` as its recommendation and `compute`
+#            assigns it — so the docstring's "a manually supplied value always
+#            wins" is true to four places rather than exactly. Measured at
+#            ~0.06% of the concluded FMV, below the per-share quantum, so it is
+#            recorded rather than fixed: the fix is a signature change on a
+#            function four other callers read.
+#
+#            Two figures in the result document round to six places while the
+#            discount applied beside them rounds to four (`dlom_detail.dlom`
+#            against `discounts.dlom`). That is deliberate and now documented,
+#            but it means a reviewer re-deriving from the *detail* rather than
+#            from the concluded figure lands one place away. The report prints
+#            the concluded one; nothing yet stops a future exhibit printing the
+#            other.
+
+# N409 revision
 # commit:    61d3724
 # subject:   the chart that outgrew its own wire contract, and the offload that stopped silently
 # previous:  3ed3c78 (the failures that reached a person as an empty 500).
