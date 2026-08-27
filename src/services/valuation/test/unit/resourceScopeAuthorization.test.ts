@@ -53,9 +53,7 @@ const PRIVILEGED_PREFIXES = [
   '/api/v1/admin/',
   '/api/v1/users',
   '/api/v1/partners',
-  '/api/v1/operations',
   '/api/v1/report-templates',
-  '/api/v1/prompts',
   '/scim/v2',
 ];
 

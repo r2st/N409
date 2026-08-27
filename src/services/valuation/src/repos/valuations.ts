@@ -53,6 +53,16 @@ export interface ValuationRow {
    * holding one row by id has nothing but this column to go on.
    */
   archived_at: Date | null;
+  /**
+   * The roll-up this engagement is a member of, or NULL for a standalone one
+   * (migration for portfolio consolidation; `assignValuationToOrg` is the only
+   * writer). Declared for the same reason as `archived_at`: a route holding one
+   * row by id has nothing else to compare an organization named in the URL
+   * against, and under the index signature below that comparison type-checks as
+   * `unknown` — so a typo in the field name would read as "not a member" on
+   * every row and refuse every request. See `DELETE /organizations/:id/entities/:valuationId`.
+   */
+  organization_id: string | null;
   created_at: Date;
   due_date: Date | null;
   published_at: Date | null;

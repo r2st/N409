@@ -286,16 +286,78 @@ describe.skipIf(!dbUp)('account settings', () => {
   // ── Personal API tokens ────────────────────────────────────────────────────
 
   describe('personal API tokens', () => {
+    const mintRaw = (token: string, payload: unknown) =>
+      ctx.app.inject({ method: 'POST', url: '/api/v1/me/tokens', headers: authHeader(token), payload });
+
     const mint = async (token: string, name: string) => {
-      const res = await ctx.app.inject({
-        method: 'POST',
-        url: '/api/v1/me/tokens',
-        headers: authHeader(token),
-        payload: { name },
-      });
+      // The password rides along on every mint: issuing a token is a
+      // credential-level action and is re-authenticated like the rest of them.
+      const res = await mintRaw(token, { name, current_password: SEED_PASSWORD });
       expect(res.statusCode).toBe(201);
       return res.json() as { token: { id: string; partner_id: string | null }; secret: string };
     };
+
+    /**
+     * Why a password stands in front of a mint.
+     *
+     * A personal token is the only credential on this platform that outlives
+     * everything meant to take access away: `bumpSessionEpoch` — what a
+     * password change and "sign out everywhere" both do — deliberately does not
+     * revoke API tokens, so a borrowed session that could mint one bought
+     * permanent access to the account, and the owner's obvious response to the
+     * theft would not have taken it back. Everything else at that level
+     * (changing the password or the login email, closing the account, disabling
+     * 2FA, regenerating backup codes) already asked; this was the omission, and
+     * the only one of the set that *creates* a credential rather than changing
+     * one.
+     */
+    it('refuses to mint without the current password', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const res = await mintRaw(user.token, { name: 'no-password' });
+      expect(res.statusCode).toBe(422);
+      // The field is named, so the form can mark it rather than showing a
+      // sentence next to a box the user has already filled.
+      expect(res.json().errors).toEqual([{ path: ['current_password'] }]);
+
+      const after = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/me/tokens',
+        headers: authHeader(user.token),
+      });
+      expect(after.json().tokens).toEqual([]);
+    });
+
+    it('refuses to mint on a wrong password', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const res = await mintRaw(user.token, { name: 'guessed', current_password: 'not-the-password' });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().detail).toBe('Current password is incorrect');
+    });
+
+    /**
+     * No token mints its successor.
+     *
+     * The password check alone does not settle this — an SSO-only account has
+     * no digest to check — and it is the case that makes revocation mean
+     * something: if a leaked key's last act can be to issue a replacement, then
+     * revoking it ends nothing.
+     */
+    it('refuses a mint authenticated by an API token, password or not', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const { secret } = await mint(user.token, 'first');
+      const res = await mintRaw(secret, { name: 'second', current_password: SEED_PASSWORD });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().detail).toContain('cannot mint another API token');
+
+      // Exactly the one token, so the refusal is a refusal and not a 403 after
+      // the row was written.
+      const after = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/me/tokens',
+        headers: authHeader(user.token),
+      });
+      expect(after.json().tokens).toHaveLength(1);
+    });
 
     it('mints a token that authenticates as its owner', async () => {
       const user = await seedUser(ctx, { roles: ['valuation_user'] });

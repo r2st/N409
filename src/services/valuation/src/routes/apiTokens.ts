@@ -50,6 +50,16 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (!isUlid(partnerId)) throw problems.notFound();
     if (!canManageTokens(principal, partnerId))
       throw forbidden('Creating an API token for that partner', 'ops');
+    // No key mints its successor. The same rule `POST /me/tokens` states at
+    // length: revoking a leaked credential has to be the end of it, and it is
+    // not if the credential's last act can be to issue a replacement that
+    // survives the revocation. A partner key is the one this matters most for —
+    // it is handed to an integration, lives outside the firm's browser
+    // sessions, and reads the firm's whole book.
+    if (req.apiToken)
+      throw problems.forbidden(
+        'An API token cannot mint another API token — create it from the partner console while signed in',
+      );
 
     const parsed = z.object({ name: z.string().min(1).max(200) }).safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid token', parsed.error);

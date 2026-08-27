@@ -40,11 +40,27 @@ const PRIVILEGED_PREFIXES = [
   '/api/v1/admin/', // every ops/admin console surface
   '/api/v1/users', // the platform user directory and role mutations
   '/api/v1/partners', // firm records — creating, renaming, archiving
-  '/api/v1/operations', // the ops working queues
   '/api/v1/report-templates', // the document behind every report issued
-  '/api/v1/prompts', // the AI prompts the narratives are generated from
   '/scim/v2', // enterprise provisioning
 ];
+
+/*
+ * `/api/v1/operations` and `/api/v1/prompts` were on that list and matched
+ * nothing (R185).
+ *
+ * Both surfaces moved under `/api/v1/admin/` — the prompt console is
+ * `/api/v1/admin/prompts` and `/api/v1/admin/narrative-prompts`, and what
+ * `routes/operations.ts` still registers is either `/api/v1/admin/…` or the two
+ * scope-filtered reads `/api/v1/valuations/counts` and `/api/v1/stats/dashboard`
+ * — so the coverage never lapsed. The entries did: a prefix matching zero
+ * routes is a claim to sweep a surface that is not there, and the file read as
+ * though it audited seven when it audited five. `resourceScopeAuthorization`
+ * mirrors this list in order to *subtract* it, so the same two entries were
+ * also excusing a bucket from that sweep on the grounds that this one had it.
+ *
+ * The case below is what stops the next one: a prefix has to match a live
+ * route or be deleted.
+ */
 
 /**
  * Routes on a privileged prefix that are deliberately guarded some other way.
@@ -168,6 +184,15 @@ describe('privileged routes authorize, not merely authenticate', () => {
     // refactor changes how routes are registered, this is the case that says so.
     expect(ALL.length).toBeGreaterThan(300);
     expect(PRIVILEGED.length).toBeGreaterThan(80);
+  });
+
+  it('every privileged prefix still names a live surface', () => {
+    // Per-prefix, not in aggregate: `/api/v1/admin/` alone carries three
+    // quarters of the routes here, so the total stays comfortably over its
+    // floor while any other entry quietly stops matching anything. That is how
+    // two of them went stale unnoticed — see the note above the list.
+    const empty = PRIVILEGED_PREFIXES.filter((p) => !ALL.some((r) => r.url.startsWith(p)));
+    expect(empty).toEqual([]);
   });
 
   it('every route on a privileged surface calls a guard that can throw 403', () => {

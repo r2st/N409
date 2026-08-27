@@ -206,4 +206,50 @@ describe.skipIf(!dbUp)('admin API token listing', () => {
       expect((await list(admin.token, '?limit=0')).statusCode).toBe(400);
     });
   });
+
+  /**
+   * No key mints its successor.
+   *
+   * A partner key is handed to an integration, lives outside anybody's browser
+   * session, and reads the firm's whole book — and `POST /partners/:id/tokens`
+   * is self-service for a firm's org admin. So the credential could issue its
+   * own replacement, and revoking a leaked one ended nothing: whoever held it
+   * had already minted the next. The refusal is what makes revocation the end
+   * of the story, and `POST /me/tokens` states the same rule for the personal
+   * half.
+   */
+  describe('a token cannot mint a token', () => {
+    it('refuses a partner mint authenticated by an API key', async () => {
+      // The key has to be minted by a member of the firm it is scoped to —
+      // `resolveApiToken` re-reads that on every request, so a key created by a
+      // platform admin with no partner does not resolve at all.
+      const orgAdmin = await seedUser(ctx, { roles: ['partner'], partnerId: partnerA });
+      const minted = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/partners/${partnerA}/tokens`,
+        headers: authHeader(orgAdmin.token),
+        payload: { name: 'integration' },
+      });
+      expect(minted.statusCode, minted.body).toBe(201);
+      const secret = minted.json().secret as string;
+
+      // The key works — otherwise the refusal below would prove nothing.
+      const whoami = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/me',
+        headers: authHeader(secret),
+      });
+      expect(whoami.statusCode).toBe(200);
+      expect(whoami.json().user.id).toBe(orgAdmin.id);
+
+      const second = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/partners/${partnerA}/tokens`,
+        headers: authHeader(secret),
+        payload: { name: 'successor' },
+      });
+      expect(second.statusCode).toBe(403);
+      expect(second.json().detail).toContain('cannot mint another API token');
+    });
+  });
 });

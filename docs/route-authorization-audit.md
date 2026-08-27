@@ -1,6 +1,6 @@
-# Route authorization audit (R157)
+# Route authorization audit (R157, extended R185)
 
-**Snapshot taken 2026-08-26. The numbers below are not the authority — the
+**Snapshot taken 2026-08-26, findings appended 2026-08-28. The numbers below are not the authority — the
 census tests are.** A table of routes in a document is out of date the first
 time somebody adds a route and does not open this file, which is exactly the
 failure mode the tests exist to remove. Read this for the shape of the surface
@@ -11,11 +11,13 @@ and for where each guard lives; run the tests to find out what is true now.
 | Guard | Kind | Covers | Blind to |
 | --- | --- | --- | --- |
 | `src/plugins/routeAudit.ts` | boot check on the real route table | every registered route runs `app.authenticate` or is in `PUBLIC_ROUTES` with a written reason | whether the caller may see *this row* |
-| `test/unit/privilegedRouteAuthorization.test.ts` | source scan | `/api/v1/admin/`, `/users`, `/partners`, `/operations`, `/report-templates`, `/prompts`, `/scim/v2` reach something that can throw 403 | whether the 403 is the *right* predicate |
+| `test/unit/privilegedRouteAuthorization.test.ts` | source scan | `/api/v1/admin/`, `/users`, `/partners`, `/report-templates`, `/scim/v2` reach something that can throw 403 | whether the 403 is the *right* predicate |
 | `test/unit/valuationScopeAuthorization.test.ts` | source scan | the 171 routes under `/api/v1/valuations/…` consult a scope predicate, and nested children are read as children of `:id` | anything not keyed on a valuation |
-| `test/unit/resourceScopeAuthorization.test.ts` | source scan (**new, R157**) | the 38 routes keyed on a non-valuation row — organizations, saved views, comments, API tokens, intake links, invoices, funds, debt instruments, tasks, support messages — consult the caller before answering | whether the check compares the right field |
+| `test/unit/resourceScopeAuthorization.test.ts` | source scan (**new, R157**) | the 43 routes keyed on a non-valuation row — organizations, saved views, comments, API tokens, intake links, invoices, funds, debt instruments, tasks, support messages — consult the caller before answering | whether the check compares the right field |
 | `test/integration/crossTenantResourceAccess.test.ts` | behavioural (**new, R157**) | 17 probes: firm B, signed in and valid, aimed at firm A's ids; each paired with firm A making the same request | resources with no second tenant |
 | `test/integration/partnerApiScoping.test.ts` | behavioural, registry-driven (**rewritten, R157**) | every `{id}`-scoped partner-API operation 404s for another firm's row, and serves the key's own | — |
+| `test/unit/authorizationCoverageCensus.test.ts` | source scan + real route table (**new, R185**) | the 75 routes that name *nothing* — `GET /tasks`, `/funds`, `/firm/clients`, `/support/messages` — consult the caller; **and** every authenticated route the app registers is claimed by exactly one of the five sweeps | the correctness of the filter, once one is present |
+| `test/unit/webhookSignatureCensus.test.ts` | source scan (**new, R185**) | every route behind a raw-buffer body parser reads a signature header, verifies it cryptographically over the raw bytes, and refuses on mismatch | outbound delivery signing, which `partnerWebhooks.test.ts` owns |
 | `test/integration/publicRouteThrottleCensus.test.ts` | behavioural | every route in `PUBLIC_ROUTES` is throttled, or `open` with an argument | — |
 | `test/integration/retiredEngagementWrites.test.ts`, `partnerApiRetired.test.ts` | behavioural, route-table-driven | no write reaches a withdrawn engagement | reads, which stay open by design |
 
@@ -43,6 +45,74 @@ names would have to be edited by the same person who forgot the check.
   rather than the customer-facing one: `/docs`, `/redoc` and `/openapi.json` on
   both Python services answered without the estate's shared secret. See "the two
   surfaces that table cannot see", below.
+
+## What the sweep found, R185
+
+R157 audited the routes that *name something*. R185 audited the rest, plus the
+question no individual sweep can ask — whether the sweeps between them cover the
+table. 465 registered routes, 410 authenticated; the partition is 108
+privileged, 169 valuation-scoped, 43 other-resource-keyed, 75 collection, 15
+partner API.
+
+Five gaps, none of them a missing `preHandler` — every one passed the existing
+guards, which is why they were still there:
+
+1. **`GET /admin/email-outbox` served the rendered body of every message.**
+   `listOutbox` is `SELECT *` and the route spread the row onto the wire, so the
+   response carried `email_outbox.body` — which for a transactional send *is* a
+   live bearer credential: the password-reset link, the email-verification link,
+   the invitation, the board member's signing link, the auditor portal link, the
+   client intake link. Rows are kept for a year (0083). The route is `isOps`,
+   twelve roles, of which nine can administer nobody through any other door —
+   so a `contributing_reviewer` could request a reset for any administrator,
+   open this page and take the account. The body is now dropped from the
+   response and replaced with `body_length`; `GET /admin/api-tokens` is gated on
+   `canManageUsers` for the same reason, in a comment naming the same roles.
+
+2. **SCIM's authority ran past the accounts it provisions.** Only the unfiltered
+   listing asked `provisioned_by`; `GET /Users/:id`, the `userName eq` filter,
+   `PATCH` and `DELETE` went straight to the whole `users` table. A SCIM bearer
+   — a credential facing the open internet — could look up any account by
+   address and `setUserActive(false)` it, with no last-administrator guard on
+   that path. Now bounded to `provisioned_by IN ('scim','saml')`: the directory
+   manages what the directory created, and refuses to name a locally-registered
+   account at all.
+
+3. **Minting an API token was not re-authenticated.** `auth/reauth.ts` lists the
+   credential-level actions behind a password prompt — password, login email,
+   account closure, 2FA, backup codes — and this was the one missing, and the
+   only one that *creates* a credential rather than changing one.
+   `bumpSessionEpoch` deliberately does not revoke API tokens, so a borrowed
+   cookie bought permanent access that surviving a password change. `POST
+   /me/tokens` now takes `current_password`, and neither it nor `POST
+   /partners/:id/tokens` will mint from a request authenticated by an API token
+   — a key that can issue its successor makes revocation mean nothing.
+
+4. **`DELETE /organizations/:id/entities/:valuationId` ignored `:id`.** Both ids
+   were authorized against the caller and neither against the other, so the
+   handler detached the engagement from whatever roll-up it was really in. Not
+   an escalation, which is exactly why three sweeps walked past it: the fault is
+   in the relationship between two ids that each pass their own check.
+
+5. **Two privileged prefixes matched nothing.** `/api/v1/operations` and
+   `/api/v1/prompts` had moved under `/api/v1/admin/` — coverage never lapsed,
+   but the list claimed seven surfaces and described five, and
+   `resourceScopeAuthorization` mirrored both entries in order to *subtract*
+   them. A per-prefix non-empty case now stops the next one; the aggregate floor
+   could not, because `/api/v1/admin/` alone carries three quarters of the
+   routes.
+
+One near-miss worth recording: `scimEdges.test.ts` asserted the SCIM listing
+boundary as `expect(body.totalResults).toBe(body.Resources.length)`, which
+`scimList` computes from the array it was handed — true of any listing, including
+one containing every administrator. The claim was right, the assertion was
+vacuous, and it was the only place a reviewer would have looked to find out that
+the other four routes had no such filter. It now names a real local account.
+
+Verified as already fixed: R157's internal-tier `/docs` exposure (both Python
+services gate them behind `INTERNAL_SERVICE_TOKEN`), and the partner API's
+registry guard (`define()` attaches `apiKeyGuard` for every `auth: 'api_key'`
+entry; the two documentation endpoints are the only others).
 
 ## Roles
 
@@ -233,3 +303,7 @@ reviewer can check the claim rather than trust the list:
 * `INTERNAL_PUBLIC_PATHS` and `gatedElsewhere` in
   `packages/shared/src/internalAuth.ts` — what bypasses the service token, and
   what gates it instead.
+* `SAME_FOR_EVERYONE` in `authorizationCoverageCensus.test.ts` (**R185**) — why
+  a collection route answers every caller the same thing. The bar is that the
+  response is a constant of the codebase, so there is one entry:
+  `GET /intake/schema`.

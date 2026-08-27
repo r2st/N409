@@ -90,6 +90,63 @@ export function registerScimRoutes(
   /** The provisioning connector, as an event actor. */
   const scimActor = (tokenId: string) => ({ actorType: 'system' as const, actorId: tokenId, source: 'scim' });
 
+  /**
+   * Which accounts this bearer is allowed to name at all.
+   *
+   * `users.provisioned_by` is `'scim'`, `'saml'` or NULL (migration 0082): the
+   * directory made this account, the directory made it on first sign-in, or a
+   * person registered it here. The first two are the IdP's records to manage.
+   * The third are this platform's own — every administrator seeded before an
+   * IdP existed, every ops account, every client who signed up through the
+   * front door.
+   *
+   * The listing already drew that line (`WHERE provisioned_by = 'scim'`), and
+   * it was the only route that did. `GET /Users/:id`, the `userName eq` filter,
+   * `PATCH` and `DELETE` all went straight to `findUserById` /
+   * `findUserByEmail` over the whole `users` table — so a SCIM bearer could
+   * read any account on the platform by address, and `setUserActive(id, false)`
+   * any of them. There is no last-administrator guard on that path the way
+   * there is on `DELETE /me` and the admin user delete, so a connector
+   * misconfigured against the wrong directory — or a leaked token, which is the
+   * threat this endpoint's whole shape is built around, being a bearer facing
+   * the open internet — deactivates every administrator and nobody can sign in
+   * to undo it.
+   *
+   * `'saml'` is in the set rather than only `'scim'` because the two are the
+   * same directory: a user JIT-provisioned by the SAML assertion consumer
+   * (routes/saml.ts) is exactly who the connector then deprovisions. Excluding
+   * them would answer a real deprovision with 404, which Okta and Entra both
+   * surface as an integration error and then stop retrying — a failure to
+   * remove access, which is worse than what this guard prevents.
+   *
+   * NULL is the case being closed, and it is stated as an allow-list rather
+   * than `!== null` so a fourth provisioning source has to be considered rather
+   * than inherited.
+   */
+  const DIRECTORY_PROVISIONED: ReadonlySet<string> = new Set(['scim', 'saml']);
+  const managedByDirectory = (user: { provisioned_by: string | null }): boolean =>
+    user.provisioned_by !== null && DIRECTORY_PROVISIONED.has(user.provisioned_by);
+
+  /**
+   * The user this request names, or null with the 404 already sent.
+   *
+   * 404 and not 403 for a local account, for the reason every other id-keyed
+   * refusal in this service gives: the answer must not distinguish "no such
+   * user" from "a user you may not touch", or the endpoint becomes a directory
+   * of which addresses have accounts here.
+   */
+  const loadManaged = async (
+    id: string,
+    reply: FastifyReply,
+  ): Promise<Awaited<ReturnType<typeof findUserById>>> => {
+    const user = await findUserById(deps.pool, id);
+    if (!user || !managedByDirectory(user)) {
+      void reply.status(404).header('content-type', CT).send(scimError(404, 'User not found'));
+      return null;
+    }
+    return user;
+  };
+
   const defaultRole = async (): Promise<RoleKey> => {
     const config = await getSamlConfig(deps.pool);
     const role = config?.default_role ?? 'valuation_user';
@@ -112,8 +169,13 @@ export function registerScimRoutes(
     if (!(await requireToken(req, reply))) return;
     const filter = parseUserNameFilter((req.query as { filter?: string }).filter);
     if (filter) {
+      // Same boundary as `loadManaged`, and the reason it matters more here:
+      // the filter takes an address rather than an id, so without it this is a
+      // "does this person have an account" oracle over the whole platform that
+      // anyone holding the bearer can run one address at a time.
       const user = await findUserByEmail(deps.pool, filter);
-      return reply.header('content-type', CT).send(scimList(user ? [toScimUser(user)] : []));
+      const managed = user && managedByDirectory(user) ? user : null;
+      return reply.header('content-type', CT).send(scimList(managed ? [toScimUser(managed)] : []));
     }
     const { rows } = await deps.pool.query<ScimUserRow>(
       `SELECT id, email, first_name, last_name, scim_external_id, deleted_at, created_at
@@ -125,8 +187,8 @@ export function registerScimRoutes(
   app.get('/scim/v2/Users/:id', limited, async (req, reply) => {
     if (!(await requireToken(req, reply))) return;
     const { id } = req.params as { id: string };
-    const user = await findUserById(deps.pool, id);
-    if (!user) return reply.status(404).header('content-type', CT).send(scimError(404, 'User not found'));
+    const user = await loadManaged(id, reply);
+    if (!user) return;
     return reply.header('content-type', CT).send(toScimUser(user));
   });
 
@@ -181,8 +243,8 @@ export function registerScimRoutes(
     const tokenId = await requireToken(req, reply);
     if (!tokenId) return;
     const { id } = req.params as { id: string };
-    const user = await findUserById(deps.pool, id);
-    if (!user) return reply.status(404).header('content-type', CT).send(scimError(404, 'User not found'));
+    const user = await loadManaged(id, reply);
+    if (!user) return;
     const active = activeFromPatch(req.body);
     if (active !== undefined) {
       await setUserActive(deps.pool, id, active);
@@ -215,8 +277,8 @@ export function registerScimRoutes(
     const tokenId = await requireToken(req, reply);
     if (!tokenId) return;
     const { id } = req.params as { id: string };
-    const user = await findUserById(deps.pool, id);
-    if (!user) return reply.status(404).header('content-type', CT).send(scimError(404, 'User not found'));
+    const user = await loadManaged(id, reply);
+    if (!user) return;
     await setUserActive(deps.pool, id, false);
     if (!user.deleted_at)
       await recordAdminEvent(deps.pool, {

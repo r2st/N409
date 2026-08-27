@@ -235,14 +235,39 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     return reply.status(204).send();
   });
 
+  /**
+   * Remove one engagement from this organization.
+   *
+   * Both ids are authorized — the caller owns the organization, and owns the
+   * engagement — and until R185 neither was checked against the *other*. The
+   * handler read `:valuationId`, confirmed the caller could edit it, and then
+   * cleared `organization_id` unconditionally: whatever roll-up the engagement
+   * was actually a member of, not the one the URL named. So a stale tab, a
+   * copied link, or a bulk script iterating the wrong roster detached an
+   * engagement from an organization the request never mentioned, and answered
+   * 204 as though it had done what was asked.
+   *
+   * It is not a privilege escalation — ops can edit every organization and
+   * every engagement, and a client can only reach their own — which is exactly
+   * why it survived three authorization sweeps: every id in the request passes
+   * its own check, and the bug is in the relationship between them. For ops it
+   * is the sharpest case rather than the mildest, because they hold every
+   * organization on the platform, so the engagement silently removed belongs to
+   * a firm that did not ask.
+   *
+   * 404 rather than 409: to a caller who may see both rows, "that engagement is
+   * not in this organization" and "that engagement is not there" are the same
+   * fact about this URL.
+   */
   app.delete(
     '/api/v1/organizations/:id/entities/:valuationId',
     { preHandler: app.authenticate },
     async (req, reply) => {
       const principal = requirePrincipal(req);
       const { id, valuationId } = req.params as { id: string; valuationId: string };
-      await loadOwnedOrg(principal, id);
-      await loadEditableValuation(principal, valuationId);
+      const org = await loadOwnedOrg(principal, id);
+      const valuation = await loadEditableValuation(principal, valuationId);
+      if (valuation.organization_id !== org.id) throw problems.notFound();
       await assignValuationToOrg(deps.pool, valuationId, null);
       return reply.status(204).send();
     },

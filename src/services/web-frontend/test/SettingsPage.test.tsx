@@ -268,6 +268,9 @@ describe('SettingsPage — personal API tokens', () => {
     expect(await screen.findByText('You have no active tokens.')).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText('New token name'), 'reporting script');
+    // Minting is re-authenticated — a token outlives "sign out everywhere", so
+    // a borrowed session must not be able to issue one. See routes/account.ts.
+    await userEvent.type(screen.getByLabelText('Your password'), 'hunter2');
     await userEvent.click(screen.getByRole('button', { name: 'Create token' }));
 
     expect(await screen.findByText('n409_pat_the-real-secret')).toBeInTheDocument();
@@ -285,6 +288,7 @@ describe('SettingsPage — personal API tokens', () => {
     await settled();
 
     await userEvent.type(await screen.findByLabelText('New token name'), 'temp');
+    await userEvent.type(screen.getByLabelText('Your password'), 'hunter2');
     await userEvent.click(screen.getByRole('button', { name: 'Create token' }));
     await screen.findByRole('table', { name: 'Personal API tokens' });
 
@@ -300,6 +304,7 @@ describe('SettingsPage — personal API tokens', () => {
     await settled();
 
     await userEvent.type(await screen.findByLabelText('New token name'), 'temp');
+    await userEvent.type(screen.getByLabelText('Your password'), 'hunter2');
     await userEvent.click(screen.getByRole('button', { name: 'Create token' }));
     await screen.findByRole('table', { name: 'Personal API tokens' });
 

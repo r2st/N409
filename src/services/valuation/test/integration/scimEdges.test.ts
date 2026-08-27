@@ -21,10 +21,16 @@ const CT = 'application/scim+json';
 describe.skipIf(!dbUp)('SCIM edges', () => {
   let ctx: TestApp;
   let bearer: { authorization: string };
+  /**
+   * A locally-registered account, held for the cases that matter most here:
+   * it is `provisioned_by IS NULL`, it holds `admin`, and the whole point of
+   * the boundary below is that a SCIM bearer cannot see it or switch it off.
+   */
+  let admin: Awaited<ReturnType<typeof seedUser>>;
 
   beforeAll(async () => {
     ctx = await setupTestApp();
-    const admin = await seedUser(ctx, { roles: ['admin'] });
+    admin = await seedUser(ctx, { roles: ['admin'] });
     const created = await ctx.app.inject({
       method: 'POST',
       url: '/api/v1/admin/sso/scim-tokens',
@@ -92,7 +98,16 @@ describe.skipIf(!dbUp)('SCIM edges', () => {
       expect(body.Resources.map((r: { userName: string }) => r.userName)).toContain('listed@corp.example');
       // Only SCIM-provisioned users: the platform's own accounts are not the
       // IdP's to see, let alone to deprovision.
-      expect(body.totalResults).toBe(body.Resources.length);
+      //
+      // Asserted against a real local account. This line used to read
+      // `expect(body.totalResults).toBe(body.Resources.length)` under that same
+      // comment, which `scimList` computes from the array it was handed — so it
+      // held for any listing whatsoever, including one containing every
+      // administrator on the platform. The claim was right and nothing checked
+      // it, which is worse than not making it: the four other routes had no
+      // such filter at all and this was the only place a reviewer would have
+      // looked to find out (R185).
+      expect(body.Resources.map((r: { userName: string }) => r.userName)).not.toContain(admin.email);
     });
 
     it('returns an empty list for a filter that matches nobody', async () => {
@@ -235,6 +250,79 @@ describe.skipIf(!dbUp)('SCIM edges', () => {
       const created = await scim('POST', '/scim/v2/Users', { userName: 'twice@corp.example' });
       const id = created.json().id;
       expect((await scim('DELETE', `/scim/v2/Users/${id}`)).statusCode).toBe(204);
+      expect((await scim('DELETE', `/scim/v2/Users/${id}`)).statusCode).toBe(204);
+    });
+  });
+
+  /**
+   * The reach of the bearer, which was the whole `users` table.
+   *
+   * Only the unfiltered listing ever asked what provisioned a row. `GET
+   * /Users/:id`, the `userName eq` filter, `PATCH` and `DELETE` each went
+   * straight to `findUserById` / `findUserByEmail`, so a SCIM token could look
+   * up any account on the platform by address and `setUserActive(false)` it.
+   * That is not a data leak so much as a switch: there is no last-administrator
+   * guard on this path the way there is on `DELETE /me`, so the accounts most
+   * worth turning off are the ones that make the console unreachable
+   * afterwards. And the credential in front of it is a bearer facing the open
+   * internet — the threat this endpoint's rate limiter, its audit rows and its
+   * constant-time comparison are all already written for.
+   *
+   * A directory-provisioned account (`'scim'` or `'saml'`) stays fully
+   * manageable: that is the connector doing its job, and refusing a real
+   * deprovision would leave access in place, which is the worse failure.
+   */
+  describe('the accounts a bearer may reach', () => {
+    it('does not find a locally-registered account by address', async () => {
+      const res = await scim(
+        'GET',
+        '/scim/v2/Users?filter=' + encodeURIComponent(`userName eq "${admin.email}"`),
+      );
+      expect(res.statusCode).toBe(200);
+      // Empty, not 403: the filter must not become an oracle for which
+      // addresses have accounts here.
+      expect(res.json().totalResults).toBe(0);
+      expect(res.json().Resources).toEqual([]);
+    });
+
+    it('404s a locally-registered account by id', async () => {
+      const res = await scim('GET', `/scim/v2/Users/${admin.id}`);
+      expect(res.statusCode).toBe(404);
+      expect(res.headers['content-type']).toContain(CT);
+    });
+
+    it('cannot deactivate a locally-registered administrator', async () => {
+      for (const [method, payload] of [
+        ['PATCH', { Operations: [{ op: 'replace', path: 'active', value: false }] }],
+        ['DELETE', undefined],
+      ] as const) {
+        const res = await scim(method, `/scim/v2/Users/${admin.id}`, payload);
+        expect([method, res.statusCode]).toEqual([method, 404]);
+      }
+
+      // The refusal has to be a refusal. A 404 returned after the row was
+      // already updated would read identically from outside.
+      const { rows } = await ctx.pool.query<{ deleted_at: Date | null }>(
+        'SELECT deleted_at FROM users WHERE id = $1',
+        [admin.id],
+      );
+      expect(rows[0]?.deleted_at ?? null).toBeNull();
+
+      // …and the account still signs in, which is the fact the guard exists for.
+      const login = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        payload: { email: admin.email, password: 'test-password-123' },
+      });
+      expect(login.statusCode).toBe(200);
+    });
+
+    it('still manages an account the directory provisioned', async () => {
+      // The other side of the boundary, stated so a fix that simply refused
+      // everything would fail here rather than look like a hardened endpoint.
+      const created = await scim('POST', '/scim/v2/Users', { userName: 'reachable@corp.example' });
+      const id = created.json().id;
+      expect((await scim('GET', `/scim/v2/Users/${id}`)).statusCode).toBe(200);
       expect((await scim('DELETE', `/scim/v2/Users/${id}`)).statusCode).toBe(204);
     });
   });

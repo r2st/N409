@@ -602,4 +602,104 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
       expect((res.json() as { organizations: unknown[] }).organizations).toEqual([]);
     });
   });
+
+  /**
+   * The two ids in `DELETE /organizations/:id/entities/:valuationId` describe
+   * one relationship, and each used to be checked only against the caller.
+   *
+   * The handler authorized the organization, authorized the engagement, and
+   * then cleared `organization_id` unconditionally — so it removed the
+   * engagement from whichever roll-up it was really in, not from the one the
+   * URL named, and answered 204 as though it had done what was asked. Every id
+   * passes its own check, which is why three authorization sweeps walked past
+   * it: the fault is in the relationship between them, and nothing was looking
+   * there.
+   */
+  describe('detaching an entity names the organization it is in', () => {
+    it('refuses when the engagement belongs to a different organization', async () => {
+      const home = (
+        await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/organizations',
+          headers: authHeader(owner.token),
+          payload: { name: 'Home Group' },
+        })
+      ).json().organization.id as string;
+      const elsewhere = (
+        await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/organizations',
+          headers: authHeader(owner.token),
+          payload: { name: 'Unrelated Group' },
+        })
+      ).json().organization.id as string;
+
+      const member = await seedValuation(owner, 'Member Co', 1_000_000);
+      expect(
+        (
+          await ctx.app.inject({
+            method: 'POST',
+            url: `/api/v1/organizations/${home}/entities`,
+            headers: authHeader(owner.token),
+            payload: { valuation_id: member.id, entity_type: 'standalone' },
+          })
+        ).statusCode,
+      ).toBe(204);
+
+      // Same caller, same rights over both rows — the only thing wrong is that
+      // this engagement is not in this organization.
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/organizations/${elsewhere}/entities/${member.id}`,
+        headers: authHeader(owner.token),
+      });
+      expect(res.statusCode).toBe(404);
+
+      // And the membership it was not asked about is still there. Without this
+      // the case above would pass on a handler that detached the engagement and
+      // then 404ed.
+      const home_after = (
+        await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/organizations/${home}`,
+          headers: authHeader(owner.token),
+        })
+      ).json();
+      expect(home_after.entities.map((e: { valuation_id: string }) => e.valuation_id)).toEqual([member.id]);
+    });
+
+    it('still detaches when the organization named is the one it is in', async () => {
+      const org = (
+        await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/organizations',
+          headers: authHeader(owner.token),
+          payload: { name: 'Correct Group' },
+        })
+      ).json().organization.id as string;
+      const member = await seedValuation(owner, 'Correct Member Co', 2_000_000);
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/organizations/${org}/entities`,
+        headers: authHeader(owner.token),
+        payload: { valuation_id: member.id, entity_type: 'standalone' },
+      });
+
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/organizations/${org}/entities/${member.id}`,
+        headers: authHeader(owner.token),
+      });
+      expect(res.statusCode).toBe(204);
+
+      const after = (
+        await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/organizations/${org}`,
+          headers: authHeader(owner.token),
+        })
+      ).json();
+      expect(after.entities).toEqual([]);
+    });
+  });
 });

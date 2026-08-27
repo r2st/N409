@@ -349,7 +349,16 @@ export interface OutboxEmail {
   channel?: CommChannel;
   template_key: string;
   subject: string;
-  body: string;
+  /**
+   * How long the rendered message was — not the message.
+   *
+   * The server stopped sending `body` on this listing: a transactional body
+   * holds the reset, verification, invitation, board-signing, auditor and
+   * intake links verbatim, and this page is open to every ops role. See
+   * `withoutBody` in routes/notifications.ts. The length is what an operator
+   * actually reads it for — a template that rendered to nothing.
+   */
+  body_length: number;
   status: OutboxStatus;
   /** Server-derived; see DeliveryState. Optional only so older fixtures still type. */
   delivery_state?: DeliveryState;

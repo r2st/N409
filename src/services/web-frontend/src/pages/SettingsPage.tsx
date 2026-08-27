@@ -447,11 +447,21 @@ function NotificationPreferencesCard() {
  * these carry only the owner's own scope and are rejected by the partner API.
  */
 function ApiTokensCard() {
+  const { user } = useAuth();
   const [tokens, setTokens] = useState<ApiToken[] | null>(null);
   const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
   const [minted, setMinted] = useState<{ name: string; secret: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  /*
+   * Minting a token is a credential-level action, so the server re-authenticates
+   * it — same rule and same shape as closing the account below. And the same
+   * exception: a Google SSO account has no password to confirm, so asking for
+   * one would be a box nobody can fill.
+   */
+  const needsPassword = user?.sso_provider !== 'google';
 
   const load = () =>
     api<{ tokens: ApiToken[] }>('/me/tokens')
@@ -463,8 +473,11 @@ function ApiTokensCard() {
   }, []);
 
   const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(
-    { name },
-    { name: required('name', 'Token name') },
+    { name, password },
+    {
+      name: required('name', 'Token name'),
+      password: needsPassword ? required('password', 'Password') : undefined,
+    },
   );
 
   const create = handleSubmit(async () => {
@@ -473,10 +486,12 @@ function ApiTokensCard() {
     try {
       const res = await api<{ token: ApiToken; secret: string }>('/me/tokens', {
         method: 'POST',
-        body: { name },
+        body: { name, current_password: password },
       });
       setMinted({ name: res.token.name, secret: res.secret });
       setName('');
+      // Never leave a password sitting in a form that stays on screen.
+      setPassword('');
       // The box is now empty and the form is still on screen; without this the
       // "is required" message appears the moment the token is created.
       reset();
@@ -553,19 +568,37 @@ function ApiTokensCard() {
         </table>
       )}
 
-      <form onSubmit={create} className="mt-5 flex max-w-md items-end gap-3" noValidate>
-        <div className="flex-1">
-          <Field label="New token name" error={errorFor('name')}>
+      <form onSubmit={create} className="mt-5 max-w-md space-y-4" noValidate>
+        <Field label="New token name" error={errorFor('name')}>
+          <TextInput
+            required
+            maxLength={200}
+            placeholder="e.g. reporting script"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={blurHandler('name')}
+          />
+        </Field>
+        {needsPassword && (
+          <Field
+            // Not "Confirm your password", which is what the close-account card
+            // below says: two identically-labelled password boxes on one page
+            // are ambiguous to a screen reader reading the form out, and to
+            // anything else that finds a field by its label.
+            label="Your password"
+            error={errorFor('password')}
+            hint="A token outlives signing out everywhere, so we check it is you before issuing one."
+          >
             <TextInput
+              type="password"
               required
-              maxLength={200}
-              placeholder="e.g. reporting script"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={blurHandler('name')}
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onBlur={blurHandler('password')}
             />
           </Field>
-        </div>
+        )}
         <Button type="submit" disabled={busy}>
           {busy ? 'Creating…' : 'Create token'}
         </Button>

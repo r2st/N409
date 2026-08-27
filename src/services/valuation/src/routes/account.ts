@@ -72,7 +72,11 @@ const CloseAccountBody = z.object({
   current_password: z.string().min(1).optional(),
 });
 
-const TokenBody = z.object({ name: z.string().trim().min(1).max(200) });
+const TokenBody = z.object({
+  name: z.string().trim().min(1).max(200),
+  /** Required for password accounts; ignored for SSO-only ones. See the mint route. */
+  current_password: z.string().min(1).optional(),
+});
 
 function isKnownTimezone(tz: string | null): boolean {
   if (tz === null) return true;
@@ -274,10 +278,54 @@ export function registerAccountRoutes(
     return { tokens: await listPersonalApiTokens(deps.pool, principal.id) };
   });
 
+  /**
+   * Mint a personal API token.
+   *
+   * Re-authenticated, which it was not. `auth/reauth.ts` lists the actions that
+   * sit behind a password prompt on an already signed-in session — changing the
+   * password or the login email, closing the account, disabling 2FA,
+   * regenerating backup codes — and gives the reason: the session may not be
+   * the owner's, so the password is the only thing still in the way. Minting a
+   * credential belongs on that list and was the one credential-level action
+   * missing from it, and it is the worst omission of the set, because the
+   * others *change* an existing credential while this one **creates** a new one
+   * that outlives everything meant to take access away. `bumpSessionEpoch` —
+   * what a password change and "sign out everywhere" both do — deliberately
+   * does not touch API tokens (plugins/auth.ts says why: revoking browser
+   * sessions must not break a partner's running integration). So a borrowed
+   * cookie bought permanent access: mint a token, and the owner changing their
+   * password afterwards revokes the cookie and not the token.
+   *
+   * A token may not mint a token either, which the password check alone would
+   * not settle: an SSO-only account has no digest to check, and the whole point
+   * of `req.apiToken` here is that a stolen key must not be able to issue its
+   * own successor and survive the revocation of the original. Refused as 403
+   * rather than 401 — the credential is valid, it is this operation it may not
+   * perform — and worded so an integration author knows to do it in the
+   * console rather than retrying.
+   */
   app.post('/api/v1/me/tokens', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
+    if (req.apiToken)
+      throw problems.forbidden(
+        'An API token cannot mint another API token — create it from the settings page while signed in',
+      );
     const parsed = TokenBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid token', parsed.error);
+
+    // Same shape as `DELETE /api/v1/me`: demanded when there is a password to
+    // demand, skipped when the account signs in through Google or SAML and has
+    // no digest at all — for those the `req.apiToken` refusal above is what
+    // stops a token issuing its successor.
+    const self = await loadSelf(principal.id);
+    if (self.password_digest) {
+      if (!parsed.data.current_password)
+        throw problems.unprocessable('Your current password is required to create an API token', {
+          errors: [{ path: ['current_password'] }],
+        });
+      if (!(await verifyReauthPassword(self.id, parsed.data.current_password, self.password_digest)))
+        throw problems.badRequest('Current password is incorrect');
+    }
 
     const { token, secret } = await createApiToken(deps.pool, {
       partnerId: null,

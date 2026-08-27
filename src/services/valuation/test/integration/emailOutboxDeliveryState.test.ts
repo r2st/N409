@@ -177,4 +177,84 @@ describe.skipIf(!dbUp)('GET /admin/email-outbox — delivery state', () => {
     expect(row!.delivered_at).toBeNull();
     expect(row!.open_count).toBe(0);
   });
+
+  /**
+   * The message, which this page must not publish.
+   *
+   * `listOutbox` is `SELECT *` and the route spread the row onto the wire, so
+   * every response carried `body` — the fully rendered text that went to the
+   * recipient. For the transactional half of this table that text *is* a live
+   * bearer credential: `POST /auth/forgot-password` writes
+   * `…/reset-password#token=<secret>` into it, and so do the verification,
+   * invitation, board-signing, auditor-portal and client-intake links.
+   *
+   * The route is gated on `isOps`, which is twelve roles. `ops` in this file is
+   * a `reviewer` — deliberately, and it is the point: a reviewer can administer
+   * nobody through any other door on this platform, and could reset any
+   * administrator's password through this one. Request the reset, open the
+   * outbox, follow the link.
+   */
+  describe('the rendered message', () => {
+    it('never leaves the server on the listing', async () => {
+      await enqueueEmail(ctx.pool, {
+        toEmail: 'admin@test.example.com',
+        templateKey: 'password_reset',
+        subject: 'Reset your password',
+        body: 'Reset it here: https://app.test/reset-password#token=SECRET-RESET-TOKEN',
+      });
+
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/admin/email-outbox',
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      const [row] = res.json().emails as Array<Record<string, unknown>>;
+
+      expect(row).not.toHaveProperty('body');
+      // Asserted on the whole serialized response and not only on the field,
+      // because the leak this closes is about a string reaching a reader — a
+      // second copy under another key would satisfy the line above and publish
+      // the token just the same.
+      expect(res.body).not.toContain('SECRET-RESET-TOKEN');
+
+      // What the page is actually for still arrives, so this is a narrowing
+      // rather than the endpoint being emptied out.
+      expect(row).toMatchObject({
+        to_email: 'admin@test.example.com',
+        subject: 'Reset your password',
+        template_key: 'password_reset',
+        status: 'queued',
+        delivery_state: 'queued',
+      });
+    });
+
+    it('reports its length, so a template that rendered to nothing is visible', async () => {
+      // The one fact an operator read off the body: a send whose content came
+      // out empty is a delivery fault, and with the body gone there would be
+      // nothing on the page to see it by.
+      await enqueueEmail(ctx.pool, {
+        toEmail: 'client@test.example.com',
+        templateKey: 'draft_ready',
+        subject: 'Your 409A is ready',
+        body: '',
+      });
+      await enqueueEmail(ctx.pool, {
+        toEmail: 'client@test.example.com',
+        templateKey: 'draft_ready',
+        subject: 'Your 409A is ready',
+        body: 'Sign in to view it.',
+      });
+
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/admin/email-outbox',
+        headers: authHeader(ops.token),
+      });
+      const lengths = (res.json().emails as Array<{ body_length: number }>)
+        .map((e) => e.body_length)
+        .sort((a, b) => a - b);
+      expect(lengths).toEqual([0, 'Sign in to view it.'.length]);
+    });
+  });
 });

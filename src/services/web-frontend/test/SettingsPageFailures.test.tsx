@@ -162,6 +162,9 @@ describe('SettingsPage — a save the API refuses', () => {
 
     const tokensCard = card('API tokens');
     await userEvent.type(within(tokensCard).getByLabelText('New token name'), 'reporting script');
+    // The mint is re-authenticated, so the form has to be complete before the
+    // server's refusal is what this case is testing rather than the client's.
+    await userEvent.type(within(tokensCard).getByLabelText('Your password'), 'hunter2');
     await userEvent.click(within(tokensCard).getByRole('button', { name: 'Create token' }));
 
     expect(await screen.findByText('You already have ten tokens.')).toBeInTheDocument();

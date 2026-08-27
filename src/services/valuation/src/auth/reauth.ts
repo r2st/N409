@@ -6,7 +6,7 @@ import { verifyPassword } from './password.js';
  * The throttle on re-authentication: the password prompts that sit in front of
  * a credential-level action on an *already signed-in* session — changing the
  * password or the login email, closing the account, disabling 2FA, regenerating
- * backup codes.
+ * backup codes, and minting a personal API token.
  *
  * Those prompts exist for the case where the session is not the owner's: a
  * stolen token, a walk-up on an unlocked laptop, an XSS-borrowed cookie. The
@@ -17,8 +17,10 @@ import { verifyPassword } from './password.js';
  * to `/account/mfa/disable` could be repeated forever.
  *
  * The budget is per user and *shared across every prompt*, because the endpoints
- * are interchangeable to a guesser: five separate ten-try budgets is a fifty-try
- * budget for anyone willing to rotate between them.
+ * are interchangeable to a guesser: six separate ten-try budgets is a sixty-try
+ * budget for anyone willing to rotate between them. Sharing it is also what
+ * makes adding a sixth prompt free: `POST /me/tokens` joined the list without
+ * widening the budget by a single guess.
  *
  * Only failures are charged. A legitimate owner passes on the first try, so the
  * window never fills for them however many settings they change; a guesser pays

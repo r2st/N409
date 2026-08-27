@@ -6,7 +6,7 @@ import { isOps } from '../auth/rbac.js';
 import { NOTIFICATION_EVENT_TYPES } from '../domain/emailWorkflows.js';
 import { listNotifications, markAllRead, markRead, unreadCount } from '../repos/notifications.js';
 import { getPreferenceMatrix, replacePreferences } from '../repos/notificationPreferences.js';
-import { listOutbox } from '../repos/emailOutbox.js';
+import { listOutbox, type EmailOutboxRow } from '../repos/emailOutbox.js';
 import { deliveryStateOf } from '../domain/emailDelivery.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -91,6 +91,42 @@ export function registerNotificationRoutes(app: FastifyInstance, deps: { pool: p
     return { preferences: await getPreferenceMatrix(deps.pool, principal.id) };
   });
 
+  /**
+   * The outbox row minus the thing it must not publish: the rendered message.
+   *
+   * `listOutbox` is `SELECT *`, and `email_outbox.body` is the fully rendered
+   * text that went to the recipient — which for the transactional half of this
+   * table means a live bearer credential. `POST /auth/forgot-password` writes
+   * `…/reset-password#token=<secret>` into it; so do the email-verification
+   * link, the invitation link, the board member's signing link, the auditor
+   * portal link and a client's intake link. Every one of those is redeemable by
+   * whoever holds the string, and the rows are kept for a year (0083).
+   *
+   * The route is `isOps`, which is twelve roles — `reviewer`,
+   * `contributing_reviewer`, `data`, `support`, `auto`, `spa` among them — and
+   * none of those can administer a user through any other door. So the page
+   * that exists to answer "did that email go out" was also answering "reset any
+   * administrator's password": request a reset for them, open the outbox,
+   * follow the link. `GET /admin/api-tokens` is gated on `canManageUsers` for
+   * exactly this reason, in a comment that names the same two roles.
+   *
+   * Dropped rather than the route being narrowed, because narrowing it would
+   * take a real ops tool away from the people who use it and would still leave
+   * the credentials sitting behind one more role. Delivery observability is
+   * `status`, `delivery_state`, `attempts`, `error`, `to_email`, `subject` and
+   * `template_key`; the body is not one of the facts this page reports, and the
+   * console has never rendered it. An operator who needs to see what a template
+   * produces has `POST /admin/communication-templates/:id/preview`, which
+   * renders against supplied variables rather than against a real send.
+   */
+  const withoutBody = (row: EmailOutboxRow): Omit<EmailOutboxRow, 'body'> & { body_length: number } => {
+    const { body, ...rest } = row;
+    // Kept as a length so "the template rendered empty" stays visible — that is
+    // a delivery fault an operator has to be able to see, and it was previously
+    // read off the body itself.
+    return { ...rest, body_length: body?.length ?? 0 };
+  };
+
   // Ops window into the auto-email outbox (P1 #21 observability).
   app.get('/api/v1/admin/email-outbox', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
@@ -106,6 +142,6 @@ export function registerNotificationRoutes(app: FastifyInstance, deps: { pool: p
     // what became of it. Derived here rather than in the browser so the rule
     // for which fact supersedes which lives in exactly one place — a complaint
     // outranking a delivery is a judgement, not a formatting choice.
-    return { emails: emails.map((e) => ({ ...e, delivery_state: deliveryStateOf(e) })) };
+    return { emails: emails.map((e) => ({ ...withoutBody(e), delivery_state: deliveryStateOf(e) })) };
   });
 }
