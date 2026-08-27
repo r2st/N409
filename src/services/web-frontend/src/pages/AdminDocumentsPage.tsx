@@ -166,7 +166,11 @@ export function AdminDocumentsPage() {
           <ErrorNote>{error}</ErrorNote>
         </div>
       )}
-      {note && <p className="mt-4 text-sm font-medium text-bond-700">{note}</p>}
+      {note && (
+        <p role="status" className="mt-4 text-sm font-medium text-bond-700">
+          {note}
+        </p>
+      )}
 
       {data.documents.length === 0 ? (
         <div className="mt-6">

@@ -301,7 +301,10 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
         </div>
       )}
       {note && (
-        <div className="mb-4 rounded-lg border border-paper-300 bg-paper-50 px-4 py-3 text-sm text-ink-500">
+        <div
+          role="status"
+          className="mb-4 rounded-lg border border-paper-300 bg-paper-50 px-4 py-3 text-sm text-ink-500"
+        >
           {note}
         </div>
       )}

@@ -50,7 +50,15 @@ function classNames(text: string): string[] {
     .filter(Boolean);
 }
 
-type Table = { file: string; line: number; columns: number; scrolls: boolean; minWidth: boolean };
+type Table = {
+  file: string;
+  line: number;
+  /** The table's accessible name — `aria-label`, `aria-labelledby`, or its `<caption>`. */
+  name: string;
+  columns: number;
+  scrolls: boolean;
+  minWidth: boolean;
+};
 
 /**
  * Locate every real `<table>` and describe it: how many columns it declares,
@@ -92,9 +100,26 @@ function tables(): Table[] {
           if (inRow && /<\/tr>/.test(row)) break;
         }
       }
+      /*
+       * The name is what the allowlist below is keyed on. It used to be keyed
+       * on the line number, and a line number is a property of everything
+       * *above* the table rather than of the table: two unrelated rounds in a
+       * row shifted these entries by inserting a hook declaration in the
+       * component, and each time the suite went red for a table nobody had
+       * touched. Every one of these carries an accessible name because the
+       * accessibility census requires it, so there is a stable key available.
+       */
+      const nameSource = lines.slice(i, Math.min(lines.length, i + 4)).join(' ');
+      const name =
+        /aria-label="([^"]+)"/.exec(nameSource)?.[1] ??
+        /aria-labelledby="([^"]+)"/.exec(nameSource)?.[1] ??
+        /<caption[^>]*>([^<]+)</.exec(nameSource)?.[1]?.trim() ??
+        '';
+
       found.push({
         file,
         line: i + 1,
+        name,
         columns,
         scrolls,
         minWidth: /min-w-\[[\d.]+(?:px|rem)\]/.test(line),
@@ -118,22 +143,25 @@ describe('app data tables stay within a 375px viewport', () => {
     // re-measured: its status cell now carries a refund/chargeback sentence
     // instead of one short token, which no longer fits the budget, so it went
     // into an overflow-x-auto box like the invoice table beside it.
-    ['pages/SettingsPage.tsx:560', 228], // personal API tokens
-    ['pages/FundPortfolioPage.tsx:773', 292], // position mark history
-    ['pages/AdminSsoPage.tsx:234', 261], // SCIM tokens — label · created · state · revoke
+    ['pages/SettingsPage.tsx\tPersonal API tokens', 228],
+    ['pages/FundPortfolioPage.tsx\tmark-history-heading', 292], // position mark history
+    ['pages/AdminSsoPage.tsx\tSCIM tokens', 261], // label · created · state · revoke
     // Legal holds — scope · reason · state · release. Re-measured after the
     // action column gained an in-flight label: "Releasing…" is three glyphs
     // wider than "Release", which is the widest this cell now gets.
-    ['pages/AdminRetentionPage.tsx:483', 297],
+    ['pages/AdminRetentionPage.tsx\tlegal-holds-heading', 297],
   ]);
+
+  /** The allowlist key: stable under any edit that does not rename the table. */
+  const keyOf = (t: Table) => `${t.file}\t${t.name}`;
 
   it('gives every table of four or more columns somewhere to scroll', () => {
     // Four columns is where the measurements crossed over: the six-column ESPP
     // table needed 446px and the ASC 820 hierarchy 405px, while every table
     // that fit was carrying wrapping text rather than money.
-    const offenders = TABLES.filter(
-      (t) => t.columns >= 4 && !t.scrolls && !NARROW_ENOUGH.has(`${t.file}:${t.line}`),
-    ).map((t) => `${t.file}:${t.line} (${t.columns} columns)`);
+    const offenders = TABLES.filter((t) => t.columns >= 4 && !t.scrolls && !NARROW_ENOUGH.has(keyOf(t))).map(
+      (t) => `${t.file}:${t.line} (${t.columns} columns, named “${t.name}”)`,
+    );
     expect(offenders).toEqual([]);
   });
 
@@ -146,16 +174,26 @@ describe('app data tables stay within a 375px viewport', () => {
   });
 
   it('still points at tables that exist', () => {
-    // An allowlist entry whose table has moved or gone is worse than no entry:
-    // it silently stops covering anything.
+    // An allowlist entry whose table has been renamed or removed is worse than
+    // no entry: it silently stops covering anything. Keyed on the name, this
+    // now fires only when the table itself changed, which is exactly when a
+    // re-measurement is actually owed.
     for (const where of NARROW_ENOUGH.keys()) {
-      const at = where.lastIndexOf(':');
-      const file = where.slice(0, at);
-      const line = Number(where.slice(at + 1));
       expect(
-        TABLES.some((t) => t.file === file && t.line === line),
-        `allowlist entry ${where} matches no table — re-measure and update it`,
+        TABLES.some((t) => keyOf(t) === where),
+        `allowlist entry ${where.replace('\t', ' → ')} matches no table — re-measure and update it`,
       ).toBe(true);
+    }
+  });
+
+  it('names every table it allows through, so the key cannot collide', () => {
+    // A nameless table would key as `file\t`, and two of them in one file
+    // would share an entry — one measurement rubber-stamping a table nobody
+    // measured.
+    for (const where of NARROW_ENOUGH.keys()) {
+      const [, name] = where.split('\t');
+      expect(name, `${where} has no name to key on`).toBeTruthy();
+      expect(TABLES.filter((t) => keyOf(t) === where)).toHaveLength(1);
     }
   });
 

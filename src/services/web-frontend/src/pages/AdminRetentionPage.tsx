@@ -10,6 +10,7 @@ import {
   ResultCount,
   Select,
   Spinner,
+  SuccessNote,
   TextInput,
   useRetry,
 } from '../components/ui';
@@ -343,11 +344,7 @@ export function AdminRetentionPage() {
           <ErrorNote>{error}</ErrorNote>
         </div>
       )}
-      {note && (
-        <div className="mt-4 rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
-          {note}
-        </div>
-      )}
+      {note && <SuccessNote className="mt-4">{note}</SuccessNote>}
 
       <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <div className="mb-4 flex items-center justify-between">

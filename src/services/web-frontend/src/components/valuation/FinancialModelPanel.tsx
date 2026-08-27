@@ -3,7 +3,17 @@ import type { FormEvent } from 'react';
 import { api, ApiError, ifMatch } from '../../lib/api';
 import { paramsVersionKey, useRowVersion } from '../../lib/rowVersion';
 import type { EngineInputs, ShareClassInput } from '../../lib/pipeline';
-import { Button, ErrorNote, Field, LoadError, Select, Spinner, TextInput, useRetry } from '../ui';
+import {
+  Button,
+  ErrorNote,
+  Field,
+  LoadError,
+  Select,
+  Spinner,
+  SuccessNote,
+  TextInput,
+  useRetry,
+} from '../ui';
 
 /**
  * Financial model editor — hand-enter the full engine input document so an
@@ -361,14 +371,7 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
       </p>
       {error && <ErrorNote>{error}</ErrorNote>}
       {problem && <ErrorNote>{problem}</ErrorNote>}
-      {saved && (
-        <div
-          role="status"
-          className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700"
-        >
-          Financial model saved.
-        </div>
-      )}
+      {saved && <SuccessNote>Financial model saved.</SuccessNote>}
 
       {/* Cap table & allocation */}
       <section className={cardClass}>

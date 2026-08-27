@@ -180,7 +180,11 @@ export function AdminDataRemediationPage() {
         <h2 className="font-display text-xl font-semibold text-ink-900">Stale backsolved equity values</h2>
         <p className="mt-1 max-w-3xl text-sm text-ink-500">{backsolves.description}</p>
 
-        {note && <p className="mt-3 text-sm font-medium text-bond-700">{note}</p>}
+        {note && (
+          <p role="status" className="mt-3 text-sm font-medium text-bond-700">
+            {note}
+          </p>
+        )}
 
         {rerunnable.length > 0 && (
           <div className="mt-4 flex flex-wrap items-center gap-3">

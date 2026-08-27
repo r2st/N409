@@ -506,6 +506,39 @@ export function ErrorNote({ children }: { children: ReactNode }) {
 }
 
 /**
+ * The other half of {@link ErrorNote}: an action that worked, said out loud.
+ *
+ * The asymmetry this fixes is the whole reason it exists. `ErrorNote` is
+ * `role="alert"`, so a save that *fails* is announced. A save that *succeeds*
+ * drew the same box in fourteen places with no role on it at all, so it was
+ * announced nowhere. A screen-reader user pressing Save therefore heard
+ * something when it went wrong and silence when it went right — and silence is
+ * also what a button that did nothing sounds like. They are left to tab through
+ * the form looking for a sentence, or to press Save again.
+ *
+ * `role="status"` rather than `alert`: a confirmation must never interrupt what
+ * the reader is in the middle of, and polite is the announcement a completed
+ * action wants. The box is the one those fourteen sites were already drawing,
+ * so adopting it changes nothing on screen.
+ *
+ * For a confirmation that is a whole page rather than a line inside one — the
+ * "Email verified" and "Password updated" screens — the route change and its
+ * heading already announce, and this would say it a second time. Those keep a
+ * plain box.
+ */
+export function SuccessNote({ children, className = '' }: { children: ReactNode; className?: string }) {
+  if (!children) return null;
+  return (
+    <div
+      role="status"
+      className={`rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700 ${className}`.trim()}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
  * A load that failed, and the way back from it.
  *
  * Fifty-nine surfaces across the product answered a failed read with

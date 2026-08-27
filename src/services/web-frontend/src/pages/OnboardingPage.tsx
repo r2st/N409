@@ -401,7 +401,10 @@ export function OnboardingPage() {
       {step === 2 && valuation && (
         <div className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           {paymentNote && (
-            <p className="rounded-md border border-sky-200 bg-sky-50 px-3.5 py-2.5 text-sm text-sky-900">
+            <p
+              role="status"
+              className="rounded-md border border-sky-200 bg-sky-50 px-3.5 py-2.5 text-sm text-sky-900"
+            >
               {paymentNote}
             </p>
           )}

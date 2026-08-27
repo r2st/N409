@@ -11,6 +11,7 @@ import {
   LoadError,
   Select,
   Spinner,
+  SuccessNote,
   TextInput,
   useRetry,
 } from '../ui';
@@ -742,11 +743,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   return (
     <form onSubmit={save} className="space-y-6" noValidate>
       {error && <ErrorNote>{error}</ErrorNote>}
-      {saved && (
-        <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
-          Methodology saved.
-        </div>
-      )}
+      {saved && <SuccessNote>Methodology saved.</SuccessNote>}
 
       {/* ── Engagement basics (409.ai §7.1/§7.7). Every field here is a column
           the API has always accepted and no screen ever offered: an analyst
@@ -1175,7 +1172,11 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               {scenarioIssue}
             </p>
           )}
-          {scenariosSaved && <p className="mt-3 text-sm font-medium text-bond-700">Scenarios saved.</p>}
+          {scenariosSaved && (
+            <p role="status" className="mt-3 text-sm font-medium text-bond-700">
+              Scenarios saved.
+            </p>
+          )}
           {!readOnly && (
             <div className="mt-4 flex gap-2">
               <Button

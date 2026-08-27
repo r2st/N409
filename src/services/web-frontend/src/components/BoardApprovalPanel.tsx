@@ -294,7 +294,11 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
                       {m.signed_at && (
                         <span className="tnum text-xs text-ink-400">{formatDateTime(m.signed_at)}</span>
                       )}
-                      {linkNote && <span className="text-xs font-semibold text-amber-700">{linkNote}</span>}
+                      {linkNote && (
+                        <span role="status" className="text-xs font-semibold text-amber-700">
+                          {linkNote}
+                        </span>
+                      )}
                       <span className="ml-auto flex items-center gap-3">
                         {m.status === 'pending' && (
                           <button

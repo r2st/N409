@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
-import { Button, ErrorNote, Field, PickerOverflowNote, Select } from '../ui';
+import { Button, ErrorNote, Field, PickerOverflowNote, Select, SuccessNote } from '../ui';
 
 interface Organization {
   id: string;
@@ -75,11 +75,7 @@ export function OrgAssignmentCard({ valuationId }: { valuationId: string }) {
       ) : (
         <div className="space-y-3">
           {error && <ErrorNote>{error}</ErrorNote>}
-          {saved && (
-            <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
-              Assigned to the organization.
-            </div>
-          )}
+          {saved && <SuccessNote>Assigned to the organization.</SuccessNote>}
           <Field label="Organization">
             <Select value={orgId} onChange={(e) => setOrgId(e.target.value)} aria-label="Organization">
               <option value="">Select…</option>

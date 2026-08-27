@@ -9,7 +9,16 @@ import { eventLabel, formatDate, formatDateTime, STATE_LABELS } from '../lib/for
 import { VALUATION_STATES } from '../lib/types';
 import type { Valuation, ValuationEvent } from '../lib/types';
 import { useWorkspace } from './valuation/ValuationWorkspace';
-import { Button, ErrorNote, Field, Select, Spinner, TextInput, WriteGate } from '../components/ui';
+import {
+  Button,
+  ErrorNote,
+  Field,
+  Select,
+  Spinner,
+  SuccessNote,
+  TextInput,
+  WriteGate,
+} from '../components/ui';
 import { CommentsSection } from '../components/CommentThread';
 import { WorkflowActions } from '../components/WorkflowActions';
 import { FundingHistory } from '../components/FundingHistory';
@@ -283,11 +292,7 @@ export function ValuationDetailPage() {
             <h2 className="overline mb-5 text-ink-400">Edit</h2>
             <form onSubmit={save} className="space-y-5" noValidate>
               {saveError && <ErrorNote>{saveError}</ErrorNote>}
-              {saved && (
-                <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
-                  Changes saved.
-                </div>
-              )}
+              {saved && <SuccessNote>Changes saved.</SuccessNote>}
               <div className="grid gap-5 sm:grid-cols-2">
                 {editable.has('company_name') && (
                   <Field label="Company name" error={errorFor('company_name')}>

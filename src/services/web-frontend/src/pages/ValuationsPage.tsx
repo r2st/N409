@@ -700,7 +700,7 @@ export function ValuationsPage() {
       </form>
 
       {exportNote && (
-        <div className="mt-3 text-sm text-ink-600" data-testid="export-note">
+        <div role="status" className="mt-3 text-sm text-ink-600" data-testid="export-note">
           {exportNote}
         </div>
       )}
@@ -826,7 +826,11 @@ export function ValuationsPage() {
           try again.
         </p>
       )}
-      {bulkNote && <div className="mt-3 text-sm text-ink-600">{bulkNote}</div>}
+      {bulkNote && (
+        <div role="status" className="mt-3 text-sm text-ink-600">
+          {bulkNote}
+        </div>
+      )}
 
       {data && data.valuations.length === 0 && (
         <div className="mt-6">

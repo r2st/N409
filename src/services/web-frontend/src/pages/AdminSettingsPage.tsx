@@ -3,7 +3,16 @@ import { api, ApiError } from '../lib/api';
 import { email as emailRule, numberRange, optional, useFormValidation } from '../lib/useFormValidation';
 import { formatDateTime } from '../lib/format';
 import type { SystemSettings, SystemSettingsResponse } from '../lib/types';
-import { Button, ErrorNote, Field, LoadError, Spinner, TextInput, useRetry } from '../components/ui';
+import {
+  Button,
+  ErrorNote,
+  Field,
+  LoadError,
+  Spinner,
+  SuccessNote,
+  TextInput,
+  useRetry,
+} from '../components/ui';
 import { CapabilityRoster } from '../components/CapabilityRoster';
 
 /**
@@ -153,11 +162,7 @@ export function AdminSettingsPage() {
 
       <form onSubmit={save} className="mt-8 space-y-6" noValidate>
         <ErrorNote>{error}</ErrorNote>
-        {saved && (
-          <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
-            System settings updated.
-          </div>
-        )}
+        {saved && <SuccessNote>System settings updated.</SuccessNote>}
 
         <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="overline mb-4 text-ink-400">Access</h2>

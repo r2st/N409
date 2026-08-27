@@ -341,7 +341,10 @@ export function RollforwardPanel({
         </div>
       )}
       {note && (
-        <div className="mt-4 rounded-lg border border-paper-300 bg-surface px-4 py-3 text-sm text-ink-500">
+        <div
+          role="status"
+          className="mt-4 rounded-lg border border-paper-300 bg-surface px-4 py-3 text-sm text-ink-500"
+        >
           {note}
         </div>
       )}

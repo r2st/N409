@@ -455,7 +455,11 @@ export function CompanyTab() {
                 {agentPhase === 'drafting' && (
                   <p className="mt-2 text-xs text-bond-700">Free-tier models can take up to a minute…</p>
                 )}
-                {agentNote && <p className="mt-2 text-sm font-medium text-bond-800">{agentNote}</p>}
+                {agentNote && (
+                  <p role="status" className="mt-2 text-sm font-medium text-bond-800">
+                    {agentNote}
+                  </p>
+                )}
                 {agentError && (
                   <p className="mt-2 text-sm text-red-700" role="alert">
                     {agentError}
@@ -546,7 +550,11 @@ export function CompanyTab() {
             <Button type="submit" disabled={saving}>
               {saving ? 'Saving…' : 'Save profile'}
             </Button>
-            {saved && <span className="text-sm font-medium text-bond-700">Saved.</span>}
+            {saved && (
+              <span role="status" className="text-sm font-medium text-bond-700">
+                Saved.
+              </span>
+            )}
           </div>
         </WriteGate>
       </form>

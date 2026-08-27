@@ -380,7 +380,11 @@ export function IntakeTab() {
                   Send reminder to client
                 </Button>
               </WriteGate>
-              {reminderNote && <p className="mt-2 text-xs text-ink-500">{reminderNote}</p>}
+              {reminderNote && (
+                <p role="status" className="mt-2 text-xs text-ink-500">
+                  {reminderNote}
+                </p>
+              )}
             </div>
           )}
         </div>

@@ -10,6 +10,7 @@ import {
   ListTruncationNote,
   LoadError,
   Spinner,
+  SuccessNote,
   TextInput,
   useRetry,
 } from '../components/ui';
@@ -161,11 +162,7 @@ export function AdminSsoPage() {
             Enabled
           </label>
         </div>
-        {saved && (
-          <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
-            SAML configuration saved.
-          </div>
-        )}
+        {saved && <SuccessNote>SAML configuration saved.</SuccessNote>}
         <Field label="IdP SSO URL" hint="SingleSignOnService endpoint (HTTP-Redirect).">
           <TextInput
             value={config.idp_sso_url ?? ''}

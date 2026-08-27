@@ -23,6 +23,7 @@ import {
   ListTruncationNote,
   Select,
   Spinner,
+  SuccessNote,
   TextInput,
 } from '../components/ui';
 import { PhoneInput, phoneFieldError } from '../components/PhoneInput';
@@ -44,14 +45,6 @@ function Card({
       {description && <p className="mb-4 text-sm text-ink-400">{description}</p>}
       <div className={description ? '' : 'mt-4'}>{children}</div>
     </section>
-  );
-}
-
-function SavedNote({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
-      {children}
-    </div>
   );
 }
 
@@ -114,7 +107,7 @@ function ProfileCard() {
     <Card title="Profile" description="How your name appears on reports and in comment threads.">
       <form onSubmit={submit} className="space-y-4" noValidate>
         <ErrorNote>{error}</ErrorNote>
-        {saved && <SavedNote>Profile updated.</SavedNote>}
+        {saved && <SuccessNote>Profile updated.</SuccessNote>}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="First name">
             <TextInput value={form.first_name} onChange={set('first_name')} maxLength={100} />
@@ -218,7 +211,7 @@ function ChangeEmailCard() {
     >
       <form onSubmit={submit} className="max-w-sm space-y-4" noValidate>
         <ErrorNote>{error}</ErrorNote>
-        {saved && <SavedNote>Email updated. Check your inbox to verify the new address.</SavedNote>}
+        {saved && <SuccessNote>Email updated. Check your inbox to verify the new address.</SuccessNote>}
         <Field label="Email" error={errorFor('email')}>
           <TextInput
             type="email"
@@ -313,7 +306,7 @@ function ChangePasswordCard() {
     <Card title="Change password">
       <form onSubmit={submit} className="max-w-sm space-y-4" noValidate>
         <ErrorNote>{error}</ErrorNote>
-        {saved && <SavedNote>Password updated. Other sessions have been signed out.</SavedNote>}
+        {saved && <SuccessNote>Password updated. Other sessions have been signed out.</SuccessNote>}
         <Field label="Current password" error={errorFor('current')}>
           <TextInput
             type="password"
@@ -667,7 +660,7 @@ function SessionCard() {
       )}
       {done && (
         <div className="mb-3">
-          <SavedNote>Other sessions have been signed out.</SavedNote>
+          <SuccessNote>Other sessions have been signed out.</SuccessNote>
         </div>
       )}
       <p className="mb-4 text-sm text-ink-400">

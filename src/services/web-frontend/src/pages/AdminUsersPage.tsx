@@ -18,6 +18,7 @@ import {
   PickerOverflowNote,
   ResultCount,
   Select,
+  SuccessNote,
   TableSkeleton,
   TextInput,
 } from '../components/ui';
@@ -879,14 +880,7 @@ export function AdminUsersPage() {
           {exportNote}
         </div>
       )}
-      {notice && (
-        <div
-          role="status"
-          className="mt-6 rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700"
-        >
-          {notice}
-        </div>
-      )}
+      {notice && <SuccessNote className="mt-6">{notice}</SuccessNote>}
       {!data && !error && (
         <div className="mt-6 rounded-lg border border-paper-300 bg-surface shadow-card">
           <TableSkeleton columns={5} rows={8} label="Loading users…" />

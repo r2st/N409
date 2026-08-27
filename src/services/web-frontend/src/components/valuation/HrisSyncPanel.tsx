@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
-import { Button, ErrorNote, LoadError, Select, Spinner, useRetry } from '../ui';
+import { Button, ErrorNote, LoadError, Select, Spinner, SuccessNote, useRetry } from '../ui';
 
 type Provider = 'rippling' | 'gusto' | 'deel';
 type Frequency = 'manual' | 'daily' | 'weekly';
@@ -129,11 +129,7 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
         </p>
       </div>
       {error && <ErrorNote>{error}</ErrorNote>}
-      {note && (
-        <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
-          {note}
-        </div>
-      )}
+      {note && <SuccessNote>{note}</SuccessNote>}
 
       {providers.map((p) => {
         const connected = p.connection && p.connection.status !== 'revoked';

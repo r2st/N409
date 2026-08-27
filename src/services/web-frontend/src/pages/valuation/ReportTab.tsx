@@ -21,6 +21,7 @@ import {
   ErrorNote,
   LoadError,
   Spinner,
+  SuccessNote,
   TextInput,
   WriteGate,
   useRetry,
@@ -397,11 +398,7 @@ export function ReportTab() {
         </div>
 
         {error && <ErrorNote>{error}</ErrorNote>}
-        {notice && (
-          <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
-            {notice}
-          </div>
-        )}
+        {notice && <SuccessNote>{notice}</SuccessNote>}
         {ops && dirty && (
           <p className="text-xs font-medium text-amber-700">
             Unsaved changes — render is disabled until you save.

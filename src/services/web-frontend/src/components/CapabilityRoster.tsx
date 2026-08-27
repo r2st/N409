@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import type { OptionalCapability } from '../lib/types';
-import { LoadError, Skeleton, useRetry } from './ui';
+import { LoadError, LoadingBlock, Skeleton, useRetry } from './ui';
 
 /**
  * What the platform is not doing.
@@ -45,7 +45,18 @@ export function CapabilityRoster() {
   // The error wins over the skeleton. A panel that spins forever after a failed
   // load is the swept bug of rounds 12 and 16.
   if (error) return <LoadError message={error} {...retryProps} />;
-  if (!rows) return <Skeleton className="h-24 w-full" />;
+  // `Skeleton` is `aria-hidden` by construction — the announcement belongs to
+  // `LoadingBlock`, and this was the one placeholder on the platform without
+  // one. The roster is the whole of what this panel says, so between opening
+  // the settings page and the answer arriving a screen reader had nothing at
+  // all to report: not the wait, not the content, no way to tell a slow
+  // request from a panel that renders nothing.
+  if (!rows)
+    return (
+      <LoadingBlock label="Loading integration status…">
+        <Skeleton className="h-24 w-full" />
+      </LoadingBlock>
+    );
 
   const ordered = [...rows].sort((a, b) => {
     const rank = (c: OptionalCapability) => (c.configured ? 2 : c.severity === 'silent' ? 0 : 1);
