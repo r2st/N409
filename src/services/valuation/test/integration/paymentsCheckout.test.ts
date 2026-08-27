@@ -134,7 +134,7 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
     // What the client reads on the Stripe page and their statement.
     expect(form.get('line_items[0][price_data][product_data][name]')).toBe('409A valuation — Checkout Co');
 
-    const [payment] = await listPayments(ctx.pool, vid);
+    const [payment] = (await listPayments(ctx.pool, vid)).payments;
     expect(payment?.session_id).toBe('cs_checkout_1');
     expect(payment?.status).toBe('pending');
     expect(payment?.created_by).toBe(client.id);
@@ -158,7 +158,7 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
       'QSBS attestation letter',
     );
 
-    const [payment] = await listPayments(ctx.pool, vid);
+    const [payment] = (await listPayments(ctx.pool, vid)).payments;
     expect(Number(payment?.amount_cents)).toBe(total);
     // Persisted as columns, not only inside the breakdown: express moves the
     // SLA once the money lands, and that is read from the row.
@@ -180,7 +180,7 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
     expect(quote.amount_cents).toBe(PRICE + quote.band_uplift_cents);
     expect(sentForm(spy).get('line_items[0][price_data][unit_amount]')).toBe(String(quote.amount_cents));
 
-    const [payment] = await listPayments(ctx.pool, vid);
+    const [payment] = (await listPayments(ctx.pool, vid)).payments;
     expect(payment?.price_breakdown?.map((l) => l.key)).toEqual(['base', 'band']);
   });
 
@@ -207,7 +207,7 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
     expect(res.statusCode).toBe(201);
     expect(sentForm(spy).get('line_items[0][price_data][unit_amount]')).toBe('250000');
 
-    const [payment] = await listPayments(ctx.pool, vid);
+    const [payment] = (await listPayments(ctx.pool, vid)).payments;
     expect(Number(payment?.amount_cents)).toBe(250_000);
     // Not the itemisation the quote produced: those lines add up to a different
     // number from the one charged, and an invoice that does not foot is worse
@@ -227,7 +227,7 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
     // Nothing was created and nothing was sent: a 422 that had already opened a
     // Stripe session would leave a payable page nobody can reconcile.
     expect(spy).not.toHaveBeenCalled();
-    expect(await listPayments(ctx.pool, vid)).toEqual([]);
+    expect((await listPayments(ctx.pool, vid)).payments).toEqual([]);
   });
 
   it('refuses a second checkout once the engagement is paid', async () => {
@@ -267,7 +267,7 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
       // is exactly what a client returning to an abandoned checkout wants, and
       // if it has in fact been paid, Stripe's own page says so.
       expect(second).not.toHaveBeenCalled();
-      expect(await listPayments(ctx.pool, vid)).toHaveLength(1);
+      expect((await listPayments(ctx.pool, vid)).payments).toHaveLength(1);
     });
 
     it('expires the old session before opening one at a new price', async () => {
@@ -291,7 +291,7 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
       expect(res.json().checkout_url).toBe('https://checkout.stripe.com/c/pay/cs_supersede_2');
       expect(String(spy.mock.calls[0]?.[0])).toContain('/checkout/sessions/cs_supersede_1/expire');
 
-      const rows = await listPayments(ctx.pool, vid);
+      const rows = (await listPayments(ctx.pool, vid)).payments;
       expect(rows.find((r) => r.session_id === 'cs_supersede_1')?.status).toBe('expired');
       expect(rows.find((r) => r.session_id === 'cs_supersede_2')?.status).toBe('pending');
     });
@@ -320,7 +320,7 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
       expect(res.statusCode).toBe(409);
       expect(res.json().detail).toMatch(/already in progress/i);
       expect(spy).toHaveBeenCalledTimes(1);
-      expect(await listPayments(ctx.pool, vid)).toHaveLength(1);
+      expect((await listPayments(ctx.pool, vid)).payments).toHaveLength(1);
     });
 
     it('opens a fresh session once the old one has aged past Stripe’s 24 hours', async () => {
@@ -349,7 +349,7 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
       const vid = await newValuation('Settled Row Co');
       stubSession('cs_settled_1');
       expect((await checkout(client.token, vid)).statusCode).toBe(201);
-      const [row] = await listPayments(ctx.pool, vid);
+      const [row] = (await listPayments(ctx.pool, vid)).payments;
       await ctx.pool.query("UPDATE payments SET status = 'expired' WHERE id = $1", [row!.id]);
       vi.restoreAllMocks();
 
@@ -378,7 +378,7 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
     expect(spy).toHaveBeenCalledTimes(1);
     // No pending row for a session that was never created — it would sit in the
     // payments list forever with a null checkout URL.
-    expect(await listPayments(ctx.pool, vid)).toEqual([]);
+    expect((await listPayments(ctx.pool, vid)).payments).toEqual([]);
   });
 
   /**
@@ -421,7 +421,7 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
     // Not retried — a re-sent create is a second payable session.
     expect(spy).toHaveBeenCalledTimes(1);
     // And still no pending row for a session that was never created.
-    expect(await listPayments(ctx.pool, vid)).toEqual([]);
+    expect((await listPayments(ctx.pool, vid)).payments).toEqual([]);
   });
 
   it('404s an id that is not an id, without touching the database', async () => {

@@ -178,8 +178,10 @@ describe.skipIf(!dbUp)('reads keyed by engagement do not scan the estate (migrat
     });
 
     it('still returns what the repo asked for, both ways round', async () => {
-      const live = await listMarketResearch(db.pool, ownedValuation);
-      const all = await listMarketResearch(db.pool, ownedValuation, { includeSuperseded: true });
+      const { research: live } = await listMarketResearch(db.pool, ownedValuation);
+      const { research: all } = await listMarketResearch(db.pool, ownedValuation, {
+        includeSuperseded: true,
+      });
       expect(all.length).toBeGreaterThan(live.length);
       expect(live.every((r) => r.superseded_at === null)).toBe(true);
       const times = all.map((r) => r.created_at.getTime());
