@@ -4,14 +4,7 @@ import { createCalculation } from '../../src/repos/calculations.js';
 import { createReport } from '../../src/repos/reports.js';
 import { markValuationsArchived } from '../../src/repos/retention.js';
 import { listNotifications } from '../../src/repos/notifications.js';
-import {
-  authHeader,
-  forceState,
-  isDbAvailable,
-  seedUser,
-  setupTestApp,
-  type TestApp,
-} from './helpers.js';
+import { authHeader, forceState, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * The auditor review journey, end to end: share → access → review → respond →
@@ -152,9 +145,7 @@ describe.skipIf(!dbUp)('auditor review journey', () => {
     // whose file it is, and the role group that covers an unassigned one.
     for (const who of [reviewer, ops]) {
       const notifications = await listNotifications(ctx.pool, who.id);
-      const hit = notifications.find(
-        (n) => n.valuation_id === v.id && n.type === 'auditor_note_received',
-      );
+      const hit = notifications.find((n) => n.valuation_id === v.id && n.type === 'auditor_note_received');
       expect(hit, `${who.id} should have been notified`).toBeDefined();
       expect(hit!.title).toContain('Notified Co');
       expect(hit!.body).toContain('Which DLOM study?');
@@ -228,7 +219,9 @@ describe.skipIf(!dbUp)('auditor review journey', () => {
         url: `/api/v1/valuations/${v.id}/auditor-access/${accessId}`,
         headers: authHeader(owner.token),
       });
-      expect((await submitNote({ token, disposition: 'question', body: 'Still here?' })).statusCode).toBe(401);
+      expect((await submitNote({ token, disposition: 'question', body: 'Still here?' })).statusCode).toBe(
+        401,
+      );
     });
 
     it('refuses a garbage token', async () => {

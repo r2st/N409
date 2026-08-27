@@ -816,8 +816,8 @@ export function ValuationsPage() {
       )}
       {tagsFailed && (
         <p className="mt-3 text-sm text-ink-400">
-          The tag vocabulary could not be loaded, so engagements cannot be filtered by tag right now.
-          Reload the page to try again.
+          The tag vocabulary could not be loaded, so engagements cannot be filtered by tag right now. Reload
+          the page to try again.
         </p>
       )}
       {partnersFailed && (

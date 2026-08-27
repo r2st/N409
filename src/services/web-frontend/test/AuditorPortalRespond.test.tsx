@@ -52,15 +52,18 @@ const BUNDLE = {
 function mountWith(
   bundle: Record<string, unknown> = BUNDLE,
   noteReply: () => Response = () =>
-    jsonResponse({
-      note: {
-        disposition: 'change_requested',
-        heading: 'Auditor requested a change',
-        from: 'Auditor · PwC',
-        body: 'Exhibit C uses 22%; the term sheet says 25%.',
-        created_at: '2026-08-27T00:00:00Z',
+    jsonResponse(
+      {
+        note: {
+          disposition: 'change_requested',
+          heading: 'Auditor requested a change',
+          from: 'Auditor · PwC',
+          body: 'Exhibit C uses 22%; the term sheet says 25%.',
+          created_at: '2026-08-27T00:00:00Z',
+        },
       },
-    }, 201),
+      201,
+    ),
 ) {
   const calls: Array<{ url: string; body: unknown }> = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(((url: string, init?: RequestInit) => {
@@ -113,7 +116,9 @@ describe('the auditor can respond', () => {
 
   it('keeps the text when the send fails, so the note can be retried not rewritten', async () => {
     const user = userEvent.setup();
-    mountWith(BUNDLE, () => jsonResponse({ detail: 'This auditor link is invalid, expired, or revoked' }, 401));
+    mountWith(BUNDLE, () =>
+      jsonResponse({ detail: 'This auditor link is invalid, expired, or revoked' }, 401),
+    );
     await waitFor(() => expect(screen.getByText('Respond')).toBeInTheDocument());
 
     const box = screen.getByRole('textbox', { name: /Your note/i });

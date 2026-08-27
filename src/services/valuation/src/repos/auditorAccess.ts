@@ -77,10 +77,7 @@ export async function revokeAuditorAccess(
  * — is not an opening, and redeeming for it would inflate the one figure the
  * list exists to report, on the auditors who engage with the work the most.
  */
-export async function verifyAuditorToken(
-  pool: pg.Pool,
-  rawToken: string,
-): Promise<AuditorAccessRow | null> {
+export async function verifyAuditorToken(pool: pg.Pool, rawToken: string): Promise<AuditorAccessRow | null> {
   const { rows } = await pool.query<AuditorAccessRow>(
     `SELECT * FROM auditor_access
       WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()`,

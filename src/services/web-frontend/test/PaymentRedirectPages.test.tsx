@@ -150,10 +150,7 @@ describe('the return leg of the onboarding funnel', () => {
     );
     // The valuation is still one click away — continuing is the offer, not the
     // only exit.
-    expect(screen.getByRole('link', { name: /skip for now/i })).toHaveAttribute(
-      'href',
-      `/valuations/${VID}`,
-    );
+    expect(screen.getByRole('link', { name: /skip for now/i })).toHaveAttribute('href', `/valuations/${VID}`);
   });
 
   it('leaves the ordinary pay-an-invoice landing alone', async () => {

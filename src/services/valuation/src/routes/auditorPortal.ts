@@ -352,8 +352,7 @@ export function registerAuditorPortalRoutes(
     // from, and a bare "Not Found" on a link that just rendered a report is
     // indistinguishable to them from a bug in the form they typed into — so it
     // reads as "resend it" rather than "ask for a new link".
-    if (!valuation)
-      throw problems.notFound('The valuation this link was issued for is no longer available.');
+    if (!valuation) throw problems.notFound('The valuation this link was issued for is no longer available.');
     // The same refusal the read gives, for the same reason and in the same
     // words: a withdrawn engagement is not accepting anything, and an auditor
     // whose note vanished into one would have no way to discover that.
