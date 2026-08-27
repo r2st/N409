@@ -16,6 +16,7 @@ import {
 import { softDeleteUser } from '../repos/adminUsers.js';
 import { buildPersonalDataExport } from '../repos/dataExport.js';
 import {
+  API_TOKEN_PAGE_LIMIT,
   createApiToken,
   findApiTokenById,
   listPersonalApiTokens,
@@ -275,7 +276,7 @@ export function registerAccountRoutes(
 
   app.get('/api/v1/me/tokens', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    return { tokens: await listPersonalApiTokens(deps.pool, principal.id) };
+    return { ...(await listPersonalApiTokens(deps.pool, principal.id)), page_limit: API_TOKEN_PAGE_LIMIT };
   });
 
   /**

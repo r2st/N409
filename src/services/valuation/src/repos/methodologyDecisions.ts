@@ -70,12 +70,28 @@ export async function createDecision(
   });
 }
 
-export async function listDecisions(pool: pg.Pool, valuationId: string): Promise<MethodologyDecisionRow[]> {
+/**
+ * Ceiling on one page of the decision log.
+ *
+ * Append-only by design: a revised decision is a new row pointing at the one it
+ * supersedes, so nothing here is ever updated or removed and the log grows for
+ * as long as the engagement is worked. Oldest first — a decision log read from
+ * the middle loses the reasoning the later entries revise.
+ */
+export const DECISION_PAGE_LIMIT = 500;
+
+export async function listDecisions(
+  pool: pg.Pool,
+  valuationId: string,
+): Promise<{ decisions: MethodologyDecisionRow[]; truncated: boolean }> {
   const { rows } = await pool.query<MethodologyDecisionRow>(
-    'SELECT * FROM methodology_decisions WHERE valuation_id = $1 ORDER BY created_at ASC',
-    [valuationId],
+    'SELECT * FROM methodology_decisions WHERE valuation_id = $1 ORDER BY created_at ASC LIMIT $2',
+    [valuationId, DECISION_PAGE_LIMIT + 1],
   );
-  return rows;
+  return {
+    decisions: rows.slice(0, DECISION_PAGE_LIMIT),
+    truncated: rows.length > DECISION_PAGE_LIMIT,
+  };
 }
 
 export async function findDecisionById(pool: pg.Pool, id: string): Promise<MethodologyDecisionRow | null> {

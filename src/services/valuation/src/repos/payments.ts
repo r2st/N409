@@ -289,12 +289,26 @@ export async function setPaymentReceipt(
   );
 }
 
-export async function listPayments(pool: pg.Pool, valuationId: string): Promise<PaymentRow[]> {
+/**
+ * Ceiling on one page of an engagement's payment attempts.
+ *
+ * A row per checkout session, kept whether it completed or not — a client who
+ * abandons the card form three times leaves three rows — plus refunds and
+ * disputes. Nothing prunes them, so the list grows with attempts rather than
+ * with payments. Shares the ledger page size with the billing screen below.
+ */
+export async function listPayments(
+  pool: pg.Pool,
+  valuationId: string,
+): Promise<{ payments: PaymentRow[]; truncated: boolean }> {
   const { rows } = await pool.query<PaymentRow>(
-    'SELECT * FROM payments WHERE valuation_id = $1 ORDER BY created_at DESC',
-    [valuationId],
+    'SELECT * FROM payments WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [valuationId, BILLING_PAYMENT_PAGE_LIMIT + 1],
   );
-  return rows;
+  return {
+    payments: rows.slice(0, BILLING_PAYMENT_PAGE_LIMIT),
+    truncated: rows.length > BILLING_PAYMENT_PAGE_LIMIT,
+  };
 }
 
 // ── Account-level billing rollup (P2 #13) ────────────────────────────────────

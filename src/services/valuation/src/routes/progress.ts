@@ -17,7 +17,7 @@ import {
 } from '../domain/progress.js';
 import type { ValuationState } from '../domain/valuation.js';
 import { findValuationById } from '../repos/valuations.js';
-import { listDocuments } from '../repos/documents.js';
+import { documentCoverage } from '../repos/documents.js';
 import { latestSucceededJob } from '../repos/aiJobs.js';
 import { findReportByValuation } from '../repos/reports.js';
 import { latestEventAt, listEvents } from '../events/record.js';
@@ -45,8 +45,12 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // state_changed, the timeline reads the client-safe catalog. A long-running
     // valuation's full spine is thousands of rows we would immediately discard.
     const relevantTypes = [...new Set(['state_changed', ...Object.keys(CLIENT_TIMELINE_EVENTS)])];
-    const [documents, events, lastActivityAt, report, explainJob] = await Promise.all([
-      listDocuments(deps.pool, valuation.id),
+    // Counts, not rows: the checklist and `documents_uploaded` below are
+    // arithmetic over every live file, and `listDocuments` is a capped page.
+    // See `documentCoverage` — a checklist built from a page under-reports the
+    // buckets past the cap and asks the client to upload them again.
+    const [coverage, events, lastActivityAt, report, explainJob] = await Promise.all([
+      documentCoverage(deps.pool, valuation.id),
       listEvents(deps.pool, valuation.id, { types: relevantTypes }),
       latestEventAt(deps.pool, valuation.id),
       findReportByValuation(deps.pool, valuation.id),
@@ -84,10 +88,7 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
     }));
 
     // ── Document checklist ──────────────────────────────────────────────────
-    const uploadedByKind = new Map<string, number>();
-    for (const doc of documents) {
-      uploadedByKind.set(doc.kind, (uploadedByKind.get(doc.kind) ?? 0) + 1);
-    }
+    const uploadedByKind = coverage.byKind;
     const checklist = REQUIRED_DOCUMENT_KINDS.map(({ kind, label }) => ({
       kind,
       label,
@@ -145,7 +146,7 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
       last_activity_at: lastActivityAt?.toISOString() ?? null,
       stages,
       checklist,
-      documents_uploaded: documents.length,
+      documents_uploaded: coverage.total,
       documents_missing: missingDocuments,
       report: { available: reportAvailable },
       explanation: { available: reportVisible && explainJob !== null },

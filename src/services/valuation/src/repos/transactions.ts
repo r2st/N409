@@ -69,12 +69,31 @@ const txn = (row: TransactionRow): TransactionRow => calendarDateRow(row, 'occur
 
 // ── Funding rounds ────────────────────────────────────────────────────────────
 
-export async function listRounds(pool: pg.Pool, valuationId: string): Promise<FundingRoundRow[]> {
+/**
+ * Ceiling on one page of the financing history, and of the secondary book.
+ *
+ * Neither list is capped at the write end: rounds and secondary transactions
+ * are created one at a time by hand and in bulk by the partner API, and a
+ * company that has been through a dozen financings and an employee tender has
+ * a long book. Oldest first is the order both are read in — a financing
+ * history that starts in the middle is not a financing history — so the page
+ * that survives is the early one, and the flag says the recent end is missing.
+ */
+export const TRANSACTION_PAGE_LIMIT = 500;
+
+export async function listRounds(
+  pool: pg.Pool,
+  valuationId: string,
+): Promise<{ rounds: FundingRoundRow[]; truncated: boolean }> {
   const { rows } = await pool.query<FundingRoundRow>(
-    'SELECT * FROM funding_rounds WHERE valuation_id = $1 ORDER BY closed_on NULLS LAST, created_at',
-    [valuationId],
+    `SELECT * FROM funding_rounds WHERE valuation_id = $1
+      ORDER BY closed_on NULLS LAST, created_at LIMIT $2`,
+    [valuationId, TRANSACTION_PAGE_LIMIT + 1],
   );
-  return rows.map(round);
+  return {
+    rounds: rows.slice(0, TRANSACTION_PAGE_LIMIT).map(round),
+    truncated: rows.length > TRANSACTION_PAGE_LIMIT,
+  };
 }
 
 export interface RoundInput {
@@ -193,12 +212,19 @@ export async function deleteRound(
 
 // ── Transactions ──────────────────────────────────────────────────────────────
 
-export async function listTransactions(pool: pg.Pool, valuationId: string): Promise<TransactionRow[]> {
+export async function listTransactions(
+  pool: pg.Pool,
+  valuationId: string,
+): Promise<{ transactions: TransactionRow[]; truncated: boolean }> {
   const { rows } = await pool.query<TransactionRow>(
-    'SELECT * FROM valuation_transactions WHERE valuation_id = $1 ORDER BY occurred_on, created_at',
-    [valuationId],
+    `SELECT * FROM valuation_transactions WHERE valuation_id = $1
+      ORDER BY occurred_on, created_at LIMIT $2`,
+    [valuationId, TRANSACTION_PAGE_LIMIT + 1],
   );
-  return rows.map(txn);
+  return {
+    transactions: rows.slice(0, TRANSACTION_PAGE_LIMIT).map(txn),
+    truncated: rows.length > TRANSACTION_PAGE_LIMIT,
+  };
 }
 
 export interface TransactionInput {

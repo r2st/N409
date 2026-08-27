@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
-import { listGrants } from '../../src/repos/grants.js';
+import { createGrant, listGrants } from '../../src/repos/grants.js';
+import { existingGrantExternalIds } from '../../src/repos/hrisConnections.js';
 import { signCapTableSyncState, signHrisState } from '../../src/auth/jwt.js';
 import { runDueHrisSyncs } from '../../src/routes/hris.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
@@ -149,6 +150,70 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     });
     expect(again.json()).toMatchObject({ grants_created: 0, grants_skipped: 2 });
     expect((await listGrants(ctx.pool, v.id)).grants).toHaveLength(2);
+  });
+
+  /**
+   * The dedupe set is bounded by the pull, not by the cap table.
+   *
+   * This is the one read in this file that may never be capped: the caller
+   * skips a grant it finds in the set, so a short set is a duplicate grant
+   * rather than a short list. The bound therefore has to come from the pull —
+   * the set is complete for everything the caller is about to iterate no
+   * matter how many grants the valuation already holds.
+   *
+   * The discriminator is the 200 grants seeded below, none of which appear in
+   * the roster. Under the previous spelling — `SELECT external_id FROM
+   * option_grants WHERE valuation_id = $1` — all 200 came back to answer a
+   * question about two, and this test asserts the size that spelling would
+   * report. It is a bound, not a behaviour: idempotency itself is asserted
+   * above, and holds either way.
+   */
+  it('asks the grant dedupe set about the pull, not about the whole cap table', async () => {
+    const v = await connectedValuation();
+    const ids = Array.from({ length: 200 }, (_, i) => `unrelated-${i}`);
+    for (const externalId of ids) {
+      await createGrant(
+        ctx.pool,
+        {
+          valuationId: v.id,
+          granteeName: 'Prior Holder',
+          granteeEmail: `prior-${externalId}@acme.com`,
+          grantDate: '2024-01-01',
+          optionsCount: 100,
+          exercisePrice: 1,
+          currency: 'USD',
+          vestingTemplate: 'imported',
+          vestingStartDate: '2024-01-01',
+          vestingMonths: 48,
+          cliffMonths: 12,
+          frequencyMonths: 1,
+          createdBy: ops.id,
+          externalId,
+        },
+        { actorType: 'system', actorId: 'test', source: 'hris_sync' },
+      );
+    }
+
+    const seen = await existingGrantExternalIds(ctx.pool, v.id, ['g1', 'unrelated-7']);
+    expect([...seen].sort()).toEqual(['unrelated-7']);
+    expect(seen.size).toBe(1);
+
+    // Nothing to ask about is not a table scan either.
+    expect((await existingGrantExternalIds(ctx.pool, v.id, [])).size).toBe(0);
+
+    // And the sync still skips what it has already imported.
+    const pull = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+      headers: authHeader(ops.token),
+    });
+    expect(pull.json()).toMatchObject({ grants_created: 2, grants_skipped: 0 });
+    const repeat = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+      headers: authHeader(ops.token),
+    });
+    expect(repeat.json()).toMatchObject({ grants_created: 0, grants_skipped: 2 });
   });
 
   /**

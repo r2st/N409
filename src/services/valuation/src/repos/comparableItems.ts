@@ -81,17 +81,32 @@ function hydrate(row: RawComparableItemRow): ComparableItemRow {
  * re-sorting in their head. Nulls sort last: an unscored analyst addition
  * belongs below the screened rows, not above them.
  */
+/**
+ * Ceiling on one page of an engagement's peer set.
+ *
+ * Machine-generated rows are replaced wholesale on each run, but analyst-added
+ * peers accumulate beside them and nothing removes an excluded one — exclusion
+ * is a flag, kept so the reasoning survives into the report. Included first,
+ * then by score, so a capped page is the peer set that carries the conclusion
+ * and the tail that falls off is the rejected end.
+ */
+export const COMPARABLE_PAGE_LIMIT = 500;
+
 export async function listComparableItems(
   pool: pg.Pool | pg.PoolClient,
   valuationId: string,
-): Promise<ComparableItemRow[]> {
+): Promise<{ items: ComparableItemRow[]; truncated: boolean }> {
   const { rows } = await pool.query<RawComparableItemRow>(
     `SELECT * FROM comparable_items
       WHERE valuation_id = $1
-      ORDER BY included DESC, score DESC NULLS LAST, name ASC`,
-    [valuationId],
+      ORDER BY included DESC, score DESC NULLS LAST, name ASC
+      LIMIT $2`,
+    [valuationId, COMPARABLE_PAGE_LIMIT + 1],
   );
-  return rows.map(hydrate);
+  return {
+    items: rows.slice(0, COMPARABLE_PAGE_LIMIT).map(hydrate),
+    truncated: rows.length > COMPARABLE_PAGE_LIMIT,
+  };
 }
 
 export async function findComparableItem(
@@ -102,6 +117,27 @@ export async function findComparableItem(
   const { rows } = await pool.query<RawComparableItemRow>(
     `SELECT * FROM comparable_items WHERE id = $1 AND valuation_id = $2`,
     [itemId, valuationId],
+  );
+  return rows[0] ? hydrate(rows[0]) : null;
+}
+
+/**
+ * The peer already holding this ticker, if any — the friendly half of the
+ * unique index, asked as a lookup.
+ *
+ * Both callers had scanned the whole peer set for it. That was correct only
+ * while the set was the whole set: from a capped page the check misses a
+ * duplicate sitting past the cap, the insert then hits the index, and the
+ * analyst gets a 500 in place of the sentence this function exists to produce.
+ */
+export async function findComparableByTicker(
+  pool: pg.Pool | pg.PoolClient,
+  valuationId: string,
+  ticker: string,
+): Promise<ComparableItemRow | null> {
+  const { rows } = await pool.query<RawComparableItemRow>(
+    'SELECT * FROM comparable_items WHERE valuation_id = $1 AND ticker = $2',
+    [valuationId, ticker],
   );
   return rows[0] ? hydrate(rows[0]) : null;
 }

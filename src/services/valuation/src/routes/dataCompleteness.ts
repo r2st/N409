@@ -7,7 +7,7 @@ import { findValuationById } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
 import { findQuestionnaire } from '../repos/intake.js';
 import { findCapTable } from '../repos/capTables.js';
-import { listDocuments } from '../repos/documents.js';
+import { documentCoverage } from '../repos/documents.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -39,11 +39,16 @@ export function registerDataCompletenessRoutes(app: FastifyInstance, deps: { poo
     // 404 rather than 403: whether a valuation exists is itself scoped.
     if (!readable) throw problems.notFound();
 
-    const [params, questionnaire, capTable, documents] = await Promise.all([
+    // Only the set of covered buckets is read below, so this asks for the
+    // buckets rather than for the files. `listDocuments` is a capped page, and
+    // scoring a page would report a bucket as missing because its files sit
+    // past the cap — a gap the engagement does not have, on the one screen
+    // whose whole job is to say what is still missing.
+    const [params, questionnaire, capTable, coverage] = await Promise.all([
       findParams(deps.pool, valuation.id),
       findQuestionnaire(deps.pool, valuation.id),
       findCapTable(deps.pool, valuation.id),
-      listDocuments(deps.pool, valuation.id),
+      documentCoverage(deps.pool, valuation.id),
     ]);
 
     // `engine_inputs` is the extracted-financials blob merged onto the params
@@ -58,7 +63,7 @@ export function registerDataCompletenessRoutes(app: FastifyInstance, deps: { poo
     const report = scoreCompleteness({
       kind: valuation.kind,
       answers: questionnaire?.answers ?? {},
-      documents: documents.map((d) => ({ category: d.category })),
+      documents: [...coverage.byCategory.keys()].map((category) => ({ category })),
       engineInputs,
       params: params ?? {},
       shareClasses: capTable?.entries ?? [],

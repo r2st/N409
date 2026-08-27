@@ -20,7 +20,7 @@ import { decodeSheetText, SheetTextError } from '../domain/sheetText.js';
 import { buildCapTableGraph } from '../domain/capTableGraph.js';
 import { findCapTable, saveCapTable } from '../repos/capTables.js';
 import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
-import { listRounds } from '../repos/transactions.js';
+import { TRANSACTION_PAGE_LIMIT, listRounds } from '../repos/transactions.js';
 import { looksLikeXlsx, readXlsx, XlsxReadError } from '../domain/xlsxRead.js';
 import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
@@ -384,13 +384,17 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const valuation = await loadReadable(deps.pool, id, principal);
     const table = await findCapTable(deps.pool, id);
     if (!table) throw problems.notFound('No cap table imported yet');
-    const rounds = await listRounds(deps.pool, id);
+    const { rounds, truncated } = await listRounds(deps.pool, id);
     return {
       graph: buildCapTableGraph({
         companyName: valuation.company_name,
         entries: table.entries,
         rounds,
       }),
+      // The graph draws a node per round, so a short book is a graph missing
+      // financings rather than a graph that is merely shorter.
+      truncated,
+      page_limit: TRANSACTION_PAGE_LIMIT,
     };
   });
 }

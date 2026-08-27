@@ -4,9 +4,10 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
-import { listDocuments } from '../repos/documents.js';
+import { hasExtractableDocument } from '../repos/documents.js';
 import { activePipelineRun, latestPipelineRun, setValuationAutoPipeline } from '../repos/pipelineRuns.js';
-import { isExtractable, startPipelineRun, type AutoPipelineDeps } from '../pipeline/autoPipeline.js';
+import { startPipelineRun, type AutoPipelineDeps } from '../pipeline/autoPipeline.js';
+import { EXTRACTABLE_EXTENSIONS } from './ai.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
@@ -59,8 +60,11 @@ export function registerPipelineRoutes(
     if (!deps.autoPipeline.enabled) {
       throw problems.unprocessable('The pipeline is disabled on this deployment (AUTO_PIPELINE=off)');
     }
-    const documents = await listDocuments(deps.pool, valuation.id);
-    if (!documents.some(isExtractable)) {
+    // Asked as the existence question it is. Reading the document list and
+    // running `.some(isExtractable)` over it was correct only while the list
+    // was the whole list; past the cap it refuses a run on an engagement that
+    // does hold an extractable file, with a remedy the user has already met.
+    if (!(await hasExtractableDocument(deps.pool, valuation.id, [...EXTRACTABLE_EXTENSIONS]))) {
       throw problems.unprocessable('Upload at least one extractable document (pdf/txt/csv/xlsx/…) first');
     }
     if (await activePipelineRun(deps.pool, valuation.id)) {

@@ -144,19 +144,97 @@ export async function findDocumentsByIds(pool: pg.Pool, ids: string[]): Promise<
  * exists at all: six was a list you could read, thirteen is one an analyst
  * looking for the option plan has to search.
  */
+export const DOCUMENT_PAGE_LIMIT = 500;
+
 export async function listDocuments(
   pool: pg.Pool,
   valuationId: string,
   filter: { category?: DocumentCategory } = {},
-): Promise<DocumentRow[]> {
+): Promise<{ documents: DocumentRow[]; truncated: boolean }> {
   const { rows } = await pool.query<DocumentRow>(
     `SELECT * FROM documents
      WHERE valuation_id = $1 AND deleted_at IS NULL
        AND ($2::document_category IS NULL OR category = $2)
-     ORDER BY category, kind, created_at DESC`,
-    [valuationId, filter.category ?? null],
+     ORDER BY category, kind, created_at DESC
+     LIMIT $3`,
+    [valuationId, filter.category ?? null, DOCUMENT_PAGE_LIMIT + 1],
   );
-  return rows;
+  return {
+    documents: rows.slice(0, DOCUMENT_PAGE_LIMIT),
+    truncated: rows.length > DOCUMENT_PAGE_LIMIT,
+  };
+}
+
+/** What {@link documentCoverage} answers — counts, never rows. */
+export interface DocumentCoverage {
+  /** Live documents on the engagement. Counted in SQL, so it is exact. */
+  total: number;
+  /** How many live documents carry each kind. Absent kinds are simply absent. */
+  byKind: Map<DocumentKind, number>;
+  /** The same, per intake bucket. */
+  byCategory: Map<DocumentCategory, number>;
+}
+
+/**
+ * The document checklist's arithmetic, answered in SQL.
+ *
+ * Three callers asked {@link listDocuments} for the whole list and then reduced
+ * it to a handful of numbers — the progress tracker's per-kind checklist and
+ * `documents_uploaded`, and the completeness score's set of covered buckets.
+ * Capping the list would have made every one of those answers wrong in the
+ * direction nobody checks: an engagement past the cap reads as *missing* the
+ * bucket whose files sit beyond it, which is a checklist item a client is then
+ * asked to satisfy twice.
+ *
+ * So the cap and the counts are separated. `kind` and `category` are both
+ * enums, so this result is bounded by their product no matter how many files
+ * an engagement holds, and every count in it is exact.
+ */
+export async function documentCoverage(pool: pg.Pool, valuationId: string): Promise<DocumentCoverage> {
+  const { rows } = await pool.query<{ kind: DocumentKind; category: DocumentCategory; count: string }>(
+    `SELECT kind, category, count(*)::text AS count
+       FROM documents
+      WHERE valuation_id = $1 AND deleted_at IS NULL
+      GROUP BY kind, category`,
+    [valuationId],
+  );
+  const coverage: DocumentCoverage = { total: 0, byKind: new Map(), byCategory: new Map() };
+  for (const row of rows) {
+    const n = Number(row.count);
+    coverage.total += n;
+    coverage.byKind.set(row.kind, (coverage.byKind.get(row.kind) ?? 0) + n);
+    coverage.byCategory.set(row.category, (coverage.byCategory.get(row.category) ?? 0) + n);
+  }
+  return coverage;
+}
+
+/**
+ * Whether any live document on this engagement can feed text extraction.
+ *
+ * An existence question, asked as one. The pipeline trigger read the whole
+ * document list to run `.some(isExtractable)` over it, so past the cap it would
+ * have refused to start a run on an engagement that does hold an extractable
+ * file — a refusal with a remedy ("upload one first") the user has already met.
+ *
+ * The extension test is `isExtractable`'s, moved into SQL so the two cannot
+ * drift: the suffix list is passed in rather than restated here, and
+ * `lower(filename) LIKE ANY` matches what `path.extname().toLowerCase()` does
+ * for every name that has an extension at all.
+ */
+export async function hasExtractableDocument(
+  pool: pg.Pool,
+  valuationId: string,
+  extensions: readonly string[],
+): Promise<boolean> {
+  if (extensions.length === 0) return false;
+  const { rowCount } = await pool.query(
+    `SELECT 1 FROM documents
+      WHERE valuation_id = $1 AND deleted_at IS NULL
+        AND lower(filename) LIKE ANY ($2::text[])
+      LIMIT 1`,
+    [valuationId, extensions.map((e) => `%${e.toLowerCase()}`)],
+  );
+  return (rowCount ?? 0) > 0;
 }
 
 export interface UnfiledDocumentRow extends DocumentRow {

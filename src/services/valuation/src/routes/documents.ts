@@ -20,6 +20,7 @@ import {
   deleteDocument,
   documentPathInUse,
   findDocumentById,
+  documentCoverage,
   listDocuments,
   setDocumentReviewed,
   type DocumentRow,
@@ -430,7 +431,7 @@ export function registerDocumentRoutes(
     const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
     const parsed = z.object({ category: z.enum(DOCUMENT_CATEGORIES).optional() }).safeParse(req.query);
     if (!parsed.success) throw invalidQuery(parsed.error);
-    return { documents: await listDocuments(deps.pool, valuation.id, parsed.data) };
+    return listDocuments(deps.pool, valuation.id, parsed.data);
   });
 
   /**
@@ -442,8 +443,11 @@ export function registerDocumentRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
-    const documents = await listDocuments(deps.pool, valuation.id);
-    const categories = summarizeCategories(documents);
+    // The counts, not the files: this checklist states how many uploads each
+    // bucket holds and whether a required one is satisfied, and both are wrong
+    // when derived from a capped page. `documentCoverage` counts in SQL.
+    const coverage = await documentCoverage(deps.pool, valuation.id);
+    const categories = summarizeCategories(coverage.byCategory);
     return {
       categories,
       // What still blocks the engagement, so a client does not have to scan

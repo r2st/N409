@@ -25,6 +25,7 @@ import { CurrencyCode } from '../domain/currency.js';
 import { VALUATION_KINDS } from '../domain/valuation.js';
 import { findBrandingByPartnerId } from '../repos/branding.js';
 import {
+  INTAKE_LINK_PAGE_LIMIT,
   convertIntakeLink,
   createIntakeLink,
   findIntakeLink,
@@ -159,9 +160,11 @@ export function registerClientIntakeRoutes(
     const partnerId = resolveFirm(principal, query.data.partner_id);
 
     const now = new Date();
-    const rows = await listIntakeLinks(deps.pool, partnerId);
+    const { links, truncated } = await listIntakeLinks(deps.pool, partnerId);
     return {
-      links: rows.map((row) => ({ ...toPublicLink(row), ...summarizeIntakeLink(row, now) })),
+      links: links.map((row) => ({ ...toPublicLink(row), ...summarizeIntakeLink(row, now) })),
+      truncated,
+      page_limit: INTAKE_LINK_PAGE_LIMIT,
     };
   });
 

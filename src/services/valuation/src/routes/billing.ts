@@ -157,6 +157,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     // returned null, which `usageView` reads as *unlimited*. See
     // findPlanForSubscription.
     const plan = sub ? await findPlanForSubscription(deps.pool, sub.plan_tier) : null;
+    const invoicePage = await listInvoicesForUser(deps.pool, principal.id);
     const usage = sub
       ? usageView({ valuation_limit: plan?.valuation_limit ?? null, valuations_used: sub.valuations_used })
       : null;
@@ -164,7 +165,12 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       subscription: sub,
       plan,
       usage,
-      invoices: await listInvoicesForUser(deps.pool, principal.id),
+      invoices: invoicePage.invoices,
+      // A subscriber accrues an invoice a month, so this list is long for the
+      // customers who have been here longest — exactly the ones most likely to
+      // be looking for an old one.
+      invoices_truncated: invoicePage.truncated,
+      invoice_page_limit: INVOICE_PAGE_LIMIT,
       // Drives the "Manage subscription" control: a customer record has to
       // exist before the portal has anything to open.
       portal_available:

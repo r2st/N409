@@ -43,12 +43,27 @@ export async function createAuditorAccess(
   return { access: rows[0]!, token };
 }
 
-export async function listAuditorAccess(pool: pg.Pool, valuationId: string): Promise<AuditorAccessRow[]> {
+/**
+ * Ceiling on one page of an engagement's auditor grants.
+ *
+ * Revoked and expired grants stay for the audit trail, so this list only ever
+ * grows — every audit season adds rows and nothing removes them. Newest first,
+ * which is also the live end.
+ */
+export const AUDITOR_ACCESS_PAGE_LIMIT = 200;
+
+export async function listAuditorAccess(
+  pool: pg.Pool,
+  valuationId: string,
+): Promise<{ grants: AuditorAccessRow[]; truncated: boolean }> {
   const { rows } = await pool.query<AuditorAccessRow>(
-    'SELECT * FROM auditor_access WHERE valuation_id = $1 ORDER BY created_at DESC',
-    [valuationId],
+    'SELECT * FROM auditor_access WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [valuationId, AUDITOR_ACCESS_PAGE_LIMIT + 1],
   );
-  return rows;
+  return {
+    grants: rows.slice(0, AUDITOR_ACCESS_PAGE_LIMIT),
+    truncated: rows.length > AUDITOR_ACCESS_PAGE_LIMIT,
+  };
 }
 
 export async function revokeAuditorAccess(

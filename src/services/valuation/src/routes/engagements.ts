@@ -56,7 +56,7 @@ async function loadValuation(pool: pg.Pool, id: string): Promise<ValuationRow> {
 const ACTIVITY_FEED_LIMIT = 40;
 
 async function engagementView(pool: pg.Pool, engagement: EngagementRow, now: Date) {
-  const history = await stageHistory(pool, engagement.id);
+  const { history, truncated: historyTruncated } = await stageHistory(pool, engagement.id);
   // The cap belongs in the query, not after it. `.slice(-40)` on an unbounded
   // read selected every event the engagement had ever recorded — payload JSONB
   // and all — and then discarded all but the newest forty, on a table nothing
@@ -68,6 +68,9 @@ async function engagementView(pool: pg.Pool, engagement: EngagementRow, now: Dat
     sla: slaStatus(engagement.current_stage, engagement.stage_entered_at, now),
     stages: ENGAGEMENT_STAGES,
     durations: stageDurations(history, now),
+    // Time-in-stage summed over a page of the trail, so a trail that ran past
+    // the cap understates every stage after it.
+    durations_truncated: historyTruncated,
     // Activity feed: most-recent-first, capped for the panel.
     activity: events.reverse(),
   };

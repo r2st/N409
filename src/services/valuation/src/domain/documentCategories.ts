@@ -313,12 +313,8 @@ export interface CategorySummary extends DocumentCategoryDef {
  * required bucket in it.
  */
 export function summarizeCategories(
-  documents: ReadonlyArray<{ category: DocumentCategory }>,
+  counts: ReadonlyMap<DocumentCategory, number>,
 ): CategorySummary[] {
-  const counts = new Map<DocumentCategory, number>();
-  for (const doc of documents) {
-    counts.set(doc.category, (counts.get(doc.category) ?? 0) + 1);
-  }
   return DOCUMENT_CATEGORY_DEFS.map((def) => {
     const count = counts.get(def.key) ?? 0;
     return { ...def, count, satisfied: !def.required || count > 0 };

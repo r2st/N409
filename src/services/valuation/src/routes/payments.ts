@@ -18,6 +18,7 @@ import {
   createPayment,
   findLiveCheckout,
   findPaymentByChargeOrIntent,
+  BILLING_PAYMENT_PAGE_LIMIT,
   findPaymentBySessionId,
   findPaymentForValuation,
   listPayments,
@@ -357,7 +358,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     await loadAuthorized(deps.pool, principal, id);
-    return { payments: await listPayments(deps.pool, id) };
+    return { ...(await listPayments(deps.pool, id)), page_limit: BILLING_PAYMENT_PAGE_LIMIT };
   });
 
   /**

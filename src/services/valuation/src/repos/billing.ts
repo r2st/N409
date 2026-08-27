@@ -660,12 +660,27 @@ export async function findInvoice(pool: pg.Pool, id: string): Promise<InvoiceRow
   return rows[0] ?? null;
 }
 
-export async function listInvoicesForUser(pool: pg.Pool, userId: string): Promise<InvoiceRow[]> {
+/**
+ * One page of a user's own invoice ledger, newest first.
+ *
+ * Append-only, and appended to on a clock: a subscriber accrues a row a month
+ * for as long as they subscribe, so this list is the one on the account page
+ * whose length is a function of tenure rather than of anything the user did.
+ * It shares {@link INVOICE_PAGE_LIMIT} with the admin ledger below — the same
+ * rows, the same page size, one number to reason about.
+ */
+export async function listInvoicesForUser(
+  pool: pg.Pool,
+  userId: string,
+): Promise<{ invoices: InvoiceRow[]; truncated: boolean }> {
   const { rows } = await pool.query<InvoiceRow>(
-    'SELECT * FROM invoices WHERE user_id = $1 ORDER BY issued_at DESC',
-    [userId],
+    'SELECT * FROM invoices WHERE user_id = $1 ORDER BY issued_at DESC LIMIT $2',
+    [userId, INVOICE_PAGE_LIMIT + 1],
   );
-  return rows;
+  return {
+    invoices: rows.slice(0, INVOICE_PAGE_LIMIT),
+    truncated: rows.length > INVOICE_PAGE_LIMIT,
+  };
 }
 
 export const INVOICE_PAGE_LIMIT = 200;

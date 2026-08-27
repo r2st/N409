@@ -33,14 +33,14 @@ export function registerPackageRoutes(app: FastifyInstance, deps: { pool: pg.Poo
     const [
       profile,
       params,
-      documents,
+      documentPage,
       aiJobPage,
       calculationPage,
       overwrites,
       report,
       tasks,
-      rounds,
-      transactions,
+      roundPage,
+      transactionPage,
     ] = await Promise.all([
       findCompanyProfile(deps.pool, id),
       findParams(deps.pool, id),
@@ -55,6 +55,9 @@ export function registerPackageRoutes(app: FastifyInstance, deps: { pool: pg.Poo
     ]);
     const reportVersions = report ? await listVersions(deps.pool, report.id) : [];
     const { jobs: aiJobs, truncated: aiJobsTruncated } = aiJobPage;
+    const { documents, truncated: documentsTruncated } = documentPage;
+    const { rounds, truncated: roundsTruncated } = roundPage;
+    const { transactions, truncated: transactionsTruncated } = transactionPage;
     const { calculations, truncated: calculationsTruncated } = calculationPage;
 
     // Calculations without result payloads — the explorer shows summaries,
@@ -90,6 +93,11 @@ export function registerPackageRoutes(app: FastifyInstance, deps: { pool: pg.Poo
         // arrays, so the caps they came from travel with them.
         ai_jobs_truncated: aiJobsTruncated,
         calculations_truncated: calculationsTruncated,
+        // Same reason, three more badges: the explorer counts the files, the
+        // financings and the secondary trades in its headings too.
+        documents_truncated: documentsTruncated,
+        funding_rounds_truncated: roundsTruncated,
+        transactions_truncated: transactionsTruncated,
         overwrites,
         report: report
           ? {

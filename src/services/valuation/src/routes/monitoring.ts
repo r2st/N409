@@ -355,6 +355,20 @@ export function registerMonitoringRoutes(
         monitors.map((m) => m.valuation_id),
       );
       const snapshots = await buildSnapshots(deps.pool, [...valuations.values()]);
+      // Triggers are evaluated for the whole page before anything is read
+      // about them, so the dedupe query can be asked about the signatures that
+      // actually fired rather than about the monitors. Reading it the other way
+      // round pulled every alert those monitors had ever sent — see
+      // `notifiedSignaturesFor`, where the bound now lives.
+      const fired = new Map<string, ReturnType<typeof evaluateTriggers>>();
+      for (const m of monitors) {
+        const valuation = valuations.get(m.valuation_id);
+        if (!valuation) continue;
+        const live = snapshots.get(valuation.id)!;
+        const triggers = evaluateTriggers(baselineOf(m, live), live.snapshot, now);
+        if (triggers.length > 0) fired.set(m.id, triggers);
+      }
+
       // Both of these were read inside the loop below, once per monitor and
       // once per firing trigger respectively. Batched per page: the dedupe sets
       // for every monitor in one query, and every assigned reviewer in one more
@@ -362,7 +376,9 @@ export function registerMonitoringRoutes(
       // trigger on the same engagement.
       const notified = await notifiedSignaturesFor(
         deps.pool,
-        monitors.map((m) => m.id),
+        [...fired].flatMap(([monitorId, triggers]) =>
+          triggers.map((t) => ({ monitorId, signature: t.signature })),
+        ),
       );
       const reviewers = await findUsersByIds(
         deps.pool,
@@ -376,9 +392,8 @@ export function registerMonitoringRoutes(
       for (const m of monitors) {
         const valuation = valuations.get(m.valuation_id);
         if (!valuation) continue;
-        const live = snapshots.get(valuation.id)!;
-        const triggers = evaluateTriggers(baselineOf(m, live), live.snapshot, now);
-        if (triggers.length === 0) continue;
+        const triggers = fired.get(m.id);
+        if (!triggers) continue;
 
         const alreadyNotified = notified.get(m.id) ?? new Set<string>();
         const fresh = triggers.filter((t) => !alreadyNotified.has(t.signature));

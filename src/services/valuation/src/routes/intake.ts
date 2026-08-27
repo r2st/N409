@@ -5,7 +5,7 @@ import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { findUserById } from '../repos/users.js';
-import { listDocuments } from '../repos/documents.js';
+import { documentCoverage } from '../repos/documents.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
@@ -49,11 +49,16 @@ function canEditIntake(principal: Principal, valuation: ValuationRow): boolean {
   return isOps(principal) || valuation.user_id === principal.id;
 }
 
-/** Required document kinds with no live upload yet. */
+/**
+ * Required document kinds with no live upload yet.
+ *
+ * From the per-kind counts rather than the document list: a required kind
+ * whose only upload sits past `DOCUMENT_PAGE_LIMIT` would otherwise be
+ * reported as still missing, and this list is what the client is chased for.
+ */
 async function missingDocuments(pool: pg.Pool, valuationId: string) {
-  const docs = await listDocuments(pool, valuationId);
-  const present = new Set(docs.map((d) => d.kind));
-  return REQUIRED_DOCUMENT_KINDS.filter((r) => !present.has(r.kind));
+  const { byKind } = await documentCoverage(pool, valuationId);
+  return REQUIRED_DOCUMENT_KINDS.filter((r) => !byKind.has(r.kind));
 }
 
 export function registerIntakeRoutes(

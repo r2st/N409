@@ -166,33 +166,45 @@ export async function* eachEnabledMonitor(
   }
 }
 
-/** Set of alert signatures already emailed for a monitor (dedupe). */
-export async function notifiedSignatures(pool: pg.Pool, monitorId: string): Promise<Set<string>> {
-  const { rows } = await pool.query<{ signature: string }>(
-    'SELECT signature FROM monitor_alerts WHERE monitor_id = $1',
-    [monitorId],
-  );
-  return new Set(rows.map((r) => r.signature));
+/** One `(monitor, signature)` the scan is about to consider sending. */
+export interface AlertCandidate {
+  monitorId: string;
+  signature: string;
 }
 
 /**
- * The same dedupe set for a whole page of monitors, in one query.
+ * Which of `candidates` have already been alerted on, for a whole page of
+ * monitors in one query.
  *
- * The scan asked per monitor, so the read count grew with the number of
- * monitors enabled — and it asked *inside* the loop, after the triggers were
- * evaluated, so it was one round trip per firing monitor on a path that already
- * sends email. Monitors with no alerts yet are absent from the map; the caller
+ * Asked about the candidates rather than about the monitors. The earlier
+ * spelling took the page's monitor ids and read *every* signature those
+ * monitors had ever fired — a set that only grows, on a table that is appended
+ * to on every scan, to answer a question about the handful of triggers this
+ * scan evaluated. A monitor that has been watching an engagement for two years
+ * dragged two years of alerts through the wire each time the sweep ran.
+ *
+ * Bounding it costs nothing here because this set is an optimisation and not
+ * the guard: `recordAlert` is `ON CONFLICT (monitor_id, signature) DO NOTHING`
+ * and the scan sends only when it reports a fresh insert. A signature this
+ * function failed to return would cost one no-op INSERT, not a second email.
+ * That is the opposite of {@link existingGrantExternalIds}'s situation and the
+ * reason the two are bounded the same way rather than one of them capped.
+ *
+ * Monitors with nothing already alerted are absent from the map; the caller
  * reads them as an empty set.
  */
 export async function notifiedSignaturesFor(
   pool: pg.Pool,
-  monitorIds: readonly string[],
+  candidates: readonly AlertCandidate[],
 ): Promise<Map<string, Set<string>>> {
   const out = new Map<string, Set<string>>();
-  if (monitorIds.length === 0) return out;
+  if (candidates.length === 0) return out;
   const { rows } = await pool.query<{ monitor_id: string; signature: string }>(
-    'SELECT monitor_id, signature FROM monitor_alerts WHERE monitor_id = ANY($1::ulid[])',
-    [monitorIds as readonly string[]],
+    `SELECT a.monitor_id, a.signature
+       FROM monitor_alerts a
+       JOIN unnest($1::ulid[], $2::text[]) AS c(monitor_id, signature)
+         ON c.monitor_id = a.monitor_id AND c.signature = a.signature`,
+    [candidates.map((c) => c.monitorId), candidates.map((c) => c.signature)],
   );
   for (const r of rows) {
     const set = out.get(r.monitor_id) ?? new Set<string>();

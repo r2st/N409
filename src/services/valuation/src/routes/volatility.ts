@@ -195,7 +195,7 @@ export function registerVolatilityRoutes(
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(id, principal);
 
-    const [estimates, overwrites, peers] = await Promise.all([
+    const [estimates, overwrites, peerPage] = await Promise.all([
       listVolatilityEstimates(deps.pool, valuation.id),
       listOverwrites(deps.pool, valuation.id),
       listComparableItems(deps.pool, valuation.id),
@@ -207,7 +207,7 @@ export function registerVolatilityRoutes(
       // What an estimate would be struck on if one were run now. A set with no
       // tickers in it is the reason the button cannot work, and saying so here
       // is cheaper than a 422 after the press.
-      eligible_tickers: peers.filter((p) => p.included && p.ticker !== null).map((p) => p.ticker!),
+      eligible_tickers: peerPage.items.filter((p) => p.included && p.ticker !== null).map((p) => p.ticker!),
       can_edit: isOps(principal),
     };
   });
@@ -232,7 +232,7 @@ export function registerVolatilityRoutes(
       }
       const { method, window_days, manual_override } = parsed.data;
 
-      const peers = await listComparableItems(deps.pool, valuation.id);
+      const { items: peers } = await listComparableItems(deps.pool, valuation.id);
       const tickers = peers.filter((p) => p.included && p.ticker !== null).map((p) => p.ticker!);
       if (tickers.length === 0 && (manual_override === null || manual_override === undefined)) {
         throw problems.unprocessable(

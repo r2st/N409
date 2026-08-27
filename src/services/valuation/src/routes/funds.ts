@@ -221,7 +221,10 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     const fund = await loadFund(id);
     const { positions, truncated } = await listPositions(deps.pool, id);
-    const marks = await latestMarks(deps.pool, id);
+    const marks = await latestMarks(
+      deps.pool,
+      positions.map((p) => p.id),
+    );
     const lpTerms = await findLpTerms(deps.pool, id);
     return {
       fund,
@@ -436,7 +439,10 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const fund = await loadFund(id);
     const { positions, truncated } = await listPositions(deps.pool, id);
     if (positions.length === 0) throw problems.unprocessable('The fund has no positions to value');
-    const marks = await latestMarks(deps.pool, id);
+    const marks = await latestMarks(
+      deps.pool,
+      positions.map((p) => p.id),
+    );
     const enginePositions = positions.map((p) => {
       const mark = marks.get(p.id);
       if (mark && mark.inputs)

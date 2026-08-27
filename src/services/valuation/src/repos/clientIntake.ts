@@ -92,12 +92,27 @@ export async function createIntakeLink(
   return { link: rows[0], token };
 }
 
-export async function listIntakeLinks(pool: pg.Pool, partnerId: string): Promise<ClientIntakeLinkRow[]> {
+/**
+ * Ceiling on one page of a firm's intake links.
+ *
+ * One row per prospective client, kept after it is used or revoked so the
+ * conversion is auditable — so the list grows with the firm's whole history of
+ * asking, not with its current pipeline.
+ */
+export const INTAKE_LINK_PAGE_LIMIT = 200;
+
+export async function listIntakeLinks(
+  pool: pg.Pool,
+  partnerId: string,
+): Promise<{ links: ClientIntakeLinkRow[]; truncated: boolean }> {
   const { rows } = await pool.query<ClientIntakeLinkRow>(
-    'SELECT * FROM client_intake_links WHERE partner_id = $1 ORDER BY created_at DESC',
-    [partnerId],
+    'SELECT * FROM client_intake_links WHERE partner_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [partnerId, INTAKE_LINK_PAGE_LIMIT + 1],
   );
-  return rows;
+  return {
+    links: rows.slice(0, INTAKE_LINK_PAGE_LIMIT),
+    truncated: rows.length > INTAKE_LINK_PAGE_LIMIT,
+  };
 }
 
 /**

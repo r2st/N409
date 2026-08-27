@@ -246,6 +246,12 @@ export const ResultsResponse = z
       .nullable()
       .describe('The latest completed run, or null if none has completed.'),
     documents: z.array(ResultsDocumentSchema).describe('Documents attached to the engagement.'),
+    documents_truncated: z
+      .boolean()
+      .describe(
+        'True when the engagement holds more documents than this page carries. ' +
+          'A short list is otherwise indistinguishable from a complete one.',
+      ),
     report: z
       .object({
         /** False until a draft has been shared — not merely until it renders. */

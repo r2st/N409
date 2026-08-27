@@ -16,6 +16,7 @@ import { DEFAULT_APPRAISER_QUALIFICATIONS, renderBoardResolution } from '../doma
 import {
   addBoardMember,
   deleteBoardMember,
+  countBoardMembers,
   findResolutionByValuation,
   findSignoffById,
   findSignoffByTokenHash,
@@ -151,6 +152,12 @@ async function resolutionResponse(pool: pg.Pool, resolution: BoardResolutionRow)
   const members = await listBoardMembers(pool, resolution.id);
   return { resolution, members: members.map(memberDto) };
 }
+
+/**
+ * Ceiling on a resolution's sign-off list — see `countBoardMembers`, which is
+ * where the reasoning for bounding the write rather than the read is written.
+ */
+export const MAX_BOARD_MEMBERS = 50;
 
 export function registerBoardApprovalRoutes(
   app: FastifyInstance,
@@ -297,6 +304,16 @@ export function registerBoardApprovalRoutes(
 
     const parsed = MemberBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid member', parsed.error);
+
+    // The sign-off list is read uncapped on purpose — every member on it is
+    // one the resolution is waiting for, so a page boundary would hide an
+    // outstanding signature — which means the bound belongs here instead. No
+    // real board is near this; a loop against this endpoint would be.
+    if ((await countBoardMembers(deps.pool, resolution.id)) >= MAX_BOARD_MEMBERS) {
+      throw problems.conflict(
+        `A resolution takes at most ${MAX_BOARD_MEMBERS} board members — remove one first`,
+      );
+    }
 
     const { token, hash } = mintSignoffToken();
     let member: BoardSignoffRow;

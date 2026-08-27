@@ -21,11 +21,13 @@ export async function loadFundReport(pool: pg.Pool, valuation: ValuationRow): Pr
   const fund = await findFundByValuation(pool, valuation.id);
   if (!fund) return null;
 
-  const [positions, marks, lpTerms] = await Promise.all([
-    listPositions(pool, fund.id),
-    latestMarks(pool, fund.id),
-    findLpTerms(pool, fund.id),
-  ]);
+  const [positions, lpTerms] = await Promise.all([listPositions(pool, fund.id), findLpTerms(pool, fund.id)]);
+  // After the page, not beside it: the marks this report prints are the ones
+  // for the positions it prints.
+  const marks = await latestMarks(
+    pool,
+    positions.positions.map((p) => p.id),
+  );
 
   return {
     fund,

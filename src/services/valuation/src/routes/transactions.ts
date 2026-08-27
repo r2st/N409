@@ -8,6 +8,7 @@ import {
   createTransaction,
   deleteRound,
   deleteTransaction,
+  TRANSACTION_PAGE_LIMIT,
   listRounds,
   listTransactions,
   TRANSACTION_KINDS,
@@ -85,7 +86,7 @@ export function registerTransactionRoutes(app: FastifyInstance, deps: { pool: pg
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     await loadAuthorizedValuation(deps.pool, principal, id);
-    return { rounds: await listRounds(deps.pool, id) };
+    return { ...(await listRounds(deps.pool, id)), page_limit: TRANSACTION_PAGE_LIMIT };
   });
 
   app.post('/api/v1/valuations/:id/rounds', { preHandler: app.authenticate }, async (req, reply) => {
@@ -167,7 +168,7 @@ export function registerTransactionRoutes(app: FastifyInstance, deps: { pool: pg
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     await loadAuthorizedValuation(deps.pool, principal, id);
-    return { transactions: await listTransactions(deps.pool, id) };
+    return { ...(await listTransactions(deps.pool, id)), page_limit: TRANSACTION_PAGE_LIMIT };
   });
 
   app.post('/api/v1/valuations/:id/transactions', { preHandler: app.authenticate }, async (req, reply) => {

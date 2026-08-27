@@ -7,6 +7,7 @@ import {
   createDecision,
   DECISION_CATEGORIES,
   findDecisionById,
+  DECISION_PAGE_LIMIT,
   listDecisions,
 } from '../repos/methodologyDecisions.js';
 import { findValuationById } from '../repos/valuations.js';
@@ -81,12 +82,17 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: { pool: pg.Po
     requireOps(principal);
     const { id } = req.params as { id: string };
     await loadValuation(id);
-    const decisions = await listDecisions(deps.pool, id);
-    // Rows superseded by a later entry, for strike-through rendering.
+    const { decisions, truncated } = await listDecisions(deps.pool, id);
+    // Rows superseded by a later entry, for strike-through rendering. Read off
+    // this page: a superseding row beyond the cap cannot strike through one on
+    // it, so a truncated log shows a superseded decision as live — which is
+    // why the flag below has to reach the screen.
     const superseded = new Set(decisions.map((d) => d.supersedes).filter(Boolean) as string[]);
     return {
       decisions: decisions.map((d) => ({ ...d, superseded: superseded.has(d.id) })),
       categories: DECISION_CATEGORIES,
+      truncated,
+      page_limit: DECISION_PAGE_LIMIT,
     };
   });
 }

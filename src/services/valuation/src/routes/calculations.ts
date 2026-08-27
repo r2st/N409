@@ -226,7 +226,7 @@ export async function buildCalculationInputs(
   // *comparables* job below stays behind the peer set on purpose — it is the
   // fallback for an unscreened engagement, and fetching it eagerly would query
   // for an answer most engagements throw away.
-  const [extractJob, peers] = await Promise.all([
+  const [extractJob, peerPage] = await Promise.all([
     latestSucceededJob(pool, valuationId, 'extract'),
     listComparableItems(pool, valuationId),
   ]);
@@ -244,7 +244,10 @@ export async function buildCalculationInputs(
   // for every engagement nobody has screened, which is the behaviour that
   // existed before `comparable_items` did — a new empty table must not change
   // what an untouched valuation computes.
-  const peerMultiples = marketMultiples(peers, paramsRow.market_method, paramsRow.market_horizon);
+  // A page of the peer set. `COMPARABLE_PAGE_LIMIT` is an order of magnitude
+  // above any set an analyst curates, and the ordering puts the included peers
+  // — the only ones `marketMultiples` reads — at the front of it.
+  const peerMultiples = marketMultiples(peerPage.items, paramsRow.market_method, paramsRow.market_horizon);
   if (peerMultiples.length > 0) {
     inputs = deepMerge(inputs, { market: { multiples: peerMultiples } });
   } else {

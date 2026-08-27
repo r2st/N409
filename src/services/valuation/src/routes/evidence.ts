@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { buildZip, type ZipEntry } from '../export/zip.js';
-import { listMarketResearch } from '../repos/marketResearch.js';
+import { RESEARCH_PAGE_LIMIT, listMarketResearch } from '../repos/marketResearch.js';
 import { changeLogCsv, describeEvent, summarizeAuditTrail } from '../domain/auditTrail.js';
 import { listEvents, recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
@@ -12,15 +12,15 @@ import { CALCULATION_PAGE_LIMIT, listCalculations, listCalculationTraces } from 
 import { listWorkbookCells, WORKBOOK_CELL_LIMIT } from '../repos/workbook.js';
 import { computeWorkbook } from '../domain/workbook.js';
 import { detectFinancialAnomalies } from '../domain/financialAnomalies.js';
-import { listDocuments } from '../repos/documents.js';
+import { DOCUMENT_PAGE_LIMIT, listDocuments } from '../repos/documents.js';
 import { COMMENT_PAGE_LIMIT, listComments } from '../repos/comments.js';
 import { listSignatures } from '../repos/signatures.js';
 import { AI_JOB_PAGE_LIMIT, listAiJobs } from '../repos/aiJobs.js';
-import { listDecisions } from '../repos/methodologyDecisions.js';
+import { DECISION_PAGE_LIMIT, listDecisions } from '../repos/methodologyDecisions.js';
 import { QA_REVIEW_PAGE_LIMIT, listQaReviews } from '../repos/qaReviews.js';
 import { deliverablePdf } from './reports.js';
 import { listScenarios } from '../repos/scenarios.js';
-import { listComparableItems } from '../repos/comparableItems.js';
+import { COMPARABLE_PAGE_LIMIT, listComparableItems } from '../repos/comparableItems.js';
 import { impliedMultiples } from '../domain/comparables.js';
 import { findReportByValuation, getVersion, listVersions } from '../repos/reports.js';
 import { findUserById } from '../repos/users.js';
@@ -57,7 +57,7 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // guards draw.
     refuseIfRetired(valuation, 'producing evidence bundles');
 
-    const [events, calculationPage, documents, commentPage, signatures, aiJobPage, report, generator] =
+    const [events, calculationPage, documentPage, commentPage, signatures, aiJobPage, report, generator] =
       await Promise.all([
         listEvents(deps.pool, id),
         listCalculations(deps.pool, id),
@@ -70,7 +70,8 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
       ]);
     // Audit-defense additions (IMPROVEMENTS_RESEARCH §5.3/§4.3/§5.7): the
     // methodology decision log, QA review history, and saved scenarios.
-    const [decisions, qaPage, scenarios, research, comparables, traces, workbookCells] = await Promise.all([
+    const [decisionPage, qaPage, scenarios, researchPage, comparablePage, traces, workbookCells] =
+      await Promise.all([
       listDecisions(deps.pool, id),
       listQaReviews(deps.pool, id),
       listScenarios(deps.pool, id),
@@ -152,6 +153,10 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // quietly. Reaching COMMENT_PAGE_LIMIT on one engagement takes an email
     // loop, and this is what tells the auditor that is what they are looking at.
     const { comments, truncated: commentsTruncated } = commentPage;
+    const { documents, truncated: documentsTruncated } = documentPage;
+    const { decisions, truncated: decisionsTruncated } = decisionPage;
+    const { research, truncated: researchTruncated } = researchPage;
+    const { items: comparables, truncated: comparablesTruncated } = comparablePage;
     const { calculations, truncated: calculationsTruncated } = calculationPage;
     const { jobs: aiJobs, truncated: aiJobsTruncated } = aiJobPage;
     const { reviews: qaReviews, truncated: qaReviewsTruncated } = qaPage;
@@ -280,6 +285,16 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         ...(calculationsTruncated ? { calculations: CALCULATION_PAGE_LIMIT } : {}),
         ...(aiJobsTruncated ? { ai_jobs: AI_JOB_PAGE_LIMIT } : {}),
         ...(qaReviewsTruncated ? { qa_reviews: QA_REVIEW_PAGE_LIMIT } : {}),
+        // The file manifest. An auditor reading a bundle for what is *not* in
+        // it counts this list, so a short one has to be labelled a short one.
+        ...(documentsTruncated ? { documents: DOCUMENT_PAGE_LIMIT } : {}),
+        // The methodology log, which is append-only and is read here for the
+        // reasoning behind a number rather than for its latest state.
+        ...(decisionsTruncated ? { decisions: DECISION_PAGE_LIMIT } : {}),
+        // The supersede chain and the peer set — the two lists an auditor
+        // reads specifically for what is *not* in the conclusion.
+        ...(researchTruncated ? { market_research: RESEARCH_PAGE_LIMIT } : {}),
+        ...(comparablesTruncated ? { comparables: COMPARABLE_PAGE_LIMIT } : {}),
       },
       files: ['manifest.json', ...entries.map((e) => e.name)],
     };

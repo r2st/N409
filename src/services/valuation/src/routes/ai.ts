@@ -16,7 +16,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
 import { sanitizeExtractedInputs, type RejectedInput } from './engineInputs.js';
-import { listDocuments, type DocumentRow } from '../repos/documents.js';
+import { findDocumentsByIds, listDocuments, type DocumentRow } from '../repos/documents.js';
 import { findUserById } from '../repos/users.js';
 import {
   completeAiJob,
@@ -35,7 +35,7 @@ import { decodeFromStorage } from '../storage/documentEncryption.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
-import { listComparableItems, replaceMachineComparables } from '../repos/comparableItems.js';
+import { COMPARABLE_PAGE_LIMIT, listComparableItems, replaceMachineComparables } from '../repos/comparableItems.js';
 import { summarizeSet } from '../domain/comparables.js';
 import {
   AiComparablesError,
@@ -259,7 +259,11 @@ export async function runAiPipeline(
 }> {
   const { valuation, pipeline } = args;
   const params = await findParams(deps.pool, valuation.id);
-  const documents = await listDocuments(deps.pool, valuation.id);
+  // A page, and that is what the model gets. `encodeDocuments` already spends
+  // a bounded character budget over whatever it is handed, so the corpus was
+  // never "every file" — the cap makes the bound explicit instead of leaving
+  // it to whichever document the budget happened to run out on.
+  const { documents } = await listDocuments(deps.pool, valuation.id);
 
   // Registry-managed prompt: the stored system prompt + model binding ride
   // along so admins can tune pipelines without a deploy (Bot Prompts view).
@@ -289,13 +293,15 @@ export async function runAiPipeline(
   // or from the `company_profile` agent.
   let profilePayload: Record<string, unknown> | null = null;
   if (pipeline === 'report_narrative') {
-    const [rows, research, profile] = await Promise.all([
+    const [rows, researchPage, profile] = await Promise.all([
       listNarrativePromptsForKind(deps.pool, valuation.kind),
       listMarketResearch(deps.pool, valuation.id),
       findCompanyProfile(deps.pool, valuation.id),
     ]);
     narrativeSections = narrativeSectionsPayload(rows, valuation.kind);
-    researchPayload = narrativeResearchPayload(research);
+    // The live rows only — one per (topic, region), so this branch is bounded
+    // by the two enums and the page never bites.
+    researchPayload = narrativeResearchPayload(researchPage.research);
     profilePayload = narrativeProfilePayload(profile);
   }
 
@@ -483,7 +489,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     // the body is parsed, so the answer names the state of the file rather than
     // whatever else the request got wrong.
     refuseIfRetired(valuation, 'running AI pipelines');
-    const documents = await listDocuments(deps.pool, id);
+    const { documents } = await listDocuments(deps.pool, id);
 
     if (pipeline === 'extract' && documents.length === 0) {
       throw problems.unprocessable('Upload at least one document before running data extraction');
@@ -608,10 +614,12 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
         payload: { ...mapped.summary, written: written.length, source_job_id: job.id },
       });
 
-      const items = await listComparableItems(deps.pool, id);
+      const { items, truncated } = await listComparableItems(deps.pool, id);
       return {
         comparables: items.map(presentComparable),
         statistics: summarizeSet(items),
+        truncated,
+        page_limit: COMPARABLE_PAGE_LIMIT,
         applied: mapped.summary,
         written: written.length,
         source_job_id: job.id,
@@ -811,8 +819,14 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     // and the rest would come back truncated, with nothing saying which.
     let documents: DocumentRow[] = [];
     if (documentIds.length > 0) {
-      const all = await listDocuments(deps.pool, id);
-      const byId = new Map(all.map((d) => [d.id, d]));
+      // Looked up by id rather than filtered out of the list. Answering this
+      // from a capped page turns a document that is on the valuation into one
+      // the caller is told is not — a refusal naming ids the user can see on
+      // the screen they copied them from.
+      const byId = await findDocumentsByIds(deps.pool, documentIds);
+      for (const [docId, doc] of byId) {
+        if (doc.valuation_id !== id || doc.deleted_at !== null) byId.delete(docId);
+      }
       const missing = documentIds.filter((docId) => !byId.has(docId));
       if (missing.length > 0) {
         // Named rather than skipped: a request that asked for four documents

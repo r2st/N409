@@ -109,12 +109,29 @@ export async function assignAnalyst(
   });
 }
 
-export async function stageHistory(pool: pg.Pool, engagementId: string): Promise<StageHistoryEntry[]> {
+/**
+ * Ceiling on one engagement's stage trail.
+ *
+ * A row per stage entry, and the stage can be re-entered — an engagement that
+ * bounces between review and drafting writes one every time — so the trail is
+ * not bounded by the number of stages. Oldest first: the trail is read to see
+ * where the time went, which is a question about the beginning.
+ */
+export const STAGE_HISTORY_LIMIT = 500;
+
+export async function stageHistory(
+  pool: pg.Pool,
+  engagementId: string,
+): Promise<{ history: StageHistoryEntry[]; truncated: boolean }> {
   const { rows } = await pool.query<StageHistoryEntry>(
-    'SELECT stage, entered_at FROM engagement_stage_history WHERE engagement_id = $1 ORDER BY entered_at',
-    [engagementId],
+    `SELECT stage, entered_at FROM engagement_stage_history
+      WHERE engagement_id = $1 ORDER BY entered_at LIMIT $2`,
+    [engagementId, STAGE_HISTORY_LIMIT + 1],
   );
-  return rows;
+  return {
+    history: rows.slice(0, STAGE_HISTORY_LIMIT),
+    truncated: rows.length > STAGE_HISTORY_LIMIT,
+  };
 }
 
 export interface EngagementListRow extends EngagementRow {

@@ -44,13 +44,28 @@ export async function createApiToken(
   return { token: rows[0]!, secret };
 }
 
-export async function listApiTokens(pool: pg.Pool, partnerId: string): Promise<ApiTokenRow[]> {
+/**
+ * Ceiling on one page of an issuer's tokens.
+ *
+ * Revoked rows are kept deliberately — a credential that existed is part of
+ * the audit trail (see the admin listing below) — so this list is append-only
+ * in practice and grows with every rotation.
+ */
+export const API_TOKEN_PAGE_LIMIT = 200;
+
+export async function listApiTokens(
+  pool: pg.Pool,
+  partnerId: string,
+): Promise<{ tokens: ApiTokenRow[]; truncated: boolean }> {
   const { rows } = await pool.query<ApiTokenRow>(
     `SELECT id, partner_id, created_by, name, token_prefix, created_at, last_used_at, revoked_at
-     FROM api_tokens WHERE partner_id = $1 ORDER BY created_at DESC`,
-    [partnerId],
+     FROM api_tokens WHERE partner_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [partnerId, API_TOKEN_PAGE_LIMIT + 1],
   );
-  return rows;
+  return {
+    tokens: rows.slice(0, API_TOKEN_PAGE_LIMIT),
+    truncated: rows.length > API_TOKEN_PAGE_LIMIT,
+  };
 }
 
 export interface AdminApiTokenRow extends ApiTokenRow {
@@ -133,13 +148,19 @@ export async function apiTokenStats(pool: pg.Pool, dormantAfterMs: number): Prom
 }
 
 /** A user's personal tokens — partner tokens they minted for an org are excluded. */
-export async function listPersonalApiTokens(pool: pg.Pool, userId: string): Promise<ApiTokenRow[]> {
+export async function listPersonalApiTokens(
+  pool: pg.Pool,
+  userId: string,
+): Promise<{ tokens: ApiTokenRow[]; truncated: boolean }> {
   const { rows } = await pool.query<ApiTokenRow>(
     `SELECT id, partner_id, created_by, name, token_prefix, created_at, last_used_at, revoked_at
-     FROM api_tokens WHERE created_by = $1 AND partner_id IS NULL ORDER BY created_at DESC`,
-    [userId],
+     FROM api_tokens WHERE created_by = $1 AND partner_id IS NULL ORDER BY created_at DESC LIMIT $2`,
+    [userId, API_TOKEN_PAGE_LIMIT + 1],
   );
-  return rows;
+  return {
+    tokens: rows.slice(0, API_TOKEN_PAGE_LIMIT),
+    truncated: rows.length > API_TOKEN_PAGE_LIMIT,
+  };
 }
 
 /** Revokes every live token a user owns — used when closing an account. */

@@ -188,6 +188,24 @@ export async function addBoardMember(
   });
 }
 
+/**
+ * How many members are on this resolution's sign-off list.
+ *
+ * Counted in SQL so the write cap below can be enforced without reading the
+ * list. {@link listBoardMembers} is deliberately uncapped — it is the list of
+ * people whose signature the resolution is waiting on, and a member hidden
+ * past a page boundary reads as a member who is not required — so the bound
+ * has to sit at the write end instead. `MAX_BOARD_MEMBERS` in
+ * `routes/boardApproval.ts` is that bound.
+ */
+export async function countBoardMembers(pool: pg.Pool, resolutionId: string): Promise<number> {
+  const { rows } = await pool.query<{ count: string }>(
+    'SELECT count(*)::text AS count FROM board_signoffs WHERE resolution_id = $1',
+    [resolutionId],
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
 export async function listBoardMembers(pool: pg.Pool, resolutionId: string): Promise<BoardSignoffRow[]> {
   const { rows } = await pool.query<BoardSignoffRow>(
     'SELECT * FROM board_signoffs WHERE resolution_id = $1 ORDER BY created_at',

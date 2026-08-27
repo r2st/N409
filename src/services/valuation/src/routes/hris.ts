@@ -117,7 +117,11 @@ export async function syncHrisConnection(
     throw err;
   }
 
-  const seen = await existingGrantExternalIds(deps.pool, connection.valuation_id);
+  const seen = await existingGrantExternalIds(
+    deps.pool,
+    connection.valuation_id,
+    pull.grants.map((g) => g.external_id),
+  );
   const actor: EventActor = {
     actorType: 'system',
     actorId: `hris-sync:${connection.provider}`,

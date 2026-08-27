@@ -11,6 +11,7 @@ import { latestCalculationForKind } from '../repos/calculations.js';
 import { listQaReviews } from '../repos/qaReviews.js';
 import { headlineLabels } from '../domain/specialty.js';
 import {
+  AUDITOR_ACCESS_PAGE_LIMIT,
   createAuditorAccess,
   listAuditorAccess,
   redeemAuditorToken,
@@ -139,8 +140,8 @@ export function registerAuditorPortalRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadManageable(principal, id);
-    const rows = await listAuditorAccess(deps.pool, valuation.id);
-    return { access: rows.map(toPublic) };
+    const { grants, truncated } = await listAuditorAccess(deps.pool, valuation.id);
+    return { access: grants.map(toPublic), truncated, page_limit: AUDITOR_ACCESS_PAGE_LIMIT };
   });
 
   app.delete(

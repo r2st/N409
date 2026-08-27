@@ -177,11 +177,34 @@ export async function findDueConnections(pool: pg.Pool, limit = 25): Promise<Hri
   return rows.map((r) => openConnectionTokens(r));
 }
 
-/** External grant ids already imported for this valuation (idempotency). */
-export async function existingGrantExternalIds(pool: pg.Pool, valuationId: string): Promise<Set<string>> {
+/**
+ * Which of `candidates` this valuation has already imported (idempotency).
+ *
+ * Asked about the incoming pull rather than about the table. The set this
+ * answers is a *decision* set — the caller skips a grant it finds here — and
+ * that is why it may not be capped like a list. A short page of a display list
+ * is a short list; a short page of a dedupe set is a duplicate grant, silently
+ * created, on a cap table someone will later reconcile by hand. So the bound
+ * has to come from somewhere that cannot cost correctness, and the provider's
+ * own pull is that somewhere: it is what the caller is about to iterate, so a
+ * set covering all of it is complete by construction no matter how many grants
+ * the valuation already holds.
+ *
+ * The previous spelling read every `external_id` on the valuation. It was
+ * correct and unbounded in the one dimension that grows fastest here — a large
+ * employer's cap table is tens of thousands of grants, all of them pulled into
+ * a `Set` to answer a question about the few hundred in this sync.
+ */
+export async function existingGrantExternalIds(
+  pool: pg.Pool,
+  valuationId: string,
+  candidates: readonly string[],
+): Promise<Set<string>> {
+  if (candidates.length === 0) return new Set();
   const { rows } = await pool.query<{ external_id: string }>(
-    'SELECT external_id FROM option_grants WHERE valuation_id = $1 AND external_id IS NOT NULL',
-    [valuationId],
+    `SELECT external_id FROM option_grants
+      WHERE valuation_id = $1 AND external_id = ANY($2::text[])`,
+    [valuationId, [...new Set(candidates)]],
   );
   return new Set(rows.map((r) => r.external_id));
 }

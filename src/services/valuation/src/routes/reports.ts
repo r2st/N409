@@ -396,7 +396,7 @@ export async function summaryFor(
   // those addresses — so the appendix this feeds cannot be built from a partial
   // model by way of the cap.
   const financials = computeWorkbook(workbookCells.cells);
-  const peers = peerRows.map((row) => ({
+  const peers = peerRows.items.map((row) => ({
     ticker: row.ticker,
     name: row.name,
     included: row.included,
@@ -435,7 +435,7 @@ export async function summaryFor(
       // derive and a reader should meet the derivation first.
       ...(hmrcForm ? [hmrcFormExhibit(hmrcForm)] : []),
       // Last: it is the bibliography, and a reader looks for one at the end.
-      ...[researchSourcesExhibit(research)].filter((s): s is ReportPdfSection => s !== null),
+      ...[researchSourcesExhibit(research.research)].filter((s): s is ReportPdfSection => s !== null),
     ],
     valuationDate,
     figures: reportFigures(calculation, valuation.currency),

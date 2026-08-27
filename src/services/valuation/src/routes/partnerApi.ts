@@ -1081,13 +1081,14 @@ export function registerPartnerApiRoutes(
               created_at: calculation.created_at,
             }
           : null,
-        documents: documents.map((d) => ({
+        documents: documents.documents.map((d) => ({
           id: d.id,
           kind: d.kind,
           filename: d.filename,
           sha256: d.sha256,
           created_at: d.created_at,
         })),
+        documents_truncated: documents.truncated,
         report: { available: Boolean(rendered), version: rendered?.version ?? null },
       };
     },

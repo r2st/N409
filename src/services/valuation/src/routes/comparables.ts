@@ -12,6 +12,8 @@ import { listOverwrites } from '../repos/overwrites.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import {
   deleteComparableItem,
+  COMPARABLE_PAGE_LIMIT,
+  findComparableByTicker,
   findComparableItem,
   insertComparableItem,
   listComparableItems,
@@ -190,14 +192,19 @@ export function registerComparableRoutes(
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(id, principal);
 
-    const [items, paramsRow] = await Promise.all([
+    const [itemPage, paramsRow] = await Promise.all([
       listComparableItems(deps.pool, valuation.id),
       findParams(deps.pool, valuation.id),
     ]);
+    const { items, truncated } = itemPage;
     const primary = multipleKeyFor(paramsRow?.market_method, paramsRow?.market_horizon);
     return {
       comparables: items.map(presentComparable),
+      // Multiples over a page, so a peer set past the cap states a median the
+      // whole set does not have. The flag rides beside it for that reason.
       statistics: summarizeSet(items),
+      truncated,
+      page_limit: COMPARABLE_PAGE_LIMIT,
       // Named rather than left for the reader to infer from params: the whole
       // point of the summary is that it previews the number the engine will
       // select, and which of the four it is depends on two params fields that
@@ -230,8 +237,7 @@ export function registerComparableRoutes(
     // The unique index is the authority on duplicates; this is the friendly
     // half of the same rule, so an analyst gets a sentence rather than a 500.
     if (body.ticker) {
-      const existing = await listComparableItems(deps.pool, valuation.id);
-      if (existing.some((r) => r.ticker === body.ticker)) {
+      if (await findComparableByTicker(deps.pool, valuation.id, body.ticker)) {
         throw problems.conflict(`${body.ticker} is already in this peer set`);
       }
     }
@@ -289,8 +295,8 @@ export function registerComparableRoutes(
     }
 
     if (body.ticker && body.ticker !== current.ticker) {
-      const existing = await listComparableItems(deps.pool, valuation.id);
-      if (existing.some((r) => r.ticker === body.ticker && r.id !== itemId)) {
+      const clash = await findComparableByTicker(deps.pool, valuation.id, body.ticker);
+      if (clash && clash.id !== itemId) {
         throw problems.conflict(`${body.ticker} is already in this peer set`);
       }
     }
@@ -410,7 +416,7 @@ export function registerComparableRoutes(
       // The current set steers the screen rather than being discarded by it:
       // an analyst's kept comps are forced in and scored alongside the rest,
       // and their exclusions stay out of the ranking entirely.
-      const existing = await listComparableItems(deps.pool, valuation.id);
+      const { items: existing } = await listComparableItems(deps.pool, valuation.id);
       const include_tickers = existing.filter((r) => r.included && r.ticker).map((r) => r.ticker!);
       const exclude_tickers = existing.filter((r) => !r.included && r.ticker).map((r) => r.ticker!);
 
@@ -508,10 +514,12 @@ export function registerComparableRoutes(
         universe,
       });
 
-      const items = await listComparableItems(deps.pool, valuation.id);
+      const { items, truncated } = await listComparableItems(deps.pool, valuation.id);
       return reply.status(201).send({
         comparables: items.map(presentComparable),
         statistics: summarizeSet(items),
+        truncated,
+        page_limit: COMPARABLE_PAGE_LIMIT,
         screened: written.length,
         target: screen.target ?? target,
         universe,
@@ -550,7 +558,7 @@ export function registerComparableRoutes(
       const valuation = await loadOps(id, principal);
       refuseIfRetired(valuation, 'accepting changes');
 
-      const items = await listComparableItems(deps.pool, valuation.id);
+      const { items } = await listComparableItems(deps.pool, valuation.id);
       // Included rows only: the excluded half is kept as the record of what was
       // considered, and re-fetching figures for a comp somebody screened out
       // spends the quota to update a number no approach reads.
@@ -622,10 +630,12 @@ export function registerComparableRoutes(
         unavailable: unavailable.map((r) => r.ticker),
       });
 
-      const after = await listComparableItems(deps.pool, valuation.id);
+      const { items: after, truncated } = await listComparableItems(deps.pool, valuation.id);
       return reply.status(200).send({
         comparables: after.map(presentComparable),
         statistics: summarizeSet(after),
+        truncated,
+        page_limit: COMPARABLE_PAGE_LIMIT,
         refreshed,
         unavailable,
       });

@@ -37,19 +37,35 @@ export interface MarketResearchRow {
 }
 
 /** The live set for one engagement, newest topic first. */
+/**
+ * Ceiling on one page of the research log.
+ *
+ * The default branch is bounded without this: a live row is superseded by the
+ * next run for the same (topic, region), and both are enums, so at most one
+ * row per pair survives. `includeSuperseded` is the branch that needs the cap
+ * — that is the whole history, one row per re-run, on a table nothing prunes,
+ * and it is what the evidence bundle asks for. Newest first, so the page that
+ * survives is the research the conclusion was actually drawn from.
+ */
+export const RESEARCH_PAGE_LIMIT = 500;
+
 export async function listMarketResearch(
   pool: pg.Pool | pg.PoolClient,
   valuationId: string,
   opts: { includeSuperseded?: boolean } = {},
-): Promise<MarketResearchRow[]> {
+): Promise<{ research: MarketResearchRow[]; truncated: boolean }> {
   const { rows } = await pool.query<MarketResearchRow>(
     `SELECT * FROM market_research
       WHERE valuation_id = $1
         AND ($2::boolean OR superseded_at IS NULL)
-      ORDER BY created_at DESC`,
-    [valuationId, opts.includeSuperseded ?? false],
+      ORDER BY created_at DESC
+      LIMIT $3`,
+    [valuationId, opts.includeSuperseded ?? false, RESEARCH_PAGE_LIMIT + 1],
   );
-  return rows;
+  return {
+    research: rows.slice(0, RESEARCH_PAGE_LIMIT),
+    truncated: rows.length > RESEARCH_PAGE_LIMIT,
+  };
 }
 
 export interface MarketResearchInput {

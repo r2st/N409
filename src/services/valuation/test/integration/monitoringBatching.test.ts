@@ -13,8 +13,8 @@ import { findResolutionByValuation, findResolutionsByValuationIds } from '../../
 import {
   eachEnabledMonitor,
   findMonitor,
-  notifiedSignatures,
   notifiedSignaturesFor,
+  recordAlert,
 } from '../../src/repos/monitors.js';
 
 const dbUp = await isDbAvailable();
@@ -178,16 +178,41 @@ describe.skipIf(!dbUp)('monitoring — snapshot batching', () => {
     expect(Number(rows[0]!.count)).toBe(0);
   });
 
-  it('reads the alert dedupe set once per page, not once per monitor', async () => {
-    const ids = monitored.slice(0, 3);
-    const batch = await notifiedSignaturesFor(pool, ids);
-    for (const id of ids) {
-      const monitor = await findMonitor(pool, id);
-      const single = await notifiedSignatures(pool, monitor!.id);
-      expect([...(batch.get(monitor!.id) ?? new Set())].sort()).toEqual([...single].sort());
+  /**
+   * The dedupe read is one query per page, and it is asked about the
+   * signatures the page's triggers produced rather than about the monitors —
+   * so what it drags through the wire is bounded by this scan and not by how
+   * long these monitors have been running. The discriminator is the third
+   * signature below: it exists on the monitor and is *not* asked about, so a
+   * query that had gone back to `monitor_id = ANY(...)` would return it and
+   * fail here.
+   */
+  it('answers the alert dedupe set for the candidates asked, not the monitor', async () => {
+    const monitor = (await findMonitor(pool, monitored[0]!))!;
+    for (const signature of ['sig-a', 'sig-b', 'sig-old']) {
+      await recordAlert(pool, {
+        monitorId: monitor.id,
+        valuationId: monitor.valuation_id,
+        triggerType: 'fmv_drift',
+        level: 'warn',
+        signature,
+      });
     }
-    // A monitor with no alerts is absent from the map rather than mapped to
-    // undefined-shaped junk, which is what lets the caller read `?? new Set()`.
+
+    const answered = await notifiedSignaturesFor(pool, [
+      { monitorId: monitor.id, signature: 'sig-a' },
+      { monitorId: monitor.id, signature: 'sig-b' },
+      { monitorId: monitor.id, signature: 'never-fired' },
+    ]);
+    expect([...(answered.get(monitor.id) ?? new Set())].sort()).toEqual(['sig-a', 'sig-b']);
+
+    // A candidate nobody has alerted on leaves its monitor out of the map
+    // rather than mapping it to undefined-shaped junk, which is what lets the
+    // caller read `?? new Set()`.
+    const none = await notifiedSignaturesFor(pool, [
+      { monitorId: monitor.id, signature: 'never-fired' },
+    ]);
+    expect(none.has(monitor.id)).toBe(false);
     expect(await notifiedSignaturesFor(pool, [])).toEqual(new Map());
   });
 

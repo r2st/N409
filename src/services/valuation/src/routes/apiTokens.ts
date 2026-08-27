@@ -5,6 +5,7 @@ import { isUlid, problems } from '@n409/shared';
 import { canManageTokens } from '../auth/operations.js';
 import { canManageUsers } from '../auth/rbac.js';
 import {
+  API_TOKEN_PAGE_LIMIT,
   apiTokenStats,
   createApiToken,
   findApiTokenById,
@@ -41,7 +42,7 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const { partnerId } = req.params as { partnerId: string };
     if (!isUlid(partnerId)) throw problems.notFound();
     if (!canManageTokens(principal, partnerId)) throw forbidden("Listing that partner's API tokens", 'ops');
-    return { tokens: await listApiTokens(deps.pool, partnerId) };
+    return { ...(await listApiTokens(deps.pool, partnerId)), page_limit: API_TOKEN_PAGE_LIMIT };
   });
 
   app.post('/api/v1/partners/:partnerId/tokens', { preHandler: app.authenticate }, async (req, reply) => {

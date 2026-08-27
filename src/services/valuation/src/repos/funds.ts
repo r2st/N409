@@ -333,14 +333,27 @@ export async function listMarks(
 }
 
 /** Latest mark per position for a fund (for the NAV roll-up). */
-export async function latestMarks(pool: pg.Pool, fundId: string): Promise<Map<string, FundMarkRow>> {
+/**
+ * The current mark for each of `positionIds`, newest measurement first.
+ *
+ * Keyed on the positions rather than on the fund. Both callers hand this the
+ * page `listPositions` returned and then look each position up in the map, so
+ * asking by fund read a mark for every position the fund holds — including the
+ * ones past `FUND_POSITION_PAGE_LIMIT`, whose marks were loaded and dropped.
+ * The bound now comes from the page, which is where the caller's bound already
+ * was; nothing about which mark answers for a position changes.
+ */
+export async function latestMarks(
+  pool: pg.Pool,
+  positionIds: readonly string[],
+): Promise<Map<string, FundMarkRow>> {
+  if (positionIds.length === 0) return new Map();
   const { rows } = await pool.query<FundMarkRow>(
     `SELECT DISTINCT ON (m.position_id) m.*
        FROM fund_marks m
-       JOIN fund_positions p ON p.id = m.position_id
-      WHERE p.fund_id = $1
+      WHERE m.position_id = ANY($1::ulid[])
       ORDER BY m.position_id, m.measurement_date DESC, m.created_at DESC`,
-    [fundId],
+    [[...new Set(positionIds)]],
   );
   const map = new Map<string, FundMarkRow>();
   for (const r of rows) map.set(r.position_id, mark(r));

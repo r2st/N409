@@ -272,10 +272,10 @@ export function registerResearchRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // for that alone: without it every finished engagement flags all of its
     // research stale forever, which is the tab's own copy contradicted by the
     // field beside it.
-    const [rows, params] = await Promise.all([listMarketResearch(deps.pool, id), findParams(deps.pool, id)]);
+    const [page, params] = await Promise.all([listMarketResearch(deps.pool, id), findParams(deps.pool, id)]);
     const asOf = researchStaleAsOf(params?.inception_date);
     return {
-      research: rows.map((row) => ({
+      research: page.research.map((row) => ({
         ...row,
         stale: isResearchStale(row.created_at, asOf),
         // Same rule the report gates apply, computed in one place the tab can
