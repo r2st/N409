@@ -312,9 +312,7 @@ export interface CategorySummary extends DocumentCategoryDef {
  * catch-all. A checklist that opened on "board resolutions" would bury the one
  * required bucket in it.
  */
-export function summarizeCategories(
-  counts: ReadonlyMap<DocumentCategory, number>,
-): CategorySummary[] {
+export function summarizeCategories(counts: ReadonlyMap<DocumentCategory, number>): CategorySummary[] {
   return DOCUMENT_CATEGORY_DEFS.map((def) => {
     const count = counts.get(def.key) ?? 0;
     return { ...def, count, satisfied: !def.required || count > 0 };

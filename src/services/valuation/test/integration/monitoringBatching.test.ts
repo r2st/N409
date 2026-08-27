@@ -209,9 +209,7 @@ describe.skipIf(!dbUp)('monitoring — snapshot batching', () => {
     // A candidate nobody has alerted on leaves its monitor out of the map
     // rather than mapping it to undefined-shaped junk, which is what lets the
     // caller read `?? new Set()`.
-    const none = await notifiedSignaturesFor(pool, [
-      { monitorId: monitor.id, signature: 'never-fired' },
-    ]);
+    const none = await notifiedSignaturesFor(pool, [{ monitorId: monitor.id, signature: 'never-fired' }]);
     expect(none.has(monitor.id)).toBe(false);
     expect(await notifiedSignaturesFor(pool, [])).toEqual(new Map());
   });

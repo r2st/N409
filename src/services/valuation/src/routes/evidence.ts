@@ -72,30 +72,30 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // methodology decision log, QA review history, and saved scenarios.
     const [decisionPage, qaPage, scenarios, researchPage, comparablePage, traces, workbookCells] =
       await Promise.all([
-      listDecisions(deps.pool, id),
-      listQaReviews(deps.pool, id),
-      listScenarios(deps.pool, id),
-      // Every research row including superseded ones (migration 0116). An
-      // auditor asking "what did you read, and what did you read before that"
-      // is asking exactly what the supersede chain records; a bundle that
-      // shipped only the live rows would answer half the question.
-      listMarketResearch(deps.pool, id, { includeSuperseded: true }),
-      // The peer set behind the market approach (migration 0119), included and
-      // excluded rows alike. The excluded ones are the half an auditor asks
-      // about, so a bundle carrying only the retained comps would be answering
-      // the easy question.
-      listComparableItems(deps.pool, id),
-      // The engine's own step record for each run (migration 0126). It is the
-      // only artifact that answers "how" rather than "what", and it says the
-      // two things `results` structurally cannot: which approaches were
-      // skipped, and which carried a figure reused from an earlier run.
-      listCalculationTraces(deps.pool, id),
-      // The entered workbook. `calculations.inputs` holds the engine payload
-      // derived from it, not the grid an analyst typed and Appendix II prints
-      // — an auditor reconciling the report to the source has been given the
-      // derived figures and never the ones they were derived from.
-      listWorkbookCells(deps.pool, id),
-    ]);
+        listDecisions(deps.pool, id),
+        listQaReviews(deps.pool, id),
+        listScenarios(deps.pool, id),
+        // Every research row including superseded ones (migration 0116). An
+        // auditor asking "what did you read, and what did you read before that"
+        // is asking exactly what the supersede chain records; a bundle that
+        // shipped only the live rows would answer half the question.
+        listMarketResearch(deps.pool, id, { includeSuperseded: true }),
+        // The peer set behind the market approach (migration 0119), included and
+        // excluded rows alike. The excluded ones are the half an auditor asks
+        // about, so a bundle carrying only the retained comps would be answering
+        // the easy question.
+        listComparableItems(deps.pool, id),
+        // The engine's own step record for each run (migration 0126). It is the
+        // only artifact that answers "how" rather than "what", and it says the
+        // two things `results` structurally cannot: which approaches were
+        // skipped, and which carried a figure reused from an earlier run.
+        listCalculationTraces(deps.pool, id),
+        // The entered workbook. `calculations.inputs` holds the engine payload
+        // derived from it, not the grid an analyst typed and Appendix II prints
+        // — an auditor reconciling the report to the source has been given the
+        // derived figures and never the ones they were derived from.
+        listWorkbookCells(deps.pool, id),
+      ]);
 
     // Review tasks carry the approve / request-changes workflow; decisions
     // themselves are `review_decision` events (already in events.json).

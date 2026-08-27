@@ -35,7 +35,11 @@ import { decodeFromStorage } from '../storage/documentEncryption.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
-import { COMPARABLE_PAGE_LIMIT, listComparableItems, replaceMachineComparables } from '../repos/comparableItems.js';
+import {
+  COMPARABLE_PAGE_LIMIT,
+  listComparableItems,
+  replaceMachineComparables,
+} from '../repos/comparableItems.js';
 import { summarizeSet } from '../domain/comparables.js';
 import {
   AiComparablesError,
