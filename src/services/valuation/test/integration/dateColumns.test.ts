@@ -328,7 +328,7 @@ describe.skipIf(!dbUp)('`date` columns leave the API as days, not instants', () 
 
     const { marks } = await listMarks(pool, position.id);
     expect(marks[0]?.measurement_date).toBe(DAY);
-    expect((await latestMarks(pool, fund.id)).get(position.id)?.measurement_date).toBe(DAY);
+    expect((await latestMarks(pool, [position.id])).get(position.id)?.measurement_date).toBe(DAY);
 
     // The shape the two `reply.send({ mark })` sites in routes/funds.ts put on
     // the wire — the leak this test was written for.
