@@ -128,6 +128,21 @@ describe('TagsPanel', () => {
     expect(screen.queryByText(/No tags yet/)).not.toBeInTheDocument();
   });
 
+  /**
+   * A 200 with the wrong body is the only failure that can reach the render,
+   * and it took the whole tab down: `res.tags.filter` on an absent field throws
+   * inside React, which the route boundary catches as a crashed screen. The
+   * panel is mounted on the Company tab, so what an analyst saw was the company
+   * profile disappearing because a *tag* payload was short a field.
+   */
+  it('treats a 200 with no tag array as a failed load, not as a crash', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({}));
+    renderPanel();
+
+    expect(await screen.findByText(/Could not load the engagement tags/)).toBeInTheDocument();
+    expect(screen.queryByText(/No tags yet/)).not.toBeInTheDocument();
+  });
+
   it('lists suggestions apart from accepted tags, with the model’s reasoning', async () => {
     mockApi([
       [

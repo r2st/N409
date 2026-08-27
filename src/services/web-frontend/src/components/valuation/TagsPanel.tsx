@@ -55,7 +55,16 @@ export function TagsPanel({
 
   const load = useCallback(async () => {
     try {
-      setData(await api<TagsResponse>(`/valuations/${valuationId}/tags`));
+      const res = await api<Partial<TagsResponse>>(`/valuations/${valuationId}/tags`);
+      // A 200 carrying the wrong shape is a failure too, and the only one that
+      // can reach the render. `res.tags.filter` on an absent field throws
+      // inside React's render, which takes the whole tab down through the
+      // route boundary — so the check is here, where it is still a load error
+      // and can be reported as one.
+      if (!Array.isArray(res.tags) || !Array.isArray(res.categories)) {
+        throw new TypeError('malformed tag payload');
+      }
+      setData({ tags: res.tags, categories: res.categories });
       setLoadError(null);
     } catch (err) {
       // Surfaced, not swallowed: an empty tag list and a tag list that failed
