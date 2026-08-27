@@ -88,6 +88,48 @@ def test_manual_volatility_overrides_auto():
     assert res["auto"]["volatility"]["method"] == "manual"
 
 
+def test_manual_volatility_keeps_every_digit_the_analyst_entered():
+    """The autopilot must not restate the analyst's own assumption.
+
+    `estimate_volatility` rounds its recommendation to 4dp for reporting, and
+    with a manual override that recommendation *is* the entered value — which
+    `_apply_autopilot` then wrote back over the input. So an analyst who
+    concluded 0.612345 ran a model on 0.6123 and got a report disclosing 0.6123,
+    with nothing anywhere saying the number had been changed.
+
+    Volatility is not a presentational field: it is the Black-Scholes sigma for
+    every OPM breakpoint and for the DLOM put, so the discarded digits reach the
+    concluded figures.
+    """
+    entered = 0.612345
+    res = _all(volatility=entered)
+    assert res["assumptions"]["volatility"] == entered
+    # Disclosed under both its names — the report prints the DLOM's sigma from
+    # the second one, so a silent rewrite would have shown up there too.
+    assert res["assumptions"]["dlom_volatility"] == entered
+    assert res["discounts"]["dlom_detail"]["volatility"] == entered
+
+    # ...and the model actually ran on it, rather than on the 4dp copy: the
+    # allocation and the DLOM both land somewhere else on the rounded input.
+    rounded = compute(
+        PARAMS,
+        _inputs(volatility=round(entered, 4)),
+        auto_volatility=True,
+        auto_wacc=True,
+        auto_comparables=True,
+    )["results"]
+    assert res["common_equity_value"] != rounded["common_equity_value"]
+    assert res["discounts"]["dlom_detail"]["dlom"] != rounded["discounts"]["dlom_detail"]["dlom"]
+
+
+def test_the_estimated_volatility_is_still_written_when_there_is_no_manual_one():
+    # The other half of the same branch: with nothing entered, the estimate is
+    # what the model runs on, and it is still the 4dp recommendation.
+    res = _all()
+    assert res["assumptions"]["volatility"] == res["auto"]["volatility"]["recommended_volatility"]
+    assert res["auto"]["volatility"]["manual_override"] is None
+
+
 def test_manual_discount_rate_overrides_wacc():
     inp = _inputs()
     inp["income"] = {**inp["income"], "discount_rate": 0.30}

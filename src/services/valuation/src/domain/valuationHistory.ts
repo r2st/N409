@@ -46,9 +46,36 @@ export interface CompanyHistoryFilter {
 
 export function sameCompanyFilter(valuation: CompanyHistoryRef): CompanyHistoryFilter {
   const name = 'lower(trim(v.company_name)) = lower(trim($2))';
+  /*
+   * Archived engagements are out of a client's history, for the same reason
+   * `repos/valuations.buildValuationWhere` puts `archived_at IS NULL` in the
+   * builder rather than in its callers: every read that has to remember is a
+   * read that will forget. All three callers here did — the report's trend
+   * chart, the analytics series and the bridge's candidate list each scanned
+   * `valuations v` with no archived clause at all.
+   *
+   * What that cost is worse than a stale list, because none of these three
+   * surfaces is a list of engagements the user is picking from. The trend chart
+   * plots a withdrawn valuation's concluded FMV as a point on a *signed* PDF,
+   * under a note asserting every point is a prior valuation of this company.
+   * The analytics series can seat an archived run as the newest row, which is
+   * the row the whole benchmark block is computed from. And the bridge offers
+   * one as a comparison candidate, so a firm is invited to explain this year's
+   * change against a valuation it retired.
+   *
+   * Retirement is reversible (`archived_at` is nulled on restore), so this is
+   * not data loss — an unarchived engagement comes straight back onto the line.
+   */
+  const live = 'v.archived_at IS NULL';
   return valuation.partner_id
-    ? { clause: `v.partner_id = $1 AND ${name}`, params: [valuation.partner_id, valuation.company_name] }
-    : { clause: `v.user_id = $1 AND ${name}`, params: [valuation.user_id, valuation.company_name] };
+    ? {
+        clause: `v.partner_id = $1 AND ${name} AND ${live}`,
+        params: [valuation.partner_id, valuation.company_name],
+      }
+    : {
+        clause: `v.user_id = $1 AND ${name} AND ${live}`,
+        params: [valuation.user_id, valuation.company_name],
+      };
 }
 
 /** How `lower(trim(company_name))` folds in SQL, in TypeScript. */

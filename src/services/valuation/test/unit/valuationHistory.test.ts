@@ -46,6 +46,24 @@ describe('sameCompanyFilter', () => {
     }
   });
 
+  it('leaves archived engagements out of every history it scopes', () => {
+    /*
+     * R176: all three callers scanned `valuations v` with no archived clause,
+     * and none of them is a list the user is picking from. The trend chart
+     * plots a retired valuation's FMV as a point on a signed PDF; the analytics
+     * series can seat one as the newest row, which is what the benchmark block
+     * is computed from; and the bridge offers one as a comparison candidate.
+     *
+     * Asserted on the builder rather than on the three call sites for the
+     * reason `buildValuationWhere` gives for owning its own `archived_at IS
+     * NULL`: a rule each caller has to remember is a rule a fourth caller will
+     * forget.
+     */
+    for (const v of [firmValuation, directValuation]) {
+      expect(sameCompanyFilter(v).clause).toContain('v.archived_at IS NULL');
+    }
+  });
+
   it('binds exactly $1 and $2, so a caller can append its own from $3', () => {
     for (const v of [firmValuation, directValuation]) {
       const { clause, params } = sameCompanyFilter(v);

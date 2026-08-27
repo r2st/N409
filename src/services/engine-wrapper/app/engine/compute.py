@@ -359,7 +359,26 @@ def _apply_autopilot(
                 time_to_exit_years=_num(inputs.get("time_to_exit_years"), "time_to_exit_years"),
                 manual_override=manual_vol,
             )
-            inputs["volatility"] = est["recommended_volatility"]
+            # Only fills a gap — the rule this whole function states, and the
+            # one the sibling `auto_wacc` branch below already keeps with its
+            # `if not manual`.
+            #
+            # This line assigned unconditionally, and `estimate_volatility`
+            # rounds its recommendation to 4dp for reporting. With a manual
+            # override that recommendation *is* the analyst's own number, so an
+            # entered 0.61234 came back as 0.6123 and was written over the input
+            # — the auto engine silently restating the analyst's assumption at
+            # coarser precision. Nothing warned, because the value that came
+            # back was the value that went in, near enough to look like a copy.
+            #
+            # It is not presentational rounding here: `volatility` feeds the
+            # Black-Scholes σ for every OPM breakpoint and the DLOM put, so the
+            # discarded digits move the concluded per-share figure, and the
+            # report then discloses a volatility assumption that is not the one
+            # the model ran on. The estimate stays in `meta["volatility"]`
+            # either way, so the comp statistics are still on the record.
+            if manual_vol is None:
+                inputs["volatility"] = est["recommended_volatility"]
             meta["volatility"] = est
 
     # ── auto_wacc → income.discount_rate from CAPM WACC ──────────────────────
