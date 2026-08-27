@@ -137,7 +137,8 @@ describe.skipIf(!dbUp)('reads keyed by engagement do not scan the estate (migrat
     await db.pool.query('ANALYZE valuations');
     await db.pool.query('ANALYZE market_research');
     await db.pool.query('ANALYZE board_signoffs');
-    ownedValuation = `${'0'.repeat(26 - (1000001).toString(16).length)}${(1000001).toString(16)}`.toUpperCase();
+    ownedValuation =
+      `${'0'.repeat(26 - (1000001).toString(16).length)}${(1000001).toString(16)}`.toUpperCase();
   }, 180_000);
   afterAll(async () => db?.teardown());
 
@@ -173,9 +174,7 @@ describe.skipIf(!dbUp)('reads keyed by engagement do not scan the estate (migrat
       const seq = withoutIndex.find((n) => n['Relation Name'] === 'market_research');
       expect(seq?.['Node Type']).toBe('Seq Scan');
       expect(seq?.['Rows Removed by Filter'] ?? 0).toBeGreaterThan(RESEARCH / 2);
-      expect(Math.max(...withIndex.map(blocks))).toBeLessThan(
-        Math.max(...withoutIndex.map(blocks)) / 10,
-      );
+      expect(Math.max(...withIndex.map(blocks))).toBeLessThan(Math.max(...withoutIndex.map(blocks)) / 10);
     });
 
     it('still returns what the repo asked for, both ways round', async () => {
@@ -210,9 +209,7 @@ describe.skipIf(!dbUp)('reads keyed by engagement do not scan the estate (migrat
       expect(withIndex.find((n) => n['Relation Name'] === 'board_signoffs')?.['Node Type']).not.toBe(
         'Seq Scan',
       );
-      expect(Math.max(...withIndex.map(blocks))).toBeLessThan(
-        Math.max(...withoutIndex.map(blocks)) / 5,
-      );
+      expect(Math.max(...withIndex.map(blocks))).toBeLessThan(Math.max(...withoutIndex.map(blocks)) / 5);
     });
 
     it('counts the caller’s signed resolutions and nobody else’s', async () => {
