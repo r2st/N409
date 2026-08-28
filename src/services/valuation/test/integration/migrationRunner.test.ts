@@ -13,6 +13,7 @@ import {
   migrationChecksum,
   migrationLockHolders,
 } from '../../src/db/migrate.js';
+import { buildPoolConfig, resolvePoolTuning } from '../../src/db/pool.js';
 import { isDbAvailable } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -390,5 +391,131 @@ describe.skipIf(!dbUp)('migration lock and pre-apply validation', () => {
     await rm(path.join(dir, '0001_empty.sql'));
     await write('0001_real.sql', 'CREATE TABLE real_one (id int);');
     expect(await migrate(pool, { dir, lockTimeoutMs: 500, lockPollMs: 25 })).toEqual(['0001_real.sql']);
+  });
+  /**
+   * The session bounds a migration runs under.
+   *
+   * The runner takes its client from the application pool, and the pool is
+   * tuned for request handlers: `statement_timeout` 15s, `lock_timeout` unset
+   * and therefore 0. Both are wrong for DDL, in opposite directions, and both
+   * failures are invisible until an environment has enough data to expose them
+   * — which is never CI.
+   *
+   * The pools built here set a deliberately tiny `statement_timeout`, so the
+   * override can be proved with a one-second statement instead of a real index
+   * build.
+   */
+  describe('migration session timeouts', () => {
+    /** A pool configured the way the service configures its own. */
+    const appPool = (overrides: Partial<pg.PoolConfig> = {}): pg.Pool => {
+      const url = new URL(BASE_URL);
+      url.pathname = `/${dbName}`;
+      const target = url.toString();
+      const config = buildPoolConfig(target, resolvePoolTuning(target, { DB_SSL: 'disable' }));
+      const p = new pg.Pool({ ...config, max: 3, ...overrides });
+      p.on('error', () => {});
+      return p;
+    };
+
+    it('runs a migration under its own statement ceiling, not the pool request one', async () => {
+      const tiny = appPool({ statement_timeout: 300 });
+      try {
+        // Would be cancelled at 300ms by the pool's own setting.
+        await write('0001_slow.sql', 'CREATE TABLE slow (id int); SELECT pg_sleep(1);');
+        expect(await migrate(tiny, { dir, statementTimeoutMs: 20_000 })).toEqual(['0001_slow.sql']);
+
+        const { rows } = await tiny.query("SELECT to_regclass('slow') AS t");
+        expect(rows[0].t).not.toBeNull();
+      } finally {
+        await tiny.end().catch(() => {});
+      }
+    });
+
+    /**
+     * The reason it is `SET LOCAL` and not `SET`.
+     *
+     * pg runs no DISCARD when a client goes back to the pool, so a plain SET
+     * would hand the next request handler a connection with the migration's
+     * five-minute ceiling on it — silently removing the bound that stops one
+     * runaway query pinning a connection. The leak would never fail a test
+     * about migrations; it would surface much later as a service that stopped
+     * timing anything out.
+     */
+    it('does not leak its raised ceiling back onto the pooled connection', async () => {
+      const tiny = appPool({ statement_timeout: 300 });
+      try {
+        await write('0001_first.sql', 'CREATE TABLE first (id int);');
+        await migrate(tiny, { dir, statementTimeoutMs: 300_000, ddlLockTimeoutMs: 3000 });
+
+        // Every client in the pool, since the runner only borrowed one of them
+        // and the next request may get any.
+        for (let i = 0; i < 3; i += 1) {
+          const client = await tiny.connect();
+          const { rows } = await client.query<{ st: string; lt: string }>(
+            "SELECT current_setting('statement_timeout') st, current_setting('lock_timeout') lt",
+          );
+          expect(rows[0]).toEqual({ st: '300ms', lt: '0' });
+          client.release();
+        }
+      } finally {
+        await tiny.end().catch(() => {});
+      }
+    });
+
+    /**
+     * The half that protects everyone *else*.
+     *
+     * Postgres's lock queue is ordered, so an ALTER TABLE waiting for ACCESS
+     * EXCLUSIVE sits in front of every request that arrives after it — and
+     * ordinary reads of that table stop until it is resolved. With the default
+     * `lock_timeout` of 0 that wait was bounded only by `statement_timeout`,
+     * so a deploy landing during one long-running reader took the table down
+     * for fifteen seconds and then failed the migration anyway.
+     */
+    it('gives up on a contended table lock instead of blocking the queue behind it', async () => {
+      const url = new URL(BASE_URL);
+      url.pathname = `/${dbName}`;
+      await write('0001_first.sql', 'CREATE TABLE first (id int);');
+      await migrate(pool, { dir });
+
+      // A reader holding an ordinary open transaction on the table.
+      const reader = new pg.Client({ connectionString: url.toString() });
+      await reader.connect();
+      await reader.query('BEGIN');
+      await reader.query('SELECT * FROM first');
+
+      try {
+        await write('0002_alter.sql', 'ALTER TABLE first ADD COLUMN added int;');
+        const startedAt = Date.now();
+        const err = await migrate(pool, { dir, ddlLockTimeoutMs: 400 }).catch((e: unknown) => e);
+        const waitedMs = Date.now() - startedAt;
+
+        expect(err).toBeInstanceOf(Error);
+        // Bounded by the lock timeout, nowhere near the 15s the pool allows.
+        expect(waitedMs).toBeLessThan(5000);
+        // And it says which of the two cancellations this was, because the
+        // operational conclusions are opposites.
+        expect((err as Error).message).toContain('waited 400ms for a table lock');
+        expect((err as Error).message).toContain('was not applied');
+
+        // Nothing was recorded, so the retry the unit performs is a clean one.
+        const { rows } = await pool.query<{ name: string }>('SELECT name FROM schema_migrations');
+        expect(rows.map((r) => r.name)).toEqual(['0001_first.sql']);
+      } finally {
+        await reader.query('ROLLBACK').catch(() => {});
+        await reader.end().catch(() => {});
+      }
+    });
+
+    it('applies the migration once the lock holder goes away', async () => {
+      // The point of failing fast rather than waiting: the unit is
+      // Restart=always, so this is what the next boot does.
+      await write('0001_first.sql', 'CREATE TABLE first (id int);');
+      await write('0002_alter.sql', 'ALTER TABLE first ADD COLUMN added int;');
+      expect(await migrate(pool, { dir, ddlLockTimeoutMs: 400 })).toEqual([
+        '0001_first.sql',
+        '0002_alter.sql',
+      ]);
+    });
   });
 });

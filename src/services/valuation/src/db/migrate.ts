@@ -38,6 +38,90 @@ export const DEFAULT_MIGRATION_LOCK_TIMEOUT_MS = 60_000;
 /** How often the lock is re-tried while waiting. */
 export const MIGRATION_LOCK_POLL_MS = 250;
 
+/**
+ * How long a migration statement waits for a *table* lock before giving up.
+ *
+ * A different lock from the advisory one above, and the distinction is the
+ * whole point. {@link DEFAULT_MIGRATION_LOCK_TIMEOUT_MS} bounds the wait for
+ * the right to migrate at all; this bounds each statement's wait for the
+ * relation it is about to alter — and until now nothing bounded it, because
+ * `lock_timeout` is `0` (unbounded) by default and the pool never set one.
+ *
+ * Unbounded is the dangerous setting, not the patient one, because of what a
+ * blocked `ALTER TABLE` does to everything behind it. Postgres's lock queue is
+ * ordered: a statement waiting for ACCESS EXCLUSIVE sits ahead of every request
+ * that arrives after it, so while the migration waits on one long-running
+ * reader, *ordinary traffic to that table stops too* — including plain SELECTs
+ * that conflict with nothing. Measured on a real database (a reader holding one
+ * open transaction, an `ALTER TABLE ADD COLUMN` behind it): an unrelated
+ * `SELECT count(*)` issued afterwards was still blocked six seconds later, and
+ * would have stayed blocked for the full statement timeout.
+ *
+ * So the deploy did not merely stall — it took the table down for the length of
+ * the stall and then failed anyway. Three seconds is chosen to be shorter than
+ * anyone would notice as an outage and longer than any lock this schema
+ * actually contends for. Failing is the right outcome: the unit is
+ * `Restart=always` with `RestartSec=3`, so a migration that loses this race is
+ * retried in seconds and succeeds once the blocker clears, which is precisely
+ * the behaviour "wait forever" was pretending to provide.
+ */
+export const DEFAULT_MIGRATION_DDL_LOCK_TIMEOUT_MS = 3_000;
+
+/**
+ * How long one migration statement may run once it holds its locks.
+ *
+ * This one has to go *up*, and it is the half that was actively broken. The
+ * runner borrows a client from the application pool, and `buildPoolConfig` sets
+ * `statement_timeout` to 15s — a good ceiling for a request handler and far too
+ * low for DDL. There are 164 `CREATE INDEX` statements in this directory and
+ * none of them can be CONCURRENTLY (see the note in 0148: the runner wraps each
+ * file in a transaction and Postgres forbids it there), so each one builds
+ * under a lock, in one statement, for as long as the table takes.
+ *
+ * The failure that produces is the worst shape available: it is a function of
+ * how much data an environment has. An index build over an empty CI database
+ * finishes in milliseconds and the pipeline is green; the same file against a
+ * production table crosses 15s, Postgres cancels it (`57014`), the transaction
+ * rolls back, and `migrate()` throws before `app.listen` — so valuation never
+ * binds its port, never answers `/health`, and `deploy.sh` reads it as a hung
+ * deploy. Restarting cannot help, because the next attempt is equally slow.
+ *
+ * Five minutes is not a target, it is a backstop: it exists so that a migration
+ * is bounded by something, while being far enough above any real build that
+ * hitting it means a genuinely stuck statement rather than a large table.
+ */
+export const DEFAULT_MIGRATION_STATEMENT_TIMEOUT_MS = 300_000;
+
+/** The two session bounds a migration runs under. */
+export interface MigrationTimeouts {
+  /** Per-statement wait for a table lock (ms). */
+  ddlLockTimeoutMs: number;
+  /** Per-statement execution ceiling (ms). */
+  statementTimeoutMs: number;
+}
+
+/**
+ * Resolves the migration session bounds from env, with the defaults above.
+ *
+ * Pure and exported for the same reason `resolvePoolTuning` is: the interesting
+ * cases are all about a malformed value, and none of them should need a
+ * database to assert. A non-numeric, negative or absent value falls back to the
+ * default rather than being passed through — these end up interpolated into a
+ * `SET LOCAL`, which cannot take a bind parameter, so "is this an integer" is a
+ * correctness question before it is a tidiness one.
+ */
+export function resolveMigrationTimeouts(env: NodeJS.ProcessEnv = process.env): MigrationTimeouts {
+  const ms = (raw: string | undefined, fallback: number): number => {
+    if (raw === undefined || raw.trim() === '') return fallback;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 0 ? n : fallback;
+  };
+  return {
+    ddlLockTimeoutMs: ms(env.MIGRATION_DDL_LOCK_TIMEOUT_MS, DEFAULT_MIGRATION_DDL_LOCK_TIMEOUT_MS),
+    statementTimeoutMs: ms(env.MIGRATION_STATEMENT_TIMEOUT_MS, DEFAULT_MIGRATION_STATEMENT_TIMEOUT_MS),
+  };
+}
+
 /** Raised when the migration lock could not be taken inside its deadline. */
 export class MigrationLockTimeoutError extends Error {
   constructor(
@@ -101,6 +185,50 @@ export class MigrationDriftError extends Error {
     );
     this.name = 'MigrationDriftError';
   }
+}
+
+/**
+ * Turns a failed migration into a message that names the cause.
+ *
+ * Two of these failures are the session bounds doing their job, and both arrive
+ * from Postgres as a bare sentence — "canceling statement due to lock timeout"
+ * — that says what happened and nothing about what to do. They are also the two
+ * an operator meets during a deploy rather than while writing SQL, which is the
+ * worst moment to have to work out whether the migration is wrong or merely
+ * unlucky. The distinction is the whole message: one is retryable and one is
+ * not.
+ */
+export function explainMigrationFailure(file: string, err: unknown, timeouts: MigrationTimeouts): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const code = (err as { code?: unknown } | null)?.code;
+  const head = `Migration ${file} failed: ${message}`;
+
+  // 55P03 lock_not_available — `lock_timeout` fired, so the statement never
+  // began. Nothing was applied and nothing is wrong with the file.
+  if (code === '55P03') {
+    return (
+      `${head}. It waited ${timeouts.ddlLockTimeoutMs}ms for a table lock and gave up, which means ` +
+      'another session was holding a conflicting lock — a long-running query, an open transaction, or ' +
+      'a hand-run statement left uncommitted. The migration itself is fine and was not applied; the ' +
+      'unit is Restart=always, so the next boot retries it and will succeed once the holder is gone. ' +
+      "Find it with `SELECT * FROM pg_stat_activity WHERE state <> 'idle' ORDER BY xact_start` " +
+      'before raising MIGRATION_DDL_LOCK_TIMEOUT_MS, which only lengthens the queue behind it.'
+    );
+  }
+
+  // 57014 query_canceled — `statement_timeout` fired, so the statement did run
+  // and simply did not finish. A retry does the same thing again.
+  if (code === '57014') {
+    return (
+      `${head}. It ran for ${timeouts.statementTimeoutMs}ms and was cancelled. Unlike a lock timeout ` +
+      'this will not pass on a retry: the statement holds its locks and is genuinely that slow, which ' +
+      'on this schema means an index build or a table rewrite over more rows than the environment it ' +
+      'was tested against. Apply it by hand under a longer MIGRATION_STATEMENT_TIMEOUT_MS during a ' +
+      'maintenance window, or split it so each statement is bounded.'
+    );
+  }
+
+  return head;
 }
 
 /** Anything that can run a query — a Pool, a PoolClient, or a Client. */
@@ -188,6 +316,14 @@ async function acquireMigrationLock(
  * under a deadline so a runner that cannot get it fails loudly rather than
  * hanging the boot — see {@link DEFAULT_MIGRATION_LOCK_TIMEOUT_MS}.
  *
+ * Each file's transaction also sets its own `lock_timeout` and
+ * `statement_timeout` — see {@link DEFAULT_MIGRATION_DDL_LOCK_TIMEOUT_MS} and
+ * {@link DEFAULT_MIGRATION_STATEMENT_TIMEOUT_MS}. The client comes from the
+ * application pool, whose bounds are tuned for request handlers and are wrong
+ * for DDL in both directions at once: too short to let an index build finish,
+ * and (for locks) absent entirely, so a blocked ALTER TABLE stalled every
+ * request queued behind it on the same table.
+ *
  * A pending file with no statements in it is refused before it is applied
  * ({@link EmptyMigrationError}): recording an empty file as applied is the one
  * mistake this runner's own guarantees make unrepairable, because forward-only
@@ -216,10 +352,21 @@ export async function migrate(
     lockTimeoutMs?: number;
     /** Poll interval while waiting; injected by the contention tests. */
     lockPollMs?: number;
+    /** Per-statement table-lock wait. See
+     *  {@link DEFAULT_MIGRATION_DDL_LOCK_TIMEOUT_MS}. */
+    ddlLockTimeoutMs?: number;
+    /** Per-statement execution ceiling. See
+     *  {@link DEFAULT_MIGRATION_STATEMENT_TIMEOUT_MS}. */
+    statementTimeoutMs?: number;
   } = {},
 ): Promise<string[]> {
   const dir = opts.dir ?? DEFAULT_DIR;
   const log = opts.log ?? (() => {});
+  const env = resolveMigrationTimeouts();
+  const timeouts: MigrationTimeouts = {
+    ddlLockTimeoutMs: opts.ddlLockTimeoutMs ?? env.ddlLockTimeoutMs,
+    statementTimeoutMs: opts.statementTimeoutMs ?? env.statementTimeoutMs,
+  };
   const files = (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort();
 
   const client = await pool.connect();
@@ -265,6 +412,19 @@ export async function migrate(
 
       await client.query('BEGIN');
       try {
+        // SET LOCAL rather than SET, and the difference is not stylistic. This
+        // client was borrowed from the *application* pool and is returned to it
+        // — pg runs no DISCARD on release — so a plain SET would leave a
+        // five-minute statement_timeout on a connection that the next request
+        // handler picks up, quietly removing the 15s ceiling every other query
+        // in the service relies on. LOCAL is scoped to the transaction and
+        // reverts on COMMIT and on ROLLBACK alike, so both exits are covered
+        // without a restore step that could itself be skipped.
+        //
+        // Interpolated because SET takes no bind parameter; both values are
+        // integers by construction (see resolveMigrationTimeouts).
+        await client.query(`SET LOCAL lock_timeout = ${timeouts.ddlLockTimeoutMs}`);
+        await client.query(`SET LOCAL statement_timeout = ${timeouts.statementTimeoutMs}`);
         await client.query(sql);
         await client.query('INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)', [
           file,
@@ -272,8 +432,12 @@ export async function migrate(
         ]);
         await client.query('COMMIT');
       } catch (err) {
-        await client.query('ROLLBACK');
-        throw new Error(`Migration ${file} failed: ${err instanceof Error ? err.message : err}`);
+        // A failed ROLLBACK must not become the error the operator sees. When
+        // the connection is what broke, ROLLBACK throws too, and an unguarded
+        // one replaces a message naming the migration with a socket error
+        // naming nothing.
+        await client.query('ROLLBACK').catch(() => {});
+        throw new Error(explainMigrationFailure(file, err, timeouts));
       }
       applied.push(file);
       log(`applied ${file}`);

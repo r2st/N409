@@ -172,6 +172,17 @@ const REVIEWED: Record<string, string[]> = {
   // Not SQL at all — an SMTP envelope whose header names trip the keyword test.
   'src/services/valuation/src/email/smtp.ts': ['bareAddress(opts.from)'],
 
+  // The migration session's two bounds (R192), interpolated into `SET LOCAL`.
+  // Unavoidable rather than convenient: SET takes no bind parameter, so `$n`
+  // is not available for these at all. Both reach the statement only through
+  // `resolveMigrationTimeouts`, which admits a value solely when
+  // `Number.isInteger(n) && n >= 0` and otherwise returns the module default —
+  // so a non-integer never arrives, and there is no request path to either one
+  // regardless: they come from env at boot, read once per migrate() call.
+  // `test/unit/migrationTimeouts.test.ts` asserts the rejection directly,
+  // including on a value spelled as a trailing SET fragment.
+  'src/services/valuation/src/db/migrate.ts': ['timeouts.ddlLockTimeoutMs', 'timeouts.statementTimeoutMs'],
+
   // `whereSql` / `where` / `filter` / `search` / `scope` / `cursorSql` / `from`
   // / `union` / `values`: predicate and column-list fragments assembled in the
   // same function from string literals, with every value pushed onto `params`

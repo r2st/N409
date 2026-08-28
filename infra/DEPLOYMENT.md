@@ -573,6 +573,79 @@ serving the previous release.
 If you ever genuinely need a destructive change, it is two releases: stop using
 the column, ship that, then remove it — never one migration.
 
+### How long a migration may lock (round 192)
+
+Additive-only answers *whether a rollback is safe*. It says nothing about the
+other way a migration hurts production, which is **how long it holds a lock**,
+and that half had no bound worth the name until R192.
+
+The runner borrows its client from the application pool, so it inherited a pool
+tuned for request handlers. Both settings were wrong for DDL, in opposite
+directions:
+
+| | pool (request handlers) | migration needs | why |
+| --- | --- | --- | --- |
+| `statement_timeout` | 15s | **longer** | an index build over a real table takes longer than any request may |
+| `lock_timeout` | `0` (Postgres default) | **shorter, and non-zero** | a blocked `ALTER TABLE` blocks everything queued behind it |
+
+Each was a live fault, and neither could be seen from CI:
+
+- **The 15s ceiling cancelled long DDL.** There are 164 `CREATE INDEX`
+  statements in `migrations/` and none can be `CONCURRENTLY` — the runner wraps
+  each file in a transaction and Postgres forbids it there (0148 says so in
+  prose). So each builds under a lock in one statement. Over an empty CI
+  database that is milliseconds; over a production table it crosses 15s,
+  Postgres cancels it (`57014`), and `migrate()` throws *before* `app.listen`.
+  valuation then never binds its port, never answers `/health`, and `deploy.sh`
+  reads it as a hung deploy. Restarting does not help: the next attempt is
+  equally slow. The failure is a function of how much data an environment has,
+  which is the one axis CI cannot vary.
+- **The unbounded `lock_timeout` took the table down while it waited.**
+  Postgres's lock queue is ordered, so a statement waiting for ACCESS EXCLUSIVE
+  sits ahead of every request that arrives after it — including plain `SELECT`s
+  that conflict with nothing. Measured against a real database (one reader
+  holding an open transaction, an `ALTER TABLE ADD COLUMN` behind it): an
+  unrelated `SELECT count(*)` issued afterwards was **still blocked six seconds
+  later**, and would have stayed blocked for the full 15s before the migration
+  died and failed the deploy regardless.
+
+Each migration's transaction now sets its own bounds — `MIGRATION_DDL_LOCK_TIMEOUT_MS`
+(default 3000) and `MIGRATION_STATEMENT_TIMEOUT_MS` (default 300000), both in
+`.env.example`. They are `SET LOCAL`, so they revert at `COMMIT` and at
+`ROLLBACK` and cannot ride the pooled connection back to a request handler.
+
+**Failing fast here is the design, not a regression.** The unit is
+`Restart=always` with `RestartSec=3`, so a migration that loses a lock race is
+retried within seconds and succeeds once the holder clears — which is what
+"wait forever" only appeared to provide.
+
+Retrying faster does not thrash the unit. Neither valuation's unit nor any
+other sets `StartLimitBurst`, so systemd's default applies: 5 starts per 10s
+before the unit is failed and left down. A lock-timeout cycle costs the 3s wait
+plus `RestartSec=3` plus boot, so roughly two starts per window — the same
+budget the previous 15s cancellation used more slowly, and comfortably inside
+the limit. Worth re-checking if `MIGRATION_DDL_LOCK_TIMEOUT_MS` is ever lowered
+much below a second. The two cancellations are reported
+differently on purpose, because their conclusions are opposites:
+
+- `55P03` (**lock** timeout) — nothing was applied, the file is fine, it will
+  retry itself. Find the holder with
+  `SELECT * FROM pg_stat_activity WHERE state <> 'idle' ORDER BY xact_start`.
+  Do **not** raise `MIGRATION_DDL_LOCK_TIMEOUT_MS`: that lengthens the queue
+  behind the migration rather than shortening the wait.
+- `57014` (**statement** timeout) — the statement ran and is genuinely that
+  slow, so a retry does the same thing again. Apply it by hand under a raised
+  `MIGRATION_STATEMENT_TIMEOUT_MS` in a maintenance window, or split it.
+
+**Known limitation, deliberately not fixed.** 53 of the index builds are on
+tables that already exist, so each takes a `SHARE` lock (blocking writes,
+leaving reads alone) for the length of the build. Removing that needs
+`CREATE INDEX CONCURRENTLY`, which needs the runner to *not* wrap the file in a
+transaction — and a non-transactional migration that fails partway is neither
+applied nor recorded, and `CONCURRENTLY` can leave an `INVALID` index behind to
+be cleaned up by hand. That trade has not been taken. The bounds above make the
+current behaviour survivable; they do not make these builds concurrent.
+
 ### Where the target comes from
 
 `$REMOTE_DIR/RELEASES`, appended by section 8 of `deploy.sh` **after** a deploy
