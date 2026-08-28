@@ -8,6 +8,7 @@ import {
   Button,
   EmptyState,
   ErrorNote,
+  Field,
   LoadError,
   LoadingBlock,
   Pagination,
@@ -15,6 +16,8 @@ import {
   SkeletonTable,
   Spinner,
   StatCard,
+  SuccessNote,
+  TextInput,
   pageCountOf,
   useRetry,
 } from '../components/ui';
@@ -143,6 +146,171 @@ function retryDueIn(job: Job): string | null {
   if (job.status !== 'queued') return null;
   const ms = new Date(job.due_at).getTime() - Date.now();
   return ms > 0 ? duration(ms) : null;
+}
+
+/** A whole number inside `[min, max]`, or null — which is what blocks a save. */
+function intOrNull(text: string, min: number, max: number): number | null {
+  const trimmed = text.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const n = Number.parseInt(trimmed, 10);
+  return n >= min && n <= max ? n : null;
+}
+
+/**
+ * The alerting thresholds, editable.
+ *
+ * `PATCH /admin/jobs/alert-rules/:source` has existed since the rules were
+ * added and had no caller, so the only way to change a threshold — or to turn
+ * one back on — was a hand-written request. The page did print them, but only
+ * in the "nothing is wrong" line, and only for the rules that were *enabled*:
+ * a queue whose alerting had been switched off looked exactly like a queue
+ * that had nothing to say, which is the failure the rules exist to remove. So
+ * every rule is listed here, disabled ones included and marked.
+ *
+ * Bounds are the server's (1 minute to a week; 1 to 10,000 failures; 1 hour to
+ * 30 days) and are stated on the inputs rather than only enforced on submit —
+ * a refusal after the fact is a worse way to learn a limit than the field.
+ */
+function AlertRuleEditor({
+  rule,
+  label,
+  onSaved,
+}: {
+  rule: JobAlertRule;
+  label: string;
+  onSaved: (rule: JobAlertRule) => void;
+}) {
+  const [draft, setDraft] = useState({
+    stall_minutes: String(rule.stall_minutes),
+    failure_count: String(rule.failure_count),
+    failure_window_hours: String(rule.failure_window_hours),
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  // The three numbers as the server would read them; null when a box holds
+  // something that is not a positive integer, which is what blocks the save.
+  const numbers = {
+    stall_minutes: intOrNull(draft.stall_minutes, 1, 60 * 24 * 7),
+    failure_count: intOrNull(draft.failure_count, 1, 10_000),
+    failure_window_hours: intOrNull(draft.failure_window_hours, 1, 24 * 30),
+  };
+  const invalid = Object.values(numbers).some((v) => v === null);
+  const dirty =
+    numbers.stall_minutes !== rule.stall_minutes ||
+    numbers.failure_count !== rule.failure_count ||
+    numbers.failure_window_hours !== rule.failure_window_hours;
+
+  const patch = async (body: Record<string, unknown>, said: string) => {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const res = await api<{ rule: JobAlertRule }>(`/admin/jobs/alert-rules/${rule.source}`, {
+        method: 'PATCH',
+        body,
+      });
+      onSaved(res.rule);
+      setDraft({
+        stall_minutes: String(res.rule.stall_minutes),
+        failure_count: String(res.rule.failure_count),
+        failure_window_hours: String(res.rule.failure_window_hours),
+      });
+      setNote(said);
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status === 403
+          ? 'Only operations can change an alert threshold.'
+          : `Could not update the ${label} rule.`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-paper-300 bg-surface p-4 shadow-card">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="font-semibold text-ink-900">{label}</span>
+        <span className="flex items-center gap-2">
+          {!rule.enabled && (
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+              Alerting off
+            </span>
+          )}
+          <Button
+            variant="secondary"
+            className="!px-3 !py-1.5 !text-xs"
+            disabled={busy}
+            title={
+              rule.enabled
+                ? 'Stop alerting on this queue. The queue keeps running; nobody is told when it stalls.'
+                : 'Resume alerting on this queue.'
+            }
+            onClick={() =>
+              void patch(
+                { enabled: !rule.enabled },
+                rule.enabled ? 'Alerting turned off.' : 'Alerting turned back on.',
+              )
+            }
+          >
+            {rule.enabled ? 'Turn off' : 'Turn on'}
+          </Button>
+        </span>
+      </div>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <Field label="Stalled after (minutes)" hint="1 – 10080">
+          <TextInput
+            inputMode="numeric"
+            aria-label={`${label} stall minutes`}
+            value={draft.stall_minutes}
+            onChange={(e) => setDraft((d) => ({ ...d, stall_minutes: e.target.value }))}
+          />
+        </Field>
+        <Field label="Failures" hint="1 – 10000">
+          <TextInput
+            inputMode="numeric"
+            aria-label={`${label} failure count`}
+            value={draft.failure_count}
+            onChange={(e) => setDraft((d) => ({ ...d, failure_count: e.target.value }))}
+          />
+        </Field>
+        <Field label="Within (hours)" hint="1 – 720">
+          <TextInput
+            inputMode="numeric"
+            aria-label={`${label} failure window hours`}
+            value={draft.failure_window_hours}
+            onChange={(e) => setDraft((d) => ({ ...d, failure_window_hours: e.target.value }))}
+          />
+        </Field>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <Button
+          className="!px-3 !py-1.5 !text-xs"
+          disabled={busy || !dirty || invalid}
+          title={
+            invalid
+              ? 'Each threshold is a whole number inside the range under its box.'
+              : !dirty
+                ? 'Nothing has changed.'
+                : undefined
+          }
+          onClick={() => void patch(numbers, 'Thresholds saved.')}
+        >
+          {busy ? 'Saving…' : 'Save thresholds'}
+        </Button>
+        {note && <SuccessNote className="!mt-0">{note}</SuccessNote>}
+      </div>
+      {error && (
+        <div className="mt-3">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function StatusBadge({ job }: { job: Job }) {
@@ -313,12 +481,38 @@ export function AdminJobsPage() {
 
       {alerts && alerts.open === 0 && (
         <p className="mt-6 rounded-lg border border-paper-300 bg-surface px-5 py-3 text-sm text-ink-500">
-          No queue alerts open. Thresholds:{' '}
-          {alerts.rules
-            .filter((r) => r.enabled)
-            .map((r) => `${SOURCE_LABELS[r.source]} ${r.stall_minutes}m / ${r.failure_count} failures`)
-            .join(' · ')}
+          No queue alerts open.
         </p>
+      )}
+
+      {/* The thresholds behind the line above, editable — see AlertRuleEditor.
+          Collapsed because it is settings, not status, and the page is opened
+          to read status. */}
+      {alerts && alerts.rules.length > 0 && (
+        <details className="mt-4 rounded-lg border border-paper-300 bg-surface px-5 py-3 shadow-card">
+          <summary className="tap-area cursor-pointer text-sm font-semibold text-ink-700">
+            Alert thresholds ({alerts.rules.filter((r) => r.enabled).length} of {alerts.rules.length} enabled)
+          </summary>
+          <div className="mt-3 space-y-3">
+            {alerts.rules.map((rule) => (
+              <AlertRuleEditor
+                key={rule.source}
+                rule={rule}
+                label={SOURCE_LABELS[rule.source]}
+                onSaved={(saved) =>
+                  setAlerts((prev) =>
+                    prev === null
+                      ? prev
+                      : {
+                          ...prev,
+                          rules: prev.rules.map((r) => (r.source === saved.source ? saved : r)),
+                        },
+                  )
+                }
+              />
+            ))}
+          </div>
+        </details>
       )}
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

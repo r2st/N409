@@ -4,8 +4,17 @@ import { api, ApiError } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
 import { formatDateTime } from '../lib/format';
-import type { DeliveryState, OutboxEmail, OutboxStatus } from '../lib/types';
-import { Button, EmptyState, ErrorNote, LoadingBlock, SkeletonTable } from '../components/ui';
+import type { BounceKind, DeliveryState, OutboxEmail, OutboxStatus } from '../lib/types';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  LoadingBlock,
+  SkeletonTable,
+  SkeletonStatStrip,
+  StatCard,
+  SuccessNote,
+} from '../components/ui';
 import { SuppressionList } from '../components/SuppressionList';
 
 /**
@@ -37,6 +46,61 @@ const DELIVERY_TITLES: Record<DeliveryState, string> = {
   skipped: 'Not sent — the address is suppressed.',
 };
 
+/** `/admin/email/delivery-stats` — the window's counts, its derived rates, and
+ *  the per-template breakdown behind them. */
+interface DeliveryStats {
+  totals: {
+    window_days: number;
+    total: number;
+    queued: number;
+    sent: number;
+    failed: number;
+    skipped: number;
+    delivered: number;
+    bounced: number;
+    complained: number;
+    opened: number;
+    suppressed_addresses: number;
+  };
+  /**
+   * Null below the server's sample floor rather than zero — see the route.
+   * A tile that renders `null` as "0%" reports an outage that is not happening,
+   * so every reader here has to keep the two apart.
+   */
+  rates: {
+    delivered: number | null;
+    bounced: number | null;
+    opened: number | null;
+    send_failure: number | null;
+  };
+  by_template: Array<{
+    template_key: string;
+    total: number;
+    delivered: number;
+    bounced: number;
+    failed: number;
+  }>;
+}
+
+type DeliveryEventKind = 'delivered' | 'bounced' | 'complained' | 'deferred' | 'opened';
+
+/** One line of the delivery ledger (migration 0163), newest first. */
+interface DeliveryEvent {
+  id: string;
+  kind: DeliveryEventKind;
+  occurred_at: string;
+  received_at: string;
+  /** 'webhook:<provider>', 'dsn', or 'pixel' — who told us. */
+  source: string;
+  bounce_kind: BounceKind | null;
+  detail: string | null;
+}
+
+/** A rate the server declined to derive is "—", never "0%". */
+function percent(rate: number | null): string {
+  return rate === null ? '—' : `${(rate * 100).toFixed(1)}%`;
+}
+
 function DeliveryBadge({ email }: { email: OutboxEmail }) {
   // Fall back to the platform status when the field is absent, which is only
   // a response cached from a build older than the derivation.
@@ -51,11 +115,106 @@ function DeliveryBadge({ email }: { email: OutboxEmail }) {
   );
 }
 
+const EVENT_STYLES: Record<DeliveryEventKind, string> = {
+  delivered: 'text-emerald-700',
+  opened: 'text-emerald-700',
+  bounced: 'text-red-600',
+  complained: 'text-red-600',
+  deferred: 'text-amber-700',
+};
+
+/**
+ * The delivery ledger for one message, on demand.
+ *
+ * The row above shows the *state* — the one fact the server derived from these
+ * events. That is the right summary and the wrong thing to hand somebody
+ * arguing with a mail administrator, who needs the provider's own words, when
+ * each signal arrived, and how many times. `/admin/email-outbox/:id/delivery-
+ * events` has served exactly that since migration 0163 and nothing asked for
+ * it.
+ *
+ * Fetched on first open rather than with the listing: a page of 50 rows would
+ * otherwise be 51 requests to draw a column nobody has expanded.
+ */
+function DeliveryTrail({ email }: { email: OutboxEmail }) {
+  const [open, setOpen] = useState(false);
+  const [events, setEvents] = useState<DeliveryEvent[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const toggle = async () => {
+    const next = !open;
+    setOpen(next);
+    if (!next || events !== null) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api<{ events: DeliveryEvent[] }>(`/admin/email-outbox/${email.id}/delivery-events`);
+      setEvents(res.events);
+    } catch {
+      // Not swallowed: an empty ledger and an unreadable one are the same
+      // picture, and the first is the one an operator would wrongly conclude.
+      setError('Could not load the delivery trail.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mt-1.5">
+      <button
+        type="button"
+        onClick={() => void toggle()}
+        aria-expanded={open}
+        className="tap-area cursor-pointer text-xs font-semibold text-bond-600 hover:text-bond-700"
+      >
+        {open ? 'Hide delivery trail' : 'Delivery trail'}
+      </button>
+      {open && (
+        <div className="mt-1.5">
+          {loading && (
+            <p role="status" className="text-xs text-ink-400">
+              Loading the delivery trail…
+            </p>
+          )}
+          {error && <p className="text-xs text-red-600">{error}</p>}
+          {events !== null && events.length === 0 && !error && (
+            <p className="text-xs text-ink-400">
+              Nothing reported back yet — the relay accepted it and no provider signal has arrived.
+            </p>
+          )}
+          {events !== null && events.length > 0 && (
+            <ul className="space-y-1">
+              {events.map((ev) => (
+                <li key={ev.id} className="text-xs text-ink-500">
+                  <span className={`font-semibold ${EVENT_STYLES[ev.kind]}`}>{ev.kind}</span>{' '}
+                  <span className="tnum">{formatDateTime(ev.occurred_at)}</span>
+                  {/* Whose word this is. A pixel fetch and a provider webhook
+                      are not equally good evidence, and only the source says
+                      which one this line is. */}
+                  <span className="text-ink-400"> · {ev.source}</span>
+                  {ev.bounce_kind && <span className="text-red-600"> · {ev.bounce_kind}</span>}
+                  {ev.detail && <span className="text-ink-400"> · {ev.detail}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Ops window into the transactional email outbox (P0 #1; API from P1 #21). */
 export function EmailOutboxPage() {
   const [emails, setEmails] = useState<OutboxEmail[] | null>(null);
   const [scope, setScope] = useState<OutboxStatus | 'all'>('all');
   const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<DeliveryStats | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryNote, setRetryNote] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
 
   /*
    * The scope filter re-issues this without waiting, so two scopes can be
@@ -82,6 +241,32 @@ export function EmailOutboxPage() {
     }
   }, [scope, claim]);
 
+  /*
+   * The window totals are asked over the whole outbox, not the selected scope,
+   * so they are loaded once rather than re-fetched by every chip. Their own
+   * error slot for the same reason: a stats outage must not blank the table,
+   * and a table outage must not claim the rates are unknown.
+   */
+  const loadStats = useCallback(async () => {
+    try {
+      const res = await api<DeliveryStats>('/admin/email/delivery-stats?days=30');
+      // Shape-checked at the boundary rather than trusted into the render. A
+      // body without `totals` is a deployment mismatch, and reaching for
+      // `totals.failed` on one takes the whole page down — the table, the
+      // filters and the suppression list included — over a panel that is not
+      // even the reason anybody opened it.
+      if (!res || typeof res.totals !== 'object' || res.totals === null) {
+        setStats(null);
+        setStatsError('Delivery statistics came back in a shape this page cannot read.');
+        return;
+      }
+      setStats(res);
+      setStatsError(null);
+    } catch {
+      setStatsError('Could not load delivery statistics.');
+    }
+  }, []);
+
   // The scope chips are the question; the table is the answer to it. Without
   // this the previous scope's rows sit under the newly pressed chip for a
   // whole round trip, unmarked. See `useClearOnChange`.
@@ -90,6 +275,45 @@ export function EmailOutboxPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void loadStats();
+  }, [loadStats]);
+
+  /**
+   * Run the retry sweep now.
+   *
+   * `POST /admin/outbox/retry` is the same code path the interval runs, and it
+   * existed with no caller: an operator who has just fixed the relay had to
+   * wait out the sweep to find out whether the fix worked. The result is
+   * announced rather than merely reloaded — "attempted 4, sent 4" and
+   * "attempted 4, sent 0" leave the table looking identical for the seconds
+   * before the states settle, and they mean opposite things.
+   */
+  const retryFailed = async () => {
+    setRetrying(true);
+    setRetryNote(null);
+    setRetryError(null);
+    try {
+      const res = await api<{ attempted: number; sent: number }>('/admin/outbox/retry', {
+        method: 'POST',
+      });
+      setRetryNote(
+        res.attempted === 0
+          ? 'Nothing was eligible for retry.'
+          : `Retried ${res.attempted} message${res.attempted === 1 ? '' : 's'} — ${res.sent} sent.`,
+      );
+      await Promise.all([load(), loadStats()]);
+    } catch (err) {
+      setRetryError(
+        err instanceof ApiError && err.status === 403
+          ? 'Retrying the outbox is operations-only.'
+          : 'Could not retry the failed messages.',
+      );
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   /*
    * The wait replaces the answer, not the page. Returning a bare `<Spinner />`
@@ -112,10 +336,112 @@ export function EmailOutboxPage() {
             still bounce.
           </p>
         </div>
-        <Button variant="secondary" onClick={() => void load()}>
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => void load()}>
+            Refresh
+          </Button>
+          {/* Failed rows are already retried by the outbox worker's sweep; this
+              is the same sweep, now. Disabled when nothing has failed, and the
+              tooltip says so rather than leaving a dead control. */}
+          <Button
+            variant="secondary"
+            disabled={retrying || stats?.totals.failed === 0}
+            title={
+              stats?.totals.failed === 0
+                ? 'No failed messages in the last 30 days.'
+                : 'Run the retry sweep now instead of waiting for the outbox worker.'
+            }
+            onClick={() => void retryFailed()}
+          >
+            {retrying ? 'Retrying…' : 'Retry failed now'}
+          </Button>
+        </div>
       </div>
+
+      {retryNote && (
+        <div className="mt-4">
+          <SuccessNote>{retryNote}</SuccessNote>
+        </div>
+      )}
+      {retryError && (
+        <div className="mt-4">
+          <ErrorNote>{retryError}</ErrorNote>
+        </div>
+      )}
+
+      {/* ── Delivery statistics ─────────────────────────────────────────────
+          Counts say what the outbox did; the rates say whether it worked. Both
+          have been served by `/admin/email/delivery-stats` all along with
+          nowhere to land, which left the only answer to "is mail getting
+          through" a manual read of the table below. */}
+      {statsError ? (
+        <div className="mt-6">
+          <ErrorNote>{statsError}</ErrorNote>
+        </div>
+      ) : !stats ? (
+        <div className="mt-6">
+          <LoadingBlock label="Loading delivery statistics…">
+            <SkeletonStatStrip count={4} />
+          </LoadingBlock>
+        </div>
+      ) : (
+        <section className="mt-6" aria-label="Delivery statistics">
+          <h2 className="overline text-ink-400">Last {stats.totals.window_days} days</h2>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              label="Delivered"
+              value={percent(stats.rates.delivered)}
+              hint={`${stats.totals.delivered} of ${stats.totals.sent} handed to the relay`}
+            />
+            <StatCard
+              label="Bounced or complained"
+              value={percent(stats.rates.bounced)}
+              hint={`${stats.totals.bounced} bounced · ${stats.totals.complained} complaints`}
+            />
+            <StatCard
+              label="Send failures"
+              value={percent(stats.rates.send_failure)}
+              hint={`${stats.totals.failed} never reached the relay`}
+            />
+            <StatCard
+              label="Suppressed addresses"
+              value={String(stats.totals.suppressed_addresses)}
+              hint={`${stats.totals.skipped} messages skipped in the window`}
+            />
+          </div>
+          {stats.by_template.length > 0 && (
+            <details className="mt-4 rounded-lg border border-paper-300 bg-surface px-5 py-3 shadow-card">
+              <summary className="tap-area cursor-pointer text-sm font-semibold text-ink-700">
+                By template ({stats.by_template.length})
+              </summary>
+              <div className="mt-3 overflow-x-auto overscroll-x-contain">
+                <table className="w-full min-w-[520px] text-sm" aria-label="Delivery by template">
+                  <thead>
+                    <tr className="border-b border-paper-300 text-left">
+                      <th className="overline px-2 py-2 font-semibold text-ink-400">Template</th>
+                      <th className="overline px-2 py-2 text-right font-semibold text-ink-400">Sent</th>
+                      <th className="overline px-2 py-2 text-right font-semibold text-ink-400">Delivered</th>
+                      <th className="overline px-2 py-2 text-right font-semibold text-ink-400">Bounced</th>
+                      <th className="overline px-2 py-2 text-right font-semibold text-ink-400">Failed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.by_template.map((t) => (
+                      <tr key={t.template_key} className="border-b border-paper-200 last:border-0">
+                        <td className="px-2 py-2 font-mono text-xs text-ink-600">{t.template_key}</td>
+                        <td className="tnum px-2 py-2 text-right text-ink-600">{t.total}</td>
+                        <td className="tnum px-2 py-2 text-right text-ink-600">{t.delivered}</td>
+                        <td className="tnum px-2 py-2 text-right text-ink-600">{t.bounced}</td>
+                        <td className="tnum px-2 py-2 text-right text-ink-600">{t.failed}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
+        </section>
+      )}
 
       <div className="mt-6 flex flex-wrap gap-2">
         {(['all', 'queued', 'sent', 'failed', 'skipped'] as const).map((s) => (
@@ -194,6 +520,7 @@ export function EmailOutboxPage() {
                   </td>
                   <td className="px-4 py-3.5">
                     <DeliveryBadge email={e} />
+                    <DeliveryTrail email={e} />
                     {e.error && (
                       <div className="mt-1 max-w-52 text-xs text-red-600" title={e.error}>
                         <span className="line-clamp-2">{e.error}</span>

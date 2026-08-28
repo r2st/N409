@@ -128,6 +128,26 @@ const outboxEmail = (id: string, status: string, subject: string) => ({
   sent_at: null,
 });
 
+/** R191 put the window's delivery rates on the outbox page; the scope filter
+ *  does not re-ask for them, so one body serves every request here. */
+const OUTBOX_DELIVERY_STATS = {
+  totals: {
+    window_days: 30,
+    total: 1,
+    queued: 0,
+    sent: 1,
+    failed: 0,
+    skipped: 0,
+    delivered: 1,
+    bounced: 0,
+    complained: 0,
+    opened: 0,
+    suppressed_addresses: 0,
+  },
+  rates: { delivered: 1, bounced: 0, opened: 0, send_failure: 0 },
+  by_template: [],
+};
+
 describe('a filter change must not leave the previous answer on screen', () => {
   it('the email outbox drops the sent rows when Failed is selected', async () => {
     // `holdSecondMatching` rather than `holdSecondRequest`: R178 put the
@@ -137,7 +157,9 @@ describe('a filter change must not leave the previous answer on screen', () => {
     const { pending } = holdSecondMatching(/\/admin\/email-outbox/, (url) =>
       url.includes('/suppressions')
         ? { suppressions: [], truncated: false }
-        : { emails: [outboxEmail('1', 'sent', 'SENT ROW')] },
+        : url.includes('/delivery-stats')
+          ? OUTBOX_DELIVERY_STATS
+          : { emails: [outboxEmail('1', 'sent', 'SENT ROW')] },
     );
     render(
       <MemoryRouter>

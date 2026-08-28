@@ -3,9 +3,11 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { formatDate } from '../lib/format';
 import {
+  Button,
   DataTable,
   EmptyState,
   ErrorNote,
+  ListTruncationNote,
   LoadError,
   pageCountOf,
   Pagination,
@@ -112,6 +114,19 @@ export function FirmDashboardPage() {
   // Firm users get their own console from the session. Ops belong to no firm,
   // so they arrive from the partner console with the tenant named in the URL.
   const partnerId = params.get('partner_id');
+  /*
+   * The whole ranked queue, once asked for.
+   *
+   * The dashboard serves the top 25 and says "Showing 25 of 140" — a count of
+   * a list the reader had no way to open. `/firm/attention` is the endpoint
+   * that answers it ("the full attention queue, for when 25 is not all of it")
+   * and nothing called it, so the notice was a dead end: the one number a
+   * principal plans against, with no path to the rows behind it.
+   */
+  const [fullQueue, setFullQueue] = useState<AttentionItem[] | null>(null);
+  const [queueMeta, setQueueMeta] = useState<{ truncated: boolean; scan_limit: number } | null>(null);
+  const [queueBusy, setQueueBusy] = useState(false);
+  const [queueError, setQueueError] = useState<string | null>(null);
 
   const [data, setData] = useState<FirmDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -208,6 +223,27 @@ export function FirmDashboardPage() {
     }, 250);
     return () => clearTimeout(timer);
   }, [page, search, loadClients]);
+
+  const loadFullQueue = async () => {
+    setQueueBusy(true);
+    setQueueError(null);
+    try {
+      const query = partnerId ? `?partner_id=${encodeURIComponent(partnerId)}` : '';
+      const res = await api<{
+        attention: AttentionItem[];
+        truncated: boolean;
+        scan_limit: number;
+      }>(`/firm/attention${query}`);
+      setFullQueue(res.attention);
+      setQueueMeta({ truncated: res.truncated, scan_limit: res.scan_limit });
+    } catch (err) {
+      // Not `setFullQueue([])`: the table's empty text is "Nothing needs
+      // chasing", which is the opposite of what a failed load knows.
+      setQueueError(err instanceof ApiError ? err.message : 'Could not load the full attention queue.');
+    } finally {
+      setQueueBusy(false);
+    }
+  };
 
   if (error && !data) return <LoadError message={error} {...retryProps} />;
   if (!data) return <Spinner />;
@@ -333,16 +369,45 @@ export function FirmDashboardPage() {
             // one figure a partner plans against read as an exact count of a
             // list it could not all be seeing. `attention_truncated` is what
             // the server now says about that, and "at least" is what it means.
-            <span className="text-sm text-ink-400">
-              Showing {attention.length} of {data.attention_truncated ? 'at least ' : ''}
-              {data.attention_total}
+            <span className="flex items-center gap-3">
+              <span className="text-sm text-ink-400">
+                Showing {fullQueue ? fullQueue.length : attention.length} of{' '}
+                {data.attention_truncated ? 'at least ' : ''}
+                {data.attention_total}
+              </span>
+              {fullQueue === null && (
+                <Button
+                  variant="secondary"
+                  className="!px-3 !py-1.5 !text-xs"
+                  disabled={queueBusy}
+                  onClick={() => void loadFullQueue()}
+                >
+                  {queueBusy ? 'Loading…' : 'Show the full queue'}
+                </Button>
+              )}
             </span>
           )}
         </div>
+        {queueError && (
+          <div className="mt-3">
+            <ErrorNote>{queueError}</ErrorNote>
+          </div>
+        )}
+        {queueMeta && (
+          // The full queue has its own ceiling — the ranking scan's — and it is
+          // a different number from the dashboard's 25. Saying so here is the
+          // same rule that produced "at least" above.
+          <ListTruncationNote
+            truncated={queueMeta.truncated}
+            shown={fullQueue?.length ?? 0}
+            noun="engagements needing attention"
+            hint={`the ranking scans the ${queueMeta.scan_limit} most recent engagements`}
+          />
+        )}
         <div className="mt-3 rounded-lg border border-paper-300 bg-surface p-2 shadow-card">
           <DataTable
             columns={attentionColumns}
-            rows={attention}
+            rows={fullQueue ?? attention}
             rowKey={(row) => row.id}
             caption="Engagements needing attention"
             onRowClick={(row) => navigate(`/valuations/${row.id}`)}

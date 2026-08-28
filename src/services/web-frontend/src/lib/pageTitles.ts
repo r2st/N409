@@ -136,6 +136,7 @@ export const ROUTE_TITLES: Readonly<Record<string, string | null>> = {
   '/admin/support': 'Support inbox',
   '/admin/outbox': 'Email outbox',
   '/admin/jobs': 'Background jobs',
+  '/admin/operations': 'System health',
   '/admin/communications': 'Communications',
   '/admin/activity': 'Activity log',
   '/admin/help': 'Help articles',

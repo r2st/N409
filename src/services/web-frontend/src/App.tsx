@@ -128,6 +128,7 @@ const AdminApiTokensPage = named(() => import('./pages/AdminApiTokensPage'), 'Ad
 const PartnerDetailPage = named(() => import('./pages/PartnerDetailPage'), 'PartnerDetailPage');
 const EmailOutboxPage = named(() => import('./pages/EmailOutboxPage'), 'EmailOutboxPage');
 const AdminJobsPage = named(() => import('./pages/AdminJobsPage'), 'AdminJobsPage');
+const AdminOperationsPage = named(() => import('./pages/AdminOperationsPage'), 'AdminOperationsPage');
 const InboxPage = named(() => import('./pages/InboxPage'), 'InboxPage');
 const PartnerPortalPage = named(() => import('./pages/PartnerPortalPage'), 'PartnerPortalPage');
 const ApiDocsPage = named(() => import('./pages/ApiDocsPage'), 'ApiDocsPage');
@@ -312,6 +313,7 @@ export default function App() {
               <Route path="/admin/support" element={<SupportInboxPage />} />
               <Route path="/admin/outbox" element={<EmailOutboxPage />} />
               <Route path="/admin/jobs" element={<AdminJobsPage />} />
+              <Route path="/admin/operations" element={<AdminOperationsPage />} />
               <Route path="/admin/communications" element={<CommunicationsPage />} />
               <Route path="/admin/activity" element={<ActivityLogPage />} />
               <Route path="/admin/help" element={<AdminHelpPage />} />

@@ -651,6 +651,7 @@ export function AppLayout() {
           <NavItem to="/admin/support" label="Support inbox" icon={icons.support} onNavigate={close} />
           <NavItem to="/admin/outbox" label="Email outbox" icon={icons.outbox} onNavigate={close} />
           <NavItem to="/admin/jobs" label="Background jobs" icon={icons.tasks} onNavigate={close} />
+          <NavItem to="/admin/operations" label="System health" icon={icons.activity} onNavigate={close} />
           <NavItem
             to="/admin/communications"
             label="Communications"

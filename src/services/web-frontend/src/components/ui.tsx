@@ -459,12 +459,19 @@ export function StatCard({
   value,
   accent = false,
   to,
+  hint,
 }: {
   label: string;
   value: ReactNode;
   accent?: boolean;
   /** Makes the whole card a link to the cohort it counts. */
   to?: string;
+  /**
+   * The figure behind the figure — most usefully a rate's denominator. A
+   * percentage with no sample size is a number the reader cannot weigh, and
+   * "0.0% delivered" off four messages is not the outage it looks like.
+   */
+  hint?: ReactNode;
 }) {
   const body = (
     <>
@@ -474,6 +481,7 @@ export function StatCard({
       >
         {value}
       </div>
+      {hint && <div className="mt-1.5 text-xs text-ink-400">{hint}</div>}
     </>
   );
   const base = 'block rounded-lg border border-paper-300 bg-surface p-5 shadow-card';
