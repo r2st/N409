@@ -184,15 +184,45 @@ let jobsBody: typeof JOBS | typeof WAITING_JOBS = JOBS;
 
 function mockApi() {
   const calls: string[] = [];
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
     calls.push(path);
     if (path.includes('/admin/jobs/stats')) return jsonResponse(STATS);
+    if (path.includes('/admin/jobs/alert-rules/')) {
+      const source = path.split('/admin/jobs/alert-rules/')[1]!;
+      const patch = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      const before = RULES.find((r) => r.source === source)!;
+      return jsonResponse({ rule: { ...before, ...patch } });
+    }
     if (path.includes('/admin/jobs/alerts')) return jsonResponse(alertsBody);
     if (path.includes('/admin/jobs')) return jsonResponse({ jobs: jobsBody, total: jobsBody.length });
     return jsonResponse({}, 404);
   });
   return calls;
+}
+
+/** The same mock, with each call's method and body kept for assertions. */
+function mockApiRecording() {
+  const sent: Array<{ url: string; method: string; body: unknown }> = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    const path = String(url);
+    sent.push({
+      url: path,
+      method: init?.method ?? 'GET',
+      body: init?.body ? JSON.parse(String(init.body)) : null,
+    });
+    if (path.includes('/admin/jobs/stats')) return jsonResponse(STATS);
+    if (path.includes('/admin/jobs/alert-rules/')) {
+      const source = path.split('/admin/jobs/alert-rules/')[1]!;
+      const patch = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      const before = RULES.find((r) => r.source === source)!;
+      return jsonResponse({ rule: { ...before, ...patch } });
+    }
+    if (path.includes('/admin/jobs/alerts')) return jsonResponse(alertsBody);
+    if (path.includes('/admin/jobs')) return jsonResponse({ jobs: jobsBody, total: jobsBody.length });
+    return jsonResponse({}, 404);
+  });
+  return sent;
 }
 
 const renderPage = () =>
@@ -381,9 +411,14 @@ describe('AdminJobsPage', () => {
   it('states the thresholds when nothing is wrong, so silence is legible', async () => {
     mockApi();
     renderPage();
-    // "No alerts" and "alerting is broken" look identical without this.
+    // "No alerts" and "alerting is broken" look identical without this. R191
+    // moved the thresholds out of that one line and into an editable panel, so
+    // they are now stated whether or not an alert is open — and the summary
+    // says how many rules are actually armed.
     expect(await screen.findByText(/No queue alerts open/)).toBeInTheDocument();
-    expect(screen.getByText(/Outbound message 120m \/ 10 failures/)).toBeInTheDocument();
+    expect(screen.getByText('Alert thresholds (2 of 2 enabled)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Outbound message stall minutes')).toHaveValue('120');
+    expect(screen.getByLabelText('Outbound message failure count')).toHaveValue('10');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -441,5 +476,112 @@ describe('AdminJobsPage', () => {
     // poll that asked for page 2 forever.
     expect(await screen.findByText('upload')).toBeInTheDocument();
     expect(pagesAsked.at(-1)).toBe('1');
+  });
+});
+
+describe('AdminJobsPage — alert thresholds (R191)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    alertsBody = QUIET;
+    jobsBody = JOBS;
+  });
+
+  it('sends only the changed thresholds, as numbers', async () => {
+    const user = userEvent.setup();
+    const sent = mockApiRecording();
+    renderPage();
+    const box = await screen.findByLabelText('Outbound message stall minutes');
+    await user.clear(box);
+    await user.type(box, '45');
+    await user.click(screen.getAllByRole('button', { name: 'Save thresholds' })[0]!);
+
+    await waitFor(() => {
+      const patch = sent.find((c) => c.url.includes('/admin/jobs/alert-rules/email'));
+      expect(patch?.method).toBe('PATCH');
+      // Whole numbers, not the strings the boxes hold — the route's schema is
+      // strict and a string would be refused.
+      expect(patch?.body).toEqual({
+        stall_minutes: 45,
+        failure_count: 10,
+        failure_window_hours: 24,
+      });
+    });
+    expect(await screen.findByText('Thresholds saved.')).toBeInTheDocument();
+  });
+
+  it('refuses to save a threshold outside the range the server accepts', async () => {
+    // Stated on the field and enforced before the request, because a refusal
+    // after the fact is a worse way to learn a limit than the box.
+    const user = userEvent.setup();
+    const sent = mockApiRecording();
+    renderPage();
+    const box = await screen.findByLabelText('Outbound message failure count');
+    await user.clear(box);
+    await user.type(box, '99999');
+
+    const save = screen.getAllByRole('button', { name: 'Save thresholds' })[0]!;
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute('title', expect.stringContaining('whole number inside the range'));
+    expect(sent.some((c) => c.method === 'PATCH')).toBe(false);
+  });
+
+  it('says nothing has changed rather than leaving Save looking broken', async () => {
+    mockApi();
+    renderPage();
+    await screen.findByLabelText('Outbound message stall minutes');
+    const save = screen.getAllByRole('button', { name: 'Save thresholds' })[0]!;
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute('title', 'Nothing has changed.');
+  });
+
+  it('lists a rule whose alerting is off, and marks it', async () => {
+    // A queue nobody is watching reads exactly like a healthy one. The page
+    // used to print enabled rules only, so switching alerting off made the
+    // queue disappear from the only place it was mentioned.
+    alertsBody = {
+      alerts: [],
+      open: 0,
+      rules: [{ ...RULES[0]!, enabled: false }, RULES[1]!],
+    };
+    mockApi();
+    renderPage();
+    expect(await screen.findByText('Alert thresholds (1 of 2 enabled)')).toBeInTheDocument();
+    expect(screen.getByText('Alerting off')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Turn on' })).toBeInTheDocument();
+  });
+
+  it('turns alerting back on through the same route', async () => {
+    const user = userEvent.setup();
+    alertsBody = {
+      alerts: [],
+      open: 0,
+      rules: [{ ...RULES[0]!, enabled: false }, RULES[1]!],
+    };
+    const sent = mockApiRecording();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Turn on' }));
+    await waitFor(() => {
+      const patch = sent.find((c) => c.url.includes('/admin/jobs/alert-rules/email'));
+      expect(patch?.body).toEqual({ enabled: true });
+    });
+    expect(await screen.findByText('Alerting turned back on.')).toBeInTheDocument();
+  });
+
+  it('reports a refused change instead of showing the draft as saved', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.includes('/admin/jobs/stats')) return jsonResponse(STATS);
+      if (path.includes('/admin/jobs/alert-rules/')) return jsonResponse({ status: 403 }, 403);
+      if (path.includes('/admin/jobs/alerts')) return jsonResponse(QUIET);
+      return jsonResponse({ jobs: JOBS, total: JOBS.length });
+    });
+    renderPage();
+    const box = await screen.findByLabelText('Outbound message stall minutes');
+    await user.clear(box);
+    await user.type(box, '45');
+    await user.click(screen.getAllByRole('button', { name: 'Save thresholds' })[0]!);
+    expect(await screen.findByText('Only operations can change an alert threshold.')).toBeInTheDocument();
+    expect(screen.queryByText('Thresholds saved.')).not.toBeInTheDocument();
   });
 });

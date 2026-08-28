@@ -92,7 +92,35 @@ const CLIENTS = [
 ];
 
 /** Records every path the page asks for, so scoping can be asserted. */
-function mockApi(opts: { dashboardStatus?: number } = {}) {
+/**
+ * `/firm/attention` — "the full attention queue, for when 25 is not all of it".
+ *
+ * Its own envelope: `truncated` and `scan_limit` describe the ranking scan's
+ * ceiling, which is a different number from the dashboard's page of 25.
+ */
+const FULL_QUEUE = {
+  attention: [
+    ...DASHBOARD.attention,
+    {
+      id: '01N409VAL00000000000000CC',
+      number: 130,
+      company_name: 'Cobalt Freight',
+      state: 'open' as const,
+      due_date: null,
+      assigned_reviewer_name: null,
+      reason: 'stalled_with_client' as const,
+      severity: 'medium' as const,
+      days: 21,
+      detail: 'Waiting on the client for 21 days',
+    },
+  ],
+  total: 3,
+  counts: DASHBOARD.attention_counts,
+  truncated: true,
+  scan_limit: 1000,
+};
+
+function mockApi(opts: { dashboardStatus?: number; attentionStatus?: number } = {}) {
   const paths: string[] = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
     const path = String(url);
@@ -101,6 +129,11 @@ function mockApi(opts: { dashboardStatus?: number } = {}) {
       return opts.dashboardStatus
         ? jsonResponse({ title: 'nope' }, opts.dashboardStatus)
         : jsonResponse(DASHBOARD);
+    }
+    if (path.includes('/firm/attention')) {
+      return opts.attentionStatus
+        ? jsonResponse({ title: 'nope' }, opts.attentionStatus)
+        : jsonResponse(FULL_QUEUE);
     }
     if (path.includes('/firm/clients')) return jsonResponse({ clients: CLIENTS, total: 2 });
     // The intake panel lives on this page; its own suite covers its behaviour.
@@ -229,5 +262,66 @@ describe('FirmDashboardPage', () => {
     mockApi({ dashboardStatus: 400 });
     renderPage();
     expect(await screen.findByText(/Open a firm from the partner console/i)).toBeInTheDocument();
+  });
+});
+
+describe('FirmDashboardPage — the attention queue behind the count (R191)', () => {
+  it('offers a way to open the rest instead of only counting it', async () => {
+    // The console said "Showing 2 of 9" and stopped there: the one number a
+    // principal plans against, and no path to the rows behind it.
+    mockApi();
+    render(
+      <MemoryRouter>
+        <FirmDashboardPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText(/Showing 2 of 9/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show the full queue' })).toBeInTheDocument();
+  });
+
+  it('replaces the page with the full ranked queue', async () => {
+    const user = userEvent.setup();
+    const paths = mockApi();
+    render(
+      <MemoryRouter>
+        <FirmDashboardPage />
+      </MemoryRouter>,
+    );
+    await user.click(await screen.findByRole('button', { name: 'Show the full queue' }));
+    await waitFor(() => expect(paths.some((p) => p.includes('/firm/attention'))).toBe(true));
+    expect(await screen.findByText('Cobalt Freight')).toBeInTheDocument();
+    // The count now describes what is actually on screen.
+    expect(screen.getByText(/Showing 3 of 9/)).toBeInTheDocument();
+    // ...and the button is gone rather than left to re-ask the same question.
+    expect(screen.queryByRole('button', { name: 'Show the full queue' })).not.toBeInTheDocument();
+  });
+
+  it('states the full queue’s own ceiling, which is not the dashboard’s', async () => {
+    const user = userEvent.setup();
+    mockApi();
+    render(
+      <MemoryRouter>
+        <FirmDashboardPage />
+      </MemoryRouter>,
+    );
+    await user.click(await screen.findByRole('button', { name: 'Show the full queue' }));
+    const note = await screen.findByTestId('list-truncated');
+    expect(note).toHaveTextContent('Showing 3 engagements needing attention');
+    expect(note).toHaveTextContent('scans the 1000 most recent engagements');
+  });
+
+  it('does not read a failed queue load as an empty queue', async () => {
+    const user = userEvent.setup();
+    mockApi({ attentionStatus: 500 });
+    render(
+      <MemoryRouter>
+        <FirmDashboardPage />
+      </MemoryRouter>,
+    );
+    await user.click(await screen.findByRole('button', { name: 'Show the full queue' }));
+    expect(await screen.findByText(/Could not load the full attention queue|nope/)).toBeInTheDocument();
+    // The 25 already ranked stay on screen: they are still true.
+    expect(screen.getByText('Northwind Robotics')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing needs chasing')).not.toBeInTheDocument();
   });
 });
