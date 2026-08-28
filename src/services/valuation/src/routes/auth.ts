@@ -114,8 +114,21 @@ const AcceptInviteBody = z.object({
  */
 function slidingWindowLimiter() {
   const limiter = new SlidingWindowRateLimiter();
-  return (key: string, limit: number, windowMs: number, opts?: { peek?: boolean }): boolean =>
+  const allow = (key: string, limit: number, windowMs: number, opts?: { peek?: boolean }): boolean =>
     limiter.allow(key, limit, windowMs, opts);
+  /**
+   * Seconds to wait, for whichever of the checked counters is furthest from
+   * letting the caller back in.
+   *
+   * Each of these routes checks two keys — a per-IP ceiling and a per-address
+   * one — and being under one of them is not enough. Reporting the smaller wait
+   * would send the caller back to be refused again by the other, so the answer
+   * is the maximum across the counters the route consulted, and zero when none
+   * of them is currently over its limit.
+   */
+  const retryAfter = (...counters: ReadonlyArray<[string, number, number]>): number =>
+    Math.max(0, ...counters.map(([key, limit, windowMs]) => limiter.retryAfterSeconds(key, limit, windowMs)));
+  return { allow, retryAfter };
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -185,7 +198,7 @@ export function registerAuthRoutes(
     return token;
   };
   const baseUrl = (deps.publicBaseUrl ?? 'http://localhost:3000').replace(/\/$/, '');
-  const allow = slidingWindowLimiter();
+  const { allow, retryAfter } = slidingWindowLimiter();
 
   /**
    * Mints a verification token and emails the link (gap #26). Fire-and-forget
@@ -239,7 +252,13 @@ export function registerAuthRoutes(
       !allow(`register-ip:${req.ip}`, REGISTER_PER_IP, HOUR_MS) ||
       !allow(`register:${email.toLowerCase()}`, REGISTER_PER_EMAIL, HOUR_MS)
     ) {
-      throw problems.tooManyRequests('Too many sign-up attempts — try again later');
+      throw problems.tooManyRequests(
+        'Too many sign-up attempts — try again later',
+        retryAfter(
+          [`register-ip:${req.ip}`, REGISTER_PER_IP, HOUR_MS],
+          [`register:${email.toLowerCase()}`, REGISTER_PER_EMAIL, HOUR_MS],
+        ),
+      );
     }
 
     await assertPasswordStrong(password);
@@ -292,7 +311,10 @@ export function registerAuthRoutes(
       !allow(emailKey, 10, LOGIN_WINDOW_MS, { peek: true }) ||
       !allow(ipKey, 100, LOGIN_WINDOW_MS, { peek: true })
     ) {
-      throw problems.tooManyRequests('Too many sign-in attempts — try again later');
+      throw problems.tooManyRequests(
+        'Too many sign-in attempts — try again later',
+        retryAfter([emailKey, 10, LOGIN_WINDOW_MS], [ipKey, 100, LOGIN_WINDOW_MS]),
+      );
     }
 
     const user = await findUserByEmail(deps.pool, email);
@@ -358,7 +380,10 @@ export function registerAuthRoutes(
 
     // Throttle second-factor guessing per user.
     if (!allow(`mfa:${user.id}`, 10, LOGIN_WINDOW_MS)) {
-      throw problems.tooManyRequests('Too many verification attempts — try again later');
+      throw problems.tooManyRequests(
+        'Too many verification attempts — try again later',
+        retryAfter([`mfa:${user.id}`, 10, LOGIN_WINDOW_MS]),
+      );
     }
 
     let ok = false;
@@ -488,7 +513,10 @@ export function registerAuthRoutes(
     const email = parsed.data.email;
 
     if (!allow(`email:${email.toLowerCase()}`, 3, HOUR_MS) || !allow(`ip:${req.ip}`, 30, HOUR_MS)) {
-      throw problems.tooManyRequests('Too many reset requests — try again later');
+      throw problems.tooManyRequests(
+        'Too many reset requests — try again later',
+        retryAfter([`email:${email.toLowerCase()}`, 3, HOUR_MS], [`ip:${req.ip}`, 30, HOUR_MS]),
+      );
     }
 
     const user = await findUserByEmail(deps.pool, email);
@@ -539,7 +567,10 @@ export function registerAuthRoutes(
     // belt-and-braces limit — but an unbounded redeem endpoint also lets an
     // attacker burn CPU on a scrypt hash per request.
     if (!allow(`reset-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
-      throw problems.tooManyRequests('Too many reset attempts — try again later');
+      throw problems.tooManyRequests(
+        'Too many reset attempts — try again later',
+        retryAfter([`reset-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS]),
+      );
     }
 
     await assertPasswordStrong(parsed.data.password);
@@ -568,7 +599,10 @@ export function registerAuthRoutes(
     if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     if (!allow(`verify-email-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
-      throw problems.tooManyRequests('Too many verification attempts — try again later');
+      throw problems.tooManyRequests(
+        'Too many verification attempts — try again later',
+        retryAfter([`verify-email-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS]),
+      );
     }
 
     const { outcome, userId } = await verifyEmailWithToken(deps.pool, parsed.data.token);
@@ -599,7 +633,10 @@ export function registerAuthRoutes(
     if (user.verified) return { message: 'Your email is already verified.' };
 
     if (!allow(`verify:${user.id}`, 3, HOUR_MS) || !allow(`verify-ip:${req.ip}`, 30, HOUR_MS)) {
-      throw problems.tooManyRequests('Too many verification requests — try again later');
+      throw problems.tooManyRequests(
+        'Too many verification requests — try again later',
+        retryAfter([`verify:${user.id}`, 3, HOUR_MS], [`verify-ip:${req.ip}`, 30, HOUR_MS]),
+      );
     }
     sendVerificationEmail(user, req.log);
     return { message: "We've sent a fresh verification link to your email." };
@@ -652,7 +689,10 @@ export function registerAuthRoutes(
     // real?" directly — limiting only the redeem route would leave the
     // enumeration oracle wide open.
     if (!allow(`invite-info-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
-      throw problems.tooManyRequests('Too many invitation lookups — try again later');
+      throw problems.tooManyRequests(
+        'Too many invitation lookups — try again later',
+        retryAfter([`invite-info-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS]),
+      );
     }
 
     const invitation = await findPendingInvitationByToken(deps.pool, parsed.data.token);
@@ -668,7 +708,10 @@ export function registerAuthRoutes(
     // Accepting an invite mints an account, so an unbounded endpoint is both a
     // token-guessing surface and a scrypt-CPU sink.
     if (!allow(`invite-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
-      throw problems.tooManyRequests('Too many invitation attempts — try again later');
+      throw problems.tooManyRequests(
+        'Too many invitation attempts — try again later',
+        retryAfter([`invite-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS]),
+      );
     }
 
     // The same policy register, reset-password and change-password all apply.

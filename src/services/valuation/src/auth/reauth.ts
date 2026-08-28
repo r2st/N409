@@ -46,7 +46,13 @@ export async function verifyReauthPassword(
   digest: string | null | undefined,
 ): Promise<boolean> {
   if (!limiter.allow(key(userId), REAUTH_MAX_FAILURES, REAUTH_WINDOW_MS, { peek: true })) {
-    throw problems.tooManyRequests('Too many incorrect password attempts — try again later');
+    throw problems.tooManyRequests(
+      'Too many incorrect password attempts — try again later',
+      // The window is a quarter hour, so a client left to guess at the wait
+      // guesses low and is refused again. `PROBLEM_CATALOG` promises the caller
+      // a number; this is where the number for these six prompts comes from.
+      limiter.retryAfterSeconds(key(userId), REAUTH_MAX_FAILURES, REAUTH_WINDOW_MS),
+    );
   }
   // No digest means an SSO-only account; callers reject that with their own
   // message, but an attempt against one still counts as a failed guess.

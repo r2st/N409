@@ -1,6 +1,12 @@
 import { PROBLEM_CATALOG } from '@n409/shared';
 import { SESSION_COOKIE } from '../auth/cookies.js';
 import { operationId, pathParameters } from './openapi.js';
+import {
+  rateLimitForOperation,
+  type DeploymentRateLimits,
+  type OperationRateLimit,
+  type RateLimitPolicy,
+} from './rateLimitPolicy.js';
 
 /**
  * OpenAPI 3.1 for the client/admin API, generated from the route table the
@@ -436,14 +442,96 @@ export function templatePath(path: string): string {
 
 const PROBLEM_REF = { $ref: '#/components/schemas/Problem' };
 
-function problemResponse(type: string): Record<string, unknown> {
+function problemResponse(type: string, headers?: Record<string, unknown>): Record<string, unknown> {
   const entry = PROBLEM_CATALOG[type];
   return {
     // Description straight from the catalog, so the spec's account of a failure
     // is the same sentence the published table gives and the same one the
     // `/api/v1/problems` endpoint serves. Three renderings, one source.
     description: entry ? `${entry.summary} ${entry.resolution}` : type,
+    ...(headers ? { headers } : {}),
     content: { 'application/problem+json': { schema: PROBLEM_REF } },
+  };
+}
+
+/**
+ * The header a refused caller backs off on.
+ *
+ * Declared on every 429 this document admits to, because the catalogue's own
+ * entry for the rate-limited type tells the reader to "wait the stated number
+ * of seconds — not a fixed timer of your own", and a spec that does not declare
+ * the header leaves a generated client reaching past its own types to find it.
+ * The same number is in the body as `retry_after_seconds`; a client that reads
+ * either is correct.
+ */
+const RETRY_AFTER_HEADER = {
+  'retry-after': {
+    schema: { type: 'integer' },
+    description: 'Seconds to wait before retrying. Mirrors `retry_after_seconds` in the body.',
+  },
+};
+
+/** Prose for one `x-ratelimit-*` header, keyed by its suffixed name. */
+function rateLimitHeaderSchema(name: string): Record<string, unknown> {
+  const scope = name.endsWith('-user')
+    ? 'your account'
+    : name.endsWith('-org')
+      ? 'your organisation'
+      : 'the heavy-operation budget';
+  const measure = name.endsWith('-cost') ? 'cost units' : 'requests';
+  if (name.startsWith('x-ratelimit-limit')) {
+    return { schema: { type: 'integer' }, description: `${measure} allowed per window for ${scope}.` };
+  }
+  if (name.startsWith('x-ratelimit-remaining')) {
+    return { schema: { type: 'integer' }, description: `${measure} left in this window for ${scope}.` };
+  }
+  return { schema: { type: 'integer' }, description: `Unix seconds when the window for ${scope} resets.` };
+}
+
+/**
+ * The `x-ratelimit-*` trio(s) an operation returns, as an OpenAPI headers map.
+ *
+ * Attached to the success response as well as to the 429, which is the entire
+ * point of them: a client that only reads its headroom off the rejection has
+ * already been rejected.
+ */
+function rateLimitHeaders(limit: OperationRateLimit): Record<string, unknown> | undefined {
+  if (limit.headers.length === 0) return undefined;
+  return Object.fromEntries(limit.headers.map((name) => [name, rateLimitHeaderSchema(name)]));
+}
+
+/** A policy as the `x-rate-limit` extension carries it — the numbers, flattened. */
+function policyExtension(policy: RateLimitPolicy): Record<string, unknown> {
+  return {
+    name: policy.name,
+    description: policy.description,
+    windows: policy.windows.map((window) => ({
+      limit: window.limit,
+      window_seconds: window.windowSeconds,
+      key: window.key,
+      ...(window.unit ? { unit: window.unit } : {}),
+    })),
+  };
+}
+
+/**
+ * `x-rate-limit` for one operation, or undefined when nothing limits it.
+ *
+ * An extension rather than prose because it is the half of this document a tool
+ * can act on: the numbers are exact, and a client that wants to pace itself
+ * needs them as numbers. `open` carries the reviewed sentence explaining why a
+ * public route has no ceiling, so "unlimited" is an argument rather than a gap.
+ */
+function rateLimitExtension(limit: OperationRateLimit): Record<string, unknown> | undefined {
+  if (limit.policies.length === 0) {
+    return limit.open ? { unlimited: true, reason: limit.open } : undefined;
+  }
+  return {
+    policies: limit.policies.map(policyExtension),
+    // Only meaningful where the heavy budget applies, and misleading as a zero
+    // everywhere else — an operation that costs nothing is not one that costs 0
+    // of a budget it never touches.
+    ...(limit.cost > 0 ? { cost_units: limit.cost } : {}),
   };
 }
 
@@ -491,7 +579,61 @@ export interface ClientOpenApiInput {
   authenticated: ReadonlySet<string>;
   /** Route key → why it is reachable without a session, from `PUBLIC_ROUTES`. */
   publicReasons: ReadonlyMap<string, string>;
+  /**
+   * The throttles this process installed over the authenticated surface, read
+   * off the limiter objects themselves — see `deploymentRateLimits`. Omitted
+   * entries publish no limit rather than a number nothing enforces.
+   */
+  rateLimits: DeploymentRateLimits;
   version: string;
+}
+
+/**
+ * The rate-limit section of the document's own description.
+ *
+ * Written from the policies this process installed, so a deployment that
+ * enforces nothing says so rather than reciting a ceiling from a config file it
+ * is not applying. The per-operation detail is in `x-rate-limit`; this is the
+ * paragraph that tells a reader the extension is there and what to do with a
+ * refusal.
+ */
+function rateLimitPreamble(limits: DeploymentRateLimits): string {
+  const installed = [limits.session, limits.organisation, limits.cost].filter(
+    (policy): policy is RateLimitPolicy => policy !== undefined,
+  );
+  const refusal =
+    'A refusal is a 429 carrying `retry-after` and, in the body, `retry_after_seconds` — the same ' +
+    'number twice. Wait it out rather than retrying on a timer of your own.';
+  if (installed.length === 0) {
+    return (
+      '## Rate limits\n\n' +
+      'This deployment installs no throttle over the authenticated surface, so no operation here ' +
+      'declares a 429 on that account. Individual public endpoints are limited regardless — each ' +
+      'says so in its own `x-rate-limit`. ' +
+      refusal
+    );
+  }
+  const lines = installed.map((policy) => {
+    const windows = policy.windows
+      .map(
+        (window) =>
+          `${window.limit} ${window.unit === 'cost-units' ? 'cost units' : 'requests'} per ` +
+          `${window.windowSeconds}s per ${window.key}`,
+      )
+      .join('; ');
+    return `- **${policy.name}** — ${windows}. ${policy.description}`;
+  });
+  return (
+    '## Rate limits\n\n' +
+    'Authenticated calls are governed by the counters below; unauthenticated ones by whatever their ' +
+    'own `x-rate-limit` names, which for many of them is nothing at all. Every operation carries an ' +
+    '`x-rate-limit` extension giving its counters as numbers, and — where the heavy budget applies — ' +
+    'what one call costs against it.\n\n' +
+    `${lines.join('\n')}\n\n` +
+    'Headroom comes back on the `x-ratelimit-*` response headers, on successful responses as well as ' +
+    'on the refusal, so a client can pace itself before it is turned away. ' +
+    refusal
+  );
 }
 
 /**
@@ -513,6 +655,14 @@ export function buildClientOpenApiDocument(input: ClientOpenApiInput): Record<st
 
     const authenticated = input.authenticated.has(key);
     const reason = input.publicReasons.get(key);
+    const limit = rateLimitForOperation({
+      method,
+      path,
+      authenticated,
+      limits: input.rateLimits,
+    });
+    const limitHeaders = rateLimitHeaders(limit);
+    const extension = rateLimitExtension(limit);
     const parameters = pathParameters(templatePath(path)).map((name) => ({
       name,
       in: 'path',
@@ -529,8 +679,18 @@ export function buildClientOpenApiDocument(input: ClientOpenApiInput): Record<st
       // reviewed sentence about why no session is needed. Everywhere else the
       // operation says nothing rather than saying something generated.
       ...(reason ? { description: `Reachable without a session: ${reason}.` } : {}),
+      // The numbers, as an extension a tool can read: which counters govern the
+      // call, what they are keyed on, and what it costs against the heavy
+      // budget. Absent entirely on an operation nothing limits and that carries
+      // no reviewed sentence saying why.
+      ...(extension ? { 'x-rate-limit': extension } : {}),
       responses: {
-        '2XX': { description: 'Success. Response bodies are not described by this document.' },
+        '2XX': {
+          description: 'Success. Response bodies are not described by this document.',
+          // On the success too, deliberately: a client that only reads its
+          // headroom off the rejection has already been rejected.
+          ...(limitHeaders ? { headers: limitHeaders } : {}),
+        },
         ...(authenticated
           ? {
               '401': problemResponse('urn:n409:problem:unauthorized'),
@@ -539,7 +699,19 @@ export function buildClientOpenApiDocument(input: ClientOpenApiInput): Record<st
           : {}),
         '404': problemResponse('urn:n409:problem:not-found'),
         '422': problemResponse('urn:n409:problem:validation'),
-        '429': problemResponse('urn:n409:problem:rate-limited'),
+        // Declared only where a limiter can actually refuse. Around forty
+        // operations on the unauthenticated surface have none — a liveness
+        // probe, a branding read, an OAuth return leg — and this document used
+        // to promise every one of them a 429, which is the same noise the test
+        // above refuses to accept for a 401 on the sign-in route.
+        ...(limit.policies.length > 0
+          ? {
+              '429': problemResponse('urn:n409:problem:rate-limited', {
+                ...RETRY_AFTER_HEADER,
+                ...(limitHeaders ?? {}),
+              }),
+            }
+          : {}),
         '500': problemResponse('urn:n409:problem:internal'),
       },
       // `security: []` is not the same as omitting the key: it explicitly clears
@@ -563,7 +735,8 @@ export function buildClientOpenApiDocument(input: ClientOpenApiInput): Record<st
         'validated inside the handlers rather than by a route schema, so this document describes ' +
         'them only at the tag level. Failures are uniform — an RFC 9457 problem document whose ' +
         '`type` vocabulary is served at GET /api/v1/problems. The partner API is documented ' +
-        'separately, with full schemas, at /api/partner/v1/openapi.json.',
+        'separately, with full schemas, at /api/partner/v1/openapi.json.\n\n' +
+        rateLimitPreamble(input.rateLimits),
     },
     servers: [{ url: '/' }],
     tags: API_TAGS.filter((tag) => usedTags.has(tag.name)),

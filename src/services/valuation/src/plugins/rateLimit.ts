@@ -335,6 +335,39 @@ export class SlidingWindowRateLimiter {
     return true;
   }
 
+  /**
+   * Seconds until this key is inside `limit` again — the number a refused
+   * caller should wait before retrying.
+   *
+   * A sliding window frees exactly one slot at a time, and the slot that frees
+   * next is the *oldest* hit still inside the window: once `times[0]` ages past
+   * `windowMs` the count drops below the limit and the next request is allowed.
+   * So the answer is `times[0] + windowMs - now`, floored at one second so a
+   * client is never told to retry immediately.
+   *
+   * This exists because `allow()` returns a boolean and a boolean cannot fill
+   * in a `retry-after`. Every 429 on the unauthenticated auth surface — sign-in,
+   * registration, password reset, invitation redemption — was raised without
+   * one, while `PROBLEM_CATALOG`'s own entry for the rate-limited type told the
+   * caller to "wait the stated number of seconds — not a fixed timer of your
+   * own". There was no stated number: the field the catalogue names is only
+   * emitted when the thrower supplies it. A client that followed the published
+   * advice found nothing to follow and fell back to the fixed timer the advice
+   * warns against, which on a fifteen-minute window means being refused again.
+   *
+   * Reported for a key that is not currently over its limit as `0`, so a caller
+   * can use the value directly as "nothing to wait for".
+   */
+  retryAfterSeconds(key: string, limit: number, windowMs: number, now: number = Date.now()): number {
+    const times = (this.hits.get(key)?.times ?? []).filter((t) => now - t < windowMs);
+    if (times.length < limit) return 0;
+    // `times` is ascending, so the head is the hit that ages out first. Take
+    // the slot that brings the count to `limit - 1`, which for a list at
+    // exactly the limit is the head and stays correct if it ever overshoots.
+    const freeing = times[times.length - limit]!;
+    return Math.max(1, Math.ceil((freeing + windowMs - now) / 1000));
+  }
+
   /** Number of tracked keys — for tests and diagnostics. */
   get size(): number {
     return this.hits.size;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { newUlid } from '@n409/shared';
 import { hashPassword } from '../../src/auth/password.js';
-import { REAUTH_MAX_FAILURES, verifyReauthPassword } from '../../src/auth/reauth.js';
+import { REAUTH_MAX_FAILURES, REAUTH_WINDOW_MS, verifyReauthPassword } from '../../src/auth/reauth.js';
 
 /**
  * The re-authentication throttle. The budget is process-wide and keyed by user
@@ -87,5 +87,23 @@ describe('verifyReauthPassword', () => {
     const started = performance.now();
     await expect(verifyReauthPassword(id, PASSWORD, digest)).rejects.toMatchObject({ status: 429 });
     expect(performance.now() - started).toBeLessThan(baseline / 2);
+  });
+
+  it('tells the caller how long the prompt stays shut', async () => {
+    // The window is a quarter of an hour, and the refusal used to carry no
+    // number at all — so the workspace showing this prompt had nothing to put
+    // in front of the user but "try again later", and `PROBLEM_CATALOG` was
+    // meanwhile telling clients to wait the stated number of seconds.
+    const id = userId();
+    for (let i = 0; i < REAUTH_MAX_FAILURES; i++) await guess(id, `wrong-${i}`);
+    await expect(verifyReauthPassword(id, PASSWORD, digest)).rejects.toMatchObject({
+      status: 429,
+      retryAfterSeconds: expect.any(Number),
+    });
+    const refused = await verifyReauthPassword(id, PASSWORD, digest).catch(
+      (err: { retryAfterSeconds: number }) => err,
+    );
+    expect(refused.retryAfterSeconds).toBeGreaterThan(0);
+    expect(refused.retryAfterSeconds).toBeLessThanOrEqual(REAUTH_WINDOW_MS / 1000);
   });
 });

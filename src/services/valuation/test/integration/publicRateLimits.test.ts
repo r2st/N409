@@ -236,3 +236,103 @@ describe.skipIf(!dbUp)('rate limits on the auth routes', () => {
     expect(info[20]).toBe(429);
   });
 });
+
+/**
+ * A refusal that says when to come back.
+ *
+ * `PROBLEM_CATALOG`'s entry for the rate-limited type tells the caller to "wait
+ * the stated number of seconds — not a fixed timer of your own", and every 429
+ * on this surface used to state nothing: the routes raise from
+ * `SlidingWindowRateLimiter.allow()`, which returns a boolean, and none of them
+ * passed a second argument to `problems.tooManyRequests`. So the client most
+ * likely to meet a throttle — an anonymous one, on sign-in or password
+ * recovery, against a fifteen-minute or hourly window — was told to read a
+ * field that was never sent, and fell back to exactly the fixed timer the
+ * advice warns against.
+ *
+ * Asserted on the real thresholds rather than an injected limiter, because the
+ * number being checked is a function of the window the deployment enforces.
+ */
+describe.skipIf(!dbUp)('a throttled auth route says how long to wait', () => {
+  let app: FastifyInstance;
+  let teardown: () => Promise<void>;
+
+  beforeAll(async () => {
+    const ctx = await setupTestApp({ AUTO_PIPELINE: 'off' });
+    app = ctx.app;
+    teardown = ctx.teardown;
+  });
+
+  afterAll(async () => {
+    await teardown?.();
+  });
+
+  /** Fires `request` until refused and returns the refusal. */
+  const refusal = async (request: Parameters<FastifyInstance['inject']>[0], ceiling: number) => {
+    for (let n = 0; n < ceiling; n++) {
+      const res = await app.inject(request);
+      if (res.statusCode === 429) return res;
+    }
+    throw new Error('never refused');
+  };
+
+  it.each([
+    [
+      'sign-in',
+      {
+        method: 'POST' as const,
+        url: '/api/v1/auth/login',
+        payload: { email: 'retry-after-login@test.example.com', password: 'Correct-Horse-Battery-Staple-9' },
+      },
+      15 * 60,
+    ],
+    [
+      'password reset',
+      {
+        method: 'POST' as const,
+        url: '/api/v1/auth/reset-password',
+        payload: { token: 'retry-after-guess', password: 'a-long-enough-password1' },
+      },
+      60 * 60,
+    ],
+    [
+      'invitation lookup',
+      {
+        method: 'POST' as const,
+        url: '/api/v1/auth/invite-info',
+        payload: { token: 'retry-after-guess' },
+      },
+      60 * 60,
+    ],
+  ])('%s carries retry-after in the header and the body', async (_name, request, windowSeconds) => {
+    const res = await refusal(request, 130);
+    const wait = Number(res.headers['retry-after']);
+    // The header the shared problem handler emits from `retryAfterSeconds` —
+    // absent entirely before this, because nothing supplied the number.
+    expect(Number.isInteger(wait)).toBe(true);
+    expect(wait).toBeGreaterThan(0);
+    // Never longer than the window itself: a wait past it would be describing a
+    // counter that is not the one doing the refusing.
+    expect(wait).toBeLessThanOrEqual(windowSeconds);
+    // And the same number in the body, which is where the catalogue points.
+    const body = res.json() as { type: string; retry_after_seconds?: number };
+    expect(body.type).toBe('urn:n409:problem:rate-limited');
+    expect(body.retry_after_seconds).toBe(wait);
+  });
+
+  it('reports the wait for the tightest counter, not the loosest', async () => {
+    // Sign-in checks ten per quarter hour per address and a hundred per quarter
+    // hour per caller. The refusal here is the per-address one, so the wait must
+    // be inside its window — reporting the other counter's would send the client
+    // back to be refused again.
+    const res = await refusal(
+      {
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        payload: { email: 'retry-after-window@test.example.com', password: 'Correct-Horse-Battery-Staple-9' },
+      },
+      130,
+    );
+    expect(Number(res.headers['retry-after'])).toBeLessThanOrEqual(15 * 60);
+  });
+});

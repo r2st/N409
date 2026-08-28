@@ -347,3 +347,65 @@ describe('SlidingWindowRateLimiter', () => {
     expect(limiter.allow('k', 1, HOUR, undefined, (now += 1))).toBe(false);
   });
 });
+
+/**
+ * The number a refused caller is told to wait.
+ *
+ * `allow()` returns a boolean, and every 429 on the unauthenticated auth
+ * surface was raised from one — with no second argument, so no `retry-after`
+ * header and no `retry_after_seconds` in the body. The published catalogue
+ * meanwhile tells the caller to "wait the stated number of seconds — not a
+ * fixed timer of your own", which on a fifteen-minute window is precisely the
+ * advice that cannot be followed without this.
+ */
+describe('SlidingWindowRateLimiter.retryAfterSeconds', () => {
+  const MINUTE = 60 * 1000;
+
+  it('is zero while the key still has headroom', () => {
+    const limiter = new SlidingWindowRateLimiter();
+    expect(limiter.retryAfterSeconds('k', 2, MINUTE, 0)).toBe(0);
+    limiter.allow('k', 2, MINUTE, undefined, 0);
+    expect(limiter.retryAfterSeconds('k', 2, MINUTE, 0)).toBe(0);
+  });
+
+  it('counts from the oldest hit still inside the window, not from now', () => {
+    // A sliding window frees exactly one slot at a time, and the slot that
+    // frees next is the head of the list. Two hits at t=0 and t=30s against a
+    // 60s window: the caller is back in at t=60s, thirty seconds from the
+    // second hit — not sixty.
+    const limiter = new SlidingWindowRateLimiter();
+    limiter.allow('k', 2, MINUTE, undefined, 0);
+    limiter.allow('k', 2, MINUTE, undefined, 30_000);
+    expect(limiter.retryAfterSeconds('k', 2, MINUTE, 30_000)).toBe(30);
+  });
+
+  it('never says zero to a caller it is refusing', () => {
+    // A window that expires in under a second still has to round up: telling a
+    // refused client to retry immediately is how a backoff loop becomes a spin.
+    const limiter = new SlidingWindowRateLimiter();
+    limiter.allow('k', 1, MINUTE, undefined, 0);
+    expect(limiter.allow('k', 1, MINUTE, undefined, MINUTE - 1)).toBe(false);
+    expect(limiter.retryAfterSeconds('k', 1, MINUTE, MINUTE - 1)).toBe(1);
+  });
+
+  it('agrees with the limiter about when the caller is let back in', () => {
+    // The property that matters: wait exactly what you were told, and the next
+    // request is allowed. Checked across a few limits rather than asserted once.
+    for (const limit of [1, 3, 10]) {
+      const limiter = new SlidingWindowRateLimiter();
+      let now = 0;
+      for (let i = 0; i < limit; i += 1) limiter.allow(`k${limit}`, limit, MINUTE, undefined, (now += 1_000));
+      expect(limiter.allow(`k${limit}`, limit, MINUTE, { peek: true }, now)).toBe(false);
+      const wait = limiter.retryAfterSeconds(`k${limit}`, limit, MINUTE, now);
+      expect(wait, `limit ${limit}`).toBeGreaterThan(0);
+      expect(limiter.allow(`k${limit}`, limit, MINUTE, { peek: true }, now + wait * 1_000)).toBe(true);
+    }
+  });
+
+  it('forgets a key whose window has passed', () => {
+    const limiter = new SlidingWindowRateLimiter();
+    limiter.allow('k', 1, MINUTE, undefined, 0);
+    expect(limiter.retryAfterSeconds('k', 1, MINUTE, 0)).toBe(60);
+    expect(limiter.retryAfterSeconds('k', 1, MINUTE, MINUTE)).toBe(0);
+  });
+});

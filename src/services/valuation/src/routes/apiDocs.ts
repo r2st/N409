@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { PROBLEM_CATALOG, buildInfo } from '@n409/shared';
 import { buildClientOpenApiDocument } from '../domain/apiCatalog.js';
+import type { DeploymentRateLimits } from '../domain/rateLimitPolicy.js';
 import { PUBLIC_ROUTES } from '../plugins/routeAudit.js';
 
 /**
@@ -19,7 +20,17 @@ import { PUBLIC_ROUTES } from '../plugins/routeAudit.js';
  * structures, the endpoints are cold, and a cached document is one more thing
  * that can be stale — the partner spec made the same call for the same reasons.
  */
-export function registerApiDocsRoutes(app: FastifyInstance): void {
+export function registerApiDocsRoutes(
+  app: FastifyInstance,
+  deps: {
+    /**
+     * The throttles `buildApp` installed, read off the limiter objects rather
+     * than off config — see `deploymentRateLimits`. Defaulted to none so a
+     * caller that installs no limiter publishes no ceiling.
+     */
+    rateLimits?: DeploymentRateLimits;
+  } = {},
+): void {
   /**
    * `PUBLIC_ROUTES` keyed the way `routeAudit` keys a route, so the generator
    * can attach each reason to the operation it was written about.
@@ -33,6 +44,7 @@ export function registerApiDocsRoutes(app: FastifyInstance): void {
       routes: app.routeAudit.all(),
       authenticated: new Set(app.routeAudit.authenticated()),
       publicReasons,
+      rateLimits: deps.rateLimits ?? {},
       // The build's commit, not a hand-kept number. A spec version that has to
       // be bumped by hand is a spec version that says 1.0.0 forever, and the
       // question a reader actually has — "is this the deployment I am calling"

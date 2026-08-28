@@ -109,6 +109,7 @@ import { registerSupportRoutes } from './routes/support.js';
 import { registerContactRoutes } from './routes/contact.js';
 import { registerAdminEventRoutes } from './routes/adminEvents.js';
 import { registerApiDocsRoutes } from './routes/apiDocs.js';
+import { deploymentRateLimits } from './domain/rateLimitPolicy.js';
 import { registerHelpRoutes } from './routes/help.js';
 import { registerBlogRoutes } from './routes/blog.js';
 import { registerCommunicationRoutes } from './routes/communications.js';
@@ -771,7 +772,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // R163 — the client API's own OpenAPI document and the error catalog behind
   // every problem+json body. Registered late so `routeAudit.all()` is complete
   // by the time either is served; both are pure reads of in-memory state.
-  registerApiDocsRoutes(app);
+  registerApiDocsRoutes(app, {
+    // Read off the limiter objects this build installed, so the published
+    // ceilings are the ones this process enforces rather than the ones its
+    // config would enforce somewhere else.
+    rateLimits: deploymentRateLimits({
+      session: sessionLimiter,
+      organisation: sessionOrgLimiter,
+      cost: costLimiter,
+    }),
+  });
   // P2 #10 — help / knowledge base
   registerHelpRoutes(app, { pool });
   // Design §16.2 — the public marketing blog, shaped on the help centre.

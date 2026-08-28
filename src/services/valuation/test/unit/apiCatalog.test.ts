@@ -22,6 +22,8 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { PUBLIC_ROUTES } from '../../src/plugins/routeAudit.js';
+import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
+import { deploymentRateLimits } from '../../src/domain/rateLimitPolicy.js';
 import {
   API_SECTIONS,
   API_TAGS,
@@ -59,6 +61,22 @@ afterAll(async () => {
   await pool?.end();
 });
 
+/**
+ * Production's throttles, passed explicitly.
+ *
+ * `buildApp` only installs these when `NODE_ENV` is production, and the
+ * document is honest about that — a deployment enforcing nothing publishes no
+ * ceiling and no 429. Generating the document here with none installed would
+ * therefore describe a surface the deployed service does not have.
+ * `rateLimitPolicyCensus.test.ts` owns the rate-limit half; this file just
+ * needs the document to look like the deployed one.
+ */
+const LIMITS = deploymentRateLimits({
+  session: new FixedWindowRateLimiter(300, 60_000),
+  organisation: new FixedWindowRateLimiter(1_500, 60_000),
+  cost: new WeightedWindowRateLimiter(200, 60_000),
+});
+
 const document = () =>
   buildClientOpenApiDocument({
     routes: app.routeAudit.all(),
@@ -66,6 +84,7 @@ const document = () =>
     publicReasons: new Map(
       PUBLIC_ROUTES.map((route) => [`${route.method.toUpperCase()} ${route.url}`, route.reason]),
     ),
+    rateLimits: LIMITS,
     version: 'test',
   });
 
