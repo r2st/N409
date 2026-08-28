@@ -1,0 +1,47 @@
+-- The AI-job reaper read every AI job ever run, on a timer, forever.
+--
+-- `reapStaleAiJobs` (repos/aiJobs.ts) settles the rows a restart orphaned:
+--
+--     SELECT * FROM ai_jobs
+--      WHERE status = 'running' AND created_at < now() - ($1 || ' seconds')::interval
+--      ORDER BY created_at ASC LIMIT $2 FOR UPDATE SKIP LOCKED
+--
+-- `ai_jobs` has three indexes and all of them lead with `valuation_id`; the
+-- partial one is `WHERE status = 'succeeded'`, which is the opposite half of the
+-- table from the one this wants. So the reaper's only plan was a sequential scan,
+-- and the interesting thing about it is what it scans: `status = 'running'` is
+-- true of a few dozen rows at any moment and false of every job the platform has
+-- ever completed. The work is entirely in the rows it throws away, and the number
+-- of those is the platform's whole history of AI pipeline runs.
+--
+-- It is a sweep, so nobody is waiting on it and it will never show up as a slow
+-- endpoint. It runs at boot and on an interval on every instance, which is the
+-- reason to fix it rather than to shrug: a query whose cost is "the entire table"
+-- and whose frequency is "every N seconds on every process" is the one that
+-- stops being free without anybody making a decision, and the first symptom is
+-- I/O the database is spending on nothing.
+--
+-- Measured at 25k jobs with 119 running (EXPLAIN ANALYZE, warm):
+--
+--     before  1.38 ms  1307 shared blocks   Seq Scan, Rows Removed by Filter 24,881
+--     after   0.04 ms   111 shared blocks   Bitmap Index Scan
+--
+-- The milliseconds are not the point at this size and the ratio is: the before
+-- number is linear in the table and the after number is linear in the backlog.
+--
+-- Partial on `status = 'running'` and keyed on `created_at`, which is both the
+-- age predicate and the ordering, so the reaper takes the oldest stale jobs off
+-- the front of the index without a sort. The index holds only jobs in flight,
+-- so it is a page or two in a steady state and shrinks as fast as the queue
+-- drains — the maintenance cost falls on the two writes that put a job into and
+-- out of `running`, and on nothing else.
+--
+-- `pipeline_runs` has the same reaper shape and is deliberately left alone: its
+-- `pipeline_runs_one_active_per_valuation_idx` is partial to exactly the three
+-- active statuses the sweep asks for, so that reaper already plans as a bitmap
+-- scan over the active rows (measured: 366 rows visited, 0.96 ms). The unique
+-- constraint it exists for happens to be the index this query needs.
+
+CREATE INDEX IF NOT EXISTS ai_jobs_running_idx
+    ON ai_jobs (created_at)
+    WHERE status = 'running';

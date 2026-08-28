@@ -1,0 +1,67 @@
+-- The retired-engagements console read `retention_actions` end to end, once per
+-- retired engagement, to fill in a reason column.
+--
+-- `listRetiredValuations` (repos/retention.ts) pairs each archived valuation
+-- with the archival that is still the last word on it:
+--
+--     LEFT JOIN LATERAL (
+--       SELECT ra.detail FROM retention_actions ra
+--        WHERE ra.data_type = 'valuation' AND ra.reference_id = v.id
+--          AND ra.action = 'archived'
+--        ORDER BY ra.created_at DESC LIMIT 1
+--     ) a ON true
+--
+-- `retention_actions` had two indexes: its primary key, and `(created_at DESC)`
+-- for the actions log. Nothing led with `reference_id`, so the subquery could
+-- only be answered by reading the whole table — and a LATERAL is evaluated once
+-- per row on its left, so that is one full scan of the retention ledger per
+-- archived engagement. An N+1 written in SQL rather than in JavaScript, which is
+-- why `listQueryScaling.test.ts` never saw it: the endpoint issues exactly one
+-- statement no matter how large the answer gets.
+--
+-- Two things made it worse than the shape suggests. `count(*) OVER ()` in the
+-- select list is a window over the matched set, so the `LIMIT 50` cannot stop
+-- the scan early — every archived row is visited to produce a page of fifty.
+-- And both sides grow together: the sweep archives engagements and writes a
+-- `retention_actions` row for each, so the left side of the loop and the table
+-- being scanned inside it increase in step, making this quadratic in the age of
+-- the platform.
+--
+-- The rewrite is in `listRetiredValuations` and is the other half of this: the
+-- page is taken first and the LATERAL hangs off the fifty rows that survive it,
+-- so the lookup runs fifty times instead of 4,444. The index is what makes each
+-- of those fifty a lookup rather than a scan; the rewrite is what stops there
+-- being 4,444 of them. Measured at 40k valuations, 4,444 of them archived, 20k
+-- retention actions all pointing at one (EXPLAIN ANALYZE, warm, both shapes
+-- verified to return the same fifty rows and the same `total`):
+--
+--                        no index                 with index
+--     flat        2784.86 ms  18,997,180 blk    26.37 ms  21,926 blk
+--     nested        43.14 ms     240,136 blk     8.80 ms   4,397 blk
+--
+-- Read the diagonal rather than the rows: 2785 ms and nineteen million blocks
+-- down to 8.8 ms and four thousand, a factor of 316 in time and 4,300 in I/O.
+-- Neither change alone gets there, and the two are not interchangeable — the
+-- index is worth 106x on its own and the rewrite 65x on its own, because they
+-- are fixing different halves. The rewrite reduces how many times the lookup
+-- runs; the index reduces what one run costs. Left flat, the console still
+-- reads 22k blocks to show fifty rows; left unindexed, it still runs fifty
+-- sequential scans.
+--
+-- Column order is the query's own: `data_type` and `action` are equality terms,
+-- `reference_id` is the correlated one, and `created_at DESC` supplies the
+-- `ORDER BY ... LIMIT 1` so the subquery stops at the first index entry instead
+-- of sorting the matches. `reference_id` sits between the two equalities rather
+-- than first because that is the order the planner wants — every leading column
+-- is an equality until `created_at` — and putting it first would leave
+-- `data_type` and `action` as recheck filters.
+--
+-- `data_type` is in the index rather than being made a partial predicate. The
+-- ledger holds five data types (0083) and the console asks about one, but
+-- `retentionSweep` writes all of them and the actions log reads across them; a
+-- partial index would serve one reader and leave the others where they were,
+-- for the sake of a few pages on a table that is small next to the ones it
+-- describes.
+
+CREATE INDEX IF NOT EXISTS retention_actions_reference_idx
+    ON retention_actions (data_type, reference_id, action, created_at DESC);

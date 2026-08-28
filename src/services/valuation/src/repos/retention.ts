@@ -236,12 +236,31 @@ export async function listRetiredValuations(
   // written once.
   const pattern = q === '' ? null : likeContains(q);
 
+  // The page is taken first and the reason is looked up against it, rather than
+  // the two being one flat select. A LATERAL is evaluated once per row on its
+  // left, and `count(*) OVER ()` is a window over the *matched* set, so the
+  // LIMIT cannot stop the scan early — written flat, the lookup ran once per
+  // archived engagement on the platform to fill in fifty cells. Nesting it
+  // makes the left side of the loop the page, which is the only side anything
+  // reads. Measured at 4,444 archived rows, with the index migration 0177 adds:
+  // 26.4 ms and 21,926 blocks flat against 8.8 ms and 4,397 nested, and 65x
+  // that again on a database where the index is missing.
+  //
+  // The window still counts the whole matched set — it is inside the subquery,
+  // where `WindowAgg` runs before `Limit` — so `total` means what it did.
   const { rows } = await pool.query<RetiredValuationRow & { total: string }>(
-    `SELECT v.id, v.number, v.company_name, v.kind, v.state, v.archived_at,
+    `SELECT p.id, p.number, p.company_name, p.kind, p.state, p.archived_at, p.total,
             a.detail ->> 'reason' AS retired_reason,
-            COALESCE((a.detail ->> 'manual')::boolean, false) AS retired_manually,
-            count(*) OVER () AS total
-       FROM valuations v
+            COALESCE((a.detail ->> 'manual')::boolean, false) AS retired_manually
+       FROM (
+         SELECT v.id, v.number, v.company_name, v.kind, v.state, v.archived_at,
+                count(*) OVER () AS total
+           FROM valuations v
+          WHERE v.archived_at IS NOT NULL
+            AND ($1::text IS NULL OR v.company_name ILIKE $1 ESCAPE '\\' OR v.id = $2)
+          ORDER BY v.archived_at DESC
+          LIMIT $3
+       ) p
        -- The archival that is still the last word on this row. LATERAL rather
        -- than a join on max(created_at): two archivals of the same id (retired,
        -- restored, retired again) would otherwise multiply the valuation.
@@ -249,15 +268,15 @@ export async function listRetiredValuations(
          SELECT ra.detail
            FROM retention_actions ra
           WHERE ra.data_type = 'valuation'
-            AND ra.reference_id = v.id
+            AND ra.reference_id = p.id
             AND ra.action = 'archived'
           ORDER BY ra.created_at DESC
           LIMIT 1
        ) a ON true
-      WHERE v.archived_at IS NOT NULL
-        AND ($1::text IS NULL OR v.company_name ILIKE $1 ESCAPE '\\' OR v.id = $2)
-      ORDER BY v.archived_at DESC
-      LIMIT $3`,
+      -- Repeated on the outside because a join does not promise to preserve its
+      -- input's order, however reliably a nested loop happens to. Fifty rows,
+      -- already in order, so it is a free assertion rather than a second sort.
+      ORDER BY p.archived_at DESC`,
     [pattern, q, limit],
   );
 
