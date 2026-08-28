@@ -77,7 +77,6 @@ const IN_FLIGHT = [
   /^!?\(?\s*refreshing\b/,
   /^!?\(?\s*retrying\b/,
   /^!?\(?\s*queueBusy\b/,
-  /^!?\(?\s*queueBusy\b/,
   /^!?\(?\s*agentPhase\b/,
   /^!?\(?\s*state === 'busy'/,
   /^!?\(?\s*download\.\w+/,
