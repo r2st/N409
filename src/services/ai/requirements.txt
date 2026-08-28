@@ -14,3 +14,24 @@ httpx>=0.28
 # changes (see the PREV_SHA diff in section 5), so raising this number is also
 # the thing that schedules the reinstall that retires the vulnerable build.
 pypdf>=6.15.0
+
+# Imported directly by app code, and until R195 declared by nobody.
+#
+# All three arrive anyway as FastAPI's transitive closure, which is exactly the
+# problem: the version this service runs was chosen by *FastAPI's* ranges, not
+# by anything written here, and a resolver is free to satisfy them at the floor.
+# `starlette` permits `anyio>=3.6.2`, so a fresh install was entitled to hand
+# `app/limits.py` an anyio three major lines below the one it was written
+# against. Declaring them says what this service actually accepts, and puts them
+# in pip-audit's `-r` resolution as first-class lines rather than as whatever
+# FastAPI happened to drag in.
+#
+#   pydantic    app/main.py — BaseModel, ConfigDict, Field (v2 API)
+#   starlette   app/errors.py — StarletteHTTPException
+#   anyio       app/limits.py — to_thread.current_default_thread_limiter()
+#
+# Floors match FastAPI's own for the two it still declares, so this constrains
+# without narrowing what was already resolvable.
+pydantic>=2.9
+starlette>=0.46
+anyio>=4.0

@@ -11,3 +11,16 @@ uvicorn>=0.32
 # removing this. The switch is read per call, so it takes effect on a restart
 # with no rebuild, and it leaves the /market-feed route working.
 yfinance>=0.2
+
+# Imported directly by app code, and until R195 declared by nobody. See the
+# matching block in ../ai/requirements.txt for why a transitive arrival is not a
+# declaration — `starlette` permits `anyio>=3.6.2`, so a fresh install was
+# entitled to hand `app/limits.py` an anyio three major lines below the one it
+# was written against.
+#
+#   pydantic    app/main.py — BaseModel, Field (v2 API)
+#   starlette   app/errors.py — StarletteHTTPException
+#   anyio       app/limits.py — to_thread.current_default_thread_limiter()
+pydantic>=2.9
+starlette>=0.46
+anyio>=4.0

@@ -141,11 +141,28 @@ jobs:
           python -m pip install --upgrade pip pip-audit
           pip-audit -r src/services/ai/requirements.txt
           pip-audit -r src/services/engine-wrapper/requirements.txt
+      # The one thing in this pipeline that was never verified was the
+      # verifier. `curl ... | tar -xz` streams a release asset straight into an
+      # extractor and then executes it, in a job that has the whole repository
+      # and the workflow token in scope — so whoever can change what that URL
+      # serves (a re-tagged release, a compromised release token, a proxy in
+      # front of the runner) runs code here, and nothing downstream would say
+      # so. A tag is a mutable pointer; a digest is not.
+      #
+      # Downloading to a file first is the load-bearing half: a pipeline cannot
+      # be checked before its consumer has already read it. The digest below is
+      # the one gitleaks publishes in gitleaks_8.21.2_checksums.txt, confirmed
+      # against a separately fetched copy of the asset on 2026-08-28. Bumping
+      # GL_VERSION without bumping GL_SHA256 fails the step rather than
+      # silently trusting the new bytes.
       - name: gitleaks (committed secret scan)
         run: |
           GL_VERSION=8.21.2
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_x64.tar.gz" \
-            | tar -xz -C /tmp gitleaks
+          GL_SHA256=5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba
+          curl -sSL --retry 3 --fail -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_x64.tar.gz"
+          echo "${GL_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           /tmp/gitleaks detect --source . --redact --no-banner --config .gitleaks.toml
 
   docker:
