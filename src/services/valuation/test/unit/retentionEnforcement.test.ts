@@ -91,7 +91,9 @@ describe('the retention policies that do something, and the ones that do not', (
 
   it('backs every enforced claim with a branch in the sweep', () => {
     const named = typesNamedBySweep();
-    const claimed = (Object.entries(RETENTION_ENFORCEMENT) as [RetentionDataType, { archives: boolean; purges: boolean }][])
+    const claimed = (
+      Object.entries(RETENTION_ENFORCEMENT) as [RetentionDataType, { archives: boolean; purges: boolean }][]
+    )
       .filter(([, e]) => e.archives || e.purges)
       .map(([t]) => t);
     for (const type of claimed) {
@@ -104,7 +106,9 @@ describe('the retention policies that do something, and the ones that do not', (
     // a `document` branch and the console keeps telling operators the setting
     // is not enforced.
     const named = typesNamedBySweep();
-    const inert = (Object.entries(RETENTION_ENFORCEMENT) as [RetentionDataType, { archives: boolean; purges: boolean }][])
+    const inert = (
+      Object.entries(RETENTION_ENFORCEMENT) as [RetentionDataType, { archives: boolean; purges: boolean }][]
+    )
       .filter(([, e]) => !e.archives && !e.purges)
       .map(([t]) => t);
     const acted = inert.filter((t) => named.has(t));

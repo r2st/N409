@@ -185,6 +185,14 @@ export function CapTableSyncPanel({
                   <Button
                     variant="secondary"
                     disabled={!p.configured || busy === p.provider}
+                    // "Not configured on this deployment" is beside the button
+                    // but not on it: a reader who has tabbed to the control is
+                    // told nothing about why it will not take the press.
+                    title={
+                      p.configured
+                        ? undefined
+                        : `${p.label} has no credentials on this deployment, so it cannot be connected here.`
+                    }
                     onClick={() => connect(p.provider)}
                   >
                     Connect {p.label}

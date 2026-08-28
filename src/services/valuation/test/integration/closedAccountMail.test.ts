@@ -60,8 +60,8 @@ describe.skipIf(!dbUp)('mail addressed to a closed account', () => {
   }
 
   const statusOf = async (id: string) =>
-    (await ctx.pool.query<{ status: string }>('SELECT status FROM email_outbox WHERE id = $1', [id]))
-      .rows[0]!.status;
+    (await ctx.pool.query<{ status: string }>('SELECT status FROM email_outbox WHERE id = $1', [id])).rows[0]!
+      .status;
 
   it('is not delivered by the retry sweep after the account is closed', async () => {
     const user = await seedUser(ctx, { roles: [] });

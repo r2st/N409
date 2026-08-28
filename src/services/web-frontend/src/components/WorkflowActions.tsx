@@ -83,7 +83,22 @@ export function WorkflowActions({
         <Button disabled={busy || !next} onClick={() => void run('advance')}>
           {next ? `Advance → ${STATE_LABELS[next]}` : 'No next step'}
         </Button>
-        <Button variant="secondary" disabled={busy || !canRestart} onClick={() => void run('restart')}>
+        <Button
+          variant="secondary"
+          disabled={busy || !canRestart}
+          // The two states it refuses are not visible from the button. A
+          // published engagement is the one a restart would be most damaging
+          // on, and "already at the start" is the other — neither is guessable
+          // from a control that is simply grey.
+          title={
+            valuation.state === 'published'
+              ? 'A published valuation cannot be restarted. Clone it instead.'
+              : valuation.state === 'started'
+                ? 'This engagement is already at the first stage.'
+                : 'Send this engagement back to the first stage.'
+          }
+          onClick={() => void run('restart')}
+        >
           Restart
         </Button>
       </div>
@@ -111,6 +126,17 @@ export function WorkflowActions({
         <Button
           variant="secondary"
           disabled={busy || optionsFailed || (reviewerId || null) === valuation.assigned_reviewer_id}
+          // Two different refusals behind one grey button: the roster never
+          // arrived, or the picker still names the reviewer already assigned.
+          // The second is the confusing one — the control looks broken when
+          // in fact there is nothing to apply.
+          title={
+            optionsFailed
+              ? 'The reviewer list could not be loaded, so there is nothing to choose from.'
+              : (reviewerId || null) === valuation.assigned_reviewer_id
+                ? 'This is already the assigned reviewer. Pick a different one to reassign.'
+                : undefined
+          }
           onClick={() => void run('reassign', { reviewer_id: reviewerId || null })}
         >
           Reassign

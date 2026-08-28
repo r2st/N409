@@ -6,6 +6,8 @@ import { canManageUsers } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findUserById } from '../repos/users.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
+import type { AdminEventType } from '../domain/auditTrail.js';
 import {
   isDueForArchival,
   RETENTION_DATA_TYPES,
@@ -290,6 +292,11 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
       enabled: parsed.data.enabled,
       updatedBy: principal.id,
     });
+    await audit(principal.id, 'retention_policy_updated', 'retention_policy', null, dataType, {
+      archive_after_days: parsed.data.archive_after_days,
+      retention_days: parsed.data.retention_days,
+      enabled: parsed.data.enabled,
+    });
     return { policy };
   });
 
@@ -334,6 +341,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
     const principal = requireAdmin(req);
     const { id } = req.params as { id: string };
     if (!(await releaseHold(deps.pool, id, principal.id))) throw problems.notFound();
+    await audit(principal.id, 'legal_hold_released', 'legal_hold', id, null);
     return { released: true };
   });
 
@@ -429,6 +437,9 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
       // or never. `valuation.retired` is the only terminal event on that API
       // and this is one of the two things that produces it.
       await firePartnerWebhooksForRetirement({ pool: deps.pool, log: app.log }, [id]);
+      await audit(principal.id, 'valuation_retired', 'valuation', id, valuation.company_name, {
+        reason: parsed.data.reason ?? null,
+      });
     }
     return { retired, valuation: await findValuationById(deps.pool, id) };
   });
@@ -518,6 +529,10 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
             },
           },
         ]);
+        await audit(principal.id, 'valuation_restored', 'valuation', id, valuation.company_name, {
+          archived_at: valuation.archived_at.toISOString(),
+          acknowledged_rearchival: parsed.data.acknowledge_rearchival === true,
+        });
       }
       return { restored, valuation: await findValuationById(deps.pool, id) };
     },

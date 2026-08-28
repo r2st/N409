@@ -373,7 +373,20 @@ export function ReportTab() {
                   >
                     {busy === 'draft' ? 'Drafting…' : 'Draft with AI'}
                   </Button>
-                  <Button variant="secondary" onClick={() => void render()} disabled={busy !== null || dirty}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => void render()}
+                    disabled={busy !== null || dirty}
+                    // Rendering an unsaved body would produce a PDF of the
+                    // stored version while the screen shows a newer one — the
+                    // reason the button is blocked, and not something the
+                    // reader can infer from a grey control beside their edits.
+                    title={
+                      dirty
+                        ? 'Save your edits first — a render reads the stored body, not what is on screen.'
+                        : 'Render the current body to a PDF.'
+                    }
+                  >
                     {busy === 'render' ? 'Rendering…' : 'Render PDF'}
                   </Button>
                   <Button

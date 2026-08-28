@@ -1445,63 +1445,21 @@ export function Pagination({
   );
 }
 
-const toastTone = {
-  success: 'border-bond-200 bg-bond-50 text-bond-800',
-  error: 'border-red-200 bg-red-50 text-red-800',
-  info: 'border-ink-200 bg-surface text-ink-800',
-} as const;
-
-/**
- * Lightweight controlled toast (audit F-4 P3). Announces via `role=status`
- * (errors as `alert`) and auto-dismisses after `duration` ms; the parent owns
- * visibility so it stays trivially testable without a global provider.
+/*
+ * There is no Toast here any more.
+ *
+ * One shipped in the F-4 audit — a controlled, `role=status` floating banner —
+ * and in the whole product nothing ever rendered it. Fifty-odd surfaces answer
+ * the same need with `SuccessNote` and `ErrorNote` placed beside the control
+ * that caused the outcome, which is the better answer for this app and is why
+ * nobody reached for the floating one: a note next to the button says *which*
+ * save succeeded, and a banner at the bottom of the viewport does not.
+ *
+ * Written down rather than silently deleted so the next person to want a toast
+ * knows one existed, why it went, and what to use instead. If a genuine need
+ * turns up — a background job finishing while the reader is elsewhere on the
+ * page — it wants a provider and a queue, not this component back.
  */
-export function Toast({
-  message,
-  tone = 'info',
-  onDismiss,
-  duration = 4000,
-}: {
-  message: ReactNode;
-  tone?: keyof typeof toastTone;
-  onDismiss?: () => void;
-  duration?: number;
-}) {
-  useEffect(() => {
-    if (!onDismiss || duration <= 0) return;
-    const timer = setTimeout(onDismiss, duration);
-    return () => clearTimeout(timer);
-  }, [onDismiss, duration, message]);
-
-  return (
-    <div
-      role={tone === 'error' ? 'alert' : 'status'}
-      className={`fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-2.5 text-sm font-medium shadow-lift ${toastTone[tone]}`}
-    >
-      <span>{message}</span>
-      {onDismiss && (
-        <button
-          type="button"
-          aria-label="Dismiss"
-          onClick={onDismiss}
-          className="tap-area rounded p-0.5 text-current/60 hover:text-current"
-        >
-          <svg
-            aria-hidden="true"
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <path d="M5 5l14 14M19 5L5 19" strokeLinecap="round" />
-          </svg>
-        </button>
-      )}
-    </div>
-  );
-}
 
 /**
  * Wraps a region of write controls so one condition closes all of them.

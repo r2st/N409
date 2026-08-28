@@ -149,6 +149,11 @@ export function EngagementTab() {
             <Button
               onClick={() => void advance()}
               disabled={busy || view.engagement.current_stage === 'complete'}
+              title={
+                view.engagement.current_stage === 'complete'
+                  ? 'This engagement is at its final stage — there is nothing after complete.'
+                  : undefined
+              }
             >
               Advance to next stage
             </Button>

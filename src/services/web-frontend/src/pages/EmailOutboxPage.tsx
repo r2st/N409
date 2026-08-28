@@ -177,7 +177,14 @@ function DeliveryTrail({ email }: { email: OutboxEmail }) {
               Loading the delivery trail…
             </p>
           )}
-          {error && <p className="text-xs text-red-600">{error}</p>}
+          {/* A live region, not just red text: this appears after the reader
+              pressed "Delivery trail", by which point focus is on that button
+              and nothing would say the fetch had failed. */}
+          {error && (
+            <p role="alert" className="text-xs text-red-600">
+              {error}
+            </p>
+          )}
           {events !== null && events.length === 0 && !error && (
             <p className="text-xs text-ink-400">
               Nothing reported back yet — the relay accepted it and no provider signal has arrived.

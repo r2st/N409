@@ -790,6 +790,16 @@ export function ValuationsPage() {
             // Blocked only for the action the missing roster actually breaks:
             // setting state in bulk does not read the roster and stays usable.
             disabled={bulkBusy || (bulkAction === 'assign_reviewer' && reviewersFailed)}
+            // The roster failure greys the picker beside this button and says
+            // nothing, so Apply went grey too with no stated reason. Which
+            // matters more here than most: the action being refused is the one
+            // that, run against an empty roster, would have unassigned every
+            // selected engagement.
+            title={
+              bulkAction === 'assign_reviewer' && reviewersFailed
+                ? 'The reviewer list could not be loaded, so there is nobody to assign. Reload to try again.'
+                : undefined
+            }
             onClick={() => void applyBulk()}
           >
             {bulkBusy ? 'Applying…' : 'Apply'}

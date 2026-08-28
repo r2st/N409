@@ -212,10 +212,9 @@ describe.skipIf(!dbUp)('the email outbox retention policy', () => {
         subject: 'Queued',
         body: 'Body',
       });
-      await ctx.pool.query(
-        `UPDATE email_outbox SET created_at = now() - interval '900 days' WHERE id = $1`,
-        [stranded.id],
-      );
+      await ctx.pool.query(`UPDATE email_outbox SET created_at = now() - interval '900 days' WHERE id = $1`, [
+        stranded.id,
+      ]);
       await setPolicy('email_outbox', { archive_after_days: null, retention_days: 730, enabled: true });
 
       expect((await runRetentionSweep(ctx.pool)).purged).toBe(0);
@@ -272,10 +271,12 @@ describe.skipIf(!dbUp)('the email outbox retention policy', () => {
     const byType = new Map<string, { archives: boolean; purges: boolean; note: string }>(
       res
         .json()
-        .policies.map((p: { data_type: string; enforcement: { archives: boolean; purges: boolean; note: string } }) => [
-          p.data_type,
-          p.enforcement,
-        ]),
+        .policies.map(
+          (p: { data_type: string; enforcement: { archives: boolean; purges: boolean; note: string } }) => [
+            p.data_type,
+            p.enforcement,
+          ],
+        ),
     );
     expect(byType.get('email_outbox')).toMatchObject({ purges: true });
     expect(byType.get('valuation')).toMatchObject({ archives: true });

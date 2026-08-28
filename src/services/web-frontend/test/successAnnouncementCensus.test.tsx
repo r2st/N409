@@ -69,7 +69,7 @@ function tagEnd(src: string, i: number): number {
 const OUTCOME_FLAG =
   /\{(\w*(?:saved|Saved|sent|Sent|copied|Copied|done|Done|note|Note|ok|Ok)\w*)\s*&&\s*\(?\s*</g;
 
-const ANNOUNCED = /role="status"|role="alert"|aria-live|<ErrorNote|<SuccessNote|<Toast/;
+const ANNOUNCED = /role="status"|role="alert"|aria-live|<ErrorNote|<SuccessNote/;
 
 /**
  * Two matches of the shape that are not confirmations, and would be wrong to

@@ -37,9 +37,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC = join(here, '../../src');
 
-type Verdict =
-  | { writesState: true; guard: string }
-  | { writesState: false; because: string };
+type Verdict = { writesState: true; guard: string } | { writesState: false; because: string };
 
 /**
  * Keyed by the file and the third argument — the fields being written — because
@@ -64,7 +62,7 @@ const DECIDED: Record<string, Verdict> = {
     // `state` is in OPS_PATCH_FIELDS, so a PATCH body can carry it. `If-Match`
     // stays opt-in for an ordinary field save and cannot be for this: the
     // `state_changed` event records the caller's read as the `from` of the move.
-    guard: "expectedVersion defaults to valuation.version whenever the body carries `state`",
+    guard: 'expectedVersion defaults to valuation.version whenever the body carries `state`',
   },
   'routes/workflow.ts :: { assigned_reviewer_id: reviewerId }': {
     writesState: false,
@@ -198,9 +196,7 @@ describe('every writer that can move a valuation state', () => {
     for (const call of CALLS) {
       const verdict = DECIDED[call.key]!;
       if (!verdict.writesState) continue;
-      expect(call.options, `${call.key} writes state without a version guard`).toContain(
-        'expectedVersion',
-      );
+      expect(call.options, `${call.key} writes state without a version guard`).toContain('expectedVersion');
     }
   });
 

@@ -67,13 +67,27 @@ const candidate = (n: number, frozen = false) => ({
 
 const of = (calls: Recorded[], fragment: string) => calls.filter((c) => c.sql.includes(fragment));
 
+/*
+ * `purged: 0` in every expectation below, and deliberately so.
+ *
+ * The sweep gained a third counter when outbox purging was added, and it is
+ * separate from `archived` because "nothing was purged" has to be tellable
+ * from "nothing was eligible". These fixtures seed the *valuation* policy
+ * only, so `sweepOutbox` finds no `email_outbox` policy and returns before it
+ * queries — which is what the fake pool, whose default branch throws on an
+ * unexpected statement, is quietly proving.
+ *
+ * Asserted rather than dropped from the comparison: `toEqual` on the whole
+ * result is what pins the shape, and a sweep that silently grew a fourth
+ * counter should fail here and be described, not absorbed.
+ */
 describe('runRetentionSweep batching', () => {
   it('archives any number of candidates in one UPDATE and one INSERT', async () => {
     const { pool, calls } = fakePool(Array.from({ length: 250 }, (_, i) => candidate(i)));
 
     const result = await runRetentionSweep(pool);
 
-    expect(result).toEqual({ archived: 250, skipped_hold: 0 });
+    expect(result).toEqual({ archived: 250, skipped_hold: 0, purged: 0 });
     expect(of(calls, 'UPDATE valuations')).toHaveLength(1);
     expect(of(calls, 'INSERT INTO retention_actions')).toHaveLength(1);
     // And one lookup for the retirement webhooks, over the whole batch rather
@@ -89,7 +103,7 @@ describe('runRetentionSweep batching', () => {
 
     const result = await runRetentionSweep(pool);
 
-    expect(result).toEqual({ archived: 2, skipped_hold: 2 });
+    expect(result).toEqual({ archived: 2, skipped_hold: 2, purged: 0 });
     // The frozen pair is never named in the UPDATE, not merely absent from the count.
     const [update] = of(calls, 'UPDATE valuations');
     expect(update!.params[0]).toEqual([candidate(1).id, candidate(3).id]);
@@ -123,7 +137,7 @@ describe('runRetentionSweep batching', () => {
 
     const result = await runRetentionSweep(pool);
 
-    expect(result).toEqual({ archived: 1, skipped_hold: 0 });
+    expect(result).toEqual({ archived: 1, skipped_hold: 0, purged: 0 });
     const [insert] = of(calls, 'INSERT INTO retention_actions');
     expect(insert!.params).toContain(candidate(1).id);
     expect(insert!.params).not.toContain(candidate(2).id);
@@ -132,7 +146,7 @@ describe('runRetentionSweep batching', () => {
   it('writes nothing when the pass finds no candidates', async () => {
     const { pool, calls } = fakePool([]);
 
-    expect(await runRetentionSweep(pool)).toEqual({ archived: 0, skipped_hold: 0 });
+    expect(await runRetentionSweep(pool)).toEqual({ archived: 0, skipped_hold: 0, purged: 0 });
     // An empty VALUES list is a syntax error, so the no-op must be in the repo
     // and not in a loop that happens to run zero times.
     expect(of(calls, 'UPDATE valuations')).toHaveLength(0);
@@ -155,7 +169,7 @@ describe('runRetentionSweep batching', () => {
         }),
       } as unknown as pg.Pool;
 
-      expect(await runRetentionSweep(pool)).toEqual({ archived: 0, skipped_hold: 0 });
+      expect(await runRetentionSweep(pool)).toEqual({ archived: 0, skipped_hold: 0, purged: 0 });
       expect(calls).toHaveLength(1);
     }
   });

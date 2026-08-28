@@ -199,8 +199,19 @@ export function SavedViews() {
       </Select>
 
       {/* Saving an empty filter set would store "everything", which the
-          unfiltered list already is. */}
-      <Button variant="secondary" onClick={() => setSaveOpen(true)} disabled={!current}>
+          unfiltered list already is. Said on the control as well as here: the
+          reason was written down for whoever reads the source and nowhere at
+          all for the person looking at the greyed button. */}
+      <Button
+        variant="secondary"
+        onClick={() => setSaveOpen(true)}
+        disabled={!current}
+        title={
+          current
+            ? 'Save the current filters, sort and tab as a named view.'
+            : 'Set a filter, sort or tab first — an empty view is the unfiltered list.'
+        }
+      >
         Save this view
       </Button>
 

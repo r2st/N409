@@ -158,6 +158,13 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
                 <Button
                   variant="secondary"
                   disabled={!p.configured || busy === p.provider}
+                  // As in CapTableSyncPanel: the status text sits next to the
+                  // button, never on it.
+                  title={
+                    p.configured
+                      ? undefined
+                      : `${p.label} has no credentials on this deployment, so it cannot be connected here.`
+                  }
                   onClick={() => connect(p.provider)}
                 >
                   Connect {p.label}

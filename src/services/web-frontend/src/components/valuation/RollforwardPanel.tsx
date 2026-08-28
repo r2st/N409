@@ -100,6 +100,15 @@ interface AdjustmentDraft {
   amount: string;
 }
 
+/**
+ * How many adjustments one rollforward carries.
+ *
+ * A cap the button used to enforce silently: it stopped working at ten with
+ * nothing on the page mentioning a limit. Named here so the refusal and the
+ * sentence explaining it cannot drift apart.
+ */
+const MAX_ADJUSTMENTS = 10;
+
 const STEP_LABELS: Record<string, string> = {
   prior_equity_value: 'Prior concluded equity value',
   new_round_post_money: 'New priced round supersedes the prior value',
@@ -299,7 +308,7 @@ export function RollforwardPanel({
     setAdjustments((rows) =>
       // Keyed off a monotonic counter rather than the index, so removing a row
       // above an edited one doesn't hand its state to its neighbour.
-      rows.length >= 10 ? rows : [...rows, { key: nextKey++, label: '', pct: '', amount: '' }],
+      rows.length >= MAX_ADJUSTMENTS ? rows : [...rows, { key: nextKey++, label: '', pct: '', amount: '' }],
     );
   const setAdjustment = (key: number, patch: Partial<AdjustmentDraft>) =>
     setAdjustments((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -482,7 +491,18 @@ export function RollforwardPanel({
             <Button onClick={rollForward} disabled={busy || !datedForRun || noCandidates || candidatesFailed}>
               Run rollforward
             </Button>
-            <Button variant="ghost" onClick={addAdjustment} disabled={adjustments.length >= 10}>
+            <Button
+              variant="ghost"
+              onClick={addAdjustment}
+              disabled={adjustments.length >= MAX_ADJUSTMENTS}
+              // The cap was invisible: the button simply stopped working at
+              // ten, with nothing on the page mentioning a limit.
+              title={
+                adjustments.length >= MAX_ADJUSTMENTS
+                  ? `A rollforward carries at most ${MAX_ADJUSTMENTS} adjustments. Combine two, or remove one to add another.`
+                  : undefined
+              }
+            >
               Add an adjustment
             </Button>
           </div>

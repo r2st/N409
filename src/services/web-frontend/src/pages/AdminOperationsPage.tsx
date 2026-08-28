@@ -512,6 +512,11 @@ export function AdminOperationsPage() {
           <button
             type="button"
             disabled={replayable.length === 0}
+            title={
+              replayable.length === 0
+                ? 'Every failed delivery here is one the server would refuse to replay.'
+                : 'Tick every row the server would accept.'
+            }
             onClick={() => setSelected(new Set(replayable.map((d) => d.id)))}
             className="tap-area cursor-pointer text-sm font-semibold text-bond-600 hover:text-bond-700 disabled:cursor-not-allowed disabled:text-ink-300"
           >

@@ -60,6 +60,9 @@ function StepRow({ step }: { step: CalculationStep }) {
         disabled={!hasPayload}
         onClick={() => setOpen((v) => !v)}
         aria-expanded={hasPayload ? open : undefined}
+        // Absent the caret there is nothing to distinguish "this step recorded
+        // nothing" from "this row is broken".
+        title={hasPayload ? undefined : 'This step recorded no inputs or outputs to inspect.'}
         className="touch:min-h-11 flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-left text-sm enabled:cursor-pointer enabled:hover:bg-paper-100"
       >
         <span className="tnum w-5 shrink-0 text-xs text-ink-400">{step.seq}</span>

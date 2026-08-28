@@ -193,6 +193,16 @@ const REVIEWED: Record<string, string[]> = {
   'src/services/valuation/src/repos/systemSettings.ts': ['values'],
   'src/services/valuation/src/repos/tasks.ts': ['whereSql'],
 
+  // `eligible` / `frozen`: the outbox purge's two predicate fragments, declared
+  // as template literals a few lines above the statements that embed them and
+  // holding no interpolation of their own — every value is `$1` (retention
+  // days), `$2` (max attempts) or `$3` (the batch limit), and both statements
+  // number them the same way on purpose. The reason they are fragments at all
+  // is that the count and the delete must ask the same question: two spellings
+  // of "eligible" is how an operator's "how much is your hold holding" stops
+  // describing the rows the delete actually skipped.
+  'src/services/valuation/src/repos/retention.ts': ['eligible', 'frozen'],
+
   // Two fixed spellings chosen by a boolean.
   'src/services/valuation/src/repos/boardApprovals.ts': ['approvedAt'],
 
