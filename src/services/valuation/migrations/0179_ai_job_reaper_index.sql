@@ -41,6 +41,13 @@
 -- active statuses the sweep asks for, so that reaper already plans as a bitmap
 -- scan over the active rows (measured: 366 rows visited, 0.96 ms). The unique
 -- constraint it exists for happens to be the index this query needs.
+--
+-- Not CONCURRENTLY: db/migrate.ts wraps each file in BEGIN/COMMIT and CREATE
+-- INDEX CONCURRENTLY cannot run inside a transaction block. Same trade as every
+-- index since 0056 — a SHARE lock that blocks writes while it builds. `ai_jobs`
+-- is written once per pipeline step, so a build long enough to matter would
+-- stall the AI pipeline rather than a person; the partial predicate keeps the
+-- index itself to a page or two, but the build still reads the whole table.
 
 CREATE INDEX IF NOT EXISTS ai_jobs_running_idx
     ON ai_jobs (created_at)

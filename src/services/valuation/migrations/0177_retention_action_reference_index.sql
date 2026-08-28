@@ -62,6 +62,12 @@
 -- partial index would serve one reader and leave the others where they were,
 -- for the sake of a few pages on a table that is small next to the ones it
 -- describes.
+--
+-- Not CONCURRENTLY: db/migrate.ts wraps each file in BEGIN/COMMIT and CREATE
+-- INDEX CONCURRENTLY cannot run inside a transaction block. Same trade as every
+-- index since 0056 — a SHARE lock that blocks writes while it builds, reads
+-- unaffected. `retention_actions` is written only by the retention sweep, so
+-- the only writer that can be blocked is a job that will retry.
 
 CREATE INDEX IF NOT EXISTS retention_actions_reference_idx
     ON retention_actions (data_type, reference_id, action, created_at DESC);

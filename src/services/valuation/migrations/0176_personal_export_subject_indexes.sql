@@ -64,6 +64,17 @@
 -- requires the catalog to have an index leading with each one, so a seventh
 -- section added to `dataExport.ts` is under the obligation on the day it is
 -- written instead of on the day somebody next goes looking.
+--
+-- Not CONCURRENTLY: db/migrate.ts wraps each file in BEGIN/COMMIT and CREATE
+-- INDEX CONCURRENTLY cannot run inside a transaction block. Same trade as every
+-- index since 0056 — a SHARE lock that blocks writes to the table while it
+-- builds and leaves reads alone. Worth naming here rather than taking as read,
+-- because this file indexes the two largest tables in the schema:
+-- `email_outbox` holds every message ever sent and `documents` every file ever
+-- uploaded, so these are the longest builds in the directory and the pause they
+-- impose is on outbound mail and on uploads. Six indexes in one file is
+-- deliberate for the same reason — one migration, one window, rather than six
+-- deploys each taking their own lock.
 
 CREATE INDEX IF NOT EXISTS documents_uploaded_by_idx
     ON documents (uploaded_by, created_at DESC);

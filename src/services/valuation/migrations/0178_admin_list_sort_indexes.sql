@@ -82,6 +82,17 @@
 -- deprovisioned accounts as `active: false`, which is what SCIM's own model asks
 -- for; a `WHERE deleted_at IS NULL` here would be the third index on `users`
 -- that the query cannot use.
+--
+-- Not CONCURRENTLY: db/migrate.ts wraps each file in BEGIN/COMMIT and CREATE
+-- INDEX CONCURRENTLY cannot run inside a transaction block. Same trade as every
+-- index since 0056 — a SHARE lock that blocks writes while it builds. `users`
+-- is the one to know about: the partial index below is a handful of pages, but
+-- the lock is taken on the whole table, and the writes waiting behind it are
+-- ones a person is watching — a sign-up, a password change, an MFA challenge
+-- stamping `totp_last_counter`, a sign-out bumping `session_epoch`. (There is
+-- no `last_login_at` on this schema, so an ordinary login writes nothing and is
+-- not among them.) The other four tables are written at the rate the business
+-- transacts, which is not a rate.
 
 CREATE INDEX IF NOT EXISTS invoices_issued_at_idx
     ON invoices (issued_at DESC);
