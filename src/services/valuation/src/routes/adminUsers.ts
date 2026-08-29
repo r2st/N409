@@ -545,10 +545,16 @@ export function registerAdminUserRoutes(
 
     await adminPatchUser(deps.pool, id, { roles: nextRoles });
     const updated = await findUserById(deps.pool, id);
-    await audit(principal.id, 'user_promoted', 'user', id, existing.email, {
-      role,
-      promoted_by: principal.id,
-    });
+    // `role` only. The actor was also written into the payload as
+    // `promoted_by`, duplicating the `actor_id` column `recordAdminEvent`
+    // already fills from the same value — and a payload key is not governed
+    // the way a column is: the personal-data export selects `payload` whole
+    // for the rows whose subject is the requester, and deliberately does not
+    // select `actor_id`, because which administrator acted is another
+    // person's data (Art. 15(4), the same call `email_suppression` makes
+    // about `released_by`). The duplicate put it back in the copy through the
+    // one field nobody was reading. Nothing consumed it.
+    await audit(principal.id, 'user_promoted', 'user', id, existing.email, { role });
     return { user: updated ? toAdminUser(updated) : null };
   });
 
@@ -575,10 +581,9 @@ export function registerAdminUserRoutes(
 
     await adminPatchUser(deps.pool, id, { roles: nextRoles });
     const updated = await findUserById(deps.pool, id);
-    await audit(principal.id, 'user_demoted', 'user', id, existing.email, {
-      role,
-      demoted_by: principal.id,
-    });
+    // See the note on `user_promoted`: `demoted_by` was the same duplicate of
+    // `actor_id`, reaching the subject's own export through `payload`.
+    await audit(principal.id, 'user_demoted', 'user', id, existing.email, { role });
     return { user: updated ? toAdminUser(updated) : null };
   });
 
