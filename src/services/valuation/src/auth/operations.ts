@@ -3,7 +3,7 @@
  * contract as auth/rbac.ts. Separate file so parallel milestones don't collide
  * editing rbac.ts.
  */
-import { canReadValuation, isOps, type Principal, type ValuationRef } from './rbac.js';
+import { canReadValuation, isOps, isSuspended, type Principal, type ValuationRef } from './rbac.js';
 import type { CommentKind } from '../domain/operations.js';
 
 /** Chat is client-facing; notes and threaded email are internal ops tooling. */
@@ -30,8 +30,16 @@ export function canIngestEmail(p: Principal): boolean {
 /**
  * API tokens act for a partner. Ops manage any partner's tokens; a 'partner'
  * (org admin) manages their own org's. 'member' users cannot mint tokens.
+ *
+ * The suspension check is not redundant with `isOps`, which answers about the
+ * ops roles and not about this one: the second line is the whole of a firm
+ * administrator's authority, and it read a role key off the row. A suspended
+ * `partner` could go on minting credentials that act for their firm — and an
+ * API token is the one credential here that a later suspension cannot reach,
+ * because it is revoked by its own record rather than by its holder's session.
  */
 export function canManageTokens(p: Principal, partnerId: string): boolean {
   if (isOps(p)) return true;
+  if (isSuspended(p)) return false;
   return p.roles.includes('partner') && p.partnerId === partnerId;
 }

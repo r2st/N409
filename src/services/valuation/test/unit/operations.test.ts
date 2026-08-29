@@ -69,4 +69,16 @@ describe('token policy', () => {
     expect(canManageTokens(member, 'P1')).toBe(false);
     expect(canManageTokens(client, 'P1')).toBe(false);
   });
+
+  /*
+   * `isOps` subtracts the suspension for the ops roles, and answers nothing
+   * about this one: the `partner` line is the whole of a firm administrator's
+   * authority and it read a role key straight off the row. An API token is
+   * also the one credential a later suspension cannot reach, since it is
+   * revoked by its own record rather than by its holder's session.
+   */
+  it('a suspended firm administrator mints nothing', () => {
+    const suspended = { ...partner, roles: [...partner.roles, 'ignored' as const] };
+    expect(canManageTokens(suspended, 'P1')).toBe(false);
+  });
 });
