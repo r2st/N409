@@ -132,6 +132,43 @@ export async function findPaymentForValuation(
 }
 
 /**
+ * Another payment on this engagement that is still holding money.
+ *
+ * One valuation can carry several settled payments. The checkout route refuses
+ * a second one while the engagement is already paid, but that guard is a read
+ * with a webhook between it and the write: two POSTs that both find the
+ * engagement unpaid — a double-click, a second tab — each open a Session and
+ * each leave a row, and a client who pays both leaves two `succeeded` rows.
+ *
+ * Which makes "was this payment refunded in full" the wrong question to revoke
+ * an engagement on, and it was the only one asked. The remedy for a double
+ * charge is to refund one of the two, and doing that took the report away from
+ * a client who had paid for it twice and been given one refund.
+ *
+ * `amount_cents > refunded_cents` rather than a status test, because a
+ * partially refunded row is still 'succeeded' and still holds the rest — and a
+ * row under an open dispute is too: the money is held, not lost, which is
+ * exactly why `handleDispute` does not revoke on `created`.
+ */
+export async function findOtherFundedPayment(
+  pool: pg.Pool,
+  valuationId: string,
+  excludePaymentId: string,
+): Promise<PaymentRow | null> {
+  const { rows } = await pool.query<PaymentRow>(
+    `SELECT * FROM payments
+      WHERE valuation_id = $1
+        AND id <> $2
+        AND status = 'succeeded'
+        AND amount_cents > refunded_cents
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [valuationId, excludePaymentId],
+  );
+  return rows[0] ?? null;
+}
+
+/**
  * The payment a refund or dispute event names.
  *
  * Those events carry a charge and a payment intent, never the Checkout Session

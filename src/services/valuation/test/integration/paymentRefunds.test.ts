@@ -217,6 +217,87 @@ describe.skipIf(!dbUp)('refunds and chargebacks', () => {
     });
   });
 
+  /**
+   * Two charges for one engagement, and a refund of one of them.
+   *
+   * The checkout route refuses a second payment for a valuation that is already
+   * paid, but that guard is a read with a write a webhook away: two POSTs that
+   * both find the engagement unpaid — a double-click, a second tab — each open
+   * a Session and each write a `payments` row, and a client who pays both
+   * leaves two `succeeded` rows behind. The remedy for a double charge is to
+   * refund one of them, and doing that revoked the engagement: `revokePaidStatus`
+   * asked only whether *this* payment had come back in full and never whether
+   * the engagement still had money on it. The client was refunded the duplicate,
+   * lost the 409A they had paid for, and was invited to pay a third time.
+   */
+  describe('a refund of one of two charges for the same engagement', () => {
+    it('records the refund and leaves the engagement paid', async () => {
+      const first = await seedPaid('DoubleChargeCo', 'double_first');
+      // The second charge, on the row a concurrent checkout would have left.
+      await createPayment(ctx.pool, {
+        valuationId: first.vid,
+        sessionId: 'cs_double_second',
+        amountCents: PRICE,
+        currency: 'USD',
+        createdBy: ops.id,
+      });
+      const second = await findPaymentBySessionId(ctx.pool, 'cs_double_second');
+      await markPayment(ctx.pool, second!.id, 'succeeded', { chargeId: 'ch_double_second' });
+
+      const res = await post(refundEvent({ id: 'ch_double_second', amount_refunded: PRICE }));
+      expect(res.statusCode).toBe(200);
+      expect(res.json().refunded).toBe(true);
+
+      // The money came back and is recorded as having come back...
+      const refunded = await findPaymentBySessionId(ctx.pool, 'cs_double_second');
+      expect(refunded?.status).toBe('refunded');
+      expect(Number(refunded?.refunded_cents)).toBe(PRICE);
+      // ...and the engagement is still paid for, by the charge that stands.
+      expect(await paidStatus(first.vid)).toBe('paid');
+    });
+
+    it('still revokes once the last standing payment comes back too', async () => {
+      const first = await seedPaid('DoubleChargeGoneCo', 'double_gone_first');
+      await createPayment(ctx.pool, {
+        valuationId: first.vid,
+        sessionId: 'cs_double_gone_second',
+        amountCents: PRICE,
+        currency: 'USD',
+        createdBy: ops.id,
+      });
+      const second = await findPaymentBySessionId(ctx.pool, 'cs_double_gone_second');
+      await markPayment(ctx.pool, second!.id, 'succeeded', { chargeId: 'ch_double_gone_second' });
+
+      await post(refundEvent({ id: 'ch_double_gone_second', amount_refunded: PRICE }));
+      expect(await paidStatus(first.vid)).toBe('paid');
+      await post(refundEvent({ id: first.chargeId, amount_refunded: PRICE }));
+      expect(await paidStatus(first.vid)).toBe('unpaid');
+    });
+
+    it('does not treat a still-funded engagement as a half-finished reversal', async () => {
+      const first = await seedPaid('DoubleChargeReplayCo', 'double_replay_first');
+      await createPayment(ctx.pool, {
+        valuationId: first.vid,
+        sessionId: 'cs_double_replay_second',
+        amountCents: PRICE,
+        currency: 'USD',
+        createdBy: ops.id,
+      });
+      const second = await findPaymentBySessionId(ctx.pool, 'cs_double_replay_second');
+      await markPayment(ctx.pool, second!.id, 'succeeded', { chargeId: 'ch_double_replay_second' });
+
+      const event = refundEvent({ id: 'ch_double_replay_second', amount_refunded: PRICE });
+      await post(event);
+      // The redelivery lands on the compare-and-set's null and goes to
+      // `resumeRevocation`, which reads "refunded row, paid engagement" as an
+      // unfinished reversal — it is not one here, and finishing it would take
+      // the report away on the retry rather than on the first delivery.
+      await post(event);
+      expect(await paidStatus(first.vid)).toBe('paid');
+      expect(await notificationsFor(client.id, 'payment_reversed', first.vid)).toHaveLength(1);
+    });
+  });
+
   describe('charge.dispute', () => {
     it('an opened dispute alerts ops but does not pull the report', async () => {
       const { vid, sessionId, chargeId, intentId } = await seedPaid('Dispute Open Co', 'dispute_open');

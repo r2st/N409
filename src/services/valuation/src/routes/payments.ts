@@ -19,6 +19,7 @@ import {
   findLiveCheckout,
   findPaymentByChargeOrIntent,
   BILLING_PAYMENT_PAGE_LIMIT,
+  findOtherFundedPayment,
   findPaymentBySessionId,
   findPaymentForValuation,
   listPayments,
@@ -593,6 +594,39 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
   ): Promise<void> {
     const valuation = await findValuationById(deps.pool, payment.valuation_id);
     if (!valuation) return;
+    /*
+     * Is there still money on this engagement?
+     *
+     * "This payment came back in full" is not the same claim as "the
+     * engagement is no longer paid for", and only the first was ever asked.
+     * One valuation can carry several settled payments — see
+     * `findOtherFundedPayment` — and the ordinary way it comes to is a double
+     * charge, whose remedy is to refund one of the two. Doing that revoked the
+     * engagement: the client was refunded the duplicate, lost the report they
+     * had paid for, and was shown the pay-now call to action again.
+     *
+     * The reversal is still news, so the alert still goes out; what changes is
+     * that it says the engagement stands, and names the duplicate for whoever
+     * has to reconcile it.
+     */
+    const funded = await findOtherFundedPayment(deps.pool, payment.valuation_id, payment.id);
+    if (funded) {
+      log.info(
+        { valuationId: valuation.id, paymentId: payment.id, fundedBy: funded.id },
+        'money came back on one payment while another still covers the engagement',
+      );
+      await alertBilling(log, {
+        valuationId: valuation.id,
+        ownerId: valuation.user_id,
+        type: 'payment_reversed',
+        title: `Payment reversed — ${valuation.company_name}`,
+        body:
+          `${reason} Another payment of ` +
+          `${formatMoneyCents(Number(funded.amount_cents) - Number(funded.refunded_cents ?? 0), funded.currency)} ` +
+          `still covers this engagement, so it remains paid — check whether it was charged twice.`,
+      });
+      return;
+    }
     if (valuation.paid_status === 'paid') {
       try {
         await patchValuation(
@@ -940,6 +974,14 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     if (!current || !refunded) return { received: true, refunded };
     const valuation = await findValuationById(deps.pool, current.valuation_id);
     if (valuation?.paid_status !== 'paid') return { received: true, refunded };
+    // A paid engagement beside a refunded payment is not always an unfinished
+    // reversal: it is also what a refunded duplicate charge looks like, and
+    // there the engagement is paid on purpose. Asked here as well as in
+    // `revokePaidStatus` so a redelivery does not log a resumption and send a
+    // second alert for a reversal that was complete when it happened.
+    if (await findOtherFundedPayment(deps.pool, current.valuation_id, current.id)) {
+      return { received: true, refunded };
+    }
     log.warn(
       { paymentId: current.id, valuationId: current.valuation_id },
       'resuming a reversal that took the money back but never the engagement',
