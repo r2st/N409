@@ -110,6 +110,7 @@ export {
   quiesce,
   quiesceAndLog,
   sweepFailed,
+  trackedSweep,
   type NamedScheduler,
   type QuiesceLogger,
   type QuiesceResult,
@@ -126,10 +127,13 @@ export {
   bindRequestId,
   currentActor,
   currentRequestId,
+  currentSweep,
   requestIdHeaders,
   runWithRequestId,
+  runWithSweep,
   type RequestActor,
   type RequestContext,
+  type SweepContext,
 } from './requestContext.js';
 export {
   mergeEnvSources,

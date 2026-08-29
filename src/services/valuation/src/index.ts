@@ -6,9 +6,8 @@ import {
   installCrashHandlers,
   installShutdownHandlers,
   listenHost,
-  nonOverlapping,
   quiesceAndLog,
-  sweepFailed,
+  trackedSweep,
   type NamedScheduler,
   flagOverrides,
   flagSnapshot,
@@ -308,10 +307,15 @@ const track = <T extends { running: boolean; whenIdle(): Promise<void>; skipped:
  *
  * Registering a sweep any other way is what this exists to prevent: every
  * background tick in this process now gets the alerting contract by
- * construction rather than by the next person remembering it.
+ * construction rather than by the next person remembering it — and, since
+ * R206, the correlation too: `trackedSweep` binds `{ sweep, sweepRun }` for the
+ * duration of the tick, so every line written *inside* it carries the same name
+ * the gauges and the failure line use plus an id unique to this tick. Twelve
+ * sweeps share this process and this logger; without that the interior lines
+ * interleave with nothing to separate them.
  */
 const scheduleSweep = (name: string, tick: () => Promise<unknown>) =>
-  track(name, nonOverlapping(tick, sweepFailed(app.log, name)));
+  track(name, trackedSweep(app.log, name, tick));
 
 // A scheduler that is routinely skipping ticks is one whose interval is too
 // short for its work — `nonOverlapping` counts them precisely so that is

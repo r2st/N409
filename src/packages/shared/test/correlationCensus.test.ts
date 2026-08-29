@@ -99,3 +99,55 @@ describe('the correlation id is bound wherever a Fastify app is built', () => {
     }
   });
 });
+
+/**
+ * Every background tick is correlated, not just the ones somebody remembered.
+ *
+ * The request half of this file asks each Fastify app to bind an id. The
+ * background half asks the same of the schedulers: a sweep registered with a
+ * bare `nonOverlapping` gets the non-overlap guard and none of the correlation,
+ * and the resulting lines look exactly like correlated ones minus a field —
+ * which is the one defect no reader ever notices.
+ *
+ * Phrased as "account for every scheduler" rather than "these twelve are fine",
+ * so the thirteenth sweep fails here instead of logging anonymously.
+ */
+describe('the background sweeps are correlated', () => {
+  const files = sourceFiles().map((path) => ({ path, code: code(readFileSync(path, 'utf8')) }));
+  const schedulers = files.filter((f) => /\bnonOverlapping\(/.test(f.code));
+
+  it('finds no scheduler built outside the correlated helper', () => {
+    // `trackedSweep` is the door: it binds `{ sweep, sweepRun }` for the tick
+    // and hands the failure to `sweepFailed`. A direct `nonOverlapping` call in
+    // a service skips the first half silently.
+    expect(schedulers.map((f) => relative(SERVICES, f.path))).toEqual([]);
+  });
+
+  it('registers every tick through one helper, and that helper is the correlated one', () => {
+    const registrars = files.filter((f) => /\btrackedSweep\(/.test(f.code));
+    // Vacuity guard: if this found nothing, the check above would pass against
+    // a service that had stopped scheduling anything at all.
+    expect(registrars.map((f) => relative(SERVICES, f.path))).toContain(join('valuation', 'src', 'index.ts'));
+
+    for (const f of registrars) {
+      // One wrapper per service, so the binding cannot be half-applied across
+      // a service's own sweeps.
+      const calls = f.code.match(/\btrackedSweep\(/g) ?? [];
+      expect(calls.length, relative(SERVICES, f.path)).toBe(1);
+    }
+  });
+
+  it('sends every scheduled tick in the valuation service through that wrapper', () => {
+    // Twelve `setInterval(() => x.run())` lines; each `x` has to come from
+    // `scheduleSweep`. A tick wired straight off a `nonOverlapping` — or off
+    // nothing at all — would log with no sweep name.
+    const index = files.find((f) => f.path.endsWith(join('valuation', 'src', 'index.ts')))!;
+    const scheduled = [...index.code.matchAll(/setInterval\(\s*\(\)\s*=>\s*(\w+)\.run\(\)/g)].map(
+      (m) => m[1]!,
+    );
+    expect(scheduled.length).toBeGreaterThanOrEqual(10);
+    for (const name of new Set(scheduled)) {
+      expect(index.code, name).toMatch(new RegExp(`\\b${name}\\s*=\\s*scheduleSweep\\(`));
+    }
+  });
+});

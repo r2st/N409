@@ -33,8 +33,31 @@ export interface RequestActor {
   apiTokenId?: string | null;
 }
 
+/**
+ * The background tick a line was written under, when no request caused it.
+ *
+ * A sweep tick is the async unit this platform has and cannot correlate. The
+ * failure line carries `sweep` because {@link sweepFailed} puts it there, and
+ * the two saturation gauges label by it — but every line written *inside* a
+ * tick carries neither the name nor anything else that groups it. Twelve sweeps
+ * share one process and one logger, so their interior lines interleave, and
+ * several of the functions they call (`retryFailedEmails`,
+ * `retryDueDeliveries`, `runDueAutoEmails`) are also reachable from an
+ * ops-triggered route — which means "did this warning come from the schedule or
+ * from somebody pressing the button" was not answerable either.
+ *
+ * `runId` is per *tick*, not per sweep: grouping is the whole point, and two
+ * ticks of the same sweep an hour apart must not share a key.
+ */
+export interface SweepContext {
+  /** The name the gauges and {@link sweepFailed} already use for this sweep. */
+  name: string;
+  /** One id per tick. */
+  runId: string;
+}
+
 export interface RequestContext {
-  requestId: string;
+  requestId?: string;
   /**
    * Bound once the request has authenticated, so it is absent on the lines
    * written before that (the routing, the rate-limit refusals) and on
@@ -42,6 +65,12 @@ export interface RequestContext {
    * {@link bindActor} gives.
    */
   actor?: RequestActor;
+  /**
+   * Set while a background tick is in flight. Present *alongside* `requestId`
+   * when the run was triggered from a route rather than the schedule, because
+   * both answers are true and the join wants each of them.
+   */
+  sweep?: SweepContext;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();
@@ -59,6 +88,30 @@ export function currentRequestId(): string | undefined {
  */
 export function runWithRequestId<T>(requestId: string, fn: () => T): T {
   return storage.run({ requestId }, fn);
+}
+
+/**
+ * The active sweep tick, or undefined outside one.
+ */
+export function currentSweep(): SweepContext | undefined {
+  return storage.getStore()?.sweep;
+}
+
+/**
+ * Run `fn` with a background tick's identity bound.
+ *
+ * `run` rather than `enterWith`: a tick *is* a continuation, and the binding
+ * must end with it — `enterWith` would leak the sweep onto whatever else the
+ * scheduler's async context goes on to do.
+ *
+ * Any request context already in scope is carried through rather than
+ * replaced. A sweep function called from an ops route runs under that route's
+ * request, and dropping the id there would lose the correlation this whole
+ * module exists for; the two facts do not compete.
+ */
+export function runWithSweep<T>(sweep: SweepContext, fn: () => T): T {
+  const store = storage.getStore();
+  return storage.run({ ...store, sweep }, fn);
 }
 
 /**

@@ -4,7 +4,7 @@
 // is a build error even though it resolves at runtime.
 import { pino, stdSerializers, type Logger } from 'pino';
 import { scrubSensitive, scrubUrl } from './problem.js';
-import { currentActor, currentRequestId } from './requestContext.js';
+import { currentActor, currentRequestId, currentSweep } from './requestContext.js';
 
 /**
  * Field names whose value must never reach a log line (NFR: structured
@@ -264,8 +264,20 @@ export interface LoggerOptions {
 function requestIdMixin(): Record<string, string> {
   const requestId = currentRequestId();
   const actor = currentActor();
+  const sweep = currentSweep();
   return {
     ...(requestId ? { requestId } : {}),
+    // The background tier's version of the same argument. A sweep tick is
+    // async work with no request behind it, so `requestId` is correctly absent
+    // and there was nothing else to group its lines by: twelve sweeps share
+    // this process and this logger, and their interior lines interleave. The
+    // name matches the `sweep` label the two saturation gauges use and the
+    // `sweep` field `sweepFailed` stamps on the failure line, so one vocabulary
+    // covers the metric, the failure and now everything in between. A log call
+    // passing its own `sweep` wins over this one rather than duplicating it
+    // (pino's default mixin merge is `Object.assign(mixin, obj)`), and both
+    // hold the same string anyway.
+    ...(sweep ? { sweep: sweep.name, sweepRun: sweep.runId } : {}),
     // Flat, and camelCase, for the same collision argument the note above
     // makes about `reqId`. The 5xx line carries a nested `actor` *object*
     // (problem.ts), and a mixin emitting a key a log call also passes is the

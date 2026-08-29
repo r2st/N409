@@ -65,6 +65,8 @@
  * not fatal — the exit code stays with the shutdown handler that owns it.
  */
 import { logFailure, type FailureLogger } from './failure.js';
+import { newUlid } from './ids.js';
+import { runWithSweep } from './requestContext.js';
 
 export interface Scheduler {
   /** Run one tick now, unless one is already in flight. */
@@ -191,6 +193,31 @@ export function sweepFailed(log: FailureLogger, name: string): (err: unknown) =>
   return (err) => {
     logFailure(log, err, { sweep: name }, `${name} sweep failed`);
   };
+}
+
+/**
+ * A tracked background sweep: non-overlapping, classified on failure, and
+ * correlated for every line its tick writes.
+ *
+ * The correlation is why this exists rather than the two-call composition it
+ * replaces. `sweepFailed` puts `sweep` on the *failure* line and the saturation
+ * gauges label by the same name, so the outside of a tick was well described
+ * and the inside of it was anonymous — twelve sweeps share one process and one
+ * logger, and the lines they write interleave with no field to separate them.
+ * Worse, three of the tick bodies (`runDueAutoEmails`, `retryFailedEmails`,
+ * `retryDueDeliveries`) are also reachable from an ops route, so a warning
+ * about a delivery could not be attributed to the schedule or to a person.
+ *
+ * Binding here rather than at each call site is the point: a sweep registered
+ * any other way would silently lose the correlation, and there is no way to
+ * notice a *missing* log field. `sweepCensus.test.ts` holds the valuation
+ * service's twelve to this door.
+ *
+ * The run id is per tick. Two ticks of the same sweep must not share one, or
+ * grouping by it groups the wrong thing.
+ */
+export function trackedSweep(log: FailureLogger, name: string, tick: () => Promise<unknown>): Scheduler {
+  return nonOverlapping(() => runWithSweep({ name, runId: newUlid() }, tick), sweepFailed(log, name));
 }
 
 /** A scheduler and the name it is reported under when it will not settle. */

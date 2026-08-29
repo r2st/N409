@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { Writable } from 'node:stream';
 import { pino } from 'pino';
 import { createLogger } from '../src/logger.js';
-import { bindActor, bindRequestId, currentActor, runWithRequestId } from '../src/requestContext.js';
+import {
+  bindActor,
+  bindRequestId,
+  currentActor,
+  runWithRequestId,
+  runWithSweep,
+} from '../src/requestContext.js';
 
 /**
  * A log line you can join to a request.
@@ -326,5 +332,89 @@ describe('the actor on a log line', () => {
     expect(Object.keys(entry).sort()).toEqual(
       ['apiTokenId', 'level', 'msg', 'name', 'partnerId', 'requestId', 'service', 'time', 'userId'].sort(),
     );
+  });
+});
+
+/**
+ * The background tier's half of the same problem.
+ *
+ * `requestId` is correctly absent from a sweep tick — nothing asked for it —
+ * and until R206 nothing else was present either. Twelve sweeps share the
+ * valuation process and its logger, so their interior lines interleaved with no
+ * field to tell them apart, and three of the tick bodies are also reachable
+ * from an ops route, so "schedule or person" had no answer on the line itself.
+ */
+describe('the sweep on a log line', () => {
+  it('names the tick on a line written deep inside it', async () => {
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    await runWithSweep({ name: 'email-retry', runId: 'RUN-1' }, async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      log.warn({ emailId: 'EML-1' }, 'email retry failed');
+    });
+
+    const entry = JSON.parse(lines.at(-1)!);
+    expect(entry.sweep).toBe('email-retry');
+    expect(entry.sweepRun).toBe('RUN-1');
+    expect(entry.emailId).toBe('EML-1');
+  });
+
+  it('is omitted outside a tick, so the absence still means something', () => {
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    log.info('a boot line');
+
+    const entry = JSON.parse(lines.at(-1)!);
+    expect(entry).not.toHaveProperty('sweep');
+    expect(entry).not.toHaveProperty('sweepRun');
+  });
+
+  it('ends with the tick rather than leaking onto the next one', async () => {
+    // `runWithSweep` uses `run` rather than `enterWith` for exactly this: the
+    // scheduler's async context goes on to do other things.
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    await runWithSweep({ name: 'retention', runId: 'RUN-2' }, async () => {});
+    log.info('after the tick');
+
+    expect(JSON.parse(lines.at(-1)!)).not.toHaveProperty('sweep');
+  });
+
+  it('keeps the request id when a route triggered the run', async () => {
+    // The ops-triggered path: both facts are true and the join wants each.
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    await runWithRequestId('REQ-S1', async () => {
+      bindActor({ userId: 'USR-S1' });
+      await runWithSweep({ name: 'auto-email', runId: 'RUN-3' }, async () => {
+        log.info('queued');
+      });
+    });
+
+    const entry = JSON.parse(lines.at(-1)!);
+    expect(entry.requestId).toBe('REQ-S1');
+    expect(entry.userId).toBe('USR-S1');
+    expect(entry.sweep).toBe('auto-email');
+  });
+
+  it('does not duplicate the key a log call passes itself', () => {
+    // `sweepFailed` stamps `{ sweep }` on the failure line. Pino's default
+    // mixin merge is `Object.assign(mixin, obj)`, so the call wins and there is
+    // one key — asserted on the raw text, which is the only place a duplicate
+    // is visible.
+    const lines: string[] = [];
+    const log = loggerWritingTo(lines);
+
+    runWithSweep({ name: 'housekeeping', runId: 'RUN-4' }, () => {
+      log.error({ sweep: 'housekeeping' }, 'housekeeping sweep failed');
+    });
+
+    const raw = lines.at(-1)!;
+    expect(raw.match(/"sweep"/g)).toHaveLength(1);
+    expect(JSON.parse(raw).sweep).toBe('housekeeping');
   });
 });

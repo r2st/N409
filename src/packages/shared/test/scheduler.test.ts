@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { nonOverlapping, sweepFailed } from '../src/scheduler.js';
+import { nonOverlapping, sweepFailed, trackedSweep } from '../src/scheduler.js';
+import { currentRequestId, currentSweep, runWithRequestId } from '../src/requestContext.js';
 
 /** A promise plus the handles to settle it, so a tick can be held open. */
 function deferred<T = void>() {
@@ -286,5 +287,92 @@ describe('sweepFailed', () => {
     await flush();
     expect(errors[0]!.obj).toMatchObject({ sweep: 'job-alerts', alert: true });
     expect(s.running).toBe(false);
+  });
+});
+
+/**
+ * A sweep's tick is correlated the way a request is.
+ *
+ * `sweepFailed` described the outside of a tick and the gauges labelled it; the
+ * inside was anonymous. These hold the binding to the door every sweep goes
+ * through, because a *missing* log field is the one defect nothing else notices.
+ */
+describe('trackedSweep', () => {
+  it('binds the sweep name for the whole tick, including after an await', async () => {
+    const seen: Array<{ name: string; runId: string } | undefined> = [];
+    const s = trackedSweep({ warn: () => {}, error: () => {} }, 'email-retry', async () => {
+      seen.push(currentSweep());
+      await new Promise((r) => setTimeout(r, 5));
+      seen.push(currentSweep());
+    });
+
+    s.run();
+    await s.whenIdle();
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]?.name).toBe('email-retry');
+    expect(seen[1]).toEqual(seen[0]);
+  });
+
+  it('gives each tick its own run id, which is what grouping needs', async () => {
+    const runIds: string[] = [];
+    const s = trackedSweep({ warn: () => {}, error: () => {} }, 'retention', async () => {
+      runIds.push(currentSweep()!.runId);
+    });
+
+    s.run();
+    await s.whenIdle();
+    s.run();
+    await s.whenIdle();
+
+    expect(runIds).toHaveLength(2);
+    expect(runIds[0]).not.toBe(runIds[1]);
+  });
+
+  it('leaves nothing bound once the tick has settled', async () => {
+    const s = trackedSweep({ warn: () => {}, error: () => {} }, 'housekeeping', async () => {});
+    s.run();
+    await s.whenIdle();
+    expect(currentSweep()).toBeUndefined();
+  });
+
+  it('keeps a request id the caller already had', async () => {
+    // The ops-triggered run. Dropping the id here would lose the correlation
+    // the request half of this module exists for.
+    let seen: string | undefined;
+    const s = trackedSweep({ warn: () => {}, error: () => {} }, 'auto-email', async () => {
+      seen = currentRequestId();
+    });
+
+    runWithRequestId('REQ-1', () => s.run());
+    await s.whenIdle();
+
+    expect(seen).toBe('REQ-1');
+  });
+
+  it('still classifies and reports a failing tick', async () => {
+    // The alerting contract `sweepFailed` carries must survive the wrapping.
+    const error = vi.fn();
+    const s = trackedSweep({ warn: vi.fn(), error }, 'webhook-retry', async () => {
+      throw new Error('boom');
+    });
+
+    s.run();
+    await s.whenIdle();
+    await flush();
+
+    expect(error).toHaveBeenCalled();
+    expect(error.mock.calls[0]![0]).toMatchObject({ sweep: 'webhook-retry' });
+  });
+
+  it('still refuses to overlap', async () => {
+    const gate = deferred();
+    const s = trackedSweep({ warn: () => {}, error: () => {} }, 'hris-sync', () => gate.promise);
+
+    s.run();
+    s.run();
+    expect(s.skipped).toBe(1);
+    gate.resolve();
+    await s.whenIdle();
   });
 });
