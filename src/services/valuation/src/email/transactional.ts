@@ -1,3 +1,4 @@
+import { describeTransportFailure } from '@n409/shared';
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import type { EmailTransport } from '../hooks/stateChange.js';
@@ -49,7 +50,7 @@ export async function sendTransactionalEmail(
     // was the database. Losing the 'failed' stamp is a bookkeeping problem; a
     // rejection escaping this function is not — see below.
     try {
-      await markEmail(deps.pool, email.id, 'failed', err instanceof Error ? err.message : String(err));
+      await markEmail(deps.pool, email.id, 'failed', describeTransportFailure(err));
     } catch (markErr) {
       deps.log?.warn({ err: markErr, emailId: email.id }, 'could not mark transactional email failed');
     }

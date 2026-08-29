@@ -428,3 +428,112 @@ export function databaseUnavailableReason(err: unknown): string | null {
   }
   return null;
 }
+
+// ── Describing a transport failure to a person ────────────────────────────────
+
+/**
+ * `fetch` reports every transport failure as the same four characters.
+ *
+ * Node's `fetch` rejects with `TypeError: fetch failed` for a refused
+ * connection, a name that does not resolve, an expired certificate and a reset
+ * socket alike; the fact that distinguishes them is a syscall `code` one level
+ * down, on `cause`. `classifyFailure` already walks that chain — it has to, or
+ * every network failure in the estate would classify `unclassified` and stop
+ * being retried — but it walks it to answer *whether to retry*, and throws the
+ * identity away on the way out.
+ *
+ * So every place that records `err.message` for somebody to read records the
+ * string `fetch failed`. That is not a small population and the readers are not
+ * operators with a log next to them: it is the `error` column of a partner's
+ * own webhook delivery log, the failure line on an email in the delivery trail,
+ * the message on a failed HRIS sync. A partner whose endpoint is behind an
+ * expired certificate, or whose DNS record was deleted, is told "fetch failed"
+ * and has nowhere to go with it — while the answer was one property away the
+ * whole time.
+ *
+ * This turns that chain into a sentence naming the condition. It is the
+ * *transport* half only, and deliberately so: an upstream that answered is
+ * describing itself and its own words are better than anything here (see
+ * `stripeProblem`, `toProblem`). This speaks only for the exchanges where
+ * nobody answered at all.
+ */
+const TRANSPORT_REASONS: ReadonlyMap<string, string> = new Map([
+  ['ECONNREFUSED', 'the connection was refused — nothing is listening on that host and port'],
+  ['ECONNRESET', 'the connection was reset before a reply arrived'],
+  ['EPIPE', 'the connection closed while the request was still being sent'],
+  ['ETIMEDOUT', 'the connection timed out'],
+  ['EHOSTUNREACH', 'the host is unreachable from this network'],
+  ['ENETUNREACH', 'the network is unreachable'],
+  ['ENETDOWN', 'the network is unreachable'],
+  ['ENETRESET', 'the connection was reset by the network'],
+  ['ENOTFOUND', 'the host name does not resolve — check the address for a typo or a deleted DNS record'],
+  ['EAI_AGAIN', 'the host name could not be resolved just now (DNS is not answering)'],
+  ['UND_ERR_CONNECT_TIMEOUT', 'the connection timed out'],
+  ['UND_ERR_SOCKET', 'the connection closed unexpectedly'],
+  ['CERT_HAS_EXPIRED', 'the TLS certificate has expired — renew it and the deliveries resume'],
+  [
+    'DEPTH_ZERO_SELF_SIGNED_CERT',
+    'the TLS certificate is self-signed, so it cannot be verified — use a certificate from a public authority',
+  ],
+  [
+    'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+    'the TLS certificate chain is incomplete — the server must send its intermediate certificates',
+  ],
+  ['ERR_TLS_CERT_ALTNAME_INVALID', 'the TLS certificate is for a different host name than the one requested'],
+  ['EPROTO', 'the TLS handshake failed'],
+  ['ERR_INVALID_URL', 'the address is not a valid URL'],
+]);
+
+/** Deadlines, which arrive as a `name` and carry no code at all. */
+const ABORT_NAMES: ReadonlyMap<string, string> = new Map([
+  ['TimeoutError', 'it did not respond in time'],
+  ['HeadersTimeoutError', 'it did not send response headers in time'],
+  ['AbortError', 'the request was cancelled before a reply arrived'],
+]);
+
+/**
+ * The message `fetch` uses for everything, and the two `undici` phrasings of
+ * the same. Matched exactly rather than by substring: a message that *contains*
+ * these words but says more is saying something, and should be kept.
+ */
+const OPAQUE_TRANSPORT_MESSAGES: ReadonlySet<string> = new Set([
+  'fetch failed',
+  'terminated',
+  'other side closed',
+  'socket hang up',
+]);
+
+/** The first syscall-ish `code` in an error's `cause` chain, if any. */
+function transportCode(err: unknown, depth = 0): string | null {
+  if (depth > 5 || !err || typeof err !== 'object') return null;
+  const raw = (err as { code?: unknown }).code;
+  if (typeof raw === 'string' && TRANSPORT_REASONS.has(raw)) return raw;
+  const name = (err as { name?: unknown }).name;
+  if (typeof name === 'string' && ABORT_NAMES.has(name)) return name;
+  const cause = (err as { cause?: unknown }).cause;
+  return cause && cause !== err ? transportCode(cause, depth + 1) : null;
+}
+
+/**
+ * A sentence naming why an exchange failed, for a record a person will read.
+ *
+ * Returns the identified condition when there is one, the error's own message
+ * when that message says something, and a plain statement of the fact when it
+ * does not. Never throws and never returns an empty string, because every
+ * caller is on a failure path already and a second failure there is a row that
+ * records nothing at all.
+ *
+ * Not a replacement for a log: `err` itself should still go to the logger,
+ * where the stack and the original message are worth having. This is what goes
+ * in the column somebody opens a support ticket about.
+ */
+export function describeTransportFailure(err: unknown): string {
+  const code = transportCode(err);
+  if (code) return TRANSPORT_REASONS.get(code) ?? ABORT_NAMES.get(code)!;
+  const message = err instanceof Error ? err.message : String(err ?? '');
+  const trimmed = message.trim();
+  if (trimmed === '' || OPAQUE_TRANSPORT_MESSAGES.has(trimmed.toLowerCase())) {
+    return 'the request could not be completed and the connection reported no reason';
+  }
+  return trimmed;
+}

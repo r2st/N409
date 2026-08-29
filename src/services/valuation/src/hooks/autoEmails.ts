@@ -1,3 +1,4 @@
+import { describeTransportFailure } from '@n409/shared';
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import {
@@ -250,7 +251,7 @@ async function scan(
           await transport.send(email);
           await markEmail(db, email.id, 'sent');
         } catch (err) {
-          await markEmail(db, email.id, 'failed', err instanceof Error ? err.message : String(err));
+          await markEmail(db, email.id, 'failed', describeTransportFailure(err));
           // Terminal rejection of the recipient stops the ladder and suppresses
           // the address (0163). Uses this sweep's own client rather than taking
           // a second one from the pool.

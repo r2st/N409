@@ -483,7 +483,11 @@ describe('an upstream that is rate limited, not broken', () => {
     const problem = toProblem(err);
     expect(problem.status).toBe(429);
     expect(problem.retryAfterSeconds).toBe(90);
-    expect(problem.detail).toContain('rate limited');
+    // Names the work, states the condition, and repeats the wait in the prose —
+    // `retry-after` is a header a browser does not show anybody.
+    expect(problem.detail).toContain('The AI analysis could not be completed');
+    expect(problem.detail).toContain('request allowance');
+    expect(problem.detail).toContain('90s');
   });
 
   it('still answers 429 when the upstream stated no wait', async () => {

@@ -75,7 +75,7 @@ const IDENTITY_TABLES = new Set([
  * Repo functions that write an identity table *while reading a credential*.
  *
  * Every one of these is on the hot path of a request that is already audited
- * or is not an action at all: `resolveApiToken` and `verifyScimToken` stamp
+ * or is not an action at all: `resolveApiTokenWithReason` and `verifyScimToken` stamp
  * `last_used_at` on every authenticated call, `isDeviceTrusted` stamps a
  * remembered device, `consumeTotpCounter` burns a time step so a code cannot
  * be replayed, `consumeBackupCode` spends one during a sign-in that writes
@@ -87,7 +87,7 @@ const IDENTITY_TABLES = new Set([
  * only record that it was used?
  */
 const READ_PATH_WRITERS = new Set([
-  'resolveApiToken',
+  'resolveApiTokenWithReason',
   'verifyScimToken',
   'isDeviceTrusted',
   'consumeTotpCounter',

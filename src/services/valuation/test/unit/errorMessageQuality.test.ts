@@ -225,3 +225,145 @@ describe('error messages name what failed, why, and what to do', () => {
     );
   });
 });
+
+/**
+ * R198 — the layers below the routes.
+ *
+ * Everything above is a census of `src/routes`, because that is where R180's
+ * findings were. R198's were all a layer down: a client (`toProblem` naming an
+ * internal service and stopping), a plugin (one 401 detail for four different
+ * refusals), a hook (`fetch failed` written into a partner's own delivery log),
+ * a renderer (a throw that reached the client as a bodiless 500). None of those
+ * files is a route, so none of them was looked at — the census had been reading
+ * the place the last round's bugs were rather than the place messages are
+ * written.
+ *
+ * These widen it. They are separate assertions rather than a wider `ROUTES`
+ * because the two populations answer to different rules: a route composes a
+ * problem, and these mostly *record* a failure into a column somebody reads,
+ * which the CONTENTLESS list has nothing to say about.
+ */
+describe('the layers below the routes', () => {
+  const SUPPORTING = ['clients', 'plugins', 'hooks', 'pipeline'].flatMap((dir) =>
+    sourceFiles(path.resolve(HERE, '../../src', dir)).map((file) => ({
+      rel: path.relative(path.resolve(HERE, '../..'), file).split(path.sep).join('/'),
+      text: readFileSync(file, 'utf8'),
+    })),
+  );
+
+  it('finds the files it is auditing', () => {
+    expect(SUPPORTING.length).toBeGreaterThan(15);
+  });
+
+  it('sends no message from a client or plugin whose whole content is a category', () => {
+    const findings: string[] = [];
+    for (const { rel, text } of SUPPORTING) {
+      for (const { message } of problemCalls(text)) {
+        const literal = literalMessage(message);
+        if (literal === null) continue;
+        if (CONTENTLESS_SET.has(literal.trim().toLowerCase())) findings.push(`${rel} → "${literal}"`);
+      }
+    }
+    expect(findings).toEqual([]);
+  });
+
+  /**
+   * The shape the whole round turned out to be.
+   *
+   * `err.message` on a `fetch` rejection is the string `fetch failed` — for a
+   * refused connection, a name that does not resolve, an expired certificate
+   * and a reset socket alike, because undici puts the identifying syscall on
+   * `cause` one level down. Eight places in this service recorded that message
+   * into a column a person later reads: a partner's webhook delivery log, an
+   * email's failure line, an HRIS connection's last error, a failed run.
+   *
+   * `describeTransportFailure` in shared walks the chain and names the
+   * condition, falling through to the error's own message when it said
+   * something — so adopting it never flattens a message that was already good.
+   * What is banned here is the bare idiom on a *recording* path.
+   *
+   * The exemptions are the two places the reader is an operator holding a
+   * terminal, where the raw message is the better artefact and there is no
+   * column to put anything in.
+   */
+  it('records no failure for a person as a bare err.message', () => {
+    const BARE = /instanceof Error \? (?:err|e|error)\.message : String\(/;
+    const OPERATOR_ONLY = new Set([
+      // Boot-time diagnostics, printed to the deploy's console.
+      'src/preflight.ts',
+      // The migration CLI's own output.
+      'src/db/migrate.ts',
+    ]);
+    const all = sourceFiles(path.resolve(HERE, '../../src')).map((file) => ({
+      rel: path.relative(path.resolve(HERE, '../..'), file).split(path.sep).join('/'),
+      text: readFileSync(file, 'utf8'),
+    }));
+    // The census must be able to see its own founding cases, or an idiom that
+    // gets reformatted silently empties it.
+    expect(all.length).toBeGreaterThan(150);
+
+    const findings = all
+      .filter(({ rel, text }) => !OPERATOR_ONLY.has(rel) && BARE.test(text))
+      .map(({ rel }) => rel);
+    expect(
+      findings,
+      'failures recorded as `err.message`, which is "fetch failed" for every transport failure',
+    ).toEqual([]);
+  });
+
+  /**
+   * The `toProblem` half, asserted on the table rather than on a response.
+   *
+   * Three of its four arms named an internal service ("engine", "ai") and
+   * stopped, while the fourth — the breaker one — already carried the argument
+   * for why that is useless. What keeps the other three honest is that every
+   * service has a label written for a reader and two remedies, and that neither
+   * remedy is a shrug.
+   */
+  it('gives every internal service a name a reader knows and a remedy', () => {
+    const source = readFileSync(path.resolve(HERE, '../../src/clients/internal.ts'), 'utf8');
+    const voices = source.slice(source.indexOf('const SERVICE_VOICE'));
+    const labels = [...voices.matchAll(/label:\s*\n?\s*'((?:[^\\']|\\.)*)'/g)].map((m) => m[1]!);
+    const remedies = [...voices.matchAll(/Remedy:\s*\n?\s*'((?:[^\\']|\\.)*)'/g)].map((m) => m[1]!);
+    // The fallback `voiceOf` returns is counted too, and deliberately: a fifth
+    // internal service added later gets that one, and it has to be as usable as
+    // the three written by hand. Its label is a template literal, so `label:`
+    // is counted rather than the quoted labels.
+    const voices_with_a_label = (voices.match(/^\s*label:/gm) ?? []).length;
+
+    expect(labels.length, 'every named service in the table carries a label').toBeGreaterThanOrEqual(3);
+    expect(remedies.length, 'a rejected remedy and a broken one per service').toBe(voices_with_a_label * 2);
+    for (const label of labels) {
+      // The bug being guarded: a label that is the process name and nothing
+      // else — "engine", "the ai service" — which is what the three arms said
+      // before. "The AI analysis could not be completed" names the work and is
+      // allowed to contain the same two letters.
+      expect(label, `"${label}" names a component, not the work`).not.toMatch(
+        /^(the )?(engine|ai|report)( service| unit)?[.:]?$/i,
+      );
+      expect(label.split(/\s+/).length, `"${label}" is too terse to name any work`).toBeGreaterThan(3);
+    }
+    for (const remedy of remedies) {
+      expect(remedy.length, `remedy too short to be actionable: "${remedy}"`).toBeGreaterThan(30);
+    }
+  });
+
+  /**
+   * The 401 half.
+   *
+   * One `detail` answered four different token refusals, three of which have
+   * different fixes — and the one this platform causes itself, where the member
+   * who minted a firm's key was moved out of the org, read exactly like a typo.
+   */
+  it('answers each API token refusal with its own sentence', () => {
+    const source = readFileSync(path.resolve(HERE, '../../src/repos/apiTokens.ts'), 'utf8');
+    const table = source.slice(source.indexOf('API_TOKEN_REFUSAL_DETAIL'));
+    const kinds = ['unknown', 'revoked', 'no_owner', 'orphaned'];
+    for (const kind of kinds) {
+      expect(table, `${kind} has no message`).toContain(`${kind}:`);
+    }
+    const details = [...table.matchAll(/^\s{4}'((?:[^\\']|\\.)*)',$/gm)].map((m) => m[1]!);
+    expect(details.length, 'one message per refusal').toBe(kinds.length);
+    expect(new Set(details).size, 'two refusals sharing a sentence is the bug').toBe(kinds.length);
+  });
+});

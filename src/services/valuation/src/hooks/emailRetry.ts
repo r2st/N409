@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
-import { FLAGS, flagEnabled } from '@n409/shared';
+import { describeTransportFailure, flagEnabled, FLAGS } from '@n409/shared';
 import { claimRetryableEmails, settleClaimedEmail } from '../repos/emailOutbox.js';
 import { recordSendFailure } from '../repos/emailDelivery.js';
 import { EMAIL_MAX_ATTEMPTS } from '../domain/emailRetry.js';
@@ -78,13 +78,7 @@ export async function retryFailedEmails(deps: {
       await settleClaimedEmail(deps.pool, email.id, 'sent', undefined, { maxAttempts });
       sent += 1;
     } catch (err) {
-      await settleClaimedEmail(
-        deps.pool,
-        email.id,
-        'failed',
-        err instanceof Error ? err.message : String(err),
-        { maxAttempts },
-      );
+      await settleClaimedEmail(deps.pool, email.id, 'failed', describeTransportFailure(err), { maxAttempts });
       // A permanent rejection of the recipient takes the row out of the claim
       // and the address out of future sends (0163). Never allowed to throw:
       // the row is already settled, and losing the sweep over the bookkeeping

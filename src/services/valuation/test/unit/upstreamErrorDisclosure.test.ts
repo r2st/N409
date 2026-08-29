@@ -38,7 +38,11 @@ describe('upstream error disclosure', () => {
     expect(err.opaque).toBe(false);
     // The whole point of the pipe: the engine's pre-flight message is the most
     // useful thing the analyst can be told.
-    expect(toProblem(err).detail).toBe('engine rejected the request: volatility is required');
+    // R198 wraps it: the upstream's sentence stays verbatim in the middle, with
+    // a name for the work in front and the remedy after. What is pinned here is
+    // that the pipe still carries the engine's own words end to end.
+    expect(toProblem(err).detail).toContain('volatility is required');
+    expect(toProblem(err).detail).toMatch(/^The calculation could not be run: /);
   });
 
   it('withholds a pydantic validation body, which echoes the submitted payload', async () => {
@@ -63,7 +67,11 @@ describe('upstream error disclosure', () => {
     // ...and absent from what the caller is handed.
     const problem = toProblem(err);
     expect(problem.status).toBe(422);
-    expect(problem.detail).toBe('engine rejected the request.');
+    // The withheld half is asserted by absence, not by an exact sentence: what
+    // matters is that *none* of the body came through, and pinning the prose
+    // instead makes this test fail on an improvement to the wording.
+    expect(problem.detail).not.toContain('Input should be greater than 0');
+    expect(problem.detail).not.toContain('share_classes');
     expect(JSON.stringify(problem.toBody('/x'))).not.toContain('cfo@acme.example');
   });
 
@@ -77,7 +85,7 @@ describe('upstream error disclosure', () => {
     expect(err.opaque).toBe(true);
     const problem = toProblem(err);
     expect(problem.status).toBe(502);
-    expect(problem.detail).toBe('engine is unavailable.');
+    expect(problem.detail).not.toContain('Traceback');
     const body = JSON.stringify(problem.toBody('/x'));
     expect(body).not.toContain('/opt/N409');
     expect(body).not.toContain('compute.py');
@@ -90,7 +98,8 @@ describe('upstream error disclosure', () => {
     )) as InternalServiceError;
 
     expect(err.detail).toContain('10.0.1.4');
-    expect(toProblem(err).detail).toBe('engine is unavailable.');
+    expect(toProblem(err).detail).not.toContain('10.0.1.4');
+    expect(toProblem(err).detail).not.toContain('ECONNREFUSED');
   });
 
   it('still says the service timed out, because that sentence is ours', async () => {
@@ -129,7 +138,7 @@ describe('upstream error disclosure', () => {
     const err = await failWith(response(422, body));
     const problem = toProblem(err);
 
-    expect(problem.detail).toBe('engine rejected the request.');
+    expect(problem.detail).not.toContain('secret');
     const rendered = JSON.stringify(problem.toBody('/x'));
     expect(rendered).toContain('volatility is required');
     expect(rendered).not.toContain('secret');

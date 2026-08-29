@@ -2,7 +2,7 @@ import path from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type pg from 'pg';
 import { EXTRACTABLE_EXTENSIONS, runAiPipeline } from '../routes/ai.js';
-import { classifyInternalError } from '../clients/internal.js';
+import { classifyInternalError, InternalServiceError, toProblem } from '../clients/internal.js';
 import { buildCalculationInputs, runCalculation } from '../routes/calculations.js';
 import { findParams } from '../repos/params.js';
 import {
@@ -17,6 +17,7 @@ import type { ValuationRow } from '../repos/valuations.js';
 import type { DocumentRow } from '../repos/documents.js';
 import type { EventActor } from '../events/record.js';
 import { Semaphore } from './semaphore.js';
+import { describeTransportFailure } from '@n409/shared';
 
 /**
  * Bounds how many auto-pipeline orchestrations execute at once in a single
@@ -153,6 +154,35 @@ async function advance(
   return null;
 }
 
+/**
+ * What `pipeline_runs.error` is set to when a run fails.
+ *
+ * That column is not an internal note. It rides out on
+ * `GET /api/v1/valuations/{id}/pipeline` as part of the run object, so whatever
+ * goes in it is a message to whoever asks — and it was `err.message`, which for
+ * the errors that actually reach here is `InternalServiceError`'s
+ * `${service}: ${detail}`. `detail` on an opaque upstream body is the raw body:
+ * a FastAPI traceback with its file paths, or a proxy's HTML page. R181 built
+ * the `opaque` flag precisely so those never reach a caller and taught
+ * `toProblem` to honour it — and this path never went through `toProblem`, so
+ * the same body it withholds from the response was stored in a field the
+ * response hands over anyway.
+ *
+ * Routing it through `toProblem` fixes both halves at once and keeps them fixed
+ * together: the stored sentence is now the same one the synchronous route would
+ * have answered with, remedy included, and the withholding is the same
+ * withholding rather than a second copy of the rule.
+ *
+ * A non-upstream failure — a missing params row, a bug — has no upstream body to
+ * withhold and no house sentence worth substituting, so it keeps its own
+ * message, with `describeTransportFailure` covering the case where that message
+ * is `fetch failed`.
+ */
+function runFailureMessage(err: unknown): string {
+  if (err instanceof InternalServiceError) return toProblem(err).detail ?? err.message;
+  return describeTransportFailure(err);
+}
+
 async function executeRun(
   deps: AutoPipelineDeps,
   run: PipelineRunRow,
@@ -182,7 +212,7 @@ async function executeRun(
 
     await setPipelineRunStatus(deps.pool, run, 'ready', { actor });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = runFailureMessage(err);
     // Classify before recording: `setPipelineRunStatus` stamps the retry
     // schedule from this, and a run recorded without it is a run nothing will
     // ever come back for (migration 0161).

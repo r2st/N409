@@ -1,3 +1,4 @@
+import { describeTransportFailure } from '@n409/shared';
 /**
  * Accounting software integrations (409.ai §23): OAuth2 connect + financial
  * data import for the six providers the onboarding flow advertises.
@@ -553,7 +554,7 @@ export async function fetchFinancials(
     return {
       ...pl,
       balance_sheet: null,
-      balance_sheet_error: err instanceof Error ? err.message : String(err),
+      balance_sheet_error: describeTransportFailure(err),
     };
   }
 }

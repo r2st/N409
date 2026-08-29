@@ -182,6 +182,7 @@ export {
   classifyFailure,
   classifyStatus,
   databaseUnavailableReason,
+  describeTransportFailure,
   FAILURE_KIND,
   isTransient,
   logFailure,

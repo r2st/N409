@@ -1,3 +1,4 @@
+import { describeTransportFailure } from '@n409/shared';
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import { withTransaction } from '../db/pool.js';
@@ -319,7 +320,7 @@ async function deliverTransitionMessages(
       await markEmail(deps.pool, email.id, 'sent');
     } catch (err) {
       try {
-        await markEmail(deps.pool, email.id, 'failed', err instanceof Error ? err.message : String(err));
+        await markEmail(deps.pool, email.id, 'failed', describeTransportFailure(err));
         // Terminal rejection of the recipient stops the ladder and suppresses
         // the address (0163); anything else stays retryable.
         const bounce = await recordSendFailure(deps.pool, email, err).catch(() => null);

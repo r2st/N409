@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import pLimit from 'p-limit';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { ApiProblem, describeTransportFailure, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { signHrisState, verifyHrisState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -113,7 +113,7 @@ export async function syncHrisConnection(
       deps.fetchFn,
     );
   } catch (err) {
-    await recordSyncError(deps.pool, connection.id, err instanceof Error ? err.message : String(err));
+    await recordSyncError(deps.pool, connection.id, describeTransportFailure(err));
     throw err;
   }
 

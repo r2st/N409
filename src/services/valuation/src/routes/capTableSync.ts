@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import pLimit from 'p-limit';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { ApiProblem, describeTransportFailure, isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { signCapTableSyncState, verifyCapTableSyncState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -123,7 +123,7 @@ export async function syncCapTableConnection(
     // may have failed on. A rejection here would replace an accurate provider
     // error with an unrelated one and lose the original entirely — including
     // for the scheduler above, which has no client to report it to at all.
-    const message = err instanceof Error ? err.message : String(err);
+    const message = describeTransportFailure(err);
     await recordSyncError(deps.pool, connection.id, message).catch(() => undefined);
     throw err;
   }

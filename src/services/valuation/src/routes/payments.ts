@@ -115,6 +115,22 @@ export function stripeProblem(err: StripeApiError): ApiProblem {
       'Stripe could not be reached, so the payment was not started. Nothing has been charged — try again in a moment.',
     );
   }
+  // A third failure was hiding inside the second, and it is not the client's.
+  //
+  // Stripe answers 401 when *our* secret key is wrong, expired or rolled, and
+  // 403 when it lacks the permission for the call. Its sentence for those names
+  // the credential — "Invalid API Key provided: sk_live_51H***abc" — and that
+  // went out to whoever pressed Pay. It is the one Stripe message not written
+  // for the person reading it: they have no key to fix, nothing they can do
+  // changes it, and it hands a stranger the shape and prefix of our live key.
+  // So it stays in the log (the route logs `err`) and the reader gets the two
+  // facts that are theirs: no money moved, and the fix is ours to make.
+  if (err.status === 401 || err.status === 403) {
+    return stripeUpstream(
+      'Payments are misconfigured on our side, so the payment was not started. Nothing has been ' +
+        'charged. This needs us to fix it — please contact support, and mention the time you tried.',
+    );
+  }
   return stripeUpstream(`Stripe: ${err.message}`);
 }
 

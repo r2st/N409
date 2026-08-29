@@ -5,7 +5,7 @@ import { verifySession, type JwtConfig } from '../auth/jwt.js';
 import { SESSION_COOKIE } from '../auth/cookies.js';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { findAuthPrincipal } from '../repos/users.js';
-import { resolveApiToken, TOKEN_SCHEME } from '../repos/apiTokens.js';
+import { API_TOKEN_REFUSAL_DETAIL, resolveApiTokenWithReason, TOKEN_SCHEME } from '../repos/apiTokens.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import { costOfRequest } from '../domain/requestCost.js';
 import type { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './rateLimit.js';
@@ -44,6 +44,20 @@ declare module 'fastify' {
     authenticate: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
 }
+
+/**
+ * What a request with no credential at all is told.
+ *
+ * `problems.unauthorized()`'s default is "Authentication required", which
+ * states the problem and stops. The two audiences that reach this line need
+ * different next steps and both fit in a sentence: a browser has a session
+ * cookie it did not send (or has been signed out), and an integrator has an
+ * `Authorization` header to add — and naming the scheme and the token prefix is
+ * the difference between reading the docs and guessing at them.
+ */
+const MISSING_CREDENTIAL =
+  `Authentication required. Send an API token as \`Authorization: Bearer ${TOKEN_SCHEME}…\`, ` +
+  'or sign in — a browser session sends its own cookie, so this usually means the session expired.';
 
 /** Requests that only read are served normally during maintenance. */
 const READ_ONLY_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -133,25 +147,44 @@ export function registerAuth(
     const header = req.headers.authorization;
     const headerBearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
     const bearer = headerBearer || req.cookies?.[SESSION_COOKIE] || '';
-    if (!bearer) throw problems.unauthorized();
+    if (!bearer) throw problems.unauthorized(MISSING_CREDENTIAL);
 
     let sub: string;
     let sessionEpoch: number | null = null;
     if (bearer.startsWith(TOKEN_SCHEME)) {
-      const resolved = await resolveApiToken(deps.pool, bearer);
-      if (!resolved) throw problems.unauthorized('Invalid or revoked API token');
+      // The refusal reason, not just the refusal. `resolveApiToken` answered
+      // `null` to four different conditions and this said "Invalid or revoked
+      // API token" to all of them — including the one this platform causes
+      // itself, where a firm's integration stops because the member who minted
+      // its key was moved out of the org. That reads as a typo, and the fix for
+      // it is nothing like the fix for a typo. See `ApiTokenRefusal`.
+      const { token: resolved, refusal } = await resolveApiTokenWithReason(deps.pool, bearer);
+      if (!resolved) throw problems.unauthorized(API_TOKEN_REFUSAL_DETAIL[refusal ?? 'unknown']);
       sub = resolved.userId;
       req.apiToken = { tokenId: resolved.tokenId, partnerId: resolved.partnerId };
     } else {
       try {
         ({ sub, session_epoch: sessionEpoch } = await verifySession(bearer, deps.jwt));
       } catch {
-        throw problems.unauthorized('Invalid or expired token');
+        throw problems.unauthorized(
+          'Your session is no longer valid — it has expired, or was ended by a password change. Sign in again.',
+        );
       }
     }
 
     const user = await findAuthPrincipal(deps.pool, sub);
-    if (!user || user.deleted_at) throw problems.unauthorized('Unknown user');
+    // "Unknown user" was a statement about our lookup, given to somebody with
+    // no user to look up. The reachable cause is one thing — the account this
+    // credential acts as has been closed — and saying it is the difference
+    // between a support ticket and a sign-up. (An API token minted by a closed
+    // account is refused a layer earlier now, with its own sentence; see
+    // `ApiTokenRefusal.no_owner`.)
+    if (!user || user.deleted_at) {
+      throw problems.unauthorized(
+        'The account this sign-in belongs to has been closed, so it can no longer be used. ' +
+          'Contact support if it was closed in error, or sign in with another account.',
+      );
+    }
 
     // "Sign out everywhere" and password changes bump the epoch; a JWT minted
     // before the bump is dead. API tokens have their own revocation and are

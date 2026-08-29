@@ -220,20 +220,139 @@ export async function revokeApiToken(pool: pg.Pool, id: string): Promise<boolean
  * Personal tokens (partner_id NULL) are unaffected: they carry only their
  * owner's own scope, which is re-read per request already.
  */
-export async function resolveApiToken(
+/**
+ * Why a presented secret was refused.
+ *
+ * Four conditions used to arrive as one `null`, and the partner API answered
+ * all four with "Invalid or revoked API token". Three of them are things
+ * somebody can go and fix, and each fix is different: mint a new key, un-revoke
+ * or replace a revoked one, or move the member back / re-mint under a current
+ * one. An integrator holding a key that stopped working overnight got no way to
+ * tell which — and the `orphaned` case, which is the one this platform actually
+ * causes, reads exactly like a typo.
+ *
+ * Telling the presenter is safe. Every one of these answers is given only to
+ * somebody who has already produced the secret, so it discloses nothing to
+ * anyone who did not already hold the credential; `unknown` — the one case
+ * where the presenter has proved nothing — is the one that stays vague.
+ */
+export type ApiTokenRefusal =
+  /** No live token has this digest. A typo, a key from another environment, or one that was deleted. */
+  | 'unknown'
+  /** The digest matches a token whose `revoked_at` is set. */
+  | 'revoked'
+  /**
+   * The token is live, but the user in `created_by` is gone — the row deleted,
+   * or the account closed (`deleted_at`).
+   *
+   * The closed-account half only became distinguishable this round. The
+   * resolving UPDATE did not test `deleted_at`, so a token minted by somebody
+   * whose account was later closed resolved, and `registerAuth` refused it one
+   * line later with "Unknown user" — a message about *us* not finding a row,
+   * handed to an integrator who has no user to go and look up. Excluding them
+   * here is not a new refusal; it moves the same refusal to the layer that can
+   * say what it means.
+   */
+  | 'no_owner'
+  /**
+   * The token is live and so is its owner, but they are no longer a member of
+   * the organisation the token belongs to.
+   *
+   * The documented, deliberate consequence of scoping a partner token to
+   * `token.partner_id` (see the note above): move the org admin who minted a
+   * firm's key to another firm and that firm's integration stops. Refused
+   * rather than revoked, so it resumes if the move was a mistake — which is
+   * only a useful property if somebody is told what happened.
+   */
+  | 'orphaned';
+
+export interface ResolvedApiToken {
+  tokenId: string;
+  userId: string;
+  partnerId: string | null;
+}
+
+/**
+ * Resolve a presented secret to the user it acts as, with the reason when the
+ * answer is no.
+ *
+ * One round trip on the hot path, not two: the UPDATE is attempted first and
+ * the diagnostic SELECT runs only on the miss, so a working integration issues
+ * exactly the query it always did and the extra read happens only on requests
+ * that are about to be refused anyway.
+ */
+export async function resolveApiTokenWithReason(
   pool: pg.Pool,
   secret: string,
-): Promise<{ tokenId: string; userId: string; partnerId: string | null } | null> {
+): Promise<{ token: ResolvedApiToken | null; refusal: ApiTokenRefusal | null }> {
+  const digest = hashToken(secret);
   const { rows } = await pool.query<{ id: string; created_by: string; partner_id: string | null }>(
     `UPDATE api_tokens t SET last_used_at = now()
        FROM users u
       WHERE t.token_hash = $1
         AND t.revoked_at IS NULL
         AND u.id = t.created_by
+        AND u.deleted_at IS NULL
         AND (t.partner_id IS NULL OR u.partner_id = t.partner_id)
      RETURNING t.id, t.created_by, t.partner_id`,
-    [hashToken(secret)],
+    [digest],
   );
   const row = rows[0];
-  return row ? { tokenId: row.id, userId: row.created_by, partnerId: row.partner_id } : null;
+  if (row) {
+    return { token: { tokenId: row.id, userId: row.created_by, partnerId: row.partner_id }, refusal: null };
+  }
+  return { token: null, refusal: await refusalFor(pool, digest) };
 }
+
+/**
+ * Which of the UPDATE's four conditions failed.
+ *
+ * Deliberately not a join back onto `users`: `deleted_at` is what makes a user
+ * gone here, and the membership test is against `partner_id`, so both are read
+ * explicitly rather than inferred from a row's absence. A token whose owner is
+ * both deleted and moved reports `no_owner`, the more fundamental of the two.
+ */
+async function refusalFor(pool: pg.Pool, digest: string): Promise<ApiTokenRefusal> {
+  const { rows } = await pool.query<{
+    revoked: boolean;
+    owner_present: boolean;
+    owner_in_partner: boolean;
+  }>(
+    `SELECT t.revoked_at IS NOT NULL AS revoked,
+            (u.id IS NOT NULL AND u.deleted_at IS NULL) AS owner_present,
+            (t.partner_id IS NULL OR u.partner_id = t.partner_id) AS owner_in_partner
+       FROM api_tokens t
+       LEFT JOIN users u ON u.id = t.created_by
+      WHERE t.token_hash = $1`,
+    [digest],
+  );
+  const row = rows[0];
+  if (!row) return 'unknown';
+  if (row.revoked) return 'revoked';
+  if (!row.owner_present) return 'no_owner';
+  if (!row.owner_in_partner) return 'orphaned';
+  // Every condition the UPDATE tests now reads as satisfied, so the row was
+  // changed between the two statements. Nothing here is a fact any more; say
+  // the least specific true thing rather than a stale one.
+  return 'unknown';
+}
+
+/**
+ * What the presenter of a refused token is told.
+ *
+ * One sentence each, naming the condition and the move that fixes it. Kept
+ * beside the enum rather than in the auth plugin because the plugin is the only
+ * caller today and will not be the only one for long — the docs endpoint
+ * describes these statuses too, and two hand-written copies of a message is how
+ * they drift.
+ */
+export const API_TOKEN_REFUSAL_DETAIL: Record<ApiTokenRefusal, string> = {
+  unknown:
+    'That API token is not recognised. Check it was copied whole (tokens start `n409_pat_`) and that it belongs to this environment, or mint a new one from Settings → API tokens.',
+  revoked:
+    'That API token has been revoked and will not work again. Mint a replacement from Settings → API tokens and update your integration.',
+  no_owner:
+    'The user account this API token was created under no longer exists, so the token has no authority to act with. Mint a replacement under a current user from Settings → API tokens.',
+  orphaned:
+    'The user who created this API token is no longer a member of the organization the token acts for, so it has been refused rather than revoked. Mint a replacement under a current member from Settings → API tokens; if the change of membership was a mistake, restoring it brings this token back.',
+};

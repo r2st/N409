@@ -585,6 +585,75 @@ function degradedMessage(service: string): string {
   );
 }
 
+/**
+ * What to call each service in front of a client, and what they do about it.
+ *
+ * The reasoning above stopped one branch short. `DEGRADED_MESSAGES` exists
+ * because "the ai service is unavailable" names an internal component the
+ * reader has never heard of and says nothing about what to do — and then the
+ * other three arms of `toProblem` went on saying exactly that: an analyst whose
+ * run failed pre-flight was told "engine rejected the request", which reads as
+ * a bug in this platform rather than as a field they have to go and fill in.
+ *
+ * `label` is the name the surface already uses for the thing ("the
+ * calculation", "the AI analysis"), so the sentence is about the work the
+ * person was doing. `remedy` is the half that cannot be derived: what survived,
+ * and what to do next. Both are per service because the answers differ — a
+ * rejected calculation has an input to fix; a rejected AI job usually has a
+ * document to replace.
+ */
+interface ServiceVoice {
+  label: string;
+  /** What to do when the upstream refused our payload (a 4xx). */
+  rejectedRemedy: string;
+  /** What to do when the upstream never answered or broke (a 5xx). */
+  brokenRemedy: string;
+}
+
+const SERVICE_VOICE: Record<string, ServiceVoice> = {
+  engine: {
+    label: 'The calculation could not be run',
+    rejectedRemedy:
+      'Correct the inputs it names on the valuation’s parameters and run the calculation again.',
+    brokenRemedy: 'Your inputs are saved — run the calculation again in a few minutes.',
+  },
+  ai: {
+    label: 'The AI analysis could not be completed',
+    rejectedRemedy: 'Check the documents and prompt this run was given, then start it again.',
+    brokenRemedy: 'Your valuation and its inputs are saved — start the analysis again in a few minutes.',
+  },
+  report: {
+    label: 'The report could not be rendered',
+    rejectedRemedy: 'Check the report’s content for a section that cannot be laid out, then render again.',
+    brokenRemedy: 'The report’s content is saved — try the download again in a few minutes.',
+  },
+};
+
+function voiceOf(service: string): ServiceVoice {
+  return (
+    SERVICE_VOICE[service] ?? {
+      label: `The ${service} step could not be completed`,
+      rejectedRemedy: 'Check the inputs to this step and try again.',
+      brokenRemedy: 'Nothing has been lost — try again in a few minutes.',
+    }
+  );
+}
+
+/**
+ * `label`, the upstream's own words when it wrote any, then the remedy.
+ *
+ * The upstream sentence is the middle rather than the whole message, which is
+ * the entire change: it was previously all there was on two of these arms, and
+ * on an opaque body there was nothing at all.
+ */
+function compose(label: string, said: string | null, remedy: string): string {
+  // The upstream's sentence may or may not be punctuated — the engine's
+  // pre-flight messages are not, pydantic's are — and this is one string, so a
+  // trailing stop from there and the one added here read as a typo.
+  const middle = said?.trim().replace(/[.;:,\s]+$/, '') ?? '';
+  return middle === '' ? `${label}. ${remedy}` : `${label}: ${middle}. ${remedy}`;
+}
+
 /** Converts an InternalServiceError to the client-facing ApiProblem. */
 export function toProblem(err: InternalServiceError): ApiProblem {
   const said = describedBy(err);
@@ -609,11 +678,14 @@ export function toProblem(err: InternalServiceError): ApiProblem {
   // arm below and reach the analyst as "the ai service rejected the request",
   // which reads as a bug in their valuation — the one reading of it that is
   // both wrong and actionable, so people acted on it.
+  const voice = voiceOf(err.service);
   if (err.status === 429) {
+    const wait =
+      err.retryAfterSeconds !== null
+        ? `Try again in ${err.retryAfterSeconds}s.`
+        : 'Try again in a few minutes.';
     return problems.tooManyRequests(
-      said === null
-        ? `${err.service} is rate limited. Try again shortly.`
-        : `${err.service} is rate limited: ${said}`,
+      compose(`${voice.label} — the service is at its request allowance`, said, wait),
       err.retryAfterSeconds ?? undefined,
     );
   }
@@ -623,7 +695,7 @@ export function toProblem(err: InternalServiceError): ApiProblem {
     // body because `parseIssues` builds them field by field from a known
     // shape — nothing unrecognised is copied through.
     return problems.unprocessable(
-      said === null ? `${err.service} rejected the request.` : `${err.service} rejected the request: ${said}`,
+      compose(voice.label, said, voice.rejectedRemedy),
       err.issues.length > 0 ? { issues: err.issues } : undefined,
     );
   }
@@ -631,6 +703,6 @@ export function toProblem(err: InternalServiceError): ApiProblem {
     status: 502,
     title: 'Bad Gateway',
     type: 'urn:n409:problem:upstream',
-    detail: said === null ? `${err.service} is unavailable.` : `${err.service} is unavailable: ${said}`,
+    detail: compose(voice.label, said, voice.brokenRemedy),
   });
 }

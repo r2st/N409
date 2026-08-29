@@ -129,6 +129,25 @@ export class StripeApiError extends Error {
   }
 }
 
+/**
+ * Stripe's own sentence for a rejection, or a statement of the fact when the
+ * body carried none.
+ *
+ * `err.message` is missing whenever something other than Stripe answered — a
+ * proxy, a WAF, a load balancer with its own error page — and the fallback then
+ * read `Stripe HTTP 502`, which `stripeProblem` prefixed into
+ * `Stripe: Stripe HTTP 502`. That is a status code with a brand on it: it names
+ * no condition, suggests nothing, and repeats itself. A status is worth saying
+ * only as what it means to the reader.
+ */
+function stripeMessage(err: Record<string, unknown>, status: number): string {
+  const message = typeof err.message === 'string' ? err.message.trim() : '';
+  if (message !== '') return message;
+  return status >= 500
+    ? `Stripe is having trouble at the moment (HTTP ${status})`
+    : `Stripe refused the request and gave no reason (HTTP ${status})`;
+}
+
 /** The deadline every call in this file runs under. */
 const STRIPE_TIMEOUT_MS = 20_000;
 
@@ -285,7 +304,7 @@ export async function createCheckoutSession(
   const json = await stripeBody(res);
   if (!res.ok) {
     const err = (json.error ?? {}) as Record<string, unknown>;
-    throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);
+    throw new StripeApiError(stripeMessage(err, res.status), res.status);
   }
   return asCheckoutSession(json, res.status);
 }
@@ -340,7 +359,7 @@ export async function createSubscriptionCheckoutSession(
   const json = await stripeBody(res);
   if (!res.ok) {
     const err = (json.error ?? {}) as Record<string, unknown>;
-    throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);
+    throw new StripeApiError(stripeMessage(err, res.status), res.status);
   }
   return asCheckoutSession(json, res.status);
 }
@@ -372,7 +391,7 @@ export async function createBillingPortalSession(
   const json = await stripeBody(res);
   if (!res.ok) {
     const err = (json.error ?? {}) as Record<string, unknown>;
-    throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);
+    throw new StripeApiError(stripeMessage(err, res.status), res.status);
   }
   if (typeof json.url !== 'string') {
     throw new StripeApiError('Stripe returned a billing portal session with no URL', 502);
@@ -422,7 +441,7 @@ export async function retrieveReceipt(secretKey: string, paymentIntentId: string
   const json = await stripeBody(res);
   if (!res.ok) {
     const err = (json.error ?? {}) as Record<string, unknown>;
-    throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);
+    throw new StripeApiError(stripeMessage(err, res.status), res.status);
   }
   const charge = (json.latest_charge ?? {}) as Record<string, unknown>;
   return {

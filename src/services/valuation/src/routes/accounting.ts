@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { ApiProblem, describeTransportFailure, isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { signAccountingState, verifyAccountingState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -220,7 +220,7 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
          * unwell, this write fails too, and the rejection replaced an accurate
          * "Xero report fetch failed (503)" with a 500 about something else.
          */
-        const message = err instanceof Error ? err.message : String(err);
+        const message = describeTransportFailure(err);
         await recordImportError(deps.pool, connection.id, message).catch((bookErr: unknown) => {
           req.log.warn({ err: bookErr, connectionId: connection.id }, 'could not record import error');
         });

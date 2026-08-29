@@ -1,10 +1,12 @@
 import { renderReportPdf as renderLocally, type ReportPdfInput, type RenderOptions } from '@n409/report/pdf';
 import type { Counter, Histogram, MetricsRegistry } from '@n409/shared';
 import {
+  ApiProblem,
   CircuitOpenError,
   classifyFailure,
   classifyStatus,
   currentRequestId,
+  describeTransportFailure,
   FLAGS,
   flagEnabled,
   requestIdHeaders,
@@ -98,6 +100,8 @@ export type LocalReason =
 export interface RenderLogger {
   warn(obj: Record<string, unknown>, msg: string): void;
   debug(obj: Record<string, unknown>, msg: string): void;
+  /** A render that produced no bytes — see `reportRenderFailed`. */
+  error(obj: Record<string, unknown>, msg: string): void;
 }
 
 export interface RenderVia {
@@ -356,6 +360,59 @@ export function reportServiceUrl(): string | null {
 }
 
 /**
+ * The answer when the bytes could not be produced at all.
+ *
+ * Every failure this module *handles* ends in a PDF: an unreachable report
+ * unit, an open breaker, a full queue and a 422 on the wire all fall back to
+ * rendering here, which is why none of them is an error. The one that does not
+ * is the render itself throwing — pdfkit refusing a font it cannot read, a
+ * table whose column widths do not resolve, an embedded image that will not
+ * decode — and that had no handler anywhere on the path. It left this function
+ * untouched, walked past every `catch` in the four routes that call it, and
+ * arrived at `registerProblemHandler` as `500 urn:n409:problem:internal`, whose
+ * body carries no `detail` by design. Somebody pressed Download and got
+ * nothing, twice: no file and no sentence.
+ *
+ * So: a 502 that says the render is what failed, that the report itself is
+ * intact, and that re-trying is worth one attempt before it is worth a support
+ * ticket. `urn:n409:problem:upstream` rather than a new type because that is
+ * already the catalogued "a step we depend on did not produce its output", and
+ * an operator reading it needs the log line — which still carries the original
+ * error, stack and all — not a second URN.
+ *
+ * The underlying message is deliberately *not* forwarded. It is a pdfkit
+ * internal ("Unknown font format", a font path) written for whoever is holding
+ * the stack, and this body goes to a client; the same split `describedBy` makes
+ * in `clients/internal.ts`.
+ */
+function reportRenderFailed(err: unknown, reason: LocalReason, log: RenderLogger | null): ApiProblem {
+  // The cause goes to the log, which is where it belongs, and not onto the
+  // problem: `registerProblemHandler` builds a body from the declared fields,
+  // so a `cause` there would be invisible in the response and duplicated here.
+  log?.error(
+    {
+      service: SERVICE,
+      reason,
+      detail: describe(err),
+      err,
+      request_id: currentRequestId() ?? null,
+      // Nothing retries a render and no sweep comes back for it; the download
+      // is simply gone. That is the class `alert: true` is for.
+      alert: true,
+    },
+    'report render failed; no PDF produced',
+  );
+  return new ApiProblem({
+    status: 502,
+    title: 'Bad Gateway',
+    type: 'urn:n409:problem:upstream',
+    detail:
+      'The report could not be turned into a PDF. Nothing about the report itself has changed — ' +
+      'its content and version are saved. Try the download again, and contact support if it keeps failing.',
+  });
+}
+
+/**
  * Render a report PDF — on the report service when one is configured and
  * reachable, in this process otherwise.
  *
@@ -366,7 +423,13 @@ export async function renderReportPdf(input: ReportPdfInput, via: RenderVia = {}
   const startedAt = Date.now();
   const env = via.env ?? process.env;
   const local = async (reason: LocalReason): Promise<Buffer> => {
-    const pdf = await renderLocally(input, via.options);
+    const pdf = await renderLocally(input, via.options).catch((err: unknown) => {
+      // Counted before it is thrown. `record` on the success path is what makes
+      // the local renderer visible at all, so a renderer that fails every time
+      // would otherwise show up as no local renders rather than as a fault.
+      record('local', `${reason}:failed`, startedAt);
+      throw reportRenderFailed(err, reason, logger(via));
+    });
     record('local', reason, startedAt);
     return pdf;
   };
@@ -554,5 +617,5 @@ function logger(via: RenderVia): RenderLogger | null {
 }
 
 function describe(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return describeTransportFailure(err);
 }

@@ -1,7 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
-import { FLAGS, flagEnabled } from '@n409/shared';
+import { describeTransportFailure, FLAGS, flagEnabled } from '@n409/shared';
 import {
   buildWebhookPayload,
   DELIVERY_HEADER,
@@ -98,7 +98,7 @@ async function blockedTargetReason(url: string, lookupFn: LookupFn): Promise<str
   try {
     addresses = await lookupFn(parsed.hostname);
   } catch (err) {
-    return `could not resolve ${parsed.hostname}: ${err instanceof Error ? err.message : String(err)}`;
+    return `could not resolve ${parsed.hostname}: ${describeTransportFailure(err)}`;
   }
   // `all: true` and not just the first: a name with one public and one private
   // A record would otherwise pass or fail on resolver ordering.
@@ -177,7 +177,14 @@ async function postDelivery(
   } catch (err) {
     // A timeout, a refused connection, DNS — the transient class this whole
     // mechanism exists for.
-    return { ok: false, error: err instanceof Error ? err.message : String(err), permanent: false };
+    //
+    // Described rather than quoted. `err.message` here is `fetch failed` for
+    // every one of those conditions, and this string is not a log line: it is
+    // the `error` column of the partner's own delivery log, which is the only
+    // place they get to find out why their endpoint is not receiving anything.
+    // "fetch failed" against an expired certificate or a deleted DNS record
+    // sends them to us; the condition sends them to the fix.
+    return { ok: false, error: describeTransportFailure(err), permanent: false };
   }
 }
 
