@@ -73,6 +73,40 @@ describe('applyPartnerEmailTemplates', () => {
     expect(half).toEqual(specs);
   });
 
+  /**
+   * The var bag a white-labelled send hands a partner's template.
+   *
+   * The send path assembles every scope it can answer — `always`, `link`, the
+   * whole `valuation` scope — for the platform template and then rebuilt a
+   * three-key subset for the partner's, so a partner template writing
+   * `{{kind_label}}`, the phrasing every seeded platform template uses,
+   * reached that partner's own client as literal braces while the identical
+   * placeholder in a DB override beside it rendered correctly.
+   */
+  it('answers every name the platform template beside it can answer', () => {
+    const specs = emailsForTransition(snapshot, 'started');
+    const out = applyPartnerEmailTemplates(
+      specs,
+      {
+        valuation_started: {
+          subject: 'Your {{kind_label}} for {{company_name}}',
+          body: 'Hi {{recipient_name}}, see {{valuation_link}}. Due {{due_date}}. — {{partner_name}}',
+        },
+      },
+      {
+        ...VARS,
+        kind_label: '409A',
+        recipient_name: 'Dana',
+        valuation_link: 'https://app.n409.test/valuations/01JQ',
+        due_date: '2026-08-21',
+      },
+    );
+    expect(out[0]!.subject).toBe('Your 409A for Acme Inc');
+    expect(out[0]!.body).toBe(
+      'Hi Dana, see https://app.n409.test/valuations/01JQ. Due 2026-08-21. — Bridge Advisors',
+    );
+  });
+
   it('every templatable key corresponds to a real workflow email', () => {
     const seen = new Set<string>();
     for (const to of ['started', 'review', 'drafted', 'published', 'cancelled'] as const) {

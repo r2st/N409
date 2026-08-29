@@ -267,7 +267,16 @@ async function deliverTransitionMessages(
     };
     const [withDb] = applyTemplateOverrides([spec], overrides, vars);
     if (!partner || Object.keys(partner.email_templates ?? {}).length === 0) return withDb!;
+    // The same var bag the platform template was rendered with, not a
+    // three-key subset of it. Rebuilt here, a partner's template writing
+    // `{{kind_label}}` or `{{due_date}}` — names the platform's own seeded
+    // copy uses — reached that partner's client as literal braces, while the
+    // identical placeholder in the DB override beside it rendered correctly.
+    // The three named ones stay explicit because the type requires them: they
+    // are what the partner editor advertises, so they must never be the ones
+    // that go missing.
     return applyPartnerEmailTemplates([withDb!], partner.email_templates, {
+      ...vars,
       company_name: valuation.company_name,
       kind: valuation.kind,
       partner_name: partner.name,

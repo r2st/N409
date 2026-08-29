@@ -209,6 +209,17 @@ export type PartnerEmailTemplates = Partial<
 >;
 
 /**
+ * What a partner's own template may interpolate.
+ *
+ * The three named ones are required, so a caller cannot forget the names the
+ * partner editor advertises. The index signature is the rest of the catalog:
+ * the send path assembles every scope it can answer for the *platform*
+ * template a line earlier and then rebuilt a three-key subset for the
+ * partner's, so a white-label template writing `{{kind_label}}` — the phrasing
+ * every seeded template uses — or `{{recipient_name}}` reached the partner's
+ * own client as literal braces. The mirror of the `{{partner_name}}` gap
+ * recorded above, in the other direction.
+ *
  * A `type` rather than an `interface`, for the reason `ReportTemplateVars`
  * carries: only an object type alias gets TypeScript's implicit index
  * signature, and without one a `{{placeholder}}` lookup cannot read this shape
@@ -218,7 +229,7 @@ export type EmailTemplateVars = {
   company_name: string;
   kind: string;
   partner_name: string;
-};
+} & Record<string, string | number | null | undefined>;
 
 /**
  * {{placeholder}} substitution; unknown placeholders survive verbatim.

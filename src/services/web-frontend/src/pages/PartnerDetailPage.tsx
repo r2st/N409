@@ -13,7 +13,13 @@ import { displayName, formatDate, formatDateTime, GROUP_LABELS } from '../lib/fo
 import { NAMED_BUCKETS, PARTNER_EMAIL_TEMPLATE_KEYS } from '../lib/types';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
-import type { NamedBucketKey, PartnerDetail, ValuationKind, ValuationState } from '../lib/types';
+import type {
+  NamedBucketKey,
+  PartnerDetail,
+  TemplateVariable,
+  ValuationKind,
+  ValuationState,
+} from '../lib/types';
 import {
   Button,
   ErrorNote,
@@ -530,6 +536,7 @@ export function PartnerDetailPage() {
   const [templates, setTemplates] = useState<Record<string, { subject: string; body: string }>>({});
   const [subdomain, setSubdomain] = useState('');
   const [ccEmails, setCcEmails] = useState('');
+  const [variables, setVariables] = useState<TemplateVariable[] | null>(null);
 
   /*
    * `:id` changes without this page being torn down, so two firms can be in
@@ -567,6 +574,40 @@ export function PartnerDetailPage() {
   useEffect(() => {
     void load();
   }, [load, token]);
+
+  /*
+   * The placeholder list, from the same catalog the renderer validates
+   * against. Hard-coded, this hint named three variables out of the thirteen a
+   * white-labelled send answers — and a hint that under-names them is how a
+   * partner ends up writing the email by hand that the platform template three
+   * screens away writes with `{{kind_label}}`.
+   *
+   * A failure degrades to the three the send is *typed* to require, which is
+   * what this screen said before: the palette is a convenience, not a gate, and
+   * an ops-only endpoint is one a partner administrator may not be allowed to
+   * read at all.
+   */
+  useEffect(() => {
+    api<{ variables: TemplateVariable[] }>('/admin/communication-templates/variables')
+      .then((d) => setVariables(d.variables))
+      .catch(() => setVariables(null));
+  }, []);
+
+  /*
+   * What a workflow email can actually answer, which is not the whole catalog:
+   * `always` and `valuation` in full, and the two links that are derivable from
+   * the engagement's id. The rest of the `link` scope is a reset or an
+   * invitation, and the `payment` scope is a receipt — none of them is a
+   * transition, so none of them reaches a partner's template. Naming one here
+   * would put braces in a client's inbox, which is the failure this list exists
+   * to prevent rather than cause.
+   */
+  const WORKFLOW_LINKS = ['valuation_link', 'payment_link'];
+  const placeholders = (
+    variables
+      ?.filter((v) => v.scope === 'always' || v.scope === 'valuation' || WORKFLOW_LINKS.includes(v.name))
+      .map((v) => v.name) ?? ['company_name', 'kind', 'partner_name']
+  ).map((name) => `{{${name}}}`);
 
   /*
    * Three forms share this page, each with a different amount of nothing
@@ -1006,9 +1047,14 @@ export function PartnerDetailPage() {
         <p className="text-sm text-ink-400">
           Override the workflow emails sent for this partner&rsquo;s engagements. Leave a template blank to
           use the platform default. Placeholders:{' '}
-          <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">{'{{company_name}}'}</code>{' '}
-          <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">{'{{kind}}'}</code>{' '}
-          <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">{'{{partner_name}}'}</code>
+          {placeholders.map((token) => (
+            <code
+              key={token}
+              className="mr-1 inline-block rounded bg-paper-200 px-1 py-0.5 font-mono text-xs"
+            >
+              {token}
+            </code>
+          ))}
         </p>
         <form className="mt-5 space-y-6" onSubmit={saveTemplates} noValidate>
           {PARTNER_EMAIL_TEMPLATE_KEYS.map((key) => {
