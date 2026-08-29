@@ -592,11 +592,13 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
    * Wrapped whole, like `alertBilling` above and for a sharper reason. This
    * runs after the compare-and-set in `fulfill` has already claimed the row, so
    * the settlement is committed: an exception escaping here would 5xx the
-   * webhook, and Stripe's redelivery would find the payment no longer
-   * `pending`, take the `!claimed` early return, and never reach this code
-   * again. The announcement would be lost by the retry that exists to save it.
-   * Once `sendTransactionalEmail` has written the outbox row the retry ladder
-   * owns delivery, so the only thing this can swallow is the enqueue itself.
+   * webhook, and Stripe's redelivery would arrive to find the payment no longer
+   * `pending`. `resumeAbandoned` will now carry such a redelivery back to this
+   * line, but only while the engagement is still unpaid — and by the time this
+   * runs it is not, so the announcement would still be lost by the retry that
+   * exists to save it. Once `sendTransactionalEmail` has written the outbox row
+   * the retry ladder owns delivery, so the only thing this can swallow is the
+   * enqueue itself.
    */
   async function announcePaymentReceived(
     log: FastifyBaseLogger,
@@ -1000,13 +1002,61 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       // against us) read as un-fulfilled. A replayed `completed` then marked it
       // succeeded again and put the engagement back to paid, leaving a client
       // who had been refunded in full holding a published 409A.
+      /*
+       * The half of a fulfilment that a redelivery can no longer finish.
+       *
+       * `markPayment` above is a compare-and-set from 'pending', and returning
+       * on its null is what makes a replay safe. It is also what makes a
+       * replay *useless*, and those are not the same event.
+       *
+       * Everything after the claim is a separate statement: the receipt, the
+       * valuation's paid fields, the lifecycle move, the announcement. Only two
+       * of them are wrapped — `findValuationById` and `patchValuation` are not,
+       * deliberately, because losing the paid fields is worse than a 5xx that
+       * brings Stripe back. But the 5xx that brings Stripe back arrives to find
+       * the row already 'succeeded', so the compare-and-set declines it and the
+       * handler returns having done nothing at all. A pool timeout in that
+       * window therefore left a charge collected, a payment row succeeded, and
+       * an engagement permanently unpaid, unadvanced and unannounced — with the
+       * ledger recording nothing, so the *next* redelivery repeated the
+       * no-op rather than fixing it.
+       *
+       * A payment on 'succeeded' whose valuation is still 'unpaid' is exactly
+       * that abandoned state and nothing else: a refund or a lost chargeback
+       * moves the row off 'succeeded' before it clears the valuation, and an
+       * ordinary redelivery of a fulfilment that finished finds the valuation
+       * paid. So the redelivery resumes from there rather than returning.
+       *
+       * What it must not do is race the delivery that is still running. Two
+       * simultaneous deliveries put the loser here while the winner is between
+       * its claim and its patch — a window as wide as the receipt lookup's
+       * 20-second deadline — and both would see 'unpaid'. So the resumed patch
+       * is version-conditional: whichever writes first wins, and the other is
+       * refused and stops before it can announce a second time. Only the
+       * resumed one; the claiming path's exclusivity is the compare-and-set,
+       * and a version condition there could refuse a settlement outright.
+       */
+      const resumeAbandoned = async (): Promise<PaymentRow | null> => {
+        const current = await findPaymentForValuation(deps.pool, payment.valuation_id, payment.id);
+        if (!current || current.status !== 'succeeded') return null;
+        const valuation = await findValuationById(deps.pool, current.valuation_id);
+        if (!valuation || valuation.paid_status !== 'unpaid') return null;
+        req.log.warn(
+          { sessionId, paymentId: current.id, valuationId: current.valuation_id },
+          'resuming a fulfilment that settled the payment but never reached the engagement',
+        );
+        return current;
+      };
+
       const fulfill = async () => {
         const intent = typeof session.payment_intent === 'string' ? session.payment_intent : null;
         const claimed = await markPayment(deps.pool, payment.id, 'succeeded', {
           paymentIntentId: intent,
           from: ['pending'],
         });
-        if (!claimed) return;
+        const settledPayment = claimed ?? (await resumeAbandoned());
+        if (!settledPayment) return;
+        const resumed = claimed === null;
         // Best-effort receipt capture — the charge (not the session) carries
         // receipt_url, so resolve it via the API. Failure never blocks the ack.
         if (deps.stripeSecretKey && intent) {
@@ -1018,26 +1068,53 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
           }
         }
         const valuation = await findValuationById(deps.pool, payment.valuation_id);
+        // Re-read after the receipt lookup, which may have spent 20 seconds at
+        // Stripe. A resumed delivery is entitled to finish an *unpaid*
+        // engagement and nothing else, so if one has been paid in the meantime
+        // this stops here rather than falling through to announce it twice.
+        if (resumed && valuation?.paid_status !== 'unpaid') {
+          req.log.info(
+            { sessionId, valuationId: payment.valuation_id },
+            'another delivery of this settlement finished the engagement first',
+          );
+          return;
+        }
         if (valuation && valuation.paid_status === 'unpaid') {
           const amount =
             typeof session.amount_total === 'number' ? session.amount_total : Number(payment.amount_cents);
-          const updated = await patchValuation(
-            deps.pool,
-            valuation,
-            {
-              paid_status: 'paid',
-              amount_cents: amount,
-              paid_at: new Date(),
-              // Express is a promise that only starts costing us once the
-              // money is in, so the SLA moves here and not at checkout — an
-              // abandoned or bounced express order must not leave a
-              // one-business-day due date on an unpaid engagement. Written
-              // through patchValuation so the change lands in the audit trail
-              // attributed to Stripe, like the paid fields beside it.
-              ...(payment.express ? { delivery_days: EXPRESS_DELIVERY_DAYS } : {}),
-            },
-            { actorType: 'system', source: 'stripe' },
-          );
+          let updated: ValuationRow;
+          try {
+            updated = await patchValuation(
+              deps.pool,
+              valuation,
+              {
+                paid_status: 'paid',
+                amount_cents: amount,
+                paid_at: new Date(),
+                // Express is a promise that only starts costing us once the
+                // money is in, so the SLA moves here and not at checkout — an
+                // abandoned or bounced express order must not leave a
+                // one-business-day due date on an unpaid engagement. Written
+                // through patchValuation so the change lands in the audit trail
+                // attributed to Stripe, like the paid fields beside it.
+                ...(payment.express ? { delivery_days: EXPRESS_DELIVERY_DAYS } : {}),
+              },
+              { actorType: 'system', source: 'stripe' },
+              // Only on the resumed path — see resumeAbandoned. It is what stops
+              // a redelivery that arrives beside the live one from patching and
+              // announcing a second time.
+              resumed ? { expectedVersion: valuation.version } : {},
+            );
+          } catch (err) {
+            if (resumed && err instanceof ApiProblem && err.status === 409) {
+              req.log.info(
+                { sessionId, valuationId: valuation.id },
+                'another delivery of this settlement got to the engagement first',
+              );
+              return;
+            }
+            throw err;
+          }
           /*
            * The lifecycle move is a second decision, not a field on the first.
            *
@@ -1097,7 +1174,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // charge on an already-paid file does not do; this is about the charge,
         // and `claimed` above has already established there is exactly one of
         // them. An add-on bought after the fact is still money we took.
-        if (valuation) await announcePaymentReceived(req.log, claimed, valuation);
+        if (valuation) await announcePaymentReceived(req.log, settledPayment, valuation);
       };
 
       if (event.type === 'checkout.session.completed') {
