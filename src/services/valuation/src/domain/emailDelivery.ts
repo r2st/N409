@@ -13,6 +13,7 @@
  * So the classification is deliberately conservative and the reasons are
  * written down beside each rule.
  */
+import { createHash } from 'node:crypto';
 
 /** Terminal for the address, or merely for this attempt. */
 export type BounceKind = 'hard' | 'soft' | 'complaint';
@@ -208,4 +209,65 @@ export const RATE_FLOOR = 20;
 export function rateOrNull(numerator: number, denominator: number): number | null {
   if (denominator < RATE_FLOOR) return null;
   return Math.round((numerator / denominator) * 10_000) / 100;
+}
+
+/**
+ * The idempotency key for a webhook event the provider did not give one.
+ *
+ * `email_delivery_events` dedupes on `(source, provider_event_id)`, and a NULL
+ * collides with nothing — deliberately, because the other producer of NULLs is
+ * the tracking pixel, where every fetch really is a distinct event. A webhook
+ * is the opposite case: `event_id` is optional in the envelope, providers that
+ * batch opens routinely omit it, and *every* provider redelivers a batch it did
+ * not get a 2xx for. So an undated open with no id was inserted again on each
+ * redelivery, and `applyEvent` increments `open_count` on every fresh insert —
+ * one open reported as four because a later event in the same batch failed and
+ * the provider tried three more times.
+ *
+ * The fingerprint is over the fields that are *stored*, normalised, so the two
+ * ways a provider can spell the same instant (`…T10:00:00Z` and
+ * `…T10:00:00.000Z`) fingerprint alike. `occurred_at` contributes only when the
+ * provider dated the event: an undated one is stamped `now()` at insert, so
+ * including it would make every redelivery a fresh event again — which is the
+ * bug. Two genuinely distinct undated events of the same kind on the same
+ * message therefore collapse into one, and that is the right direction to be
+ * wrong in: `open_count` is documented as a floor, not a count, while an
+ * inflated one is read as engagement that did not happen.
+ *
+ * Prefixed so the ledger says which ids we derived and which the provider
+ * supplied, and so a provider id that happens to be 32 hex characters can never
+ * collide with one of ours.
+ */
+export function deliveryEventFingerprint(event: {
+  messageId: string;
+  kind: DeliveryEventKind;
+  /** As the provider spelled it, or null when it dated nothing. */
+  occurredAt: string | null;
+  bounceKind: BounceKind | null;
+  status: string | null;
+  detail: string | null;
+}): string {
+  const dated = event.occurredAt === null ? '' : normaliseInstant(event.occurredAt);
+  const parts = [
+    event.messageId,
+    event.kind,
+    dated,
+    event.bounceKind ?? '',
+    event.status ?? '',
+    event.detail ?? '',
+  ];
+  // Length-prefixed, so a detail ending in the separator cannot spell the next
+  // field — the same reason `\n`-joining a signing payload is wrong.
+  const canonical = parts.map((p) => `${p.length}:${p}`).join('');
+  return `derived:${createHash('sha256').update(canonical, 'utf8').digest('hex').slice(0, 32)}`;
+}
+
+/**
+ * An ISO instant as one string per instant, or the input unchanged when it is
+ * not a date this runtime can read — a fingerprint must never throw, and an
+ * unparseable value still fingerprints consistently with itself.
+ */
+function normaliseInstant(value: string): string {
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? value : new Date(ms).toISOString();
 }

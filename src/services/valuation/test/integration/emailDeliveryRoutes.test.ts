@@ -356,6 +356,53 @@ describe.skipIf(!dbUp)('email delivery routes', () => {
       expect(await isSuppressed(ctx.pool, 'maybe@test.example.com')).toBeNull();
     });
 
+    /**
+     * A provider that batches opens routinely omits `event_id`, and every
+     * provider redelivers a batch it did not get a 2xx for. Before the
+     * fingerprint, `(source, NULL)` collided with nothing, so the redelivery
+     * inserted the event again and `open_count` counted one open twice.
+     */
+    it('treats an unidentified event as a duplicate on redelivery', async () => {
+      const email = await seed();
+      const body = JSON.stringify({
+        events: [{ message_id: email.id, kind: 'opened' }],
+      });
+      const send = () =>
+        ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/webhooks/email/testmail',
+          headers: { 'content-type': 'application/json', 'x-n409-signature': sign(body) },
+          payload: body,
+        });
+
+      expect((await send()).json()).toMatchObject({ applied: 1, duplicates: 0 });
+      expect((await send()).json()).toMatchObject({ applied: 0, duplicates: 1 });
+      const { rows } = await ctx.pool.query<{ open_count: number }>(
+        'SELECT open_count FROM email_outbox WHERE id = $1',
+        [email.id],
+      );
+      expect(Number(rows[0]!.open_count)).toBe(1);
+    });
+
+    /** The two ways a provider spells the same instant are the same event. */
+    it('fingerprints an undated pair of spellings alike', async () => {
+      const email = await seed();
+      const send = (occurredAt: string) => {
+        const body = JSON.stringify({
+          events: [{ message_id: email.id, kind: 'opened', occurred_at: occurredAt }],
+        });
+        return ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/webhooks/email/testmail',
+          headers: { 'content-type': 'application/json', 'x-n409-signature': sign(body) },
+          payload: body,
+        });
+      };
+
+      expect((await send('2026-08-15T10:00:00Z')).json()).toMatchObject({ applied: 1 });
+      expect((await send('2026-08-15T10:00:00.000Z')).json()).toMatchObject({ duplicates: 1 });
+    });
+
     it('rejects a payload that is not the shape it accepts', async () => {
       const body = JSON.stringify({ events: [{ message_id: 'not-a-ulid', kind: 'delivered' }] });
       const res = await ctx.app.inject({

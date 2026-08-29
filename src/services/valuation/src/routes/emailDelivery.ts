@@ -6,6 +6,7 @@ import { isUlid, problems } from '@n409/shared';
 import { canManageUsers, isOps } from '../auth/rbac.js';
 import {
   classifyDsnStatus,
+  deliveryEventFingerprint,
   rateOrNull,
   type BounceKind,
   type DeliveryEventKind,
@@ -311,12 +312,27 @@ export function registerEmailDeliveryRoutes(
           (event.status ? classifyDsnStatus(event.status) : null) ??
           (event.kind === 'complained' ? 'complaint' : event.kind === 'bounced' ? 'soft' : null);
 
+        // An event the provider did not identify is still the same event when
+        // it redelivers the batch. See `deliveryEventFingerprint`: without one
+        // of these, `(source, provider_event_id)` is `(webhook:x, NULL)`, which
+        // collides with nothing, and a retried batch counted every open again.
+        const providerEventId =
+          event.event_id ??
+          deliveryEventFingerprint({
+            messageId: event.message_id,
+            kind: event.kind as DeliveryEventKind,
+            occurredAt: event.occurred_at ?? null,
+            bounceKind,
+            status: event.status ?? null,
+            detail: event.detail ?? null,
+          });
+
         const fresh = await recordDeliveryEvent(deps.pool, {
           outboxId: event.message_id,
           kind: event.kind as DeliveryEventKind,
           occurredAt: event.occurred_at ? new Date(event.occurred_at) : new Date(),
           source: `webhook:${provider}`,
-          providerEventId: event.event_id ?? null,
+          providerEventId,
           bounceKind,
           detail: event.detail ?? null,
         });
