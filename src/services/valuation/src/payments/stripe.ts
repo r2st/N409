@@ -505,6 +505,17 @@ export async function expireCheckoutSession(secretKey: string, sessionId: string
 export interface ChargeReceipt {
   chargeId: string | null;
   receiptUrl: string | null;
+  /**
+   * Cents already returned on this charge, or null when the charge did not say.
+   *
+   * On the same object the receipt is on, so it costs nothing to read and is
+   * the only thing at settlement time that can say the money has already gone
+   * back. A `charge.refunded` that arrives *before* the settlement it belongs
+   * to matches nothing here — a pending row carries neither a charge id nor a
+   * payment intent, both of which are written at fulfilment — so it is
+   * acknowledged, recorded in the event ledger, and never redelivered.
+   */
+  amountRefunded: number | null;
 }
 
 /**
@@ -527,5 +538,6 @@ export async function retrieveReceipt(secretKey: string, paymentIntentId: string
   return {
     chargeId: typeof charge.id === 'string' ? charge.id : null,
     receiptUrl: typeof charge.receipt_url === 'string' ? charge.receipt_url : null,
+    amountRefunded: typeof charge.amount_refunded === 'number' ? charge.amount_refunded : null,
   };
 }

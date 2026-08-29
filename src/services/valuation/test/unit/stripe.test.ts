@@ -84,10 +84,20 @@ describe('retrieveReceipt', () => {
     await expect(retrieveReceipt('sk_test', 'pi_1')).resolves.toEqual({
       chargeId: 'ch_1',
       receiptUrl: 'https://pay.stripe.com/receipts/r1',
+      // Absent on a charge nothing has come back on, which is not the same as
+      // zero and must not read as "the charge said nothing".
+      amountRefunded: null,
     });
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(String(url)).toBe('https://api.stripe.com/v1/payment_intents/pi_1?expand[]=latest_charge');
     expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer sk_test');
+  });
+
+  it('reads how much of the charge has already gone back', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ id: 'pi_1', latest_charge: { id: 'ch_1', amount_refunded: 4200 } }),
+    );
+    await expect(retrieveReceipt('sk_test', 'pi_1')).resolves.toMatchObject({ amountRefunded: 4200 });
   });
 
   it('tolerates a missing charge (nulls, not a crash)', async () => {
@@ -95,6 +105,7 @@ describe('retrieveReceipt', () => {
     await expect(retrieveReceipt('sk_test', 'pi_1')).resolves.toEqual({
       chargeId: null,
       receiptUrl: null,
+      amountRefunded: null,
     });
   });
 

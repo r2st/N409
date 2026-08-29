@@ -1308,13 +1308,68 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         const resumed = claimed === null;
         // Best-effort receipt capture — the charge (not the session) carries
         // receipt_url, so resolve it via the API. Failure never blocks the ack.
+        //
+        // The charge also says how much of itself has already gone back, and
+        // that is the only thing available here that can. A `charge.refunded`
+        // delivered *before* the settlement it belongs to matches no row —
+        // `findPaymentByChargeOrIntent` reads `charge_id` and
+        // `payment_intent_id`, and both are written at fulfilment, so a pending
+        // row has neither — and it is then acknowledged, written into the event
+        // ledger, and never redelivered. Which left this handler releasing an
+        // engagement, and mailing a receipt for it, on money that was already
+        // back with the client. The ordering is not exotic: our own webhook is
+        // on a retry ladder that runs for days, and a duplicate or fraudulent
+        // charge is refunded within minutes of being noticed.
+        let alreadyBack = { refundedCents: 0, fullyRefunded: false };
         if (deps.stripeSecretKey && intent) {
           try {
             const receipt = await retrieveReceipt(deps.stripeSecretKey, intent);
             await setPaymentReceipt(deps.pool, payment.id, receipt);
+            const state = refundState({
+              amountCents: Number(payment.amount_cents),
+              amountRefunded: receipt.amountRefunded,
+            });
+            if (state.refundedCents > 0) {
+              alreadyBack = state;
+              // Through the same compare-and-set the webhook path uses, so the
+              // `charge.refunded` that may yet arrive with this figure is not
+              // news and does not alert a second time.
+              await recordRefund(deps.pool, payment.id, {
+                refundedCents: state.refundedCents,
+                fullyRefunded: state.fullyRefunded,
+              });
+            }
           } catch (err) {
             log.warn({ err }, 'stripe receipt lookup failed');
           }
+        }
+        if (alreadyBack.fullyRefunded) {
+          // Recorded, not released. The payment did settle and the row says so
+          // before it says 'refunded'; what must not happen is the engagement
+          // crossing the payment gate and a receipt going out for money the
+          // client already has back.
+          log.error(
+            {
+              alert: true,
+              actorType: 'system',
+              source: 'stripe',
+              sessionId,
+              paymentId: payment.id,
+              valuationId: payment.valuation_id,
+              refundedCents: alreadyBack.refundedCents,
+            },
+            'checkout settled on a charge that had already been refunded in full — engagement not released',
+          );
+          await alertBilling(log, {
+            valuationId: payment.valuation_id,
+            ownerId: (await findValuationById(deps.pool, payment.valuation_id))?.user_id ?? null,
+            type: 'payment_reversed',
+            title: 'Payment refunded before it could be applied',
+            body:
+              `${formatMoneyCents(alreadyBack.refundedCents, payment.currency)} was refunded before this ` +
+              'settlement reached us, so the engagement has not been marked paid.',
+          });
+          return;
         }
         const valuation = await findValuationById(deps.pool, payment.valuation_id);
         // Re-read after the receipt lookup, which may have spent 20 seconds at
