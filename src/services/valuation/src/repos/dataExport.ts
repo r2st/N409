@@ -129,9 +129,30 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
   // The account, minus every credential. Enumerated rather than `SELECT *`
   // with deletions, so a column added later is absent by default instead of
   // being exported by an oversight.
+  //
+  // "Absent by default" is the safe direction for a credential and the wrong
+  // one for an identifier, and nothing said which a new column was. The table
+  // census below this file (`personalDataCensus`) states the rule one level up
+  // — every *table* about a person is exported or exempted — and stopped
+  // there, so two columns on the most personal table in the schema had never
+  // been considered by anything:
+  //
+  //   * `gclid` is the Google Ads click identifier captured at signup. It is
+  //     an online identifier under Art. 4(1) in the plainest sense — it ties
+  //     this account to one advertisement click, which is a fact about the
+  //     person that exists nowhere else and that they cannot see.
+  //   * `scim_external_id` is the id their employer's directory knows them by,
+  //     written here by the SCIM connector (routes/scim.ts) and round-tripped
+  //     back to it. An account provisioned by an IdP is the case where the
+  //     subject did not create the record and has the least idea what is in
+  //     it.
+  //
+  // `usersColumnCensus.test.ts` now holds every column of `users` against this
+  // list or against a written reason, so the next one is a decision.
   const { rows: accountRows } = await pool.query<Record<string, unknown>>(
     `SELECT u.id, u.first_name, u.last_name, u.email, u.phone, u.job_title, u.company_name,
-            u.timezone, u.verified, u.sso_provider, u.provisioned_by, u.partner_id,
+            u.timezone, u.verified, u.sso_provider, u.provisioned_by, u.scim_external_id,
+            u.gclid, u.partner_id,
             u.totp_enabled, u.totp_confirmed_at, u.created_at, u.deleted_at,
             p.name AS partner_name,
             coalesce(array_agg(r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
