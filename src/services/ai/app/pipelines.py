@@ -15,7 +15,7 @@ from typing import Any
 from .anonymize import Redactor
 from .documents import DocText, extract_texts, render_corpus
 from .llm_router import chat
-from .openrouter import LlmResult, extract_json
+from .openrouter import LlmResult, extract_json, max_output_tokens
 
 # Fields the extraction pipeline may emit — everything else is dropped so a
 # hallucinated key can never reach the calculation engine.
@@ -638,10 +638,37 @@ Only include approaches that actually carried weight. Maximum 6 drivers."""
     return llm.model, result
 
 
+class TruncatedCompletionError(ValueError):
+    """The model ran out of output room before it finished its answer.
+
+    A `ValueError` so that anything catching the "model output unusable" case
+    still does; its own type so `main` can answer 422 instead of 502, because
+    no retry shortens the prompt and the fix is in the request.
+    """
+
+
 def _safe_result(llm: LlmResult) -> dict | list:
+    """The model's JSON, or its prose under `notes` when it wrote prose.
+
+    The `notes` fallback is a deliberate degradation for a model that ignored
+    "respond ONLY with JSON" — the analyst still gets what it said. It is the
+    wrong answer for a *truncated* reply, and that is how it was being used:
+    every prompt in this module asks for a JSON object, so a completion cut off
+    at the output cap is unparseable, fell into `notes`, and each caller below
+    then read its own keys off that dict, found none, and returned an empty
+    result. The pipeline reported success, the job row said `succeeded`, and the
+    AI tab showed a document summary with no documents in it — an answer, drawn
+    from a truncation, that nothing anywhere contradicted.
+    """
     try:
         return extract_json(llm.content)
-    except ValueError:
+    except ValueError as exc:
+        if llm.truncated:
+            raise TruncatedCompletionError(
+                f"the model stopped at the {max_output_tokens()}-token output cap "
+                "before completing its answer — send fewer documents, or raise "
+                "OPENROUTER_MAX_TOKENS"
+            ) from exc
         return {"notes": llm.content[:1000]}
 
 

@@ -16,7 +16,9 @@ import {
 /**
  * Thin JSON client for the internal AI / engine services. Failures surface as
  * problems: an upstream 4xx means our payload was incomplete (→ 422 to the
- * client); anything else is a 502 so an outage never reads as a valuation bug.
+ * client), a 429 is the upstream out of allowance (→ 429, with its own
+ * `retry-after`), and anything else is a 502 so an outage never reads as a
+ * valuation bug.
  */
 /**
  * A structured input problem reported by an upstream service (the engine's
@@ -79,7 +81,17 @@ export class InternalServiceError extends Error {
      * 502-it-is-broken.
      */
     readonly circuitOpen: boolean = false,
-    /** Seconds until the breaker will admit a trial call; only set with `circuitOpen`. */
+    /**
+     * Seconds until it is worth asking again, when something said so.
+     *
+     * Two sources, both of them an upstream answering "not now" rather than
+     * "not ever": the breaker, which knows exactly when it will admit a trial
+     * call, and a `retry-after` on an upstream 429. The AI service raises the
+     * second one when OpenRouter's allowance is spent — a daily quota on the
+     * key, so every model in its fallback chain refuses at once — and that
+     * number is the only useful thing anyone can tell the analyst who is
+     * looking at the failed run.
+     */
     readonly retryAfterSeconds: number | null = null,
   ) {
     super(`${service}: ${detail}`);
@@ -474,6 +486,10 @@ async function postJsonOnce<T>(
   }
   if (!res.ok) {
     let detail = text.slice(0, 500);
+    // Forwarded rather than re-guessed: only the upstream knows when its
+    // window reopens, and a number invented here would be advice about a
+    // dependency this service cannot see.
+    const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
     // Until a problem document says otherwise, `detail` is whatever bytes the
     // upstream happened to send — see the `opaque` field on the error.
     let opaque = true;
@@ -496,7 +512,7 @@ async function postJsonOnce<T>(
     // proxy's HTML error page — and re-reading it later beats re-running the
     // call that produced it.
     emit({ response: safeParse(text), status: res.status, error: detail });
-    throw new InternalServiceError(service, res.status, detail, issues, false, opaque);
+    throw new InternalServiceError(service, res.status, detail, issues, false, opaque, false, retryAfter);
   }
   let parsed: T;
   try {
@@ -507,6 +523,26 @@ async function postJsonOnce<T>(
   }
   emit({ response: parsed, status: res.status, error: null });
   return parsed;
+}
+
+/**
+ * The `retry-after` header as whole seconds, or null when there isn't a usable one.
+ *
+ * RFC 9110 allows a delta or an HTTP-date; the internal services send a delta,
+ * but a proxy between here and there may rewrite it, and a date parsed as NaN
+ * would otherwise ride out to a client as `retry-after: NaN`. Anything past a
+ * day is a message for an operator rather than a wait for a browser tab, so it
+ * is clamped to one.
+ */
+const MAX_UPSTREAM_RETRY_AFTER_S = 86_400;
+
+export function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const raw = header.trim();
+  const delta = Number(raw);
+  const seconds = Number.isFinite(delta) && raw !== '' ? delta : (Date.parse(raw) - Date.now()) / 1000;
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return Math.min(Math.ceil(seconds), MAX_UPSTREAM_RETRY_AFTER_S);
 }
 
 /** JSON when it parses, the raw text when it does not. Never throws. */
@@ -567,6 +603,19 @@ export function toProblem(err: InternalServiceError): ApiProblem {
       // which also stops well-behaved clients from being the retry storm.
       ...(err.retryAfterSeconds !== null ? { retryAfterSeconds: err.retryAfterSeconds } : {}),
     });
+  }
+  // An upstream 429 is neither a bad gateway nor a malformed request: the
+  // dependency is healthy and out of allowance. It used to fall into the 4xx
+  // arm below and reach the analyst as "the ai service rejected the request",
+  // which reads as a bug in their valuation — the one reading of it that is
+  // both wrong and actionable, so people acted on it.
+  if (err.status === 429) {
+    return problems.tooManyRequests(
+      said === null
+        ? `${err.service} is rate limited. Try again shortly.`
+        : `${err.service} is rate limited: ${said}`,
+      err.retryAfterSeconds ?? undefined,
+    );
   }
   if (err.status !== null && err.status >= 400 && err.status < 500) {
     // Field-level issues ride along as a problem extension so the UI can

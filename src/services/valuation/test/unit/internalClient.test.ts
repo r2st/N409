@@ -3,6 +3,7 @@ import {
   InternalServiceError,
   internalAuthHeaders,
   parseIssues,
+  parseRetryAfter,
   postJson,
   setNetworkSink,
   toProblem,
@@ -432,5 +433,101 @@ describe('internal client — the body is inside the error boundary too', () => 
       error: 'did not respond within 5s',
       response: null,
     });
+  });
+});
+
+/**
+ * An upstream that is healthy and out of allowance (R197, methodology M5).
+ *
+ * The AI service raises this whenever OpenRouter's free-tier quota is spent —
+ * a daily cap on the *key*, so every model in the fallback chain refuses at
+ * once, which is why the whole call fails rather than falling through. It used
+ * to be reported as a 503, and everything downstream then did the wrong thing
+ * with it: `postJson` retried (a second full chain of provider calls against a
+ * key that had already said no), the breaker counted both, and five of them
+ * shut AI off for every other engagement on the platform. It reached the
+ * analyst as "the ai service rejected the request", which reads as a bug in
+ * the valuation they were working on.
+ */
+describe('an upstream that is rate limited, not broken', () => {
+  function rateLimited(seconds?: string): Response {
+    return new Response(JSON.stringify({ detail: 'All models failed: HTTP 429' }), {
+      status: 429,
+      headers: {
+        'content-type': 'application/json',
+        ...(seconds !== undefined ? { 'retry-after': seconds } : {}),
+      },
+    });
+  }
+
+  it('is not retried — the quota does not refill in 250ms', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => rateLimited('60'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postJson('ai', 'http://x/y', {}, { backoffMs: 1 })).rejects.toBeInstanceOf(
+      InternalServiceError,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("carries the upstream's retry-after onto the error", async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(rateLimited('90')));
+    const err = await postJson('ai', 'http://x/y', {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InternalServiceError);
+    expect((err as InternalServiceError).retryAfterSeconds).toBe(90);
+  });
+
+  it('becomes a 429 to our own caller, not a 422', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(rateLimited('90')));
+    const err = (await postJson('ai', 'http://x/y', {}).catch((e: unknown) => e)) as InternalServiceError;
+    const problem = toProblem(err);
+    expect(problem.status).toBe(429);
+    expect(problem.retryAfterSeconds).toBe(90);
+    expect(problem.detail).toContain('rate limited');
+  });
+
+  it('still answers 429 when the upstream stated no wait', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(rateLimited()));
+    const err = (await postJson('ai', 'http://x/y', {}).catch((e: unknown) => e)) as InternalServiceError;
+    expect(err.retryAfterSeconds).toBeNull();
+    expect(toProblem(err).status).toBe(429);
+  });
+
+  it('leaves every other 4xx as the unprocessable it was', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse(422, { detail: 'volatility is required' })),
+    );
+    const err = (await postJson('engine', 'http://x/y', {}).catch((e: unknown) => e)) as InternalServiceError;
+    const problem = toProblem(err);
+    expect(problem.status).toBe(422);
+    expect(problem.detail).toContain('volatility is required');
+  });
+});
+
+describe('parseRetryAfter', () => {
+  it('reads a delta in seconds', () => {
+    expect(parseRetryAfter('120')).toBe(120);
+  });
+
+  it('reads an HTTP-date, which a proxy in between may have rewritten it into', () => {
+    const when = new Date(Date.now() + 120_000).toUTCString();
+    expect(parseRetryAfter(when)).toBeGreaterThan(60);
+    expect(parseRetryAfter(when)).toBeLessThanOrEqual(121);
+  });
+
+  it('rounds a fractional wait up rather than down to nothing', () => {
+    expect(parseRetryAfter('0.4')).toBe(1);
+  });
+
+  it.each([null, '', '   ', 'soon', '-5', '0', 'NaN'])(
+    'refuses %o rather than emitting it as a header',
+    (header) => {
+      expect(parseRetryAfter(header)).toBeNull();
+    },
+  );
+
+  it('clamps a wait longer than a day', () => {
+    expect(parseRetryAfter(String(60 * 60 * 24 * 30))).toBe(86_400);
   });
 });

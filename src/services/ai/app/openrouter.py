@@ -7,8 +7,10 @@ out), model fallback, and explicit errors the valuation service can surface.
 
 from __future__ import annotations
 
+import email.utils
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -74,16 +76,90 @@ class TokenBudgetExceeded(OpenRouterError):
     """Raised when the process-wide token budget is exhausted."""
 
 
+# ── Why every model failed ───────────────────────────────────────────────────
+#
+# `chat` used to answer one way for every failure: OpenRouterError, which
+# `main` turns into a 503. That is right for an outage and wrong for everything
+# else, and "everything else" is what actually happens here daily. The free
+# tier caps requests *per key*, so an exhausted quota 429s every candidate in
+# the chain; a prompt larger than a model's context is a 400 that will be a 400
+# forever; a retired free model id is a 404. All three arrived as
+# "503 — All models failed", which the valuation service reads as a transient
+# upstream and therefore *retries* (a second full chain, billed again) before
+# counting the failure toward a circuit breaker that, five failures in, denies
+# AI to every other engagement on the platform.
+#
+# So the failures that no retry can fix say so, in their own type. The base
+# class is unchanged, which is what keeps every `except OpenRouterError` in the
+# agents and the research fallback working exactly as before.
+
+
+class RateLimited(OpenRouterError):
+    """Every candidate refused with 429 — the key's allowance, not an outage.
+
+    `retry_after_s` is the provider's own answer to "when, then" when it gave
+    one, so the refusal can carry a `retry-after` the whole way out to the
+    client instead of being re-guessed at each hop.
+    """
+
+    def __init__(self, message: str, retry_after_s: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
+
+class AuthenticationFailed(OpenRouterError):
+    """OpenRouter rejected the key itself (401/403).
+
+    Not separated in order to be handled differently — a service whose key is
+    revoked *is* unavailable, and 503 stays the honest status. It is separated
+    so the log and the readiness detail can say which of the two 503s this is,
+    because one needs an operator and the other needs patience.
+    """
+
+
+class RequestRejected(OpenRouterError):
+    """A 4xx that no retry and no other candidate can turn into an answer.
+
+    Context length exceeded (400/413), an unknown or retired model id (404):
+    the request as built cannot be served, and the fix is in the request.
+    """
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+# `finish_reason` values that mean the model stopped because it ran out of room
+# rather than because it had finished. OpenRouter normalises to "length"; some
+# upstream providers pass their own spelling through.
+TRUNCATED_FINISH_REASONS = frozenset({"length", "max_tokens", "MAX_TOKENS"})
+
+
 @dataclass
 class LlmResult:
     model: str
     content: str
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    #: Why the model stopped, verbatim, or None when it did not say.
+    finish_reason: str | None = None
 
     @property
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
+
+    @property
+    def truncated(self) -> bool:
+        """True when the answer was cut off at the output cap.
+
+        A truncated completion is a *partial success*, and partial successes
+        were the failure mode this property exists to end: the caller got a
+        200, some text, and no way to tell that the rest of the sentence — or
+        the rest of the JSON — was never written. `pipelines._safe_result`
+        turned the unparseable remains into an empty result set and the job
+        was recorded as having succeeded.
+        """
+        return self.finish_reason in TRUNCATED_FINISH_REASONS
 
 
 def max_output_tokens() -> int:
@@ -368,6 +444,116 @@ def _post_with_retry(
     raise last_exc if last_exc else OpenRouterError(f"{candidate}: retries exhausted")
 
 
+# The longest wait worth passing on. A provider that says "come back in three
+# days" is telling an operator something, not telling a client to hold the tab
+# open, and an unbounded number here rides out to an HTTP header.
+MAX_RETRY_AFTER_S = 3600.0
+# What a 429 carrying no `Retry-After` is reported as. The free tier's window is
+# a day and its headers are inconsistent about saying so, so this is not a
+# prediction — it is the shortest interval at which asking again is polite.
+DEFAULT_RETRY_AFTER_S = 60.0
+# Characters per token, for the estimate below. Deliberately crude: this feeds a
+# safety cap, not an invoice.
+CHARS_PER_TOKEN = 4
+
+
+def _retry_after_seconds(resp: httpx.Response) -> float | None:
+    """How long the provider asked us to wait, in seconds, or None.
+
+    Two spellings, because OpenRouter uses both depending on which upstream
+    refused: `Retry-After` (RFC 9110 — a delta in seconds *or* an HTTP-date),
+    and `X-RateLimit-Reset` (an epoch, in milliseconds, which is what the free
+    tier's daily counter reports).
+    """
+    headers = resp.headers
+    raw = headers.get("retry-after")
+    if raw:
+        try:
+            return _clamp_wait(float(raw.strip()))
+        except ValueError:
+            pass
+        try:
+            when = email.utils.parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
+            when = None
+        if when is not None:
+            return _clamp_wait(when.timestamp() - time.time())
+    reset = headers.get("x-ratelimit-reset")
+    if reset:
+        try:
+            # Epoch milliseconds. A value that is plainly seconds instead (too
+            # small to be a millisecond epoch) is read as seconds rather than
+            # reported as a wait of half a century.
+            value = float(reset.strip())
+        except ValueError:
+            return None
+        epoch_s = value / 1000 if value > 1e11 else value
+        return _clamp_wait(epoch_s - time.time())
+    return None
+
+
+def _clamp_wait(seconds: float) -> float | None:
+    """A wait we are willing to quote: positive, finite, and under the ceiling."""
+    if not math.isfinite(seconds) or seconds <= 0:
+        return None
+    return min(seconds, MAX_RETRY_AFTER_S)
+
+
+def _estimate_tokens(*texts: str) -> int:
+    """A rough token count for text nobody counted for us.
+
+    `usage` is optional in the chat-completions shape and several free-tier
+    models omit it entirely. Coerced to 0, those calls left `_budget` exactly
+    where they found it — so OPENROUTER_TOKEN_BUDGET, the one guard against a
+    runaway loop on a paid key, was unenforceable against precisely the models
+    most likely to be looping, and `/ready` reported a lifetime spend of zero
+    however hard the service had been working.
+    """
+    return max(1, math.ceil(sum(len(t) for t in texts) / CHARS_PER_TOKEN))
+
+
+def _finish_reason(data: dict) -> str | None:
+    """Why the model stopped, if it said. Every level is model-controlled."""
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first = choices[0]
+    if not isinstance(first, dict):
+        return None
+    reason = first.get("finish_reason")
+    return reason if isinstance(reason, str) and reason else None
+
+
+def _classify(
+    errors: list[str], statuses: list[int | None], retry_after_s: float | None = None
+) -> OpenRouterError:
+    """The exception that says *why* the whole chain failed.
+
+    `statuses` has one entry per candidate the loop got to, `None` where that
+    candidate never produced a status at all (a refused connection, a spent
+    budget, a 200 carrying nothing usable). The rules read off that:
+
+    * A 401/403 anywhere is the key, and the key is the same for every
+      candidate — no fallback was ever going to help.
+    * Otherwise a verdict is only drawn when *every* candidate answered, and
+      answered 4xx. A chain where one model 429'd and another was unreachable
+      is not "rate limited"; it is a bad afternoon, and the generic error is
+      the honest one.
+    * All-429 is the quota. Any other all-4xx mix is a request the provider
+      will not serve however many times it is sent.
+    """
+    joined = "All models failed: " + " | ".join(errors)
+    if any(status in (401, 403) for status in statuses):
+        return AuthenticationFailed(joined)
+    if not statuses or any(status is None for status in statuses):
+        return OpenRouterError(joined)
+    if not all(400 <= status < 500 for status in statuses):  # type: ignore[operator]
+        return OpenRouterError(joined)
+    if all(status == 429 for status in statuses):
+        return RateLimited(joined, retry_after_s or DEFAULT_RETRY_AFTER_S)
+    return RequestRejected(joined, next((s for s in statuses if s != 429), None))
+
+
 def _completion_text(data: dict) -> str:
     """The assistant text out of a chat-completions body, or "" if it isn't there.
 
@@ -404,6 +590,12 @@ def chat(
     http = client or httpx.Client(timeout=TIMEOUT_S)
     deadline = _Deadline(call_budget_s())
     errors: list[str] = []
+    # One entry per candidate the loop reached: its HTTP status, or None when it
+    # never produced one. `_classify` reads this to tell an exhausted quota from
+    # an outage; see the note there for why None is not the same as a failure.
+    statuses: list[int | None] = []
+    # The soonest any candidate said it would serve us again.
+    retry_after_s: float | None = None
     try:
         for candidate in configured_models(preferred=model):
             # Falling through to another model is only worth it if there is time
@@ -411,6 +603,7 @@ def chat(
             # the per-attempt timeout instead of sharing one ceiling with it.
             if deadline.expired():
                 errors.append(f"{candidate}: skipped, call budget exhausted")
+                statuses.append(None)
                 break
             try:
                 resp = _post_with_retry(http, candidate, system, user, deadline)
@@ -418,9 +611,15 @@ def chat(
                 # DeadlineExceeded lands here rather than escaping, so the caller
                 # still gets the full tally of what was tried and why.
                 errors.append(f"{candidate}: {exc}")
+                statuses.append(None)
                 continue
             if resp.status_code != 200:
                 errors.append(f"{candidate}: HTTP {resp.status_code} {resp.text[:200]}")
+                statuses.append(resp.status_code)
+                if resp.status_code == 429:
+                    wait = _retry_after_seconds(resp)
+                    if wait is not None and (retry_after_s is None or wait < retry_after_s):
+                        retry_after_s = wait
                 continue
             # Everything from here down is one candidate's *answer*, and an
             # unusable answer is this loop's whole reason to exist: record why
@@ -434,13 +633,16 @@ def chat(
                 data = resp.json()
             except ValueError as exc:
                 errors.append(f"{candidate}: non-JSON body ({exc})")
+                statuses.append(None)
                 continue
             if not isinstance(data, dict):
                 errors.append(f"{candidate}: non-object body ({type(data).__name__})")
+                statuses.append(None)
                 continue
             content = _completion_text(data)
             if not content:
                 errors.append(f"{candidate}: empty completion")
+                statuses.append(None)
                 continue
             usage = data.get("usage")
             usage = usage if isinstance(usage, dict) else {}
@@ -449,7 +651,27 @@ def chat(
             prompt_tokens = _token_count(usage.get("prompt_tokens"))
             completion_tokens = _token_count(usage.get("completion_tokens"))
             self_total = prompt_tokens + completion_tokens
-            cumulative = _budget.add(self_total)
+            # A model that reported nothing still spent something. The estimate
+            # goes to the budget only — `LlmResult` keeps the counters exactly as
+            # they arrived, so nothing downstream can mistake a guess for a
+            # measurement. See `_estimate_tokens`.
+            estimated = self_total == 0
+            billed = _estimate_tokens(system, user, content) if estimated else self_total
+            cumulative = _budget.add(billed)
+            finish_reason = _finish_reason(data)
+            if finish_reason in TRUNCATED_FINISH_REASONS:
+                # Worth a line of its own: the caller may well accept this
+                # answer, and the operator who has to raise OPENROUTER_MAX_TOKENS
+                # has no other way to learn that it is being hit.
+                _log.warning(
+                    "llm completion truncated at the output cap",
+                    extra={
+                        "event": "llm_truncated",
+                        "path": candidate,
+                        "status": max_output_tokens(),
+                        "detail": finish_reason,
+                    },
+                )
             # `model` is echoed by the provider and lands in job records and
             # audit trails; fall back to the candidate we asked for unless it
             # comes back as an actual string.
@@ -460,8 +682,9 @@ def chat(
                 extra={
                     "event": "llm_usage",
                     "path": served_by,
-                    "status": self_total,
+                    "status": billed,
                     "duration_ms": cumulative,
+                    "detail": "estimated" if estimated else "reported",
                 },
             )
             return LlmResult(
@@ -469,8 +692,9 @@ def chat(
                 content=content,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                finish_reason=finish_reason,
             )
-        raise OpenRouterError("All models failed: " + " | ".join(errors))
+        raise _classify(errors, statuses, retry_after_s)
     finally:
         if owns_client:
             http.close()

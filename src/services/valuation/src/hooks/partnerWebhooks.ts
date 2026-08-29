@@ -277,9 +277,7 @@ export async function deliverToWebhook(
  * same cadence and the same lease, and a second interval would be a second
  * place to keep that number.
  */
-export async function retryDueDeliveries(
-  deps: WebhookDeps & { limit?: number; leaseMs?: number },
-): Promise<{
+export async function retryDueDeliveries(deps: WebhookDeps & { limit?: number; leaseMs?: number }): Promise<{
   attempted: number;
   delivered: number;
   retrying: number;

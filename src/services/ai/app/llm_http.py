@@ -20,8 +20,15 @@ import time
 TIMEOUT_S = 90.0
 # Transient-failure retry policy. A connect/transport error or a 5xx is usually
 # momentary, so retry with exponential backoff before giving up on a candidate.
-# 4xx (including 429) is not retried — falling through to another model or
-# provider already handles those.
+# 4xx (including 429) is not retried here; the caller falls through to the next
+# candidate instead.
+#
+# For 429 that fall-through is usually theatre, and knowing so is the point:
+# OpenRouter's free allowance is counted against the *key*, so a spent quota
+# refuses every model in the chain. The chain is still walked — a paid key, or a
+# per-model limit, does make the next candidate worth trying — but when it comes
+# back all-429 the client says "rate limited" rather than "everything is down",
+# because those two want opposite things from whoever hears them.
 MAX_RETRIES = 2
 RETRY_BACKOFF_BASE_S = 0.5
 # Below this there is no point starting an attempt; it would only time out.

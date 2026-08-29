@@ -19,10 +19,7 @@ import {
   DELIVERY_ATTEMPT_BUDGET_MS,
   DELIVERY_LEASE_FLOOR_MS,
 } from '../../src/domain/partnerWebhooks.js';
-import {
-  DELIVERY_CLAIM_BATCH_DEFAULT,
-  DELIVERY_CLAIM_BATCH_MAX,
-} from '../../src/repos/partnerWebhooks.js';
+import { DELIVERY_CLAIM_BATCH_DEFAULT, DELIVERY_CLAIM_BATCH_MAX } from '../../src/repos/partnerWebhooks.js';
 
 describe('partner webhook domain', () => {
   it('signs and verifies over exact body bytes', () => {

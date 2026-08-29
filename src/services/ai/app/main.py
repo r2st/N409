@@ -26,7 +26,10 @@ from .limits import configure_threadpool, make_body_limit_middleware, max_body_b
 from .observability import configure_logging, make_request_context_middleware
 from .llm_router import chat, configured_models
 from .openrouter import (
+    DEFAULT_RETRY_AFTER_S,
     OpenRouterError,
+    RateLimited,
+    RequestRejected,
     tokens_used,
     verify_api_key,
 )
@@ -45,7 +48,7 @@ from .perplexity import verify_api_key as verify_perplexity_key
 from .websearch import configured_provider as search_provider
 from .websearch import is_configured as search_configured
 from .websearch import verify_provider as verify_search_provider
-from .pipelines import PIPELINES
+from .pipelines import PIPELINES, TruncatedCompletionError
 from .ratelimit import limit_per_minute, make_rate_limit_middleware
 from .security_headers import make_security_headers_middleware
 
@@ -138,6 +141,25 @@ app.middleware("http")(make_security_headers_middleware())
 # response this service can emit is traceable to a log line.
 install_error_handlers(app)
 enforce_token_configured()
+
+
+def _rate_limited(exc: RateLimited) -> HTTPException:
+    """The provider's refusal, forwarded with its own `retry-after`.
+
+    503 was wrong for this in both directions. It told the client an outage was
+    in progress when the service is perfectly healthy and merely out of
+    allowance, and it told the *valuation service* to retry — which it did,
+    spending a second full chain of requests against a key that had already
+    said no, and then counting both toward a circuit breaker that denies AI to
+    every other engagement. A 429 is not retried by that client, and the
+    `retry-after` rides all the way out to the browser.
+    """
+    seconds = max(1, int(round(exc.retry_after_s or DEFAULT_RETRY_AFTER_S)))
+    return HTTPException(
+        status_code=429,
+        detail=str(exc),
+        headers={"retry-after": str(seconds)},
+    )
 
 
 class PipelineRequest(BaseModel):
@@ -486,6 +508,14 @@ def test_prompt(request: TestRequest) -> TestResponse:
         llm = chat(red.text(request.system), red.text(request.user), model=request.model)
     except AnonymizeInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RateLimited as exc:
+        raise _rate_limited(exc) from exc
+    except RequestRejected as exc:
+        # The provider will refuse this request however often it is sent
+        # (context length, a retired model id). 422 keeps the retry ladder and
+        # the breaker out of it and points at the request, which is where the
+        # fix is.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except OpenRouterError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return TestResponse(model=llm.model, content=llm.content, anonymization=red.report())
@@ -568,9 +598,23 @@ def run_pipeline(pipeline: str, request: PipelineRequest) -> PipelineResponse:
         # something unusable", which would send the caller looking at the model
         # for a fault that is in the request.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RateLimited as exc:
+        raise _rate_limited(exc) from exc
+    except RequestRejected as exc:
+        # The provider will refuse this request however often it is sent
+        # (context length, a retired model id). 422 keeps the retry ladder and
+        # the breaker out of it and points at the request, which is where the
+        # fix is.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except OpenRouterError as exc:
         # 503 → the valuation service records the job as failed and returns 502.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except TruncatedCompletionError as exc:
+        # Ahead of the ValueError arm, and 422 rather than its 502: the answer
+        # was cut off because the request asked for more output than the cap
+        # allows, which is deterministic. A 502 would be retried by the
+        # valuation service and would fail identically, twice as expensively.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=f"Model output unusable: {exc}") from exc
     # Non-fatal output-shape check (audit B-2 P3): surface contract drift.

@@ -28,6 +28,7 @@ from app.openrouter import (
 class _Response:
     def __init__(self, status_code=200, completion='{"ok": true}'):
         self.status_code = status_code
+        self.headers: dict[str, str] = {}
         self._completion = completion
         self.text = "error body" if status_code != 200 else completion
 

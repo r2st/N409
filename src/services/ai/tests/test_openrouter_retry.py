@@ -14,8 +14,11 @@ from app.openrouter import LlmResult, OpenRouterError, chat
 
 
 class _Response:
-    def __init__(self, status_code=200, completion='{"ok": true}', usage=None):
+    def __init__(self, status_code=200, completion='{"ok": true}', usage=None, headers=None):
         self.status_code = status_code
+        # httpx.Response always carries headers; the double does too, so the
+        # client's `retry-after` read is exercised rather than worked around.
+        self.headers = headers or {}
         self._completion = completion
         self._usage = usage or {"prompt_tokens": 3, "completion_tokens": 2}
         self.text = "error body" if status_code != 200 else completion

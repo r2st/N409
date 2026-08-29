@@ -11,6 +11,7 @@ from app.openrouter import LlmResult, TokenBudgetExceeded, chat, max_output_toke
 class _FakeResponse:
     def __init__(self, payload):
         self.status_code = 200
+        self.headers: dict[str, str] = {}
         self._payload = payload
         self.text = json.dumps(payload)
 

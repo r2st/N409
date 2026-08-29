@@ -34,8 +34,9 @@ GOOD_BODY = {
 class _Reply:
     """A response whose body is whatever the test says, JSON or not."""
 
-    def __init__(self, body, *, status: int = 200, decodable: bool = True):
+    def __init__(self, body, *, status: int = 200, decodable: bool = True, headers=None):
         self.status_code = status
+        self.headers = headers or {}
         self._body = body
         self._decodable = decodable
         self.text = body if isinstance(body, str) else json.dumps(body)
@@ -196,11 +197,23 @@ class TestUsageAccountingNeverDiscardsACompletion:
         assert result.completion_tokens == 5
         assert openrouter.tokens_used() == 12
 
-    def test_a_junk_counter_does_not_corrupt_the_running_budget(self, solo) -> None:
+    def test_a_junk_counter_charges_an_estimate_rather_than_nothing(self, solo) -> None:
+        """Uncountable counters used to leave the budget exactly where it was.
+
+        That looks conservative and is the opposite: OPENROUTER_TOKEN_BUDGET is
+        the only stop on a runaway loop, and a model that reports no usage —
+        several free-tier ones report none at all — could then loop against it
+        for free while `/ready` went on saying nothing had been spent. The
+        estimate is crude by design; it is a cap, not an invoice.
+        """
         body = {**GOOD_BODY, "usage": {"prompt_tokens": "lots", "completion_tokens": "more"}}
         client = _Client([_Reply(body)])
-        chat("sys", "user", client=client)
-        assert openrouter.tokens_used() == 0
+        result = chat("sys", "user", client=client)
+        # The *result* still reports what arrived, so nothing downstream can
+        # mistake the estimate for something the provider said.
+        assert result.prompt_tokens == 0
+        assert result.completion_tokens == 0
+        assert openrouter.tokens_used() > 0
 
 
 class TestTheModelNameOnTheResult:
