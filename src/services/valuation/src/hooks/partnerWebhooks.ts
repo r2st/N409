@@ -248,8 +248,22 @@ export async function deliverToWebhook(
   );
   const outcome = await settle(deps, delivery, result);
   if (!result.ok) {
+    // `deliveryId` for the same reason every line in the retry sweep carries
+    // one: this is attempt 1 of a ladder whose remaining attempts are all
+    // logged against the row id, so without it a delivery's life story starts
+    // in a different vocabulary from the rest of itself — and the partner's own
+    // delivery log, which is where a complaint arrives from, is indexed by
+    // exactly this id. `valuationId` because the event is about an engagement
+    // and nothing else on the line says which.
     deps.log?.warn(
-      { webhookId: webhook.id, event, outcome, error: result.error },
+      {
+        deliveryId: delivery.id,
+        webhookId: webhook.id,
+        valuationId: valuationId ?? null,
+        event,
+        outcome,
+        error: result.error,
+      },
       'partner webhook delivery failed',
     );
   }
