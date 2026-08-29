@@ -1,5 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { pino } from 'pino';
+import { Writable } from 'node:stream';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { historicalVolatility } from '../../src/domain/asc718Public.js';
 import { beforeRequest, expectDatedToday } from '../support/today.js';
@@ -43,6 +45,7 @@ describe.runIf(dbUp)('ASC 718 — public market feed', () => {
   let feedMode: FeedMode = 'live';
   /** What the route actually asked the feed for, for the window assertions. */
   let lastFeedBody: Record<string, unknown> | null = null;
+  const logLines: Array<Record<string, unknown>> = [];
 
   beforeAll(async () => {
     engineStub = Fastify({ logger: false });
@@ -81,7 +84,15 @@ describe.runIf(dbUp)('ASC 718 — public market feed', () => {
     const address = engineStub.server.address();
     const enginePort = typeof address === 'object' && address ? address.port : 0;
 
-    ctx = await setupTestApp({ ENGINE_URL: `http://127.0.0.1:${enginePort}` });
+    // 'warn' rather than the helper's 'silent', for the outage line asserted
+    // below; the stream is swapped so nothing reaches the suite's output.
+    ctx = await setupTestApp({ ENGINE_URL: `http://127.0.0.1:${enginePort}`, LOG_LEVEL: 'warn' });
+    (ctx.app.log as unknown as Record<symbol, unknown>)[pino.symbols.streamSym] = new Writable({
+      write(chunk, _enc, cb) {
+        logLines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        cb();
+      },
+    });
     ops = await seedUser(ctx, { roles: ['reviewer'] });
   });
 
@@ -297,6 +308,27 @@ describe.runIf(dbUp)('ASC 718 — public market feed', () => {
       source: 'fallback',
       warning: 'market feed unavailable',
     });
+  });
+
+  it('records why the feed was unavailable, which the response cannot', async () => {
+    // The response says 'market feed unavailable' for an engine that is down, a
+    // ticker the feed does not carry, a 500 and a body that would not parse
+    // alike, and the measurement then runs on the caller's own defaults. This
+    // call leaves no `network_items` row — it is best-effort and deliberately
+    // unrecorded — so the log line is the only place the reason can live.
+    feedMode = 'error';
+    const id = await seedValuation();
+    const mark = logLines.length;
+    const res = await price(id, publicBody({ default_grant_date_fair_value: 90, default_volatility: 0.4 }));
+    expect(res.statusCode).toBe(200);
+
+    const line = logLines.slice(mark).find((l) => String(l.msg).includes('market feed unavailable'));
+    expect(line, 'the outage was not logged').toBeDefined();
+    expect(line!.valuationId).toBe(id);
+    expect(line!.ticker).toBe('ACME');
+    // The reason, which is the whole point: the 503 has to be distinguishable
+    // from a timeout without re-running the measurement.
+    expect(JSON.stringify(line!.err)).toMatch(/503|engine/i);
   });
 
   it('refuses rather than guesses when the feed is down and nothing was supplied', async () => {

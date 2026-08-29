@@ -88,8 +88,13 @@ export function registerPromptRoutes(app: FastifyInstance, deps: { pool: pg.Pool
         signal: AbortSignal.timeout(10_000),
       });
       if (res.ok) return (await res.json()) as AiModelsResponse;
-    } catch {
-      /* fall through to the empty list — the UI accepts free-text models */
+      // A non-ok answer fell through as silently as a thrown one, and both
+      // arrive at the operator as an empty picker — which reads as "the AI
+      // service offers no models" rather than "we could not ask it". The
+      // fall-through stays; what was missing is any record of why.
+      req.log.warn({ status: res.status, aiUrl: deps.aiUrl }, 'AI model list refused; picker left empty');
+    } catch (err) {
+      req.log.warn({ err, aiUrl: deps.aiUrl }, 'AI model list unreachable; picker left empty');
     }
     return { models: [] };
   });

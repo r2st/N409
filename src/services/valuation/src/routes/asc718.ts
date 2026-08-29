@@ -212,6 +212,7 @@ async function resolveMarket(
   ticker: string,
   end: string,
   lookbackDays: number,
+  onUnavailable: (err: unknown) => void,
 ): Promise<MarketResolution> {
   const start = addDays(end, -lookbackDays);
   try {
@@ -257,7 +258,17 @@ async function resolveMarket(
       as_of: null,
       warning: 'no live prices for ticker',
     };
-  } catch {
+  } catch (err) {
+    // The caller is told, in one string, and the operator was told nothing at
+    // all. 'market feed unavailable' is the same warning for an engine that is
+    // down, a ticker the feed does not carry, a 500, and a body that would not
+    // parse — and the measurement continues on the caller's own defaults, so
+    // the fair values in the response were computed from a substituted
+    // volatility with no record anywhere of what was substituted for. Every
+    // other engine call in this service leaves a `network_items` row; this one
+    // is best-effort and deliberately leaves none, which makes the log line the
+    // only place the reason can live.
+    onUnavailable(err);
     return {
       ticker,
       underlying: null,
@@ -408,6 +419,11 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
         b.ticker.toUpperCase(),
         end,
         b.market_lookback_days ?? 504,
+        (err) =>
+          req.log.warn(
+            { err, valuationId: id, ticker: b.ticker?.toUpperCase() ?? null },
+            'ASC 718 market feed unavailable — measuring on the supplied defaults',
+          ),
       );
     }
 
