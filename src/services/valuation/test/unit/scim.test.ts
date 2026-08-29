@@ -8,6 +8,8 @@ import {
   isScimRejection,
   activeFromPatch,
   scimBoolean,
+  scimPage,
+  SCIM_MAX_PAGE,
   SCIM_USER_SCHEMA,
   SCIM_LIST_SCHEMA,
   SCIM_ERROR_SCHEMA,
@@ -391,5 +393,95 @@ describe('scimBoolean', () => {
   it('treats absent values as false', () => {
     expect(scimBoolean(undefined)).toBe(false);
     expect(scimBoolean(null)).toBe(false);
+  });
+});
+
+/**
+ * Paging, as a connector spells it (round 201, M6).
+ *
+ * `startIndex` and `count` arrive as query-string text from an IdP rather than
+ * from a form, so the parse has to land every degenerate spelling somewhere
+ * that is not an `OFFSET NaN`. The clamps are RFC 7644 §3.4.2.4's: below 1 is
+ * 1 for the index, below 0 is 0 for the count.
+ */
+describe('scimPage', () => {
+  it('defaults to the first page of the largest size this service will build', () => {
+    expect(scimPage({})).toEqual({ startIndex: 1, count: SCIM_MAX_PAGE });
+    expect(scimPage(undefined)).toEqual({ startIndex: 1, count: SCIM_MAX_PAGE });
+  });
+
+  it('reads the two parameters an IdP pages with', () => {
+    expect(scimPage({ startIndex: '51', count: '25' })).toEqual({ startIndex: 51, count: 25 });
+  });
+
+  it('keeps count=0 distinct from an absent count — it means "just the total"', () => {
+    expect(scimPage({ count: '0' }).count).toBe(0);
+    expect(scimPage({}).count).toBe(SCIM_MAX_PAGE);
+  });
+
+  it('clamps a page larger than this service will build', () => {
+    expect(scimPage({ count: '100000' }).count).toBe(SCIM_MAX_PAGE);
+  });
+
+  it.each([
+    ['a startIndex below the first', { startIndex: '0' }, 1],
+    ['a negative startIndex', { startIndex: '-9' }, 1],
+    ['a startIndex that is not a number', { startIndex: 'abc' }, 1],
+    ['an empty startIndex', { startIndex: '' }, 1],
+    // `Number('1e9')` and `Number('0x10')` both parse and neither is an index
+    // any IdP means, so only decimal digits count.
+    ['a startIndex in exponent notation', { startIndex: '1e9' }, 1],
+    ['a hexadecimal startIndex', { startIndex: '0x10' }, 1],
+    ['a startIndex past the safe integers', { startIndex: '99999999999999999999' }, 1],
+  ])('reads %s as the first page', (_label, query, expected) => {
+    expect(scimPage(query).startIndex).toBe(expected);
+  });
+
+  it.each([
+    ['a negative count', { count: '-5' }, 0],
+    ['a count that is not a number', { count: 'all' }, SCIM_MAX_PAGE],
+    ['an empty count', { count: '' }, SCIM_MAX_PAGE],
+  ])('reads %s safely', (_label, query, expected) => {
+    expect(scimPage(query).count).toBe(expected);
+  });
+
+  it('takes the last of a repeated parameter, which is how Fastify hands it over', () => {
+    expect(scimPage({ count: ['2', '3'], startIndex: ['5', '7'] })).toEqual({
+      startIndex: 7,
+      count: 3,
+    });
+  });
+});
+
+describe('scimList paging fields', () => {
+  const user = toScimUser({
+    id: 'u1',
+    email: 'a@example.com',
+    first_name: null,
+    last_name: null,
+    scim_external_id: null,
+    deleted_at: null,
+    created_at: new Date('2026-01-01T00:00:00Z'),
+  });
+
+  it("reports the caller's page, not the constant first one", () => {
+    const list = scimList([user], { totalResults: 412, startIndex: 201 });
+    expect(list.totalResults).toBe(412);
+    expect(list.startIndex).toBe(201);
+    expect(list.itemsPerPage).toBe(1);
+  });
+
+  it('does not report a truncated page as the whole set', () => {
+    // The bug: `totalResults` was `Resources.length`, so 200 of 412 answered
+    // "there are 200" — a complete, self-consistent, wrong answer that a
+    // reconciliation reads as "the other 212 are gone".
+    const page = Array.from({ length: 200 }, () => user);
+    expect(scimList(page, { totalResults: 412, startIndex: 1 }).totalResults).toBe(412);
+  });
+
+  it('falls back to the page length only when the page is the whole match set', () => {
+    // The `userName eq` lookup: one match or none, and no paging to report.
+    expect(scimList([user]).totalResults).toBe(1);
+    expect(scimList([]).totalResults).toBe(0);
   });
 });

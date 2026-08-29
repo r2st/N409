@@ -121,14 +121,79 @@ export function scimError(status: number, detail: string): ScimErrorResponse {
   return { schemas: [SCIM_ERROR_SCHEMA], status: String(status), detail };
 }
 
-export function scimList(resources: ScimUser[]): ScimListResponse {
+/**
+ * The largest page this service will return, and the number
+ * `ServiceProviderConfig` publishes as `filter.maxResults`.
+ */
+export const SCIM_MAX_PAGE = 200;
+
+/**
+ * A SCIM ListResponse.
+ *
+ * `totalResults` is how many resources match, *not* how many are in this page —
+ * RFC 7644 §3.4.2.4 — and it was the page's own length. The listing takes 200
+ * rows and nothing else, so a directory with 250 provisioned accounts was
+ * answered `totalResults: 200, itemsPerPage: 200, startIndex: 1`, which is a
+ * complete, self-consistent, wrong answer: every field agrees that those 200
+ * are all of them. Okta's reconciliation reads exactly this to decide who this
+ * service still knows about, so the fifty past the cut are accounts it believes
+ * are already gone — and a connector configured to deprovision what it no
+ * longer sees has been told the wrong thing by a 200 OK.
+ *
+ * The other half is that `startIndex` was the constant 1. An IdP pages by
+ * asking for `startIndex=201` next; the parameter was ignored, so the same
+ * first page came back with `startIndex: 1` on it, and the client either loops
+ * or gives up. Reporting the index the caller asked for is what lets paging
+ * terminate.
+ *
+ * So the total is passed in by the caller — it comes from a `count(*)` over
+ * the same predicate — and defaults to the page length only for the filtered
+ * lookup, where the page genuinely is the whole match set.
+ */
+export function scimList(
+  resources: ScimUser[],
+  page: { totalResults?: number; startIndex?: number } = {},
+): ScimListResponse {
   return {
     schemas: [SCIM_LIST_SCHEMA],
-    totalResults: resources.length,
-    startIndex: 1,
+    totalResults: page.totalResults ?? resources.length,
+    startIndex: page.startIndex ?? 1,
     itemsPerPage: resources.length,
     Resources: resources,
   };
+}
+
+/**
+ * `startIndex` / `count` as this service will honour them.
+ *
+ * Both are 1-based decimal strings on the query string and both arrive from a
+ * connector rather than a form, so every degenerate spelling has to land
+ * somewhere sane rather than in an `OFFSET NaN`: absent, empty, `"abc"`,
+ * `"-5"`, `"1e9"`, repeated (Fastify hands back an array), or larger than the
+ * page this service will build. RFC 7644 §3.4.2.4 fixes the two clamps — a
+ * `startIndex` below 1 is treated as 1, a negative `count` as 0 — and the
+ * upper bound on `count` is ours, published as `filter.maxResults`.
+ *
+ * `count: 0` is a legal request meaning "just tell me the total", so it is
+ * distinct from an absent `count`, which means "a page of whatever you give
+ * me". That is why the parse keeps null rather than folding both to a default.
+ */
+export function scimPage(query: unknown): { startIndex: number; count: number } {
+  const q = (query ?? {}) as Record<string, unknown>;
+  const int = (value: unknown): number | null => {
+    const raw = Array.isArray(value) ? value[value.length - 1] : value;
+    if (typeof raw === 'number') return Number.isFinite(raw) ? Math.trunc(raw) : null;
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    // Decimal only: `Number('1e9')` and `Number('0x10')` both parse, and neither
+    // is an index any IdP means.
+    if (!/^[+-]?\d+$/.test(raw.trim())) return null;
+    const n = Number(raw.trim());
+    return Number.isSafeInteger(n) ? n : null;
+  };
+  const startIndex = Math.max(1, int(q.startIndex) ?? 1);
+  const requested = int(q.count);
+  const count = requested === null ? SCIM_MAX_PAGE : Math.min(Math.max(requested, 0), SCIM_MAX_PAGE);
+  return { startIndex, count };
 }
 
 /** Parse `userName eq "value"` (the only filter Okta/Azure send on lookup). */

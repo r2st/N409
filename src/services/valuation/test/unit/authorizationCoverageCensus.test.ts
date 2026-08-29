@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { scanRoutes } from '../support/routeSource.js';
 import pg from 'pg';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
@@ -136,28 +137,25 @@ function importedHelpersIn(source: string, file: string): Set<string> {
   return names;
 }
 
+/**
+ * The scan itself is shared (`test/support/routeSource.ts`): matching `app.` on
+ * its own missed every route registered on an encapsulated instance — the
+ * Stripe, billing and email-delivery webhooks, unsubscribe, the SAML assertion
+ * consumer and the whole SCIM surface — in this census and in the two beside
+ * it. What stays here is the per-file helper resolution.
+ */
 function routes(): Route[] {
-  const found: Route[] = [];
-  for (const file of readdirSync(ROUTES).filter((f) => f.endsWith('.ts'))) {
-    const source = readFileSync(path.join(ROUTES, file), 'utf8');
-    const lines = source.split('\n');
-    const helpers = new Set([...declarationsIn(source), ...importedHelpersIn(source, file)]);
-
-    lines.forEach((line, i) => {
-      const verb = /app\.(get|post|put|patch|delete)[<(]/.exec(line);
-      if (!verb) return;
-      const url = /["'`](\/[^"'`]*)["'`]/.exec(lines.slice(i, i + 3).join(' '));
-      if (!url?.[1]) return;
-
-      let body = '';
-      for (let j = i; j < Math.min(lines.length, i + 250); j++) {
-        body += `${lines[j]}\n`;
-        if (/^ {2,4}\}\);\s*$/.test(lines[j] ?? '')) break;
-      }
-      found.push({ file, line: i + 1, method: verb[1]!.toUpperCase(), url: url[1], body, helpers });
-    });
-  }
-  return found;
+  const helpersByFile = new Map<string, Set<string>>();
+  return scanRoutes(ROUTES).map((r) => {
+    let helpers = helpersByFile.get(r.file);
+    if (!helpers) {
+      const source = readFileSync(path.join(ROUTES, r.file), 'utf8');
+      const file = r.file;
+      helpers = new Set([...declarationsIn(source), ...importedHelpersIn(source, file)]);
+      helpersByFile.set(r.file, helpers);
+    }
+    return { ...r, helpers };
+  });
 }
 
 const key = (method: string, url: string) => `${method.toUpperCase()} ${url}`;

@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { scanRoutes } from '../support/routeSource.js';
 
 /**
  * The authorization half of the route audit.
@@ -143,29 +144,23 @@ function guardsIn(source: string): Set<string> {
   return guards;
 }
 
+/**
+ * The scan itself is shared (`test/support/routeSource.ts`) — it is the piece
+ * that has to know about encapsulated registration and `register` prefixes,
+ * and three censuses each carrying their own copy of it is how the webhook
+ * routes stayed invisible to all three. What is file-local here is only the
+ * guard resolution.
+ */
 function routes(): Route[] {
-  const found: Route[] = [];
-  for (const file of readdirSync(ROUTES).filter((f) => f.endsWith('.ts'))) {
-    const source = readFileSync(path.join(ROUTES, file), 'utf8');
-    const lines = source.split('\n');
-    const guards = guardsIn(source);
-
-    lines.forEach((line, i) => {
-      const verb = /app\.(get|post|put|patch|delete)[<(]/.exec(line);
-      if (!verb) return;
-      // The URL may wrap onto the next line when the options object is long.
-      const url = /["'`](\/[^"'`]*)["'`]/.exec(lines.slice(i, i + 3).join(' '));
-      if (!url?.[1]) return;
-
-      let body = '';
-      for (let j = i; j < Math.min(lines.length, i + 200); j++) {
-        body += `${lines[j]}\n`;
-        if (/^ {2}\}\);\s*$/.test(lines[j] ?? '')) break;
-      }
-      found.push({ file, line: i + 1, method: verb[1]!.toUpperCase(), url: url[1], body, guards });
-    });
-  }
-  return found;
+  const guardsByFile = new Map<string, ReadonlySet<string>>();
+  return scanRoutes(ROUTES, { maxBodyLines: 200 }).map((r) => {
+    let guards = guardsByFile.get(r.file);
+    if (!guards) {
+      guards = guardsIn(readFileSync(path.join(ROUTES, r.file), 'utf8'));
+      guardsByFile.set(r.file, guards);
+    }
+    return { ...r, guards };
+  });
 }
 
 const ALL = routes();
