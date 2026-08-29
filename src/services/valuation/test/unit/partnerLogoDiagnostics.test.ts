@@ -119,6 +119,34 @@ describe('why a partner logo did not load', () => {
     expect(await reasonFor('https://cdn.example/logo.png', fetchReturning(big) as never)).toBe('too_large');
   });
 
+  it('stops a host whose content-length was a claim rather than a fact', async () => {
+    // The declared length used to be the whole of the guard: `arrayBuffer()`
+    // reads to the end of the stream before anything can measure it. This URL
+    // is a value a partner typed, pointing at a host on the internet, so a
+    // small declared length in front of an endless body is the case that
+    // matters — and it took every byte into a report render's heap for the
+    // three seconds the deadline allows.
+    let pulled = 0;
+    const chunk = new Uint8Array(64 * 1024).fill(0x41);
+    const endless = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              pulled += 1;
+              controller.enqueue(chunk);
+            },
+          }),
+          { status: 200, headers: { 'content-length': '100' } },
+        ),
+    );
+    expect(await reasonFor('https://cdn.example/logo.png', endless as never)).toBe('too_large');
+    // Stopped just past the 1 MB cap, not at whatever the host chose: the
+    // chunk that crossed it, plus the one a ReadableStream keeps queued ahead
+    // of any reader.
+    expect(pulled * chunk.byteLength).toBeLessThanOrEqual(1024 * 1024 + 2 * chunk.byteLength);
+  });
+
   it('distinguishes a redirect loop from a redirect with nowhere to go', async () => {
     const looping = vi.fn(
       async () => new Response(null, { status: 302, headers: { location: 'https://cdn.example/again.png' } }),

@@ -23,6 +23,7 @@
 import { isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
 import { isPrivateAddress, isPrivateIpv4, isPrivateIpv6 } from '../domain/privateAddress.js';
+import { readCappedBytes } from './deadline.js';
 
 /*
  * Re-exported rather than re-implemented. These used to live here, and a
@@ -177,11 +178,16 @@ export async function fetchPartnerLogo(
     }
     if (!res) return give('too_many_redirects');
     if (!res.ok) return give('http_error', { status: res.status });
-    const length = Number(res.headers.get('content-length') ?? '0');
-    if (length > MAX_LOGO_BYTES) return give('too_large', { bytes: length });
-    const buf = Buffer.from(await res.arrayBuffer());
+    // Read under the cap rather than up to it. `arrayBuffer()` reads to the end
+    // of the stream *before* anything can measure it, so the declared
+    // `content-length` was the whole of the guard — and this URL is a value a
+    // partner typed, pointing at a host on the internet, which is precisely
+    // where a declared length is a claim rather than a fact. A host answering
+    // `content-length: 100` and then streaming for the three seconds the
+    // deadline allows buffered every byte of it into a render's heap.
+    const buf = await readCappedBytes(res, MAX_LOGO_BYTES);
+    if (buf === null) return give('too_large');
     if (buf.length === 0) return give('empty_body');
-    if (buf.length > MAX_LOGO_BYTES) return give('too_large', { bytes: buf.length });
     // PNG and JPEG are the only formats PDFKit can embed, so an SVG or a WebP
     // is a partner who needs telling rather than a fault.
     return sniffImageKind(buf) ? buf : give('unsupported_format', { bytes: buf.length });

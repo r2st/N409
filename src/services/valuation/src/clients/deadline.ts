@@ -147,7 +147,7 @@ export const MAX_INTEGRATION_JSON_BYTES = 16 * 1024 * 1024;
 const OVERSIZE_MB = MAX_INTEGRATION_JSON_BYTES / (1024 * 1024);
 
 /**
- * Reads a body to a string, refusing to buffer more than `MAX_INTEGRATION_JSON_BYTES`.
+ * Reads a body to a Buffer, or `null` if it runs past `limitBytes`.
  *
  * The `content-length` check is a courtesy for the honest oversized answer —
  * it costs nothing and refuses before a byte is read. It is not the guard: a
@@ -159,12 +159,10 @@ const OVERSIZE_MB = MAX_INTEGRATION_JSON_BYTES / (1024 * 1024);
  * Cancelling the reader is what makes that true — without it the socket keeps
  * delivering into a buffer nobody is draining.
  */
-async function readCappedText(res: Response, label: string): Promise<string> {
+export async function readCappedBytes(res: Response, limitBytes: number): Promise<Buffer | null> {
   const declared = Number(res.headers.get('content-length') ?? '');
-  if (Number.isFinite(declared) && declared > MAX_INTEGRATION_JSON_BYTES) {
-    throw new IntegrationError(`${label} returned a response larger than ${OVERSIZE_MB} MB`);
-  }
-  if (!res.body) return res.text();
+  if (Number.isFinite(declared) && declared > limitBytes) return null;
+  if (!res.body) return Buffer.from(await res.arrayBuffer());
 
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -175,9 +173,7 @@ async function readCappedText(res: Response, label: string): Promise<string> {
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
-      if (total > MAX_INTEGRATION_JSON_BYTES) {
-        throw new IntegrationError(`${label} returned a response larger than ${OVERSIZE_MB} MB`);
-      }
+      if (total > limitBytes) return null;
       chunks.push(value);
     }
   } finally {
@@ -185,7 +181,15 @@ async function readCappedText(res: Response, label: string): Promise<string> {
     // connection stays open feeding a buffer that is already over budget.
     await reader.cancel().catch(() => undefined);
   }
-  return new TextDecoder().decode(Buffer.concat(chunks));
+  return Buffer.concat(chunks);
+}
+
+async function readCappedText(res: Response, label: string): Promise<string> {
+  const bytes = await readCappedBytes(res, MAX_INTEGRATION_JSON_BYTES);
+  if (bytes === null) {
+    throw new IntegrationError(`${label} returned a response larger than ${OVERSIZE_MB} MB`);
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 /**
