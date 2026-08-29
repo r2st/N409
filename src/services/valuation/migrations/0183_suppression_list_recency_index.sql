@@ -1,0 +1,53 @@
+-- The sixth capped-but-not-bounded list, on the one table 0178 could not see.
+--
+-- 0178 fixed five admin ledgers whose `ORDER BY` named a column no index led
+-- with. It found them by explaining every *static* SQL literal in the tree, and
+-- `listSuppressions` is not one: its WHERE clause is assembled per call
+--
+--     SELECT * FROM email_suppressions
+--       ${opts.includeReleased ? '' : 'WHERE released_at IS NULL'}
+--       ORDER BY created_at DESC
+--       LIMIT $1
+--
+-- so the sweep skipped it along with every other interpolated statement. That
+-- is the whole finding: the shape was known, the query was ordinary, and the
+-- only reason it survived two rounds of this exact audit is that the tool read
+-- source rather than plans, and could not parse a template hole.
+--
+-- `email_suppressions` had two indexes, on `to_email` (the primary key, for the
+-- send path's "may I mail this address" check) and on `outbox_id`. Nothing on
+-- `created_at`, which is the only column the list orders by. So opening the
+-- email admin page read every suppression the platform has ever recorded and
+-- sorted them to show the hundred most recent.
+--
+-- Measured at 50k suppressions, 95% still held (EXPLAIN ANALYZE, warm):
+--
+--     held only (the default)   8.4 ms  465 blk  ->  0.08 ms  3 blk   155x
+--     including released         same shape      ->  0.08 ms  3 blk
+--
+-- Plain rather than partial, and that is the interesting half. The obvious
+-- index here is `(created_at DESC) WHERE released_at IS NULL`, matching the
+-- default filter — but it would serve only one of the two shapes, and the
+-- released-inclusive listing would go straight back to the sequential scan. The
+-- plain index serves both, because the filter is not selective: a suppression
+-- is released by hand and almost none are, so ~95% of index entries pass and
+-- the scan reaches 101 rows in about 106 of them. The same statistic that makes
+-- a partial index on `released_at IS NULL` worthless as a *filter* (0181
+-- declined one over the held-count for exactly this reason) is what makes it
+-- unnecessary here.
+--
+-- Nothing is added for `listPosts`, which the same sweep surfaced with a
+-- genuinely awkward ordering (`published DESC NULLS LAST, published_at DESC
+-- NULLS FIRST, created_at DESC` — R166's mixed-NULLS spelling, which no btree
+-- can serve). `blog_posts` is the marketing blog: it grows at the rate someone
+-- writes an article, its cap is 200, and an index on a three-term mixed
+-- ordering to sort a hundred rows would cost more to maintain than the sort
+-- costs to run.
+--
+-- Not CONCURRENTLY: db/migrate.ts wraps each file in BEGIN/COMMIT and CREATE
+-- INDEX CONCURRENTLY cannot run inside a transaction block. `email_suppressions`
+-- is written when a bounce webhook arrives and when an operator releases an
+-- address by hand, neither of which is a request anyone is watching return.
+
+CREATE INDEX IF NOT EXISTS email_suppressions_recent_idx
+    ON email_suppressions (created_at DESC);

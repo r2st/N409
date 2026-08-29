@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { listAllInvoices, listAllSubscriptions } from '../../src/repos/billing.js';
 import { listInvitations } from '../../src/repos/invitations.js';
 import { listActiveEngagements } from '../../src/repos/engagements.js';
+import { listSuppressions } from '../../src/repos/emailDelivery.js';
 import { isDbAvailable, setupTestDb, type TestDb } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -152,6 +153,16 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
       run: captured(/FROM engagements/i, (d) => listActiveEngagements(d.pool, { limit: 200 })),
     },
     {
+      // R202. Same shape as the five above, on the table the R193 sweep could
+      // not see: `listSuppressions` assembles its WHERE per call, and a sweep
+      // that explains static SQL literals cannot parse a template hole. The
+      // index is plain rather than partial on purpose — see 0183.
+      name: 'listSuppressions',
+      table: 'email_suppressions',
+      index: 'email_suppressions_recent_idx',
+      run: captured(/FROM email_suppressions/i, (d) => listSuppressions(d.pool, { limit: 100 })),
+    },
+    {
       name: 'GET /scim/v2/Users',
       table: 'users',
       index: 'users_scim_provisioned_idx',
@@ -222,6 +233,16 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
               '{}'::jsonb, now() - (g || ' minutes')::interval
          FROM generate_series(1, ${ROWS}) g`,
     );
+    // Held addresses far outnumber released ones — a suppression is released
+    // by hand and almost none are. That share is load-bearing for 0183: it is
+    // why a plain index on `created_at` serves the filtered listing too.
+    await q(
+      `INSERT INTO email_suppressions (to_email, reason, detail, created_at, released_at)
+       SELECT 'sup' || g || '@x.y', (ARRAY['hard','soft','complaint'])[1 + g % 3]::email_bounce_kind,
+              'detail ' || g, now() - (g || ' minutes')::interval,
+              CASE WHEN g % 20 = 0 THEN now() END
+         FROM generate_series(1, ${ROWS}) g`,
+    );
     await q('ANALYZE');
 
     for (const c of CASES) {
@@ -245,7 +266,8 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
               (SELECT count(*) FROM user_invitations) AS user_invitations,
               (SELECT count(*) FROM engagements WHERE current_stage <> 'complete') AS open_engagements,
               (SELECT count(*) FROM users WHERE provisioned_by = 'scim') AS scim_users,
-              (SELECT count(*) FROM ai_jobs WHERE status = 'running') AS running_jobs`,
+              (SELECT count(*) FROM ai_jobs WHERE status = 'running') AS running_jobs,
+              (SELECT count(*) FROM email_suppressions WHERE released_at IS NULL) AS held`,
     );
     const counts = rows[0]!;
     expect(Number(counts.invoices)).toBe(ROWS);
@@ -256,6 +278,9 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
     // indexes small and the scans they replaced wasteful.
     expect(Number(counts.scim_users)).toBe(ROWS / 200);
     expect(Number(counts.running_jobs)).toBe(ROWS / 500);
+    // The opposite of selective, and deliberately so: 0183's index is plain
+    // because this predicate keeps almost everything.
+    expect(Number(counts.held)).toBe(ROWS - ROWS / 20);
   });
 
   it('matches the statement the source issues, for the two written out here', () => {
