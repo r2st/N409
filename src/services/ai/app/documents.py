@@ -10,6 +10,7 @@ file never sinks a run.
 from __future__ import annotations
 
 import base64
+import codecs
 import io
 import re
 import zipfile
@@ -116,6 +117,69 @@ class DocText:
     text: str
 
 
+class MalformedDocument(Exception):
+    """A part of an archive is XML this reader will not parse at all."""
+
+
+def _parse_xml_part(data: bytes) -> ElementTree.Element:
+    """Parse one XML part of a workbook, refusing any document type declaration.
+
+    `ElementTree` expands internal entities. Six nested declarations of ten
+    references each turn fifty bytes into fifty megabytes, and each further
+    level multiplies by ten — the billion-laughs bomb, and `zipfile` never sees
+    it: the payload is a 427-byte `xl/sharedStrings.xml` in an 845-byte archive,
+    so the decompression budget above is spent to four figures and the
+    allocation happens in the parser afterwards. Measured on this reader before
+    this existed.
+
+    A DTD is refused rather than the expansion being metered. No part of an
+    OOXML package carries one — the format's own schema is XSD, and every writer
+    from Excel to openpyxl emits an XML declaration and nothing else — so there
+    is no legitimate workbook to trade against, and "no entities to expand"
+    is a property one scan can establish, where "expanded to less than N" is a
+    budget that has to be threaded through a parser that does not offer a hook
+    for it.
+
+    The exception type is deliberately not `ParseError`: the callers below skip
+    an unreadable part and carry on, which is right for a truncated sheet and
+    wrong for a hostile one. This reaches `extract_texts`, which reports it as
+    the document's text, so the run says what it refused.
+    """
+    if _has_doctype(data):
+        raise MalformedDocument(
+            "this workbook contains an XML document type declaration, which no spreadsheet "
+            "writes and which cannot be read safely"
+        )
+    return ElementTree.fromstring(data)
+
+
+def _has_doctype(data: bytes) -> bool:
+    """Whether a document type declaration leads this XML part.
+
+    Only the prolog is examined — everything before the first element — so a
+    cell whose *text* is the literal `<!DOCTYPE html>` cannot be mistaken for
+    one (it is escaped in the part, and past the root element either way). What
+    may legitimately precede it is whitespace, the XML declaration, processing
+    instructions, and comments; each is skipped, and anything else ends the
+    scan.
+    """
+    rest = data.lstrip(codecs.BOM_UTF8).lstrip()
+    while True:
+        if rest.startswith(b"<!DOCTYPE"):
+            return True
+        if rest.startswith(b"<!--"):
+            end = rest.find(b"-->", 4)
+        elif rest.startswith(b"<?"):
+            end = rest.find(b"?>", 2)
+        else:
+            return False
+        if end < 0:
+            # Unterminated: there is no well-formed document after it, so the
+            # parser is about to raise anyway. Not a DTD.
+            return False
+        rest = rest[end + (3 if rest.startswith(b"<!--") else 2) :].lstrip()
+
+
 def _pdf_text(raw: bytes) -> str:
     reader = PdfReader(io.BytesIO(raw))
     pages = [page.extract_text() or "" for page in reader.pages[:40]]
@@ -153,7 +217,7 @@ def _rich_text(node: ElementTree.Element) -> str:
 
 def _xlsx_shared_strings(zf: _BoundedZip) -> list[str]:
     try:
-        root = ElementTree.fromstring(zf.read("xl/sharedStrings.xml"))
+        root = _parse_xml_part(zf.read("xl/sharedStrings.xml"))
     except (KeyError, ElementTree.ParseError):
         return []
     # Each <si> may hold one <t> or rich-text runs of <r><t>; join the runs.
@@ -163,7 +227,7 @@ def _xlsx_shared_strings(zf: _BoundedZip) -> list[str]:
 def _xlsx_rels(zf: _BoundedZip) -> dict[str, str]:
     """Relationship id → part target, from the workbook's relationships part."""
     try:
-        root = ElementTree.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+        root = _parse_xml_part(zf.read("xl/_rels/workbook.xml.rels"))
     except (KeyError, ElementTree.ParseError):
         return {}
     out: dict[str, str] = {}
@@ -191,7 +255,7 @@ def _xlsx_sheets(zf: _BoundedZip) -> list[tuple[str, str]]:
     share classes out of a P&L.
     """
     try:
-        root = ElementTree.fromstring(zf.read("xl/workbook.xml"))
+        root = _parse_xml_part(zf.read("xl/workbook.xml"))
     except (KeyError, ElementTree.ParseError):
         return []
     rels = _xlsx_rels(zf)
@@ -306,7 +370,7 @@ def _xlsx_text(raw: bytes) -> str:
         blocks: list[str] = []
         for name, path in sheets[:MAX_XLSX_SHEETS]:
             try:
-                root = ElementTree.fromstring(zf.read(path))
+                root = _parse_xml_part(zf.read(path))
             except (KeyError, ElementTree.ParseError):
                 continue
             lines = [f"=== Sheet: {name} ==="]

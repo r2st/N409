@@ -1,6 +1,7 @@
 """XLSX extraction tests — a real minimal workbook built in-memory (no deps)."""
 
 import base64
+import codecs
 import io
 import zipfile
 
@@ -480,3 +481,61 @@ def test_an_inline_string_drops_its_phonetic_guide():
     [doc] = extract_texts([_doc(_phonetic_bytes())])
     assert doc.text.rstrip().endswith("佐藤")
     assert "サトウ" not in doc.text
+
+
+# ── XML entity expansion ─────────────────────────────────────────────────────
+#
+# The decompression budget bounds what `zipfile` inflates and nothing about what
+# the XML parser then allocates. `ElementTree` expands internal entities, so a
+# few hundred bytes of declarations inside a part that is well within budget
+# expands by a factor of ten per level once it is parsed.
+
+def _entity_bomb_shared_strings(levels: int) -> str:
+    """`levels` nested declarations, each ten references to the one below."""
+    decls = ['<!ENTITY e0 "' + "a" * 50 + '">']
+    for i in range(1, levels):
+        decls.append(f'<!ENTITY e{i} "{("&e" + str(i - 1) + ";") * 10}">')
+    return (
+        '<?xml version="1.0"?>\n<!DOCTYPE sst [\n' + "\n".join(decls) + "\n]>\n"
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<si><t>&e{levels - 1};</t></si></sst>'
+    )
+
+
+def _bomb_xlsx(levels: int = 6) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", _CONTENT_TYPES)
+        zf.writestr("xl/workbook.xml", _WORKBOOK)
+        zf.writestr("xl/sharedStrings.xml", _entity_bomb_shared_strings(levels))
+        zf.writestr("xl/worksheets/sheet1.xml", _SHEET1)
+    return buf.getvalue()
+
+
+def test_entity_bomb_is_refused_rather_than_expanded():
+    raw = _bomb_xlsx()
+    # Well inside the decompression budget — the point of the test is that the
+    # budget is not what stops this.
+    assert len(raw) < 4096
+    [doc] = extract_texts([_doc(raw)])
+    assert doc.text.startswith("[could not extract text:")
+    assert "document type declaration" in doc.text
+    # 6 levels expand to ~50 MB of 'a'; nothing of the kind reached the output.
+    assert "aaaaaaaaaa" not in doc.text
+
+
+def test_a_doctype_is_refused_wherever_it_leads_a_part():
+    """The scan reads the prolog, so a declaration behind a comment still counts."""
+    from app.documents import _has_doctype
+
+    assert _has_doctype(b'<?xml version="1.0"?>\n<!DOCTYPE sst []>\n<sst/>')
+    assert _has_doctype(b"<!-- written by a tool --> <!DOCTYPE sst []><sst/>")
+    assert _has_doctype(codecs.BOM_UTF8 + b"<!DOCTYPE sst []><sst/>")
+    # A cell whose text merely says so is past the root element, and escaped.
+    assert not _has_doctype(b'<?xml version="1.0"?><sst><si><t>&lt;!DOCTYPE x&gt;</t></si></sst>')
+    assert not _has_doctype(b"<sst/>")
+
+
+def test_an_ordinary_workbook_still_parses():
+    [doc] = extract_texts([_doc(_xlsx_bytes())])
+    assert "Series A\t2000000" in doc.text
