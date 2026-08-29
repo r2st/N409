@@ -8,6 +8,7 @@ import { EXPORT_SECTION_LIMIT } from '../../src/repos/dataExport.js';
 import { enqueueEmail } from '../../src/repos/emailOutbox.js';
 import { suppressAddress } from '../../src/repos/emailDelivery.js';
 import { createInvitation } from '../../src/repos/invitations.js';
+import { recordAdminEvent } from '../../src/events/adminRecord.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
@@ -268,6 +269,64 @@ describe.skipIf(!dbUp)('personal data export', () => {
     // issued it is another person — neither belongs in this copy.
     expect(body.invitations.rows[0]).not.toHaveProperty('token_sha256');
     expect(body.invitations.rows[0]).not.toHaveProperty('invited_by');
+  });
+
+  it('tells a directory-provisioned account what the connector did to it', async () => {
+    /*
+     * The case the account-events section exists for. A SCIM connector
+     * creates an account, deactivates it and restores it; the person it
+     * belongs to performed none of those actions and, before this, had no way
+     * to learn that any of them happened — the three `recordAdminEvent` calls
+     * in `routes/scim.ts` were readable by administrators and by nobody else.
+     *
+     * Written against `admin_events` directly rather than by driving the SCIM
+     * routes, so the assertion is about what the export can reach rather than
+     * about the connector's own plumbing (`scim.test.ts` covers that).
+     */
+    const provisioned = await seedUser(ctx, { roles: [] });
+    for (const [type, payload] of [
+      ['user_created', { method: 'scim', roles: ['valuation_user'] }],
+      ['user_deactivated', { method: 'scim' }],
+    ] as const) {
+      await recordAdminEvent(ctx.pool, {
+        type,
+        actor: { actorType: 'system', actorId: 'scim-token-01', source: 'scim' },
+        subjectType: 'user',
+        subjectId: provisioned.id,
+        subjectLabel: provisioned.email,
+        payload,
+      });
+    }
+    // Another person's event, with the same subject *type*: the predicate
+    // leads on `subject_id`, and a section that led on `subject_type` instead
+    // would hand this one over too.
+    await recordAdminEvent(ctx.pool, {
+      type: 'user_deactivated',
+      actor: { actorType: 'human', actorId: admin.id, source: 'api' },
+      subjectType: 'user',
+      subjectId: owner.id,
+      subjectLabel: owner.email,
+      payload: { method: 'console' },
+    });
+
+    const body = (await exportSelf(provisioned.token)).json();
+    const rows = body.account_events.rows as Array<Record<string, unknown>>;
+    // `user_login` is in here too — `seedUser` signs in, and auth.ts records
+    // it against the same subject. That it arrives unasked-for is the section
+    // working: the rule is the subject, not a list of types somebody curated.
+    expect(rows.map((r) => r.type)).toEqual(expect.arrayContaining(['user_created', 'user_deactivated']));
+    const provisioning = rows.filter((r) => r.source === 'scim');
+    expect(provisioning).toHaveLength(2);
+    // The other person's deactivation, which shares this row's `subject_type`
+    // and differs only in `subject_id`, is not in the copy.
+    expect(rows.filter((r) => (r.payload as { method?: string }).method === 'console')).toEqual([]);
+    expect(rows.find((r) => r.type === 'user_created')!.payload).toMatchObject({ method: 'scim' });
+    // Which administrator, or which connector token, carried it out is
+    // another party's data — Art. 15(4), the same call `email_suppression`
+    // makes about `released_by`. What kind of actor it was is not.
+    expect(provisioning[0]).not.toHaveProperty('actor_id');
+    expect(provisioning[0]).toHaveProperty('actor_type', 'system');
+    expect(JSON.stringify(body)).not.toContain('scim-token-01');
   });
 
   it('lists a trusted device without the token that makes it trusted', async () => {

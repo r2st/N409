@@ -1,0 +1,24 @@
+-- Reach an admin event by its subject.
+--
+-- `admin_events_subject_idx` is `(subject_type, subject_id)` and has been since
+-- 0047. Its leading column is the *kind* of subject, which is one of about six
+-- values across the whole table, so it serves "every user event" and serves no
+-- question anyone actually asks. Both callers ask the other question — which
+-- events are about this one subject — and neither of them names a type first:
+--
+--   * `repos/dataExport.ts` now answers an Art. 15 request with the account
+--     lifecycle recorded here (who created this account and how, when it was
+--     deactivated or restored, when a password reset was sent). For a user
+--     provisioned by an IdP that is the only record they have of an account
+--     they did not create.
+--   * `routes/evidence.ts` collects the admin events for a valuation into the
+--     evidence bundle, by `subject_id` alone. That has been a sequential scan
+--     of the whole audit spine since it was written, on the path that builds a
+--     deliverable.
+--
+-- `occurred_at DESC` as the second column because both read newest-first or
+-- ordered by time; the sort comes off the index rather than out of a sort node.
+-- The old index is kept: it is the one the admin console's "all user events"
+-- listing uses, and dropping it would move that scan somewhere else.
+CREATE INDEX IF NOT EXISTS admin_events_subject_id_idx
+    ON admin_events (subject_id, occurred_at DESC);

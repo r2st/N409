@@ -46,6 +46,15 @@ import type pg from 'pg';
  * user id, so it is the one section that reaches the subject through their
  * email rather than their primary key.
  *
+ * The audit spine is in the copy for the rows it is *about* the requester —
+ * `admin_events` where `subject_type = 'user'` and the subject is them. That
+ * is a narrower thing than "the audit trail", and the line is the same one
+ * `user_invitations` sits on: what a person did to a valuation belongs to the
+ * engagement, what was done *to their account* belongs to them. An account
+ * provisioned, deactivated or restored by a directory connector over SCIM is
+ * the case where the subject took none of the actions and had no way to see
+ * any of them.
+ *
  * **What is deliberately withheld.** The password digest, the TOTP secret and
  * its backup codes, the API token hashes, and the reset/verification tokens.
  * Article 15(4) is explicit that the right to a copy must not adversely affect
@@ -114,6 +123,8 @@ export interface PersonalDataExport {
   invoices: ExportSection<Record<string, unknown>>;
   subscriptions: ExportSection<Record<string, unknown>>;
   api_tokens: ExportSection<Record<string, unknown>>;
+  /** The account's own lifecycle out of the audit spine — see the query. */
+  account_events: ExportSection<Record<string, unknown>>;
   section_limit: number;
 }
 
@@ -232,6 +243,7 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     invoices,
     subscriptions,
     apiTokens,
+    accountEvents,
   ] = await Promise.all([
     // Their engagements as a relationship — what was ordered, when, what it
     // cost, where it got to. Not the valuation's contents; see the note above.
@@ -427,6 +439,54 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
          FROM api_tokens WHERE created_by = $1 ORDER BY created_at DESC LIMIT $2`,
       [userId],
     ),
+    /*
+     * What happened to this account, from the audit spine.
+     *
+     * The doctrine above draws a line at the audit trail and that line is
+     * right where it is drawn — what a person *did* to a valuation is the
+     * engagement's record, not theirs, and copying it here would put a
+     * client's working papers into an access request by the back door. But
+     * `admin_events` is polymorphic, and the rows whose `subject_type` is
+     * `'user'` are on the other side of that line: the subject of the row is
+     * the person asking. They are the same class of fact as `user_invitations`
+     * — which is exported for the stated reason that "how did I come to have
+     * an account here" is a question only that row answers.
+     *
+     * The case that makes it unarguable is the one this round came for. An
+     * account provisioned over SCIM was created by a directory connector, may
+     * be deactivated by it, and may be reactivated by it, and the person it
+     * belongs to did none of those things and is told about none of them. The
+     * three `recordAdminEvent` calls in `routes/scim.ts` are the *only* record
+     * that any of it happened, and until now they were readable by
+     * administrators and by nobody else. Same for a SAML JIT account, and for
+     * a promotion or demotion an administrator performed.
+     *
+     * No table was invisible here, which is why the table census never asked:
+     * `admin_events.subject_id` carries no foreign key — it cannot, being
+     * polymorphic over users, partners, invitations and templates — so a scan
+     * for columns pointing at `users` sees nothing, and `subject_label` is not
+     * spelled like a contact column either.
+     *
+     * `actor_id` is deliberately not selected, and that is the same call
+     * `email_suppression` makes about `released_by` and `contact_submissions`
+     * about `handled_by`: which administrator carried the action out is
+     * another person's data, and Art. 15(4) is the limit on answering one
+     * person's request with another's. `actor_type` and `source` are: "a
+     * person", "the system", "scim" is what the subject actually needs to
+     * know, and it names nobody.
+     *
+     * `subject_id` leads the predicate so the index added in 0184 serves it —
+     * `admin_events_subject_idx` is `(subject_type, subject_id)`, whose
+     * leading column has about six distinct values in the whole table and
+     * therefore reaches nothing.
+     */
+    section(
+      pool,
+      `SELECT type, actor_type::text AS actor_type, source, payload, occurred_at
+         FROM admin_events WHERE subject_id = $1 AND subject_type = 'user'
+        ORDER BY occurred_at DESC LIMIT $2`,
+      [userId],
+    ),
   ]);
 
   return {
@@ -453,6 +513,7 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     invoices,
     subscriptions,
     api_tokens: apiTokens,
+    account_events: accountEvents,
     section_limit: EXPORT_SECTION_LIMIT,
   };
 }

@@ -189,9 +189,16 @@ describe.skipIf(!dbUp)('the personal export reaches every table by an index (R19
     // is over `reads`, so a regex that stopped matching would report a
     // perfectly indexed export of nothing. Pinned to a count rather than a
     // floor so that *deleting* a section is as visible as adding one.
-    expect(sections).toHaveLength(19);
+    expect(sections).toHaveLength(20);
     const tables = new Set(reads.map((a) => a.table));
-    for (const t of ['valuations', 'documents', 'email_outbox', 'contact_submissions', 'payments']) {
+    for (const t of [
+      'valuations',
+      'documents',
+      'email_outbox',
+      'contact_submissions',
+      'payments',
+      'admin_events',
+    ]) {
       expect(tables.has(t)).toBe(true);
     }
   });
@@ -226,7 +233,7 @@ describe.skipIf(!dbUp)('the personal export reaches every table by an index (R19
     expect(scans).toEqual([]);
   });
 
-  it('indexes the six the export was scanning (0176)', () => {
+  it('indexes the tables the export was scanning (0176, 0184)', () => {
     // Named individually so that reverting the migration fails with the list
     // rather than with a generic census message, and so the census cannot go
     // green by losing the sections instead of keeping the indexes.
@@ -237,6 +244,13 @@ describe.skipIf(!dbUp)('the personal export reaches every table by an index (R19
       ['email_outbox', 'to_user_id'],
       ['contact_submissions', 'lower(email)'],
       ['user_invitations', 'lower(email)'],
+      // 0184, and the same shape one round later: the audit spine's own
+      // subject index leads on `subject_type`, which has about six distinct
+      // values, so the account-events section (and `routes/evidence.ts`, which
+      // has asked the same question since it was written) read the whole
+      // table. Listed here rather than in a second block because what makes
+      // it the same finding is not the migration number.
+      ['admin_events', 'subject_id'],
     ];
     for (const [table, key] of closed) {
       expect(leading.get(table), `${table}.${key}`).toContain(key);
