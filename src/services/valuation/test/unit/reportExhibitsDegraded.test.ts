@@ -87,8 +87,68 @@ describe('Exhibit B — reconciliation on a thin approach block', () => {
     expect(approachExhibit(results, CTX)).toBeNull();
   });
 
-  it('drops the exhibit when the weighted approach reported no equity value', () => {
+  it('drops the exhibit when no weighted approach reported an equity value', () => {
+    // Every row an em-dash under a heading that promises a reconciliation.
     expect(approachExhibit({ approaches: { income: { weight: 1 } } }, CTX)).toBeNull();
+  });
+
+  /**
+   * The partial case is the opposite of the two above: there is a real
+   * reconciliation and one approach is missing from it.
+   *
+   * Dropping the unvalued row took its weight out of the foot as well, so a run
+   * with the market approach weighted at 25% and no value for it printed rows
+   * summing to $35,000,000 in the Weighted column, a total of "75%", and
+   * "$42,000,000" beside it — on the schedule whose whole job is to show how
+   * the conclusion was reached, with nothing saying an approach was omitted.
+   */
+  it('keeps a weighted approach that produced no value, and says so', () => {
+    const s = approachExhibit(
+      {
+        equity_value: 42_000_000,
+        approaches: {
+          opm_backsolve: { weight: 0.5, equity_value: 52_000_000 },
+          income: { weight: 0.25, equity_value: 36_000_000 },
+          market: { weight: 0.25, enterprise_value: 26_000_000 },
+        },
+      },
+      CTX,
+    );
+    const html = s!.html;
+    expect(html).toContain('Market (comparables)');
+    // The weight is in the foot, so the total states how the conclusion was
+    // actually weighted rather than how much of it happened to render.
+    expect(html).toContain('<strong>100%</strong>');
+    expect(html).not.toContain('<strong>75%</strong>');
+    // And the hole is named rather than left to be inferred from a column that
+    // does not add up.
+    expect(html).toContain('at 25% of the weight');
+    expect(html).toContain('does not sum to the concluded equity value');
+  });
+
+  it('says nothing about missing indications when none are missing', () => {
+    const s = approachExhibit(
+      {
+        equity_value: 40_000_000,
+        approaches: {
+          income: { weight: 0.5, equity_value: 40_000_000 },
+          market: { weight: 0.5, equity_value: 40_000_000 },
+        },
+      },
+      CTX,
+    );
+    expect(s!.html).not.toContain('of the weight');
+  });
+
+  it('escapes an unlabelled approach key on its way into the table', () => {
+    // Exhibit B-1 has always escaped the same value from the same object;
+    // Exhibit B interpolated it raw, and `table()` does not escape for callers.
+    const s = approachExhibit(
+      { equity_value: 1, approaches: { '<b>x</b>': { weight: 1, equity_value: 1 } } },
+      CTX,
+    );
+    expect(s!.html).toContain('&lt;b&gt;x&lt;/b&gt;');
+    expect(s!.html).not.toContain('<b>x</b>');
   });
 
   it('falls back to the raw key for an approach with no published label', () => {

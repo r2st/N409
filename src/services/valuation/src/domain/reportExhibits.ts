@@ -490,20 +490,44 @@ export function approachExhibit(
         method: text(value?.method),
       };
     })
-    .filter((e) => e.weight > 0 && e.equity !== null)
+    /*
+     * Weighted, whether or not it produced a value.
+     *
+     * An approach carrying no weight is genuinely not part of the conclusion
+     * and is left out. An approach carrying weight and *no indicated value* is
+     * a different thing entirely, and dropping it here took its weight out of
+     * the foot as well: a run where the market approach was weighted at 25% and
+     * came back without an equity value printed two rows summing to $35,000,000
+     * in the Weighted column, a total of "75%", and "$42,000,000" beside it —
+     * on the one schedule whose whole job is to show how the conclusion was
+     * arrived at. Nothing on the page said an approach was missing, so the
+     * reconciliation simply did not close and the reader could not see why.
+     *
+     * The row stays, with em-dashes where the engine gave nothing, and its
+     * weight stays in the total. The note under the table says the rest.
+     */
+    .filter((e) => e.weight > 0)
     .sort((a, b) => b.weight - a.weight);
-  if (entries.length === 0) return null;
+  // Nothing to reconcile: no weight anywhere, or weight everywhere and not one
+  // indicated value. A table of em-dashes under a heading promising figures is
+  // what the degradation rule exists to avoid — the partial case above is the
+  // opposite, a reconciliation that is real and has a hole in it.
+  if (entries.length === 0 || entries.every((e) => e.equity === null)) return null;
 
   const rows = entries.map((e) => [
-    APPROACH_LABELS[e.key] ?? e.key,
+    // Escaped like Exhibit B-1's, which is the same value from the same object:
+    // these cells are interpolated into markup, and an approach key is a key
+    // from a stored result rather than a name this file chose.
+    APPROACH_LABELS[e.key] ?? esc(e.key),
     e.method ? esc(e.method.replace(/_/g, ' ')) : '—',
     e.enterprise === null ? '—' : formatCurrency(e.enterprise, currency, 0),
-    formatCurrency(e.equity as number, currency, 0),
+    e.equity === null ? '—' : formatCurrency(e.equity, currency, 0),
     formatPercent(e.weight, 0),
-    formatCurrency((e.equity as number) * e.weight, currency, 0),
+    e.equity === null ? '—' : formatCurrency(e.equity * e.weight, currency, 0),
   ]);
   const concluded = num(results.equity_value);
   const weightTotal = entries.reduce((sum, e) => sum + e.weight, 0);
+  const unvalued = entries.filter((e) => e.equity === null);
 
   /*
    * This paragraph asserted "on a marketable, controlling basis" unconditionally,
@@ -526,6 +550,20 @@ export function approachExhibit(
         'The concluded equity value is the weighted average of the indications, with weights ' +
         'reflecting the relevance and reliability of each approach to this company at this stage.',
     ),
+    // Said outright rather than left to be inferred from a Weighted column
+    // that does not add up to the foot.
+    unvalued.length === 0
+      ? null
+      : P(
+          `${unvalued.length === 1 ? 'One approach carries' : `${unvalued.length} approaches carry`} ` +
+            'weight in the conclusion without an indicated equity value on this run — ' +
+            `${unvalued.map((e) => esc(APPROACH_LABELS[e.key] ?? e.key)).join(', ')}, at ` +
+            `${formatPercent(
+              unvalued.reduce((sum, e) => sum + e.weight, 0),
+              0,
+            )} of the weight. The weighted column below therefore does not sum to the concluded ` +
+            'equity value.',
+        ),
     table({
       head: ['Approach', 'Method', 'Enterprise value', 'Equity value', 'Weight', 'Weighted'],
       rows,
