@@ -253,9 +253,31 @@ export function registerAdminUserRoutes(
     assertPartnerScopeConsistent(roles, partner_id ?? null);
     if (partner_id) await assertAssignablePartner(partner_id);
 
+    /*
+     * Any account, not only a live one.
+     *
+     * This asked `existing && !existing.deleted_at`, and the other end of the
+     * lifecycle asks whether the address is on the `users` table at all —
+     * `acceptInvitation` has to, because a closed account is a soft delete and
+     * `users_email_key` still holds the address. So an invitation to a closed
+     * account's address was minted, emailed and shown as pending, and then
+     * refused at the last step of the flow: the invitee chose a password and
+     * was told an account with their email already exists, for an account they
+     * cannot sign in to, on a page with nowhere to go from there.
+     *
+     * Refusing here puts the refusal in front of the one person who can act on
+     * it, and the sentence says what the action is. Restoring the account and
+     * sending a reset (`POST /users/:id/restore`, `.../send-password-reset`)
+     * is not a workaround for this refusal — it is the only sequence that can
+     * work, because the address is spoken for whichever end asks.
+     */
     const existing = await findUserByEmail(deps.pool, email);
-    if (existing && !existing.deleted_at)
-      throw problems.conflict('An account with this email already exists');
+    if (existing?.deleted_at)
+      throw problems.conflict(
+        'This email belongs to a closed account. Reactivate it from the user list and send a ' +
+          'password reset — an invitation cannot create a second account on the same address.',
+      );
+    if (existing) throw problems.conflict('An account with this email already exists');
     if (await hasPendingInvitation(deps.pool, email))
       throw problems.conflict('An invitation for this email is already pending');
 

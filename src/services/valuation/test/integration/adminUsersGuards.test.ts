@@ -457,19 +457,25 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
       }
     });
 
-    it('restores a deactivated account, and lets the address be reinvited only after', async () => {
+    it('restores a deactivated account, and points a reinvite at doing that instead', async () => {
       const user = await createUser();
       await ctx.app.inject({ method: 'DELETE', url: `/api/v1/users/${user.id}`, headers: auth() });
 
-      // A deactivated account no longer blocks its own address — the invite
-      // conflict checks `!deleted_at` for exactly this case.
+      // This asserted 201 — the invite conflict checked `!deleted_at`, so a
+      // closed account did not block its own address. The invitation it minted
+      // could not be redeemed: `acceptInvitation` refuses any address already
+      // on `users`, and a closed account is a soft delete that keeps both the
+      // row and `users_email_key`. The 201 bought an email, a pending row in
+      // the console, and a dead end at the invitee's last step. Restoring is
+      // the path that works, so the refusal names it.
       const reinvite = await ctx.app.inject({
         method: 'POST',
         url: '/api/v1/users/invite',
         headers: auth(),
         payload: { email: user.email, roles: ['valuation_user'] },
       });
-      expect(reinvite.statusCode).toBe(201);
+      expect(reinvite.statusCode).toBe(409);
+      expect(reinvite.json().detail).toMatch(/closed account/i);
 
       const restored = await ctx.app.inject({
         method: 'POST',
