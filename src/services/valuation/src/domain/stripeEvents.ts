@@ -46,7 +46,8 @@ export interface StripeEventKey {
  *
  * These three are also the *authority* on a subscription's state: they are the
  * subscription object itself, reported by Stripe. See {@link CHECKOUT_COMPLETED}
- * for the one other event that writes that state, and why it is not one of them.
+ * and {@link INVOICE_PAYMENT_FAILED} for the other two events that write that
+ * state, and why neither is one of them.
  */
 export const SUBSCRIPTION_STATE_EVENTS: readonly string[] = [
   'customer.subscription.created',
@@ -77,8 +78,39 @@ export const SUBSCRIPTION_STATE_EVENTS: readonly string[] = [
  */
 export const CHECKOUT_COMPLETED = 'checkout.session.completed';
 
+/**
+ * The third writer of subscription state, and the narrowest.
+ *
+ * `invoice.payment_failed` puts the subscription on 'past_due' through
+ * `markSubscriptionPastDue`, deliberately without going near the metadata the
+ * `customer.subscription.*` handler needs — a lapsed card should mark the
+ * account past due even on a subscription created in the Stripe dashboard. That
+ * makes it a writer of the state this ledger orders, and it was not in the
+ * ledger, so the ordinary recovery sequence ran backwards:
+ *
+ *   10:00  invoice.payment_failed — delivery fails, goes on the retry ladder
+ *   10:05  the customer fixes the card; customer.subscription.updated says
+ *          active, and is applied
+ *   10:12  the 10:00 retry lands, and puts the account back on past_due
+ *
+ * The subscriber keeps their quota either way ('past_due' is a served status),
+ * so what they get is a billing page saying their payment failed and a second
+ * dunning email about a card they have already replaced.
+ *
+ * Keyed on `data.object.subscription`, like {@link CHECKOUT_COMPLETED} and for
+ * the same reason: the invoice is not the thing whose state is contested.
+ *
+ * It yields to a newer subscription event and to a newer one of its own kind,
+ * and to nothing else — see {@link supersedingTypes}.
+ */
+export const INVOICE_PAYMENT_FAILED = 'invoice.payment_failed';
+
 /** Every type that gets an ordering key, i.e. is recorded with an object id. */
-export const ORDERED_EVENT_TYPES: readonly string[] = [...SUBSCRIPTION_STATE_EVENTS, CHECKOUT_COMPLETED];
+export const ORDERED_EVENT_TYPES: readonly string[] = [
+  ...SUBSCRIPTION_STATE_EVENTS,
+  CHECKOUT_COMPLETED,
+  INVOICE_PAYMENT_FAILED,
+];
 
 /** Whether two events of this type about one object have a knowable order. */
 export function isOrderedEventType(type: string): boolean {
@@ -88,7 +120,7 @@ export function isOrderedEventType(type: string): boolean {
 /**
  * Which already-handled types can make an event of this type stale.
  *
- * Asymmetric on purpose, because the two writers of subscription state are not
+ * Asymmetric on purpose, because the three writers of subscription state are not
  * equally authoritative and suppressing them symmetrically would lose data.
  *
  * A checkout session's `payment_status` is a fact about the payment page, mapped
@@ -104,7 +136,15 @@ export function isOrderedEventType(type: string): boolean {
  * created a second earlier and delivered a moment later.
  */
 export function supersedingTypes(type: string): readonly string[] {
-  return type === CHECKOUT_COMPLETED ? ORDERED_EVENT_TYPES : SUBSCRIPTION_STATE_EVENTS;
+  if (type === CHECKOUT_COMPLETED) return ORDERED_EVENT_TYPES;
+  // A failed invoice reports one attempt, not the subscription — so it yields
+  // to any newer reading by the authority, and to a newer attempt of its own,
+  // and to nothing else. Not to a newer checkout session: that one is the
+  // weaker writer of the two (see above), and letting it suppress a payment
+  // failure would put an account back on 'active' on the strength of a page the
+  // customer clicked through rather than money that arrived.
+  if (type === INVOICE_PAYMENT_FAILED) return [...SUBSCRIPTION_STATE_EVENTS, INVOICE_PAYMENT_FAILED];
+  return SUBSCRIPTION_STATE_EVENTS;
 }
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v : null);
@@ -139,6 +179,9 @@ function createdAt(value: unknown): Date | null {
 function objectIdOf(type: string, object: Record<string, unknown>): string | null {
   if (SUBSCRIPTION_STATE_EVENTS.includes(type)) return str(object.id);
   if (type === CHECKOUT_COMPLETED && str(object.mode) === 'subscription') return str(object.subscription);
+  // A one-off invoice carries no `subscription`, and it is also the invoice the
+  // dunning handler already declines to act on — nothing to order, so no key.
+  if (type === INVOICE_PAYMENT_FAILED) return str(object.subscription);
   return null;
 }
 

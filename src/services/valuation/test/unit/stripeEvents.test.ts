@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  INVOICE_PAYMENT_FAILED,
   isOrderedEventType,
   stripeEventKey,
   SUBSCRIPTION_STATE_EVENTS,
@@ -147,6 +148,60 @@ describe('supersedingTypes', () => {
     // and dropping it would drop the billing period with it.
     for (const type of SUBSCRIPTION_STATE_EVENTS) {
       expect(supersedingTypes(type)).not.toContain('checkout.session.completed');
+      expect(supersedingTypes(type)).toEqual(SUBSCRIPTION_STATE_EVENTS);
+    }
+  });
+});
+
+describe('a failed invoice is a writer of subscription state too', () => {
+  it('is ordered, and keyed on the subscription rather than the invoice', () => {
+    // markSubscriptionPastDue writes the same column customer.subscription.*
+    // writes, so an ordering key only helps if it is the same key.
+    expect(isOrderedEventType(INVOICE_PAYMENT_FAILED)).toBe(true);
+    const key = stripeEventKey(
+      {
+        id: 'evt_1',
+        type: INVOICE_PAYMENT_FAILED,
+        created: 1_772_000_000,
+        data: { object: { id: 'in_1', subscription: 'sub_1' } },
+      },
+      'billing',
+    );
+    expect(key.objectId).toBe('sub_1');
+  });
+
+  it('has no key when the invoice is not against a subscription', () => {
+    // A one-off invoice is also the one the dunning handler declines to act on.
+    const key = stripeEventKey(
+      { id: 'evt_2', type: INVOICE_PAYMENT_FAILED, created: 1_772_000_000, data: { object: { id: 'in_2' } } },
+      'billing',
+    );
+    expect(key.objectId).toBe(null);
+  });
+
+  it('yields to a newer subscription event and to a newer attempt of its own', () => {
+    // The recovery sequence it exists for: a failure retried at 10:12 must not
+    // undo the 10:05 event that said the replaced card went through.
+    expect(supersedingTypes(INVOICE_PAYMENT_FAILED)).toEqual([
+      ...SUBSCRIPTION_STATE_EVENTS,
+      INVOICE_PAYMENT_FAILED,
+    ]);
+  });
+
+  it('is not superseded by a checkout session, and does not supersede one', () => {
+    // A checkout session is the weaker writer of the two: it reports a page the
+    // customer clicked through, not money that arrived, so it must not put an
+    // account back to active over a payment failure.
+    expect(supersedingTypes(INVOICE_PAYMENT_FAILED)).not.toContain('checkout.session.completed');
+    // The other direction does hold — a stale checkout completion arriving
+    // after a payment failure has nothing to say.
+    expect(supersedingTypes('checkout.session.completed')).toContain(INVOICE_PAYMENT_FAILED);
+  });
+
+  it('leaves the subscription events themselves alone', () => {
+    // They are the authority and they carry the billing period the quota reset
+    // keys off; nothing weaker may suppress one.
+    for (const type of SUBSCRIPTION_STATE_EVENTS) {
       expect(supersedingTypes(type)).toEqual(SUBSCRIPTION_STATE_EVENTS);
     }
   });

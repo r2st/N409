@@ -69,6 +69,67 @@ describe.skipIf(!dbUp)('stripe webhook event ledger', () => {
     },
   });
 
+  /**
+   * The dunning event is a writer of subscription state too (round 203).
+   *
+   * `invoice.payment_failed` puts the row on 'past_due' through
+   * `markSubscriptionPastDue` — deliberately without the metadata the
+   * `customer.subscription.*` handler needs, so that a lapsed card marks the
+   * account even on a subscription this platform never created. That made it a
+   * third writer of the column this ledger orders, and it was not in the
+   * ledger.
+   */
+  describe('out-of-order dunning', () => {
+    it('does not let a retried payment failure undo the card the customer fixed', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const subId = 'sub_dunning_1';
+
+      // 09:55 — the subscription exists and is past due.
+      await toBilling(
+        subEvent({ eventId: 'evt_dun_seed', subId, userId: user.id, status: 'past_due', created: T - 300 }),
+      );
+
+      // 10:05 — the customer replaces the card and Stripe says active.
+      await toBilling(
+        subEvent({ eventId: 'evt_dun_fixed', subId, userId: user.id, status: 'active', created: T + 300 }),
+      );
+      expect((await findActiveSubscription(ctx.pool, user.id))?.status).toBe('active');
+
+      // 10:00 — the failed invoice, arriving late off the retry ladder. It used
+      // to put the account straight back on past_due and send a second dunning
+      // email about a card that had already been replaced.
+      const late = await toBilling({
+        id: 'evt_dun_late',
+        type: 'invoice.payment_failed',
+        created: T,
+        data: { object: { id: 'in_dun_1', subscription: subId, amount_due: 48_000, currency: 'usd' } },
+      });
+      expect(late.statusCode).toBe(200);
+      expect(late.json()).toMatchObject({ received: true, stale: true });
+      expect((await findActiveSubscription(ctx.pool, user.id))?.status).toBe('active');
+    });
+
+    it('still applies a payment failure that is the newest thing said', async () => {
+      // The suppression is about order, not about the type — an ordinary
+      // failure with nothing newer behind it has to land.
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const subId = 'sub_dunning_2';
+      await toBilling(
+        subEvent({ eventId: 'evt_dun2_seed', subId, userId: user.id, status: 'active', created: T }),
+      );
+
+      const failed = await toBilling({
+        id: 'evt_dun2_failed',
+        type: 'invoice.payment_failed',
+        created: T + 300,
+        data: { object: { id: 'in_dun_2', subscription: subId, amount_due: 48_000, currency: 'usd' } },
+      });
+      expect(failed.statusCode).toBe(200);
+      expect(failed.json()).toMatchObject({ received: true });
+      expect((await findActiveSubscription(ctx.pool, user.id))?.status).toBe('past_due');
+    });
+  });
+
   describe('out-of-order subscription events', () => {
     it('refuses to let a retried older event undo a newer one', async () => {
       const user = await seedUser(ctx, { roles: ['valuation_user'] });
