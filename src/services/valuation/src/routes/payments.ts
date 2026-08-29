@@ -43,7 +43,11 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { collectedTotals, disputeStatusOf, refundState, type DisputeStatus } from '../domain/payments.js';
 import { fitsInt4 } from '../domain/int4.js';
 import { createNotifications } from '../repos/notifications.js';
-import { recordInvoiceRefund } from '../repos/billing.js';
+import {
+  findInvoiceByStripeId,
+  findSubscriptionByStripeCustomerId,
+  recordInvoiceRefund,
+} from '../repos/billing.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport, SupportEmailSource } from '../hooks/stateChange.js';
 import { applyValuationState } from '../domain/applyState.js';
@@ -707,7 +711,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
   async function handleInvoiceRefund(
     log: FastifyBaseLogger,
     charge: Record<string, unknown>,
-  ): Promise<{ received: boolean; ignored?: string; refunded?: boolean }> {
+  ): Promise<{ received: boolean; ignored?: string; refunded?: boolean; unreconciled?: string }> {
     const invoiceId = typeof charge.invoice === 'string' ? charge.invoice : null;
     if (!invoiceId) return { received: true, ignored: 'unknown charge' };
     const refundedCents = Number(charge.amount_refunded ?? 0);
@@ -748,10 +752,59 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       );
     }
     const invoice = await recordInvoiceRefund(deps.pool, invoiceId, refundedCents);
-    // Null means the invoice is unknown to us, or the figure is not news. Both
-    // are ordinary — a Stripe account can carry invoices this platform never
-    // created — and neither is worth an alert.
-    if (!invoice) return { received: true, ignored: 'unknown or already-recorded invoice' };
+    /*
+     * Null was read as one thing and is two, and only one of them is ordinary.
+     *
+     * The compare-and-set declines both a redelivery carrying a figure already
+     * on file and an invoice that is not on file at all, and this returned
+     * `unknown or already-recorded invoice` for the pair without so much as a
+     * log line. The second is money going back out with nowhere to record it:
+     *
+     *   * `invoice.paid` is still on Stripe's retry ladder. The billing
+     *     endpoint answers a transient failure with a 5xx *on purpose*, so an
+     *     invoice can be minutes or hours from being written while the refund
+     *     for it is delivered here on a ladder of its own. The two endpoints
+     *     share no ordering — the ledger orders events about one object at one
+     *     endpoint — so nothing brings this refund back once it is acked.
+     *
+     *   * or the invoice was dropped on purpose. `invoice.paid` records nothing
+     *     when it cannot resolve the account (`if (userId && !already)`), which
+     *     is the right answer for an invoice that is not ours and leaves a hole
+     *     for one that is. Money in and money out then both vanish silently.
+     *
+     * Told apart by reading the row, and then by the same discriminator the
+     * settlement path above uses for a session with no payment row: is this
+     * ours? A charge for a renewal names the customer, and a customer we have a
+     * subscription for is our money whatever state that subscription is in. One
+     * we have never seen is somebody else's invoice on a shared Stripe account,
+     * which is ordinary and stays silent.
+     *
+     * Acknowledged rather than 5xx'd, for the reason the unreconciled
+     * settlement is: this cannot be fixed by redelivery on any bounded schedule
+     * and a permanent retry loop would bury the one line worth reading.
+     */
+    if (!invoice) {
+      const known = await findInvoiceByStripeId(deps.pool, invoiceId);
+      if (known) return { received: true, ignored: 'refund already recorded' };
+      const customerId = typeof charge.customer === 'string' ? charge.customer : null;
+      const ours = customerId ? await findSubscriptionByStripeCustomerId(deps.pool, customerId) : null;
+      if (!ours) return { received: true, ignored: 'unknown invoice' };
+      log.error(
+        {
+          alert: true,
+          actorType: 'system',
+          source: 'stripe',
+          stripeInvoiceId: invoiceId,
+          chargeId: typeof charge.id === 'string' ? charge.id : null,
+          stripeCustomerId: customerId,
+          userId: ours.user_id,
+          amountRefunded: refundedCents,
+          currency: typeof charge.currency === 'string' ? charge.currency : null,
+        },
+        'stripe refunded a subscriber of ours against an invoice we never recorded — money returned and unreconciled',
+      );
+      return { received: true, unreconciled: 'refunded invoice is not on file' };
+    }
 
     const amount = formatMoneyCents(
       Math.min(Number(invoice.refunded_cents), Number(invoice.amount_cents)),
@@ -792,7 +845,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
   async function handleRefund(
     log: FastifyBaseLogger,
     charge: Record<string, unknown>,
-  ): Promise<{ received: boolean; ignored?: string; refunded?: boolean }> {
+  ): Promise<{ received: boolean; ignored?: string; refunded?: boolean; unreconciled?: string }> {
     const payment = await findPaymentByChargeOrIntent(deps.pool, {
       chargeId: typeof charge.id === 'string' ? charge.id : null,
       paymentIntentId: typeof charge.payment_intent === 'string' ? charge.payment_intent : null,

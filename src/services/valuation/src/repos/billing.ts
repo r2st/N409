@@ -277,6 +277,34 @@ export async function markSubscriptionPastDue(
 }
 
 /**
+ * Is this Stripe customer one of ours?
+ *
+ * The reverse of {@link findStripeCustomerId}, and it answers a different
+ * question: not "where do I send this subscriber" but "is this charge our
+ * money". A `charge.refunded` names a charge, an invoice and a customer, and
+ * when the invoice is not on file the customer is the only thing left on the
+ * event that can tell a renewal of ours from one of the many that a shared
+ * Stripe account carries.
+ *
+ * Whatever state the subscription is in, deliberately. A refund most often
+ * follows a cancellation, so filtering to the served statuses would answer "not
+ * ours" for exactly the case this exists to catch. Newest first, since a
+ * resubscribe leaves the old row behind.
+ */
+export async function findSubscriptionByStripeCustomerId(
+  pool: pg.Pool,
+  stripeCustomerId: string,
+): Promise<SubscriptionRow | null> {
+  const { rows } = await pool.query<SubscriptionRow>(
+    `SELECT * FROM subscriptions
+      WHERE stripe_customer_id = $1
+      ORDER BY created_at DESC LIMIT 1`,
+    [stripeCustomerId],
+  );
+  return rows[0] ?? null;
+}
+
+/**
  * The Stripe customer to open the billing portal for.
  *
  * Not restricted to an *active* subscription: someone who has just cancelled

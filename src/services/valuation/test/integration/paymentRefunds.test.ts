@@ -531,6 +531,67 @@ describe.skipIf(!dbUp)('refunds and chargebacks', () => {
       expect(res.json().ignored).toMatch(/unknown/i);
     });
 
+    /**
+     * The two endpoints run on separate retry ladders and share no ordering, so
+     * a refund can reach this one while `invoice.paid` is still being retried
+     * at the other — and `invoice.paid` records nothing at all for an invoice
+     * whose account it cannot resolve. Either way the compare-and-set declines,
+     * and it declined identically for an ordinary redelivery, so money going
+     * back out against an invoice that is not on file was acknowledged in
+     * silence and never came back.
+     */
+    it('answers a refund against an invoice of ours that is not on file as unreconciled', async () => {
+      await ctx.pool.query(
+        `INSERT INTO subscriptions (id, user_id, plan_tier, status, stripe_subscription_id, stripe_customer_id)
+         VALUES ($1, $2, 'annual_retainer', 'canceled', $3, $4)`,
+        [newUlid(), client.id, 'sub_unreconciled', 'cus_unreconciled'],
+      );
+      const res = await post(
+        JSON.stringify({
+          id: 'evt_unreconciled_refund',
+          type: 'charge.refunded',
+          data: {
+            object: {
+              id: 'ch_unreconciled',
+              invoice: 'in_never_recorded',
+              customer: 'cus_unreconciled',
+              amount_refunded: 12_000,
+            },
+          },
+        }),
+      );
+      expect(res.statusCode).toBe(200);
+      expect(res.json().unreconciled).toBeTruthy();
+      expect(res.json().ignored).toBeUndefined();
+    });
+
+    it('stays silent for a refunded invoice belonging to nobody we bill', async () => {
+      const res = await post(
+        JSON.stringify({
+          id: 'evt_foreign_refund',
+          type: 'charge.refunded',
+          data: {
+            object: {
+              id: 'ch_foreign',
+              invoice: 'in_someone_elses',
+              customer: 'cus_not_ours',
+              amount_refunded: 900,
+            },
+          },
+        }),
+      );
+      expect(res.json().ignored).toBe('unknown invoice');
+      expect(res.json().unreconciled).toBeUndefined();
+    });
+
+    it('reports a redelivered refund as already recorded, not as unreconciled', async () => {
+      await seedInvoice('in_sub_refund_replay', 40_000);
+      await refundCharge('in_sub_refund_replay', 10_000, 'ch_sub_refund_replay_1');
+      const again = await refundCharge('in_sub_refund_replay', 10_000, 'ch_sub_refund_replay_2');
+      expect(again.json().ignored).toBe('refund already recorded');
+      expect(again.json().unreconciled).toBeUndefined();
+    });
+
     it('ignores a charge carrying neither a payment nor an invoice', async () => {
       const res = await post(
         JSON.stringify({

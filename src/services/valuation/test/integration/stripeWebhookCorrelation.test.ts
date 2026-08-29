@@ -20,6 +20,8 @@ import crypto from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { pino } from 'pino';
 import { Writable } from 'node:stream';
+import { newUlid } from '@n409/shared';
+import { createUser } from '../../src/repos/users.js';
 import { isDbAvailable, setupTestApp, type TestApp } from './helpers.js';
 
 const WEBHOOK_SECRET = 'whsec_correlation_test';
@@ -128,5 +130,94 @@ describe.skipIf(!dbUp)('the Stripe event id on a webhook log line', () => {
     expect(alert).toBeDefined();
     expect(alert!.stripeEventId).toBe('evt_corr_unreconciled_1');
     expect(alert!.sessionId).toBe('cs_corr_unreconciled');
+  });
+
+  /**
+   * The same fact on the way back out, which had no line of any kind.
+   *
+   * A refund whose invoice is not on file is declined by the same
+   * compare-and-set that declines an ordinary redelivery, so it was
+   * acknowledged as `unknown or already-recorded invoice` and never mentioned
+   * again. The two webhooks run on separate retry ladders and share no
+   * ordering, so an `invoice.paid` still being retried at the other endpoint is
+   * an ordinary way to be in this state — and nothing brings the refund back
+   * once it is acked.
+   */
+  it('carries the id on the alert raised when a refund has no invoice row', async () => {
+    const userId = (
+      await createUser(ctx.pool, {
+        email: 'corr-refund@corr.example.com',
+        passwordDigest: 'x',
+        roles: ['valuation_user'],
+      })
+    ).id;
+    await ctx.pool.query(
+      `INSERT INTO subscriptions (id, user_id, plan_tier, status, stripe_subscription_id, stripe_customer_id)
+       VALUES ($1, $2, 'annual_retainer', 'active', $3, $4)`,
+      [newUlid(), userId, 'sub_corr_refund', 'cus_corr_refund'],
+    );
+
+    const mark = lines.length;
+    const res = await deliver('/api/v1/stripe/webhook', {
+      id: 'evt_corr_unreconciled_refund',
+      type: 'charge.refunded',
+      created: Math.floor(Date.UTC(2026, 0, 2, 13, 0, 0) / 1000),
+      data: {
+        object: {
+          id: 'ch_corr_refund',
+          object: 'charge',
+          invoice: 'in_corr_never_recorded',
+          customer: 'cus_corr_refund',
+          currency: 'usd',
+          amount_refunded: 42_000,
+        },
+      },
+    });
+    expect(res.json()).toMatchObject({ unreconciled: expect.any(String) });
+
+    const alert = since(mark).find((l) => l.alert === true);
+    expect(alert).toBeDefined();
+    expect(alert!.stripeEventId).toBe('evt_corr_unreconciled_refund');
+    // The fields a person reconciles from: which invoice, which charge, whose
+    // account, and how much went back.
+    expect(alert!.stripeInvoiceId).toBe('in_corr_never_recorded');
+    expect(alert!.chargeId).toBe('ch_corr_refund');
+    expect(alert!.userId).toBe(userId);
+    expect(alert!.amountRefunded).toBe(42_000);
+  });
+
+  /**
+   * And the ordinary redelivery it used to be indistinguishable from, which
+   * must stay quiet — an alert on every retry of a refund already recorded is
+   * how the loud one above stops being read.
+   */
+  it('raises nothing for a redelivered refund whose figure is already on file', async () => {
+    const userId = (
+      await createUser(ctx.pool, {
+        email: 'corr-replay@corr.example.com',
+        passwordDigest: 'x',
+        roles: ['valuation_user'],
+      })
+    ).id;
+    await ctx.pool.query(
+      `INSERT INTO invoices (id, user_id, number, amount_cents, currency, status, issued_at,
+                             line_items, stripe_invoice_id)
+       VALUES ($1, $2, 'INV-CORR-0001', 80000, 'usd', 'paid', now(), '[]', 'in_corr_recorded')`,
+      [newUlid(), userId],
+    );
+    const charge = (chargeId: string) => ({
+      id: `evt_${chargeId}`,
+      type: 'charge.refunded',
+      created: Math.floor(Date.UTC(2026, 0, 2, 14, 0, 0) / 1000),
+      data: {
+        object: { id: chargeId, object: 'charge', invoice: 'in_corr_recorded', amount_refunded: 5_000 },
+      },
+    });
+    await deliver('/api/v1/stripe/webhook', charge('ch_corr_recorded_1'));
+
+    const mark = lines.length;
+    const again = await deliver('/api/v1/stripe/webhook', charge('ch_corr_recorded_2'));
+    expect(again.json()).toMatchObject({ ignored: 'refund already recorded' });
+    expect(since(mark).find((l) => l.alert === true)).toBeUndefined();
   });
 });
