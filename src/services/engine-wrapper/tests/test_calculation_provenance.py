@@ -652,6 +652,83 @@ class TestSensitivityFidelity:
         assert middle["value"] == pytest.approx(self.CHEAP_INPUTS["volatility"], abs=1e-9)
         assert middle["delta_from_base"] == 0.0
 
+    # ── The same sweep, over a cap table ────────────────────────────────────
+    #
+    # `CHEAP_INPUTS` above has no `share_classes`, so every test in this class
+    # so far runs the aggregate OPM branch — where `common_per_share` is an
+    # unrounded common equity divided by an unrounded share count, and the only
+    # quantum in the chain was the 1e-4 on `results.fmv_per_share` that
+    # `fmv_per_share_unrounded` removed.
+    #
+    # The breakpoint branch had a second one. `waterfall.allocate_waterfall`
+    # rounded its `common_per_share` to six places, `compute._opm_allocate`
+    # read that rounded figure, and the product it returned as
+    # `fmv_per_share_unrounded` therefore carried a 5e-7 per-share quantum —
+    # 6e-5 of a sub-cent conclusion, on a ratio published to 1e-6. Every
+    # engagement with a real cap table takes this branch.
+    CHEAP_CAP_TABLE = [
+        {"name": "Common", "kind": "common", "shares": 90_000_000},
+        {"name": "Options", "kind": "option", "shares": 10_000_000, "strike": 0.05},
+        {
+            "name": "Series A",
+            "kind": "preferred",
+            "shares": 50_000_000,
+            "preference": 250_000_000,
+            "seniority": 1,
+            "participating": False,
+        },
+    ]
+
+    def _cap_table_inputs(self, **over):
+        return {**self.CHEAP_INPUTS, "share_classes": copy.deepcopy(self.CHEAP_CAP_TABLE), **over}
+
+    def _exact_over_the_cap_table(self, volatility):
+        """The conclusion at full precision, rebuilt from the document.
+
+        Same reconstruction as `_exact`, and accurate for the same reason:
+        `common_equity_value` is cent-precise over 90,000,000 shares, so the
+        rebuilt per-share is good to ~5e-11 — four orders finer than the
+        quantum this test is about.
+        """
+        res = compute(self.CHEAP_PARAMS, self._cap_table_inputs(volatility=volatility))["results"]
+        marketable = res["common_equity_value"] / res["fully_diluted_common"]
+        discounts = res["discounts"]
+        return marketable * (1 - discounts["dloc"]) * (1 - discounts["dlom"])
+
+    def test_the_cap_table_case_really_is_the_waterfall_branch_and_sub_cent(self):
+        out = compute(self.CHEAP_PARAMS, self._cap_table_inputs())
+        assert out["results"]["allocation"]["method"] == "opm_waterfall"
+        assert out["results"]["fmv_per_share"] < 0.01
+
+    def test_every_delta_over_a_cap_table_is_the_ratio_of_two_exact_conclusions(self):
+        """The swept point at −75.1277% was published as −75.1244%.
+
+        Not the 2% the rounded conclusion cost — two orders less — but wrong in
+        the fourth decimal of a figure reported to six, and wrong for the same
+        reason: an intermediate rounding that stopped being presentational the
+        moment `sensitivity` started dividing what it fed.
+        """
+        inputs = self._cap_table_inputs()
+        out = sensitivity(
+            self.CHEAP_PARAMS, inputs, parameters=["volatility"], span=0.20, steps=7
+        )
+        base = self._exact_over_the_cap_table(inputs["volatility"])
+        points = out["one_way"][0]["points"]
+        assert len(points) == 7
+        for point in points:
+            expected = self._exact_over_the_cap_table(point["value"]) / base - 1
+            assert point["delta_from_base"] == pytest.approx(expected, abs=1e-6)
+
+    def test_the_conclusion_itself_is_unchanged_by_any_of_this(self):
+        """The FMV is reported to four places and the quantum removed was 5e-7,
+        so the concluded figure must not move. A fix to a ratio that moves an
+        opinion is not a fix to a ratio."""
+        res = compute(self.CHEAP_PARAMS, self._cap_table_inputs())["results"]
+        assert res["fmv_per_share"] == round(res["fmv_per_share"], 4)
+        assert res["fmv_per_share"] == pytest.approx(
+            self._exact_over_the_cap_table(self.CHEAP_INPUTS["volatility"]), abs=5e-5
+        )
+
     def test_a_two_way_table_divides_the_same_way(self):
         out = sensitivity(
             self.CHEAP_PARAMS,
@@ -680,11 +757,21 @@ POLICY_DOC = (
 #: two orders finer than the figure it feeds, and the intermediate rounding
 #: starts reaching the conclusion.
 DECLARED_PRECISION = {
-    "common_per_share": 6,
+    # `common_per_share` is deliberately absent: it is the one per-share figure
+    # the conclusion is struck from, so it is not rounded at all. The census
+    # below enforces that directly rather than through a declared precision.
     "per_share": 6,
     "fmv_per_share": 4,
     "recommended_volatility": 4,
 }
+
+#: Two modules name a ``common_per_share`` that is only ever read, and both do
+#: it in a *nested* dict rather than in the allocation response itself:
+#: ``hybrid.blend_hybrid`` copies one per leg (the blend the FMV is struck from
+#: is its own top-level figure, a weighted mean of the two unrounded legs), and
+#: ``monte_carlo`` reports one per simulated scenario. The census below is
+#: therefore scoped to the dict a function *returns*, which is the allocation
+#: response and the only one the conclusion reads.
 
 #: Where a module means something else by one of those names.
 #:
@@ -698,6 +785,40 @@ DECLARED_PRECISION = {
 _PRECISION_OVERRIDES = {
     ("pwerm.py", "fmv_per_share"): 6,
 }
+
+
+def _rounded_returned_keys(path: pathlib.Path):
+    """``"key": round(expr, n)`` in a dict a function *returns*, as (key, n).
+
+    Scoped to the returned dict itself — not a dict nested inside it — because
+    that dict is the allocation response, and a figure one level down is a row
+    of a schedule that nothing computes on.
+    """
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Return) or not isinstance(node.value, ast.Dict):
+            continue
+        for key, value in zip(node.value.keys, node.value.values):
+            if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                continue
+            if (
+                isinstance(value, ast.Call)
+                and getattr(value.func, "id", None) == "round"
+                and len(value.args) == 2
+                and isinstance(value.args[1], ast.Constant)
+            ):
+                yield key.value, value.args[1].value
+
+
+def _dict_keys(path: pathlib.Path):
+    """Every literal string key of every dict literal in a module."""
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key in node.keys:
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                yield key.value
 
 
 def _rounded_dict_keys(path: pathlib.Path):
@@ -748,19 +869,52 @@ class TestRoundingPolicyCensus:
                 "Change one or the other, deliberately."
             )
 
+    def test_no_allocation_path_rounds_the_per_share_the_conclusion_uses(self):
+        """The inverse of the census this replaces, and for a reason.
+
+        The old form collected every module that *rounded* a
+        `common_per_share` and required the policy document to name each one.
+        It was satisfied the moment the rounding was removed — the surviving
+        match was `hybrid`'s display copy, `hybrid` is named in the document,
+        and a guard whose founding case no longer exists passes by having
+        nothing left to ask. The property actually worth holding is the one the
+        removal established: no allocation path rounds the figure the FMV is
+        struck from, so a sixth path cannot quietly reintroduce the quantum
+        that `fmv_per_share_unrounded` exists to keep out of a ratio.
+        """
+        offenders = {
+            module.name: places
+            for module in ENGINE_DIR.glob("*.py")
+            for key, places in _rounded_returned_keys(module)
+            if key == "common_per_share"
+        }
+        assert not offenders, (
+            f"{sorted(offenders)} round a common_per_share the FMV is computed from. "
+            "That figure feeds `fmv_per_share_unrounded`, which "
+            "docs/engine-rounding-policy.md tells a consumer computing a ratio to "
+            "divide — a ratio inherits the quantum scaled by 1/FMV, which is 6e-5 on "
+            "a sub-cent common share. Leave it exact; round the display copies."
+        )
+
     def test_the_document_names_every_module_that_allocates_to_common(self):
-        """Each allocation path rounds a `common_per_share` that the FMV is then
-        struck from, so each is a load-bearing site the table has to list."""
+        """The load-bearing table still has to list every allocation path.
+
+        Scanned off the modules that *emit* a `common_per_share` rather than
+        the ones that round it, so removing a rounding cannot empty the scan.
+        """
         allocators = {
             module.name
             for module in ENGINE_DIR.glob("*.py")
-            if any(k == "common_per_share" for k, _ in _rounded_dict_keys(module))
+            if "common_per_share" in set(_dict_keys(module))
         }
-        assert allocators, "no allocation site found — the scan is reading nothing"
+        assert len(allocators) >= 5, (
+            f"only {sorted(allocators)} emit a common_per_share — the engine has five "
+            "allocation paths, so the scan is reading something wrong"
+        )
         text = POLICY_DOC.read_text()
         missing = {m for m in allocators if m.removesuffix(".py") not in text}
         assert not missing, (
-            f"{sorted(missing)} round a common_per_share the FMV is computed from, "
+            f"{sorted(missing)} produce a common_per_share the FMV is computed from, "
             "and are absent from the load-bearing table in "
             "docs/engine-rounding-policy.md"
         )

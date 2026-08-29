@@ -186,7 +186,7 @@ class TestTheScenarioListsInputContract:
             mc(scenarios=[{"name": "A", "probability": -0.25}])
 
     def test_probabilities_that_all_sum_to_zero_are_refused(self):
-        with pytest.raises(EngineInputError, match="sum to a positive number"):
+        with pytest.raises(EngineInputError, match="must sum to 1.0"):
             mc(scenarios=[{"name": "A", "probability": 0.0}, {"name": "B", "probability": 0.0}])
 
     def test_a_non_positive_horizon_is_refused(self):
@@ -202,11 +202,20 @@ class TestTheScenarioListsInputContract:
         out = mc(scenarios=[{"probability": 1.0}])
         assert out["scenarios"][0]["name"] == "Scenario 1"
 
-    def test_probabilities_are_normalised_rather_than_refused(self):
-        # 0.999 is a spreadsheet's rounding, not a modelling error — and `pwerm`
-        # already takes the same view of the same input.
-        out = mc(scenarios=[{"name": "A", "probability": 0.6}, {"name": "B", "probability": 0.399}])
-        assert sum(s["probability"] for s in out["scenarios"]) == pytest.approx(1.0)
+    def test_probabilities_that_do_not_total_one_are_refused(self):
+        """Same rule and same tolerance as `pwerm.allocate_pwerm`.
+
+        The engine used to rescale them here and refuse them there, so a
+        scenario set moved between the two allocation methods was accepted by
+        one and rejected by the other — and the rescaling concluded on weights
+        the analyst had not chosen.
+        """
+        with pytest.raises(EngineInputError, match=r"must sum to 1\.0 \(got 0\.9990\)"):
+            mc(scenarios=[{"name": "A", "probability": 0.6}, {"name": "B", "probability": 0.399}])
+
+    def test_the_probabilities_reported_back_are_the_ones_supplied(self):
+        out = mc(scenarios=[{"name": "A", "probability": 0.6}, {"name": "B", "probability": 0.4}])
+        assert [s["probability"] for s in out["scenarios"]] == [0.6, 0.4]
 
 
 class TestThePathCount:

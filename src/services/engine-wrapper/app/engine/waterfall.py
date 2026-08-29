@@ -531,7 +531,30 @@ def allocate_waterfall(
         "classes": by_class,
         "common_value": round(common_value, 2),
         "common_shares": common_shares,
-        "common_per_share": round(common_value / common_shares, 6),
+        # The one per-share figure on this response that is *not* rounded, and
+        # the reason is that it is the only one the conclusion is struck from.
+        # `compute._opm_allocate` reads it, multiplies it by (1 − DLOC)(1 − DLOM)
+        # and returns the product as `fmv_per_share_unrounded` — the field
+        # `docs/engine-rounding-policy.md` tells a consumer computing a *ratio*
+        # to divide, because a ratio inherits the quantum of both its operands
+        # scaled by 1/FMV and is therefore not covered by the 5e-5 bound the
+        # policy puts on the conclusion itself.
+        #
+        # Rounded to six places it was not unrounded, and the promise did not
+        # hold on the path that matters. On a heavy preference stack over 90M
+        # common — the ordinary early-stage shape, and one whose common share is
+        # worth well under a cent — the residual 5e-7 quantum is 7e-5 of the
+        # conclusion, so `sensitivity` published a swept point at −75.1277% as
+        # −75.1244%: wrong in the fourth decimal of a figure reported to six.
+        # The aggregate OPM branch never had the defect (it divides an
+        # unrounded common equity by the share count), which is why the
+        # sub-cent regression in `test_calculation_provenance.py` did not see
+        # it — that payload has no cap table.
+        #
+        # The per-class `per_share` rows above stay at six places. They are read
+        # by the allocation schedule and by nothing else, so their quantum
+        # cannot reach a number.
+        "common_per_share": common_value / common_shares,
     }
 
 
@@ -690,7 +713,10 @@ def exit_allocation(exit_value: float, classes: list[dict]) -> dict:
         "classes": by_class,
         "common_value": round(common_value, 2),
         "common_shares": common_shares,
-        "common_per_share": round(common_value / common_shares, 6) if common_shares > 0 else 0.0,
+        # Exact, for the reason `allocate_waterfall` states: this is the figure
+        # `pwerm.allocate_pwerm` and `current_value.allocate_cvm` strike their
+        # conclusion from.
+        "common_per_share": common_value / common_shares if common_shares > 0 else 0.0,
     }
 
 

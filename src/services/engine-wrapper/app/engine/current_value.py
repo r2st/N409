@@ -135,7 +135,10 @@ def allocate_cvm(equity_value: float, inputs: dict) -> dict:
         "equity_value": round(equity_value, 2),
         "common_value": round(common_value, 2),
         "common_shares": fully_diluted_common,
-        "common_per_share": round(common_value / fully_diluted_common, 6),
+        # Exact — see `waterfall.allocate_waterfall`. The waterfall branch
+        # above passes `exit_allocation`'s figure through, which is exact for
+        # the same reason.
+        "common_per_share": common_value / fully_diluted_common,
         "fully_diluted_common": fully_diluted_common,
         "detail": detail,
     }

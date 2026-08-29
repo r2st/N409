@@ -53,6 +53,10 @@ from .dlom import (
     is_post_amendment,
     selects_model_dlom,
 )
+from .monte_carlo import (
+    MAX_PATHS as MONTE_CARLO_MAX_PATHS,
+    MAX_SCENARIOS as MONTE_CARLO_MAX_SCENARIOS,
+)
 from .projection import MAX_FORECAST_YEARS
 # The modules that own a shape this validator mirrors. Imported rather than
 # restated so a bound or a vocabulary changing in one place cannot leave the
@@ -1666,6 +1670,123 @@ def _check_pwerm(c: _Collector, inputs: dict) -> None:
         )
 
 
+def _check_monte_carlo(c: _Collector, inputs: dict) -> None:
+    """Pre-flight for ``inputs.monte_carlo``, which had none.
+
+    Every other allocation method's configuration is checked here before the
+    engine runs: PWERM's scenarios get a hundred lines, the hybrid's weights
+    get their own function, and the cap table each of them needs is checked in
+    `_check_cap_table`. The Monte Carlo block was the exception — `paths`,
+    `seed` and `scenarios` reached `monte_carlo.allocate_monte_carlo`
+    unexamined, so an over-large path count or a scenario set one digit short
+    of a hundred percent came back from `/compute` as a bare `detail` string
+    with no field path, on a form that had shown the analyst a clean pre-flight.
+
+    Same rules as the engine, deliberately: this function exists to say the
+    engine's own refusals earlier and against a field, not to add any of its
+    own. `test_validate_guards.py` holds the two to each other.
+    """
+    raw = inputs.get("monte_carlo")
+    if raw is None:
+        return
+    if not isinstance(raw, dict):
+        c.error(
+            "invalid_shape",
+            "inputs.monte_carlo",
+            "inputs.monte_carlo must be an object",
+        )
+        return
+
+    paths = _finite(raw.get("paths"))
+    if raw.get("paths") is not None:
+        if paths is None or paths <= 0:
+            c.error(
+                "not_a_number",
+                "inputs.monte_carlo.paths",
+                "monte_carlo.paths must be a positive number",
+            )
+        elif paths > MONTE_CARLO_MAX_PATHS:
+            c.error(
+                "out_of_range",
+                "inputs.monte_carlo.paths",
+                f"monte_carlo.paths accepts at most {MONTE_CARLO_MAX_PATHS:,} "
+                f"(got {paths:,.0f})",
+                "The simulation is synchronous and runs in pure Python, so the ceiling is a "
+                "latency bound. More paths would not buy a fourth decimal anyway — the error "
+                "falls as 1/sqrt(n).",
+            )
+    if raw.get("seed") is not None and _finite(raw.get("seed")) is None:
+        c.error(
+            "not_a_number",
+            "inputs.monte_carlo.seed",
+            "monte_carlo.seed must be a finite number",
+        )
+
+    scenarios = raw.get("scenarios")
+    if scenarios is None:
+        return
+    if not isinstance(scenarios, list) or not scenarios:
+        c.error(
+            "invalid_shape",
+            "inputs.monte_carlo.scenarios",
+            "monte_carlo.scenarios must be a non-empty list when provided",
+            "Leave it out entirely to simulate the single lognormal the OPM assumes.",
+        )
+        return
+    if len(scenarios) > MONTE_CARLO_MAX_SCENARIOS:
+        c.error(
+            "too_many",
+            "inputs.monte_carlo.scenarios",
+            f"at most {MONTE_CARLO_MAX_SCENARIOS} scenarios (got {len(scenarios)})",
+        )
+
+    total = 0.0
+    countable = True
+    for i, scenario in enumerate(scenarios):
+        path = f"inputs.monte_carlo.scenarios[{i}]"
+        if not isinstance(scenario, dict):
+            c.error("invalid_shape", path, f"scenarios[{i}] must be an object")
+            countable = False
+            continue
+        probability = _finite(scenario.get("probability"))
+        if probability is None:
+            c.error("required", f"{path}.probability", f"scenarios[{i}].probability is required")
+            countable = False
+        elif probability < 0:
+            c.error(
+                "out_of_range",
+                f"{path}.probability",
+                f"scenarios[{i}].probability must be >= 0",
+            )
+            countable = False
+        else:
+            total += probability
+        for field, label in (("years_to_exit", "years_to_exit"), ("volatility", "volatility")):
+            if scenario.get(field) is None:
+                continue
+            value = _finite(scenario.get(field))
+            if value is None or value <= 0:
+                c.error(
+                    "out_of_range",
+                    f"{path}.{field}",
+                    f"scenarios[{i}].{label} must be a positive number",
+                    "Leave it unset to inherit the run's own horizon and volatility.",
+                )
+
+    # The same rule and the same tolerance as `_check_pwerm`, because the two
+    # methods read the same shape and an analyst moving a scenario set between
+    # them must not have it accepted by one and refused by the other. The engine
+    # used to rescale this set silently; see `monte_carlo._resolve_scenarios`.
+    if countable and abs(total - 1.0) > 1e-6:
+        c.error(
+            "probabilities_sum",
+            "inputs.monte_carlo.scenarios",
+            f"monte_carlo scenario probabilities must sum to 1.0 (got {total:.4f})",
+            "Adjust the scenario probabilities so they total 100% — the engine weights "
+            "each scenario by its own probability and does not rescale them.",
+        )
+
+
 def _check_hybrid(c: _Collector, inputs: dict) -> None:
     raw = inputs.get("hybrid")
     if raw is None:
@@ -1770,6 +1891,8 @@ def validate_payload(
         _check_pwerm(c, inputs)
     if allocation_method == "hybrid":
         _check_hybrid(c, inputs)
+    if allocation_method == "monte_carlo":
+        _check_monte_carlo(c, inputs)
 
     _check_cap_table(
         c,

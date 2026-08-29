@@ -166,18 +166,36 @@ class TestScenarioMixture:
         legs = [s["common_per_share"] for s in out["scenarios"]]
         assert min(legs) <= out["common_per_share"] <= max(legs)
 
-    def test_probabilities_are_normalised_rather_than_refused(self):
-        # 0.999 is a rounding artefact of an analyst's spreadsheet, not a
-        # modelling error — and `pwerm` already takes the same view.
+    def test_probabilities_that_do_not_total_one_are_refused_as_pwerm_refuses_them(self):
+        """The two scenario-based methods read the same shape, so they take the
+        same view of it.
+
+        This used to rescale, on the reasoning that 0.999 is a spreadsheet
+        artefact and that "`pwerm` already takes the same view" — which it does
+        not: `allocate_pwerm` refuses anything more than 1e-6 off 1.0, and the
+        pre-flight tells the analyst the engine does not rescale. So one
+        scenario set was a 422 under PWERM and a silently reweighted 200 here.
+        """
+        with pytest.raises(EngineInputError, match="must sum to 1.0"):
+            mc(
+                monte_carlo={
+                    "scenarios": [
+                        {"name": "A", "probability": 0.6, "years_to_exit": 3},
+                        {"name": "B", "probability": 0.399, "years_to_exit": 3},
+                    ]
+                }
+            )
+
+    def test_a_set_that_does_total_one_still_runs(self):
         out = mc(
             monte_carlo={
                 "scenarios": [
                     {"name": "A", "probability": 0.6, "years_to_exit": 3},
-                    {"name": "B", "probability": 0.399, "years_to_exit": 3},
+                    {"name": "B", "probability": 0.4, "years_to_exit": 3},
                 ]
             }
         )
-        assert sum(s["probability"] for s in out["scenarios"]) == pytest.approx(1.0)
+        assert [s["probability"] for s in out["scenarios"]] == [0.6, 0.4]
 
     def test_a_single_scenario_reproduces_the_default(self):
         explicit = mc(
@@ -186,7 +204,7 @@ class TestScenarioMixture:
         assert explicit["common_per_share"] == pytest.approx(mc()["common_per_share"], rel=1e-9)
 
     def test_scenarios_that_all_have_no_probability_are_refused(self):
-        with pytest.raises(EngineInputError, match="positive"):
+        with pytest.raises(EngineInputError, match="must sum to 1.0"):
             mc(monte_carlo={"scenarios": [{"name": "A", "probability": 0}]})
 
 

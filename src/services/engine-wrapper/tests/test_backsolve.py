@@ -280,14 +280,32 @@ def test_backsolve_converges_in_a_handful_of_iterations_on_a_large_cap_table():
 
 
 def test_allocate_waterfall_response_still_rounds_for_display():
-    """The rounding belongs in the response, and stays there."""
+    """The rounding belongs in the response, and stays there.
+
+    `common_per_share` is the exception and is checked below: it is not a
+    display figure, it is the one number the concluded FMV is struck from.
+    """
     alloc = allocate_waterfall(20_000_000.0, CLASSES, T, R, SIGMA)
     for name, cls in alloc["classes"].items():
         assert cls["per_share"] == round(cls["per_share"], 6), name
         assert cls["value"] == round(cls["value"], 2), name
-    assert alloc["common_per_share"] == round(alloc["common_per_share"], 6)
     for bp in alloc["breakpoints"]:
         assert bp["value"] == round(bp["value"], 2)
+
+
+def test_the_common_per_share_the_conclusion_uses_is_not_rounded():
+    """The figure `compute._opm_allocate` multiplies by the discounts.
+
+    Six places is two orders finer than the four the conclusion prints, so the
+    quantum never reached `results.fmv_per_share`. It reached
+    `fmv_per_share_unrounded` — the field the rounding policy tells a consumer
+    computing a *ratio* to divide, and a ratio inherits the quantum scaled by
+    1/FMV. See `test_calculation_provenance.TestSensitivityFidelity`.
+    """
+    alloc = allocate_waterfall(20_000_000.0, CLASSES, T, R, SIGMA)
+    exact = alloc["classes"]["Common"]["value"]
+    assert alloc["common_per_share"] != round(alloc["common_per_share"], 6)
+    assert alloc["common_per_share"] == pytest.approx(exact / alloc["common_shares"], rel=1e-7)
 
 
 def test_allocation_still_conserves_value_after_the_split():

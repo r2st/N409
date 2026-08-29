@@ -180,7 +180,10 @@ def allocate_pwerm(
         "expected_time_to_exit_years": round(weighted_time, 4),
         "common_value": round(common_value, 2),
         "common_shares": common_shares,
-        "common_per_share": round(common_value / common_shares, 6) if common_shares > 0 else 0.0,
+        # Exact — the conclusion is struck from this one figure. See the note
+        # on `waterfall.allocate_waterfall`; the per-class `fmv_per_share`
+        # rows above stay at six places because nothing computes on them.
+        "common_per_share": common_value / common_shares if common_shares > 0 else 0.0,
         "classes": by_class,
         "scenarios": breakdown,
     }

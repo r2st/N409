@@ -149,14 +149,31 @@ def _resolve_scenarios(raw, *, t: float, sigma: float) -> list[dict]:
             }
         )
 
+    # Refused, not rescaled — and the comment this replaces had it backwards.
+    #
+    # It claimed that a set summing to 0.999 was a spreadsheet artefact rather
+    # than a modelling error and that "`pwerm` already takes the same view of
+    # the same input". `pwerm.allocate_pwerm` takes the opposite view: it
+    # refuses any total more than 1e-6 from 1.0, and the pre-flight tells the
+    # analyst in writing that "the engine weights each exit by its own
+    # probability and does not rescale them".
+    #
+    # So the same three scenarios — an IPO, a trade sale and a wind-down at
+    # 0.4 / 0.4 / 0.1, one digit short of a hundred percent — were a 422 naming
+    # the field under PWERM and a silently reweighted 200 under Monte Carlo,
+    # which is the one input both methods read identically and the one thing a
+    # reader comparing two allocations of the same scenario set would assume.
+    # Rescaling is also the worse half of the disagreement: the tenth of the
+    # probability mass the analyst meant to put somewhere is not dropped, it is
+    # redistributed across the scenarios they did type, and the run concludes on
+    # weights nobody chose. The `scenarios[].probability` rows disclosed the
+    # rescaled figures, so the only trace of it was a table of probabilities
+    # that no longer matched the model the analyst had entered.
     total = sum(s["probability"] for s in out)
-    if total <= 0:
-        raise EngineInputError("monte_carlo.scenarios probabilities must sum to a positive number")
-    # Normalised rather than refused: probabilities that sum to 0.999 are a
-    # rounding artefact of an analyst's spreadsheet, not a modelling error, and
-    # `pwerm` already takes the same view of the same input.
-    for s in out:
-        s["probability"] /= total
+    if abs(total - 1.0) > 1e-6:
+        raise EngineInputError(
+            f"monte_carlo scenario probabilities must sum to 1.0 (got {total:.4f})"
+        )
     return out
 
 
@@ -356,7 +373,10 @@ def allocate_monte_carlo(
         "classes": by_class,
         "common_value": round(common_value, 2),
         "common_shares": common_shares,
-        "common_per_share": round(common_per_share, 6),
+        # Exact — see `waterfall.allocate_waterfall`. The interval below and
+        # the per-scenario figures above are read and not computed on, so
+        # they keep the schedule's six places.
+        "common_per_share": common_per_share,
         # The precision of the estimate itself, in the same unit as the
         # conclusion. A simulated figure without one is a number pretending to
         # be exact.
