@@ -122,12 +122,15 @@ export { newUlid, isUlid } from './ids.js';
 export { isIsoCalendarDate, isoCalendarDateError } from './dates.js';
 export { E164_MAX_DIGITS, E164_MIN_DIGITS, e164Error, isE164, normalizeE164 } from './phone.js';
 export {
+  MAX_REQUEST_ID_CHARS,
   REQUEST_ID_HEADER,
+  acceptableRequestId,
   bindActor,
   bindRequestId,
   currentActor,
   currentRequestId,
   currentSweep,
+  requestIdFromHeaders,
   requestIdHeaders,
   runWithRequestId,
   runWithSweep,

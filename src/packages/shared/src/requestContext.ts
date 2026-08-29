@@ -169,6 +169,65 @@ export function bindActor(actor: RequestActor): void {
 }
 
 /**
+ * The longest inbound correlation id this estate will adopt.
+ *
+ * Not a guess about what a load balancer sends — AWS, Cloudflare and every
+ * tracing library in the field emit a UUID, a ULID or a 32-hex trace id, all of
+ * which are well under this. It is a ceiling on what one request can cost.
+ */
+export const MAX_REQUEST_ID_CHARS = 128;
+
+/**
+ * An inbound `x-request-id`, if it is one, and `null` if it is anything else.
+ *
+ * All three Fastify services set `requestIdHeader: 'x-request-id'`, which
+ * adopts whatever arrives *verbatim* — Fastify does not look at it. That is the
+ * intended behaviour for the hop it was written for, a load balancer or a
+ * synthetic check supplying its own id, and it is also a header any browser can
+ * set. The web BFF then stamps `req.id` onto the proxied call, the valuation
+ * service binds it and forwards it again to the engine, the AI gateway and the
+ * renderer, and every log line in all five services carries it.
+ *
+ * So one request with an 8 KB `x-request-id` — the most Node's header limit
+ * allows — is 8 KB on every line of a five-service trace, in a journal on a box
+ * with 3.8 GB of memory. Nothing about it is malformed; it is simply a string
+ * the estate agreed to repeat without bound.
+ *
+ * The charset is the second half. Pino writes JSON, so a newline in an id is
+ * escaped rather than forged into a second log line — but an id is a value
+ * things are *joined* on, and a whitespace- or control-character-bearing id
+ * does not survive the grep or the journal query that a join is made of. What
+ * is accepted is what an id is made of: the unreserved URL characters, plus the
+ * separators tracing formats already use.
+ *
+ * A refusal is not an error. The caller sent something this hop will not adopt,
+ * and the answer is the id it would have minted anyway — the request is served,
+ * and it is correlatable, just not under a name a client chose.
+ */
+export function acceptableRequestId(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  if (raw.length === 0 || raw.length > MAX_REQUEST_ID_CHARS) return null;
+  return /^[A-Za-z0-9._~:@=+-]+$/.test(raw) ? raw : null;
+}
+
+/** Mints the ids `requestIdFromHeaders` falls back to, in Fastify's own shape. */
+let minted = 0;
+
+/**
+ * The id this request will be logged and traced under.
+ *
+ * Wired as Fastify's `genReqId` with `requestIdHeader: false`, which is the
+ * only way to *look* at the header before adopting it — with `requestIdHeader`
+ * set, Fastify takes whatever arrived and `genReqId` never runs. See
+ * {@link acceptableRequestId} for what is and is not adopted; the fallback is
+ * the same `req-<n>` Fastify would have minted, so a refused header costs the
+ * caller nothing but the name.
+ */
+export function requestIdFromHeaders(headers: Record<string, string | string[] | undefined>): string {
+  return acceptableRequestId(headers[REQUEST_ID_HEADER]) ?? `req-${(minted++).toString(36)}`;
+}
+
+/**
  * `{ 'x-request-id': … }` when a request is in flight, `{}` otherwise.
  *
  * Empty rather than a minted id when unbound: a background job genuinely has no

@@ -16,6 +16,7 @@ import {
   registerPermissionsPolicy,
   registerProblemHandler,
   registerRequestDrain,
+  requestIdFromHeaders,
 } from '@n409/shared';
 import { CHART_SERIES_LIMITS, renderReportPdf, verifyFontAssets } from './pdf.js';
 
@@ -165,7 +166,13 @@ export function buildApp(): FastifyInstance {
     // logs under the same id as the valuation request that asked for it. The
     // other two Fastify services already do this and the Python pair read the
     // header into a contextvar; this was the one hop where the chain broke.
-    requestIdHeader: 'x-request-id',
+    //
+    // Adopted only if it is an id — see `acceptableRequestId`. The caller here
+    // is the valuation service, which has already applied the same rule, so
+    // this is the belt to its braces: the three services agree on what an id
+    // is, in one place, rather than each trusting the hop before it.
+    requestIdHeader: false,
+    genReqId: (req) => requestIdFromHeaders(req.headers),
   }) as unknown as FastifyInstance;
 
   // Bind the request id to the async context, so a line written through

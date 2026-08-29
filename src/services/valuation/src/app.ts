@@ -19,6 +19,7 @@ import {
   registerPermissionsPolicy,
   registerProblemHandler,
   registerRequestDrain,
+  requestIdFromHeaders,
   StartupGate,
   trustedProxies,
 } from '@n409/shared';
@@ -271,7 +272,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   setWebhookTargetPolicy(config.WEBHOOK_ALLOW_PRIVATE_TARGETS);
   const app = Fastify({
     loggerInstance: createLogger({ service: 'valuation', level: config.LOG_LEVEL }),
-    requestIdHeader: 'x-request-id',
+    // Validated rather than adopted verbatim — see `acceptableRequestId`. The
+    // BFF in front of this has already refused an implausible one, but this
+    // service is also reached by the partner API and by SCIM, and a rule that
+    // holds only where somebody remembered to put a proxy is not a rule.
+    requestIdHeader: false,
+    genReqId: (req) => requestIdFromHeaders(req.headers),
     // Nothing reaches this service directly: the web BFF proxies /api to it over
     // loopback. Without this the socket peer is 127.0.0.1 on every request, so
     // the fourteen throttles keyed on `req.ip` — contact, the three public

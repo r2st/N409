@@ -12,6 +12,7 @@ import {
   bindRequestId,
   createLogger,
   probeReady,
+  requestIdFromHeaders,
   MetricsRegistry,
   registerHealth,
   registerHttpMetrics,
@@ -300,7 +301,15 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
     // The BFF is where a browser request enters the estate, so it is where the
     // id that ties the whole chain together is minted. Honouring an inbound
     // header lets a load balancer or a synthetic check supply its own.
-    requestIdHeader: 'x-request-id',
+    //
+    // `requestIdHeader: false` plus `genReqId` rather than the header option,
+    // because the header option adopts whatever arrived without looking at it
+    // — and this is the hop a browser talks to. Whatever is adopted here is
+    // stamped on the proxied call, bound by the valuation service, forwarded
+    // again to the engine, the AI gateway and the renderer, and written on
+    // every log line of all five. See `acceptableRequestId`.
+    requestIdHeader: false,
+    genReqId: (req) => requestIdFromHeaders(req.headers),
     // Caddy terminates TLS and dials this service, so the socket peer is Caddy
     // on every request. This is also the hop that decides the client identity
     // for the whole estate: the proxy below restamps X-Forwarded-For from the

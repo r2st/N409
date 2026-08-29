@@ -95,7 +95,19 @@ describe('the correlation id is bound wherever a Fastify app is built', () => {
     // BFF proxies to valuation and valuation calls the Python pair, so a
     // service that minted its own would break the chain at its own door.
     for (const f of builders) {
-      expect(f.code, relative(SERVICES, f.path)).toMatch(/requestIdHeader:\s*'x-request-id'/);
+      expect(f.code, relative(SERVICES, f.path)).toMatch(/requestIdFromHeaders\(req\.headers\)/);
+    }
+  });
+
+  it('adopts it through the shared rule rather than Fastify’s bare header option', () => {
+    // `requestIdHeader: 'x-request-id'` takes whatever arrived without looking
+    // at it, and `genReqId` never runs — so the header option and the shared
+    // rule are alternatives, not layers. The BFF is a hop a browser talks to;
+    // see `acceptableRequestId` for what one unbounded adoption costs across
+    // five services' logs.
+    for (const f of builders) {
+      expect(f.code, relative(SERVICES, f.path)).toMatch(/requestIdHeader:\s*false/);
+      expect(f.code, relative(SERVICES, f.path)).not.toMatch(/requestIdHeader:\s*'/);
     }
   });
 });
