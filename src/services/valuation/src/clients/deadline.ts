@@ -126,6 +126,69 @@ export async function withDeadline<T>(
 }
 
 /**
+ * The most JSON we will hold from a provider before giving up on the answer.
+ *
+ * `res.json()` reads to the end of the stream before it parses, so the size of
+ * the buffer is the provider's choice, not ours. A misbehaving or hostile
+ * endpoint that answers a token exchange with an endless body — or an ingress
+ * that streams a multi-gigabyte error page — takes the whole service down with
+ * it, and takes the other four services on the same box with it, because the
+ * one that dies is the one holding the heap. No status code is involved and
+ * nothing in the log says "too big": the process is simply killed.
+ *
+ * 16 MB is far above every real body these clients read. The largest is a full
+ * cap-table pull — a few thousand grants, well under 5 MB of JSON — and a
+ * balance sheet or an HRIS roster is smaller still. It is chosen to be
+ * comfortably out of the way of legitimate answers rather than to be tight,
+ * because the failure this guards is unbounded, not merely large.
+ */
+export const MAX_INTEGRATION_JSON_BYTES = 16 * 1024 * 1024;
+
+const OVERSIZE_MB = MAX_INTEGRATION_JSON_BYTES / (1024 * 1024);
+
+/**
+ * Reads a body to a string, refusing to buffer more than `MAX_INTEGRATION_JSON_BYTES`.
+ *
+ * The `content-length` check is a courtesy for the honest oversized answer —
+ * it costs nothing and refuses before a byte is read. It is not the guard: a
+ * chunked response has no length, and a lying one is exactly the case that
+ * matters. The stream is the guard, and it stops at the first chunk that
+ * crosses the budget, so the peak held is one chunk over the cap rather than
+ * whatever the provider felt like sending.
+ *
+ * Cancelling the reader is what makes that true — without it the socket keeps
+ * delivering into a buffer nobody is draining.
+ */
+async function readCappedText(res: Response, label: string): Promise<string> {
+  const declared = Number(res.headers.get('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > MAX_INTEGRATION_JSON_BYTES) {
+    throw new IntegrationError(`${label} returned a response larger than ${OVERSIZE_MB} MB`);
+  }
+  if (!res.body) return res.text();
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MAX_INTEGRATION_JSON_BYTES) {
+        throw new IntegrationError(`${label} returned a response larger than ${OVERSIZE_MB} MB`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    // Releasing the lock is not enough — the body must be discarded, or the
+    // connection stays open feeding a buffer that is already over budget.
+    await reader.cancel().catch(() => undefined);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
+/**
  * Reads a provider's JSON body, and makes a non-JSON answer say so.
  *
  * A 2xx is not a promise of JSON. When a provider's gateway or an ingress in
@@ -141,11 +204,16 @@ export async function withDeadline<T>(
  * is a compile-time assertion with no runtime force, so `null` and arrays reach
  * property reads that then throw `Cannot read properties of null`. Requiring an
  * object here means a caller's `body.access_token` is a miss, not a crash.
+ *
+ * Neither of those is about *size*, and `res.json()` has no opinion on it —
+ * see {@link MAX_INTEGRATION_JSON_BYTES}. An oversized body is its own
+ * refusal, named as such, rather than a dead process.
  */
 export async function readJson(res: Response, label: string): Promise<Record<string, unknown>> {
+  const text = await readCappedText(res, label);
   let body: unknown;
   try {
-    body = await res.json();
+    body = JSON.parse(text);
   } catch {
     throw new IntegrationError(`${label} returned a non-JSON response`);
   }
@@ -159,10 +227,13 @@ export async function readJson(res: Response, label: string): Promise<Record<str
  * The array-bodied variant — Xero's `/connections` answers with a bare list.
  * Returns `[]` rather than throwing: every caller treats the connections list
  * as best-effort org identification, not as a reason to fail the connection.
+ *
+ * Best-effort covers the oversized body too: the cap still stops the read, and
+ * the empty list this returns is the same answer an unparseable one gets.
  */
 export async function readJsonArray(res: Response): Promise<unknown[]> {
   try {
-    const body: unknown = await res.json();
+    const body: unknown = JSON.parse(await readCappedText(res, 'The provider'));
     return Array.isArray(body) ? body : [];
   } catch {
     return [];

@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { exchangeCode as accountingExchange, fetchFinancials } from '../../src/clients/accounting.js';
 import { exchangeCode as capTableExchange, fetchCapTable } from '../../src/clients/capTableSync.js';
 import { exchangeCode as hrisExchange, fetchRosterAndGrants } from '../../src/clients/hris.js';
-import { readJson, readJsonArray } from '../../src/clients/deadline.js';
+import {
+  IntegrationError,
+  MAX_INTEGRATION_JSON_BYTES,
+  readJson,
+  readJsonArray,
+} from '../../src/clients/deadline.js';
 import { GoogleOidc } from '../../src/auth/google.js';
 
 /**
@@ -212,5 +217,73 @@ describe('readJsonArray', () => {
     ['null', () => json(null)],
   ])('degrades %s to an empty list rather than throwing', async (_label, make) => {
     await expect(readJsonArray(make())).resolves.toEqual([]);
+  });
+});
+
+/**
+ * A body with no end to it.
+ *
+ * `res.json()` reads to the end of the stream before it parses, so against
+ * this stream it never returns: it buffers until the process is killed. That
+ * is the whole failure — no status, no log line, just a dead service and the
+ * four others on the box that die with it. Every assertion below is really the
+ * same one, that the read *terminates*, checked from a different angle.
+ */
+const endless = (chunkBytes = 1024 * 1024) => {
+  let pulled = 0;
+  const chunk = new Uint8Array(chunkBytes).fill(0x20);
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulled += 1;
+      controller.enqueue(chunk);
+    },
+  });
+  return { res: new Response(body), pulls: () => pulled };
+};
+
+describe('a provider answering with more body than we agreed to hold', () => {
+  it('stops an endless body instead of buffering it to death', async () => {
+    // Without the cap this line does not fail — it never returns at all.
+    const { res } = endless();
+    await expect(readJson(res, 'Carta')).rejects.toThrow(/Carta returned a response larger than/);
+  });
+
+  it('stops within a chunk of the cap, not whatever the provider chose to send', async () => {
+    const chunkBytes = 1024 * 1024;
+    const { res, pulls } = endless(chunkBytes);
+    await expect(readJson(res, 'Carta')).rejects.toThrow(IntegrationError);
+    // The peak held is the budget plus the one chunk that crossed it.
+    expect(pulls() * chunkBytes).toBeLessThanOrEqual(MAX_INTEGRATION_JSON_BYTES + chunkBytes);
+  });
+
+  it('refuses an honestly declared oversize before reading a byte', async () => {
+    const { res, pulls } = endless();
+    const declared = new Response(res.body, {
+      headers: { 'content-length': String(MAX_INTEGRATION_JSON_BYTES + 1) },
+    });
+    await expect(readJson(declared, 'Gusto')).rejects.toThrow(/Gusto returned a response larger than/);
+    // Not 0: a ReadableStream fills its one-chunk queue as soon as it is
+    // constructed, before anyone reads. What matters is that nothing *we* did
+    // consumed the body — a read would have run to the cap, 16 pulls away.
+    expect(pulls()).toBeLessThanOrEqual(1);
+  });
+
+  it('names the provider, so the refusal reads as theirs', async () => {
+    const { res } = endless();
+    await expect(readJson(res, 'Rippling')).rejects.toThrow(/^Rippling /);
+  });
+
+  it('keeps a body just under the cap readable', async () => {
+    // The cap is a backstop for the unbounded case, not a limit real answers
+    // are meant to feel; a large-but-sane pull must still come back.
+    const padding = 'x'.repeat(4 * 1024 * 1024);
+    await expect(readJson(json({ pad: padding }), 'Xero')).resolves.toEqual({ pad: padding });
+  });
+
+  it('degrades an endless array body to an empty list, like every other unusable one', async () => {
+    // `readJsonArray` is best-effort by contract — see the Xero /connections
+    // case above. Oversize is one more body it cannot use, not a new outcome.
+    const { res } = endless();
+    await expect(readJsonArray(res)).resolves.toEqual([]);
   });
 });
