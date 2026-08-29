@@ -287,6 +287,36 @@ export async function claimRetryableEmails(
             SELECT 1 FROM users u
              WHERE u.id = email_outbox.to_user_id AND u.deleted_at IS NOT NULL
           )
+          -- …and the address must not have been suppressed since the row was
+          -- written.
+          --
+          -- enqueueEmail asks this question, and the claim did not — it read
+          -- only the row's own bounce_kind, which is what that row's own
+          -- attempt learned. A suppression is a fact about the address, and it
+          -- arrives from three places this row knows nothing about: another
+          -- message to the same person hard-bouncing, a provider webhook
+          -- reporting a complaint, and an operator adding the address by hand.
+          -- All three left every message already queued or failed for that
+          -- address claimable, so the ladder went on delivering to an address
+          -- the platform had decided to stop mailing — including one an
+          -- administrator had just suppressed on purpose.
+          --
+          -- Same two exemptions the enqueue makes, so the two cannot disagree
+          -- about what a suppression covers: SMS does not ride this list (the
+          -- destination is a phone number), and the verification mail is how a
+          -- wrongly-suppressed address is proven good again.
+          --
+          -- Skipped rather than settled, for the reason the two clauses above
+          -- give: a release is a thing an operator does, and a row marked
+          -- failed here could not be un-failed by one.
+          AND (
+            channel <> 'email'
+            OR template_key = ANY($5::text[])
+            OR NOT EXISTS (
+              SELECT 1 FROM email_suppressions s
+               WHERE s.to_email = lower(btrim(email_outbox.to_email)) AND s.released_at IS NULL
+            )
+          )
           AND (status = 'queued' OR next_attempt_at IS NULL OR next_attempt_at <= now())
           AND (claimed_at IS NULL OR claimed_at < now() - ($3 || ' seconds')::interval)
         -- Oldest first: a backlog larger than the batch must not leave the
@@ -300,7 +330,13 @@ export async function claimRetryableEmails(
        FROM claimable c
       WHERE e.id = c.id
       RETURNING e.*`,
-    [opts.maxAttempts, opts.channels, String(leaseSeconds), Math.min(opts.limit ?? 100, 500)],
+    [
+      opts.maxAttempts,
+      opts.channels,
+      String(leaseSeconds),
+      Math.min(opts.limit ?? 100, 500),
+      [...SUPPRESSION_EXEMPT_TEMPLATES],
+    ],
   );
   return rows;
 }

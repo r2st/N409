@@ -146,6 +146,93 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
     expect(row.attempts).toBe(3);
   });
 
+  /**
+   * A suppression that arrived after the row did.
+   *
+   * `enqueueEmail` asks whether the address is suppressed; the claim did not.
+   * It read only the row's own `bounce_kind`, which is what that row's own
+   * attempt learned — so an address suppressed by *another* message's hard
+   * bounce, by a provider webhook reporting a complaint, or by an operator
+   * adding it to the list on purpose still had every message already sitting
+   * queued or failed for it delivered by the ladder.
+   */
+  describe('an address suppressed after the row was written', () => {
+    const suppress = (address: string) =>
+      ctx.pool.query(
+        `INSERT INTO email_suppressions (to_email, reason) VALUES ($1, 'hard')
+         ON CONFLICT (to_email) DO UPDATE SET released_at = NULL`,
+        [address],
+      );
+
+    it('is not mailed by the ladder', async () => {
+      const email = await seedFailedEmail(ctx, { toEmail: 'gone@test.example.com' });
+      await suppress('gone@test.example.com');
+      const sent: string[] = [];
+
+      await retryFailedEmails({
+        pool: ctx.pool,
+        transport: {
+          async send(e) {
+            sent.push(e.id);
+          },
+        },
+      });
+
+      expect(sent).not.toContain(email.id);
+      // Skipped, not settled: a release is something an operator does, and a
+      // row marked failed here could not be un-failed by one.
+      expect((await outboxRow(ctx, email.id)).status).toBe('failed');
+    });
+
+    it('is mailed again once the suppression is released', async () => {
+      const email = await seedFailedEmail(ctx, { toEmail: 'back@test.example.com' });
+      await suppress('back@test.example.com');
+      await retryFailedEmails({ pool: ctx.pool, transport: failingTransport });
+
+      await ctx.pool.query('UPDATE email_suppressions SET released_at = now() WHERE to_email = $1', [
+        'back@test.example.com',
+      ]);
+      await ctx.pool.query('UPDATE email_outbox SET next_attempt_at = NULL WHERE id = $1', [email.id]);
+      const sent: string[] = [];
+      await retryFailedEmails({
+        pool: ctx.pool,
+        transport: {
+          async send(e) {
+            sent.push(e.id);
+          },
+        },
+      });
+
+      expect(sent).toContain(email.id);
+    });
+
+    it('still delivers the one message that proves an address good again', async () => {
+      // `email_verification` is exempt at enqueue for a reason that applies
+      // exactly as much here: suppressed, a wrongly-listed address could never
+      // be cleared from the user's own side.
+      const email = await enqueueEmail(ctx.pool, {
+        toEmail: 'exempt@test.example.com',
+        templateKey: 'email_verification',
+        subject: 'Verify your email',
+        body: 'Body',
+      });
+      await failAndMakeDue(ctx, email.id, 'smtp connect refused');
+      await suppress('exempt@test.example.com');
+      const sent: string[] = [];
+
+      await retryFailedEmails({
+        pool: ctx.pool,
+        transport: {
+          async send(e) {
+            sent.push(e.id);
+          },
+        },
+      });
+
+      expect(sent).toContain(email.id);
+    });
+  });
+
   it('skips sms-channel rows when no smsTransport is configured', async () => {
     const email = await enqueueEmail(ctx.pool, {
       toEmail: '+15551234567',
