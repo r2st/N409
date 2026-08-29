@@ -428,10 +428,20 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       // readings of one subscription arriving reversed, which is what its own
       // retry ladder produces. See migration 0155.
       const key = stripeEventKey(event, 'billing');
+      // The id the Stripe dashboard indexes this delivery by, on every line
+      // below rather than only on the 'stale' one — see the note on the
+      // payments webhook for what its absence cost there. Bound as a child so
+      // no path out of the handler can be the one that forgets it.
+      const log = req.log.child({ stripeEventId: key.eventId, stripeEventType: key.type });
       const verdict = await classifyStripeEvent(deps.pool, key);
-      if (verdict === 'duplicate') return reply.send({ received: true, duplicate: true });
+      if (verdict === 'duplicate') {
+        // Same reason as the payments webhook: without this the redelivery is a
+        // 200 in Stripe's dashboard and nothing at all on this side.
+        log.info('stripe event already handled — duplicate delivery ignored');
+        return reply.send({ received: true, duplicate: true });
+      }
       if (verdict === 'stale') {
-        req.log.info({ type, eventId: key.eventId, objectId: key.objectId }, 'stale Stripe event ignored');
+        log.info({ objectId: key.objectId }, 'stale Stripe event ignored');
         await recordStripeEvent(deps.pool, key, 'stale');
         return reply.send({ received: true, stale: true });
       }
@@ -508,7 +518,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
           const rawAmount = obj.amount_paid ?? obj.amount_due ?? 0;
           const amount = typeof rawAmount === 'number' ? rawAmount : NaN;
           if (!Number.isInteger(amount) || amount < 0) {
-            req.log.error(
+            log.error(
               { alert: true, actorType: 'system', source: 'stripe', stripeInvoiceId, amount: rawAmount },
               'stripe invoice carried an amount that is not whole minor units — not recorded',
             );
@@ -577,7 +587,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             // lock that also stops the loser allocating a number it will not
             // use. See that function for what the loser's allocation cost.
             if (created) {
-              await announceInvoicePaid(req.log, {
+              await announceInvoicePaid(log, {
                 userId: saved.user_id,
                 number: saved.number,
                 amountCents: Number(saved.amount_cents),
@@ -605,7 +615,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             // tell the subscriber which payment to go and fix.
             if (sub) {
               await alertPaymentFailed(
-                req.log,
+                log,
                 sub.user_id,
                 Number(obj.amount_due ?? 0),
                 String(obj.currency ?? 'usd'),
@@ -629,7 +639,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         // (findInvoiceByStripeId, ON CONFLICT, upsert), so a redelivery of an
         // event that partly landed is safe. A genuinely permanent failure now
         // ends up visible in the Stripe dashboard instead of only in our logs.
-        req.log.error({ err, type }, 'billing webhook handling failed — returning 5xx for redelivery');
+        log.error({ err }, 'billing webhook handling failed — returning 5xx for redelivery');
         throw err;
       }
       // Only after the handlers have run: an event that threw leaves no ledger

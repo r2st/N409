@@ -991,7 +991,34 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       // there is nothing to do. The endpoint that needed more than that is the
       // billing one — see migration 0155 and routes/billing.ts.
       const eventKey = stripeEventKey(event, 'payments');
+      /**
+       * The id Stripe's own dashboard shows, on every line this handler writes.
+       *
+       * `evt_…` is the identifier the other side of this integration is
+       * indexed by: a delivery that says "failed, will retry" in the Stripe
+       * dashboard is looked up by it, and every redelivery of one event
+       * carries it again. It reached this service on every request and was
+       * logged on none of them — including the two alerting lines about money
+       * taken and unreconciled — so nothing could be joined in either
+       * direction, and six lines about six deliveries of one event were
+       * indistinguishable from six payments.
+       *
+       * A child logger rather than a field per call site: every path out of
+       * this handler is about this event, and one that forgot the field would
+       * be exactly the path an incident goes down.
+       */
+      const log = req.log.child({
+        stripeEventId: eventKey.eventId,
+        stripeEventType: eventKey.type,
+      });
       if ((await classifyStripeEvent(deps.pool, eventKey)) === 'duplicate') {
+        // Said out loud, because the alternative is a silence that looks
+        // exactly like the endpoint never being called: Stripe reports the
+        // delivery as a 200 and this side has no line for it at all, which is
+        // the state somebody is in when they ask why a payment that Stripe says
+        // succeeded did nothing here. Only redeliveries reach this, so it is
+        // not chatter.
+        log.info('stripe event already handled — duplicate delivery ignored');
         return reply.send({ received: true, duplicate: true });
       }
       // Recorded on every path out of the handler below, including the ones
@@ -1010,10 +1037,10 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       // existed they fell through it as `ignored` and a refunded engagement
       // stayed paid, published, and counted as revenue.
       if (event.type === 'charge.refunded') {
-        return settled(await handleRefund(req.log, session));
+        return settled(await handleRefund(log, session));
       }
       if (event.type === 'charge.dispute.created' || event.type === 'charge.dispute.closed') {
-        return settled(await handleDispute(req.log, session));
+        return settled(await handleDispute(log, session));
       }
 
       if (!event.type?.startsWith('checkout.session.') || !sessionId) {
@@ -1063,7 +1090,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // silence is the right answer.
         const claimed = ourValuationId(session);
         if (moneySettled && claimed !== null) {
-          req.log.error(
+          log.error(
             {
               alert: true,
               actorType: 'system',
@@ -1134,7 +1161,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         if (!current || current.status !== 'succeeded') return null;
         const valuation = await findValuationById(deps.pool, current.valuation_id);
         if (!valuation || valuation.paid_status !== 'unpaid') return null;
-        req.log.warn(
+        log.warn(
           { sessionId, paymentId: current.id, valuationId: current.valuation_id },
           'resuming a fulfilment that settled the payment but never reached the engagement',
         );
@@ -1157,7 +1184,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
             const receipt = await retrieveReceipt(deps.stripeSecretKey, intent);
             await setPaymentReceipt(deps.pool, payment.id, receipt);
           } catch (err) {
-            req.log.warn({ err }, 'stripe receipt lookup failed');
+            log.warn({ err }, 'stripe receipt lookup failed');
           }
         }
         const valuation = await findValuationById(deps.pool, payment.valuation_id);
@@ -1166,7 +1193,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // engagement and nothing else, so if one has been paid in the meantime
         // this stops here rather than falling through to announce it twice.
         if (resumed && valuation?.paid_status !== 'unpaid') {
-          req.log.info(
+          log.info(
             { sessionId, valuationId: payment.valuation_id },
             'another delivery of this settlement finished the engagement first',
           );
@@ -1200,7 +1227,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
             );
           } catch (err) {
             if (resumed && err instanceof ApiProblem && err.status === 409) {
-              req.log.info(
+              log.info(
                 { sessionId, valuationId: valuation.id },
                 'another delivery of this settlement got to the engagement first',
               );
@@ -1246,7 +1273,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
                 {
                   pool: deps.pool,
                   transport: deps.transport,
-                  log: req.log,
+                  log: log,
                   publicBaseUrl: deps.publicBaseUrl,
                   settings: deps.settings,
                 },
@@ -1255,7 +1282,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
                 { actorType: 'system', source: 'stripe' },
               );
             } catch (err) {
-              req.log.warn(
+              log.warn(
                 { err, valuationId: updated.id, paymentId: payment.id },
                 'payment settled but the engagement moved before it could be advanced to paid',
               );
@@ -1267,7 +1294,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // charge on an already-paid file does not do; this is about the charge,
         // and `claimed` above has already established there is exactly one of
         // them. An add-on bought after the fact is still money we took.
-        if (valuation) await announcePaymentReceived(req.log, settledPayment, valuation);
+        if (valuation) await announcePaymentReceived(log, settledPayment, valuation);
       };
 
       if (event.type === 'checkout.session.completed') {
@@ -1295,7 +1322,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         if (isSettled(session.payment_status)) {
           await fulfill();
         } else {
-          req.log.info(
+          log.info(
             { sessionId, paymentStatus: session.payment_status },
             'checkout completed with a delayed payment method — awaiting settlement',
           );
@@ -1315,7 +1342,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // reasons: the alert below is one a redelivery must not send twice.
         if (await markPayment(deps.pool, payment.id, 'failed', { from: ['pending'] })) {
           const valuation = await findValuationById(deps.pool, payment.valuation_id);
-          await alertBilling(req.log, {
+          await alertBilling(log, {
             valuationId: payment.valuation_id,
             ownerId: valuation?.user_id ?? null,
             type: 'payment_failed',
