@@ -258,7 +258,18 @@ app.log.info({ port: config.PORT }, 'valuation service listening');
   else app.log.info({ flags }, 'feature flags');
 }
 
-const emailTransports = buildEmailTransports(config, app.log);
+/**
+ * This process's own settings store, shared by the transports (`Reply-To`) and
+ * the drip scan (`{{support_email}}`).
+ *
+ * Its own instance rather than a reach into `buildApp`: these are sweeps on the
+ * same pool, and the store is a 5s cache over one row. Hoisted above the
+ * transports because they read the support address off it on every send.
+ */
+const { SystemSettingsStore } = await import('./repos/systemSettings.js');
+const sweepSettings = new SystemSettingsStore(pool, undefined, undefined, app.log);
+
+const emailTransports = buildEmailTransports(config, app.log, sweepSettings);
 
 /**
  * Every background sweep this process runs, so shutdown can wait for the one
@@ -324,17 +335,12 @@ app.metrics.gauge(
 // logs and waits for the next tick.
 let autoEmailTimer: NodeJS.Timeout | undefined;
 if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
-  // The scan renders `{{support_email}}`, so it needs the settings the app's
-  // own store serves. Its own instance rather than a reach into `buildApp`:
-  // this is a sweep on the same pool, and the store is a 5s cache over one row.
-  const { SystemSettingsStore } = await import('./repos/systemSettings.js');
-  const autoEmailSettings = new SystemSettingsStore(pool, undefined, undefined, app.log);
   const scan = scheduleSweep('auto-email', async () => {
     const r = await runDueAutoEmails({
       pool,
       ...emailTransports,
       publicBaseUrl: config.PUBLIC_BASE_URL,
-      settings: autoEmailSettings,
+      settings: sweepSettings,
       log: app.log,
     });
     if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');

@@ -246,6 +246,7 @@ export async function sendSmtp(
     subject: string;
     body: string;
     html?: string;
+    replyTo?: string;
     listUnsubscribe?: ListUnsubscribe;
   },
 ): Promise<void> {
@@ -271,6 +272,7 @@ export async function sendSmtp(
       subject: email.subject,
       body: email.body,
       html: email.html,
+      replyTo: email.replyTo,
       listUnsubscribe: email.listUnsubscribe,
       // Nothing this transport sends was typed by a person into a reply box —
       // it is all generated from a template or a workflow transition.
@@ -290,6 +292,24 @@ export interface SmtpTransportOptions extends SmtpOptions {
   unsubscribeSecret?: string;
   /** White-label sender name shown in the HTML header. */
   brandName?: string;
+  /**
+   * Where a reply to this mail should go.
+   *
+   * `SMTP_FROM` is a no-reply mailbox — it is the envelope sender and the
+   * default names one — and the copy this transport carries repeatedly tells
+   * the recipient to use it: "Reply to this email if that's unexpected" on a
+   * cancellation, "reply to this email and we will look into it" on a payment
+   * receipt, "Reply to this email" wherever an operator writes it into a
+   * template. With no `Reply-To` those replies go to the no-reply mailbox,
+   * which is not read, and the client's answer to "if that's unexpected" is
+   * never seen by anybody.
+   *
+   * A function rather than a string because the support address is a runtime
+   * system setting an administrator edits — a value captured when the
+   * transport was constructed would be the one the process started with. The
+   * store behind it caches, so this is not a query per send.
+   */
+  replyTo?: () => Promise<string | null | undefined>;
 }
 
 /**
@@ -324,10 +344,15 @@ export function smtpTransport(opts: SmtpTransportOptions, log?: FastifyBaseLogge
   return {
     async send(email: EmailOutboxRow): Promise<void> {
       const listUnsubscribe = unsubscribeFor(email, opts);
+      // A support address we cannot read is one header short of a good message,
+      // not a reason to drop it: without this the mail still goes, replies just
+      // land where they landed before.
+      const replyTo = (await opts.replyTo?.().catch(() => null)) || undefined;
       await sendSmtp(opts, {
         to: email.to_email,
         subject: email.subject,
         body: email.body,
+        replyTo,
         // The outbox keeps one plain-text body and stays the record of what was
         // sent; the HTML alternative is derived from it here rather than stored,
         // so the two halves of a message can never disagree about its content.

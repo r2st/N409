@@ -1,6 +1,6 @@
 import net from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { bareAddress, buildMimeMessage, sendSmtp } from '../../src/email/smtp.js';
+import { bareAddress, buildMimeMessage, sendSmtp, smtpTransport } from '../../src/email/smtp.js';
 
 describe('MIME message builder', () => {
   it('builds an RFC 5322 message with CRLF endings', () => {
@@ -140,5 +140,55 @@ describe('SMTP client against a fake server', () => {
     expect(exchange.commands).toContain('RCPT TO:<client@example.com>');
     expect(exchange.data).toContain('Subject: Test delivery');
     expect(exchange.data).toContain('Line one');
+  });
+
+  /**
+   * `SMTP_FROM` is a no-reply mailbox and the copy this transport carries keeps
+   * telling the recipient to use it — "Reply to this email if that's
+   * unexpected" on a cancellation, "reply to this email and we will look into
+   * it" on a payment receipt. With no `Reply-To` header those answers went to a
+   * mailbox nobody reads.
+   */
+  it('sends a reply somewhere it will be read', async () => {
+    exchange.data = '';
+    const transport = smtpTransport({
+      host: '127.0.0.1',
+      port,
+      from: 'N409 <no-reply@n409.local>',
+      timeoutMs: 5000,
+      replyTo: async () => 'support@n409.test',
+    });
+
+    await transport.send({
+      id: 'eml_1',
+      to_email: 'client@example.com',
+      subject: 'Your valuation was cancelled',
+      body: "Reply to this email if that's unexpected.",
+    } as never);
+
+    expect(exchange.data).toContain('Reply-To: support@n409.test');
+  });
+
+  it('still delivers when the support address cannot be read', async () => {
+    exchange.data = '';
+    const transport = smtpTransport({
+      host: '127.0.0.1',
+      port,
+      from: 'N409 <no-reply@n409.local>',
+      timeoutMs: 5000,
+      // A settings read that rejects, and one that answers with nothing: a
+      // header short of a good message is not a reason to drop the message.
+      replyTo: () => Promise.reject(new Error('settings unavailable')),
+    });
+
+    await transport.send({
+      id: 'eml_1',
+      to_email: 'client@example.com',
+      subject: 'Your draft is ready',
+      body: 'Sign in to accept it.',
+    } as never);
+
+    expect(exchange.data).toContain('Subject: Your draft is ready');
+    expect(exchange.data).not.toContain('Reply-To:');
   });
 });

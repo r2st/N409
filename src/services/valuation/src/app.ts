@@ -60,6 +60,7 @@ import { registerSavedViewRoutes } from './routes/savedViews.js';
 import { registerExportRoutes } from './routes/exports.js';
 import { registerSensitivityRoutes } from './routes/sensitivity.js';
 import { logTransport, type EmailTransport } from './hooks/stateChange.js';
+import type { SupportEmailSource } from './hooks/autoEmails.js';
 import { smtpTransport } from './email/smtp.js';
 import { registerPaymentRoutes } from './routes/payments.js';
 import { registerBillingRoutes } from './routes/billing.js';
@@ -223,6 +224,12 @@ export interface AppDeps {
 export function buildEmailTransports(
   config: Config,
   log: FastifyBaseLogger,
+  /**
+   * Reads the runtime support address, for `Reply-To`. Optional so the many
+   * test call sites need not supply one; without it a reply goes where it went
+   * before, to the no-reply mailbox `SMTP_FROM` names.
+   */
+  settings?: SupportEmailSource,
 ): { transport?: EmailTransport; smsTransport?: EmailTransport } {
   let transport: EmailTransport | undefined;
   if (config.EMAIL_MODE === 'smtp' && config.SMTP_HOST) {
@@ -240,6 +247,9 @@ export function buildEmailTransports(
         // separate secret.
         publicBaseUrl: config.PUBLIC_BASE_URL,
         unsubscribeSecret: config.JWT_SECRET,
+        // Resolved per send rather than captured here: an administrator can
+        // change the support address without restarting the service.
+        replyTo: settings ? () => settings.get('support_email') : undefined,
       },
       log,
     );
@@ -475,13 +485,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       fonts: async () => verifyFontAssets(),
     },
   });
-  // Auto-email transport; delivery status is tracked in email_outbox.
-  const { transport, smsTransport } = buildEmailTransports(config, app.log);
-
   // Runtime-editable system settings (registration switch, maintenance mode,
   // password floor). Cached — `maintenance_mode` is read on every mutating
-  // request via app.authenticate.
+  // request via app.authenticate. Built before the transports because they read
+  // the support address off it for `Reply-To`.
   const settings = new SystemSettingsStore(pool, undefined, undefined, app.log);
+
+  // Auto-email transport; delivery status is tracked in email_outbox.
+  const { transport, smsTransport } = buildEmailTransports(config, app.log, settings);
 
   // `fileSize`/`files` bound the file half; UPLOAD_FIELD_LIMITS bounds the text
   // half, which nothing bounded before — see uploadLimits.ts for the size of
