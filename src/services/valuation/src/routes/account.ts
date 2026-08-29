@@ -419,14 +419,33 @@ export function registerAccountRoutes(
   });
 }
 
-/** True when no other live user holds a user-admin role. */
+/**
+ * True when no other live user holds a user-admin role.
+ *
+ * A suspended administrator is not a successor. `ignored` subtracts every
+ * privilege the row otherwise carries (`auth/rbac.ts`, `isSuspended`), so an
+ * `admin` + `ignored` account cannot open the console — and counting it here
+ * is what lets the last working administrator close their own account and
+ * leave the platform with nobody who can administer it and nobody who can be
+ * granted the access to. The lockout this guard exists to prevent, arrived at
+ * through the one account the guard cannot see is dead.
+ *
+ * `NOT EXISTS` rather than a second join, because the suspension is the
+ * *absence* of a row to join to: `r.key = ANY($2) AND r.key <> 'ignored'`
+ * would count a suspended admin twice over, once for each of their two rows.
+ */
 export async function isLastUserAdmin(pool: pg.Pool, userId: string): Promise<boolean> {
   const { rows } = await pool.query<{ count: string }>(
     `SELECT count(*) AS count
      FROM users u
      JOIN user_roles ur ON ur.user_id = u.id
      JOIN roles r ON r.id = ur.role_id
-     WHERE u.deleted_at IS NULL AND u.id <> $1 AND r.key = ANY($2)`,
+     WHERE u.deleted_at IS NULL AND u.id <> $1 AND r.key = ANY($2)
+       AND NOT EXISTS (
+         SELECT 1 FROM user_roles sur
+         JOIN roles sr ON sr.id = sur.role_id
+         WHERE sur.user_id = u.id AND sr.key = 'ignored'
+       )`,
     [userId, [...USER_ADMIN_ROLES]],
   );
   return Number(rows[0]?.count ?? 0) === 0;

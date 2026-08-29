@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canCreateValuation,
   canEditWorkingData,
+  canManageBranding,
   canManageUsers,
   canReadReport,
   canReadValuation,
@@ -10,6 +11,7 @@ import {
   valuationScope,
   type Principal,
 } from '../../src/auth/rbac.js';
+import { OPS_ROLES, USER_ADMIN_ROLES, type RoleKey } from '../../src/domain/roles.js';
 
 const ops: Principal = { id: '01OPS', roles: ['reviewer'], partnerId: null };
 const admin: Principal = { id: '01ADM', roles: ['admin'], partnerId: null };
@@ -129,5 +131,66 @@ describe('canReadReport', () => {
   it('non-owner cannot read even in a visible state', () => {
     const otherDrafted = { ...otherValuation, state: 'drafted' };
     expect(canReadReport(client, otherDrafted)).toBe(false);
+  });
+});
+
+/**
+ * The suspension has to reach the privilege predicates, not only the scope one.
+ *
+ * `ignored` is designed to subtract while leaving the other `user_roles` rows
+ * in place, so lifting a suspension is one DELETE. Every predicate therefore
+ * has to subtract it for itself, and the four spelled `roles.some(r =>
+ * SET.has(r))` did not: `admin` is in the set whatever else the row carries.
+ *
+ * Asserted over every ops and user-admin role rather than one representative,
+ * because the bug was in the shape of the test — one suspended `admin` proves
+ * nothing about `god` or `data_supervisor`, and the whole set is eighteen
+ * strings long.
+ */
+describe('ignored suspends privilege, not just scope', () => {
+  const suspended = (roles: RoleKey[]): Principal => ({
+    id: '01SUS',
+    roles: [...roles, 'ignored'],
+    partnerId: '01PARTNER',
+  });
+
+  it('takes ops away from every ops role', () => {
+    for (const role of OPS_ROLES) {
+      expect(isOps(suspended([role])), role).toBe(false);
+      expect(canEditWorkingData(suspended([role])), role).toBe(false);
+      expect(patchableFields(suspended([role]), otherValuation).size, role).toBe(0);
+    }
+  });
+
+  it('takes the user console away from every user-admin role', () => {
+    for (const role of USER_ADMIN_ROLES) {
+      expect(canManageUsers(suspended([role])), role).toBe(false);
+      expect(canManageBranding(suspended([role]), '01PARTNER'), role).toBe(false);
+    }
+  });
+
+  /*
+   * The pair that contradicted each other on one engagement: the suspension
+   * denied the valuation and `canReadReport`'s `isOps` short-circuit granted
+   * the report drawn from it, in whatever state.
+   */
+  it('does not hand a suspended admin the report it denies the engagement for', () => {
+    const p = suspended(['admin']);
+    expect(canReadValuation(p, otherValuation)).toBe(false);
+    expect(canReadReport(p, { ...otherValuation, state: 'in_progress' })).toBe(false);
+    expect(canReadReport(p, { ...otherValuation, state: 'published' })).toBe(false);
+  });
+
+  it('leaves a suspended partner unable to brand their own firm', () => {
+    expect(canManageBranding({ id: '01P', roles: ['partner'], partnerId: '01PARTNER' }, '01PARTNER')).toBe(
+      true,
+    );
+    expect(canManageBranding(suspended(['partner']), '01PARTNER')).toBe(false);
+  });
+
+  it('still grants an unsuspended holder of the same role everything', () => {
+    expect(isOps(admin)).toBe(true);
+    expect(canManageUsers(admin)).toBe(true);
+    expect(canManageBranding(admin, '01PARTNER')).toBe(true);
   });
 });

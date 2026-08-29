@@ -17,9 +17,36 @@ export type ValuationScope =
   | { kind: 'own'; userId: string }
   | { kind: 'none' };
 
+/**
+ * `ignored` is this platform's suspension, and it subtracts.
+ *
+ * A suspended user keeps their other `user_roles` rows — that is the whole
+ * design, so lifting the suspension is one DELETE rather than a re-grant of a
+ * set nobody wrote down — which means every predicate that answers "what may
+ * this principal do" has to subtract `ignored` for itself. `valuationScope`
+ * did, and `hasCapability`/`capabilitiesFor` did. The four privilege
+ * predicates below did not, and they are the ones that matter most: they are
+ * spelled `roles.some(r => SET.has(r))`, and `admin` is in the set whatever
+ * else the row carries.
+ *
+ * So suspending an administrator took away every engagement they could open
+ * and left them the console that administers everyone — `requireUserAdmin` in
+ * `routes/adminUsers.ts` passes on `canManageUsers`, so a suspended admin
+ * could still create users, assign roles, and re-mint their own access. The
+ * same split ran through `canReadReport`, which short-circuits on `isOps`: the
+ * suspension denied the engagement and granted its finished report, on the
+ * same request pair.
+ *
+ * Stated once, here, so the next predicate that asks about privilege has an
+ * obvious thing to call rather than a role set to re-inline.
+ */
+export function isSuspended(p: Pick<Principal, 'roles'>): boolean {
+  return p.roles.includes('ignored');
+}
+
 /** What slice of the valuation table can this principal see? */
 export function valuationScope(p: Principal): ValuationScope {
-  if (p.roles.length === 0 || p.roles.includes('ignored')) return { kind: 'none' };
+  if (p.roles.length === 0 || isSuspended(p)) return { kind: 'none' };
   if (p.roles.some((r) => OPS_ROLES.has(r))) return { kind: 'all' };
   if (p.roles.some((r) => PARTNER_ROLES.has(r))) {
     return p.partnerId ? { kind: 'partner', partnerId: p.partnerId } : { kind: 'none' };
@@ -77,12 +104,13 @@ export const OWNER_PATCH_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 export function patchableFields(p: Principal, v: ValuationRef): ReadonlySet<string> {
-  if (p.roles.some((r) => OPS_ROLES.has(r))) return OPS_PATCH_FIELDS;
+  if (isOps(p)) return OPS_PATCH_FIELDS;
   if (canReadValuation(p, v) && v.userId === p.id) return OWNER_PATCH_FIELDS;
   return new Set();
 }
 
 export function isOps(p: Principal): boolean {
+  if (isSuspended(p)) return false;
   return p.roles.some((r) => OPS_ROLES.has(r));
 }
 
@@ -107,6 +135,7 @@ export function canReadReport(p: Principal, v: ValuationRef & { state: string })
 }
 
 export function canManageUsers(p: Principal): boolean {
+  if (isSuspended(p)) return false;
   return p.roles.some((r) => USER_ADMIN_ROLES.has(r));
 }
 
@@ -119,5 +148,6 @@ export function canManageUsers(p: Principal): boolean {
  */
 export function canManageBranding(p: Principal, partnerId: string): boolean {
   if (canManageUsers(p)) return true;
+  if (isSuspended(p)) return false;
   return p.roles.includes('partner') && p.partnerId === partnerId;
 }

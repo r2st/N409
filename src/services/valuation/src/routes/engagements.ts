@@ -28,7 +28,6 @@ import {
   type EngagementRow,
 } from '../repos/engagements.js';
 import { findUserById } from '../repos/users.js';
-import { OPS_ROLES } from '../domain/roles.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
@@ -127,7 +126,11 @@ async function assertAssignableAnalyst(pool: pg.Pool, analystId: string): Promis
   if (!isUlid(analystId)) throw invalid('Invalid analyst id');
   const user = await findUserById(pool, analystId);
   if (!user) throw invalid('Unknown analyst');
-  if (!user.roles.some((r) => OPS_ROLES.has(r))) {
+  // `isOps` rather than the role set directly: a suspended (`ignored`) account
+  // keeps its `admin`/`reviewer` row, so the bare set says yes to somebody who
+  // cannot open the engagement they would be assigned — and the overdue sweep
+  // would then mail them a client's SLA state by name every day.
+  if (!isOps({ id: user.id, roles: user.roles, partnerId: user.partner_id })) {
     throw invalid('That user is not on the operations team and cannot be assigned as the analyst');
   }
 }
