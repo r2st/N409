@@ -59,6 +59,10 @@ const MONEY_FORMATTERS = [
   'formatMoney',
   'formatAmount',
   'formatCents',
+  // Cents scaled by the charging currency rather than by 100 — the billing
+  // half of the split `moneyScaleCensus.test.ts` keeps. A per-share FMV is not
+  // a charge and must not reach it either.
+  'formatChargedCents',
   'formatUsd',
   'formatNumber',
   'moneyFormatter',
