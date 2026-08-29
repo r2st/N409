@@ -190,13 +190,27 @@ export function marketableValuePerShare(results: ResultsShape): number | null {
 export function approachChart(results: ResultsShape, currency: string): ChartSpec | null {
   const approaches = results.approaches;
   if (!approaches || typeof approaches !== 'object') return null;
-  const weighted_ = Object.entries(approaches)
+  const all = Object.entries(approaches)
     .map(([key, value]) => ({
       label: APPROACH_LABELS[key] ?? key,
       weight: num(value?.weight) ?? 0,
-      value: num(value?.equity_value) ?? 0,
+      value: num(value?.equity_value),
     }))
-    .filter((p) => p.weight > 0)
+    .filter((p) => p.weight > 0);
+  /*
+   * An approach with no indicated value is not an approach that indicated zero.
+   *
+   * `num(...) ?? 0` gave one a bar of height nothing captioned "$0", which on
+   * the page a board adopts the value from is a statement the engine never
+   * made — and the bar chart is the one place the reader compares the
+   * indications against each other. Unlike the weights in the ring below, these
+   * are alternative estimates of one quantity and not addends, so the honest
+   * treatment is to leave it out and say so, which is what the note already
+   * does for the tail this chart truncates.
+   */
+  const unvalued = all.filter((p) => p.value === null);
+  const weighted_ = all
+    .filter((p): p is typeof p & { value: number } => p.value !== null)
     .sort((a, b) => b.value - a.value);
   if (weighted_.length === 0) return null;
 
@@ -225,6 +239,13 @@ export function approachChart(results: ResultsShape, currency: string): ChartSpe
       ? `The ${points.length} largest of ${weighted_.length} weighted approaches; ${dropped} smaller ` +
         `${dropped === 1 ? 'approach is' : 'approaches are'} not plotted.`
       : null;
+  const missing =
+    unvalued.length > 0
+      ? `${unvalued.map((p) => p.label).join(', ')} ` +
+        `${unvalued.length === 1 ? 'carries weight and indicated' : 'carry weight and indicated'} ` +
+        `no equity value on this run, so ${unvalued.length === 1 ? 'it is' : 'they are'} not plotted. ` +
+        'Exhibit B states the weight involved.'
+      : null;
   return {
     type: 'bar',
     title: 'Equity value by approach',
@@ -233,7 +254,7 @@ export function approachChart(results: ResultsShape, currency: string): ChartSpe
       value: p.value,
       display: formatCurrency(p.value, currency, 0),
     })),
-    note: [conclusion, omission].filter((n): n is string => n !== null).join(' ') || undefined,
+    note: [conclusion, omission, missing].filter((n): n is string => n !== null).join(' ') || undefined,
   };
 }
 

@@ -170,6 +170,42 @@ describe('approachChart', () => {
     expect(approachChart({ approaches: { income: { weight: 0, equity_value: 1 } } }, 'USD')).toBeNull();
     expect(approachChart({}, 'USD')).toBeNull();
   });
+
+  /**
+   * An approach that indicated nothing is not an approach that indicated zero.
+   *
+   * `num(...) ?? 0` drew it as a bar of height nothing captioned "$0" — a
+   * statement the engine never made, on the page a board adopts the value from,
+   * in the one chart where the reader compares the indications against each
+   * other. These are alternative estimates of one quantity and not addends, so
+   * it is left out and the note says so.
+   */
+  it('does not plot an approach with no indication as an indication of zero', () => {
+    const chart = approachChart(
+      {
+        equity_value: 42_000_000,
+        approaches: {
+          income: { weight: 0.5, equity_value: 40_000_000 },
+          market: { weight: 0.5 },
+        },
+      },
+      'USD',
+    )!;
+    const bar = chart as Extract<typeof chart, { type: 'bar' }>;
+    expect(bar.points.map((p) => p.label)).toEqual(['Income (DCF) · 50%']);
+    expect(bar.points.some((p) => p.value === 0)).toBe(false);
+    expect(bar.note).toContain('Market (comparables) carries weight and indicated no equity value');
+    expect(bar.note).toContain('Exhibit B states the weight involved');
+  });
+
+  it('is silent about missing indications when every weighted approach has one', () => {
+    const chart = approachChart(RESULTS, 'USD')!;
+    expect((chart as Extract<typeof chart, { type: 'bar' }>).note).not.toContain('indicated no');
+  });
+
+  it('returns null when no weighted approach indicated anything', () => {
+    expect(approachChart({ approaches: { income: { weight: 1 } } }, 'USD')).toBeNull();
+  });
 });
 
 describe('weightingChart', () => {
