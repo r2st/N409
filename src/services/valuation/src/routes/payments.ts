@@ -131,6 +131,22 @@ export function stripeProblem(err: StripeApiError): ApiProblem {
         'charged. This needs us to fix it — please contact support, and mention the time you tried.',
     );
   }
+  // And a fourth, which is not a failure at all.
+  //
+  // Both Checkout creators now send an `Idempotency-Key` derived from the
+  // request, so two simultaneous clicks on Pay send Stripe the same key twice.
+  // Stripe answers the second with `idempotency_error` — "there is currently
+  // another in-progress request using this Idempotency Key" — which is our own
+  // duplicate suppression working, reported to the client as a bad gateway and
+  // in Stripe's vocabulary rather than theirs. The honest answer is the one the
+  // checkout route already gives for a payment in progress: a conflict, and the
+  // instruction to wait for the one that is running.
+  if (err.stripeType === 'idempotency_error' || err.status === 409) {
+    return problems.conflict(
+      'A payment for this is already being started. Wait a moment and check your billing page ' +
+        'before trying again — pressing Pay twice does not charge you twice.',
+    );
+  }
   return stripeUpstream(`Stripe: ${err.message}`);
 }
 

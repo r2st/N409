@@ -169,11 +169,25 @@ export class StripeApiError extends Error {
      * `cause` for the log.
      */
     readonly unreachable: boolean = false,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; stripeType?: string | null },
   ) {
     super(message, options);
     this.name = 'StripeApiError';
+    this.stripeType = options?.stripeType ?? null;
   }
+
+  /**
+   * Stripe's own `error.type` — `card_error`, `invalid_request_error`,
+   * `idempotency_error` — or null when nothing that shape came back.
+   *
+   * The status alone does not separate the rejections that owe the reader
+   * different sentences. `idempotency_error` in particular is not a failure of
+   * the request: it is Stripe saying an identical one is still in flight, which
+   * is what a double-click looks like from here now that both clicks carry the
+   * same key. Answering that as a bad gateway would report our own duplicate
+   * suppression to the client as Stripe being broken.
+   */
+  readonly stripeType: string | null;
 }
 
 /**
@@ -352,7 +366,9 @@ export async function createCheckoutSession(
   const json = await stripeBody(res);
   if (!res.ok) {
     const err = (json.error ?? {}) as Record<string, unknown>;
-    throw new StripeApiError(stripeMessage(err, res.status), res.status);
+    throw new StripeApiError(stripeMessage(err, res.status), res.status, false, {
+      stripeType: typeof err.type === 'string' ? err.type : null,
+    });
   }
   return asCheckoutSession(json, res.status);
 }
@@ -408,7 +424,9 @@ export async function createSubscriptionCheckoutSession(
   const json = await stripeBody(res);
   if (!res.ok) {
     const err = (json.error ?? {}) as Record<string, unknown>;
-    throw new StripeApiError(stripeMessage(err, res.status), res.status);
+    throw new StripeApiError(stripeMessage(err, res.status), res.status, false, {
+      stripeType: typeof err.type === 'string' ? err.type : null,
+    });
   }
   return asCheckoutSession(json, res.status);
 }
@@ -443,7 +461,9 @@ export async function createBillingPortalSession(
   const json = await stripeBody(res);
   if (!res.ok) {
     const err = (json.error ?? {}) as Record<string, unknown>;
-    throw new StripeApiError(stripeMessage(err, res.status), res.status);
+    throw new StripeApiError(stripeMessage(err, res.status), res.status, false, {
+      stripeType: typeof err.type === 'string' ? err.type : null,
+    });
   }
   if (typeof json.url !== 'string') {
     throw new StripeApiError('Stripe returned a billing portal session with no URL', 502);
@@ -499,7 +519,9 @@ export async function retrieveReceipt(secretKey: string, paymentIntentId: string
   const json = await stripeBody(res);
   if (!res.ok) {
     const err = (json.error ?? {}) as Record<string, unknown>;
-    throw new StripeApiError(stripeMessage(err, res.status), res.status);
+    throw new StripeApiError(stripeMessage(err, res.status), res.status, false, {
+      stripeType: typeof err.type === 'string' ? err.type : null,
+    });
   }
   const charge = (json.latest_charge ?? {}) as Record<string, unknown>;
   return {

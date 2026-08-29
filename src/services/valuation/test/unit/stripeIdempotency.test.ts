@@ -6,7 +6,9 @@ import {
   expireCheckoutSession,
   idempotencyKeyFor,
   IDEMPOTENCY_WINDOW_MS,
+  StripeApiError,
 } from '../../src/payments/stripe.js';
+import { stripeProblem } from '../../src/routes/payments.js';
 
 /**
  * Retrying a Stripe POST (round 203, methodology M5).
@@ -168,5 +170,56 @@ describe('Stripe Checkout retries', () => {
     await expireCheckoutSession('sk_test', 'cs_1');
     expect(headerOf(spy.mock.calls[0] as never)).toBeUndefined();
     expect(headerOf(spy.mock.calls[1] as never)).toBeUndefined();
+  });
+});
+
+describe('the answer to a click that arrived twice', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const inFlight = () =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          error: {
+            type: 'idempotency_error',
+            message:
+              'There is currently another in-progress request using this Idempotency Key. ' +
+              'Please retry the request later.',
+          },
+        }),
+        { status: 409, headers: { 'content-type': 'application/json' } },
+      ),
+    ) as ReturnType<typeof fetch>;
+
+  it("carries Stripe's error type off the wire", async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(inFlight);
+    const err = (await createCheckoutSession('sk_test', args).catch((e: unknown) => e)) as StripeApiError;
+    expect(err).toBeInstanceOf(StripeApiError);
+    expect(err.stripeType).toBe('idempotency_error');
+  });
+
+  it('answers a duplicate click as a conflict, not as Stripe being broken', () => {
+    // The second of two simultaneous clicks is our own suppression working.
+    // Reported as a 502 it reads as an outage, in Stripe's vocabulary, on a
+    // request that in fact succeeded once.
+    const problem = stripeProblem(
+      new StripeApiError(
+        'There is currently another in-progress request using this Idempotency Key.',
+        409,
+        false,
+        {
+          stripeType: 'idempotency_error',
+        },
+      ),
+    );
+    expect(problem.status).toBe(409);
+    expect(problem.detail).not.toMatch(/Idempotency/i);
+    expect(problem.detail).toMatch(/does not charge you twice/);
+  });
+
+  it('leaves every other rejection where it was', () => {
+    const declined = stripeProblem(new StripeApiError('Your card was declined.', 402));
+    expect(declined.status).toBe(502);
+    expect(declined.detail).toBe('Stripe: Your card was declined.');
   });
 });
