@@ -139,16 +139,42 @@ GET                   /dashboard/stats            # stage×product pivot + chart
 ```
 
 ## 3. Partner API (public)
-Token-scoped to one partner; only that partner's data.
+Token-scoped to one partner; only that partner's data. Base path `/api/partner/v1`.
 ```
-POST   /partner/v1/valuations          # create for their customer
-GET    /partner/v1/valuations          # list (their scope)
-GET    /partner/v1/valuations/{id}
-POST   /partner/v1/valuations/{id}/attachments
-GET    /partner/v1/valuations/{id}/report.pdf     # white-labelled
+GET    /api/partner/v1/docs                              # this surface, self-describing
+GET    /api/partner/v1/openapi.json                      # generated spec for client codegen
+GET    /api/partner/v1/me                                # the calling key's partner + scopes
+POST   /api/partner/v1/valuations                        # create for their customer
+GET    /api/partner/v1/valuations                        # list (their scope)
+GET    /api/partner/v1/valuations/{id}
+PUT    /api/partner/v1/valuations/{id}
+POST   /api/partner/v1/valuations/{id}/submit
+POST   /api/partner/v1/valuations/{id}/documents
+GET    /api/partner/v1/valuations/{id}/results
+GET    /api/partner/v1/valuations/{id}/report.pdf        # white-labelled
+POST   /api/partner/v1/webhooks                          # register (secret shown once)
+GET    /api/partner/v1/webhooks
+DELETE /api/partner/v1/webhooks/{id}
+GET    /api/partner/v1/webhooks/{id}/deliveries          # audit trail, keyset-paginated
+POST   /api/partner/v1/webhooks/{id}/deliveries/{deliveryId}/retry
+POST   /api/partner/v1/webhooks/{id}/test                # signed ping
 ```
-Webhooks (partner-registered): `valuation.created`, `valuation.updated`, `valuation.waiting_on_client`,
-`valuation.drafted`, `valuation.published`. Signed; at-least-once with retry/backoff.
+Webhooks (partner-registered): `valuation.state_changed`, `valuation.report_ready`,
+`valuation.retired`, `webhook.test`. Signed (HMAC-SHA256 over the raw body, `x-n409-signature:
+sha256=<hex>`); at-least-once with retry/backoff.
+
+The vocabulary is deliberately transitions rather than states. One `valuation.state_changed`
+carrying `previous_state` and the new `state` says everything a per-state event would and keeps
+saying it when a state is added, where a per-state "drafted" and "published" pair would each
+need a new member and a new subscription. `valuation.report_ready` is the exception because it is
+not a state — it is the two transitions (draft shared, opinion published) that first put a
+deliverable in front of the partner, which is the thing an integration actually waits on.
+`valuation.retired` is terminal and exists because nothing else says so: a withdrawn engagement
+leaves `GET /valuations` and simply stops emitting, which an integration cannot distinguish from
+work still in progress.
+
+This block is pinned by `test/unit/apiDesignPartnerSection.test.ts` — the operation list against
+the route registry in `routes/partnerApi.ts`, and the event list against `WEBHOOK_EVENT_TYPES`.
 
 ## 4. Internal — Valuation Engine (R/Plumber contract)
 Stable, versioned; the app pins the engine image digest per valuation.

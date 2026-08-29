@@ -78,8 +78,14 @@ interface CircuitSnapshot {
 interface WebhookBacklog {
   pending: number;
   due: number;
+  /**
+   * Both settled counts are over a trailing window, not all time — the server
+   * says how long a one in `window_hours`, and the hint below quotes it rather
+   * than hard-coding a number that would drift the day the server changed it.
+   */
   failed: number;
-  delivered_24h: number;
+  delivered: number;
+  window_hours: number;
 }
 
 interface SystemMetrics {
@@ -338,7 +344,7 @@ export function AdminOperationsPage() {
           <StatCard
             label="Webhook backlog"
             value={String(metrics.webhooks.pending)}
-            hint={`${metrics.webhooks.due} due now · ${metrics.webhooks.failed} failed · ${metrics.webhooks.delivered_24h} delivered in 24h`}
+            hint={`${metrics.webhooks.due} due now · ${metrics.webhooks.failed} failed · ${metrics.webhooks.delivered} delivered · last ${metrics.webhooks.window_hours}h`}
           />
         </div>
 

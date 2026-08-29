@@ -68,7 +68,7 @@ describe('FLAG_RETRY_LADDERS off — the partner webhook sweep', () => {
       // `reaped` is behind the same flag: a row it would settle has no attempts
       // left either way, so waiting loses nothing, and while the ladders are
       // paused "still pending" is the honest reading of every unsettled row.
-    ).resolves.toEqual({ attempted: 0, delivered: 0, retrying: 0, failed: 0, reaped: 0 });
+    ).resolves.toEqual({ attempted: 0, delivered: 0, retrying: 0, failed: 0, reaped: 0, superseded: 0 });
   });
 });
 

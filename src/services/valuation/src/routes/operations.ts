@@ -241,6 +241,12 @@ export function registerOperationsRoutes(
    * partners' delivery logs; `failed` is the one that matters, because a failed
    * row is terminal and nothing but a replay will come back for it — see the
    * dead letter queue below, which is what turns that number into a next step.
+   *
+   * `failed` and `delivered` are counted over `window_hours` rather than over
+   * the table. Nothing purges deliveries, so an all-time failure count is a
+   * fact about the platform's history and this is a question about now; the
+   * window also matches the age bound the replay below enforces, so the number
+   * and the rows an operator can act on are the same rows.
    */
   app.get('/api/v1/admin/webhooks/deliveries/stats', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);

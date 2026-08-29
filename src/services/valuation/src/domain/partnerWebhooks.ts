@@ -129,6 +129,50 @@ export function retryDelayMinutes(attemptsMade: number, maxAttempts = WEBHOOK_MA
   return step ?? WEBHOOK_RETRY_BACKOFF_MINUTES.at(-1) ?? 30;
 }
 
+// ── How long one sweeper may hold what it claimed ────────────────────────────
+
+/**
+ * The longest a single delivery attempt may take, end to end.
+ *
+ * Not the same number as the `fetch` timeout in hooks/partnerWebhooks.ts, and
+ * deliberately larger than it: an attempt is the SSRF guard's DNS lookup, then
+ * the POST, then the settle write. Only the middle one is bounded by
+ * `AbortSignal.timeout`, so budgeting the attempt at the fetch timeout alone
+ * understates it by however long `dns.lookup` takes to answer — which, for a
+ * name whose resolver is the thing that is down, is the interesting case.
+ */
+export const DELIVERY_ATTEMPT_BUDGET_MS = 15_000;
+
+/** The lease floor, for a batch small enough not to need more than it. */
+export const DELIVERY_LEASE_FLOOR_MS = 5 * 60_000;
+
+/**
+ * How long a claim must be leased for, given how many rows it takes.
+ *
+ * The sweep claims a batch and then POSTs the rows in it **one after another**,
+ * so the lease is not covering one attempt — it is covering all of them. A flat
+ * five minutes against a hundred-row batch was covering the first twenty:
+ * 100 x 15s is twenty-five minutes of sequential work, and everything after the
+ * five-minute mark sat in a row whose lease had lapsed while the sweeper was
+ * still going to deliver it.
+ *
+ * What that costs is a duplicate, not a delay. A second sweeper — the ops
+ * `POST /admin/webhooks/retry` runs the same function outside the scheduler
+ * that stops the interval overlapping itself, and a deployment may run more
+ * than one instance — finds those rows claimable, re-claims them, and POSTs
+ * them again while the first sweeper's request is still open. The partner gets
+ * the event twice, and both sweepers then write an outcome to the same row.
+ *
+ * So the lease is derived from the batch rather than picked. The cost is that a
+ * sweeper lost mid-batch strands its remaining rows for the lease's length
+ * instead of five minutes — a real trade, taken because a crash mid-sweep is
+ * rarer than an operator clicking retry during one, and because those rows are
+ * delayed by it where the duplicate case is delivered twice.
+ */
+export function deliveryLeaseMs(batchLimit: number): number {
+  return Math.max(DELIVERY_LEASE_FLOOR_MS, Math.ceil(batchLimit) * DELIVERY_ATTEMPT_BUDGET_MS);
+}
+
 /**
  * The smallest share of a backoff step that may actually be waited.
  *

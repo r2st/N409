@@ -1,0 +1,82 @@
+-- The webhook backlog gauge read every delivery the platform has ever made.
+--
+-- `deliveryBacklogStats` (repos/partnerWebhooks.ts) answered four questions in
+-- one pass:
+--
+--     SELECT count(*) FILTER (WHERE status = 'pending')                              AS pending,
+--            count(*) FILTER (WHERE status = 'pending' AND next_attempt_at <= now()) AS due,
+--            count(*) FILTER (WHERE status = 'failed')                               AS failed,
+--            count(*) FILTER (WHERE status = 'delivered'
+--                              AND delivered_at > now() - interval '24 hours')       AS delivered_24h
+--       FROM partner_webhook_deliveries
+--
+-- Four questions, one access path. The planner picks a single path for the whole
+-- statement, and with an unbounded `status = 'failed'` count in the list the only
+-- path that answers all four is a scan of the entire table. So 0103's
+-- `partner_webhook_deliveries_claim_idx` — partial on exactly the live set the
+-- first two counts want, sixteen kilobytes of it — sat unusable beside a query
+-- that could not ask it anything.
+--
+-- What makes that a growing cost rather than a fixed one is that this table is
+-- never pruned. `email_outbox`, the sibling this whole mechanism was modelled
+-- on, is drained by the retention sweep; deliveries are the partner's audit
+-- trail and are kept, so the table is the platform's entire history of partner
+-- events and the scan is linear in it forever.
+--
+-- And the reader is the wrong one to make pay for that: `GET
+-- /admin/system/metrics` composes this figure, is deliberately uncached, and is
+-- opened during an incident — which is the moment a full scan of the largest
+-- append-only table in the schema is the last thing the database should be
+-- doing.
+--
+-- Two changes together, because neither works alone. The repo now issues three
+-- statements instead of one, so each region can have its own path; and the two
+-- settled counts are bounded to a trailing window, which is what makes a path
+-- worth having. The window is also the honest reading of the number — an
+-- all-time failure count is a fact about the platform's history, and the gauge
+-- is read to ask whether anything is failing *now*.
+--
+-- Measured on 200,000 deliveries (197,741 delivered, 2,059 failed, 200 pending)
+-- spread over a year, EXPLAIN (ANALYZE, BUFFERS), warm:
+--
+--     before   one pass                  16.65 ms   5000 blocks   Parallel Seq Scan
+--     after    pending + due              0.04 ms    201 blocks   Index Only Scan (claim_idx)
+--              failed in 24h              0.01 ms      7 blocks   Index Only Scan (failed_idx)
+--              delivered in 24h           0.06 ms     18 blocks   Index Only Scan (delivered_idx)
+--
+-- The three run concurrently, so the wall clock is the slowest of them. As with
+-- 0179 the milliseconds are not the point at this size and the shape is: 5000
+-- blocks is the table, 226 is the answer.
+--
+-- `delivered_idx` is keyed on `delivered_at` and not `created_at`, because they
+-- are different questions on this table: an event that spent six hours in the
+-- backoff ladder was created yesterday and delivered today, and "delivered in
+-- the last day" is a claim about when it landed. `failed_idx` is keyed on
+-- `created_at`, which is the column the dead letter queue's own age bound uses
+-- (DELIVERY_REPLAY_MAX_AGE_HOURS), so the count and the rows an operator can
+-- actually replay describe the same set.
+--
+-- Both partial, and the two partials are very different sizes for the same
+-- reason the argument above holds: at 200k rows `failed_idx` is 64 kB and
+-- `delivered_idx` is 4.3 MB, because failure is rare and delivery is what the
+-- table is. The delivered index is the one with a real maintenance cost, and it
+-- is paid on the single write that settles a delivery — the row is inserted
+-- 'pending' (outside the index), and enters it once, on success.
+--
+-- Not CONCURRENTLY: db/migrate.ts wraps each file in BEGIN/COMMIT and CREATE
+-- INDEX CONCURRENTLY cannot run inside a transaction block. Same trade as every
+-- index since 0056 — a SHARE lock that blocks writes while it builds. The writes
+-- it blocks here are `recordDelivery` and the retry sweep's claim and settle,
+-- which is to say: partner events fired during the build wait, and a state
+-- transition that fires one waits with them. Nothing a person is watching blocks
+-- on it — `onStateChanged` contains every webhook failure and the transition has
+-- already committed — but a build over a large table is a delivery delay, so it
+-- is a deploy-window change on a busy deployment rather than a free one.
+
+CREATE INDEX IF NOT EXISTS partner_webhook_deliveries_failed_idx
+    ON partner_webhook_deliveries (created_at DESC)
+    WHERE status = 'failed';
+
+CREATE INDEX IF NOT EXISTS partner_webhook_deliveries_delivered_idx
+    ON partner_webhook_deliveries (delivered_at DESC)
+    WHERE status = 'delivered';

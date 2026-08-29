@@ -33,7 +33,7 @@ const METRICS = {
   },
   valuations: { all: 42, open: 10, in_review: 4, drafted: 6, published: 20, closed: 2 },
   throughput: [{ week: '2026-08-24', count: 5 }],
-  webhooks: { pending: 7, due: 2, failed: 3, delivered_24h: 88 },
+  webhooks: { pending: 7, due: 2, failed: 3, delivered: 88, window_hours: 24 },
   pool: {
     total: 8,
     idle: 2,

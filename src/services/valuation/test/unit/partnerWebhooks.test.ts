@@ -15,7 +15,14 @@ import {
   WEBHOOK_RETRY_BACKOFF_MINUTES,
   parseRetryAfter,
   MAX_RETRY_AFTER_SECONDS,
+  deliveryLeaseMs,
+  DELIVERY_ATTEMPT_BUDGET_MS,
+  DELIVERY_LEASE_FLOOR_MS,
 } from '../../src/domain/partnerWebhooks.js';
+import {
+  DELIVERY_CLAIM_BATCH_DEFAULT,
+  DELIVERY_CLAIM_BATCH_MAX,
+} from '../../src/repos/partnerWebhooks.js';
 
 describe('partner webhook domain', () => {
   it('signs and verifies over exact body bytes', () => {
@@ -244,5 +251,52 @@ describe('webhook delivery retries', () => {
     for (const status of [408, 425, 429, 500, 502, 503, 504]) {
       expect(isPermanentDeliveryFailure(status)).toBe(false);
     }
+  });
+});
+
+/**
+ * The one invariant that ties the claim to the sweep that works through it.
+ *
+ * `retryDueDeliveries` claims a batch and then POSTs the rows in it one after
+ * another, so the lease is not covering an attempt — it is covering all of them.
+ * Whenever `lease < batch x attempt`, the tail of every batch sits in a row
+ * whose lease has lapsed while a live sweeper is still going to deliver it, and
+ * a second sweeper (the ops retry route, or a second instance) re-claims and
+ * re-POSTs it: the partner's receiver gets the event twice.
+ *
+ * The old lease was a flat five minutes against a hundred-row batch, which
+ * covered the first twenty rows of it.
+ */
+describe('a claim is leased for as long as the batch takes to work through', () => {
+  it('covers the default batch', () => {
+    expect(deliveryLeaseMs(DELIVERY_CLAIM_BATCH_DEFAULT)).toBeGreaterThanOrEqual(
+      DELIVERY_CLAIM_BATCH_DEFAULT * DELIVERY_ATTEMPT_BUDGET_MS,
+    );
+  });
+
+  it('covers the largest batch a caller may ask for', () => {
+    expect(deliveryLeaseMs(DELIVERY_CLAIM_BATCH_MAX)).toBeGreaterThanOrEqual(
+      DELIVERY_CLAIM_BATCH_MAX * DELIVERY_ATTEMPT_BUDGET_MS,
+    );
+  });
+
+  it('holds for every batch size, not just the two the callers use', () => {
+    for (const limit of [1, 2, 7, 19, 20, 21, 50, 99, 100, 250, 500]) {
+      expect(deliveryLeaseMs(limit)).toBeGreaterThanOrEqual(limit * DELIVERY_ATTEMPT_BUDGET_MS);
+    }
+  });
+
+  it('never drops below the floor for a small batch', () => {
+    // A one-row batch still gets the floor: the lease is also the grace period
+    // the reaper reads as "nobody is holding this row", and fifteen seconds of
+    // that would reap deliveries that are merely slow.
+    expect(deliveryLeaseMs(1)).toBe(DELIVERY_LEASE_FLOOR_MS);
+    expect(deliveryLeaseMs(0)).toBe(DELIVERY_LEASE_FLOOR_MS);
+  });
+
+  it('budgets more than the POST timeout, because an attempt is not only the POST', () => {
+    // The SSRF guard resolves the target before the request and the settle
+    // writes after it, and `AbortSignal.timeout` bounds neither.
+    expect(DELIVERY_ATTEMPT_BUDGET_MS).toBeGreaterThan(10_000);
   });
 });

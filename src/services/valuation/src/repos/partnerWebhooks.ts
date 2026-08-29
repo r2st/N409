@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { openSecret, sealSecret } from '../crypto/connectionSecrets.js';
-import { WEBHOOK_MAX_ATTEMPTS } from '../domain/partnerWebhooks.js';
+import { deliveryLeaseMs, WEBHOOK_MAX_ATTEMPTS } from '../domain/partnerWebhooks.js';
 import { type Cursor, cursorAtSql, encodeCursor, keysetAfterSql, pageFrom } from '../domain/pagination.js';
 
 export interface PartnerWebhookRow {
@@ -151,34 +151,84 @@ export async function recordDelivery(
  * receiver told us not to repeat (see isPermanentDeliveryFailure). Anything
  * else stays 'pending' with its backoff stamped on, invisible to the sweep
  * until that time passes.
+ *
+ * ## Why the write is conditional
+ *
+ * `expectAttempts` is the attempt count the caller's copy of the row carried
+ * when it took it — from the INSERT for a first delivery, from the claim for a
+ * retry — and the UPDATE applies only while the table still agrees with it.
+ * Returns false when it does not, which means somebody else has since owned
+ * this row and this outcome is stale.
+ *
+ * That is not a hypothetical. The claim's lease and the sweep's batch are two
+ * different quantities (see `deliveryLeaseMs`), so a sweeper working through a
+ * long batch can still be holding a row whose lease has lapsed, and a second
+ * sweeper — the ops retry route runs outside the scheduler that keeps the
+ * interval from overlapping itself — will re-claim it. Both then settle the
+ * same row.
+ *
+ * Written unconditionally, the loser's write lands last and lands wrong twice
+ * over. It puts back a status the winner had already settled — a 'delivered'
+ * row flipped to 'pending', with `delivered_at` still set, which the sweep
+ * then delivers to the partner *again* and the partner's own delivery log
+ * describes as owed. And it stamps `next_attempt_at` computed from the attempt
+ * count the loser read, which is one or more steps behind the row's real one,
+ * so the ladder walks backwards.
+ *
+ * `settleClaimedEmail` avoids the second half by recomputing the schedule in
+ * SQL from the row's own `attempts`. That is not available here — the schedule
+ * carries jitter and an honoured `Retry-After`, both decided in JS — so the
+ * guard is the other way round: rather than making a stale schedule correct,
+ * refuse to write one. `status = 'pending'` is in the predicate as well as the
+ * attempt count, so a row a replay has reopened (which resets attempts to 0)
+ * and a row already settled are both refused for the same reason.
  */
 export async function settleDelivery(
   pool: pg.Pool,
   id: string,
   outcome: { status: 'delivered' } | { status: 'failed'; error: string; nextAttemptAt: Date | null },
-): Promise<void> {
+  expectAttempts: number,
+): Promise<boolean> {
   if (outcome.status === 'delivered') {
-    await pool.query(
+    const { rowCount } = await pool.query(
       `UPDATE partner_webhook_deliveries
           SET status = 'delivered', claimed_at = NULL, last_error = NULL, delivered_at = now()
-        WHERE id = $1`,
-      [id],
+        WHERE id = $1 AND status = 'pending' AND attempts = $2`,
+      [id, expectAttempts],
     );
-    return;
+    return (rowCount ?? 0) > 0;
   }
-  await pool.query(
+  const { rowCount } = await pool.query(
     `UPDATE partner_webhook_deliveries
         SET status = CASE WHEN $3::timestamptz IS NULL THEN 'failed' ELSE 'pending' END,
             claimed_at = NULL,
             last_error = $2,
             next_attempt_at = coalesce($3::timestamptz, next_attempt_at)
-      WHERE id = $1`,
-    [id, outcome.error, outcome.nextAttemptAt],
+      WHERE id = $1 AND status = 'pending' AND attempts = $4`,
+    [id, outcome.error, outcome.nextAttemptAt, expectAttempts],
   );
+  return (rowCount ?? 0) > 0;
 }
 
-/** Default lease: comfortably longer than any single delivery attempt. */
-export const DELIVERY_CLAIM_LEASE_MS = 5 * 60_000;
+/** Rows one sweeper takes in a pass, and the ceiling on what a caller may ask. */
+export const DELIVERY_CLAIM_BATCH_DEFAULT = 100;
+export const DELIVERY_CLAIM_BATCH_MAX = 500;
+
+/**
+ * The batch a caller actually gets, and the lease that batch needs.
+ *
+ * One function because the two are not independent: the sweep POSTs its batch
+ * one row at a time, so a lease shorter than the batch takes to work through
+ * lapses on rows a live sweeper is still going to deliver, and a second sweeper
+ * re-claims and re-delivers them. See `deliveryLeaseMs` for the arithmetic and
+ * what it trades away. An explicit `leaseMs` from the caller wins — that is the
+ * seam the tests use to make a takeover happen on purpose.
+ */
+function claimWindow(opts: { limit?: number; leaseMs?: number }): { limit: number; leaseSeconds: string } {
+  const limit = Math.min(opts.limit ?? DELIVERY_CLAIM_BATCH_DEFAULT, DELIVERY_CLAIM_BATCH_MAX);
+  const leaseMs = opts.leaseMs ?? deliveryLeaseMs(limit);
+  return { limit, leaseSeconds: String(Math.max(1, Math.floor(leaseMs / 1000))) };
+}
 
 /** What the reaper stamps on a row it settles. */
 export const DELIVERY_ABANDONED_ERROR =
@@ -218,7 +268,10 @@ export async function failExhaustedDeliveries(
   pool: pg.Pool,
   opts: { leaseMs?: number; limit?: number } = {},
 ): Promise<WebhookDeliveryRow[]> {
-  const leaseSeconds = Math.max(1, Math.floor((opts.leaseMs ?? DELIVERY_CLAIM_LEASE_MS) / 1000));
+  // The same window the claim uses, and it has to be: this reads an expired
+  // lease as "nobody is holding this row", so a shorter one here would reap
+  // rows a sweeper is still mid-attempt on and mark a live delivery failed.
+  const { limit, leaseSeconds } = claimWindow(opts);
   const { rows } = await pool.query<WebhookDeliveryRow>(
     `UPDATE partner_webhook_deliveries d
         SET status = 'failed',
@@ -239,7 +292,7 @@ export async function failExhaustedDeliveries(
          FOR UPDATE SKIP LOCKED
       )
       RETURNING d.*`,
-    [String(leaseSeconds), Math.min(opts.limit ?? 100, 500), DELIVERY_ABANDONED_ERROR],
+    [leaseSeconds, limit, DELIVERY_ABANDONED_ERROR],
   );
   return rows;
 }
@@ -264,7 +317,7 @@ export async function claimRetryableDeliveries(
   pool: pg.Pool,
   opts: { limit?: number; leaseMs?: number } = {},
 ): Promise<ClaimedDelivery[]> {
-  const leaseSeconds = Math.max(1, Math.floor((opts.leaseMs ?? DELIVERY_CLAIM_LEASE_MS) / 1000));
+  const { limit, leaseSeconds } = claimWindow(opts);
   const { rows } = await pool.query<ClaimedDelivery>(
     `WITH claimable AS (
        SELECT d.id FROM partner_webhook_deliveries d
@@ -285,7 +338,7 @@ export async function claimRetryableDeliveries(
        FROM claimable c, partner_webhooks w2
       WHERE d.id = c.id AND w2.id = d.webhook_id
       RETURNING d.*, w2.url AS url, w2.secret AS secret`,
-    [String(leaseSeconds), Math.min(opts.limit ?? 100, 500)],
+    [leaseSeconds, limit],
   );
   return rows.map(openWebhookSecret);
 }
@@ -380,32 +433,93 @@ export async function listDeliveries(
   };
 }
 
-/** Ops view: how much of the delivery backlog is owed, stuck or gone terminal. */
-export async function deliveryBacklogStats(pool: pg.Pool): Promise<{
+/**
+ * How far back the settled halves of the backlog view look.
+ *
+ * `pending` and `due` are a live set and are not windowed — the ladder's reach
+ * bounds how long a row can stay in it, and the reaper settles the ones that
+ * outlive it. `failed` and `delivered` are history, and history here is
+ * append-only: nothing purges `partner_webhook_deliveries`, unlike the outbox
+ * that retention drains.
+ *
+ * Twenty-four hours because of what the number is *for*. This is an ops gauge
+ * read during an incident to answer "is anything not getting through **now**",
+ * and an all-time failure count cannot answer it: after a year of successful
+ * sends "412,000 delivered, 3,190 failed" is a fact about the platform's
+ * history and says nothing about the last hour. It also matches
+ * {@link DELIVERY_REPLAY_MAX_AGE_HOURS}, so the count and the set an operator
+ * can actually act on through the dead letter queue describe the same rows.
+ */
+export const BACKLOG_WINDOW_HOURS = 24;
+
+export interface DeliveryBacklog {
   pending: number;
   due: number;
+  /** Gave up inside {@link BACKLOG_WINDOW_HOURS}. */
   failed: number;
-  delivered_24h: number;
-}> {
-  const { rows } = await pool.query<{
-    pending: string;
-    due: string;
-    failed: string;
-    delivered_24h: string;
-  }>(
-    `SELECT count(*) FILTER (WHERE status = 'pending')                              AS pending,
-            count(*) FILTER (WHERE status = 'pending' AND next_attempt_at <= now()) AS due,
-            count(*) FILTER (WHERE status = 'failed')                               AS failed,
-            count(*) FILTER (WHERE status = 'delivered'
-                              AND delivered_at > now() - interval '24 hours')       AS delivered_24h
-       FROM partner_webhook_deliveries`,
-  );
-  const r = rows[0]!;
+  /** Landed inside {@link BACKLOG_WINDOW_HOURS}. */
+  delivered: number;
+  /** Reported rather than assumed, so the two counts above cannot be misread. */
+  window_hours: number;
+}
+
+/**
+ * Ops view: how much of the delivery backlog is owed, stuck or gone terminal.
+ *
+ * Three statements rather than one, and the reason is the plan rather than the
+ * prose. This was a single pass with four `FILTER` aggregates over the whole
+ * table, which is one access path for four different questions: the planner can
+ * only pick one, and with an unfiltered `count(*) FILTER (WHERE status =
+ * 'failed')` in the list the only path that answers all four is a sequential
+ * scan of every delivery the platform has ever recorded. The partial index 0103
+ * added for the claim was right there and unusable, because the query was not
+ * asking a question it could answer.
+ *
+ * Split, each statement asks for one region and gets its own index: the live
+ * pair off `partner_webhook_deliveries_claim_idx`, and the two settled counts
+ * off the partial indexes on `created_at`/`delivered_at` added in 0180. Issued
+ * together, so the round trips overlap and the cost is one of them.
+ *
+ * This matters more than a triage endpoint usually would because of where it is
+ * read from: `GET /admin/system/metrics` composes it, and that endpoint is
+ * deliberately uncached and is opened during an incident — which is exactly
+ * when a full scan of the largest append-only table in the schema is the last
+ * thing the database needs to be doing.
+ */
+export async function deliveryBacklogStats(
+  pool: pg.Pool,
+  opts: { windowHours?: number } = {},
+): Promise<DeliveryBacklog> {
+  const windowHours = opts.windowHours ?? BACKLOG_WINDOW_HOURS;
+  const [live, failed, delivered] = await Promise.all([
+    pool.query<{ pending: string; due: string }>(
+      // Both counts are over the same small region, so one statement covers
+      // them and the partial index is still the path.
+      `SELECT count(*)                                          AS pending,
+              count(*) FILTER (WHERE next_attempt_at <= now())  AS due
+         FROM partner_webhook_deliveries
+        WHERE status = 'pending'`,
+    ),
+    pool.query<{ n: string }>(
+      `SELECT count(*) AS n FROM partner_webhook_deliveries
+        WHERE status = 'failed' AND created_at > now() - ($1 || ' hours')::interval`,
+      [String(windowHours)],
+    ),
+    pool.query<{ n: string }>(
+      // On `delivered_at`, not `created_at`: an event that spent six hours in
+      // the ladder was delivered today and created yesterday, and "delivered in
+      // the last day" is a claim about when it landed.
+      `SELECT count(*) AS n FROM partner_webhook_deliveries
+        WHERE status = 'delivered' AND delivered_at > now() - ($1 || ' hours')::interval`,
+      [String(windowHours)],
+    ),
+  ]);
   return {
-    pending: Number(r.pending),
-    due: Number(r.due),
-    failed: Number(r.failed),
-    delivered_24h: Number(r.delivered_24h),
+    pending: Number(live.rows[0]!.pending),
+    due: Number(live.rows[0]!.due),
+    failed: Number(failed.rows[0]!.n),
+    delivered: Number(delivered.rows[0]!.n),
+    window_hours: windowHours,
   };
 }
 

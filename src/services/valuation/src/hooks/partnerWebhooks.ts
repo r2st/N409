@@ -60,6 +60,11 @@ export type LookupFn = (hostname: string) => Promise<{ address: string }[]>;
 
 const defaultLookup: LookupFn = (hostname) => lookup(hostname, { all: true });
 
+/**
+ * The POST's own ceiling. `DELIVERY_ATTEMPT_BUDGET_MS` in the domain is the
+ * whole attempt around it — the DNS lookup in front and the settle write behind
+ * — and is what the claim lease is derived from; this bounds only the request.
+ */
 const DELIVERY_TIMEOUT_MS = 10_000;
 
 /**
@@ -176,26 +181,39 @@ async function postDelivery(
   }
 }
 
+/**
+ * What one attempt did to its row.
+ *
+ * `superseded` is not an outcome of the POST — it is the row refusing this
+ * outcome because another sweeper has owned it since this one took it. See
+ * `settleDelivery`: the request was made and may well have arrived, but the
+ * record of it belongs to whoever holds the row now, and writing over them
+ * would resurrect a settled delivery.
+ */
+export type AttemptOutcome = 'delivered' | 'failed' | 'retrying' | 'superseded';
+
 /** Writes an attempt's outcome back to the row, scheduling the next try. */
 async function settle(
   deps: WebhookDeps,
   delivery: Pick<WebhookDeliveryRow, 'id' | 'attempts' | 'max_attempts'>,
   result: AttemptResult,
-): Promise<'delivered' | 'failed' | 'retrying'> {
+): Promise<AttemptOutcome> {
   if (result.ok) {
-    await settleDelivery(deps.pool, delivery.id, { status: 'delivered' });
-    return 'delivered';
+    const applied = await settleDelivery(deps.pool, delivery.id, { status: 'delivered' }, delivery.attempts);
+    return applied ? 'delivered' : 'superseded';
   }
   const next = result.permanent
     ? null
     : nextAttemptAt(delivery.attempts, delivery.max_attempts, new Date(), {
         retryAfterSeconds: result.retryAfterSeconds,
       });
-  await settleDelivery(deps.pool, delivery.id, {
-    status: 'failed',
-    error: result.error,
-    nextAttemptAt: next,
-  });
+  const applied = await settleDelivery(
+    deps.pool,
+    delivery.id,
+    { status: 'failed', error: result.error, nextAttemptAt: next },
+    delivery.attempts,
+  );
+  if (!applied) return 'superseded';
   return next === null ? 'failed' : 'retrying';
 }
 
@@ -206,7 +224,7 @@ export async function deliverToWebhook(
   event: WebhookEventType,
   payload: Record<string, unknown>,
   valuationId?: string | null,
-): Promise<'delivered' | 'failed' | 'retrying'> {
+): Promise<AttemptOutcome> {
   const delivery = await recordDelivery(deps.pool, {
     webhookId: webhook.id,
     eventType: event,
@@ -226,6 +244,15 @@ export async function deliverToWebhook(
     deps.log?.warn(
       { webhookId: webhook.id, event, outcome, error: result.error },
       'partner webhook delivery failed',
+    );
+  }
+  if (outcome === 'superseded') {
+    // Only reachable if something re-claimed a row this call inserted moments
+    // ago and still holds. Logged rather than swallowed: the outcome above was
+    // discarded, and the row now says whatever the other writer decided.
+    deps.log?.warn(
+      { deliveryId: delivery.id, webhookId: webhook.id, event },
+      'partner webhook delivery outcome discarded: the row was claimed by another sweeper',
     );
   }
   return outcome;
@@ -252,7 +279,20 @@ export async function deliverToWebhook(
  */
 export async function retryDueDeliveries(
   deps: WebhookDeps & { limit?: number; leaseMs?: number },
-): Promise<{ attempted: number; delivered: number; retrying: number; failed: number; reaped: number }> {
+): Promise<{
+  attempted: number;
+  delivered: number;
+  retrying: number;
+  failed: number;
+  reaped: number;
+  /**
+   * Attempts whose outcome was refused because the row had moved on — the
+   * count of duplicate deliveries this pass made. Reported rather than folded
+   * into `failed`, because it says something about *us* rather than about any
+   * receiver, and a non-zero value here means two sweepers are overlapping.
+   */
+  superseded: number;
+}> {
   // See the note in hooks/emailRetry.ts: claiming nothing is what makes
   // FLAG_RETRY_LADDERS a pause rather than a loss. A pending delivery keeps its
   // backoff stamp and its attempt count, and resumes when the flag goes back on.
@@ -262,7 +302,7 @@ export async function retryDueDeliveries(
   // the ladders are paused, "still pending" is the honest reading of every
   // unsettled row rather than a claim about this one in particular.
   if (!flagEnabled(FLAGS.retryLadders)) {
-    return { attempted: 0, delivered: 0, retrying: 0, failed: 0, reaped: 0 };
+    return { attempted: 0, delivered: 0, retrying: 0, failed: 0, reaped: 0, superseded: 0 };
   }
 
   const abandoned = await failExhaustedDeliveries(deps.pool, { leaseMs: deps.leaseMs, limit: deps.limit });
@@ -281,6 +321,7 @@ export async function retryDueDeliveries(
   let delivered = 0;
   let retrying = 0;
   let failed = 0;
+  let superseded = 0;
   for (const row of claimed) {
     const result = await postDelivery(
       { url: row.url, secret: row.secret },
@@ -293,7 +334,17 @@ export async function retryDueDeliveries(
     const outcome = await settle(deps, row, result);
     if (outcome === 'delivered') delivered += 1;
     else if (outcome === 'retrying') retrying += 1;
-    else {
+    else if (outcome === 'superseded') {
+      superseded += 1;
+      // Warn, not info: this pass POSTed an event a concurrent sweeper was also
+      // POSTing, so the partner's receiver saw it twice. Nothing else records
+      // that, and the row itself cannot — it carries the other sweeper's
+      // outcome and looks entirely ordinary.
+      deps.log?.warn(
+        { deliveryId: row.id, webhookId: row.webhook_id, event: row.event_type, attempts: row.attempts },
+        'partner webhook delivery outcome discarded: the row was re-claimed mid-attempt',
+      );
+    } else {
       failed += 1;
       deps.log?.warn(
         { deliveryId: row.id, webhookId: row.webhook_id, event: row.event_type, attempts: row.attempts },
@@ -301,7 +352,7 @@ export async function retryDueDeliveries(
       );
     }
   }
-  return { attempted: claimed.length, delivered, retrying, failed, reaped: abandoned.length };
+  return { attempted: claimed.length, delivered, retrying, failed, reaped: abandoned.length, superseded };
 }
 
 /**
