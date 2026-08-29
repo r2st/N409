@@ -99,6 +99,8 @@ export async function sendTransactionalEmail(
       deps.log?.warn({ err: bookErr, emailId: email.id }, 'could not record bounce');
       return null;
     });
+    // `emailId` is what the retry sweep will log this row under when it comes
+    // back for it, so this line and every later attempt share one join key.
     deps.log?.warn({ err, emailId: email.id, bounce }, 'transactional email delivery failed; left in outbox');
   }
 }

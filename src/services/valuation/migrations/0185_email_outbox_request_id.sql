@@ -1,0 +1,22 @@
+-- What asked for this message.
+--
+-- The outbox is the one place this platform hands work from a request to a
+-- background sweep. A receipt queued inside the Stripe webhook and delivered
+-- three retries later by the email sweep is two log lines with nothing in
+-- common: the enqueue side carries `requestId` and never mentions the row, the
+-- retry side carries `emailId` and cannot know what asked for it. So the chain
+-- an incident is reconstructed along — Stripe event, payment update,
+-- notification — stopped at the outbox and could not be picked up on the other
+-- side.
+--
+-- Nullable on purpose, and null is not "unknown": rows queued by the drip scan
+-- and the other sweeps have no request behind them, and inventing one would
+-- make "no request_id" stop meaning "nobody asked for this". Same rule the
+-- correlation id follows everywhere else in the estate (requestContext.ts), and
+-- the same shape `network_items.request_id` has carried since it was added.
+--
+-- No index. Nothing queries by it — this column is read off a row already
+-- found by id, and written once — and an index on a column that only ever
+-- appears in `RETURNING *` is write cost for nothing.
+ALTER TABLE email_outbox
+    ADD COLUMN IF NOT EXISTS request_id text;

@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { newUlid } from '@n409/shared';
+import { currentRequestId, newUlid } from '@n409/shared';
 import { EMAIL_JITTER_FLOOR, EMAIL_MAX_ATTEMPTS, EMAIL_RETRY_BACKOFF_MINUTES } from '../domain/emailRetry.js';
 import { isSuppressed } from './emailDelivery.js';
 import { SUPPRESSION_EXEMPT_TEMPLATES, type BounceKind } from '../domain/emailDelivery.js';
@@ -52,6 +52,13 @@ export interface EmailOutboxRow {
   first_opened_at: Date | null;
   last_opened_at: Date | null;
   open_count: number;
+  /**
+   * The request that queued this message, when one did (migration 0185).
+   *
+   * Null for a row the drip scan or another sweep produced, which is the honest
+   * answer rather than a missing one — see the migration.
+   */
+  request_id: string | null;
 }
 
 export async function enqueueEmail(
@@ -86,8 +93,8 @@ export async function enqueueEmail(
       : await isSuppressed(db, input.toEmail);
 
   const { rows } = await db.query<EmailOutboxRow>(
-    `INSERT INTO email_outbox (id, valuation_id, to_user_id, to_email, channel, template_key, subject, body, promotional, status, error)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::email_status, $11)
+    `INSERT INTO email_outbox (id, valuation_id, to_user_id, to_email, channel, template_key, subject, body, promotional, status, error, request_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::email_status, $11, $12)
      RETURNING *`,
     [
       newUlid(),
@@ -103,6 +110,12 @@ export async function enqueueEmail(
       suppression
         ? `address suppressed (${suppression.reason}) since ${suppression.created_at.toISOString()}`
         : null,
+      // Read here rather than taken as a parameter: every caller would have to
+      // thread it, several of them are three frames from a route, and the
+      // AsyncLocalStorage already follows the work that outlives the response —
+      // which is exactly the work that queues these rows. Undefined outside a
+      // request, which is a sweep, and stored as null.
+      currentRequestId() ?? null,
     ],
   );
   return rows[0]!;

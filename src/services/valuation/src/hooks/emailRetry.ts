@@ -87,7 +87,22 @@ export async function retryFailedEmails(deps: {
         deps.log?.warn({ err: bookErr, emailId: email.id }, 'could not record bounce');
         return null;
       });
-      deps.log?.warn({ err, emailId: email.id, attempts: email.attempts, bounce }, 'email retry failed');
+      // `originRequestId` is the row's own `request_id` (migration 0185): the
+      // request that queued this message, which for a receipt is the Stripe
+      // webhook delivery that took the money. This line is written under a
+      // sweep and so carries no `requestId` of its own — correctly, nobody
+      // asked for it — and this is the field that reaches back across the
+      // handoff to the request that did.
+      deps.log?.warn(
+        {
+          err,
+          emailId: email.id,
+          originRequestId: email.request_id,
+          attempts: email.attempts,
+          bounce,
+        },
+        'email retry failed',
+      );
     }
   }
   return { attempted: claimed.length, sent };

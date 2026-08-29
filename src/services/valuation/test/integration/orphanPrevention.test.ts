@@ -43,6 +43,10 @@ const EXTERNAL: ReadonlyMap<string, string> = new Map([
   ['accounting_connections.external_org_id', "the accounting provider's organisation id"],
   ['cap_table_connections.external_company_id', "the cap-table provider's company id"],
   ['email_delivery_events.provider_event_id', "the ESP's own event id, for dedupe"],
+  // Not a row anywhere: the correlation id of the request that queued the
+  // message (0185), the same kind of value `network_items.request_id` holds,
+  // and null for a row a sweep queued.
+  ['email_outbox.request_id', 'the correlation id of the request that queued the message'],
   ['hris_connections.external_company_id', "the HRIS provider's company id"],
   ['invoices.stripe_invoice_id', 'Stripe'],
   ['network_items.request_id', "the requesting system's correlation id"],
