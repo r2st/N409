@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { findPaymentBySessionId, createPayment } from '../../src/repos/payments.js';
+import { findPaymentBySessionId, createPayment, recordRefund } from '../../src/repos/payments.js';
 import { findValuationById } from '../../src/repos/valuations.js';
 import { priceForKind } from '../../src/routes/payments.js';
 import {
@@ -168,5 +168,145 @@ describe.skipIf(!dbUp)('resuming an abandoned fulfilment', () => {
     expect((await findValuationById(ctx.pool, vid))?.paid_status).toBe('unpaid');
     expect((await findPaymentBySessionId(ctx.pool, 'cs_resume_3'))?.status).toBe('refunded');
     expect(await receivedCount(vid)).toBe(1);
+  });
+});
+
+/**
+ * The same shape on the way back out (round 203, methodology M5).
+ *
+ * `recordRefund` writes the figure and `revokePaidStatus` applies it, and the
+ * second is not wrapped. A failure between them 5xx's the webhook so Stripe
+ * comes back — to a row already carrying the full total, which is exactly what
+ * "not news" looks like. The handler returned, and the engagement stayed paid:
+ * a client with every cent back still holding a published 409A.
+ */
+describe.skipIf(!dbUp)('resuming an abandoned revocation', () => {
+  let ctx: TestApp;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET });
+  });
+  afterAll(async () => ctx?.teardown());
+
+  const deliver = (event: unknown) => {
+    const payload = JSON.stringify(event);
+    return ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/stripe/webhook',
+      headers: signedHeaders(payload),
+      payload,
+    });
+  };
+
+  /** A paid engagement with a settled payment row, ready to be refunded. */
+  async function seedPaid(company: string, sessionId: string, chargeId: string) {
+    const user = await seedUser(ctx, { roles: ['valuation_user'] });
+    const vid = (
+      await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(user.token),
+        payload: { kind: '409a', company_name: company },
+      })
+    ).json().valuation.id as string;
+    await createPayment(ctx.pool, {
+      valuationId: vid,
+      sessionId,
+      amountCents: priceForKind('409a'),
+      currency: 'USD',
+      createdBy: user.id,
+    });
+    await deliver({
+      id: `evt_paid_${chargeId}`,
+      type: 'checkout.session.completed',
+      created: T,
+      data: {
+        object: {
+          id: sessionId,
+          mode: 'payment',
+          payment_status: 'paid',
+          amount_total: priceForKind('409a'),
+        },
+      },
+    });
+    const payment = (await findPaymentBySessionId(ctx.pool, sessionId))!;
+    await ctx.pool.query(`UPDATE payments SET charge_id = $2 WHERE id = $1`, [payment.id, chargeId]);
+    return { vid, paymentId: payment.id };
+  }
+
+  const refunded = (eventId: string, chargeId: string, amountRefunded: number) => ({
+    id: eventId,
+    type: 'charge.refunded',
+    created: T,
+    data: { object: { id: chargeId, amount_refunded: amountRefunded } },
+  });
+
+  const reversedCount = async (valuationId: string) =>
+    Number(
+      (
+        await ctx.pool.query(
+          `SELECT count(*)::int AS n FROM notifications WHERE valuation_id = $1 AND type = 'payment_reversed'`,
+          [valuationId],
+        )
+      ).rows[0].n,
+    );
+
+  it('takes the engagement back when the first delivery only got as far as the money', async () => {
+    const { vid } = await seedPaid('Abandoned Revocation Co', 'cs_revoke_1', 'ch_revoke_1');
+
+    let fail = true;
+    const restore = interceptPoolQueries(ctx.pool, (sql) => {
+      if (fail && /UPDATE valuations SET/.test(sql)) throw new Error('pool timeout');
+      return undefined;
+    });
+    const first = await deliver(refunded('evt_revoke_1', 'ch_revoke_1', priceForKind('409a')));
+    restore();
+    expect(first.statusCode).toBeGreaterThanOrEqual(500);
+
+    // The state that used to be permanent: every cent back, engagement paid.
+    expect((await findPaymentBySessionId(ctx.pool, 'cs_revoke_1'))?.status).toBe('refunded');
+    expect((await findValuationById(ctx.pool, vid))?.paid_status).toBe('paid');
+
+    fail = false;
+    expect((await deliver(refunded('evt_revoke_1', 'ch_revoke_1', priceForKind('409a')))).statusCode).toBe(
+      200,
+    );
+    expect((await findValuationById(ctx.pool, vid))?.paid_status).toBe('unpaid');
+    expect(await reversedCount(vid)).toBe(1);
+  });
+
+  it('still says nothing on an ordinary redelivery of a refund that finished', async () => {
+    const { vid } = await seedPaid('Ordinary Refund Replay Co', 'cs_revoke_2', 'ch_revoke_2');
+
+    expect((await deliver(refunded('evt_revoke_2a', 'ch_revoke_2', priceForKind('409a')))).statusCode).toBe(
+      200,
+    );
+    expect((await findValuationById(ctx.pool, vid))?.paid_status).toBe('unpaid');
+    expect(await reversedCount(vid)).toBe(1);
+
+    expect((await deliver(refunded('evt_revoke_2b', 'ch_revoke_2', priceForKind('409a')))).statusCode).toBe(
+      200,
+    );
+    expect(await reversedCount(vid)).toBe(1);
+  });
+
+  it('refuses a smaller total that arrives after a larger one', async () => {
+    // Stripe sends one charge.refunded per refund, so a part refund and the
+    // rest of it are two events about one charge. Delivered out of order, the
+    // earlier one used to overwrite the later — leaving a part-refund figure on
+    // a row already marked refunded, and a revenue line netting off too little.
+    const { paymentId } = await seedPaid('Backwards Refund Co', 'cs_revoke_3', 'ch_revoke_3');
+    const full = priceForKind('409a');
+
+    expect(await recordRefund(ctx.pool, paymentId, { refundedCents: full, fullyRefunded: true })).not.toBe(
+      null,
+    );
+    expect(await recordRefund(ctx.pool, paymentId, { refundedCents: 5_000, fullyRefunded: false })).toBe(
+      null,
+    );
+
+    const row = await findPaymentBySessionId(ctx.pool, 'cs_revoke_3');
+    expect(Number(row?.refunded_cents)).toBe(full);
+    expect(row?.status).toBe('refunded');
   });
 });

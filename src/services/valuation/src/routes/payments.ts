@@ -576,16 +576,37 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     log: FastifyBaseLogger,
     payment: PaymentRow,
     reason: string,
+    /**
+     * Given only by `resumeRevocation`, where this may be racing the delivery
+     * that is still finishing the same reversal. A refused write means that one
+     * got there first, so this returns without alerting a second time. The
+     * ordinary path passes nothing: there the money coming back *is* the news
+     * and the alert has to go out even if the engagement had already been taken
+     * off paid by hand.
+     */
+    options: { expectedVersion?: number } = {},
   ): Promise<void> {
     const valuation = await findValuationById(deps.pool, payment.valuation_id);
     if (!valuation) return;
     if (valuation.paid_status === 'paid') {
-      await patchValuation(
-        deps.pool,
-        valuation,
-        { paid_status: 'unpaid', paid_at: null },
-        { actorType: 'system', source: 'stripe' },
-      );
+      try {
+        await patchValuation(
+          deps.pool,
+          valuation,
+          { paid_status: 'unpaid', paid_at: null },
+          { actorType: 'system', source: 'stripe' },
+          options,
+        );
+      } catch (err) {
+        if (options.expectedVersion !== undefined && err instanceof ApiProblem && err.status === 409) {
+          log.info(
+            { valuationId: valuation.id },
+            'another delivery of this reversal got to the engagement first',
+          );
+          return;
+        }
+        throw err;
+      }
     }
     await alertBilling(log, {
       valuationId: valuation.id,
@@ -762,16 +783,22 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     // from the valuation's, because the valuation may legitimately not be
     // 'paid' (a partner-paid engagement, one an operator already corrected) —
     // and a redelivery that found it so would otherwise alert every time.
-    const alreadyKnown = Number(payment.refunded_cents) >= state.refundedCents;
-    if (alreadyKnown) return { received: true, refunded: payment.status === 'refunded' };
-
-    await recordRefund(deps.pool, payment.id, {
+    //
+    // Asked of the UPDATE rather than of a read before it. The read is right
+    // about a sequential redelivery and blind to a simultaneous one: Stripe
+    // sends one `charge.refunded` per refund, so a part refund and the rest of
+    // it are two events about one charge that can be in flight together, and
+    // both saw the old total and both decided theirs was news — two alerts, and
+    // the smaller figure left on the row if its UPDATE landed second. See
+    // `recordRefund`.
+    const recorded = await recordRefund(deps.pool, payment.id, {
       refundedCents: state.refundedCents,
       fullyRefunded: state.fullyRefunded,
     });
+    if (!recorded) return resumeRevocation(log, payment);
 
     if (state.fullyRefunded) {
-      await revokePaidStatus(log, payment, 'The payment was refunded in full.');
+      await revokePaidStatus(log, recorded, 'The payment was refunded in full.');
     } else {
       const valuation = await findValuationById(deps.pool, payment.valuation_id);
       await alertBilling(log, {
@@ -792,6 +819,43 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       });
     }
     return { received: true, refunded: state.fullyRefunded };
+  }
+
+  /**
+   * A refund whose figure is already on file but whose consequence never was.
+   *
+   * The same shape as `resumeAbandoned` on the fulfilment path, on the way back
+   * out. `recordRefund` is one statement and `revokePaidStatus` is another, and
+   * the second is not wrapped — a pool timeout between them 5xx's the webhook
+   * so that Stripe comes back. What it came back to was a row already carrying
+   * the full total, which the compare-and-set declines, so the handler returned
+   * and the engagement stayed `paid`: a client with every cent back, still
+   * holding a published 409A, and no alert to say so. Redelivery repeated the
+   * same nothing until Stripe gave up.
+   *
+   * Only when the row is fully 'refunded' *and* the engagement is still 'paid',
+   * which is that unfinished state and nothing else — an ordinary redelivery of
+   * a revocation that completed finds it 'unpaid'. Version-conditional for the
+   * reason the fulfilment resume is: the delivery running beside this one may be
+   * between its own two statements, and one reversal must produce one alert.
+   */
+  async function resumeRevocation(
+    log: FastifyBaseLogger,
+    payment: PaymentRow,
+  ): Promise<{ received: boolean; refunded: boolean }> {
+    const current = await findPaymentForValuation(deps.pool, payment.valuation_id, payment.id);
+    const refunded = current?.status === 'refunded';
+    if (!current || !refunded) return { received: true, refunded };
+    const valuation = await findValuationById(deps.pool, current.valuation_id);
+    if (valuation?.paid_status !== 'paid') return { received: true, refunded };
+    log.warn(
+      { paymentId: current.id, valuationId: current.valuation_id },
+      'resuming a refund that reversed the payment but never the engagement',
+    );
+    await revokePaidStatus(log, current, 'The payment was refunded in full.', {
+      expectedVersion: valuation.version,
+    });
+    return { received: true, refunded };
   }
 
   /**

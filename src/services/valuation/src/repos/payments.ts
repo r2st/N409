@@ -171,6 +171,19 @@ export async function findPaymentByChargeOrIntent(
  * leaves it 'succeeded', because the client still bought and still holds the
  * report. `refunded_at` is stamped once and never moved, so it means "when the
  * money first started coming back" even across several partial refunds.
+ *
+ * `refunded_cents < $2` makes it a compare-and-set, and the null it returns is
+ * the caller's signal that this figure is not news. The handler used to decide
+ * that with a read — `payment.refunded_cents >= state.refundedCents` — which
+ * answers a *sequential* redelivery correctly and cannot answer a concurrent
+ * one at all. Stripe sends one `charge.refunded` per refund, so a partial
+ * refund and the rest of it are two events about one charge that can be in
+ * flight together: both read the old total, both decided theirs was news, and
+ * whichever UPDATE landed last won. That is how the smaller figure ends up
+ * stored under an already-'refunded' status — an engagement showing a part
+ * refund of money that all came back, and a revenue line netting off too
+ * little. It is the same guard `recordInvoiceRefund` has always had on the
+ * subscription side; the payment side did it in the wrong place.
  */
 export async function recordRefund(
   pool: pg.Pool,
@@ -183,7 +196,7 @@ export async function recordRefund(
          refunded_at = COALESCE(refunded_at, now()),
          status = CASE WHEN $3 THEN 'refunded'::payment_status ELSE status END,
          updated_at = now()
-     WHERE id = $1
+     WHERE id = $1 AND refunded_cents < $2
      RETURNING *`,
     [id, args.refundedCents, args.fullyRefunded],
   );
