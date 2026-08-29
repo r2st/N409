@@ -83,4 +83,53 @@ describe('SAML identity extraction (feature 9)', () => {
     expect(extractIdentity({ nameID: 'nid@corp.com' }).email).toBe('nid@corp.com');
     expect(extractIdentity({ nameID: 'opaque-id' }).email).toBeNull();
   });
+
+  /**
+   * The multi-valued claim (round 201, M6).
+   *
+   * node-saml collapses a single `AttributeValue` to a string and leaves
+   * several as an array. `mail`, `givenName` and `sn` are all multi-valued in
+   * the LDAP schema every AD- and OpenLDAP-backed IdP builds its assertions
+   * from, so an employee with a second address on their record sends a list —
+   * and the string check walked straight past it.
+   */
+  describe('a claim the IdP sent as a list', () => {
+    it('reads the address out of a multi-valued mail attribute', () => {
+      expect(
+        extractIdentity({ mail: ['Ada@Acme.com', 'ada.lovelace@acme.com'], nameID: 'opaque-id' }).email,
+      ).toBe('ada@acme.com');
+    });
+
+    it('does not fall through to an opaque nameID when the address was there', () => {
+      // The failure this replaces: 401 "SAML assertion has no email", for every
+      // user in that directory, about an assertion that carried one.
+      const identity = extractIdentity({
+        'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress': ['ada@acme.com'],
+        nameID: 'AAAAAA==-persistent-entra-id',
+      });
+      expect(identity.email).toBe('ada@acme.com');
+    });
+
+    it('reads multi-valued display names', () => {
+      expect(
+        extractIdentity({ mail: 'a@acme.com', givenName: ['Ada'], surname: ['Lovelace', 'Byron'] }),
+      ).toEqual({ email: 'a@acme.com', firstName: 'Ada', lastName: 'Lovelace' });
+    });
+
+    it('skips the values in the list it cannot use', () => {
+      expect(extractIdentity({ mail: ['', '   ', 42, 'ada@acme.com'] }).email).toBe('ada@acme.com');
+    });
+
+    it('still refuses a list whose first usable value is too long to store', () => {
+      // Same rule as the scalar: over the bound the claim is dropped rather
+      // than truncated, and a dropped address is a 401 rather than an account
+      // nobody can email.
+      expect(extractIdentity({ mail: [`${'a'.repeat(400)}@acme.com`] }).email).toBeNull();
+      expect(extractIdentity({ mail: 'a@acme.com', givenName: ['x'.repeat(200)] }).firstName).toBeNull();
+    });
+
+    it('reads an empty list as an absent claim', () => {
+      expect(extractIdentity({ mail: [], nameID: 'nid@corp.com' }).email).toBe('nid@corp.com');
+    });
+  });
 });

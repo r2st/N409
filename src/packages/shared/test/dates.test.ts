@@ -67,6 +67,24 @@ describe('isIsoCalendarDate', () => {
     expect(isIsoCalendarDate('0004-02-29')).toBe(true);
     expect(isIsoCalendarDate('0100-02-29')).toBe(false);
   });
+
+  it('rejects year zero, which SQL has no day in (R201)', () => {
+    // ISO 8601's calendar has a year zero and SQL's does not — it runs 1 BC
+    // straight to 1 AD — so Postgres answers `22008 date/time field value out
+    // of range` for every day in it. This predicate decides what may reach a
+    // `date` column, and these passed it and then failed in the driver: a 500
+    // where every other malformed day is a 422 naming the field.
+    for (const d of ['0000-01-01', '0000-02-29', '0000-12-31']) {
+      expect(isIsoCalendarDate(d), d).toBe(false);
+    }
+    // The year below it is real and storable, and stays accepted — the typo
+    // case above is a range question, not a validity one.
+    expect(isIsoCalendarDate('0001-01-01')).toBe(true);
+  });
+
+  it('says why a year-zero date is refused', () => {
+    expect(isoCalendarDateError('0000-01-01')).toBe('0000-01-01 is not a real calendar date');
+  });
 });
 
 describe('isoCalendarDateError', () => {

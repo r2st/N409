@@ -7,6 +7,8 @@
  */
 
 import { isIsoCalendarDate } from '@n409/shared';
+import { isStorableEmail, MAX_EMAIL_LENGTH } from '../domain/email.js';
+import { INT4_MAX } from '../domain/int4.js';
 import { clampScheduleMonths } from '../domain/vesting.js';
 import { IMPORT_TIMEOUT_MS, IntegrationError, OAUTH_TIMEOUT_MS, readJson, withDeadline } from './deadline.js';
 
@@ -117,8 +119,10 @@ export async function exchangeCode(
     accessToken: body.access_token,
     refreshToken: body.refresh_token ?? null,
     expiresAt: body.expires_in ? new Date(Date.now() + body.expires_in * 1000) : null,
-    externalCompanyId: body.company_id ?? null,
-    externalCompanyName: body.company_name ?? null,
+    // Both go straight onto `hris_connections` as `text`; both are whatever the
+    // provider's token response had at those keys, cast rather than checked.
+    externalCompanyId: storableText(body.company_id, MAX_COMPANY_NAME),
+    externalCompanyName: storableText(body.company_name, MAX_COMPANY_NAME),
   };
 }
 
@@ -157,6 +161,82 @@ const toDate = (v: unknown): string | null => {
   return isIsoCalendarDate(d) ? d : null;
 };
 
+/**
+ * The bounds `POST /api/v1/valuations/:id/grants` enforces in zod, applied to
+ * the payload a provider sends.
+ *
+ * `toDate` and `clampScheduleMonths` above each state the rule this block
+ * generalises: *hold the import to what the form is held to, because a
+ * provider's payload is no more trustworthy than a form's*. Those two covered
+ * the date and the three month figures. The rest of the grant went from the
+ * provider's JSON into the INSERT unmeasured, and every one of the following
+ * is a row Postgres refuses rather than a number that is merely wrong:
+ *
+ *   `options_count integer NOT NULL CHECK (> 0)` — `shares: 1e300` maps to
+ *     `Math.round(1e300)` and arrives as `22003 value out of range for type
+ *     integer`.
+ *   `exercise_price numeric NOT NULL CHECK (>= 0)` — a negative strike is a
+ *     check violation.
+ *   `option_grants_external_idx` is a unique b-tree over
+ *     `(valuation_id, external_id)`, so an id past roughly 2.7 KB fails with
+ *     `54000 index row size exceeds btree version 4 maximum`.
+ *   `U+0000` in any text has no UTF-8 encoding Postgres accepts — the estate
+ *     refuses it on the way in (`domain/nulBytes.ts`), and that hook guards
+ *     *request* bodies. This is the path where text arrives from outside
+ *     without passing it.
+ *
+ * What each of those costs is the same thing, and it is not one bad grant.
+ * `syncHrisConnection` inserts in a loop; a row the driver refuses throws out
+ * of it, so the grants before it stay written, the grants after it are never
+ * attempted, and the connection is left in `error` with a count instead of a
+ * roster. One malformed record in a directory of four hundred stops the
+ * import, every time it is retried, until somebody edits the provider's data.
+ *
+ * So a grant that cannot be stored is dropped here, where `mapGrant` already
+ * drops one with no date, no options or no external id — and the number
+ * dropped is counted and reported (`HrisSyncOutcome.grants_rejected`) rather
+ * than being a silence the analyst has to notice.
+ */
+const MAX_GRANTEE_NAME = 200;
+const MAX_EXTERNAL_ID = 255;
+const MAX_EXERCISE_PRICE = 1e9;
+/** `hris_connections.external_company_name`, which no index covers. */
+const MAX_COMPANY_NAME = 255;
+
+/**
+ * A provider string this platform will store, trimmed — or null.
+ *
+ * Null rather than a truncation, for the reason `extractIdentity` gives about
+ * SAML claims: half a value presented as whole is the silent corruption this
+ * codebase avoids elsewhere. What null then *means* is the caller's decision —
+ * a missing company name is cosmetic, a missing external id makes the grant
+ * unimportable — which is why this returns the absence rather than deciding.
+ */
+function storableText(value: unknown, max: number): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > max) return null;
+  return trimmed.includes('\u0000') ? null : trimmed;
+}
+
+/**
+ * Anything the mapper is handed that should be a list of records.
+ *
+ * `payload.employees` is whatever the provider's JSON had at that key, and
+ * `for (const emp of people)` on an object threw `people is not iterable`
+ * while a `null` element threw `Cannot read properties of null`. Both escaped
+ * `mapEmployees` into `fetchRosterAndGrants`'s caller, which records
+ * `describeTransportFailure(err)` on the connection — so a shape the mapper
+ * could not walk was written to `last_error`, shown to the analyst verbatim by
+ * `toPublic`, and attributed to the *transport*: "Cannot read properties of
+ * null (reading 'fullName')" on screen, under a connection that reads as a
+ * network problem.
+ */
+function records(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null);
+}
+
 export interface RosterEmployee {
   external_id: string;
   name: string;
@@ -184,6 +264,8 @@ export interface HrisPull {
   external_company_name: string | null;
   roster: RosterEmployee[];
   grants: MappedGrant[];
+  /** Grants the provider sent that this platform will not store. */
+  rejected: number;
 }
 
 /**
@@ -198,8 +280,25 @@ function mapGrant(
 ): MappedGrant | null {
   const options = toNum(raw.optionsGranted ?? raw.shares ?? raw.quantity);
   const grantDate = toDate(raw.grantDate ?? raw.issueDate ?? raw.date);
-  const externalId = String(raw.id ?? raw.grantId ?? '').trim();
+  // `String(raw.id)` turned an object into `"[object Object]"` and a 5 KB
+  // string into a b-tree the index cannot take. The id is what makes a re-sync
+  // idempotent, so an unstorable one is not a field to drop — it is a grant
+  // that would be re-imported on every pass.
+  const externalId = storableText(raw.id ?? raw.grantId, MAX_EXTERNAL_ID);
   if (!options || options <= 0 || !grantDate || !externalId) return null;
+  // `Math.round` first, because that is the value the column receives:
+  // `1e300` is a perfectly finite number and an `integer` it is not.
+  const optionsCount = Math.round(options);
+  if (!Number.isSafeInteger(optionsCount) || optionsCount < 1 || optionsCount > INT4_MAX) return null;
+  // `grantee_name` is `NOT NULL`, so an unstorable one has nothing to fall back
+  // to; the manual route bounds it at 200 and so does this.
+  const name = storableText(granteeName, MAX_GRANTEE_NAME);
+  if (!name) return null;
+  // The strike is a `numeric CHECK (>= 0)` and the form stops at 1e9. Refused
+  // rather than clamped: a price is the grant's economics, and a clamped one is
+  // a number nobody chose sitting in an ASC 718 expense calculation.
+  const exercisePrice = toNum(raw.strikePrice ?? raw.exercisePrice) ?? 0;
+  if (exercisePrice < 0 || exercisePrice > MAX_EXERCISE_PRICE) return null;
   const vesting = (raw.vesting ?? raw.vestingSchedule ?? {}) as Record<string, unknown>;
   // Bounded to the same range the grant routes enforce in zod. This path wrote
   // whatever the provider sent straight onto the row, so a schedule `POST
@@ -213,11 +312,15 @@ function mapGrant(
   });
   return {
     external_id: externalId,
-    grantee_name: granteeName,
+    grantee_name: name,
+    // Nulled rather than refused, unlike the name: the column is nullable, the
+    // manual route accepts a grant without one, and an address that is not an
+    // address identifies nobody — so the grant is still worth importing and the
+    // absence is visible on the row.
     grantee_email: granteeEmail,
     grant_date: grantDate,
-    options_count: Math.round(options),
-    exercise_price: toNum(raw.strikePrice ?? raw.exercisePrice) ?? 0,
+    options_count: optionsCount,
+    exercise_price: exercisePrice,
     vesting_start_date: toDate(vesting.startDate ?? raw.vestingStartDate) ?? grantDate,
     vesting_months: months.vestingMonths,
     cliff_months: months.cliffMonths,
@@ -230,20 +333,27 @@ function mapGrant(
  * carry an `equityGrants` array. We flatten to a roster + a grant list. The
  * shapes are close enough that one mapper covers them with lenient field names.
  */
-export function mapEmployees(payload: unknown): { roster: RosterEmployee[]; grants: MappedGrant[] } {
-  const p = payload as {
-    employees?: Array<Record<string, unknown>>;
-    people?: Array<Record<string, unknown>>;
-  };
-  const people = p.employees ?? p.people ?? [];
+export function mapEmployees(payload: unknown): {
+  roster: RosterEmployee[];
+  grants: MappedGrant[];
+  /** Grants the provider sent that this platform will not store — see the bounds above. */
+  rejected: number;
+} {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const people = records(p.employees ?? p.people);
   const roster: RosterEmployee[] = [];
   const grants: MappedGrant[] = [];
+  let rejected = 0;
   for (const emp of people) {
     const name =
       String(emp.fullName ?? emp.name ?? [emp.firstName, emp.lastName].filter(Boolean).join(' ')).trim() ||
       'Unknown';
-    const email =
-      typeof emp.workEmail === 'string' ? emp.workEmail : typeof emp.email === 'string' ? emp.email : null;
+    // An address the platform can store, or none. `grantee_email` is what a
+    // notice and an auditor's workbook are addressed to, and `email` on a
+    // provider record is free text: `mapEmployees` used to pass through
+    // `"n/a"`, an empty-domain address, or four kilobytes of one.
+    const claimed = emp.workEmail ?? emp.email;
+    const email = isStorableEmail(storableText(claimed, MAX_EMAIL_LENGTH)) ? String(claimed).trim() : null;
     roster.push({
       external_id: String(emp.id ?? emp.employeeId ?? email ?? name),
       name,
@@ -255,16 +365,13 @@ export function mapEmployees(payload: unknown): { roster: RosterEmployee[]; gran
         (typeof emp.employmentStatus === 'string' && emp.employmentStatus) ||
         null,
     });
-    const empGrants = (emp.equityGrants ?? emp.grants ?? emp.equity) as
-      Array<Record<string, unknown>> | undefined;
-    if (Array.isArray(empGrants)) {
-      for (const g of empGrants) {
-        const mapped = mapGrant(g, name, email);
-        if (mapped) grants.push(mapped);
-      }
+    for (const g of records(emp.equityGrants ?? emp.grants ?? emp.equity)) {
+      const mapped = mapGrant(g, name, email);
+      if (mapped) grants.push(mapped);
+      else rejected++;
     }
   }
-  return { roster, grants };
+  return { roster, grants, rejected };
 }
 
 export async function fetchRosterAndGrants(
@@ -282,11 +389,17 @@ export async function fetchRosterAndGrants(
   if (!res.ok)
     throw new IntegrationError(`${HRIS_PROVIDER_LABELS[provider]} roster fetch failed (${res.status})`);
   const payload = await readJson(res, HRIS_PROVIDER_LABELS[provider]);
-  const { roster, grants } = mapEmployees(payload);
+  const { roster, grants, rejected } = mapEmployees(payload);
   return {
     provider,
-    external_company_name: (payload.companyName as string | undefined) ?? tokens.externalCompanyName ?? null,
+    // The cast said this was a string; `readJson` guarantees an object and
+    // nothing about its fields, so a `companyName` that is an object reached
+    // `hris_connections.external_company_name` as whatever the driver made of
+    // it, and one of any length reached a `text` column unmeasured.
+    external_company_name:
+      storableText(payload.companyName, MAX_COMPANY_NAME) ?? tokens.externalCompanyName ?? null,
     roster,
     grants,
+    rejected,
   };
 }

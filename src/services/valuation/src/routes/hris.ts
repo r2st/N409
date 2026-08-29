@@ -89,6 +89,18 @@ export interface HrisSyncOutcome {
   grants_found: number;
   grants_created: number;
   grants_skipped: number;
+  /**
+   * Grants the provider sent that this platform will not store — a strike
+   * price below zero, an options count past `integer`, an external id longer
+   * than the unique index can hold, a NUL in a text field.
+   *
+   * Reported rather than silently absent, for the reason every other cap in
+   * this estate is reported: `mapEmployees` drops these so that one malformed
+   * record cannot end the whole import, and a drop nobody is told about is a
+   * roster that reads as complete. `grants_found` counts what could be mapped,
+   * so `found + rejected` is what the provider actually sent.
+   */
+  grants_rejected: number;
   external_company_name: string | null;
 }
 
@@ -207,6 +219,7 @@ export async function syncHrisConnection(
     grants_found: pull.grants.length,
     grants_created: created,
     grants_skipped: skipped,
+    grants_rejected: pull.rejected,
     external_company_name: pull.external_company_name,
   };
   await recordSync(

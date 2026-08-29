@@ -4,7 +4,14 @@ import { createGrant, listGrants } from '../../src/repos/grants.js';
 import { existingGrantExternalIds } from '../../src/repos/hrisConnections.js';
 import { signCapTableSyncState, signHrisState } from '../../src/auth/jwt.js';
 import { runDueHrisSyncs } from '../../src/routes/hris.js';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  interceptPoolQueries,
+  isDbAvailable,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -273,38 +280,138 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
   });
 
   it("does not answer a driver error with the driver's wording", async () => {
-    // An options count past int4. `mapGrant` keeps it — it is finite, positive
-    // and has a usable date — so it reaches `options_count integer NOT NULL`
-    // and the insert loop, which has no catch of its own. The route's old
-    // catch-all forwarded whatever it caught, so the analyst was shown
-    // `Sync failed: value "3000000000" is out of range for type integer`:
-    // the driver's wording and a column type, from a code path nobody meant
-    // to publish. The connection's last-error row still records the real one.
+    /*
+     * The rule under test is the route's, not the mapper's: when
+     * `syncHrisConnection` throws something that is not an `IntegrationError`,
+     * the analyst gets this service's own constant and the real error goes to
+     * the log and the connection's last-error row.
+     *
+     * The vehicle used to be an options count past int4, which reached
+     * `options_count integer NOT NULL` and came back as `value "3000000000" is
+     * out of range for type integer`. R201 stopped that input at the mapper —
+     * see the case below — so the failure is staged at the driver directly.
+     * That is the more honest shape anyway: the claim is about what the route
+     * does with a database error, not about which payload happens to cause
+     * one.
+     */
+    const v = await connectedValuation();
+    const restore = interceptPoolQueries(ctx.pool, (sql) => {
+      if (!/INSERT INTO option_grants/i.test(sql)) return undefined;
+      const err = Object.assign(
+        new Error('duplicate key value violates unique constraint "option_grants_external_idx"'),
+        { code: '23505', constraint: 'option_grants_external_idx', table: 'option_grants' },
+      );
+      throw err;
+    });
+    try {
+      const pull = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+        headers: authHeader(ops.token),
+      });
+      expect(pull.statusCode).toBe(422);
+      const { detail } = pull.json();
+      expect(detail).toBe("Rippling sync failed \u2014 the details are in the connection's last error");
+      for (const leak of ['duplicate key', 'constraint', 'option_grants', 'external_idx'])
+        expect(detail, leak).not.toContain(leak);
+    } finally {
+      restore();
+    }
+  });
+
+  /**
+   * A provider record this platform will not store (round 201, M6).
+   *
+   * Each of these used to be mapped and handed to the driver, which refused
+   * the row — and the insert loop is not transactional, so the refusal ended
+   * the import with the grants before it written and the ones after it never
+   * attempted. On the next scheduled pass the same payload failed the same
+   * way. One bad record in a directory of four hundred meant nobody's grants
+   * imported, indefinitely.
+   *
+   * The fix holds the import to the bounds `POST /grants` enforces, drops what
+   * cannot be stored the way `mapGrant` already dropped a grant with no date —
+   * and *counts* the drops, so a short roster is visible rather than silent.
+   */
+  it.each([
+    ['an options count past int4', { optionsGranted: 3_000_000_000 }],
+    ['a negative strike price', { strikePrice: -5 }],
+    ['a strike price past the bound the form enforces', { strikePrice: 1e12 }],
+    ['an external id longer than the unique index can hold', { id: 'g'.repeat(4000) }],
+    ['an external id that is not a string', { id: { nested: true } }],
+    [
+      'a NUL byte in the grantee name, which no text column takes',
+      {},
+      { fullName: `Ada${String.fromCharCode(0)}Lovelace` },
+    ],
+    ['a grant date in year zero, which SQL has no day in', { grantDate: '0000-03-01' }],
+  ])('rejects %s without ending the import', async (_label, grantPatch, empPatch = {}) => {
+    rosterBody = {
+      companyName: 'Acme',
+      employees: [
+        {
+          id: 'bad',
+          fullName: 'Bad Record',
+          workEmail: 'bad@acme.com',
+          ...empPatch,
+          equityGrants: [
+            { id: 'bad-1', optionsGranted: 100, strikePrice: 1, grantDate: '2025-03-01', ...grantPatch },
+          ],
+        },
+        {
+          id: 'good',
+          fullName: 'Grace Hopper',
+          workEmail: 'grace@acme.com',
+          equityGrants: [{ id: 'good-1', optionsGranted: 250, strikePrice: 2, grantDate: '2025-04-01' }],
+        },
+      ],
+    };
+    const v = await connectedValuation();
+    const pull = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+      headers: authHeader(ops.token),
+    });
+    // The sync completes, and says what it would not take.
+    expect(pull.statusCode).toBe(200);
+    expect(pull.json()).toMatchObject({ grants_found: 1, grants_created: 1, grants_rejected: 1 });
+
+    // The employee after the bad record is imported, which is the half the
+    // aborted loop lost.
+    const { grants } = await listGrants(ctx.pool, v.id);
+    expect(grants.map((g) => g.external_id)).toEqual(['good-1']);
+  });
+
+  it('leaves the connection healthy after rejecting a record, so the next sync runs', async () => {
     rosterBody = {
       companyName: 'Acme',
       employees: [
         {
           id: 'e1',
           fullName: 'Ada Lovelace',
-          workEmail: 'ada@acme.com',
-          equityGrants: [
-            { id: 'huge', optionsGranted: 3_000_000_000, strikePrice: 1, grantDate: '2026-03-01' },
-          ],
+          equityGrants: [{ id: 'g1', optionsGranted: -1, grantDate: '2025-03-01' }],
         },
       ],
     };
     const v = await connectedValuation();
-
-    const pull = await ctx.app.inject({
+    await ctx.app.inject({
       method: 'POST',
       url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
       headers: authHeader(ops.token),
     });
-    expect(pull.statusCode).toBe(422);
-    const { detail } = pull.json();
-    expect(detail).toBe("Rippling sync failed \u2014 the details are in the connection's last error");
-    for (const leak of ['integer', 'out of range', 'option_grants', 'options_count', '3000000000'])
-      expect(detail, leak).not.toContain(leak);
+    const listed = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${v.id}/hris`,
+      headers: authHeader(ops.token),
+    });
+    const connection = listed
+      .json()
+      .providers.find((p: { provider: string }) => p.provider === 'rippling').connection;
+    // Not `error`, and no message: nothing failed. A record was refused at the
+    // door and reported in the summary, which is a different thing from the
+    // import breaking.
+    expect(connection.status).toBe('connected');
+    expect(connection.last_error).toBeNull();
   });
 
   it('forbids HRIS import for non-ops users', async () => {

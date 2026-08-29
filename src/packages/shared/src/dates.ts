@@ -38,6 +38,23 @@ function isLeapYear(year: number): boolean {
  * (`0202-05-14` is one slipped keystroke), and a check named "is this a real
  * date" should reject those for being out of range somewhere that says so —
  * not silently, here, for an unrelated reason.
+ *
+ * Year 0000 is the one exception to that, and it is not a range opinion.
+ * ISO 8601's proleptic Gregorian calendar has a year zero; SQL's calendar does
+ * not — it runs 1 BC straight to 1 AD — so Postgres answers
+ *
+ *     22008  date/time field value out of range: "0000-01-01"
+ *
+ * for every day in it. This predicate's entire job is to decide what may reach
+ * a `date` column, and `0000-02-14` passed every check here and then failed in
+ * the driver: a 500 on `POST /grants` where every other malformed day is a 422
+ * naming the field, and — on the HRIS import, whose dates come from a provider
+ * rather than a form — an error thrown out of the insert loop that leaves the
+ * grants before it written and the ones after it unattempted.
+ *
+ * Years 1 through 99 stay accepted deliberately, for the reason above: they are
+ * the typo case, they are storable, and refusing them is a range judgement that
+ * belongs to whatever is asking.
  */
 export function isIsoCalendarDate(value: string): boolean {
   const m = ISO_DATE_SHAPE.exec(value);
@@ -45,7 +62,7 @@ export function isIsoCalendarDate(value: string): boolean {
   const year = Number(m[1]);
   const month = Number(m[2]);
   const day = Number(m[3]);
-  if (month < 1 || month > 12 || day < 1) return false;
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
   const limit = month === 2 && isLeapYear(year) ? 29 : DAYS_IN_MONTH[month - 1]!;
   return day <= limit;
 }

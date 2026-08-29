@@ -23,6 +23,15 @@ interface PullResult {
   grants_found: number;
   grants_created: number;
   grants_skipped: number;
+  /**
+   * Grants the provider sent that this platform will not store — an options
+   * count past what the column holds, a negative strike, an external id longer
+   * than the index takes. The importer drops these so one malformed record
+   * cannot end the whole sync, which is only defensible if the drop is said
+   * out loud: without this line the analyst reads "Synced 240 employees · 198
+   * grants imported" and has no way to know two are missing.
+   */
+  grants_rejected: number;
 }
 
 /**
@@ -71,7 +80,10 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
     try {
       const r = await api<PullResult>(`/valuations/${valuationId}/hris/${provider}/pull`, { method: 'POST' });
       setNote(
-        `Synced ${r.roster_count} employees · ${r.grants_created} grants imported, ${r.grants_skipped} already present.`,
+        `Synced ${r.roster_count} employees · ${r.grants_created} grants imported, ${r.grants_skipped} already present.` +
+          (r.grants_rejected
+            ? ` ${r.grants_rejected} ${r.grants_rejected === 1 ? 'grant was' : 'grants were'} skipped — the provider's record could not be stored; check the record in the provider.`
+            : ''),
       );
       onImported();
       await load();

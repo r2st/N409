@@ -74,11 +74,38 @@ export function extractIdentity(profile: Record<string, unknown>): {
    * address is not: dropping it makes `email` null, and the caller answers 401.
    * Truncating either would be worse than both, since half an identity presented
    * as whole is the silent corruption this codebase avoids elsewhere.
+   *
+   * ## A claim may arrive as a list
+   *
+   * node-saml collapses an attribute with one `AttributeValue` to a string and
+   * leaves one with several as an array — and several is the normal case for a
+   * directory-backed IdP, because `mail`, `givenName` and `sn` are all
+   * multi-valued in the LDAP schema Active Directory and every OpenLDAP
+   * deployment build their assertions from. An employee with a second address
+   * on their record, or a maiden name still on `sn`, sends
+   *
+   *     { "mail": ["ada@acme.com", "ada.lovelace@acme.com"] }
+   *
+   * `typeof v === 'string'` is false for that, so the loop walked past a claim
+   * that was there, fell through every remaining key, and — for the address —
+   * reached `nameID`, which is a persistent opaque identifier in most Entra and
+   * Okta configurations rather than an address. The caller then answered 401
+   * "SAML assertion has no email" for an assertion that carried one.
+   *
+   * That is not a login this platform can retry into. It is every user in that
+   * directory, permanently, with a message blaming the IdP for omitting the one
+   * thing it sent — which is the worst possible sentence to hand the admin who
+   * has to fix the mapping.
+   *
+   * The first usable value wins, which is what an SP is expected to do with a
+   * multi-valued claim: the assertion offers alternatives, not a set.
    */
   const attr = (keys: string[], max = MAX_SSO_NAME): string | null => {
     for (const k of keys) {
-      const v = profile[k];
-      if (typeof v === 'string' && v.trim()) {
+      const raw: unknown = profile[k];
+      const values = Array.isArray(raw) ? raw : [raw];
+      for (const v of values) {
+        if (typeof v !== 'string' || !v.trim()) continue;
         const trimmed = v.trim();
         return trimmed.length <= max ? trimmed : null;
       }

@@ -59,6 +59,52 @@ describe('HrisSyncPanel (feature 11)', () => {
   });
 
   /**
+   * A record the importer refused is a short roster, and a short roster nobody
+   * is told about reads as a complete one (round 201, M6).
+   *
+   * The server drops a provider grant it cannot store — an options count past
+   * the column, a negative strike, an external id longer than the unique index
+   * takes — so that one malformed record cannot end the whole import. That is
+   * only defensible if the drop is said out loud here: "Synced 12 employees ·
+   * 6 grants imported" is otherwise a sentence that omits the two an auditor
+   * would go looking for.
+   */
+  it('says how many grants the provider sent that could not be stored', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/hris/rippling/pull': () =>
+        jsonResponse({
+          roster_count: 12,
+          grants_found: 6,
+          grants_created: 6,
+          grants_skipped: 0,
+          grants_rejected: 2,
+        }),
+    });
+    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: 'Import now' }));
+    expect(await screen.findByText(/2 grants were skipped/)).toBeInTheDocument();
+  });
+
+  it('says nothing about rejected grants when the provider sent none', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/hris/rippling/pull': () =>
+        jsonResponse({
+          roster_count: 12,
+          grants_found: 8,
+          grants_created: 8,
+          grants_skipped: 0,
+          grants_rejected: 0,
+        }),
+    });
+    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: 'Import now' }));
+    expect(await screen.findByText(/8 grants imported/)).toBeInTheDocument();
+    expect(screen.queryByText(/skipped/)).not.toBeInTheDocument();
+  });
+
+  /**
    * The panel set an error on a failed load and then returned a spinner, so
    * the ErrorNote it wrote sat in markup that never rendered. The tab showed
    * a permanent spinner where the provider list should be.
