@@ -271,6 +271,33 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     for (const id of ids) {
       try {
         const valuation = fromPrefetch(prefetched, id);
+        /*
+         * The same refusal the three single-id routes above make, and it was
+         * missing here alone.
+         *
+         * `retiredEngagementWrites.test.ts` drives every mutating route *under
+         * a valuation id* against a live engagement and an archived twin, which
+         * is why R89 caught `/workflow/advance` and `/engagement/advance` and
+         * could not see this: the bulk door names its engagements in the body,
+         * so it is not a valuation-scoped route and the census never reached
+         * it. Everything R89 refused at the single-id door was reachable
+         * through it — `set_state` writes any legal transition onto a withdrawn
+         * file, `advance` and `restart` move it through the pipeline, and each
+         * of those fires `onStateChanged`: the client's email about work the
+         * firm has withdrawn, and the partner's webhook announcing it.
+         *
+         * Per row rather than for the batch, because that is what the results
+         * array is for: an operator sweeping two hundred ids does not want the
+         * one retired file in the selection to refuse the other hundred and
+         * ninety-nine, and `ok: false` with the helper's own message is how
+         * every other per-row refusal here is reported.
+         *
+         * `assign_reviewer` is refused too. It queues no mail, but the review
+         * queue is a worklist of things somebody is being told to do, and a
+         * withdrawn engagement assigned to a reviewer is work the firm is no
+         * longer doing landing on somebody's list.
+         */
+        refuseIfRetired(valuation, 'accepting workflow changes');
         switch (action) {
           case 'set_state': {
             if (!canTransition(valuation.state, state!)) {
