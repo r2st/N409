@@ -108,14 +108,27 @@ function isMarkup(text: string): boolean {
   return MARKUP_MARKERS.some((marker) => rest.startsWith(marker));
 }
 
-/** Extension → the content categories that are legitimate for it. */
-const EXTENSION_CATEGORIES: Record<string, SniffedCategory[]> = {
+/**
+ * Extension → the content categories that are legitimate for it.
+ *
+ * An extension that is *missing* here is not neutral: `checkUploadType` treats
+ * an unknown extension as "anything that is not an executable or HTML", which
+ * is the weakest answer this function gives. `.xlsm` was missing, and `.xlsm`
+ * is one of the eight extensions `EXTRACTABLE_EXTENSIONS` ships to the AI
+ * service — so the one class of upload whose bytes are read by a model was also
+ * the one whose bytes were never checked against what the file claimed to be,
+ * while the `.xlsx` beside it had to be a ZIP. `extractableFileTypes.test.ts`
+ * holds the two lists together so the next format added to one is added to both.
+ */
+export const EXTENSION_CATEGORIES: Record<string, SniffedCategory[]> = {
   pdf: ['pdf'],
   png: ['png'],
   jpg: ['jpeg'],
   jpeg: ['jpeg'],
   gif: ['gif'],
   xlsx: ['zip'],
+  // Macro-enabled, and an OOXML package like any other: still a ZIP.
+  xlsm: ['zip'],
   docx: ['zip'],
   zip: ['zip'],
   // Text/extractable formats have no signature; they must sniff as plain text.
