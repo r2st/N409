@@ -1,10 +1,13 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import type { ValuationScope } from '../auth/rbac.js';
-import type { DisputeStatus } from '../domain/payments.js';
+import { PAYMENT_REVERSIBLE_STATUSES, type DisputeStatus, type PaymentStatus } from '../domain/payments.js';
 import type { QuoteLine } from '../domain/pricing.js';
 
-export type PaymentStatus = 'pending' | 'succeeded' | 'failed' | 'expired' | 'refunded';
+// Declared in domain/payments.ts alongside the transitions between them, and
+// re-exported because every caller in this service knows this module as the
+// place a payment's shape comes from.
+export type { PaymentStatus } from '../domain/payments.js';
 
 export interface PaymentRow {
   id: string;
@@ -209,6 +212,16 @@ export async function findPaymentByChargeOrIntent(
  * report. `refunded_at` is stamped once and never moved, so it means "when the
  * money first started coming back" even across several partial refunds.
  *
+ * The status test is the other half of the compare-and-set, and it is the
+ * transition rule rather than a redelivery guard: `refunded` follows `succeeded`
+ * and nothing else (domain/payments.PAYMENT_TRANSITIONS). Without it the write
+ * was legal only by construction — a `pending`, `failed` or `expired` row has
+ * no charge id and no payment intent, so `findPaymentByChargeOrIntent` cannot
+ * normally reach one — and that function's own comment says the intent column
+ * is not unique and a resumed checkout can leave a second row against it. One
+ * such row returned newest-first is a charge we never recorded as settled being
+ * marked given back.
+ *
  * `refunded_cents < $2` makes it a compare-and-set, and the null it returns is
  * the caller's signal that this figure is not news. The handler used to decide
  * that with a read — `payment.refunded_cents >= state.refundedCents` — which
@@ -233,9 +246,9 @@ export async function recordRefund(
          refunded_at = COALESCE(refunded_at, now()),
          status = CASE WHEN $3 THEN 'refunded'::payment_status ELSE status END,
          updated_at = now()
-     WHERE id = $1 AND refunded_cents < $2
+     WHERE id = $1 AND refunded_cents < $2 AND status::text = ANY($4::text[])
      RETURNING *`,
-    [id, args.refundedCents, args.fullyRefunded],
+    [id, args.refundedCents, args.fullyRefunded, [...PAYMENT_REVERSIBLE_STATUSES]],
   );
   return rows[0] ?? null;
 }
@@ -247,6 +260,10 @@ export async function recordRefund(
  * in the same terminal state as a full refund and records the whole charge as
  * returned. An open or won one leaves `status` alone: during an open dispute we
  * still hold the money, and a won one we keep.
+ *
+ * Bounded to the settled statuses like `recordRefund` above, and for the same
+ * reason: a lost chargeback promotes the row to 'refunded', which is a
+ * transition out of 'succeeded' and out of nothing else.
  *
  * `dispute_status IS DISTINCT FROM $2` makes it a compare-and-set, for the
  * reason `recordRefund` above gained one: the handler decided whether the
@@ -283,9 +300,9 @@ export async function recordDispute(
          refunded_cents = CASE WHEN $3 THEN amount_cents ELSE refunded_cents END,
          refunded_at = CASE WHEN $3 THEN COALESCE(refunded_at, now()) ELSE refunded_at END,
          updated_at = now()
-     WHERE id = $1 AND dispute_status IS DISTINCT FROM $2
+     WHERE id = $1 AND dispute_status IS DISTINCT FROM $2 AND status::text = ANY($4::text[])
      RETURNING *`,
-    [id, status, lost],
+    [id, status, lost, [...PAYMENT_REVERSIBLE_STATUSES]],
   );
   return rows[0] ?? null;
 }

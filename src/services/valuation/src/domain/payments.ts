@@ -6,6 +6,80 @@
  * in routes/payments.ts does the I/O; everything it *decides* lives here.
  */
 
+/**
+ * Every status a `payments` row can hold — the five the `payment_status` enum
+ * names (migrations 0041 and 0099), written here so the repo, the routes and
+ * the browser read one list rather than each restating it.
+ *
+ * {@link PAYMENT_TRANSITIONS} is the other half, and it is the half that was
+ * stated nowhere. The set of statuses was in the schema; which of them may
+ * follow which was spread across four `markPayment` call sites, two UPDATEs
+ * whose WHERE clauses are the real guard, and the reasoning in their comments.
+ * R203 fixed a replayed settlement that marked a refunded row succeeded again,
+ * and it was fixed by adding a `from` to one call — a machine nobody could read
+ * is a machine nobody can check.
+ */
+export const PAYMENT_STATUSES = ['pending', 'succeeded', 'failed', 'expired', 'refunded'] as const;
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+/**
+ * Legal onward moves, per status. An empty list is terminal.
+ *
+ * A row is born `pending` when a Checkout Session is opened and leaves that
+ * state exactly once: the money lands (`succeeded`), the delayed debit bounces
+ * (`failed`), or the session is closed without paying (`expired`, either by
+ * Stripe's 24-hour clock or by the checkout route reopening at a new price).
+ *
+ * `refunded` follows `succeeded` and nothing else, by both routes money leaves:
+ * a `charge.refunded` returning the whole charge, and a chargeback decided
+ * against us. It is not reachable from `failed` or `expired` — there is no
+ * money on those rows to return — and not from `pending`, which is the
+ * transition that would say a charge we never recorded as settled had been
+ * given back.
+ *
+ * A partial refund is *not* an edge. The row stays `succeeded` and the amount
+ * goes to `refunded_cents`, for the same reason a refunded Stripe invoice stays
+ * `paid`: the client still bought the report and still holds it. An open
+ * chargeback is not an edge either — the money is held, not lost, and the case
+ * is answerable — which is why it lives in `dispute_status` beside the status
+ * rather than inside it.
+ */
+export const PAYMENT_TRANSITIONS: Record<PaymentStatus, readonly PaymentStatus[]> = {
+  pending: ['succeeded', 'failed', 'expired'],
+  succeeded: ['refunded'],
+  failed: [],
+  expired: [],
+  refunded: [],
+};
+
+/**
+ * The status a row may be *created* in. One: a payment row exists because a
+ * Checkout Session was opened, and every other status is something that
+ * happened to it afterwards.
+ */
+export const PAYMENT_INITIAL_STATUSES = ['pending'] as const;
+
+/** May a payment in `from` be moved to `to`? Same-status is not a move. */
+export function canTransitionPayment(from: PaymentStatus, to: PaymentStatus): boolean {
+  return PAYMENT_TRANSITIONS[from].includes(to);
+}
+
+/** Nothing legally follows this status. */
+export function isTerminalPaymentStatus(status: PaymentStatus): boolean {
+  return PAYMENT_TRANSITIONS[status].length === 0;
+}
+
+/**
+ * The statuses a refund or a chargeback may be recorded against.
+ *
+ * Money coming back is a fact about money that arrived, so the two writers of
+ * `refunded` only ever act on a row that already settled — `refunded` included,
+ * because a second partial refund and a chargeback lost after a part refund
+ * both land on a row that is already there. Stated here so the WHERE clauses in
+ * repos/payments.ts and the machine above cannot drift apart.
+ */
+export const PAYMENT_REVERSIBLE_STATUSES = ['succeeded', 'refunded'] as const;
+
 /** Stripe's dispute lifecycle, narrowed to the three outcomes we act on. */
 export type DisputeStatus = 'open' | 'won' | 'lost';
 
