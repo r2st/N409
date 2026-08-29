@@ -274,7 +274,10 @@ export function registerAccountRoutes(
       subjectType: 'user',
       subjectId: principal.id,
       subjectLabel: user.email,
-      payload: { self_service: true },
+      // See the admin deactivation route: the roles go with the account and
+      // `restoreUser` brings it back with none, so this is the only record of
+      // what it held.
+      payload: { self_service: true, roles_removed: user.roles },
     });
     // Refresh this device's cookie to the new epoch so it isn't logged out.
     if (deps.cookie) setSessionCookie(reply, token, deps.cookie);

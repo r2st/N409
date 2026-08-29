@@ -633,7 +633,17 @@ export function registerAdminUserRoutes(
     const target = await findUserById(deps.pool, id);
     const deleted = await softDeleteUser(deps.pool, id);
     if (!deleted) throw problems.notFound();
-    await audit(principal.id, 'user_deactivated', 'user', id, target?.email ?? null);
+    // The roles that were dropped, because this is the one role change on the
+    // platform that leaves nothing behind to read: `softDeleteUser` DELETEs the
+    // `user_roles` rows, and `restoreUser` deliberately brings the account back
+    // with none. Every other role write records what it set — `user_created`,
+    // `user_updated`, `user_promoted`, `user_demoted` — while the write that
+    // removes all of them at once recorded only that it happened. So the answer
+    // to "what did this account hold" was gone from the database and from the
+    // trail at the same instant, and reactivating one meant guessing.
+    await audit(principal.id, 'user_deactivated', 'user', id, target?.email ?? null, {
+      roles_removed: target?.roles ?? [],
+    });
     return reply.status(204).send();
   });
 

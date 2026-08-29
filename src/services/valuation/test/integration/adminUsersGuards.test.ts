@@ -437,6 +437,32 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   describe('deactivate and restore', () => {
+    /**
+     * Deactivation is the one role write that leaves nothing behind to read:
+     * it DELETEs the `user_roles` rows, and `restoreUser` deliberately brings
+     * the account back with none. Every other role write records what it set,
+     * so this one recorded the least about the largest change — and answering
+     * "what did this account hold" after the fact was guesswork.
+     */
+    it('records the roles it dropped, since nothing else keeps them', async () => {
+      const user = await createUser({ roles: ['reviewer', 'data'] });
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/users/${user.id}`,
+        headers: auth(),
+      });
+      expect(res.statusCode).toBe(204);
+
+      const { rows } = await ctx.pool.query<{ payload: { roles_removed?: string[] } }>(
+        `SELECT payload FROM admin_events
+          WHERE type = 'user_deactivated' AND subject_id = $1
+          ORDER BY occurred_at DESC LIMIT 1`,
+        [user.id],
+      );
+      expect(rows).toHaveLength(1);
+      expect([...(rows[0]!.payload.roles_removed ?? [])].sort()).toEqual(['data', 'reviewer']);
+    });
+
     it('404s restoring a user who was never deactivated, and 404s an unknown id', async () => {
       const user = await createUser();
       const live = await ctx.app.inject({
