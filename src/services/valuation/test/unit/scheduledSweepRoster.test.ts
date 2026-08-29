@@ -148,16 +148,22 @@ describe('the scheduled sweeps', () => {
     // and until R155 it had no production callers at all while the ten sweeps
     // here each hand-wrote `log.error({ err }, '<name> sweep failed')`.
     //
-    // `scheduleSweep` is what supplies it. A sweep built by calling
-    // `nonOverlapping` directly would still run, still be tracked if somebody
-    // remembered `track`, and still log — with no `sweep` field, no
-    // classification, and nothing an alert rule can match. So the guard is on
-    // the construction rather than on the roster: there is exactly one
-    // `nonOverlapping` call in this file and it is inside `scheduleSweep`.
+    // `scheduleSweep` is what supplies it. A sweep built by scheduling its tick
+    // directly would still run, still be tracked if somebody remembered
+    // `track`, and still log — with no `sweep` field, no classification, and
+    // nothing an alert rule can match. So the guard is on the construction
+    // rather than on the roster: there is exactly one scheduler call in this
+    // file and it is inside `scheduleSweep`.
+    //
+    // The spelling moved in R206. `trackedSweep` (packages/shared) is now what
+    // pairs `nonOverlapping` with `sweepFailed`, and binds `{ sweep, sweepRun }`
+    // around the tick so the interior lines of twelve sweeps sharing one logger
+    // can be told apart. Both spellings are checked: one call of the helper, and
+    // no sweep reaching past it to `nonOverlapping` on its own.
     const code = INDEX.replace(/\/\*[\s\S]*?\*\//g, '').replace(/([^:])\/\/[^\n]*/g, '$1');
-    const calls = [...code.matchAll(/\bnonOverlapping\(/g)];
-    expect(calls).toHaveLength(1);
-    expect(code).toMatch(/const scheduleSweep = [^;]*nonOverlapping\(tick, sweepFailed\(app\.log, name\)\)/);
+    expect([...code.matchAll(/\bnonOverlapping\(/g)]).toHaveLength(0);
+    expect([...code.matchAll(/\btrackedSweep\(/g)]).toHaveLength(1);
+    expect(code).toMatch(/const scheduleSweep = [^;]*trackedSweep\(app\.log, name, tick\)/);
   });
 
   it('says how each valuation-writing sweep is guarded', () => {
