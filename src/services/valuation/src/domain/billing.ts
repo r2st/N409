@@ -451,6 +451,13 @@ export function paymentReceivedMessage(r: {
     body,
     vars: {
       company_name: r.company_name,
+      // The engagement kind in both spellings the catalog declares. The label
+      // is already computed for the subject line; a receipt template writing
+      // "your {{kind_label}} valuation" had it rendered as literal braces
+      // purely because this map did not pass on what the sentence above it
+      // used.
+      kind: r.kind,
+      kind_label: kindLabel,
       valuation_number: r.reference,
       amount_paid: amount,
       receipt_link: r.receipt_link,
@@ -482,7 +489,16 @@ export function invoicePaidMessage(r: {
       invoice_number: r.number,
       amount_paid: amount,
       invoice_link: r.invoice_link,
-      ...(period ? { invoice_period: period } : {}),
+      // Blank, not absent. The prose above states no period at all when it
+      // knows only one end of one — half a period reads as a commitment the row
+      // does not make — but an *absent* var is not the same thing as an empty
+      // one to `renderTemplate`, which leaves a name nobody supplies verbatim.
+      // So an ops-authored `invoice_receipt` override reading "for the period
+      // {{invoice_period}}" previewed against the catalog's sample and was
+      // delivered, on any invoice missing a period end, as literal braces. The
+      // catalog's own wording for this variable is "blank unless both ends of
+      // it are known"; this is that.
+      invoice_period: period ?? '',
     },
   };
 }

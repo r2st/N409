@@ -184,10 +184,16 @@ describe('settlement confirmations', () => {
     expect(Object.keys(m.vars).sort()).toEqual([
       'amount_paid',
       'company_name',
+      'kind',
+      'kind_label',
       'receipt_link',
       'valuation_number',
     ]);
     expect(m.vars.amount_paid).toBe('$1,190.00');
+    // Both spellings of the kind, because the built-in subject line uses one of
+    // them and an override writing "your {{kind_label}} valuation" had it
+    // delivered as literal braces.
+    expect(m.vars.kind_label).toBe('409A');
   });
 
   const invoice = {
@@ -214,7 +220,11 @@ describe('settlement confirmations', () => {
       const m = invoicePaidMessage({ ...invoice, ...half });
       expect(m.body).not.toContain('period');
       expect(m.body).toContain('$99.00');
-      expect(m.vars.invoice_period).toBeUndefined();
+      // Blank rather than absent, which is not the same thing downstream: an
+      // ops-authored override of this copy is run through `renderTemplate`,
+      // which leaves a name nobody supplies as literal braces. The catalog
+      // promises this variable is "blank unless both ends of it are known".
+      expect(m.vars.invoice_period).toBe('');
     }
   });
 });
