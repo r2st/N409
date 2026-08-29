@@ -15,7 +15,12 @@ interface ApproachRow {
   key: string;
   name: string;
   weight: number;
-  equity_value: number;
+  /**
+   * `null` where the engine weighted the approach and produced no value for it
+   * — which is not the same thing as an approach that concluded zero, and was
+   * rendered as "$0" until it said so.
+   */
+  equity_value: number | null;
   reused: boolean;
 }
 
@@ -48,7 +53,7 @@ function approachRows(calc: Calculation): ApproachRow[] {
     key,
     name: labels[key] ?? key,
     weight: a.weight ?? 0,
-    equity_value: a.equity_value ?? 0,
+    equity_value: typeof a.equity_value === 'number' ? a.equity_value : null,
     reused: a.reused === true,
   }));
 }

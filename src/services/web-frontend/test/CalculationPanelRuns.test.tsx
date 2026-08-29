@@ -192,7 +192,7 @@ describe('CalculationPanel — a result document with keys missing', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders an approach the labels do not know, with zeroes for what it omits', async () => {
+  it('renders an approach the labels do not know, saying only what it knows', async () => {
     mockApi({
       calculations: [
         {
@@ -209,8 +209,12 @@ describe('CalculationPanel — a result document with keys missing', () => {
 
     await screen.findByText('Approach breakdown');
     const row = screen.getByText('replacement_cost').closest('tr')!;
+    // No weight is a weight of nothing, which is true. No value is not a value
+    // of nothing — the run reached no conclusion for this approach, and "$0.00"
+    // said it reached one.
     expect(row).toHaveTextContent('0%');
-    expect(row).toHaveTextContent('$0.00');
+    expect(row).toHaveTextContent('—');
+    expect(row).not.toHaveTextContent('$0.00');
   });
 
   it('shows an em dash for a DLOM the run did not record', async () => {
@@ -421,5 +425,41 @@ describe('CalculationPanel — only specialty runs on the valuation', () => {
 
     await screen.findByText('History');
     expect(screen.getByRole('button', { name: 'Run calculation' })).toBeEnabled();
+  });
+});
+
+describe('CalculationPanel — an approach the engine produced no value for', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * `a.equity_value ?? 0` printed "$0" for an approach that indicated nothing
+   * — a conclusion the engine never reached, on the screen the analyst signs
+   * the run off from, and the same substitution the report's summary bar chart
+   * was making one layer down.
+   */
+  it('shows an em-dash rather than a conclusion of zero', async () => {
+    mockApi({
+      calculations: [
+        {
+          ...SUCCEEDED,
+          results: {
+            ...SUCCEEDED.results,
+            approaches: {
+              income: { equity_value: 12_000_000, weight: 0.6 },
+              market: { weight: 0.4 },
+            },
+          },
+        },
+      ],
+    });
+    renderPanel();
+
+    const row = (await screen.findByText('Market (comps)')).closest('tr')!;
+    // The weight is still stated — the approach did count — and the value is not.
+    expect(row.textContent).toContain('40%');
+    expect(row.textContent).toContain('—');
+    expect(row.textContent).not.toContain('$0');
   });
 });
