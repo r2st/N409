@@ -290,6 +290,41 @@ describe.skipIf(!dbUp)('resuming an abandoned revocation', () => {
     expect(await reversedCount(vid)).toBe(1);
   });
 
+  it('takes the engagement back on a redelivered lost chargeback too', async () => {
+    // A lost dispute is a refund we did not choose, and it converges on the
+    // same two statements — so it had the same hole. recordDispute reversed the
+    // money, the valuation UPDATE failed, and the redelivery found the verdict
+    // already on file and returned: a chargeback we lost, with the client still
+    // holding the published 409A and ops never told.
+    const { vid } = await seedPaid('Abandoned Chargeback Co', 'cs_revoke_4', 'ch_revoke_4');
+    const lost = (eventId: string) => ({
+      id: eventId,
+      type: 'charge.dispute.closed',
+      created: T,
+      data: { object: { id: 'dp_revoke_4', charge: 'ch_revoke_4', status: 'lost' } },
+    });
+
+    let fail = true;
+    const restore = interceptPoolQueries(ctx.pool, (sql) => {
+      if (fail && /UPDATE valuations SET/.test(sql)) throw new Error('pool timeout');
+      return undefined;
+    });
+    expect((await deliver(lost('evt_dispute_4'))).statusCode).toBeGreaterThanOrEqual(500);
+    restore();
+
+    expect((await findPaymentBySessionId(ctx.pool, 'cs_revoke_4'))?.status).toBe('refunded');
+    expect((await findValuationById(ctx.pool, vid))?.paid_status).toBe('paid');
+
+    fail = false;
+    expect((await deliver(lost('evt_dispute_4'))).statusCode).toBe(200);
+    expect((await findValuationById(ctx.pool, vid))?.paid_status).toBe('unpaid');
+    expect(await reversedCount(vid)).toBe(1);
+
+    // And an ordinary redelivery after that changes nothing.
+    expect((await deliver(lost('evt_dispute_4b'))).statusCode).toBe(200);
+    expect(await reversedCount(vid)).toBe(1);
+  });
+
   it('refuses a smaller total that arrives after a larger one', async () => {
     // Stripe sends one charge.refunded per refund, so a part refund and the
     // rest of it are two events about one charge. Delivered out of order, the

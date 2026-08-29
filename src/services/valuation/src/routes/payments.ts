@@ -825,7 +825,10 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
    * A refund whose figure is already on file but whose consequence never was.
    *
    * The same shape as `resumeAbandoned` on the fulfilment path, on the way back
-   * out. `recordRefund` is one statement and `revokePaidStatus` is another, and
+   * out, and shared by both ways money leaves — a full refund and a lost
+   * chargeback converge on the same revocation.
+   *
+   * `recordRefund` is one statement and `revokePaidStatus` is another, and
    * the second is not wrapped — a pool timeout between them 5xx's the webhook
    * so that Stripe comes back. What it came back to was a row already carrying
    * the full total, which the compare-and-set declines, so the handler returned
@@ -842,6 +845,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
   async function resumeRevocation(
     log: FastifyBaseLogger,
     payment: PaymentRow,
+    reason = 'The payment was refunded in full.',
   ): Promise<{ received: boolean; refunded: boolean }> {
     const current = await findPaymentForValuation(deps.pool, payment.valuation_id, payment.id);
     const refunded = current?.status === 'refunded';
@@ -850,11 +854,9 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     if (valuation?.paid_status !== 'paid') return { received: true, refunded };
     log.warn(
       { paymentId: current.id, valuationId: current.valuation_id },
-      'resuming a refund that reversed the payment but never the engagement',
+      'resuming a reversal that took the money back but never the engagement',
     );
-    await revokePaidStatus(log, current, 'The payment was refunded in full.', {
-      expectedVersion: valuation.version,
-    });
+    await revokePaidStatus(log, current, reason, { expectedVersion: valuation.version });
     return { received: true, refunded };
   }
 
@@ -878,14 +880,24 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     if (!payment) return { received: true, ignored: 'unknown charge' };
 
     const status = disputeStatusOf(dispute.status);
-    // Same redelivery guard as the refund path: `created` and `closed` are both
-    // retried, and a repeated `created` must not re-alert an ops team that is
-    // already working the case.
-    if (payment.dispute_status === status) return { received: true, dispute_status: status };
-    await recordDispute(deps.pool, payment.id, status);
+    // Same redelivery guard as the refund path, and asked of the write for the
+    // same reason: `created` and `closed` are both retried and are fanned out
+    // together, so a read here let two deliveries both decide the verdict was
+    // news and alert the billing group twice — once to work a case, once to say
+    // it was already decided.
+    const recorded = await recordDispute(deps.pool, payment.id, status);
+    if (!recorded) {
+      // Not news. A lost one may still have money to reverse, though: see
+      // resumeRevocation, which this reaches by the same route a redelivered
+      // `charge.refunded` does.
+      if (status === 'lost') {
+        await resumeRevocation(log, payment, 'A chargeback was decided against us.');
+      }
+      return { received: true, dispute_status: status };
+    }
 
     if (status === 'lost') {
-      await revokePaidStatus(log, payment, 'A chargeback was decided against us.');
+      await revokePaidStatus(log, recorded, 'A chargeback was decided against us.');
     } else if (status === 'open') {
       const valuation = await findValuationById(deps.pool, payment.valuation_id);
       // Ops only: a client who has just disputed a charge does not need us to

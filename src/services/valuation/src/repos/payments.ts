@@ -210,6 +210,27 @@ export async function recordRefund(
  * in the same terminal state as a full refund and records the whole charge as
  * returned. An open or won one leaves `status` alone: during an open dispute we
  * still hold the money, and a won one we keep.
+ *
+ * `dispute_status IS DISTINCT FROM $2` makes it a compare-and-set, for the
+ * reason `recordRefund` above gained one: the handler decided whether the
+ * verdict was news by reading the row first, and a read cannot exclude a
+ * concurrent writer. `charge.dispute.created` and `charge.dispute.closed` are
+ * fanned out by Stripe and retried independently, so two of them about one
+ * charge do arrive together — and both then alerted the billing group, once to
+ * work a case and once to say it was already decided.
+ *
+ * What this deliberately does *not* do is order them. Two events about one
+ * dispute are two readings of one state, so of them the later is simply right;
+ * but nothing on this row identifies which dispute, and the pair that looks
+ * out-of-order is also what a genuine second case looks like — an early-warning
+ * enquiry closed (`warning_closed`, recorded 'won') and a real chargeback
+ * raised on the same charge afterwards reads exactly like a stale 'open'
+ * landing after a verdict. Guessing would either drop a live case or reopen a
+ * settled one. So a redelivered `created` arriving after a `closed` still
+ * writes 'open' over the verdict, and the money side is what stays right:
+ * `status` and `refunded_cents` are only ever set by a loss and are never
+ * unset, so a lost dispute stays lost and revoked whatever the verdict column
+ * later says.
  */
 export async function recordDispute(
   pool: pg.Pool,
@@ -225,7 +246,7 @@ export async function recordDispute(
          refunded_cents = CASE WHEN $3 THEN amount_cents ELSE refunded_cents END,
          refunded_at = CASE WHEN $3 THEN COALESCE(refunded_at, now()) ELSE refunded_at END,
          updated_at = now()
-     WHERE id = $1
+     WHERE id = $1 AND dispute_status IS DISTINCT FROM $2
      RETURNING *`,
     [id, status, lost],
   );
