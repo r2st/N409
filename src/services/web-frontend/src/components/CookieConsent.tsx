@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { useConsent } from '../lib/consent';
-import { useDialogDismiss } from './ui';
+import { useDialogDismiss } from './dialogBehaviour';
 
 /**
  * GDPR cookie-consent banner (409.ai §25). Shows on first visit only; the

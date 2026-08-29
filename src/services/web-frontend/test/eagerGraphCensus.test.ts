@@ -126,10 +126,9 @@ const EAGER_REGISTER: Record<string, string> = {
   'lib/pageTitles.ts': 'document titles for the announcer',
 
   // Shared leaves.
-  'components/ui.tsx': 'the design-system primitives',
+  'components/dialogBehaviour.ts': 'Esc-to-dismiss for the consent banner',
   'lib/api.ts': 'the fetch wrapper the providers use',
   'lib/analytics.ts': 'event helper used by the consent banner',
-  'lib/format.ts': 'number/date formatting',
   'lib/rbac.ts': 'role predicates the route guards evaluate',
   'lib/rovingFocus.ts': 'keyboard behaviour used by ui.tsx',
   'lib/theme.ts': 'light/dark resolution, read before first paint',
@@ -190,6 +189,28 @@ describe('the first-paint module graph', () => {
       'these register entries no longer describe a real eager import — delete them ' +
         'rather than leaving them to license a future one',
     ).toEqual([]);
+  });
+
+  /**
+   * R202. The design-system barrel, kept out by name.
+   *
+   * `components/ui.tsx` is 40 exports and ~18 kB, imported by 106 modules —
+   * every one of them behind a lazy route, which is why it belongs in a shared
+   * chunk the lazy routes pull rather than in the first paint. `CookieConsent`
+   * was the single exception: mounted at the root, needing one hook out of the
+   * barrel, and thereby putting the whole kit on the landing page of a visitor
+   * who renders none of it. The hook moved to `components/dialogBehaviour.ts`.
+   *
+   * The register test above already fails if the barrel comes back, since it is
+   * no longer listed. This says the same thing by name, so the failure explains
+   * itself instead of reading as an unregistered module.
+   */
+  it('does not contain the design-system barrel', () => {
+    expect(closure).not.toContain('components/ui.tsx');
+    // The reason it can stay out: one importer on the eager path, one hook.
+    const consent = ALL_FILES.find((f) => f.file === 'components/CookieConsent.tsx');
+    expect(consent?.text).toMatch(/from '\.\/dialogBehaviour'/);
+    expect(consent?.text).not.toMatch(/from '\.\/ui'/);
   });
 
   it('stays small enough to be read in one sitting', () => {
