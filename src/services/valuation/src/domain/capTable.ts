@@ -559,10 +559,24 @@ export function parseCsv(text: string): Record<string, string>[] {
   return parseCsvSheet(text).rows;
 }
 
-/** Case-insensitive lookup of a source column in a row. */
+/**
+ * Case-insensitive lookup of a source column in a row.
+ *
+ * `Object.hasOwn` rather than `in`, for the reason `renderTemplate` in
+ * domain/communications.ts already carries: `in` walks the prototype chain, and
+ * the header being looked up is a string the importer sent. `mapping` on the
+ * import body is `z.record(z.string(), z.string())` — any column name at all —
+ * so mapping `shares` to `constructor` made this return the `Object` function
+ * for a column the sheet does not have. Every one of `constructor`, `toString`,
+ * `valueOf`, `hasOwnProperty` and `__proto__` behaved that way, and none of
+ * them is ever `undefined`, so none of them could reach the "no such column"
+ * answer that is the truth about all of them. What the importer got instead was
+ * `Number(…)` of a function — a validation error about a bad quantity — or a
+ * holder named `function toString() { [native code] }`.
+ */
 function readCell(row: Record<string, unknown>, header: string | undefined): unknown {
   if (!header) return undefined;
-  if (header in row) return row[header];
+  if (Object.hasOwn(row, header)) return row[header];
   const lower = header.toLowerCase();
   for (const [k, v] of Object.entries(row)) {
     if (k.toLowerCase() === lower) return v;

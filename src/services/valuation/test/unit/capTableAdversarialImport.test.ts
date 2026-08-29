@@ -781,3 +781,85 @@ describe('adversarial imports — importing the same file twice', () => {
     expect(validateCapTable(stored, totals).issues).toEqual(validation.issues);
   });
 });
+
+/**
+ * A header, or a column mapping, that names something `Object.prototype` has.
+ *
+ * `renderTemplate` in domain/communications.ts already carries this bug's twin:
+ * `{{constructor}}` rendered as `function Object() { [native code] }` because a
+ * plain lookup finds the names on the prototype, and none of them is ever
+ * `undefined`, so none of them could reach the "unknown placeholder" answer
+ * that was the truth about all of them. The import pipeline had the same two
+ * spellings — `header in row` in `readCell`, and `obj[name] = …` in
+ * `rowByColumn` — and the mapping that reaches `readCell` is
+ * `z.record(z.string(), z.string())` on the request body, so the header being
+ * looked up is a string the caller chose.
+ */
+describe('a column named after something every object already has', () => {
+  const PROTO_NAMES = ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__'] as const;
+
+  const CSV = 'class,type,shares\nSeries A,preferred,100\n';
+  const withShareColumn = (name: string) => {
+    const sheet = parseCsvSheet(CSV);
+    return parseCapTableSheet(sheet.rows, { ...MAPPING, shares: name }, sheet.lines);
+  };
+
+  it.each(PROTO_NAMES)('reads %s exactly like a column that is simply not there', (name) => {
+    // The control is a name nothing could match. The property is that the two
+    // are the *same* answer: before this, one of them resolved to a function,
+    // and the importer complained about the quantity rather than the mapping.
+    const absent = withShareColumn('no-such-column');
+    const named = withShareColumn(name);
+    expect(named.entries).toEqual(absent.entries);
+    expect(codes(validateCapTable(named.entries, named.totals).issues)).toEqual(
+      codes(validateCapTable(absent.entries, absent.totals).issues),
+    );
+    // And the control is not vacuous: an unmapped share count is an error, so
+    // both sides are being held to a real complaint rather than to silence.
+    expect(codes(validateCapTable(absent.entries, absent.totals).issues).length).toBeGreaterThan(0);
+  });
+
+  it('never lets a function reach a text field', () => {
+    const sheet = parseCsvSheet('class,type,shares\nSeries A,preferred,100\n');
+    const { entries } = parseCapTableSheet(
+      sheet.rows,
+      { ...MAPPING, security_class: 'toString' },
+      sheet.lines,
+    );
+    // `String(row.toString)` is `function toString() { [native code] }`, which
+    // is a security class name that would have been persisted verbatim.
+    expect(entries[0]?.security_class ?? '').not.toMatch(/native code/);
+  });
+
+  it('keeps a column actually headed __proto__ rather than losing it silently', () => {
+    // `obj.__proto__ = '100'` runs the accessor every object inherits, which
+    // ignores a string — so the assignment did nothing at all: no error, no
+    // key, and a whole column gone from an import that reported success.
+    const row = rowByColumn(['__proto__', 'shares'], ['kept', '100']);
+    expect(Object.keys(row)).toEqual(['__proto__', 'shares']);
+    expect(row['__proto__']).toBe('kept');
+  });
+
+  it('leaves the row an ordinary object, so what is stored round-trips', () => {
+    const row = rowByColumn(['__proto__', 'shares'], ['kept', '100']);
+    // Written back out and read in again — `{ __proto__: … }` as an object
+    // literal sets the prototype rather than a key, so the expectation has to
+    // be built the same way the row is.
+    const back = JSON.parse(JSON.stringify(row)) as Record<string, string>;
+    expect(Object.keys(back).sort()).toEqual(['__proto__', 'shares']);
+    expect(back['__proto__']).toBe('kept');
+    expect(back['shares']).toBe('100');
+  });
+
+  it('does not pollute Object.prototype along the way', () => {
+    rowByColumn(['__proto__'], ['{"polluted":true}']);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it('still reads a real column, case-insensitively, as it always did', () => {
+    const sheet = parseCsvSheet('CLASS,type,Shares\nSeries A,preferred,100\n');
+    const { entries } = parseCapTableSheet(sheet.rows, MAPPING, sheet.lines);
+    expect(entries[0]?.shares).toBe(100);
+    expect(entries[0]?.security_class).toBe('Series A');
+  });
+});

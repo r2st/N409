@@ -52,14 +52,35 @@ export function nameColumns(cells: readonly string[]): Array<string | null> {
   });
 }
 
-/** One data row keyed by the names `nameColumns` gave the header row. */
+/**
+ * One data row keyed by the names `nameColumns` gave the header row.
+ *
+ * `defineProperty` rather than `obj[name] = …` because the names come out of
+ * an uploaded file and one of them is not an ordinary key. `obj.__proto__ = 'x'`
+ * does not create a property at all — it runs the accessor `Object.prototype`
+ * puts on every object, which ignores a string — so a column headed
+ * `__proto__` was silently dropped: no error, no key in the row, and the whole
+ * column of numbers gone from an import that reported success. Worse, the row
+ * then answered `'__proto__' in row` with `true`, so `readCell` handed
+ * `Object.prototype` back as if it were a cell.
+ *
+ * The unlikeliness of that header is not the argument for leaving it: the cost
+ * of getting it right is one call, and the cost of getting it wrong is an
+ * import that loses a column without saying so.
+ */
 export function rowByColumn(
   columns: readonly (string | null)[],
   cells: readonly string[],
 ): Record<string, string> {
   const obj: Record<string, string> = {};
   columns.forEach((name, i) => {
-    if (name !== null) obj[name] = (cells[i] ?? '').trim();
+    if (name === null) return;
+    Object.defineProperty(obj, name, {
+      value: (cells[i] ?? '').trim(),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
   });
   return obj;
 }
