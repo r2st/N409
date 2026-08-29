@@ -1,0 +1,84 @@
+-- Two operator lists sorted by an expression no index could serve.
+--
+-- 0178 fixed five lists that were capped but not bounded — a `LIMIT` over an
+-- `ORDER BY` no index led with. It found them by asking which *columns* the
+-- sort keys named. That question cannot see these two, because their leading
+-- sort key is not a column at all:
+--
+--     listAllApiTokens   ORDER BY (revoked_at IS NULL) DESC, created_at DESC
+--     listJobAlerts      ORDER BY resolved_at IS NOT NULL ASC, opened_at DESC
+--
+-- Both spellings are deliberate and correct — each list is read to answer a
+-- question about its live rows, so live rows sort first and the settled ones
+-- stay below for the audit trail. But a btree indexes values, and
+-- `revoked_at IS NULL` is not a value in any index on `revoked_at`: an index on
+-- the bare column orders NULLs against timestamps, not the boolean. So the
+-- planner had nothing to seek on, read the whole table, and top-N sorted it to
+-- hand back a screenful.
+--
+-- The fix is to index the expression the query actually sorts by. Measured at
+-- 20k rows in each table, warm, best of three (EXPLAIN ANALYZE, shared blocks):
+--
+--     listAllApiTokens   16.2 ms  1831 blk  ->  3.0 ms  1015 blk   5x
+--     listJobAlerts      10.3 ms   331 blk  ->  0.15 ms   35 blk  69x
+--
+-- ## api_tokens: the joins are most of it
+--
+-- The credential listing left-joins `partners` and `users`. Without an ordering
+-- to seek on, the planner hash-joined both tables whole — every user and every
+-- partner built into a hash table — and then discarded all but the 500 rows the
+-- page keeps. With the index it nested-loops instead: one primary-key probe per
+-- row actually returned. That is why the block count falls even though the scan
+-- on `api_tokens` was never the expensive part.
+--
+-- Which is also the number that matters, more than the ratio at 20k. The hash
+-- form is O(rows in `api_tokens` + `users` + `partners`); the loop form is
+-- O(page size), and the page is 500 whatever the platform holds.
+--
+-- ## What was measured and deliberately not fixed
+--
+-- Two full aggregates, both carried over from R193's open list, get no index.
+-- Both were tried, measured, and the planner declined them:
+--
+-- `apiTokenStats` computes `total`, `live` and `dormant` from `revoked_at`,
+-- `last_used_at` and `created_at`, so a covering index on exactly those three
+-- columns can in principle answer all three figures without touching the heap.
+-- It does not pay here. `api_tokens` rows are narrow — two ULIDs, a name, a
+-- prefix and a digest — so an index over three of its columns is 1328 kB
+-- against a 2712 kB heap, and Postgres correctly prefers one sequential pass
+-- over the table to a random walk of an index half its size. (It *does* choose
+-- the index if the rows are wide, which is worth knowing only because it is how
+-- a synthetic seed can talk you into an index production would never use.)
+--
+-- `SELECT count(*) FROM email_suppressions WHERE released_at IS NULL` is the
+-- same shape with a starker margin: a suppression is released by hand and
+-- almost none are, so the predicate selects ~95% of the table and a partial
+-- index on it would be nearly as large as the heap and read just as many
+-- blocks. Neither of these is fixable with an index; if either becomes hot it
+-- needs a windowed query or a maintained counter, which is what R193 concluded
+-- about `deliveryBacklogStats` and applies unchanged here.
+--
+-- ## Dropping job_alerts_recent_idx
+--
+-- 0120 created `job_alerts (opened_at DESC)` for the listing above, and the
+-- listing has never been able to use it: `opened_at` is the *second* sort term,
+-- behind the expression, and a btree cannot start in the middle of its key.
+-- Nothing else in the tree orders or ranges on `opened_at` — the two
+-- notification sweeps have their own partial indexes on it, and the open-alert
+-- lookup has `job_alerts_open_uq`. So it has been paying a write on every alert
+-- opened and resolved to serve nothing. The index below supersedes it for the
+-- one reader it was built for.
+--
+-- Not CONCURRENTLY: db/migrate.ts wraps each file in BEGIN/COMMIT and CREATE
+-- INDEX CONCURRENTLY cannot run inside a transaction block. Both tables are
+-- written at machine rates rather than by anyone waiting — a token is minted or
+-- revoked by hand, an alert is written by the job supervisor — so the SHARE
+-- lock while these build is not in front of a person.
+
+CREATE INDEX IF NOT EXISTS api_tokens_live_recent_idx
+    ON api_tokens (((revoked_at IS NULL)) DESC, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS job_alerts_open_first_idx
+    ON job_alerts (((resolved_at IS NOT NULL)), opened_at DESC);
+
+DROP INDEX IF EXISTS job_alerts_recent_idx;
