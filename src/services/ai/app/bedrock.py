@@ -429,14 +429,19 @@ def _post_with_retry(
             if attempt < MAX_RETRIES and backoff_sleep(attempt, deadline):
                 _log.warning(
                     "bedrock connect error, retrying",
-                    extra={"event": "llm_retry", "path": model_id, "status": attempt},
+                    extra={"event": "llm_retry", "model": model_id, "attempt": attempt},
                 )
                 continue
             raise
         if resp.status_code >= 500 and attempt < MAX_RETRIES and backoff_sleep(attempt, deadline):
             _log.warning(
                 "bedrock 5xx, retrying",
-                extra={"event": "llm_retry", "path": model_id, "status": resp.status_code},
+                extra={
+                    "event": "llm_retry",
+                    "model": model_id,
+                    "attempt": attempt,
+                    "status": resp.status_code,
+                },
             )
             continue
         return resp
@@ -492,8 +497,8 @@ def chat(
             "llm usage",
             extra={
                 "event": "llm_usage",
-                "path": f"{MODEL_PREFIX}{model_id}",
-                "status": prompt_tokens + completion_tokens,
+                "model": f"{MODEL_PREFIX}{model_id}",
+                "tokens": prompt_tokens + completion_tokens,
             },
         )
         return LlmResult(

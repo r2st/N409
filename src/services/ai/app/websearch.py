@@ -223,7 +223,7 @@ def configured_provider() -> str:
     if chosen not in PROVIDER_KEYS:
         _log.warning(
             "unknown RESEARCH_PROVIDER, falling back",
-            extra={"event": "search_unknown_provider", "path": chosen},
+            extra={"event": "search_unknown_provider", "provider": chosen},
         )
         return DEFAULT_PROVIDER
     return chosen

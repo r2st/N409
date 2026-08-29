@@ -13,12 +13,14 @@ mid-body sends `http.disconnect` instead of a further `http.request`, and the
 reader has to stop and hand back what it has rather than loop waiting for more.
 """
 
+import json
 import logging
 
 import anyio
 import pytest
 
 from app.limits import _read_capped, max_body_bytes, threadpool_size
+from app.observability import JsonLogFormatter
 
 
 # ── max_body_bytes ───────────────────────────────────────────────────────────
@@ -182,7 +184,13 @@ def test_a_rejected_body_cap_is_logged_rather_than_silently_dropped(monkeypatch,
     record = caplog.records[0]
     assert "MAX_REQUEST_BODY_BYTES" in record.getMessage()
     assert record.detail == "8MB"
-    assert record.status == 4096
+    # `limit`, not `status`: 4096 is a configured ceiling and never an HTTP
+    # status, and this field is read alongside the access log's own `status`.
+    assert record.limit == 4096
+    # Asserted through the formatter rather than off the record, because that is
+    # the step this test could not see: `detail` was passed by the call site,
+    # read back here, and dropped on the floor by the allowlist in between.
+    assert json.loads(JsonLogFormatter().format(record))["detail"] == "8MB"
 
 
 def test_a_non_positive_body_cap_is_logged_too(monkeypatch, caplog):

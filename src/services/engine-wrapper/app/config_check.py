@@ -208,7 +208,7 @@ def enforce_env_valid(
         "invalid configuration, falling back to defaults for %d setting(s): %s",
         len(problems),
         detail,
-        extra={"event": "config_invalid", "status": len(problems)},
+        extra={"event": "config_invalid", "count": len(problems)},
     )
     return problems
 

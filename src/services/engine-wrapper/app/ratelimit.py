@@ -58,7 +58,7 @@ def limit_per_minute(default: int = DEFAULT_LIMIT_PER_MINUTE) -> int:
     except ValueError:
         _log.warning(
             "RATE_LIMIT_RPM is not an integer — falling back to the default",
-            extra={"event": "ratelimit_config", "status": default},
+            extra={"event": "ratelimit_config", "limit": default},
         )
         return default
     # Negative is a typo for "off", not a licence to admit everything.
@@ -130,7 +130,7 @@ def make_rate_limit_middleware(limit: int, window_s: float = 60.0):
     if limit <= 0:
         _log.warning(
             "rate limiting disabled (RATE_LIMIT_RPM=0)",
-            extra={"event": "ratelimit_config", "status": 0},
+            extra={"event": "ratelimit_config", "limit": 0},
         )
 
         async def passthrough(request: Request, call_next):
@@ -141,7 +141,7 @@ def make_rate_limit_middleware(limit: int, window_s: float = 60.0):
     limiter = FixedWindowRateLimiter(limit, window_s)
     _log.info(
         "rate limiting enabled",
-        extra={"event": "ratelimit_config", "status": limit},
+        extra={"event": "ratelimit_config", "limit": limit},
     )
 
     async def rate_limit_middleware(request: Request, call_next):

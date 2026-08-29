@@ -101,13 +101,13 @@ async def lifespan(_app: FastAPI):
     if status.ok:
         _log.info(
             "openrouter key verified",
-            extra={"event": "openrouter_key", "status": status.state},
+            extra={"event": "openrouter_key", "detail": status.state},
         )
     else:
         _log.error(
             "openrouter key check failed: %s",
             status.detail,
-            extra={"event": "openrouter_key", "status": status.state},
+            extra={"event": "openrouter_key", "detail": status.state},
         )
         if require_verified_key():
             raise RuntimeError(f"OpenRouter API key unusable: {status.detail}")
@@ -415,7 +415,7 @@ def ready(request: Request) -> JSONResponse:
         # off /ready has to be able to read it off the journal instead.
         _log.warning(
             "readiness check failed — reporting unavailable",
-            extra={"event": "ready", "status": key.state},
+            extra={"event": "ready", "detail": key.state},
         )
     return JSONResponse(
         status_code=200 if key.ok else 503,
@@ -622,6 +622,6 @@ def run_pipeline(pipeline: str, request: PipelineRequest) -> PipelineResponse:
     if issues:
         logging.getLogger(SERVICE).warning(
             "pipeline output failed shape validation",
-            extra={"event": "output_schema", "path": pipeline, "status": "; ".join(issues)},
+            extra={"event": "output_schema", "pipeline": pipeline, "detail": "; ".join(issues)},
         )
     return PipelineResponse(model=model, result=result)

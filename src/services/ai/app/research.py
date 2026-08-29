@@ -248,7 +248,7 @@ def fallback_research(
         # reaching a report.
         _log.info(
             "research found no sources",
-            extra={"event": "research_empty", "path": provider, "status": 0},
+            extra={"event": "research_empty", "provider": provider, "count": 0},
         )
         return ResearchResult(model=provider, content=NO_RESULTS_ANSWER)
 
@@ -273,8 +273,8 @@ def fallback_research(
             "research synthesis failed, returning sources unread",
             extra={
                 "event": "research_unsynthesized",
-                "path": provider,
-                "status": len(hits),
+                "provider": provider,
+                "count": len(hits),
             },
         )
         return ResearchResult(
@@ -289,7 +289,7 @@ def fallback_research(
     citations = order_by_citation(hits, answer.content)
     _log.info(
         "research answered",
-        extra={"event": "research_usage", "path": provider, "status": len(citations)},
+        extra={"event": "research_usage", "provider": provider, "count": len(citations)},
     )
     return ResearchResult(
         # Both halves, because "which model wrote this" and "which index found
@@ -362,7 +362,7 @@ def research(
             errors.append(f"perplexity: {exc}")
             _log.warning(
                 "perplexity research failed, falling back to search",
-                extra={"event": "research_fallback", "path": websearch.configured_provider()},
+                extra={"event": "research_fallback", "provider": websearch.configured_provider()},
             )
 
     if not websearch.is_configured():

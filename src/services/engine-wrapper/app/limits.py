@@ -40,7 +40,7 @@ def _misconfigured(name: str, raw: str, default: int) -> int:
     _log.warning(
         "%s is not a positive integer — falling back to the default",
         name,
-        extra={"event": "limits_config", "detail": raw, "status": default},
+        extra={"event": "limits_config", "detail": raw, "limit": default},
     )
     return default
 
@@ -156,4 +156,4 @@ def configure_threadpool(total_tokens: int) -> None:
     """Set the anyio threadpool capacity (must run inside the event loop)."""
     limiter = anyio.to_thread.current_default_thread_limiter()
     limiter.total_tokens = total_tokens
-    _log.info("threadpool sized", extra={"event": "threadpool", "status": total_tokens})
+    _log.info("threadpool sized", extra={"event": "threadpool", "limit": total_tokens})

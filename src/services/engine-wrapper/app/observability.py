@@ -26,7 +26,53 @@ _request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", 
 # Keys the formatter promotes from ``logging`` extras onto the JSON line.
 # An allowlist, not a passthrough: a caller cannot widen what gets logged by
 # adding a key to ``extra``.
-_EXTRA_KEYS = ("http_method", "path", "status", "duration_ms", "event")
+#
+# ## Why there are more than five of them
+#
+# There were five — ``http_method``, ``path``, ``status``, ``duration_ms``,
+# ``event`` — and they are the right five for an access log, which is where they
+# came from. Everything else this tier logs was then squeezed into them, and the
+# result is fields whose names are not true:
+#
+#   * ``status`` held an HTTP status at seven sites and, at twenty others, a
+#     retry attempt number, a token total, a configured limit, a count of
+#     citations, and two different strings. Nothing can alert on ``status >=
+#     500`` against that.
+#   * ``path`` held a URL path, and also the model id an LLM call was routed to
+#     and the name of a research provider, so "group the failures by model" and
+#     "group by endpoint" are the same query and neither answers.
+#   * ``duration_ms`` held a cumulative *token* count on the usage line.
+#
+# And ``detail`` was passed by four call sites that are not in this list at all,
+# so the value each of them thought it was logging — the finish reason a
+# completion was truncated at, the malformed value an operator had typed into a
+# limit — was dropped on the floor by the formatter with nothing to say so. A
+# field that is silently discarded reads, from the call site, exactly like a
+# field that is logged.
+#
+# So the allowlist is widened with named dimensions rather than the five being
+# overloaded further. It is still an allowlist: a key not named here is still
+# dropped, which is the property this list exists for.
+_EXTRA_KEYS = (
+    # access log
+    "http_method",
+    "path",
+    "status",
+    "duration_ms",
+    "event",
+    # free text — redacted like the message, since it can quote an input
+    "detail",
+    # who served the work
+    "model",
+    "provider",
+    "pipeline",
+    # how much of it there was
+    "attempt",
+    "tokens",
+    "tokens_total",
+    "count",
+    "limit",
+)
 
 # ── Redaction ────────────────────────────────────────────────────────────────
 # The TS services redact through pino's `redact` paths (packages/shared logger),

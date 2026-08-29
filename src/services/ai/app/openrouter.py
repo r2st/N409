@@ -429,14 +429,19 @@ def _post_with_retry(
             if attempt < MAX_RETRIES and _backoff_sleep(attempt, deadline):
                 _log.warning(
                     "llm connect error, retrying",
-                    extra={"event": "llm_retry", "path": candidate, "status": attempt},
+                    extra={"event": "llm_retry", "model": candidate, "attempt": attempt},
                 )
                 continue
             raise
         if resp.status_code >= 500 and attempt < MAX_RETRIES and _backoff_sleep(attempt, deadline):
             _log.warning(
                 "llm 5xx, retrying",
-                extra={"event": "llm_retry", "path": candidate, "status": resp.status_code},
+                extra={
+                    "event": "llm_retry",
+                    "model": candidate,
+                    "attempt": attempt,
+                    "status": resp.status_code,
+                },
             )
             continue
         return resp
@@ -667,8 +672,8 @@ def chat(
                     "llm completion truncated at the output cap",
                     extra={
                         "event": "llm_truncated",
-                        "path": candidate,
-                        "status": max_output_tokens(),
+                        "model": candidate,
+                        "tokens": max_output_tokens(),
                         "detail": finish_reason,
                     },
                 )
@@ -681,9 +686,9 @@ def chat(
                 "llm usage",
                 extra={
                     "event": "llm_usage",
-                    "path": served_by,
-                    "status": billed,
-                    "duration_ms": cumulative,
+                    "model": served_by,
+                    "tokens": billed,
+                    "tokens_total": cumulative,
                     "detail": "estimated" if estimated else "reported",
                 },
             )

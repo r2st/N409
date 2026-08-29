@@ -1,10 +1,12 @@
 import json
 import logging
+import re
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.observability import JsonLogFormatter, current_request_id
+from app.observability import _EXTRA_KEYS, JsonLogFormatter, current_request_id
 
 client = TestClient(app)
 
@@ -38,3 +40,80 @@ def test_request_id_is_minted_when_absent():
 
 def test_request_id_context_defaults_outside_a_request():
     assert current_request_id() == "-"
+
+
+def _extra_dicts(source: str) -> list[tuple[int, str]]:
+    """Every ``extra={...}`` literal in a source file, with its line number."""
+    out: list[tuple[int, str]] = []
+    for match in re.finditer(r"extra=\{", source):
+        start = match.end() - 1
+        depth = 0
+        for i in range(start, len(source)):
+            if source[i] == "{":
+                depth += 1
+            elif source[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    out.append((source[: match.start()].count("\n") + 1, source[start + 1 : i]))
+                    break
+    return out
+
+
+def test_no_call_site_logs_a_key_the_formatter_will_drop():
+    """A field the allowlist does not name is discarded in silence.
+
+    ``_EXTRA_KEYS`` is an allowlist on purpose — a caller must not be able to
+    widen what reaches disk by adding a key to ``extra``. The cost of that is
+    that a call site passing an unlisted key looks, from where it is written,
+    exactly like one that works: no error, no warning, and a log line missing
+    the one field it was written for. Four sites did precisely this with
+    ``detail``, including the line that reports which finish reason truncated a
+    completion and the one that reports the malformed value an operator typed
+    into a limit — the whole diagnostic content of both, dropped.
+
+    Both services share this formatter, so both trees are walked.
+    """
+    offenders: list[str] = []
+    for service in ("ai", "engine-wrapper"):
+        app_dir = Path(__file__).resolve().parents[3] / "services" / service / "app"
+        for path in sorted(app_dir.glob("*.py")):
+            source = path.read_text(encoding="utf-8")
+            for line, body in _extra_dicts(source):
+                for key in re.findall(r'"([a-z_]+)"\s*:', body):
+                    if key not in _EXTRA_KEYS:
+                        offenders.append(f"{service}/app/{path.name}:{line} {key}")
+    assert offenders == []
+
+
+def test_the_allowlist_is_still_an_allowlist():
+    """Widening it with named dimensions must not have made it a passthrough."""
+    record = logging.LogRecord("ai", logging.INFO, __file__, 1, "hello", None, None)
+    record.prompt = "the entire document we just sent a model"
+    parsed = json.loads(JsonLogFormatter().format(record))
+    assert "prompt" not in parsed
+
+
+def test_named_dimensions_reach_the_line():
+    """The fields that were being smuggled through ``path`` and ``status``."""
+    record = logging.LogRecord("ai", logging.WARNING, __file__, 1, "llm 5xx, retrying", None, None)
+    record.event = "llm_retry"
+    record.model = "openai/gpt-4o-mini"
+    record.attempt = 2
+    record.status = 503
+    parsed = json.loads(JsonLogFormatter().format(record))
+    # The model is its own field, so "group the failures by model" is a query
+    # rather than a substring match against a field named for URL paths.
+    assert parsed["model"] == "openai/gpt-4o-mini"
+    assert parsed["attempt"] == 2
+    # And `status` means what an access log means by it.
+    assert parsed["status"] == 503
+
+
+def test_a_string_dimension_is_redacted_like_the_message():
+    """`detail` carries free text, which in this tier can quote an input."""
+    record = logging.LogRecord(
+        "ai", logging.WARNING, __file__, 1, "limit misconfigured", None, None
+    )
+    record.detail = "contact analyst@example.com"
+    parsed = json.loads(JsonLogFormatter().format(record))
+    assert parsed["detail"] == "contact [EMAIL]"

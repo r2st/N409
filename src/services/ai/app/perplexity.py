@@ -117,7 +117,7 @@ def configured_model(preferred: str | None = None) -> str:
     if chosen not in MODELS:
         _log.info(
             "unrecognised perplexity model, using as given",
-            extra={"event": "pplx_unknown_model", "path": chosen},
+            extra={"event": "pplx_unknown_model", "model": chosen},
         )
     return chosen
 
@@ -406,7 +406,7 @@ def research(
                 if attempt < MAX_RETRIES and backoff_sleep(attempt, deadline):
                     _log.warning(
                         "perplexity connect error, retrying",
-                        extra={"event": "pplx_retry", "path": chosen, "status": attempt},
+                        extra={"event": "pplx_retry", "model": chosen, "attempt": attempt},
                     )
                     continue
                 raise PerplexityError(f"perplexity unreachable: {exc}") from exc
@@ -416,7 +416,12 @@ def research(
                 if attempt < MAX_RETRIES and backoff_sleep(attempt, deadline):
                     _log.warning(
                         "perplexity 5xx, retrying",
-                        extra={"event": "pplx_retry", "path": chosen, "status": resp.status_code},
+                        extra={
+                            "event": "pplx_retry",
+                            "model": chosen,
+                            "attempt": attempt,
+                            "status": resp.status_code,
+                        },
                     )
                     continue
             if resp.status_code != 200:
@@ -449,8 +454,8 @@ def research(
                 "perplexity research",
                 extra={
                     "event": "pplx_usage",
-                    "path": served_by,
-                    "status": len(citations),
+                    "model": served_by,
+                    "count": len(citations),
                 },
             )
             return ResearchResult(
