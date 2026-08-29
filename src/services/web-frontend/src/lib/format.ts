@@ -354,3 +354,34 @@ export function formatPerShare(
     maximumFractionDigits: PER_SHARE_DIGITS,
   })(n);
 }
+
+/**
+ * A concluded rate, at the precision it was concluded at.
+ *
+ * The server states DLOM and DLOC on the summary page, in the body figures and
+ * on Exhibit H through `reportSummary.formatExactPercent`: enough decimals that
+ * the reader multiplying by what they read reproduces the figure beside it, and
+ * no more. The browser's calculation panel struck the same rate at one decimal,
+ * so a run concluding a 31.42% DLOM showed "31.4%" on the screen the analyst
+ * reads the result from and "31.42%" in the PDF generated from that same run —
+ * the app disagreeing with its own report about the rate that was applied.
+ *
+ * Same rule as the server's, restated here because the two halves of one figure
+ * must not disagree about how exact it is (see also {@link formatPerShare}).
+ * `clientServerParity.test.ts` pins the pair.
+ */
+export function formatExactPercent(
+  fraction: number | string | null | undefined,
+  minDigits = 1,
+  maxDigits = 4,
+): string {
+  if (fraction === null || fraction === undefined || fraction === '') return '—';
+  const n = Number(fraction);
+  if (!Number.isFinite(n)) return '—';
+  const pct = n * 100;
+  for (let d = minDigits; d < maxDigits; d += 1) {
+    // Exact at this many places — no rounding the reader cannot undo.
+    if (Math.abs(Number(pct.toFixed(d)) - pct) < 1e-9) return `${pct.toFixed(d)}%`;
+  }
+  return `${pct.toFixed(maxDigits)}%`;
+}

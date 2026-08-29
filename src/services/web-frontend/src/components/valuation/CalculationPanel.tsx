@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
-import { formatDateTime, formatPerShare } from '../../lib/format';
+import { formatDateTime, formatExactPercent, formatPerShare } from '../../lib/format';
 import {
   fieldLabel,
   formatMoney,
@@ -279,10 +279,7 @@ export function CalculationPanel({
               accent
             />
             <StatCard label="Equity value" value={formatMoney(latest.equity_value, currency)} />
-            <StatCard
-              label="DLOM applied"
-              value={discounts?.dlom !== undefined ? `${(discounts.dlom * 100).toFixed(1)}%` : '—'}
-            />
+            <StatCard label="DLOM applied" value={formatExactPercent(discounts?.dlom)} />
           </div>
 
           <section className="overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface p-6 shadow-card">

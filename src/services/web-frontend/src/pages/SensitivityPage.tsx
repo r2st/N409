@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { all, integer, numberMin, numberRange, useFormValidation } from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
-import { formatCents } from '../lib/format';
+import { formatCents, formatExactPercent } from '../lib/format';
 import type { AxisTable, SensitivityAxis, SensitivityResult } from '../lib/types';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
 import { ModelSensitivityPanel } from '../components/valuation/ModelSensitivityPanel';
@@ -288,7 +288,13 @@ export function SensitivityPage() {
               σ {(result.base.volatility * 100).toFixed(0)}% · {result.base.termYears}y
               {result.base.riskFreeRate !== undefined &&
                 ` · r ${(result.base.riskFreeRate * 100).toFixed(1)}%`}{' '}
-              · DLOM {(result.dlom * 100).toFixed(0)}%
+              {/*
+                The rate the whole table below was computed at, as entered. The
+                field takes `step="any"`, so a 22.5% DLOM was run at 22.5 and
+                captioned "23%" — the reader could not reproduce a single cell
+                from the rate stated above it.
+              */}
+              · DLOM {formatExactPercent(result.dlom)}
             </div>
             <label className="ml-auto flex items-center gap-1.5 text-xs font-semibold text-ink-600">
               <input
