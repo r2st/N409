@@ -206,6 +206,24 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     return reply.status(201).send({ grant: grantView(grant, new Date()) });
   });
 
+  /**
+   * The what-if ladder, read through a schema rather than a cast.
+   *
+   * This was `(req.query as { fmvs?: string }).fmvs`, and a cast is a
+   * compile-time assertion with no runtime force behind it. A query string is not
+   * a `Record<string, string>`: Fastify's parser collects a repeated key into an
+   * array, so `?fmvs=1&fmvs=2` — which any client can send, and which a proxy or
+   * a link builder can produce by accident — arrives as `['1', '2']`. The very
+   * next line called `q.split(',')`, and an array has no `split`, so the caller
+   * got a 500 saying the server broke rather than a 400 saying the query did.
+   *
+   * The bound is on the raw string as well as on the term count below, because a
+   * megabyte of commas is under the term limit and still a megabyte to split. 400
+   * characters is twenty prices of nineteen digits each, which is more than the
+   * twenty terms `MAX_SCENARIO_FMVS` allows.
+   */
+  const ScenarioQuery = z.object({ fmvs: z.string().max(400).optional() });
+
   // Grant detail: vesting status + timeline + exercise scenarios.
   app.get('/api/v1/valuations/:id/grants/:grantId', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
@@ -241,7 +259,9 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     const runKind = specialtyRunKind(latest?.results ?? null);
     const adoptable = runKind === null || concludes409AFmvPerShare(runKind);
     const baseFmv = adoptable && latest?.fmv_per_share ? Number(latest.fmv_per_share) : currentFmv;
-    const q = (req.query as { fmvs?: string }).fmvs;
+    const query = ScenarioQuery.safeParse(req.query);
+    if (!query.success) throw invalidQuery(query.error);
+    const q = query.data.fmvs;
     // Bounded like `sort` is (MAX_SORT_TERMS, repos/valuations): the ladder is a
     // handful of what-if prices for one panel — the default is four — and every
     // term costs a scenario object in the response. Rejected rather than

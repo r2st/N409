@@ -355,8 +355,12 @@ export function registerOperationsRoutes(
     // Instrumentation is wired in index.ts, so a test app or a future entry
     // point can legitimately have none. Report that rather than 500.
     if (!stats) return { instrumented: false, tracked: 0, queries: [] };
-    const { limit } = req.query as { limit?: string };
-    const parsed = Number(limit);
+    // `unknown`, not `string`: a repeated `?limit=` arrives as an array, and
+    // the declared type would not have made it a string — `Number(['5','5'])`
+    // is NaN, which lands on the default below. Said out loud so the leniency
+    // is the choice it looks like rather than an accident of coercion.
+    const { limit } = req.query as { limit?: unknown };
+    const parsed = typeof limit === 'string' ? Number(limit) : NaN;
     const top = Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 200) : 20;
     return { instrumented: true, tracked: stats.size, queries: stats.top(top) };
   });

@@ -196,9 +196,19 @@ export function scimPage(query: unknown): { startIndex: number; count: number } 
   return { startIndex, count };
 }
 
-/** Parse `userName eq "value"` (the only filter Okta/Azure send on lookup). */
-export function parseUserNameFilter(filter: string | undefined): string | null {
-  if (!filter) return null;
+/**
+ * Parse `userName eq "value"` (the only filter Okta/Azure send on lookup).
+ *
+ * Takes `unknown` rather than `string | undefined` because the caller's input
+ * is a query string, and a query string is not a `Record<string, string>`:
+ * Fastify's parser collects a repeated key into an array, so `?filter=a&filter=b`
+ * arrives as `['a', 'b']`. Declaring the narrow type did not make it true — it
+ * only moved the surprise to whichever line first treated the value as a
+ * string. Anything that is not one is no filter at all, which is the same
+ * answer this already gives for an absent one.
+ */
+export function parseUserNameFilter(filter: unknown): string | null {
+  if (typeof filter !== 'string' || !filter) return null;
   const m = /userName\s+eq\s+"([^"]+)"/i.exec(filter);
   return m ? m[1]!.toLowerCase() : null;
 }

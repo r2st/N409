@@ -284,7 +284,7 @@ export function registerScimRoutes(
 
       scope.get('/Users', limited, async (req, reply) => {
         if (!(await requireToken(req, reply))) return;
-        const filter = parseUserNameFilter((req.query as { filter?: string }).filter);
+        const filter = parseUserNameFilter((req.query as { filter?: unknown }).filter);
         if (filter) {
           // Same boundary as `loadManaged`, and the reason it matters more here:
           // the filter takes an address rather than an id, so without it this is a
