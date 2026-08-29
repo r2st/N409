@@ -226,7 +226,9 @@ describe('gift & estate', () => {
   it('foots with the effective discount, which is not the sum of the two rates', () => {
     // 1 − (1 − 0.12)(1 − 0.28) = 36.64%, where adding gives 40%.
     const html = exhibit().html;
-    expect(html).toContain('36.6%');
+    // Exactly, not to a tenth: the foot is the rate a reader checks the two
+    // rows above it against, and 36.64% is what compounding them gives.
+    expect(html).toContain('36.64%');
     expect(html).not.toContain('40.0%');
   });
 

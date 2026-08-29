@@ -203,17 +203,26 @@ describe('ESOP level of value', () => {
 
   /**
    * A control-basis engagement steps *down* through both discounts. The DLOC is
-   * derived from a 22% control premium rather than supplied, so 18.0% on the
-   * exhibit is an engine figure and not an echo of an input.
+   * derived from a 22% control premium rather than supplied, so the rate on the
+   * exhibit is an engine figure and not an echo of an input — 1 − 1/1.22, which
+   * is 18.0328% and not 18%.
+   *
+   * The ladder is the derivation: each amount is the one above it less the rate
+   * in its own label, and this is the exhibit a DOL reviewer recomputes. Stated
+   * at a tenth of a point it could not be recomputed — $62,000,000 × 0.82 is
+   * $50,840,000, $20,328 away from the marketable minority value on the very
+   * next line. The DLOM is a round 12% and still reads as one.
    */
   it('orders the ladder from the appraised control value downward', () => {
     const c = cells(out());
     expect(c).toContain('Control');
     expect(c).toContain('$62,000,000');
-    expect(c).toContain('Marketable minority (DLOC 18.0%)');
+    expect(c).toContain('Marketable minority (DLOC 18.0328%)');
     expect(c).toContain('$50,819,672');
     expect(c).toContain('Nonmarketable minority (DLOM 12.0%)');
     expect(c).toContain('$44,721,311');
+    // The rate stated reproduces the amount beneath it, to the dollar.
+    expect(Math.round(62_000_000 * (1 - 0.180328))).toBe(50_819_664);
   });
 
   it('prints the divisor the per-share conclusion was reached by', () => {

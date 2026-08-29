@@ -1,6 +1,6 @@
 import type { ReportPdfSection } from '@n409/report/pdf';
 import type { CalculationRow } from '../repos/calculations.js';
-import { formatCurrency, formatPercent, num } from './reportSummary.js';
+import { formatCurrency, formatExactPercent, formatPercent, num } from './reportSummary.js';
 import type { ExhibitContext } from './reportExhibits.js';
 import type { HmrcForm } from './hmrcForms.js';
 import { esc, P, section, table } from './exhibitHtml.js';
@@ -74,6 +74,35 @@ function count(value: unknown): string | null {
 function pct(value: unknown, digits = 1): string | null {
   const n = num(value);
   return n === null ? null : formatPercent(n, digits);
+}
+
+/**
+ * A rate the reader is invited to multiply by, at the precision it was applied.
+ *
+ * The 409A deliverable settled this at `formatExactPercent`: a rate that only
+ * has to be read is fine at a tenth of a point, and a rate the schedule beside
+ * it derives an amount from is not — "Less: DLOM 31.4%" against a figure struck
+ * at 0.3142 leaves a reviewer with a calculator unable to tell whether the
+ * exhibit is rounded or wrong. The specialty schedules were never moved onto
+ * it, and they are the ones built entirely out of that step:
+ *
+ *   - the ESOP level-of-value ladder, where each row's amount is the row above
+ *     it less the rate in its own label, and a DOL reviewer tests exactly that;
+ *   - the gift/estate bridge, whose Rate column sits beside the Amount it
+ *     produced, down to an effective discount that is the two compounded;
+ *   - the EMI/CSOP table, where the minority and restriction discounts are the
+ *     whole of the step from UMV to the AMV in the foot;
+ *   - the SMB basis column, which prints the division outright — "SDE $1,032,000
+ *     ÷ 16.9%" — and the sentence deriving that rate as a discount rate less
+ *     long-term growth, an arithmetic claim in prose that a rounded operand
+ *     makes false.
+ *
+ * Weights keep {@link pct}: a weight is read, not multiplied through, and the
+ * 409A exhibits state those at whole points for the same reason.
+ */
+function exactPct(value: unknown): string | null {
+  const n = num(value);
+  return n === null ? null : formatExactPercent(n);
 }
 
 /**
@@ -378,14 +407,14 @@ function esopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): R
   const minorityBasis = specialty.value_basis === 'minority';
   const controlRow: [string, string] = minorityBasis
     ? [
-        `Control (implied at DLOC ${pct(specialty.dloc) ?? '—'} — not a step in the conclusion)`,
+        `Control (implied at DLOC ${exactPct(specialty.dloc) ?? '—'} — not a step in the conclusion)`,
         money(levels.control, ctx) ?? '—',
       ]
     : ['Control', money(levels.control, ctx) ?? '—'];
   const minorityRow: [string, string] = [
     minorityBasis
       ? 'Marketable minority (the appraised equity value)'
-      : `Marketable minority (DLOC ${pct(specialty.dloc) ?? '—'})`,
+      : `Marketable minority (DLOC ${exactPct(specialty.dloc) ?? '—'})`,
     money(levels.marketable_minority, ctx) ?? '—',
   ];
   const shares = num(specialty.shares_outstanding);
@@ -422,7 +451,7 @@ function esopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): R
         ? [
             minorityRow,
             [
-              `Nonmarketable minority (DLOM ${pct(specialty.dlom) ?? '—'})`,
+              `Nonmarketable minority (DLOM ${exactPct(specialty.dlom) ?? '—'})`,
               money(levels.nonmarketable_minority, ctx) ?? '—',
             ] as [string, string],
             controlRow,
@@ -431,7 +460,7 @@ function esopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): R
             controlRow,
             minorityRow,
             [
-              `Nonmarketable minority (DLOM ${pct(specialty.dlom) ?? '—'})`,
+              `Nonmarketable minority (DLOM ${exactPct(specialty.dlom) ?? '—'})`,
               money(levels.nonmarketable_minority, ctx) ?? '—',
             ] as [string, string],
           ]
@@ -514,7 +543,7 @@ function smbBasis(key: string, m: Record<string, unknown>, ctx: ExhibitContext):
   const value = (v: unknown, digits = 0) => money(v, ctx, digits);
   if (key === 'capitalization_of_earnings') {
     const stream = value(m.benefit_stream);
-    const rate = pct(m.cap_rate);
+    const rate = exactPct(m.cap_rate);
     return stream !== null && rate !== null ? `SDE ${stream} ÷ ${rate}` : '—';
   }
   if (key === 'sde_multiple') {
@@ -541,9 +570,9 @@ function smbExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): Re
   // of but not the derivation of, and the two figures it is built from are the
   // ones an appraiser is asked to support. Only printed when that method ran.
   const capitalization = record(methods.capitalization_of_earnings);
-  const discountRate = capitalization ? pct(capitalization.discount_rate) : null;
-  const growth = capitalization ? pct(capitalization.long_term_growth) : null;
-  const capRate = capitalization ? pct(capitalization.cap_rate) : null;
+  const discountRate = capitalization ? exactPct(capitalization.discount_rate) : null;
+  const growth = capitalization ? exactPct(capitalization.long_term_growth) : null;
+  const capRate = capitalization ? exactPct(capitalization.cap_rate) : null;
   return section('Exhibit — SMB Valuation Methods', [
     normalization
       ? table({
@@ -637,8 +666,8 @@ function emiCsopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext)
       head: ['Measure', 'Value'],
       rows: [
         ['Pro-rata value per share', money(specialty.pro_rata_per_share, ctx, 4) ?? '—'],
-        [`Minority discount`, pct(specialty.minority_discount) ?? '—'],
-        [`Restriction discount`, pct(specialty.restriction_discount) ?? '—'],
+        [`Minority discount`, exactPct(specialty.minority_discount) ?? '—'],
+        [`Restriction discount`, exactPct(specialty.restriction_discount) ?? '—'],
         ['Unrestricted market value (UMV) per share', shown(umv, ctx, 4)],
         ...grants,
       ],
@@ -1165,14 +1194,14 @@ function giftEstateExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
       ],
       [
         'Less discount for lack of control',
-        pct(specialty.dloc) ?? '—',
+        exactPct(specialty.dloc) ?? '—',
         money(specialty.value_after_dloc, ctx) ?? '—',
       ],
-      ['Less discount for lack of marketability', pct(specialty.dlom) ?? '—', shown(concluded, ctx)],
+      ['Less discount for lack of marketability', exactPct(specialty.dlom) ?? '—', shown(concluded, ctx)],
     ],
     foot: [
       'Concluded value of the transferred interest',
-      pct(specialty.effective_discount) ?? '—',
+      exactPct(specialty.effective_discount) ?? '—',
       shown(concluded, ctx),
     ],
   });
