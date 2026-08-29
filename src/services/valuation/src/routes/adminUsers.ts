@@ -5,7 +5,7 @@ import type { AdminEventType } from '../domain/auditTrail.js';
 import { httpsUrl } from '../domain/externalUrl.js';
 import { isUlid, problems } from '@n409/shared';
 import { canManageUsers, isOps } from '../auth/rbac.js';
-import { PARTNER_ROLES, ROLE_KEYS, RoleSet, USER_ADMIN_ROLES, type RoleKey } from '../domain/roles.js';
+import { PARTNER_ROLES, ROLE_KEYS, RoleSet, type RoleKey } from '../domain/roles.js';
 import { CAPABILITIES, ROLE_DEFS, capabilitiesFor } from '../domain/permissions.js';
 import { normalizeSubdomain } from '../domain/partnerSubdomain.js';
 import { NullablePhone } from '../domain/phone.js';
@@ -513,13 +513,19 @@ export function registerAdminUserRoutes(
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
 
-    // An admin cannot strip their own admin access — prevents lockouts.
-    if (id === principal.id && parsed.data.roles && !parsed.data.roles.some((r) => USER_ADMIN_ROLES.has(r)))
-      throw problems.unprocessable('You cannot remove your own admin access');
-
     // Validate the state the patch would leave behind, not just the patch.
     const nextRoles = parsed.data.roles ?? existing.roles;
     const nextPartnerId = parsed.data.partner_id !== undefined ? parsed.data.partner_id : existing.partner_id;
+
+    // An admin cannot strip their own admin access — prevents lockouts. Asked
+    // through the predicate the console's own guard uses, over the roles this
+    // patch would leave behind: the rule spelled out as "the set still names
+    // one of admin/god/supervisor" is a different question, because `ignored`
+    // subtracts. `['admin', 'ignored']` satisfied the old spelling and produces
+    // exactly the state it exists to prevent — and on the last administrator,
+    // that is the whole platform.
+    if (id === principal.id && !canManageUsers({ ...principal, roles: nextRoles }))
+      throw problems.unprocessable('You cannot remove your own admin access');
     assertPartnerScopeConsistent(nextRoles, nextPartnerId);
     if (parsed.data.partner_id && parsed.data.partner_id !== existing.partner_id)
       await assertAssignablePartner(parsed.data.partner_id);
@@ -561,6 +567,12 @@ export function registerAdminUserRoutes(
     if (existing.roles.includes(role)) throw problems.conflict(`This user already has the ${role} role`);
 
     const nextRoles = [...existing.roles, role];
+    // Additive, and still able to lock its own caller out: `ignored` is a role
+    // like any other to this route, and adding it to yourself is the one
+    // promotion that takes access away. The same predicate as PATCH, over the
+    // same "roles this write would leave behind".
+    if (id === principal.id && !canManageUsers({ ...principal, roles: nextRoles }))
+      throw problems.unprocessable('You cannot remove your own admin access');
     // Additive promotion: only the role *being added* can introduce a scope
     // violation, so validate that role alone — not the target's whole role set.
     // Re-validating the full set would 422 an otherwise-valid admin promotion
@@ -593,12 +605,13 @@ export function registerAdminUserRoutes(
 
     const existing = await findUserById(deps.pool, id);
     if (!existing || existing.deleted_at) throw problems.notFound();
-    // Mirrors the PATCH self-lockout guard: an admin can't strip their own tier.
-    if (id === principal.id && USER_ADMIN_ROLES.has(role))
-      throw problems.unprocessable('You cannot remove your own admin access');
     if (!existing.roles.includes(role)) throw problems.conflict(`This user does not have the ${role} role`);
 
     const nextRoles = existing.roles.filter((r) => r !== role);
+    // Mirrors the PATCH self-lockout guard, and asked the same way — over what
+    // the demotion leaves rather than over the name of the role removed.
+    if (id === principal.id && !canManageUsers({ ...principal, roles: nextRoles }))
+      throw problems.unprocessable('You cannot remove your own admin access');
     // Removing a role can never introduce a partner-scope violation, so there
     // is nothing to assert here — validating the remaining set would only
     // wrongly 422 a demotion when the user already held an inconsistent
