@@ -349,7 +349,7 @@ export function registerProjectionRoutes(
       );
     } catch (err) {
       if (err instanceof InternalServiceError) {
-        req.log.warn({ err }, 'projection failed');
+        req.log.warn({ err, valuationId: valuation.id }, 'projection failed');
         throw toProblem(err);
       }
       throw err;

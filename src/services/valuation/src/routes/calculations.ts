@@ -459,7 +459,7 @@ export function registerCalculationRoutes(
       return reply.status(201).send({ calculation });
     } catch (err) {
       if (err instanceof InternalServiceError) {
-        req.log.warn({ err }, 'engine compute failed');
+        req.log.warn({ err, valuationId: id }, 'engine compute failed');
         throw toProblem(err);
       }
       throw err;
@@ -516,7 +516,7 @@ export function registerCalculationRoutes(
       };
     } catch (err) {
       if (err instanceof InternalServiceError) {
-        req.log.warn({ err }, 'engine preflight failed');
+        req.log.warn({ err, valuationId: id }, 'engine preflight failed');
         throw toProblem(err);
       }
       throw err;

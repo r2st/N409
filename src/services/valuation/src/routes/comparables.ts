@@ -441,7 +441,7 @@ export function registerComparableRoutes(
         );
       } catch (err) {
         if (err instanceof InternalServiceError) {
-          req.log.warn({ err }, 'comparable screen failed');
+          req.log.warn({ err, valuationId: valuation.id }, 'comparable screen failed');
           throw toProblem(err);
         }
         throw err;

@@ -81,7 +81,7 @@ export function registerWaccRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       };
     } catch (err) {
       if (err instanceof InternalServiceError) {
-        req.log.warn({ err }, 'wacc build-up failed');
+        req.log.warn({ err, valuationId: valuation.id }, 'wacc build-up failed');
         throw toProblem(err);
       }
       throw err;

@@ -348,7 +348,7 @@ export function registerVolatilityRoutes(
         );
       } catch (err) {
         if (err instanceof InternalServiceError) {
-          req.log.warn({ err }, 'volatility estimate failed');
+          req.log.warn({ err, valuationId: valuation.id }, 'volatility estimate failed');
           throw toProblem(err);
         }
         throw err;

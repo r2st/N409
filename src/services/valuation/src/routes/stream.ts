@@ -98,7 +98,7 @@ export function registerStreamRoutes(
     } catch (err) {
       // Unreachable behind the check above, but a throw after `hijack()` has no
       // reply to land on — end the stream rather than leak the socket.
-      if (!(err instanceof HubCapacityError)) req.log.error({ err }, 'realtime join failed');
+      if (!(err instanceof HubCapacityError)) req.log.error({ err, valuationId: id }, 'realtime join failed');
       reply.raw.end();
       return;
     }
@@ -127,7 +127,8 @@ export function registerStreamRoutes(
         stop();
         reply.raw.end();
       },
-      onError: (err) => req.log.warn({ err }, 'realtime revocation check failed; stream kept'),
+      onError: (err) =>
+        req.log.warn({ err, valuationId: id }, 'realtime revocation check failed; stream kept'),
     });
 
     req.raw.on('close', () => {

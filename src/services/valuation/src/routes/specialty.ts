@@ -165,7 +165,7 @@ export function registerSpecialtyRoutes(
           },
           actorFor(principal),
         );
-        req.log.warn({ err }, 'specialty engine run failed');
+        req.log.warn({ err, valuationId: id }, 'specialty engine run failed');
         throw toProblem(err);
       }
       throw err;

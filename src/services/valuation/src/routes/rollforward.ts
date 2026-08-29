@@ -324,7 +324,7 @@ export function registerRollforwardRoutes(
       );
     } catch (err) {
       if (err instanceof InternalServiceError) {
-        req.log.warn({ err }, 'roll-forward failed');
+        req.log.warn({ err, valuationId: valuation.id }, 'roll-forward failed');
         throw toProblem(err);
       }
       throw err;

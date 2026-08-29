@@ -149,7 +149,7 @@ export function registerSensitivityRoutes(
       return { sensitivity: { ...result, currency: valuation.currency } };
     } catch (err) {
       if (err instanceof InternalServiceError) {
-        req.log.warn({ err }, 'engine sensitivity failed');
+        req.log.warn({ err, valuationId: valuation.id }, 'engine sensitivity failed');
         throw toProblem(err);
       }
       throw err;
