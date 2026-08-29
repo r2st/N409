@@ -167,6 +167,43 @@ export async function refreshInvitation(
   return rows[0] ? { invitation: rows[0], secret } : null;
 }
 
+/**
+ * Retire every invitation an account still has outstanding.
+ *
+ * An invitation is one administrator's authority written down and posted. It
+ * names whatever roles they chose — `god` included — and stays redeemable for
+ * seven days by whoever holds the link, which is deliberately not an account
+ * yet and so cannot be revoked by any of the mechanisms that end a person's
+ * access.
+ *
+ * Deactivation is this platform's "their access ends now": their sessions 401
+ * on the next request, and their API tokens stop resolving because the owner
+ * is closed (`ApiTokenRefusal.no_owner`). Their pending invitations were the
+ * one thing that outlived it — so an administrator on the way out could invite
+ * an address they control with `god`, be offboarded that afternoon, and redeem
+ * it six days later into a fresh administrator account, with every other trace
+ * of them already gone.
+ *
+ * Revoked rather than deleted, as everywhere else in this table: the console
+ * goes on showing who invited whom, and the row says what became of it.
+ *
+ * Deactivation only. Demotion is deliberately not in this set — an
+ * administrator who becomes a reviewer has not been offboarded, and cancelling
+ * the seats they were mid-way through filling would be a surprise rather than
+ * a revocation.
+ */
+export async function revokeInvitationsFrom(
+  client: pg.PoolClient | pg.Pool,
+  invitedBy: string,
+): Promise<number> {
+  const { rowCount } = await client.query(
+    `UPDATE user_invitations SET revoked_at = now()
+     WHERE invited_by = $1 AND accepted_at IS NULL AND revoked_at IS NULL`,
+    [invitedBy],
+  );
+  return rowCount ?? 0;
+}
+
 export async function revokeInvitation(pool: pg.Pool, id: string): Promise<boolean> {
   const { rowCount } = await pool.query(
     `UPDATE user_invitations SET revoked_at = now()

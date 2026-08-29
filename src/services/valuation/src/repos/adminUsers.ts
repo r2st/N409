@@ -5,6 +5,7 @@ import { likeContains, userSearchSql } from '../db/like.js';
 import { stateGroupOf } from '../domain/operations.js';
 import { NAMED_BUCKET_KEYS, namedBucketsFor } from '../domain/workflow.js';
 import { assignRoles, type UserWithRoles } from './users.js';
+import { revokeInvitationsFrom } from './invitations.js';
 import type { RoleKey } from '../domain/roles.js';
 
 /** Admin console queries (M3 feature 13) — list/edit/soft-delete users. */
@@ -163,6 +164,16 @@ export async function adminPatchUser(pool: pg.Pool, id: string, patch: AdminUser
 }
 
 /** Soft delete: the user keeps their audit trail but can no longer sign in. */
+/**
+ * Close an account: soft-delete it, drop its roles, and retire the invitations
+ * it still has outstanding.
+ *
+ * The third of those is the one that was missing, and it is the one that
+ * outlives everything else here — see `revokeInvitationsFrom`. Same
+ * transaction as the other two, because a closure that took the roles and left
+ * the standing offer of new ones is the state this is meant to make
+ * unreachable.
+ */
 export async function softDeleteUser(pool: pg.Pool, id: string): Promise<boolean> {
   return withTransaction(pool, async (client) => {
     const { rowCount } = await client.query(
@@ -171,6 +182,7 @@ export async function softDeleteUser(pool: pg.Pool, id: string): Promise<boolean
     );
     if ((rowCount ?? 0) === 0) return false;
     await client.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
+    await revokeInvitationsFrom(client, id);
     return true;
   });
 }

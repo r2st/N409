@@ -2,6 +2,7 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import type { RoleKey } from '../domain/roles.js';
+import { revokeInvitationsFrom } from './invitations.js';
 
 export interface UserRow {
   id: string;
@@ -273,8 +274,26 @@ export async function listUserIdsWithRoles(
 }
 
 /** Soft delete / reactivate for SCIM `active` toggling. */
+/**
+ * The directory's half of activation (SCIM deprovision / reactivate).
+ *
+ * Unlike `softDeleteUser` this deliberately keeps the account's roles: a SCIM
+ * `active: false` is routinely followed by an `active: true` on the next
+ * resync, and dropping the roles would hand the reactivated user an account
+ * that can sign in and see nothing. But a deprovision is still the end of that
+ * person's access, so the invitations they have outstanding go with it — the
+ * same rule the console's own deactivation applies, for the same reason:
+ * nothing else can revoke a link that is already in somebody's inbox.
+ */
 export async function setUserActive(pool: pg.Pool, id: string, active: boolean): Promise<void> {
-  await pool.query(`UPDATE users SET deleted_at = ${active ? 'NULL' : 'now()'} WHERE id = $1`, [id]);
+  if (active) {
+    await pool.query('UPDATE users SET deleted_at = NULL WHERE id = $1', [id]);
+    return;
+  }
+  await withTransaction(pool, async (client) => {
+    await client.query('UPDATE users SET deleted_at = now() WHERE id = $1', [id]);
+    await revokeInvitationsFrom(client, id);
+  });
 }
 
 /**
