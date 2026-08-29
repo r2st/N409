@@ -4,8 +4,9 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { enqueueEmail, markEmail } from '../repos/emailOutbox.js';
 import { recordSendFailure } from '../repos/emailDelivery.js';
-import { renderTemplate, type TemplateVars } from '../domain/communications.js';
+import { alwaysTemplateVars, renderTemplate, type TemplateVars } from '../domain/communications.js';
 import { findTemplateByKey } from '../repos/communications.js';
+import type { SupportEmailSource } from '../hooks/autoEmails.js';
 
 /**
  * Transactional must-sends (password reset, invitations). Same
@@ -16,9 +17,27 @@ import { findTemplateByKey } from '../repos/communications.js';
  * An enabled communication_templates row matching templateKey re-templates
  * subject/body (§15.5), rendered with `vars`. Transactional emails always
  * deliver — a disabled row just means the built-in content is used.
+ *
+ * The `always` scope of the variable catalog is supplied here rather than by
+ * the call sites, for the reason `alwaysTemplateVars` carries and the drip
+ * scan already obeys: `recipient_name`, `platform_name` and `support_email`
+ * are declared on every template, filled in the editor's preview from the
+ * catalog's samples, and were answered by none of the eleven call sites that
+ * reach this function. `renderTemplate` leaves a name nobody supplies verbatim,
+ * so an ops-authored `password_reset` override reading "Hi {{recipient_name}}"
+ * previewed as "Hi Dana" and was delivered as "Hi {{recipient_name}}".
+ *
+ * A caller's own `vars` still win: a site that holds a better answer than the
+ * floor here — a partner's brand, the invitee's name — passes it and it stands.
  */
 export async function sendTransactionalEmail(
-  deps: { pool: pg.Pool; transport?: EmailTransport; log?: FastifyBaseLogger },
+  deps: {
+    pool: pg.Pool;
+    transport?: EmailTransport;
+    log?: FastifyBaseLogger;
+    /** Answers `{{support_email}}`; omitted, the variable renders empty. */
+    settings?: SupportEmailSource;
+  },
   input: {
     toUserId?: string | null;
     toEmail: string;
@@ -27,19 +46,38 @@ export async function sendTransactionalEmail(
     body: string;
     /** Values for {{var}} placeholders when a DB template overrides content. */
     vars?: TemplateVars;
+    /** The recipient's given name where the call site holds one. */
+    recipientName?: string | null;
+    /** The partner firm on a white-labelled send; the platform otherwise. */
+    platformName?: string | null;
   },
 ): Promise<void> {
   let { subject, body } = input;
   try {
     const override = await findTemplateByKey(deps.pool, input.templateKey);
     if (override?.enabled && override.subject && override.body) {
-      subject = renderTemplate(override.subject, input.vars ?? {});
-      body = renderTemplate(override.body, input.vars ?? {});
+      // Read only when an override is actually going to be rendered — the
+      // built-in copy carries no placeholders, and this is a query.
+      const support = await deps.settings?.get('support_email').catch((err: unknown) => {
+        deps.log?.warn({ err }, 'support_email read failed; {{support_email}} renders empty');
+        return '';
+      });
+      const vars: TemplateVars = {
+        ...alwaysTemplateVars({
+          recipient_name: input.recipientName,
+          recipient_email: input.toEmail,
+          platform_name: input.platformName,
+          support_email: support ?? '',
+        }),
+        ...(input.vars ?? {}),
+      };
+      subject = renderTemplate(override.subject, vars);
+      body = renderTemplate(override.body, vars);
     }
   } catch (err) {
     deps.log?.warn({ err }, 'template override lookup failed; using built-in content');
   }
-  const { vars: _vars, ...rest } = input;
+  const { vars: _vars, recipientName: _name, platformName: _brand, ...rest } = input;
   const email = await enqueueEmail(deps.pool, { ...rest, subject, body });
   if (!deps.transport) return;
   try {
@@ -82,7 +120,7 @@ export async function sendTransactionalEmail(
  * above; this one is for the sites that have already decided they don't.
  */
 export function sendTransactionalEmailInBackground(
-  deps: { pool: pg.Pool; transport?: EmailTransport; log?: FastifyBaseLogger },
+  deps: Parameters<typeof sendTransactionalEmail>[0],
   input: Parameters<typeof sendTransactionalEmail>[1],
 ): void {
   void sendTransactionalEmail(deps, input).catch((err: unknown) => {

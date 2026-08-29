@@ -55,6 +55,114 @@ function markFailsPool(): pg.Pool {
   } as unknown as pg.Pool;
 }
 
+/**
+ * A pool serving an enabled ops-authored override of the built-in copy, and
+ * capturing the row that ends up in the outbox.
+ */
+function overridePool(override: { subject: string; body: string }) {
+  const queued: Array<Record<string, unknown>> = [];
+  const pool = {
+    query: async (sql: string, params?: unknown[]) => {
+      if (/FROM communication_templates WHERE key/i.test(sql))
+        return { rows: [{ key: template.templateKey, enabled: true, ...override }] };
+      if (/INSERT INTO email_outbox/i.test(sql)) {
+        queued.push({ sql, params });
+        return { rows: [{ id: 'eml_1', ...template }] };
+      }
+      return { rows: [] };
+    },
+  } as unknown as pg.Pool;
+  return { pool, queued };
+}
+
+/** What the override rendered into, read back off the INSERT's parameters. */
+const rendered = (queued: Array<Record<string, unknown>>) =>
+  ((queued[0]!.params ?? []) as unknown[]).filter((p): p is string => typeof p === 'string').join(' | ');
+
+/**
+ * The `always` scope on a transactional send.
+ *
+ * `recipient_name`, `platform_name` and `support_email` are declared on every
+ * template, and the editor's preview fills all three from the catalog's
+ * samples. Not one of the eleven call sites that reach this function supplied
+ * them, and `renderTemplate` leaves a name nobody answers verbatim — so an
+ * ops-authored `password_reset` override reading "Hi {{recipient_name}}"
+ * previewed as "Hi Dana" and reached the client as "Hi {{recipient_name}}".
+ */
+describe('the always scope a transactional send has to answer', () => {
+  const OVERRIDE = {
+    subject: 'Reset your {{platform_name}} password',
+    body: 'Hi {{recipient_name}}, follow {{link}}. Questions? {{support_email}}',
+  };
+
+  it('leaves no always-scope placeholder unrendered, even with nothing in hand', async () => {
+    const { pool, queued } = overridePool(OVERRIDE);
+
+    await sendTransactionalEmail({ pool }, { ...template, vars: { link: 'https://app.test/r#t=1' } });
+
+    const out = rendered(queued);
+    expect(out).not.toMatch(/\{\{/);
+    // The catalog promises the address where we hold no name, and the platform
+    // where the send is not white-labelled.
+    expect(out).toContain('Hi founder@acme.test');
+    expect(out).toContain('Reset your N409 password');
+  });
+
+  it('prefers what the call site actually knows', async () => {
+    const { pool, queued } = overridePool(OVERRIDE);
+
+    await sendTransactionalEmail(
+      { pool, settings: { get: async () => 'support@n409.test' } },
+      {
+        ...template,
+        recipientName: 'Dana',
+        platformName: 'Fidelity',
+        vars: { link: 'https://app.test/r#t=1' },
+      },
+    );
+
+    const out = rendered(queued);
+    expect(out).toContain('Hi Dana');
+    expect(out).toContain('Reset your Fidelity password');
+    expect(out).toContain('support@n409.test');
+  });
+
+  it('still lets an explicit var win over this floor', async () => {
+    const { pool, queued } = overridePool(OVERRIDE);
+
+    await sendTransactionalEmail(
+      { pool },
+      { ...template, recipientName: 'Dana', vars: { link: 'x', recipient_name: 'Dr Okafor' } },
+    );
+
+    expect(rendered(queued)).toContain('Hi Dr Okafor');
+  });
+
+  it('renders the variable empty rather than failing the send when settings will not answer', async () => {
+    const { pool, queued } = overridePool(OVERRIDE);
+    const l = log();
+
+    await sendTransactionalEmail(
+      { pool, log: l as never, settings: { get: () => Promise.reject(new Error('no settings row')) } },
+      { ...template, vars: { link: 'x' } },
+    );
+
+    // A missing support address is a gap in a sentence; a rejection here would
+    // have been a password reset nobody received.
+    expect(rendered(queued)).not.toMatch(/\{\{/);
+    expect(l.warn).toHaveBeenCalled();
+  });
+
+  it('does not read settings at all when the built-in copy is what ships', async () => {
+    const get = vi.fn(async () => 'support@n409.test');
+    // No override row: the built-in body carries no placeholders, so there is
+    // nothing to render and no reason to spend a query.
+    await sendTransactionalEmail({ pool: livePool(), settings: { get } }, template);
+
+    expect(get).not.toHaveBeenCalled();
+  });
+});
+
 describe('sendTransactionalEmailInBackground', () => {
   it('swallows an outbox-insert failure instead of rejecting', async () => {
     const l = log();
