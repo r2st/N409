@@ -297,7 +297,30 @@ export async function isSuppressed(
 export async function suppressAddress(
   db: pg.Pool | pg.PoolClient,
   input: { address: string; reason: BounceKind; detail?: string | null; outboxId?: string | null },
+  opts: {
+    /**
+     * Write only when the address has no suppression row at all.
+     *
+     * For the caller that is finishing an operation that stopped half-way: the
+     * delivery event committed, the suppression it should have caused did not,
+     * and the provider's redelivery is the only chance to notice — but by then
+     * the event is a duplicate, so it is no longer evidence of a *new* bounce.
+     * An existing row is therefore left exactly as it is, released or not,
+     * because clearing an administrator's release needs a bounce that has not
+     * already been counted. See the webhook route.
+     */
+    onlyIfAbsent?: boolean;
+  } = {},
 ): Promise<void> {
+  if (opts.onlyIfAbsent) {
+    await db.query(
+      `INSERT INTO email_suppressions (to_email, reason, detail, outbox_id)
+       VALUES ($1, $2::email_bounce_kind, $3, $4)
+       ON CONFLICT (to_email) DO NOTHING`,
+      [normalizeAddress(input.address), input.reason, input.detail ?? null, input.outboxId ?? null],
+    );
+    return;
+  }
   await db.query(
     `INSERT INTO email_suppressions (to_email, reason, detail, outbox_id)
      VALUES ($1, $2::email_bounce_kind, $3, $4)

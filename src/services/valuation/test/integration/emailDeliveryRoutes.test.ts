@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { enqueueEmail, markEmail, type EmailOutboxRow } from '../../src/repos/emailOutbox.js';
-import { isSuppressed, suppressAddress } from '../../src/repos/emailDelivery.js';
+import { isSuppressed, releaseSuppression, suppressAddress } from '../../src/repos/emailDelivery.js';
 
 /**
  * The operator's half of delivery tracking (0163): the figures, the suppression
@@ -433,6 +433,59 @@ describe.skipIf(!dbUp)('email delivery routes', () => {
         [email.id],
       );
       expect(rows[0]!.delivered_at).not.toBeNull();
+    });
+
+    /**
+     * The suppression is a second write, after the event has committed. When it
+     * was skipped — a transient failure, a process that died between the two —
+     * the provider's redelivery arrived as a duplicate and the old code took
+     * the branch that does nothing, so a hard bounce stayed recorded and
+     * unsuppressed for good.
+     */
+    it('suppresses on a redelivered bounce whose suppression never happened', async () => {
+      const email = await seed('halfway@test.example.com');
+      const body = JSON.stringify({
+        events: [{ message_id: email.id, kind: 'bounced', event_id: 'evt-half', status: '5.1.1' }],
+      });
+      const send = () =>
+        ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/webhooks/email/testmail',
+          headers: { 'content-type': 'application/json', 'x-n409-signature': sign(body) },
+          payload: body,
+        });
+
+      await send();
+      // The state a half-finished event leaves behind: the ledger has it, the
+      // suppression list does not.
+      await ctx.pool.query('DELETE FROM email_suppressions');
+      const second = await send();
+      expect(second.json()).toMatchObject({ applied: 0, duplicates: 1 });
+      expect(await isSuppressed(ctx.pool, 'halfway@test.example.com')).not.toBeNull();
+    });
+
+    /**
+     * The other direction, and the reason the redelivery cannot simply
+     * re-suppress: an administrator's release is answered by the *next* bounce,
+     * not by the provider sending the same one again.
+     */
+    it('does not undo an administrator release on a redelivered bounce', async () => {
+      const email = await seed('released@test.example.com');
+      const body = JSON.stringify({
+        events: [{ message_id: email.id, kind: 'bounced', event_id: 'evt-rel', status: '5.1.1' }],
+      });
+      const send = () =>
+        ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/webhooks/email/testmail',
+          headers: { 'content-type': 'application/json', 'x-n409-signature': sign(body) },
+          payload: body,
+        });
+
+      await send();
+      expect(await releaseSuppression(ctx.pool, 'released@test.example.com', admin.id)).toBe(true);
+      await send();
+      expect(await isSuppressed(ctx.pool, 'released@test.example.com')).toBeNull();
     });
 
     it('rejects a payload that is not the shape it accepts', async () => {

@@ -377,30 +377,59 @@ export function registerEmailDeliveryRoutes(
           continue;
         }
 
-        if (fresh) {
-          applied += 1;
-          // A terminal bounce reported by a provider suppresses the address,
-          // exactly as one reported by the relay in-band does. Read back
-          // rather than trusted from the request: the address belongs to the
-          // outbox row, and taking it from the payload would let a caller who
-          // can forge one message id suppress an address of their choosing.
-          if (bounceKind === 'hard' || bounceKind === 'complaint') {
+        if (fresh) applied += 1;
+        else duplicates += 1;
+
+        /*
+         * A terminal bounce reported by a provider suppresses the address,
+         * exactly as one reported by the relay in-band does. Read back rather
+         * than trusted from the request: the address belongs to the outbox row,
+         * and taking it from the payload would let a caller who can forge one
+         * message id suppress an address of their choosing.
+         *
+         * The suppression is a second write, after the event's transaction has
+         * committed, and it used to run only on a fresh insert. Both halves of
+         * that were wrong in the same way. It sat outside the isolation above,
+         * so a transient failure here — the one query in the loop that is not
+         * `recordDeliveryEvent`'s — took the rest of the batch down with it;
+         * and because the event was already committed, the provider's
+         * redelivery arrived as a *duplicate*, took the `else` branch, and the
+         * suppression was never attempted again. A hard bounce recorded and
+         * never suppressed is the exact state this subsystem exists to prevent:
+         * the ladder goes on spending six attempts on a dead address, and
+         * nothing on the outbox row says the follow-through was dropped.
+         *
+         * So a duplicate terminal bounce still tries, under `onlyIfAbsent` — it
+         * can finish work that stopped half-way, and it cannot re-suppress an
+         * address an administrator has released, because a redelivered event is
+         * not the second bounce that would justify overriding them.
+         */
+        if (bounceKind === 'hard' || bounceKind === 'complaint') {
+          try {
             const { rows } = await deps.pool.query<{ to_email: string }>(
               'SELECT to_email FROM email_outbox WHERE id = $1',
               [event.message_id],
             );
             const address = rows[0]?.to_email;
             if (address) {
-              await suppressAddress(deps.pool, {
-                address,
-                reason: bounceKind,
-                detail: event.detail ?? `reported by ${provider}`,
-                outboxId: event.message_id,
-              });
+              await suppressAddress(
+                deps.pool,
+                {
+                  address,
+                  reason: bounceKind,
+                  detail: event.detail ?? `reported by ${provider}`,
+                  outboxId: event.message_id,
+                },
+                { onlyIfAbsent: !fresh },
+              );
             }
+          } catch (err) {
+            unrecorded.push(event.message_id);
+            req.log.error(
+              { err, provider, messageId: event.message_id, bounceKind, alert: true },
+              'bounce recorded but the address could not be suppressed',
+            );
           }
-        } else {
-          duplicates += 1;
         }
       }
 
