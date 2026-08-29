@@ -10,6 +10,7 @@ export const ENGAGEMENT_EVENT_TYPES = {
   stageAdvanced: 'engagement_stage_advanced',
   analystAssigned: 'engagement_analyst_assigned',
   overdueReminded: 'engagement_overdue_reminder',
+  reopened: 'engagement_reopened',
 } as const;
 
 export interface EngagementStage {
@@ -51,6 +52,80 @@ export function nextStage(key: string): EngagementStage | null {
   const i = stageIndex(key);
   if (i < 0 || i >= ENGAGEMENT_STAGES.length - 1) return null;
   return ENGAGEMENT_STAGES[i + 1]!;
+}
+
+/**
+ * Whether `key` names a stage the pipeline is finished at.
+ *
+ * A stage carrying `terminal: true` is the end of the engagement: the pipeline
+ * board stops listing it, the SLA stops running, and the overdue sweep stops
+ * chasing the analyst. Read by {@link planStageTransition}, which is the only
+ * place the flag has ever meant anything to a *write* — see the note there.
+ */
+export function isTerminalStage(key: string): boolean {
+  return stageByKey(key)?.terminal === true;
+}
+
+export type StageTransitionRefusal =
+  /** The body named something that is not a stage. */
+  | 'unknown_stage'
+  /** No target given and there is nothing after the current stage. */
+  | 'already_final'
+  /** The engagement is already where the caller is asking it to go. */
+  | 'same_stage'
+  /** Leaving a terminal stage, without saying that is what this is. */
+  | 'reopen_required';
+
+export type StageTransitionPlan =
+  { ok: true; from: string; to: string; reopen: boolean } | { ok: false; reason: StageTransitionRefusal };
+
+/**
+ * The whole transition table of the engagement lifecycle, as one pure decision.
+ *
+ * It used to be four `if`s in the route, and the reason to pull them out is
+ * that they did not agree with each other. `terminal: true` on `complete` was
+ * enforced on exactly one of the two paths into this function: an advance with
+ * no target asked `nextStage`, got null and refused with "already at its final
+ * stage", while an advance naming a target never consulted the flag at all. So
+ * `POST /engagement/advance {}` on a finished engagement was a 409 and `POST
+ * /engagement/advance {"stage":"kickoff"}` was a 200 — and the second one is
+ * the consequential direction. Reopening puts the engagement back on the
+ * pipeline board and back into the overdue-reminder sweep, which then emails
+ * the assigned analyst about work everybody believed was delivered. The stage
+ * trail recorded it as an ordinary `engagement_stage_advanced`, indistinguish-
+ * able from the forward move that closed it. The UI offered the move, too: the
+ * "Jump to stage" picker lists every stage, `complete` included, from every
+ * stage, `complete` included.
+ *
+ * Reopening is legitimate ops work — an auditor comes back with queries a month
+ * after the board approved — so the fix is not to forbid it. It is to make it
+ * something the caller *says*, rather than something that happens because a
+ * select box had the option in it. `reopen: true` is the whole difference, and
+ * a reopen records its own event so the trail can be read back.
+ *
+ * Backwards moves between non-terminal stages stay unguarded on purpose: an
+ * engagement that bounces between client review and drafting is the normal
+ * case, and `engagement_stage_history` is built to record a stage being
+ * re-entered.
+ */
+export function planStageTransition(
+  from: string,
+  to: string | undefined,
+  opts: { reopen?: boolean } = {},
+): StageTransitionPlan {
+  let target = to;
+  if (target === undefined) {
+    const next = nextStage(from);
+    // An implicit advance never reopens: there is no stage after the last one,
+    // and "next" is not a word for going backwards.
+    if (!next) return { ok: false, reason: 'already_final' };
+    target = next.key;
+  }
+  if (!isEngagementStage(target)) return { ok: false, reason: 'unknown_stage' };
+  if (target === from) return { ok: false, reason: 'same_stage' };
+  const reopen = isTerminalStage(from);
+  if (reopen && opts.reopen !== true) return { ok: false, reason: 'reopen_required' };
+  return { ok: true, from, to: target, reopen };
 }
 
 export type SlaLevel = 'green' | 'yellow' | 'red';

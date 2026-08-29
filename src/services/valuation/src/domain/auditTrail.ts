@@ -92,6 +92,9 @@ export const EVENT_CATALOG = {
   state_changed: D('Stage changed', 'lifecycle', 'notice', 'client'),
   engagement_started: D('Engagement started', 'lifecycle', 'info', 'client'),
   engagement_stage_advanced: D('Engagement stage advanced', 'lifecycle', 'info', 'client'),
+  // 'notice', not 'info': a reopen undoes a delivery everybody downstream has
+  // already been told about, and it is the one stage move that is not routine.
+  engagement_reopened: D('Engagement reopened', 'lifecycle', 'notice', 'client'),
   engagement_analyst_assigned: D('Analyst assigned', 'lifecycle', 'info'),
   engagement_overdue_reminder: D('Overdue reminder sent', 'lifecycle', 'info'),
 

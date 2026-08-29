@@ -247,6 +247,89 @@ describe('EngagementTab', () => {
     expect(screen.queryByText('stage advanced 15')).not.toBeInTheDocument();
   });
 
+  /**
+   * The picker offers every stage from every stage, `complete` included, so
+   * "back to kickoff" on a delivered engagement is one click away. The server
+   * refuses that move unless the caller says it is a reopen; the panel is what
+   * says so, and it asks first — reopening puts the engagement back on the
+   * pipeline board and restarts the SLA clock.
+   */
+  describe('reopening a completed engagement', () => {
+    const completed = {
+      ...VIEW,
+      engagement: { ...VIEW.engagement, current_stage: 'complete' },
+      sla: { ...VIEW.sla, stage: 'complete', label: 'Complete', level: 'green' as const },
+    };
+
+    it('confirms, then names the move as a reopen', async () => {
+      const writes: Array<{ body: unknown }> = [];
+      mockApi(completed, (_path, init) => {
+        writes.push({ body: JSON.parse(String(init.body)) as unknown });
+        return jsonResponse({ ok: true });
+      });
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      renderTab();
+      await screen.findByText('Stage: Complete');
+
+      await userEvent.selectOptions(screen.getByRole('combobox'), 'analysis');
+      await userEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+      await waitFor(() => expect(writes).toHaveLength(1));
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(writes[0]!.body).toEqual({ stage: 'analysis', reopen: true });
+    });
+
+    it('sends nothing when the confirmation is declined', async () => {
+      const writes: unknown[] = [];
+      mockApi(completed, (_path, init) => {
+        writes.push(init);
+        return jsonResponse({ ok: true });
+      });
+      vi.spyOn(window, 'confirm').mockReturnValue(false);
+      renderTab();
+      await screen.findByText('Stage: Complete');
+
+      await userEvent.selectOptions(screen.getByRole('combobox'), 'analysis');
+      await userEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+      // Nothing asked for, so nothing sent — and the picker keeps the choice,
+      // because the operator has not finished making it.
+      await waitFor(() => expect(screen.getByRole('combobox')).toHaveValue('analysis'));
+      expect(writes).toHaveLength(0);
+    });
+
+    it('does not ask, or claim a reopen, for an ordinary move between stages', async () => {
+      const writes: Array<{ body: unknown }> = [];
+      mockApi(VIEW, (_path, init) => {
+        writes.push({ body: JSON.parse(String(init.body)) as unknown });
+        return jsonResponse({ ok: true });
+      });
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      renderTab();
+      await screen.findByText('Stage: Review');
+
+      await userEvent.selectOptions(screen.getByRole('combobox'), 'intake');
+      await userEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+      await waitFor(() => expect(writes).toHaveLength(1));
+      expect(confirm).not.toHaveBeenCalled();
+      expect(writes[0]!.body).toEqual({ stage: 'intake' });
+    });
+  });
+
+  /**
+   * A retired valuation nobody ever opened the panel on has no engagement at
+   * all. Opening the panel used to *create* one — the GET called
+   * `ensureEngagement` — so this response could not previously arrive.
+   */
+  it('says so when the engagement was never started, rather than showing a stage', async () => {
+    mockApi({ ...VIEW, engagement: null, sla: null, durations: [] });
+    renderTab();
+    await screen.findByText('No engagement was started');
+    expect(screen.queryByText(/^Stage: /)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Advance to next stage/i })).not.toBeInTheDocument();
+  });
+
   it('reports a failed load rather than spinning forever', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(problem(403, 'the engagement panel is operations-only'));
     renderTab();

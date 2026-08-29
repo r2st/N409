@@ -1,8 +1,8 @@
 import type pg from 'pg';
-import { newUlid } from '@n409/shared';
+import { newUlid, problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
-import { ENGAGEMENT_EVENT_TYPES, type StageHistoryEntry } from '../domain/engagement.js';
+import { ENGAGEMENT_EVENT_TYPES, stageByKey, type StageHistoryEntry } from '../domain/engagement.js';
 
 export interface EngagementRow {
   id: string;
@@ -60,18 +60,51 @@ export async function ensureEngagement(
   });
 }
 
+/**
+ * Move the engagement to `toStage`, but only if it is still where the caller
+ * read it.
+ *
+ * THE `WHERE current_stage = $3` IS THE POINT. This used to update by primary
+ * key alone, and every guard the route applies — "unknown stage", "already at
+ * that stage", "already at its final stage" — is computed from a row read on a
+ * *different* connection some milliseconds earlier. So none of them survived
+ * two operators with the panel open, which is the ordinary case for a pipeline
+ * board that exists to be worked from:
+ *
+ *   * Two advances off one read both committed. The trail got two rows and two
+ *     events, and the second event said `from: kickoff` for a move out of
+ *     `analysis` — a transition that never happened, written into an
+ *     append-only log a compliance reader is entitled to believe.
+ *   * Each caller was handed back the row *its own* UPDATE returned, so both
+ *     were told the engagement was somewhere it was not. One of them was wrong
+ *     before the response finished serialising.
+ *   * `stage_entered_at` — the SLA clock, and the thing the overdue sweep
+ *     reads — was reset twice, so a double-click bought the stage a fresh
+ *     window.
+ *
+ * A conditional UPDATE makes the guard and the write the same act. Losing the
+ * race is a 409 naming the stage the engagement actually reached, because the
+ * caller's next move depends on where it is now, not on being told "conflict".
+ * The throw rolls the transaction back, so a lost race writes no history row
+ * and no event either.
+ *
+ * `reopen` selects the event type only; the refusal that decides whether a
+ * reopen is allowed at all is `planStageTransition`.
+ */
 export async function advanceStage(
   pool: pg.Pool,
   engagement: EngagementRow,
   toStage: string,
   actor: EventActor,
+  opts: { reopen?: boolean } = {},
 ): Promise<EngagementRow> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<EngagementRow>(
       `UPDATE engagements SET current_stage = $2, stage_entered_at = now(), updated_at = now()
-       WHERE id = $1 RETURNING *`,
-      [engagement.id, toStage],
+       WHERE id = $1 AND current_stage = $3 RETURNING *`,
+      [engagement.id, toStage, engagement.current_stage],
     );
+    if (rows.length === 0) throw await staleAdvance(client, engagement);
     await client.query(
       `INSERT INTO engagement_stage_history (id, engagement_id, valuation_id, stage, entered_by)
        VALUES ($1, $2, $3, $4, $5)`,
@@ -79,12 +112,33 @@ export async function advanceStage(
     );
     await recordEvent(client, {
       valuationId: engagement.valuation_id,
-      type: ENGAGEMENT_EVENT_TYPES.stageAdvanced,
+      type: opts.reopen ? ENGAGEMENT_EVENT_TYPES.reopened : ENGAGEMENT_EVENT_TYPES.stageAdvanced,
       actor,
       payload: { from: engagement.current_stage, to: toStage },
     });
     return rows[0]!;
   });
+}
+
+/**
+ * Why the conditional UPDATE above matched nothing, as something to throw.
+ *
+ * Two possibilities, and they want different answers: somebody else moved the
+ * stage (409, and the message names where it went, because that is what decides
+ * what the caller does next), or the engagement is gone — the valuation was
+ * hard-deleted out from under the request and `ON DELETE CASCADE` took it (404).
+ */
+async function staleAdvance(client: pg.PoolClient, engagement: EngagementRow): Promise<Error> {
+  const { rows } = await client.query<{ current_stage: string }>(
+    'SELECT current_stage FROM engagements WHERE id = $1',
+    [engagement.id],
+  );
+  const actual = rows[0]?.current_stage;
+  if (actual === undefined) return problems.notFound();
+  const label = stageByKey(actual)?.label ?? actual;
+  return problems.conflict(
+    `The engagement moved to "${label}" while this change was being made. Reload the engagement and try again.`,
+  );
 }
 
 export async function assignAnalyst(

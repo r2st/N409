@@ -11,10 +11,10 @@ import type { EmailTransport } from '../hooks/stateChange.js';
 import {
   ENGAGEMENT_EVENT_TYPES,
   ENGAGEMENT_STAGES,
-  isEngagementStage,
-  nextStage,
+  planStageTransition,
   slaStatus,
   stageDurations,
+  type StageTransitionRefusal,
 } from '../domain/engagement.js';
 import {
   advanceStage,
@@ -22,10 +22,13 @@ import {
   eachActiveEngagement,
   ENGAGEMENT_PAGE_LIMIT,
   ensureEngagement,
+  findEngagement,
   listActiveEngagements,
   stageHistory,
   type EngagementRow,
 } from '../repos/engagements.js';
+import { findUserById } from '../repos/users.js';
+import { OPS_ROLES } from '../domain/roles.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
@@ -38,7 +41,15 @@ import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
  * emails the assigned analyst when a stage is overdue.
  */
 
-const AdvanceBody = z.object({ stage: z.string().max(60).optional() });
+const AdvanceBody = z.object({
+  stage: z.string().max(60).optional(),
+  /**
+   * Say that this move is taking the engagement back out of `complete`.
+   * Required for that direction and meaningless in any other — see
+   * `planStageTransition` for why the flag exists rather than a flat refusal.
+   */
+  reopen: z.boolean().optional(),
+});
 const AssignBody = z.object({ analyst_id: z.string().nullable() });
 
 function requireOps(principal: Principal): void {
@@ -73,6 +84,68 @@ async function engagementView(pool: pg.Pool, engagement: EngagementRow, now: Dat
     durations_truncated: historyTruncated,
     // Activity feed: most-recent-first, capped for the panel.
     activity: events.reverse(),
+  };
+}
+
+/** The refusal a transition plan turns into on the wire. */
+function refuseTransition(reason: StageTransitionRefusal): Error {
+  switch (reason) {
+    case 'unknown_stage':
+      return problems.unprocessable('Unknown engagement stage');
+    case 'already_final':
+      return problems.conflict('The engagement is already at its final stage');
+    case 'same_stage':
+      return problems.conflict('The engagement is already at that stage');
+    case 'reopen_required':
+      return problems.conflict(
+        'This engagement is complete. Reopening it puts it back on the pipeline board and back ' +
+          'into the overdue-reminder sweep, so it has to be asked for: send "reopen": true.',
+      );
+  }
+}
+
+/**
+ * Who may be made the analyst on an engagement.
+ *
+ * Two things were wrong with accepting any ULID. A non-existent one reached the
+ * `assigned_analyst_id` foreign key and came back as a bare 500 — a
+ * well-signalled failure answered with nothing a caller can act on. And a real
+ * id belonging to a *client* was accepted, which is not a typo the operator
+ * gets to find out about later: the overdue sweep emails whoever is assigned,
+ * by name, with the company and the internal SLA state — "Overdue: OtherCo is
+ * past SLA in Analysis" — so a mis-assignment sends one client's engagement
+ * status to an unrelated one.
+ *
+ * Stricter than the reviewer check on `POST /workflow/reassign`, which only
+ * asks that the user exist, and deliberately so: nothing automatically mails a
+ * reviewer their queue, and this sweep runs on a timer.
+ */
+async function assertAssignableAnalyst(pool: pg.Pool, analystId: string): Promise<void> {
+  const invalid = (detail: string): Error =>
+    problems.unprocessable(detail, { errors: [{ path: ['analyst_id'] }] });
+  if (!isUlid(analystId)) throw invalid('Invalid analyst id');
+  const user = await findUserById(pool, analystId);
+  if (!user) throw invalid('Unknown analyst');
+  if (!user.roles.some((r) => OPS_ROLES.has(r))) {
+    throw invalid('That user is not on the operations team and cannot be assigned as the analyst');
+  }
+}
+
+/**
+ * The engagement panel for a retired valuation whose engagement was never
+ * started. `engagement` and `sla` are null rather than a fabricated kickoff:
+ * there is no stage, so there is no SLA, and no clock to have been running.
+ * The activity feed is still the valuation's, which is the part there is
+ * something to look at.
+ */
+async function unstartedEngagementView(pool: pg.Pool, valuationId: string) {
+  return {
+    engagement: null,
+    sla: null,
+    stages: ENGAGEMENT_STAGES,
+    durations: [],
+    durations_truncated: false,
+    activity: (await listEvents(pool, valuationId, { limit: ACTIVITY_FEED_LIMIT })).reverse(),
   };
 }
 
@@ -119,7 +192,30 @@ export function registerEngagementRoutes(
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadValuation(deps.pool, id);
+    const valuation = await loadValuation(deps.pool, id);
+    /*
+     * `ensureEngagement` INSERTs, and this is a GET.
+     *
+     * On a live valuation that is the intended behaviour and stays: an
+     * engagement begins the first time somebody opens the panel, which is the
+     * moment the kickoff clock should start. On a *retired* one it is a write
+     * to withdrawn work, reached by a read — the shape `refuseIfRetired`
+     * exists for, and the one R89's sweep could not see, because it drove the
+     * mutating routes and this is not one of them. It stamped an `engagements`
+     * row and an `engagement_started` event onto a file the firm had already
+     * put down.
+     *
+     * The read stays open, per the doctrine in `domain/retiredEngagement.ts` —
+     * a firm that has withdrawn work still has to be able to look at it. What
+     * it no longer does is bring an engagement into being while looking. A
+     * retired valuation nobody ever opened the panel on has no engagement, and
+     * the view says so rather than inventing a kickoff that never happened.
+     */
+    if (valuation.archived_at !== null) {
+      const existing = await findEngagement(deps.pool, id);
+      if (!existing) return unstartedEngagementView(deps.pool, id);
+      return engagementView(deps.pool, existing, new Date());
+    }
     const engagement = await ensureEngagement(deps.pool, id, {
       actorType: 'human',
       actorId: principal.id,
@@ -140,21 +236,18 @@ export function registerEngagementRoutes(
       actorType: 'human',
       actorId: principal.id,
     });
-    let target = parsed.data.stage;
-    if (!target) {
-      const next = nextStage(engagement.current_stage);
-      if (!next) throw problems.conflict('The engagement is already at its final stage');
-      target = next.key;
-    }
-    if (!isEngagementStage(target)) throw problems.unprocessable('Unknown engagement stage');
-    if (target === engagement.current_stage) {
-      throw problems.conflict('The engagement is already at that stage');
-    }
-
-    const updated = await advanceStage(deps.pool, engagement, target, {
-      actorType: 'human',
-      actorId: principal.id,
+    const plan = planStageTransition(engagement.current_stage, parsed.data.stage, {
+      reopen: parsed.data.reopen,
     });
+    if (!plan.ok) throw refuseTransition(plan.reason);
+
+    const updated = await advanceStage(
+      deps.pool,
+      engagement,
+      plan.to,
+      { actorType: 'human', actorId: principal.id },
+      { reopen: plan.reopen },
+    );
     return engagementView(deps.pool, updated, new Date());
   });
 
@@ -166,9 +259,7 @@ export function registerEngagementRoutes(
     refuseIfRetired(await loadValuation(deps.pool, id), 'accepting engagement changes');
     const parsed = AssignBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid analyst', parsed.error);
-    if (parsed.data.analyst_id && !isUlid(parsed.data.analyst_id)) {
-      throw problems.unprocessable('Invalid analyst id');
-    }
+    if (parsed.data.analyst_id !== null) await assertAssignableAnalyst(deps.pool, parsed.data.analyst_id);
     const engagement = await ensureEngagement(deps.pool, id, {
       actorType: 'human',
       actorId: principal.id,

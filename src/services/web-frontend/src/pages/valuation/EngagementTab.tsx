@@ -2,7 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, ErrorNote, LoadError, Select, Spinner, WriteGate, useRetry } from '../../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  LoadError,
+  Select,
+  Spinner,
+  WriteGate,
+  useRetry,
+} from '../../components/ui';
 
 /**
  * Engagement lifecycle panel (feature 8). Shows the current stage + SLA, the
@@ -41,12 +50,17 @@ interface ActivityEntry {
   occurred_at: string;
 }
 interface EngagementView {
+  /**
+   * Null for a retired valuation whose engagement was never started. The panel
+   * used to *create* one by being opened — the GET called `ensureEngagement` —
+   * so this case could not arise and the type did not admit it.
+   */
   engagement: {
     current_stage: string;
     assigned_analyst_id: string | null;
     stage_entered_at: string;
-  };
-  sla: Sla;
+  } | null;
+  sla: Sla | null;
   stages: Stage[];
   durations: Duration[];
   activity: ActivityEntry[];
@@ -83,13 +97,31 @@ export function EngagementTab() {
     void load();
   }, [load, token]);
 
+  /**
+   * `reopen` is sent only when the engagement is leaving `complete`, and the
+   * server refuses that move without it. The picker lists every stage from
+   * every stage, so before this the operator could take a delivered engagement
+   * back to kickoff by choosing a line in a select box — putting it back on the
+   * pipeline board and back into the overdue-reminder sweep, with nothing in
+   * the trail saying that is what happened.
+   */
   const advance = async (stage?: string) => {
+    const reopening = view?.engagement?.current_stage === 'complete' && stage !== undefined;
+    if (
+      reopening &&
+      !window.confirm(
+        'This engagement is complete. Reopening it puts it back on the pipeline board and starts ' +
+          'the SLA clock again. Reopen it?',
+      )
+    ) {
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
       await api(`/valuations/${valuation.id}/engagement/advance`, {
         method: 'POST',
-        body: stage ? { stage } : {},
+        body: { ...(stage ? { stage } : {}), ...(reopening ? { reopen: true } : {}) },
       });
       setTarget('');
       await load();
@@ -104,7 +136,16 @@ export function EngagementTab() {
   if (!view) return <LoadError message={error} {...retryProps} />;
 
   const { sla, stages, durations } = view;
-  const currentIdx = stages.findIndex((s) => s.key === view.engagement.current_stage);
+  const engagement = view.engagement;
+  if (!engagement || !sla) {
+    return (
+      <EmptyState title="No engagement was started">
+        This valuation was retired before anyone opened its engagement, so it has no stage, no SLA and no
+        timing to show.
+      </EmptyState>
+    );
+  }
+  const currentIdx = stages.findIndex((s) => s.key === engagement.current_stage);
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -148,9 +189,9 @@ export function EngagementTab() {
           <WriteGate closed={retired}>
             <Button
               onClick={() => void advance()}
-              disabled={busy || view.engagement.current_stage === 'complete'}
+              disabled={busy || engagement.current_stage === 'complete'}
               title={
-                view.engagement.current_stage === 'complete'
+                engagement.current_stage === 'complete'
                   ? 'This engagement is at its final stage — there is nothing after complete.'
                   : undefined
               }
