@@ -186,10 +186,44 @@ describe.skipIf(!dbUp)('the email outbox retention policy', () => {
       expect(await survives(heldMail.id)).toBe(true);
     });
 
+    it('freezes mail addressed to the held person before they had an account', async () => {
+      /*
+       * The invitation is the message with no `to_user_id`, because the
+       * account it invites somebody to make does not exist when it is sent.
+       * It is also the one that records how they came to be here — who
+       * invited them, to what role — and once they accept, it is
+       * correspondence with a person a user-scoped hold can name.
+       *
+       * Matched on the foreign key alone, the hold did not reach it: "freeze
+       * everything about this person" deleted their invitation on the next
+       * sweep, with the hold sitting there active and the operator's
+       * `skipped_hold` count agreeing that nothing was held.
+       */
+      const held = await seedUser(ctx, { roles: [] });
+      const beforeTheAccount = await agedEmail(900, { toUserId: null, toEmail: held.email });
+      // Same address, different case: `users.email` is matched
+      // case-insensitively everywhere and `to_email` is stored as the caller
+      // wrote it, so a hold that missed this one would be a hold defeated by
+      // an IdP that capitalises.
+      const shouted = await agedEmail(900, { toUserId: null, toEmail: held.email.toUpperCase() });
+      const stranger = await agedEmail(900, { toUserId: null, toEmail: 'someone.else@test.example.com' });
+      await placeHold('user', held.id);
+      await setPolicy('email_outbox', { archive_after_days: null, retention_days: 730, enabled: true });
+
+      const result = await runRetentionSweep(ctx.pool);
+      expect(result.purged).toBe(1);
+      expect(result.skipped_hold).toBe(2);
+      expect(await survives(beforeTheAccount.id)).toBe(true);
+      expect(await survives(shouted.id)).toBe(true);
+      expect(await survives(stranger.id)).toBe(false);
+    });
+
     it('freezes everything under a global hold, including mail with no account behind it', async () => {
-      // A client contact mailed an intake link has no `to_user_id`, so no user
-      // hold can name them. The global hold is what covers that case, and it
-      // is the one an operator reaches for when they do not yet know the scope.
+      // A client contact mailed an intake link has no `to_user_id` and no
+      // account here at all, so nothing about them is a user a hold can name —
+      // the address-matching above finds nobody. The global hold is what
+      // covers that case, and it is the one an operator reaches for when they
+      // do not yet know the scope.
       const anonymous = await agedEmail(900, { toUserId: null });
       await placeHold('global', null);
       await setPolicy('email_outbox', { archive_after_days: null, retention_days: 730, enabled: true });

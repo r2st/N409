@@ -381,11 +381,49 @@ export async function purgeExpiredOutbox(
         SELECT 1 FROM valuations v WHERE v.id = e.valuation_id AND v.archived_at IS NOT NULL
       )
     )`;
+  /*
+   * Whether a hold covers this message — and, for a user hold, by address as
+   * well as by account.
+   *
+   * `to_user_id` is nullable and is null for every message the platform sent
+   * to somebody who did not have an account at the time. The invitation mail
+   * is the whole class: `sendInviteEmail` (routes/adminUsers.ts) addresses
+   * `invitation.email`, because the account it invites them to make does not
+   * exist yet. It is also the message that says who invited them, to what
+   * role, and carries the link they used — and once they accept, it is
+   * correspondence with a person who now has an id that a hold can name.
+   *
+   * Matched on `to_user_id` alone, no user-scoped hold reached it. "Freeze
+   * everything about this person" deleted their invitation on the next sweep
+   * while the hold sat there active, which is the one failure a legal hold
+   * exists to prevent — and it did it silently, because the operator-facing
+   * "how much is your hold holding" count is this same predicate.
+   *
+   * The address is the other half of the identity here, exactly as it is for
+   * the access request: `email_suppressions` and `contact_submissions` are
+   * both reached through it by `buildPersonalDataExport`, for the same reason.
+   * `ON DELETE SET NULL` on the FK makes the point from the other side — the
+   * column is explicitly allowed to stop naming the recipient while
+   * `to_email` still does.
+   *
+   * `lower()` on both sides because neither is normalised: `users.email` is
+   * matched case-insensitively everywhere (`findUserByEmail`), and
+   * `enqueueEmail` stores `to_email` as the caller handed it over. The cost is
+   * a primary-key lookup on `users` per active user-scoped hold per candidate
+   * row, and only when such a hold exists at all — the outer EXISTS finds
+   * nothing to expand when the hold list is empty, which is every deployment
+   * that has not placed one.
+   */
   const frozen = `EXISTS (
     SELECT 1 FROM legal_holds h
      WHERE h.active
        AND (h.scope = 'global'
-         OR (h.scope = 'user' AND h.reference_id = e.to_user_id)
+         OR (h.scope = 'user' AND (
+              h.reference_id = e.to_user_id
+              OR EXISTS (
+                SELECT 1 FROM users hu
+                 WHERE hu.id = h.reference_id
+                   AND lower(hu.email) = lower(e.to_email))))
          OR (h.scope = 'valuation' AND h.reference_id = e.valuation_id))
   )`;
 
