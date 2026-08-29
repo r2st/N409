@@ -37,6 +37,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { isUniqueViolation } from '../db/pgError.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { templateText } from '../domain/templateText.js';
 
 /**
  * Communication templates + auto email campaigns (409.ai §15.5/§15.6).
@@ -54,8 +55,10 @@ const TemplateBody = z.object({
   channel: z.enum(['email', 'sms']).default('email'),
   category: z.enum(TEMPLATE_CATEGORIES).default('account'),
   description: z.string().max(500).default(''),
+  // Subject is optional here — an SMS template has none — so the blank check
+  // is the channel-aware one below, on a value that is present.
   subject: z.string().max(500).default(''),
-  body: z.string().min(1).max(20_000),
+  body: templateText(20_000),
   enabled: z.boolean().default(true),
 });
 
@@ -197,7 +200,7 @@ export function registerCommunicationRoutes(
     const principal = requireOps(req);
     const parsed = TemplateBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid template', parsed.error);
-    if (parsed.data.channel === 'email' && !parsed.data.subject)
+    if (parsed.data.channel === 'email' && !parsed.data.subject.trim())
       throw problems.unprocessable('Email templates need a subject');
     if (await findTemplateByKey(deps.pool, parsed.data.key))
       throw problems.conflict('A template with this key already exists');
@@ -216,7 +219,9 @@ export function registerCommunicationRoutes(
 
     const parsed = TemplatePatch.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
-    if (existing.channel === 'email' && parsed.data.subject === '')
+    // `.trim()`, not `=== ''`: a subject of three spaces is one every render
+    // path treats as present and every mail client shows as no subject at all.
+    if (existing.channel === 'email' && parsed.data.subject?.trim() === '')
       throw problems.unprocessable('Email templates need a subject');
 
     const template = await updateCommunicationTemplate(deps.pool, id, parsed.data, principal.id);

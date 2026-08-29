@@ -63,6 +63,7 @@ import { pageParam } from '../domain/pagination.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { isUniqueViolation } from '../db/pgError.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { templateText } from '../domain/templateText.js';
 import { forbidden } from '../domain/accessProblem.js';
 
 const ListQuery = z.object({
@@ -765,7 +766,11 @@ export function registerAdminUserRoutes(
         // template keys; empty subject/body pairs are rejected.
         email_templates: z.record(
           z.enum(PARTNER_EMAIL_TEMPLATE_KEYS),
-          z.object({ subject: z.string().min(1).max(300), body: z.string().min(1).max(5000) }),
+          // Blank-checked, not just length-checked: `applyPartnerEmailTemplates`
+          // gates on `override.subject && override.body`, which a string of
+          // spaces passes — so a template saved that way replaced the
+          // platform's copy with an empty email.
+          z.object({ subject: templateText(300), body: templateText(5000) }),
         ),
         // The firm's public address (0106). Normalised below rather than by a
         // regex here, so a rejection can say *why* — "reserved" and "too

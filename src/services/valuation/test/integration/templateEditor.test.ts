@@ -143,6 +143,65 @@ describe.skipIf(!dbUp)('communication template editor', () => {
     });
   });
 
+  /**
+   * A template whose copy is only whitespace.
+   *
+   * Every save path bounded these with `.min(1)`, which counts characters — and
+   * a subject of three spaces has three of them. Every *render* path then asks
+   * a different question: `applyTemplateOverrides`, `applyPartnerEmailTemplates`
+   * and `sendTransactionalEmail` all gate on `override.subject &&
+   * override.body`, which a whitespace string passes. So the template was
+   * accepted, listed as enabled, and replaced the platform's copy with an email
+   * that had a blank subject line and no body at all.
+   */
+  describe('copy that says nothing', () => {
+    it('refuses a body of only whitespace', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/communication-templates',
+        headers: authHeader(admin.token),
+        payload: { key: 'blank_body', subject: 'Something', body: '   \n  ' },
+      });
+      expect(res.statusCode, res.body).toBe(422);
+    });
+
+    it('refuses a subject of only whitespace on an email template', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/communication-templates',
+        headers: authHeader(admin.token),
+        payload: { key: 'blank_subject', subject: '   ', body: 'Real copy.' },
+      });
+      expect(res.statusCode, res.body).toBe(422);
+      expect(res.json().detail).toContain('subject');
+    });
+
+    it('refuses editing real copy down to whitespace', async () => {
+      // The half that mattered most: the template was created honestly and
+      // emptied afterwards, so nothing about it looked wrong on the list.
+      const t = await createTemplate({ key: 'emptied_later', subject: 'Real', body: 'Real copy.' });
+      for (const patch of [{ body: '  ' }, { subject: ' ' }]) {
+        const res = await ctx.app.inject({
+          method: 'PATCH',
+          url: `/api/v1/admin/communication-templates/${t.id}`,
+          headers: authHeader(admin.token),
+          payload: patch,
+        });
+        expect(res.statusCode, res.body).toBe(422);
+      }
+    });
+
+    it('still accepts an SMS template, which has no subject at all', async () => {
+      const t = await createTemplate({
+        key: 'sms_blank_subject_ok',
+        channel: 'sms',
+        subject: '',
+        body: 'Your valuation is waiting on payment.',
+      });
+      expect(t.key).toBe('sms_blank_subject_ok');
+    });
+  });
+
   describe('variable palette', () => {
     it('serves the catalog so the editor and the renderer cannot drift', async () => {
       const res = await ctx.app.inject({
