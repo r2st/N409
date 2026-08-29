@@ -224,11 +224,13 @@ describe.skipIf(!dbUp)('network items', () => {
 
   it('recording never changes the answer the caller gets', async () => {
     // The whole feature is subordinate: an engine that rejects must still
-    // produce a 422 naming the engine's reason, not a logging error.
+    // produce a 422 carrying the engine's reason, not a logging error. (What
+    // the engine is *called* stopped being in the message at R198; the reason
+    // it gave is the part that was always the point.)
     state.mode = 'reject';
     const res = await compute();
     expect(res.statusCode).toBe(422);
-    expect(res.json().detail).toContain('engine');
+    expect(res.json().detail).toContain('weighted equity value is not positive');
 
     state.mode = 'ok';
     const ok = await compute();

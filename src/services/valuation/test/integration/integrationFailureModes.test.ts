@@ -148,11 +148,16 @@ describe.skipIf(!dbUp)('integration points that fail while looking like they wor
       const res = await compute();
       expect(res.statusCode).toBe(502);
       const problem = res.json();
-      // Names the dependency and what was wrong with what it said. The old
+      // Names the work and what was wrong with what the upstream said. The old
       // answer was `{"title":"Internal Server Error"}` and nothing else.
+      //
+      // R198 stopped naming the *dependency*: "engine" is a process on a box
+      // the analyst cannot see, and it was the whole subject of the sentence.
+      // What has to survive is the diagnosis and a next step.
       expect(problem.title).toBe('Bad Gateway');
-      expect(problem.detail).toContain('engine');
+      expect(problem.detail).toContain('The calculation could not be run');
       expect(problem.detail).toContain('results is missing');
+      expect(problem.detail).toContain('inputs are saved');
 
       const rows = await calculations();
       expect(rows.length).toBe(before + 1);

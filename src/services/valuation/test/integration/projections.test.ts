@@ -368,12 +368,16 @@ describe.skipIf(!dbUp)('financial projection', () => {
 
   // ── When the engine will not answer ───────────────────────────────────────
 
-  it('reports an engine rejection as a 422 naming the engine', async () => {
+  it('reports an engine rejection as a 422 carrying the engine’s reason', async () => {
     engine.setOverride({ status: 422, body: { detail: 'base_revenue must be positive' } });
     try {
       const res = await run(HEALTHY);
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toContain('engine rejected the request');
+      // The upstream's own sentence, which is the useful part, plus the two
+      // halves R198 added around it: what failed, and where to go and fix it.
+      expect(res.json().detail).toContain('base_revenue must be positive');
+      expect(res.json().detail).toContain('The calculation could not be run');
+      expect(res.json().detail).toContain('parameters');
     } finally {
       engine.setOverride(null);
     }
