@@ -44,7 +44,13 @@ type Unit = 'minor' | 'major';
  * whatever depth the importing file sits at.
  */
 const FORMATTERS: Record<string, Record<string, Unit>> = {
-  format: { formatCents: 'minor', formatAmount: 'major' },
+  /*
+   * `formatChargedCents` is `minor` for this rule's purposes and divides by the
+   * charging currency's own scale rather than always by 100 — see its own doc
+   * comment, and `moneyScaleCensus.test.ts` for which surfaces may call which.
+   * What matters here is unchanged: it takes the integer, not the amount.
+   */
+  format: { formatCents: 'minor', formatChargedCents: 'minor', formatAmount: 'major' },
   pipeline: { formatMoney: 'major' },
   marketing: { formatUsd: 'minor' },
 };
