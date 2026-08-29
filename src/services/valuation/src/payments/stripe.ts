@@ -56,6 +56,53 @@ export function encodeForm(params: Record<string, unknown>, prefix = ''): string
   return parts.filter(Boolean).join('&');
 }
 
+/**
+ * How long one client intent stays the same request to Stripe.
+ *
+ * An `Idempotency-Key` makes Stripe answer a repeat of a request it has
+ * already served with the *first* answer instead of doing the work twice. What
+ * needs deciding is how long "a repeat" lasts, and it is bounded on both sides.
+ *
+ * Below, by the window that has to be covered: a click, its double, a second
+ * tab, and — the one that actually loses money — a retry after our own
+ * 20-second deadline fired on a request Stripe had already accepted. That is
+ * seconds to a couple of minutes.
+ *
+ * Above, by Stripe's own retention. Stripe forgets a key after 24 hours, and a
+ * Checkout Session expires after 24 hours, and `findLiveCheckout` stops
+ * offering the stored one after 24 hours — three clocks that all run out at
+ * once. A key stable for the whole day would sit exactly on that boundary: the
+ * first click after a session expires could be answered with the expired
+ * session, sending the client to a dead Stripe page. An hour is far longer than
+ * any retry and far shorter than any of the three, so it is never on it.
+ *
+ * The cost of the bucket is a click landing within the deadline of a boundary,
+ * where the two attempts get two keys and Stripe opens two sessions. That is
+ * what happens on *every* attempt today, so the bucket is never worse than the
+ * behaviour it replaces.
+ */
+export const IDEMPOTENCY_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * The `Idempotency-Key` for one form-encoded request.
+ *
+ * Derived from the encoded body rather than from fields picked out by hand, so
+ * that two requests share a key only if they are the same request. That is not
+ * a nicety: Stripe refuses a key reused with *different* parameters, so a key
+ * built from the quote alone would start failing outright the day a company is
+ * renamed between two clicks — the name is in the product line and not in the
+ * quote. A digest of the body cannot drift from what was sent.
+ *
+ * The scope keeps the two Checkout creators apart even in the impossible case
+ * of identical bodies, and the bucket bounds the window (see
+ * {@link IDEMPOTENCY_WINDOW_MS}).
+ */
+export function idempotencyKeyFor(scope: string, body: string, nowMs: number = Date.now()): string {
+  const bucket = Math.floor(nowMs / IDEMPOTENCY_WINDOW_MS);
+  const digest = crypto.createHash('sha256').update(`${scope}\n${bucket}\n${body}`).digest('hex');
+  return `n409-${scope}-${digest.slice(0, 40)}`;
+}
+
 export interface StripeSignature {
   timestamp: number;
   signatures: string[];
@@ -298,6 +345,7 @@ export async function createCheckoutSession(
     headers: {
       Authorization: `Bearer ${secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
+      'Idempotency-Key': idempotencyKeyFor('checkout', body),
     },
     body,
   });
@@ -353,6 +401,7 @@ export async function createSubscriptionCheckoutSession(
     headers: {
       Authorization: `Bearer ${secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
+      'Idempotency-Key': idempotencyKeyFor('subscribe', body),
     },
     body,
   });
@@ -374,7 +423,10 @@ export async function createSubscriptionCheckoutSession(
  * expired card meant a subscription that silently lapsed.
  *
  * The returned URL is single-use and short-lived, so it is fetched per click
- * rather than stored.
+ * rather than stored. That is also why this call carries no `Idempotency-Key`
+ * while the two Checkout creators do: collapsing two clicks onto one portal
+ * session would hand the second click a URL the first has already spent, and
+ * there is no charge at the end of it to protect.
  */
 export async function createBillingPortalSession(
   secretKey: string,
@@ -412,6 +464,12 @@ export async function createBillingPortalSession(
  * Stripe refuses the call — most importantly a session that has already been
  * *completed*, which it will not let you expire and which the caller must not
  * treat as harmlessly gone.
+ *
+ * No `Idempotency-Key` here either, and for the opposite reason to the portal's:
+ * expiring is already idempotent in the only sense that matters — a session
+ * expired twice is expired — while a key would make Stripe replay its *first*
+ * answer, so a refusal cached at 10:00 would still be a refusal at 10:30 on a
+ * session that had since become expirable.
  */
 export async function expireCheckoutSession(secretKey: string, sessionId: string): Promise<boolean> {
   const res = await stripeFetch(`${STRIPE_API}/checkout/sessions/${encodeURIComponent(sessionId)}/expire`, {
