@@ -4,6 +4,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canManageUsers, isOps } from '../auth/rbac.js';
+import { isForeignKeyViolation } from '../db/pgError.js';
 import {
   classifyDsnStatus,
   deliveryEventFingerprint,
@@ -299,8 +300,26 @@ export function registerEmailDeliveryRoutes(
         throw invalidBody('Invalid delivery events', parsed.error);
       }
 
+      /**
+       * Per event, because the batch is up to 500 of them and they are
+       * independent claims about 500 different messages.
+       *
+       * One event naming a message this deployment does not have is an
+       * ordinary occurrence — the outbox is pruned by retention, and a
+       * provider will report on a message weeks after it was sent — and it is
+       * a foreign-key violation on `outbox_id`. That rejection used to escape
+       * the loop, so the batch answered 500 having applied every event before
+       * the bad one and none after it, and the provider then redelivered the
+       * whole batch into the same violation, forever: the events *after* the
+       * unknown one could never land, and nothing in the ledger said why.
+       *
+       * So an unknown message is counted and skipped, and only a failure we
+       * cannot characterise is worth a redelivery.
+       */
       let applied = 0;
       let duplicates = 0;
+      let unknown = 0;
+      const unrecorded: string[] = [];
       for (const event of parsed.data.events) {
         // The provider's own classification is taken when it gives one;
         // otherwise the enhanced status is read; otherwise a bounce with no
@@ -327,15 +346,36 @@ export function registerEmailDeliveryRoutes(
             detail: event.detail ?? null,
           });
 
-        const fresh = await recordDeliveryEvent(deps.pool, {
-          outboxId: event.message_id,
-          kind: event.kind as DeliveryEventKind,
-          occurredAt: event.occurred_at ? new Date(event.occurred_at) : new Date(),
-          source: `webhook:${provider}`,
-          providerEventId,
-          bounceKind,
-          detail: event.detail ?? null,
-        });
+        let fresh: boolean;
+        try {
+          fresh = await recordDeliveryEvent(deps.pool, {
+            outboxId: event.message_id,
+            kind: event.kind as DeliveryEventKind,
+            occurredAt: event.occurred_at ? new Date(event.occurred_at) : new Date(),
+            source: `webhook:${provider}`,
+            providerEventId,
+            bounceKind,
+            detail: event.detail ?? null,
+          });
+        } catch (err) {
+          if (isForeignKeyViolation(err, 'email_delivery_events_outbox_id_fkey')) {
+            unknown += 1;
+            // Not a warning. The message id is a real one that we no longer
+            // hold, and an operator reading warnings should not be reading
+            // 500 lines of retention doing its job.
+            req.log.info(
+              { provider, messageId: event.message_id, kind: event.kind },
+              'delivery event names a message this deployment no longer has',
+            );
+            continue;
+          }
+          unrecorded.push(event.message_id);
+          req.log.error(
+            { err, provider, messageId: event.message_id, kind: event.kind },
+            'delivery event could not be recorded',
+          );
+          continue;
+        }
 
         if (fresh) {
           applied += 1;
@@ -364,10 +404,25 @@ export function registerEmailDeliveryRoutes(
         }
       }
 
+      /**
+       * Anything we could not characterise is worth the redelivery a 5xx
+       * earns: the events that did land carry an idempotency key on both
+       * paths now (the provider's, or the fingerprint), so the retry re-applies
+       * nothing. An unknown message is not one of these — redelivering it would
+       * only reproduce the same violation.
+       */
+      if (unrecorded.length > 0) {
+        throw problems.serviceUnavailable(
+          `${unrecorded.length} of ${parsed.data.events.length} events could not be recorded — redeliver this batch`,
+        );
+      }
+
       // 2xx even for duplicates: a provider that does not get one redelivers,
       // and telling it "already had this" as an error earns an escalating
-      // retry for a message we have correctly recorded.
-      return reply.code(202).send({ applied, duplicates });
+      // retry for a message we have correctly recorded. `unknown` is reported
+      // rather than folded into `duplicates`: a provider integration counting
+      // its own acknowledgements should be able to see that we dropped one.
+      return reply.code(202).send({ applied, duplicates, unknown });
     });
   });
 }

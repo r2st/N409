@@ -293,7 +293,7 @@ describe.skipIf(!dbUp)('email delivery routes', () => {
       });
 
       expect(res.statusCode).toBe(202);
-      expect(res.json()).toEqual({ applied: 1, duplicates: 0 });
+      expect(res.json()).toEqual({ applied: 1, duplicates: 0, unknown: 0 });
       const { rows } = await ctx.pool.query<{ delivered_at: Date | null }>(
         'SELECT delivered_at FROM email_outbox WHERE id = $1',
         [email.id],
@@ -314,10 +314,10 @@ describe.skipIf(!dbUp)('email delivery routes', () => {
           payload: body,
         });
 
-      expect((await send()).json()).toEqual({ applied: 1, duplicates: 0 });
+      expect((await send()).json()).toEqual({ applied: 1, duplicates: 0, unknown: 0 });
       const second = await send();
       expect(second.statusCode).toBe(202);
-      expect(second.json()).toEqual({ applied: 0, duplicates: 1 });
+      expect(second.json()).toEqual({ applied: 0, duplicates: 1, unknown: 0 });
     });
 
     it('suppresses the address the outbox row names on a hard bounce', async () => {
@@ -401,6 +401,38 @@ describe.skipIf(!dbUp)('email delivery routes', () => {
 
       expect((await send('2026-08-15T10:00:00Z')).json()).toMatchObject({ applied: 1 });
       expect((await send('2026-08-15T10:00:00.000Z')).json()).toMatchObject({ duplicates: 1 });
+    });
+
+    /**
+     * The batch is up to 500 independent claims, and the outbox is pruned by
+     * retention — so a provider reporting on a message we no longer hold is
+     * ordinary, not exceptional. It used to be a foreign-key violation that
+     * escaped the loop: the batch answered 500, every event after the unknown
+     * one was dropped, and the redelivery reproduced the same violation at the
+     * same event forever.
+     */
+    it('skips an event naming a message it does not have and applies the rest', async () => {
+      const email = await seed();
+      const body = JSON.stringify({
+        events: [
+          { message_id: '01JBAAAAAAAAAAAAAAAAAAAAAA', kind: 'delivered', event_id: 'gone-1' },
+          { message_id: email.id, kind: 'delivered', event_id: 'after-1' },
+        ],
+      });
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/webhooks/email/testmail',
+        headers: { 'content-type': 'application/json', 'x-n409-signature': sign(body) },
+        payload: body,
+      });
+
+      expect(res.statusCode).toBe(202);
+      expect(res.json()).toEqual({ applied: 1, duplicates: 0, unknown: 1 });
+      const { rows } = await ctx.pool.query<{ delivered_at: Date | null }>(
+        'SELECT delivered_at FROM email_outbox WHERE id = $1',
+        [email.id],
+      );
+      expect(rows[0]!.delivered_at).not.toBeNull();
     });
 
     it('rejects a payload that is not the shape it accepts', async () => {
