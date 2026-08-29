@@ -47,6 +47,7 @@ import {
   type InvoiceLineItem,
 } from '../domain/billing.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { fitsInt4 } from '../domain/int4.js';
 import type { SupportEmailSource } from '../hooks/autoEmails.js';
 
 /**
@@ -514,16 +515,23 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
            * property of the event, redelivery cannot fix it, and Stripe records
            * the refusal and stops. The log line is the one that says a payment
            * went unrecorded, which is the fact worth waking somebody for.
+           *
+           * `fitsInt4` rather than `Number.isInteger`, which is the range half
+           * of the same sentence and was missing from it. 2147483648 is a whole
+           * number of minor units and is still not storable — the driver
+           * answers `22003 value out of range for type integer` — so the guard
+           * written to end this exact loop passed the one amount that is both
+           * well-formed and unstorable straight into it. See domain/int4.ts.
            */
           const rawAmount = obj.amount_paid ?? obj.amount_due ?? 0;
           const amount = typeof rawAmount === 'number' ? rawAmount : NaN;
-          if (!Number.isInteger(amount) || amount < 0) {
+          if (!fitsInt4(amount) || amount < 0) {
             log.error(
               { alert: true, actorType: 'system', source: 'stripe', stripeInvoiceId, amount: rawAmount },
-              'stripe invoice carried an amount that is not whole minor units — not recorded',
+              'stripe invoice carried an amount this system cannot store — not recorded',
             );
             throw problems.badRequest(
-              'Invalid webhook payload: invoice amount is not a whole number of minor units',
+              'Invalid webhook payload: invoice amount is not a storable whole number of minor units',
             );
           }
           /**

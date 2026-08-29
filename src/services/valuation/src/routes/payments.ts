@@ -41,6 +41,7 @@ import {
 } from '../payments/stripe.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { collectedTotals, disputeStatusOf, refundState, type DisputeStatus } from '../domain/payments.js';
+import { fitsInt4 } from '../domain/int4.js';
 import { createNotifications } from '../repos/notifications.js';
 import { recordInvoiceRefund } from '../repos/billing.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
@@ -712,6 +713,39 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     const refundedCents = Number(charge.amount_refunded ?? 0);
     if (!Number.isFinite(refundedCents) || refundedCents <= 0) {
       return { received: true, ignored: 'no refunded amount' };
+    }
+    /**
+     * And storable, which finite and positive does not make it.
+     *
+     * `invoices.refunded_cents` is an `integer`, and this figure went to it
+     * unexamined. The payment half of this handler never could: `refundState`
+     * truncates and clamps the total to the charge, so whatever Stripe says it
+     * arrives at the column as something the column holds. The invoice half
+     * assigns the raw number, so `12.5` reached the driver as `12.5` and
+     * 2147483648 as itself, and both come back `22003`/`invalid input syntax`
+     * — a 500, which to Stripe is not an answer but a delivery to retry for
+     * days against a row that will never update.
+     *
+     * Refused with a 400 for the reason the invoice *amount* is on the billing
+     * endpoint: an amount this system cannot store is a permanent property of
+     * the event, and the loud line is the one that says money went back and was
+     * not written down.
+     */
+    if (!fitsInt4(refundedCents)) {
+      log.error(
+        {
+          alert: true,
+          actorType: 'system',
+          source: 'stripe',
+          stripeInvoiceId: invoiceId,
+          chargeId: typeof charge.id === 'string' ? charge.id : null,
+          amountRefunded: charge.amount_refunded,
+        },
+        'stripe refunded an amount this system cannot store — not recorded against the invoice',
+      );
+      throw problems.badRequest(
+        'Invalid webhook payload: refund amount is not a storable whole number of minor units',
+      );
     }
     const invoice = await recordInvoiceRefund(deps.pool, invoiceId, refundedCents);
     // Null means the invoice is unknown to us, or the figure is not news. Both

@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
+import { fitsInt4 } from '../domain/int4.js';
 import {
   BILLING_SUBSCRIPTION_STATUSES,
   INVOICE_INITIAL_STATUSES,
@@ -394,6 +395,17 @@ export async function recordInvoiceRefund(
   stripeInvoiceId: string,
   refundedCents: number,
 ): Promise<InvoiceRow | null> {
+  // Storable whole minor units, checked here as well as at the webhook. The
+  // column is `integer` and the figure is *assigned* rather than derived, so
+  // anything the driver refuses — a fraction, a total past int4 — is a 500 on a
+  // Stripe delivery rather than a validation failure. Stated as a precondition
+  // for the reason `recordPaidInvoice` states its own: the caller cannot see
+  // the column from where it stands.
+  if (!fitsInt4(refundedCents)) {
+    throw new Error(
+      `recordInvoiceRefund: refunded_cents must be storable whole minor units, got ${refundedCents}`,
+    );
+  }
   const { rows } = await pool.query<InvoiceRow>(
     `UPDATE invoices
         SET refunded_cents = $2,
