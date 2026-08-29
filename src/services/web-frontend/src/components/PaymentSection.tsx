@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
-import { formatDate, formatCents } from '../lib/format';
+import { formatDate, formatChargedCents } from '../lib/format';
 import type { Payment, PaymentQuote, Valuation } from '../lib/types';
 import { Button, ErrorNote, ListTruncationNote } from './ui';
 
@@ -141,13 +141,13 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
           {(quote.lines ?? []).map((line) => (
             <div key={line.key} className="flex justify-between py-0.5 text-amber-900">
               <dt>{line.label}</dt>
-              <dd className="tnum">{formatCents(line.amount_cents, quote.currency)}</dd>
+              <dd className="tnum">{formatChargedCents(line.amount_cents, quote.currency)}</dd>
             </div>
           ))}
           <div className="mt-2 flex justify-between border-t border-amber-200 pt-2 font-semibold text-amber-900">
             <dt>Total</dt>
             <dd className="tnum text-lg" data-testid="payment-quote">
-              {formatCents(quote.amount_cents, quote.currency)}
+              {formatChargedCents(quote.amount_cents, quote.currency)}
             </dd>
           </div>
           {typeof quote.delivery_days === 'number' && (
@@ -199,7 +199,7 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
             {busy
               ? 'Opening checkout…'
               : quote
-                ? `Pay ${formatCents(quote.amount_cents, quote.currency)} now`
+                ? `Pay ${formatChargedCents(quote.amount_cents, quote.currency)} now`
                 : 'Pay now'}
           </Button>
         )}
@@ -244,7 +244,7 @@ function settlementNote(p: Payment): string | null {
   if (refundedCents > 0) {
     const full = refundedCents >= toCents(p.amount_cents);
     parts.push(
-      `${full ? 'Refunded' : 'Partially refunded'} ${formatCents(refundedCents, p.currency)}${
+      `${full ? 'Refunded' : 'Partially refunded'} ${formatChargedCents(refundedCents, p.currency)}${
         p.refunded_at ? ` on ${formatDate(p.refunded_at)}` : ''
       }`,
     );
@@ -323,7 +323,7 @@ export function PaymentHistory({ valuation }: { valuation: Valuation }) {
             {payments.map((p) => (
               <tr key={p.id} className="border-b border-paper-200 last:border-0">
                 <td className="tnum py-2.5 text-ink-800">{formatDate(p.created_at)}</td>
-                <td className="tnum py-2.5 text-ink-900">{formatCents(p.amount_cents, p.currency)}</td>
+                <td className="tnum py-2.5 text-ink-900">{formatChargedCents(p.amount_cents, p.currency)}</td>
                 <td className="py-2.5">
                   <span
                     className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${

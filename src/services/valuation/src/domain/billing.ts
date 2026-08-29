@@ -121,18 +121,40 @@ export function isEntryPrice(plan: Pick<PlanLimit, 'interval'>): boolean {
 export function formatMoneyCents(cents: number, currency: string): string {
   const code = (currency || 'usd').trim().toUpperCase();
   try {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: code,
-      minimumFractionDigits: 2,
-    }).format(cents / 100);
+    const format = new Intl.NumberFormat('en-US', { style: 'currency', currency: code });
+    return format.format(cents / minorUnitScale(format));
   } catch {
+    // A code `Intl` cannot parse: the amount is printed beside it rather than
+    // withheld, and cents is the only scale left to assume.
     const plain = new Intl.NumberFormat('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(cents / 100);
     return `${code} ${plain}`;
   }
+}
+
+/**
+ * How many minor units make one major unit, for the currency a formatter was
+ * built for.
+ *
+ * Not every currency has cents. Stripe reports an amount in the currency's own
+ * minor unit, and for the zero-decimal currencies — JPY, KRW, VND, CLP, ISK and
+ * a dozen more — that unit *is* the major unit: `amount: 100000` on a yen charge
+ * is ¥100,000, not ¥1,000. Dividing by 100 regardless printed every one of them
+ * at a hundredth of what was actually charged, and pinned two decimal places
+ * onto a currency that has none. The three-decimal currencies (BHD, JOD, KWD,
+ * OMR, TND) went the other way, printing a tenth of the amount.
+ *
+ * `Intl` already carries the exponent per currency, so it is read back off the
+ * formatter rather than kept as a list here that would drift. Its default for a
+ * well-formed code it does not recognise is two, which is the same assumption
+ * the divide-by-100 made and the right one to keep.
+ */
+function minorUnitScale(format: Intl.NumberFormat): number {
+  // Typed optional, always present for `style: 'currency'`; cents if not.
+  const digits = format.resolvedOptions().maximumFractionDigits;
+  return digits === undefined ? 100 : 10 ** digits;
 }
 
 /**

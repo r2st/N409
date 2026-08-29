@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
-import { formatCents, formatDate } from '../lib/format';
+import { formatChargedCents, formatDate } from '../lib/format';
 import { Button, EmptyState, ErrorNote, ListTruncationNote, LoadError, Spinner, useRetry } from './ui';
 
 interface Plan {
@@ -86,24 +86,24 @@ export function invoiceRefundNote(inv: {
   const netCents = amountCents - refundedCents;
   const full = bounded && refundedCents >= amountCents;
   const when = inv.refunded_at ? ` on ${formatDate(inv.refunded_at)}` : '';
-  const net = bounded ? ` · net ${formatCents(netCents, inv.currency)}` : '';
-  return `${full ? 'Refunded' : 'Partially refunded'} ${formatCents(refundedCents, inv.currency)}${when}${net}`;
+  const net = bounded ? ` · net ${formatChargedCents(netCents, inv.currency)}` : '';
+  return `${full ? 'Refunded' : 'Partially refunded'} ${formatChargedCents(refundedCents, inv.currency)}${when}${net}`;
 }
 
 /**
  * Every figure on this screen, through the one formatter.
  *
- * There was a local `money()` here as well as the `formatCents` the refund note
+ * There was a local `money()` here as well as the `formatChargedCents` the refund note
  * beside it already used, and the two disagree in two ways that both land in
  * one table row. The local one pinned `en-US`, so a reader outside it saw the
  * invoice amount as "$20,000.00" and the refund line under it as "20.000,00 $";
  * and it fed the currency code straight to `Intl`, which throws a RangeError on
  * one it cannot parse — a code that arrives from a Stripe webhook into a `text`
  * column with no constraint on it, and would take the whole billing section
- * down rather than one cell. `formatCents` falls back and renders `—` for a
+ * down rather than one cell. `formatChargedCents` falls back and renders `—` for a
  * missing figure instead of `$0.00`.
  */
-const money = (cents: number, currency = 'usd') => formatCents(cents, currency);
+const money = (cents: number, currency = 'usd') => formatChargedCents(cents, currency);
 const per = (i: string) => (i === 'year' ? '/yr' : i === 'month' ? '/mo' : '');
 
 /**

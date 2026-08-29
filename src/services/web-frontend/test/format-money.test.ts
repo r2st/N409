@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { formatAmount, formatCents, formatNumber, moneyFormatter, ordinal } from '../src/lib/format';
+import {
+  formatAmount,
+  formatCents,
+  formatChargedCents,
+  formatNumber,
+  moneyFormatter,
+  ordinal,
+} from '../src/lib/format';
 import { formatMoney } from '../src/lib/pipeline';
 
 describe('money & number formatting (M4)', () => {
@@ -10,6 +17,54 @@ describe('money & number formatting (M4)', () => {
 
   it('falls back to USD when currency is missing', () => {
     expect(formatCents(100, null)).toBe('$1.00');
+  });
+
+  /**
+   * The same table `valuation/test/unit/moneyScaleParity.test.ts` holds
+   * `formatMoneyCents` to. "Cents" is a fact about most currencies, not about
+   * money: the zero-decimal ones have no subdivision, so an amount Stripe
+   * reported *is* the amount, and dividing by 100 told a Japanese customer they
+   * had been charged a hundredth of what they were — on the same figure the
+   * receipt PDF states.
+   */
+  it('scales a charged amount by its own currency, not by 100', () => {
+    expect(formatChargedCents(100_000, 'JPY')).toBe('¥100,000');
+    expect(formatChargedCents(100_000, 'KRW')).toBe('₩100,000');
+    expect(formatChargedCents(100_000, 'VND')).toBe('₫100,000');
+    // Three decimals: 1,190 fils is 1.190 dinar. `Intl` separates a code it has
+    // no symbol for with a non-breaking space.
+    expect(formatChargedCents(1_190, 'BHD')).toBe('BHD\u00a01.190');
+    expect(formatChargedCents(119_000, 'USD')).toBe('$1,190.00');
+    expect(formatChargedCents(119_000, 'GBP')).toBe('£1,190.00');
+  });
+
+  it('does not give a zero-decimal currency decimals', () => {
+    // "¥1,000.00" is two claims and both are wrong — the amount, and that the
+    // yen has a subunit at all.
+    expect(formatChargedCents(100_000, 'JPY')).not.toContain('.');
+  });
+
+  /**
+   * The two formatters disagree on purpose, because the integers do.
+   *
+   * A `*_cents` column the app wrote is hundredths whatever the currency —
+   * `FundingHistory` multiplies what the analyst typed by 100 and nothing about
+   * the engagement's currency enters into it. A `*_cents` column Stripe wrote is
+   * the currency's own minor unit. Collapsing them onto one formatter fixes one
+   * family by breaking the other.
+   */
+  it('keeps app-written hundredths on the divide-by-100 rule', () => {
+    expect(formatCents(100_000, 'JPY')).toBe('¥1,000.00');
+    expect(formatChargedCents(100_000, 'JPY')).toBe('¥100,000');
+    // In a currency that does have cents the two agree, which is why the split
+    // stayed invisible.
+    expect(formatCents(119_000, 'USD')).toBe(formatChargedCents(119_000, 'USD'));
+  });
+
+  it('assumes cents only where the code is not one', () => {
+    expect(formatChargedCents(119_000, 'not-a-currency')).toContain('1,190.00');
+    expect(formatChargedCents(null)).toBe('—');
+    expect(formatChargedCents('not-a-number')).toBe('—');
   });
 
   it('renders a dash for absent or invalid values', () => {

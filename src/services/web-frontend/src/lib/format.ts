@@ -220,6 +220,61 @@ export function formatCents(
 }
 
 /**
+ * Money the payment processor charged, from the integer it reported.
+ *
+ * Distinct from {@link formatCents}, and the distinction is the whole point:
+ * the two look identical and disagree about what the integer means.
+ *
+ *   - A `*_cents` column the app wrote holds hundredths of the major unit,
+ *     because the form that produced it multiplied what the customer typed by
+ *     100 (`FundingHistory.toCents`) whatever currency the engagement is in.
+ *     {@link formatCents} divides by 100 and is right to.
+ *   - A `*_cents` column Stripe wrote holds the *currency's own* minor unit,
+ *     and not every currency has cents. The zero-decimal ones — JPY, KRW, VND,
+ *     CLP, ISK — have no subdivision, so `amount: 100000` on a yen charge is
+ *     ¥100,000. Dividing by 100 told the customer they had been charged a
+ *     hundredth of what they were, and gave the yen two decimal places it does
+ *     not have. The three-decimal currencies (BHD, JOD, KWD, OMR, TND) came out
+ *     at a tenth.
+ *
+ * So billing renders — payments, invoices, quotes, receipts — go through this
+ * one, and valuation figures stay on `formatCents`. Same rule as the server's
+ * `domain/billing.formatMoneyCents`, which has only ever had payment callers;
+ * `format-money.test.ts` and `moneyScaleParity.test.ts` hold the pair to one
+ * table.
+ */
+export function formatChargedCents(
+  minorUnits: string | number | null | undefined,
+  currency: string | null = 'USD',
+): string {
+  if (minorUnits === null || minorUnits === undefined || minorUnits === '') return '—';
+  const n = Number(minorUnits);
+  if (!Number.isFinite(n)) return '—';
+  return moneyFormatter(currency)(n / minorUnitScale(currency));
+}
+
+/**
+ * How many minor units make one major unit of `currency`, read off `Intl` — it
+ * carries the exponent per currency, and a list kept here would drift from the
+ * server's. Its default for a well-formed code it does not recognise is two,
+ * which is the same assumption the divide-by-100 made and the right one to keep.
+ */
+function minorUnitScale(currency: string | null | undefined): number {
+  try {
+    const digits = new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: (currency || 'USD').trim(),
+    }).resolvedOptions().maximumFractionDigits;
+    // Typed optional, always present for `style: 'currency'`; cents if not.
+    return digits === undefined ? 100 : 10 ** digits;
+  } catch {
+    // An unparseable code — `moneyFormatter` prints the amount beside it, and
+    // cents is the only scale left to assume.
+    return 100;
+  }
+}
+
+/**
  * Renders a major-unit amount as money, e.g. 2500.5 → "$2,500.50".
  *
  * Most of the app stores money as integer cents and uses {@link formatCents}.

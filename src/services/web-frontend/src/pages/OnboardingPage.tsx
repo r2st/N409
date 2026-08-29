@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, apiUpload, ApiError } from '../lib/api';
 import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
-import { formatCents, KIND_LABELS } from '../lib/format';
+import { formatChargedCents, KIND_LABELS } from '../lib/format';
 import { DOCUMENT_KIND_LABELS, type DocumentKind } from '../lib/pipeline';
 import { clearDraft, loadDraft, saveDraft } from '../lib/onboardingDraft';
 import { VALUATION_KINDS, type PaymentQuote, type Valuation, type ValuationKind } from '../lib/types';
@@ -366,7 +366,7 @@ export function OnboardingPage() {
             <p className="text-sm text-ink-800" data-testid="onboarding-quote">
               {KIND_LABELS[valuation.kind]}:{' '}
               <span className="tnum text-lg font-semibold text-ink-900">
-                {formatCents(quote.amount_cents, quote.currency)}
+                {formatChargedCents(quote.amount_cents, quote.currency)}
               </span>
             </p>
           )}
@@ -381,7 +381,7 @@ export function OnboardingPage() {
               {busy
                 ? 'Opening checkout…'
                 : quote
-                  ? `Pay ${formatCents(quote.amount_cents, quote.currency)} with card`
+                  ? `Pay ${formatChargedCents(quote.amount_cents, quote.currency)} with card`
                   : 'Pay now with card'}
             </Button>
             <Button

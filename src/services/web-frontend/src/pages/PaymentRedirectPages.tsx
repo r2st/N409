@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
-import { formatCents } from '../lib/format';
+import { formatChargedCents } from '../lib/format';
 import type { Payment, Valuation } from '../lib/types';
 import { loadDraft } from '../lib/onboardingDraft';
 import { Button, Spinner } from '../components/ui';
@@ -110,7 +110,7 @@ export function PaymentSuccessPage({ pollMs = POLL_MS }: { pollMs?: number }) {
         <p className="text-sm text-ink-600">
           {receipt ? (
             <>
-              We received {formatCents(receipt.amount_cents, receipt.currency)} for{' '}
+              We received {formatChargedCents(receipt.amount_cents, receipt.currency)} for{' '}
               <span className="font-semibold">{valuation.company_name}</span>.
             </>
           ) : (
