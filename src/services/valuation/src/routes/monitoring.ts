@@ -50,6 +50,7 @@ import { calendarDate } from '../domain/calendarDate.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { specialtyRunKind } from '../domain/specialty.js';
 import { invalidQuery } from '../domain/validationProblem.js';
+import type { SupportEmailSource } from '../hooks/autoEmails.js';
 
 /**
  * Real-time valuation monitoring (feature 10). Ops enable monitoring on a
@@ -233,7 +234,12 @@ async function buildSnapshots(pool: pg.Pool, valuations: ValuationRow[]): Promis
 
 export function registerMonitoringRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; transport?: EmailTransport },
+  deps: {
+    pool: pg.Pool;
+    transport?: EmailTransport;
+    /** Answers `{{support_email}}` in an ops-authored override of the copy below. */
+    settings?: SupportEmailSource;
+  },
 ): void {
   // Monitoring dashboard: every enabled monitor with its live trigger status.
   app.get('/api/v1/monitors', { preHandler: app.authenticate }, async (req) => {
@@ -422,10 +428,11 @@ export function registerMonitoringRoutes(
           );
           if (reviewer) {
             await sendTransactionalEmail(
-              { pool: deps.pool, transport: deps.transport, log: app.log },
+              { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
               {
                 toUserId: reviewer.id,
                 toEmail: reviewer.email,
+                recipientName: reviewer.first_name,
                 templateKey: 'monitoring_alert',
                 subject: `Revaluation trigger: ${m.company_name}`,
                 body: `A monitoring trigger fired for ${m.company_name}:\n\n${t.message}\n\nConsider a fresh valuation.`,

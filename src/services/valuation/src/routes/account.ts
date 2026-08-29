@@ -30,6 +30,7 @@ import { emailVerificationEmail } from '../domain/emailWorkflows.js';
 import { NullablePhone } from '../domain/phone.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
+import type { SupportEmailSource } from '../hooks/autoEmails.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
 /**
@@ -114,6 +115,8 @@ export function registerAccountRoutes(
     transport?: EmailTransport;
     publicBaseUrl?: string;
     cookie?: SessionCookieConfig;
+    /** Answers `{{support_email}}` in an ops-authored override of the copy below. */
+    settings?: SupportEmailSource;
   },
 ): void {
   const baseUrl = (deps.publicBaseUrl ?? 'http://localhost:3000').replace(/\/$/, '');
@@ -224,8 +227,14 @@ export function registerAccountRoutes(
           const link = `${baseUrl}/verify-email#token=${secret}`;
           const template = emailVerificationEmail(link);
           await sendTransactionalEmail(
-            { pool: deps.pool, transport: deps.transport, log: req.log },
-            { toUserId: user.id, toEmail: patch.email!, ...template, vars: { link } },
+            { pool: deps.pool, transport: deps.transport, log: req.log, settings: deps.settings },
+            {
+              toUserId: user.id,
+              toEmail: patch.email!,
+              ...template,
+              recipientName: user.first_name,
+              vars: { link },
+            },
           );
         } catch (err) {
           req.log.warn({ err, userId: user.id }, 'failed to send verification email on email change');

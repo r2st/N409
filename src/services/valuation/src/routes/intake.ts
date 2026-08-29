@@ -24,6 +24,7 @@ import { REQUIRED_DOCUMENT_KINDS } from '../domain/progress.js';
 import { findQuestionnaire, saveQuestionnaire, submitQuestionnaire } from '../repos/intake.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import type { SupportEmailSource } from '../hooks/autoEmails.js';
 
 /**
  * Client self-service portal (feature 7): a guided intake questionnaire, a
@@ -63,7 +64,12 @@ async function missingDocuments(pool: pg.Pool, valuationId: string) {
 
 export function registerIntakeRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; transport?: EmailTransport },
+  deps: {
+    pool: pg.Pool;
+    transport?: EmailTransport;
+    /** Answers `{{support_email}}` in an ops-authored override of the copy below. */
+    settings?: SupportEmailSource;
+  },
 ): void {
   // The questionnaire schema is static per kind — expose it so the wizard
   // renders from the same source of truth as the completion calculation.
@@ -187,10 +193,11 @@ export function registerIntakeRoutes(
 
     const list = missing.map((m) => `• ${m.label}`).join('\n');
     await sendTransactionalEmail(
-      { pool: deps.pool, transport: deps.transport, log: app.log },
+      { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
       {
         toUserId: owner.id,
         toEmail: owner.email,
+        recipientName: owner.first_name,
         templateKey: 'document_reminder',
         subject: `Documents still needed for ${valuation.company_name}`,
         body:

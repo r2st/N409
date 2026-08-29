@@ -31,6 +31,7 @@ import {
   type BoardSignoffRow,
 } from '../repos/boardApprovals.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import type { SupportEmailSource } from '../hooks/autoEmails.js';
 
 /**
  * Board approval workflow (feature 5). Ops generate a board resolution from the
@@ -166,6 +167,8 @@ export function registerBoardApprovalRoutes(
     transport?: EmailTransport;
     publicBaseUrl?: string;
     limiter?: FixedWindowRateLimiter;
+    /** Answers `{{support_email}}` in an ops-authored override of the copy below. */
+    settings?: SupportEmailSource;
   },
 ): void {
   const baseUrl = (deps.publicBaseUrl ?? 'http://localhost:3000').replace(/\/$/, '');
@@ -360,9 +363,10 @@ export function registerBoardApprovalRoutes(
       const link = `${baseUrl}/board-sign#token=${token}`;
 
       await sendTransactionalEmail(
-        { pool: deps.pool, transport: deps.transport, log: app.log },
+        { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
         {
           toEmail: member.member_email,
+          recipientName: member.member_name,
           templateKey: 'board_resolution_signoff',
           subject: `Board resolution to sign — ${valuation.company_name}`,
           body:

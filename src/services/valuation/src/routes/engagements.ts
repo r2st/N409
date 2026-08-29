@@ -33,6 +33,7 @@ import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import type { SupportEmailSource } from '../hooks/autoEmails.js';
 
 /**
  * Engagement lifecycle management (feature 8). Ops-only: track the stage an
@@ -151,7 +152,12 @@ async function unstartedEngagementView(pool: pg.Pool, valuationId: string) {
 
 export function registerEngagementRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; transport?: EmailTransport },
+  deps: {
+    pool: pg.Pool;
+    transport?: EmailTransport;
+    /** Answers `{{support_email}}` in an ops-authored override of the copy below. */
+    settings?: SupportEmailSource;
+  },
 ): void {
   // Pipeline dashboard: every active engagement with stage, SLA + analyst.
   app.get('/api/v1/engagements', { preHandler: app.authenticate }, async (req) => {
@@ -286,7 +292,7 @@ export function registerEngagementRoutes(
       const sla = slaStatus(r.current_stage, r.stage_entered_at, now);
       if (!sla.overdue || !r.analyst_email) continue;
       await sendTransactionalEmail(
-        { pool: deps.pool, transport: deps.transport, log: app.log },
+        { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
         {
           toUserId: r.assigned_analyst_id,
           toEmail: r.analyst_email,

@@ -235,7 +235,9 @@ export function registerAdminUserRoutes(
     const link = `${baseUrl}/accept-invite#token=${secret}`;
     const template = invitationEmail(link, invitedByEmail);
     await sendTransactionalEmail(
-      { pool: deps.pool, transport: deps.transport, log: req.log },
+      { pool: deps.pool, transport: deps.transport, log: req.log, settings: deps.settings },
+      // No name to greet an invitee by — there is no account yet, which is what
+      // the invitation is for. `alwaysTemplateVars` falls back to the address.
       { toEmail: invitation.email, ...template, vars: { link, invited_by: invitedByEmail } },
     );
   };
@@ -631,8 +633,14 @@ export function registerAdminUserRoutes(
     const link = `${baseUrl}/reset-password#token=${secret}`;
     const template = passwordResetEmail(link);
     await sendTransactionalEmail(
-      { pool: deps.pool, transport: deps.transport, log: req.log },
-      { toUserId: user.id, toEmail: user.email, ...template, vars: { link } },
+      { pool: deps.pool, transport: deps.transport, log: req.log, settings: deps.settings },
+      {
+        toUserId: user.id,
+        toEmail: user.email,
+        ...template,
+        recipientName: user.first_name,
+        vars: { link },
+      },
     );
     await audit(principal.id, 'user_password_reset_sent', 'user', id, user.email);
     return { message: `Reset link sent to ${user.email}.` };

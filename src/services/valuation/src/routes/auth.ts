@@ -214,8 +214,14 @@ export function registerAuthRoutes(
         const link = `${baseUrl}/verify-email#token=${secret}`;
         const template = emailVerificationEmail(link);
         await sendTransactionalEmail(
-          { pool: deps.pool, transport: deps.transport, log },
-          { toUserId: user.id, toEmail: user.email, ...template, vars: { link } },
+          { pool: deps.pool, transport: deps.transport, log, settings: deps.settings },
+          {
+            toUserId: user.id,
+            toEmail: user.email,
+            ...template,
+            recipientName: user.first_name,
+            vars: { link },
+          },
         );
       } catch (err) {
         log.warn({ err, userId: user.id }, 'failed to send verification email');
@@ -550,8 +556,14 @@ export function registerAuthRoutes(
       // exits on those — so a database hiccup here took the process down from
       // an unauthenticated endpoint.
       sendTransactionalEmailInBackground(
-        { pool: deps.pool, transport: deps.transport, log: req.log },
-        { toUserId: user.id, toEmail: user.email, ...template, vars: { link } },
+        { pool: deps.pool, transport: deps.transport, log: req.log, settings: deps.settings },
+        {
+          toUserId: user.id,
+          toEmail: user.email,
+          ...template,
+          recipientName: user.first_name,
+          vars: { link },
+        },
       );
     }
     return reply

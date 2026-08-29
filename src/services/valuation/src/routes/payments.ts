@@ -668,10 +668,11 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       // marketing opt-out, exactly like the invitation and the password reset.
       if (owner?.email) {
         await sendTransactionalEmail(
-          { pool: deps.pool, transport: deps.transport, log },
+          { pool: deps.pool, transport: deps.transport, log, settings: deps.settings },
           {
             toUserId: valuation.user_id,
             toEmail: owner.email,
+            recipientName: owner.first_name,
             templateKey: 'payment_receipt',
             subject: message.subject,
             body: message.body,

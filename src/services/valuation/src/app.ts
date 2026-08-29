@@ -532,6 +532,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     transport,
     publicBaseUrl: config.PUBLIC_BASE_URL,
     cookie: sessionCookie,
+    settings,
   });
   registerMfaRoutes(app, { pool, settings });
   registerSystemSettingsRoutes(app, { pool, settings });
@@ -830,6 +831,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     stripeWebhookSecret: config.STRIPE_BILLING_WEBHOOK_SECRET ?? config.STRIPE_WEBHOOK_SECRET,
     publicBaseUrl: config.PUBLIC_BASE_URL,
     transport,
+    settings,
   });
   registerSignatureRoutes(app, { pool });
   // Feature 5 — board approval workflow (resolution + e-signature collection)
@@ -838,17 +840,18 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     transport,
     publicBaseUrl: config.PUBLIC_BASE_URL,
     limiter: deps.boardPublicLimiter,
+    settings,
   });
   // Feature 6 — grant management (option grants at the adopted 409A FMV)
   registerGrantRoutes(app, { pool });
   // Feature 7 — client self-service portal (intake questionnaire + reminders)
-  registerIntakeRoutes(app, { pool, transport });
+  registerIntakeRoutes(app, { pool, transport, settings });
   // Feature 8 — engagement lifecycle (stages, SLA, pipeline dashboard)
-  registerEngagementRoutes(app, { pool, transport });
+  registerEngagementRoutes(app, { pool, transport, settings });
   // Feature 9 — cap-table import + validation + waterfall feed
   registerCapTableRoutes(app, { pool });
   // Feature 10 — real-time valuation monitoring (revaluation triggers)
-  registerMonitoringRoutes(app, { pool, transport });
+  registerMonitoringRoutes(app, { pool, transport, settings });
   // §23 — accounting software integrations (OAuth connect + P&L import)
   registerAccountingRoutes(app, {
     pool,

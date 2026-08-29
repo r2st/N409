@@ -47,6 +47,7 @@ import {
   type InvoiceLineItem,
 } from '../domain/billing.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import type { SupportEmailSource } from '../hooks/autoEmails.js';
 
 /**
  * Subscription / retainer billing (feature 7). Recurring Stripe Checkout for
@@ -62,6 +63,8 @@ export interface BillingDeps {
   publicBaseUrl: string;
   /** A settled invoice is confirmed to the subscriber who paid it. */
   transport?: EmailTransport;
+  /** Answers `{{support_email}}` in an ops-authored override of that copy. */
+  settings?: SupportEmailSource;
 }
 
 const billingUnavailable = (detail: string) =>
@@ -375,10 +378,11 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       // a financial record and does not consult the notification matrix.
       if (user?.email) {
         await sendTransactionalEmail(
-          { pool: deps.pool, transport: deps.transport, log },
+          { pool: deps.pool, transport: deps.transport, log, settings: deps.settings },
           {
             toUserId: inv.userId,
             toEmail: user.email,
+            recipientName: user.first_name,
             templateKey: 'invoice_receipt',
             subject: message.subject,
             body: message.body,
