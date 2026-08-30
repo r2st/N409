@@ -123,6 +123,66 @@ describe('partner name census', () => {
     }
   });
 
+  /**
+   * The rule is written twice — once per language — and nowhere else.
+   *
+   * The census above is keyed on `AS partner_name`, which is the shape the
+   * report cover and the workflow emails used, and it is blind to the shape
+   * that keeps reappearing: the fallback written out by hand, under a
+   * different alias, by somebody who never saw this file. Three of them were
+   * live at once when this was written, each a slightly different rule:
+   *
+   *   * `routes/branding.ts` — `coalesce(brand_name, name) AS name`, in the
+   *     ops roster of *which tenants have gone live*: no `white_label_enabled`
+   *     gate, so the name column and the `enabled` column beside it disagreed
+   *     about the same row, and `coalesce` passes whitespace, so a tenant that
+   *     saved a blank brand name was listed with no name at all.
+   *   * `routes/firm.ts` — `brand_name?.trim() || name`, greeting a firm on
+   *     its own console by a brand it had only staged.
+   *   * `routes/branding.ts` again — `brand_name ?? name` as an admin event's
+   *     subject label, which could write a blank one.
+   *
+   * None of the three was reachable by the `AS partner_name` scan, and each
+   * looked obviously right where it stood. So the rule stated here is about
+   * the *shape* rather than the alias: a line that mentions `brand_name` and
+   * chooses between it and something else is spelling this rule, and there are
+   * exactly two places allowed to do that.
+   */
+  const RULE_HOMES = ['domain/branding.ts', 'repos/branding.ts'];
+
+  /** A line that picks between `brand_name` and a fallback. */
+  const CHOOSES = /\?\?|\|\||coalesce\(|CASE WHEN/i;
+
+  function brandFallbacks(): string[] {
+    const found: string[] = [];
+    for (const file of files) {
+      const rel = relative(SRC, file).split('\\').join('/');
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .forEach((line, i) => {
+          // Prose only discusses the rule; this file and the sources it reads
+          // both do so at length.
+          if (/^\s*(\*|\/\/|\/\*)/.test(line)) return;
+          if (!line.includes('brand_name')) return;
+          if (!CHOOSES.test(line)) return;
+          found.push(`${rel}:${i + 1}`);
+        });
+    }
+    return found;
+  }
+
+  it('spells the brand fallback in the two rule homes and nowhere else', () => {
+    const homes = new Set(RULE_HOMES);
+    expect(brandFallbacks().filter((hit) => !homes.has(hit.split(':')[0]!))).toEqual([]);
+  });
+
+  it('still finds the rule where it lives, so the scan cannot pass vacuously', () => {
+    // Both homes, and both by the scan's own predicate rather than by name —
+    // a reformat that hid the rule from this would hide every copy of it too.
+    const owners = new Set(brandFallbacks().map((hit) => hit.split(':')[0]!));
+    for (const home of RULE_HOMES) expect([...owners], `${home} no longer spells the rule`).toContain(home);
+  });
+
   it('the SQL spells the same rule the TypeScript does', () => {
     const sql = publicPartnerNameSql('p');
     // Gated on the switch, brand name first, blank brand name is no brand name.

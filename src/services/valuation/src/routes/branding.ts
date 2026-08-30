@@ -7,6 +7,7 @@ import {
   BRANDING_PATCH_SCHEMA,
   brandingCssVariables,
   PLATFORM_BRANDING,
+  publicPartnerName,
   resolveBranding,
   type Branding,
 } from '../domain/branding.js';
@@ -15,6 +16,7 @@ import {
   findBrandingByKey,
   findBrandingByPartnerId,
   findBrandingBySubdomain,
+  publicPartnerNameSql,
   updateBranding,
 } from '../repos/branding.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
@@ -292,7 +294,11 @@ export function registerBrandingRoutes(
       actor: { actorType: 'human', actorId: principal.id },
       subjectType: 'partner',
       subjectId: partnerId,
-      subjectLabel: source.brand_name ?? source.name,
+      // The same rule again rather than `brand_name ?? name`, which named a
+      // tenant in the activity log by a brand it had only staged — and, since
+      // `??` passes whitespace through, could write an audit row whose subject
+      // label was blank.
+      subjectLabel: publicPartnerName(source),
       payload: {
         fields: Object.keys(parsed.data),
         white_label_enabled: source.white_label_enabled,
@@ -305,12 +311,43 @@ export function registerBrandingRoutes(
     return { settings: source, branding: resolveBranding(source) };
   });
 
-  /** Ops-only: which tenants have taken their brand live. */
+  /**
+   * Ops-only: which tenants have taken their brand live.
+   *
+   * `name` is the one rule, not a third spelling of it. This read used to say
+   * `coalesce(brand_name, name)`, which differs from `publicPartnerNameSql` in
+   * both halves and in the direction that misinforms the console:
+   *
+   *  - it ignores `white_label_enabled`, so a firm that had *staged* a brand
+   *    name and not turned white label on was listed under that name with
+   *    `enabled: false` beside it — on the screen whose entire question is
+   *    which tenants have gone live, the name column answered it one way and
+   *    the flag column the other; and
+   *  - `coalesce` only catches NULL, while the column admits whitespace
+   *    (`BRANDING_PATCH_SCHEMA` is `z.string().min(1)`, which `'   '` passes),
+   *    so a tenant that saved a blank brand name appeared in the roster with
+   *    no name at all.
+   *
+   * So `name` resolves through the shared rule — the same name this firm's own
+   * clients read — and the staged value is reported beside it as itself, blank
+   * normalised to null, rather than being folded into the name and losing the
+   * distinction the console exists to show.
+   */
   app.get('/api/v1/branding/tenants', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     if (!canManageUsers(principal)) throw forbidden('Listing branded tenants', 'user-admin');
-    const { rows } = await deps.pool.query<{ id: string; name: string; key: string; enabled: boolean }>(
-      `SELECT id, coalesce(brand_name, name) AS name, key, white_label_enabled AS enabled
+    const { rows } = await deps.pool.query<{
+      id: string;
+      name: string;
+      brand_name: string | null;
+      key: string;
+      enabled: boolean;
+    }>(
+      `SELECT id,
+              ${publicPartnerNameSql('partners')} AS name,
+              nullif(btrim(brand_name), '') AS brand_name,
+              key,
+              white_label_enabled AS enabled
          FROM partners WHERE archived_at IS NULL ORDER BY white_label_enabled DESC, name ASC`,
     );
     return { tenants: rows };

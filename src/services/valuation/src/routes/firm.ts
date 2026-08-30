@@ -6,6 +6,7 @@ import { isOps, valuationScope } from '../auth/rbac.js';
 import { countByReason, DUE_SOON_DAYS, rankAttention } from '../domain/firmDashboard.js';
 import { firmAttentionCandidates, firmClients, firmSummary, firmTeam } from '../repos/firmDashboard.js';
 import { findBrandingByPartnerId } from '../repos/branding.js';
+import { publicPartnerName } from '../domain/branding.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
 import { invalidQuery } from '../domain/validationProblem.js';
@@ -67,7 +68,12 @@ export function registerFirmRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
 
     const allAttention = rankAttention(candidates.candidates, now);
     return {
-      firm: { id: partnerId, name: branding?.brand_name?.trim() || branding?.name || 'Your firm' },
+      // `publicPartnerName`, not a fourth spelling of it. Written out here as
+      // `brand_name?.trim() || name`, this dropped the `white_label_enabled`
+      // gate the rule is built around, so a firm that had staged a brand name
+      // and not turned white label on was greeted by it on their own console
+      // while every client-facing surface still said the ops channel label.
+      firm: { id: partnerId, name: (branding && publicPartnerName(branding)) || 'Your firm' },
       summary,
       team,
       // Counts cover the whole queue; the list is the top of it.

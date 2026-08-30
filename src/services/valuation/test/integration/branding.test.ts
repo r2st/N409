@@ -211,6 +211,64 @@ describe.skipIf(!dbUp)('branding', () => {
       ).statusCode,
     ).toBe(403);
   });
+
+  /**
+   * The roster answers the question it is named for.
+   *
+   * It used to spell the brand fallback as `coalesce(brand_name, name)`, which
+   * is neither half of `publicPartnerName`: no `white_label_enabled` gate, and
+   * `coalesce` only catches NULL. So a tenant that had staged a brand name and
+   * not gone live was listed *under that name* with `enabled: false` beside it,
+   * and one that saved a blank one was listed with no name at all — on the one
+   * screen whose entire purpose is telling ops which tenants have gone live.
+   */
+  it('names a staged tenant by its ops label and reports the staged brand beside it', async () => {
+    const ops = await seedUser(ctx, { roles: ['admin'] });
+    const staged = await seedPartner(ctx, 'Halton Channel');
+    await ctx.pool.query(
+      `UPDATE partners SET brand_name = 'Halton Partners LLP', white_label_enabled = false WHERE id = $1`,
+      [staged],
+    );
+
+    const row = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/branding/tenants',
+        headers: authHeader(ops.token),
+      })
+    )
+      .json()
+      .tenants.find((t: { id: string }) => t.id === staged);
+
+    expect(row).toMatchObject({
+      name: 'Halton Channel',
+      brand_name: 'Halton Partners LLP',
+      enabled: false,
+    });
+  });
+
+  it('does not let a blank brand name become a tenant with no name', async () => {
+    const ops = await seedUser(ctx, { roles: ['admin'] });
+    const blank = await seedPartner(ctx, 'Whitespace Advisory');
+    // `BRANDING_PATCH_SCHEMA` is `z.string().min(1)`, which spaces satisfy —
+    // so this is a value the write path admits, not one only a migration can
+    // produce.
+    await ctx.pool.query(`UPDATE partners SET brand_name = '   ', white_label_enabled = true WHERE id = $1`, [
+      blank,
+    ]);
+
+    const row = (
+      await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/branding/tenants',
+        headers: authHeader(ops.token),
+      })
+    )
+      .json()
+      .tenants.find((t: { id: string }) => t.id === blank);
+
+    expect(row).toMatchObject({ name: 'Whitespace Advisory', brand_name: null, enabled: true });
+  });
 });
 
 /**

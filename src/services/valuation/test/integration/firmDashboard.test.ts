@@ -121,6 +121,29 @@ describe.skipIf(!dbUp)('firm dashboard', () => {
     expect(body.firm.id).toBe(firmId);
   });
 
+  /**
+   * The console greets the firm by the name its own clients read, which is
+   * `publicPartnerName` and is gated on white label. This handler spelled the
+   * fallback out by hand as `brand_name?.trim() || name` and so dropped the
+   * gate: a firm that had typed a brand name into the branding form and not
+   * turned white label on was greeted by a brand that existed nowhere else.
+   */
+  it('greets the firm by its live name, not by a brand it has only staged', async () => {
+    await ctx.pool.query(
+      `UPDATE partners SET brand_name = 'Ridgeline Capital Advisors', white_label_enabled = false
+        WHERE id = $1`,
+      [firmId],
+    );
+    expect((await dashboard(firmAdmin.token)).json().firm.name).toBe('Meridian Valuation');
+
+    await ctx.pool.query('UPDATE partners SET white_label_enabled = true WHERE id = $1', [firmId]);
+    expect((await dashboard(firmAdmin.token)).json().firm.name).toBe('Ridgeline Capital Advisors');
+
+    await ctx.pool.query(`UPDATE partners SET brand_name = null, white_label_enabled = false WHERE id = $1`, [
+      firmId,
+    ]);
+  });
+
   it('ranks the attention queue and never names another firm’s client', async () => {
     const {
       attention,
