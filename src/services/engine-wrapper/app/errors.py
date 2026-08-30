@@ -17,7 +17,17 @@ and in this tier that input is a client's cap table — so the traceback goes to
 the log and the caller gets the request id to quote in a bug report.
 
 ``install_error_handlers`` puts the request id on the deliberate failures too,
-so *every* error response can be traced back to its log line.
+so *every* error response can be traced back to its log line — and logs the 5xx
+ones, which until R225 was the half that had no log line to be traced to. A 503
+raised because OpenRouter never answered, or a 502 because a model returned
+nothing parseable, is as much a server failure as an exception nobody caught;
+it was merely a failure somebody had thought about, which is not the same thing
+as one somebody was told about. The give-up in ``openrouter.py`` logs each
+*attempt* at ``warning`` and raises the final failure without a line of its own,
+so the condition that reaches a client had no record at all.
+
+4xx stays unlogged. Those describe the request, the caller was told, and their
+rate is set by whoever is making the mistakes.
 """
 
 from __future__ import annotations
@@ -83,17 +93,38 @@ def make_unhandled_error_middleware(service: str):
     return unhandled_error_middleware
 
 
-def install_error_handlers(app: FastAPI) -> None:
+def install_error_handlers(app: FastAPI, service: str | None = None) -> None:
     """Re-shape FastAPI's built-in error responses to carry the request id.
 
     ``detail`` keeps the exact shape FastAPI already produced — a string for
     ``HTTPException``, the list of field errors for a request-validation
     failure — so existing clients read these responses unchanged and only gain
     a field.
+
+    ``service`` names the logger the 5xx line goes to, matching
+    ``make_unhandled_error_middleware``. Left unset — as the rate-limit tests
+    do, which build a bare app to exercise one route — the module logger is
+    used, which the root handler formats identically.
     """
+    log = logging.getLogger(service) if service else logging.getLogger(__name__)
 
     @app.exception_handler(StarletteHTTPException)
-    async def _http_exception_handler(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    async def _http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        if exc.status_code >= 500:
+            # `detail` is in the formatter's allowlist and is redacted on the
+            # way out like the message is, which matters here: these details
+            # are built from an upstream's own words (`str(exc)`), and an
+            # OpenRouter error quotes the URL it called, key and all.
+            log.error(
+                "request failed",
+                extra={
+                    "event": "request_failed",
+                    "http_method": request.method,
+                    "path": request.url.path,
+                    "status": exc.status_code,
+                    "detail": str(exc.detail),
+                },
+            )
         response = error_response(exc.status_code, exc.detail)
         # 401 challenges and 405s carry headers (WWW-Authenticate, Allow) that
         # are part of the protocol, not decoration.

@@ -49,6 +49,10 @@ def boom_client() -> TestClient:
     def _ok() -> dict:
         return {"ok": True}
 
+    @boom_app.get("/unavailable")
+    def _unavailable() -> dict:
+        raise HTTPException(status_code=503, detail="solver backend is not available")
+
     boom_app.middleware("http")(make_unhandled_error_middleware("engine-wrapper"))
     boom_app.middleware("http")(make_request_context_middleware("engine-wrapper"))
     install_error_handlers(boom_app)
@@ -141,6 +145,33 @@ class TestDeliberateFailures:
         # WWW-Authenticate on a 401 and Allow on a 405 are protocol, not
         # decoration; the rewrap must not drop them.
         assert boom_client.get("/teapot").headers["x-brew"] == "no"
+
+    def test_a_deliberate_5xx_is_logged_at_error(
+        self, boom_client: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The gap R225 closed.
+
+        A 5xx raised on purpose is still the server failing to serve. Before
+        this line the handler rewrapped it and returned it in silence, so the
+        only failures with a log entry were the ones nobody had anticipated.
+        """
+        with caplog.at_level(logging.ERROR):
+            boom_client.get("/unavailable", headers={"x-request-id": "gone-1"})
+        failed = [r for r in caplog.records if getattr(r, "event", None) == "request_failed"]
+        assert len(failed) == 1
+        assert failed[0].levelno == logging.ERROR
+        assert failed[0].status == 503
+        assert failed[0].path == "/unavailable"
+        assert failed[0].http_method == "GET"
+        assert "solver backend" in failed[0].detail
+
+    def test_a_4xx_is_not_logged(
+        self, boom_client: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A 4xx describes the request, and the caller has already been told."""
+        with caplog.at_level(logging.WARNING):
+            boom_client.get("/teapot")
+        assert [r for r in caplog.records if getattr(r, "event", None) == "request_failed"] == []
 
     def test_engine_validation_error_carries_a_request_id(self) -> None:
         res = client.post("/engine/v1/compute", json={"params": {}, "inputs": {}})

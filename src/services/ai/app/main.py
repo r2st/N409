@@ -139,7 +139,7 @@ app.middleware("http")(make_request_context_middleware(SERVICE))
 app.middleware("http")(make_security_headers_middleware())
 # Put the request id on the deliberate failures as well, so every error
 # response this service can emit is traceable to a log line.
-install_error_handlers(app)
+install_error_handlers(app, SERVICE)
 enforce_token_configured()
 
 
