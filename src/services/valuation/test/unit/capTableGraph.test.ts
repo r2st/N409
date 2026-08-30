@@ -117,6 +117,59 @@ describe('cap table graph', () => {
     }
   });
 
+  /**
+   * `rank` is the column a node is drawn in, and the type has always said
+   * "nodes sharing a rank are drawn side by side". The drawing never produced
+   * one: it numbered the sorted classes `i + 1`, so two classes explicitly at
+   * seniority 2 came back in separate columns with a "senior to" arrow between
+   * them — on a response whose own `duplicate_seniority` issue says they "will
+   * be paid pari passu".
+   */
+  describe('a pari passu rank', () => {
+    const pari = (name: string, seniority: number | null, invested: number) =>
+      entry({
+        security_class: name,
+        class_type: 'preferred',
+        shares: 1_000_000,
+        seniority,
+        invested_amount: invested,
+        liquidation_multiple: 1,
+      });
+
+    it('draws classes sharing a stated rank side by side, not one behind the other', () => {
+      const { nodes, edges } = build([COMMON, SEED, pari('Series A', 2, 9e6), pari('Series A-1', 2, 3e6)]);
+      const rank = (label: string) => nodes.find((n) => n.label === label)!.rank;
+      expect(rank('Series Seed')).toBe(1);
+      expect(rank('Series A')).toBe(2);
+      expect(rank('Series A-1')).toBe(2);
+      // The stack is two columns deep, so common sits in the third.
+      expect(rank('Common')).toBe(3);
+      expect(
+        edges.some(
+          (e) => e.kind === 'senior_to' && [e.from, e.to].every((id) => id.startsWith('class:series-a')),
+        ),
+      ).toBe(false);
+      // Seed is still drawn ahead of both.
+      expect(edges.filter((e) => e.kind === 'senior_to')).toHaveLength(2);
+    });
+
+    it('puts a wholly unstated stack in one column', () => {
+      const { nodes, edges } = build([COMMON, pari('Series Seed', null, 2e6), pari('Series B', null, 20e6)]);
+      const rank = (label: string) => nodes.find((n) => n.label === label)!.rank;
+      expect(rank('Series Seed')).toBe(1);
+      expect(rank('Series B')).toBe(1);
+      expect(rank('Common')).toBe(2);
+      expect(edges.filter((e) => e.kind === 'senior_to')).toHaveLength(0);
+    });
+
+    it('still ranks an unstated class behind every stated one', () => {
+      const { nodes } = build([COMMON, pari('Series B', 2, 20e6), pari('Series Seed', null, 2e6)]);
+      const rank = (label: string) => nodes.find((n) => n.label === label)!.rank;
+      expect(rank('Series B')).toBe(1);
+      expect(rank('Series Seed')).toBe(2);
+    });
+  });
+
   it('puts common and the derivatives behind the whole stack', () => {
     const { nodes } = build([COMMON, SEED, A, B, POOL]);
     const commonRank = nodes.find((n) => n.label === 'Common')!.rank;

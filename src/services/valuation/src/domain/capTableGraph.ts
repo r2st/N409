@@ -216,19 +216,49 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
   const preferred = stackOrder(input.entries.filter((e) => e.class_type === 'preferred'));
   const others = input.entries.filter((e) => e.class_type !== 'preferred');
 
-  // The stack occupies ranks 1..n in payment order; everything junior to it
-  // shares the last rank.
-  const commonRank = preferred.length + 1;
+  /*
+   * The stack occupies one column per *rank*, not one per class.
+   *
+   * `rank` is documented as the column a node is drawn in, "the preference
+   * stack occupies 1..n in payment order", and "nodes sharing a rank are drawn
+   * side by side" — the type has always described a pari passu group. The
+   * drawing never produced one: it numbered the sorted classes `i + 1`, so two
+   * classes explicitly at seniority 2 came back in separate columns with a
+   * "senior to" arrow between them, on a response whose own
+   * `duplicate_seniority` issue says in as many words that they "will be paid
+   * pari passu". The one screen built to make payment order legible drew an
+   * order the engine does not pay, and contradicted the warning printed beside
+   * it.
+   *
+   * The grouping is `toWaterfallInputs`'s, so the picture and the projection
+   * the engine consumes answer "who is paid first" identically: a stated rank
+   * is itself, and every unstated one shares a single rank below all of them.
+   */
+  const statedRanks = preferred
+    .map((e) => e.seniority)
+    .filter((n): n is number => n !== null && Number.isFinite(n));
+  const unstatedRank = statedRanks.length > 0 ? Math.max(1, Math.floor(Math.max(...statedRanks))) + 1 : 1;
+  const effectiveRank = (e: CapTableEntry) => e.seniority ?? unstatedRank;
+  // `stackOrder` has already sorted ascending by this, so the distinct ranks
+  // come out in payment order.
+  const rankColumn = new Map<number, number>();
+  for (const e of preferred) {
+    if (!rankColumn.has(effectiveRank(e))) rankColumn.set(effectiveRank(e), rankColumn.size + 1);
+  }
+  const columnOf = (e: CapTableEntry) => rankColumn.get(effectiveRank(e))!;
+
+  // Everything junior to the stack shares the column after its last rank.
+  const commonRank = rankColumn.size + 1;
   const idFor = new Map<CapTableEntry, string>();
 
-  preferred.forEach((entry, i) => {
+  preferred.forEach((entry) => {
     const id = nodeId('class', entry.security_class, taken);
     idFor.set(entry, id);
     nodes.push({
       id,
       kind: 'share_class',
       label: entry.security_class,
-      rank: i + 1,
+      rank: columnOf(entry),
       shares: entry.shares,
       as_converted_shares: converted(entry),
       ownership: share(converted(entry)),
@@ -262,10 +292,31 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
   // Seniority edges chain consecutive ranks rather than joining every pair:
   // n² arrows between eight classes is a picture nobody can read, and the
   // chain carries the same ordering.
-  for (let i = 0; i + 1 < preferred.length; i++) {
-    const from = idFor.get(preferred[i]!)!;
-    const to = idFor.get(preferred[i + 1]!)!;
-    edges.push({ from, to, kind: 'senior_to', label: 'senior to' });
+  //
+  // Consecutive *ranks*, not consecutive classes. Chaining the sorted list drew
+  // "senior to" between two classes that rank pari passu, which is the one
+  // thing the arrow must not say; between ranks it says only what the stack
+  // says. A rank holding several classes fans out to the next rank's members,
+  // which is a handful of arrows on any real table and the only honest drawing
+  // of "these three are all paid before those two".
+  const byColumn = new Map<number, CapTableEntry[]>();
+  for (const e of preferred) {
+    const col = columnOf(e);
+    const members = byColumn.get(col);
+    if (members) members.push(e);
+    else byColumn.set(col, [e]);
+  }
+  for (let col = 1; col + 1 <= rankColumn.size; col++) {
+    for (const senior of byColumn.get(col) ?? []) {
+      for (const junior of byColumn.get(col + 1) ?? []) {
+        edges.push({
+          from: idFor.get(senior)!,
+          to: idFor.get(junior)!,
+          kind: 'senior_to',
+          label: 'senior to',
+        });
+      }
+    }
   }
 
   const commonEntries = others.filter((e) => e.class_type === 'common');
