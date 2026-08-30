@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
+import { isSuspended } from '../auth/rbac.js';
 import type { RoleKey } from '../domain/roles.js';
 import { revokeInvitationsFrom } from './invitations.js';
 
@@ -141,19 +142,38 @@ export async function userExists(pool: pg.Pool, id: string): Promise<boolean> {
  * are de-duplicated here so the caller does not have to.
  */
 /**
- * Users by id, deactivated accounts excluded.
+ * Users by id, deactivated *and suspended* accounts excluded.
  *
- * Both callers use the result to decide who to *write to* — the state-change
+ * Every caller uses the result to decide who to *write to* — the state-change
  * hook resolves the owner and reviewer of a transition, the monitoring sweep
- * resolves the reviewer to alert — and neither applied the soft delete that
- * `listUsers`, the firm roster, the reviewer picker, password reset and email
- * verification all apply. The drip-campaign candidate query grew its own
- * `u.deleted_at IS NULL` for exactly this reason; these two are the rest of it.
+ * resolves the reviewer to alert, the comment hook and the auditor-note
+ * fan-out resolve who is told a message arrived — and none applied the soft
+ * delete that `listUsers`, the firm roster, the reviewer picker, password reset
+ * and email verification all apply. The drip-campaign candidate query grew its
+ * own `u.deleted_at IS NULL` for exactly this reason; these are the rest of it.
  * A deactivated account kept receiving workflow email and in-app notifications,
  * which is the one thing deactivating it was supposed to stop.
  *
- * Filtered here rather than at the two call sites so a third caller inherits
- * the rule instead of rediscovering it.
+ * The suspension is the same sentence about the other half of this platform's
+ * vocabulary for taking access away, and it was missed because `ignored` is
+ * *additive*: the row keeps its `admin` or `valuation_user` grant, so nothing
+ * that reads the id off an engagement can tell. `valuationScope` answers
+ * `{ kind: 'none' }` for a suspended principal — they can open no engagement,
+ * no report, no comment thread — and yet the push half went on addressing them
+ * by name: a state-change email quoting the company and the engagement number,
+ * an excerpt of a client's message, an auditor's finding. Read access was
+ * revoked and delivery was not, so the content came to them instead.
+ *
+ * Nor is an unread notification the end of it. `GET /api/v1/notifications` is
+ * authenticated and nothing more — "strictly per-user, so there is nothing to
+ * authorize beyond authentication itself" — and a suspended account can still
+ * sign in. Whatever was pushed after the suspension is waiting there to be
+ * read.
+ *
+ * Filtered here rather than at the call sites so a fifth caller inherits the
+ * rule instead of rediscovering it, and expressed with `isSuspended` rather
+ * than a second spelling of `'ignored'` so the push half and the policy layer
+ * cannot come to disagree about what a suspension is.
  */
 export async function findUsersByIds(
   pool: pg.Pool,
@@ -170,7 +190,7 @@ export async function findUsersByIds(
      GROUP BY u.id`,
     [unique],
   );
-  return new Map(rows.map((r) => [r.id, r]));
+  return new Map(rows.filter((r) => !isSuspended(r)).map((r) => [r.id, r]));
 }
 
 export async function createUser(
@@ -253,6 +273,23 @@ export async function createProvisionedUser(
  * missing. Capped because a billing alert fanned out across a large ops team is
  * noise, and the first few holders of an admin role are enough for someone to
  * act; callers that need everyone should page, not notify.
+ *
+ * Suspended accounts are excluded for both of those reasons at once. `ignored`
+ * is additive, so a suspended administrator still holds the `admin` row this
+ * query joins on — and `isOps` answers false for them, which means every one of
+ * these fan-outs was addressing somebody the console will not let through the
+ * door. That is a disclosure on the billing and client-message paths, whose
+ * bodies carry an amount or an excerpt of what a client wrote; and on the job
+ * alerts it is worse than nothing, because the cap is a real one and a
+ * suspended admin sitting in the first 25 rows displaces a working one.
+ *
+ * Subtracted in SQL rather than after the fact for that same cap: filtering the
+ * result would take the suspended rows out of the page instead of out of the
+ * ordering, and the alert would reach fewer people the longer the suspension
+ * list grew. `NOT EXISTS` rather than a second join for the reason
+ * `isLastUserAdmin` records — the suspension is the absence of a row to join
+ * to, and `r.key = ANY($1) AND r.key <> 'ignored'` would still match the
+ * account through its other role.
  */
 export async function listUserIdsWithRoles(
   pool: pg.Pool,
@@ -266,6 +303,11 @@ export async function listUserIdsWithRoles(
        JOIN user_roles ur ON ur.user_id = u.id
        JOIN roles r ON r.id = ur.role_id
       WHERE r.key = ANY($1::text[]) AND u.deleted_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM user_roles sur
+          JOIN roles sr ON sr.id = sur.role_id
+          WHERE sur.user_id = u.id AND sr.key = 'ignored'
+        )
       ORDER BY u.created_at ASC
       LIMIT $2`,
     [roles as readonly string[], limit],

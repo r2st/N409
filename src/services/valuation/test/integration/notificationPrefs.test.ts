@@ -162,6 +162,37 @@ describe.skipIf(!dbUp)('notification preferences', () => {
     expect(await notificationRows(control.id, 'draft_ready')).toHaveLength(1);
   });
 
+  /**
+   * A suspension revokes reading and used to leave writing alone.
+   *
+   * `ignored` is additive, so the account keeps the `valuation_user` row this
+   * engagement is owned by and nothing on the push path could tell. The email
+   * is the sharper half of the two: an in-app notification at least waits
+   * behind a sign-in, while `draft_ready` puts the company name and the
+   * engagement number in a message that arrives at the address of somebody the
+   * platform has decided may no longer see either.
+   */
+  it('sends neither channel to a suspended owner', async () => {
+    const owner = await seedUser(ctx, { roles: ['valuation_user'] });
+    const control = await seedUser(ctx, { roles: ['valuation_user'] });
+    const ownVal = await createValuation(owner.token);
+    const controlVal = await createValuation(control.token);
+    await ctx.pool.query(
+      `INSERT INTO user_roles (user_id, role_id) SELECT $1, id FROM roles WHERE key = 'ignored'`,
+      [owner.id],
+    );
+
+    await setState(ownVal, 'drafted', 'reviewed');
+    await setState(controlVal, 'drafted', 'reviewed');
+
+    expect(await outboxRows(owner.id, 'draft_ready')).toHaveLength(0);
+    expect(await notificationRows(owner.id, 'draft_ready')).toHaveLength(0);
+    // The same transition on an account that is merely a client still lands, so
+    // what is asserted above is the suspension and not a broken dispatch.
+    expect(await outboxRows(control.id, 'draft_ready')).toHaveLength(1);
+    expect(await notificationRows(control.id, 'draft_ready')).toHaveLength(1);
+  });
+
   it('suppresses in-app while email stays on', async () => {
     const owner = await seedUser(ctx, { roles: ['valuation_user'] });
     await putPrefs(owner.token, [{ event_type: 'draft_ready', in_app: false, email: true }]);

@@ -105,18 +105,42 @@ export async function notifyCommentPosted(
 }
 
 /** The user ids this comment is addressed to, before liveness and preferences. */
-async function audienceFor(
-  pool: pg.Pool,
-  valuation: CommentedValuation,
-  comment: PostedComment,
-): Promise<Set<string>> {
-  const reviewerId = valuation.assigned_reviewer_id;
-  const fromClient = comment.kind === 'email' || comment.author_id === valuation.user_id;
+function fromClient(valuation: CommentedValuation, comment: PostedComment): boolean {
+  return comment.kind === 'email' || comment.author_id === valuation.user_id;
+}
 
+function audienceFor(valuation: CommentedValuation, comment: PostedComment): Set<string> {
+  const reviewerId = valuation.assigned_reviewer_id;
   if (comment.kind === 'note') return new Set(reviewerId ? [reviewerId] : []);
-  if (!fromClient) return new Set([valuation.user_id]);
+  if (!fromClient(valuation, comment)) return new Set([valuation.user_id]);
   if (reviewerId) return new Set([reviewerId]);
-  return new Set(await listUserIdsWithRoles(pool, CLIENT_MESSAGE_ROLES));
+  return new Set();
+}
+
+/**
+ * The addressees that can actually be written to, and the author's row with
+ * them.
+ *
+ * `findUsersByIds` subtracts both of this platform's ways of taking an account
+ * away — the soft delete and the `ignored` suspension — so an id read off the
+ * engagement row can resolve to nobody. That is the point: neither kind of
+ * account should be sent an excerpt of what a client wrote, and a suspended one
+ * can still sign in and read the notification list, which is authenticated and
+ * nothing more.
+ */
+async function liveRecipients(
+  pool: pg.Pool,
+  audience: Set<string>,
+  authorId: string | null,
+): Promise<{
+  ids: string[];
+  users: Map<string, { first_name: string | null; last_name: string | null; email: string }>;
+}> {
+  // After the branches, not inside them: see the note above on self-notification.
+  const wanted = [...audience].filter((id) => id !== authorId);
+  if (wanted.length === 0) return { ids: [], users: new Map() };
+  const users = await findUsersByIds(pool, authorId ? [...wanted, authorId] : wanted);
+  return { ids: wanted.filter((id) => users.has(id)), users };
 }
 
 function titleFor(kind: CommentKind, label: string): string {
@@ -130,24 +154,40 @@ async function deliver(
   valuation: CommentedValuation,
   comment: PostedComment,
 ): Promise<void> {
-  const audience = await audienceFor(deps.pool, valuation, comment);
-  // After the branches, not inside them: see the note above on self-notification.
-  if (comment.author_id) audience.delete(comment.author_id);
-  if (audience.size === 0) return;
+  const authorId = comment.author_id ?? null;
+  // One read for the recipients and the author's display name.
+  let { ids: live, users } = await liveRecipients(deps.pool, audienceFor(valuation, comment), authorId);
 
-  // One read for the recipients and the author's display name. Deactivated
-  // accounts drop out here — `findUsersByIds` applies the soft delete, which is
-  // the whole point of deactivating an account.
-  const wanted = [...audience];
-  const users = await findUsersByIds(deps.pool, comment.author_id ? [...wanted, comment.author_id] : wanted);
-  const live = wanted.filter((id) => users.has(id));
+  /**
+   * The client's message must not land nowhere.
+   *
+   * `CLIENT_MESSAGE_ROLES` was reached only when the engagement named no
+   * reviewer at all, which reads the assignment column as the answer to "is
+   * there somebody to tell". It is not: the column records who was assigned,
+   * not whether they still work here or still have access. A reviewer who has
+   * been deactivated or suspended since resolves to an empty set, and the
+   * branch that exists precisely for "an unassigned file must not be the case
+   * where a client's message lands nowhere" never ran — so the file with a
+   * departed reviewer was exactly that case, and silently.
+   *
+   * Asked after liveness rather than before, because the assignment is still
+   * the right answer whenever the assignee can be reached; this is the fallback
+   * for when they cannot. Deliberately not extended to a `note`: an internal
+   * note goes to the reviewer or to nobody, and widening it to the three
+   * administrative roles would put a comment the API refuses to show the owner
+   * in front of a larger audience on the strength of an account being closed.
+   */
+  if (live.length === 0 && fromClient(valuation, comment)) {
+    const fallback = new Set(await listUserIdsWithRoles(deps.pool, CLIENT_MESSAGE_ROLES));
+    ({ ids: live, users } = await liveRecipients(deps.pool, fallback, authorId));
+  }
   if (live.length === 0) return;
 
   const prefs = await preferenceOverrides(deps.pool, live);
   const recipients = live.filter((id) => channelsFor(prefs, id, COMMENT_NOTIFICATION_TYPE).in_app);
   if (recipients.length === 0) return;
 
-  const author = comment.author_id ? users.get(comment.author_id) : undefined;
+  const author = authorId ? users.get(authorId) : undefined;
   const authorName =
     [author?.first_name, author?.last_name].filter(Boolean).join(' ').trim() ||
     author?.email ||

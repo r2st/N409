@@ -161,15 +161,92 @@ describe.skipIf(!dbUp)('comment notifications', () => {
     expect(await notifications(owner.id, id)).toHaveLength(0);
   });
 
-  it('does not write to a deactivated reviewer', async () => {
+  /** Puts the `ignored` row on an account without touching what it already has. */
+  const suspend = async (userId: string) => {
+    await pool.query(
+      `INSERT INTO user_roles (user_id, role_id) SELECT $1, id FROM roles WHERE key = 'ignored'
+       ON CONFLICT DO NOTHING`,
+      [userId],
+    );
+  };
+
+  /**
+   * Assigns a reviewer who is then taken away, one way or the other.
+   *
+   * The two ways are the whole point of running this twice: a deactivation is a
+   * column on `users` and a suspension is an extra row in `user_roles`, and the
+   * push half of this platform could see neither.
+   */
+  const engagementWithDepartedReviewer = async (depart: (userId: string) => Promise<void>) => {
     const { id, owner } = await engagement();
     const leaver = await seedUser(ctx, { roles: ['reviewer'] });
     await pool.query('UPDATE valuations SET assigned_reviewer_id = $2 WHERE id = $1', [id, leaver.id]);
     const { invalidateValuation } = await import('../../src/repos/valuations.js');
     invalidateValuation(id);
-    await pool.query('UPDATE users SET deleted_at = now() WHERE id = $1', [leaver.id]);
+    await depart(leaver.id);
+    return { id, owner, leaver };
+  };
+
+  it('does not write to a deactivated reviewer, and tells the fallback roles instead', async () => {
+    const { id, owner, leaver } = await engagementWithDepartedReviewer((userId) =>
+      pool.query('UPDATE users SET deleted_at = now() WHERE id = $1', [userId]).then(() => undefined),
+    );
 
     await post(id, owner.token, 'chat', 'Still waiting on someone.');
     expect(await notifications(leaver.id, id)).toHaveLength(0);
+    // The half this used to miss. `CLIENT_MESSAGE_ROLES` was reached only when
+    // the engagement named no reviewer at all, so a file whose reviewer had
+    // left was exactly the case the fallback exists for and exactly the case it
+    // did not cover — the client's message landed nowhere, silently.
+    expect(await notifications(ops.id, id)).toHaveLength(1);
+  });
+
+  /**
+   * A suspension takes the reader's access away and left the writing alone.
+   *
+   * `ignored` is additive — the account keeps its `reviewer` row — so nothing
+   * that reads an id off the engagement could tell. `valuationScope` answers
+   * `{ kind: 'none' }` for them: they can open no engagement, no report and no
+   * comment thread. They could still sign in, and `GET /notifications` is
+   * authenticated and nothing more, so an excerpt of what a client wrote was
+   * waiting there for an account whose access had been revoked.
+   */
+  it('does not write to a suspended reviewer, and tells the fallback roles instead', async () => {
+    const { id, owner, leaver } = await engagementWithDepartedReviewer(suspend);
+
+    await post(id, owner.token, 'chat', 'The cap table is attached.');
+    expect(await notifications(leaver.id, id)).toHaveLength(0);
+    expect(await notifications(ops.id, id)).toHaveLength(1);
+  });
+
+  /**
+   * And the fallback set itself, which is chosen by role rather than by id.
+   *
+   * `listUserIdsWithRoles` joins on the role rows, and a suspended supervisor
+   * still holds theirs — so the group addressed when nobody is assigned
+   * included an account `isOps` answers false for. It is also capped at 25 in
+   * `created_at` order, which is why the subtraction has to happen in the query
+   * rather than to its result: filtered afterwards, a suspended administrator
+   * would go on displacing a working one from the page.
+   */
+  it('leaves a suspended administrator out of the fallback group', async () => {
+    const suspended = await seedUser(ctx, { roles: ['supervisor'] });
+    await suspend(suspended.id);
+    const { id, owner } = await engagement();
+
+    await post(id, owner.token, 'chat', 'Is anyone there?');
+    expect(await notifications(suspended.id, id)).toHaveLength(0);
+    expect(await notifications(ops.id, id)).toHaveLength(1);
+  });
+
+  it('does not write to a suspended owner', async () => {
+    const { id, owner } = await engagement({ assign: true });
+    await suspend(owner.id);
+
+    // An analyst answering: the audience is the owner, and there is no fallback
+    // for a reply to somebody who can no longer read the thread it is on.
+    await post(id, reviewer.token, 'chat', 'Here is the answer to your question.');
+    expect(await notifications(owner.id, id)).toHaveLength(0);
+    expect(await notifications(ops.id, id)).toHaveLength(0);
   });
 });
