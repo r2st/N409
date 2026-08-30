@@ -624,6 +624,49 @@ export async function runAiPipeline(
 }
 
 /**
+ * Refuse to build anything on a run that somebody else ended.
+ *
+ * `runAiPipeline` returns the ending that *stands* rather than the one this
+ * worker came to write — `completeAiJob` refuses a second terminal state, and
+ * hands back the row as it is. Three things put a run in that position: the
+ * reaper closed it as stale, a duplicate settle beat it, or the engagement was
+ * deleted underneath it and there is no row left to update at all (in which
+ * case the job comes back still reading `running`).
+ *
+ * R232 taught the extraction auto-apply to check this, because that path
+ * *writes*: an engagement's engine inputs were being set from a run the audit
+ * trail records as failed. The check was written into that branch rather than
+ * into the return, so the two callers that read `job.result` afterwards never
+ * got it, and both quietly presented the empty result of a closed run as the
+ * agent's answer:
+ *
+ *  - `routes/qa.ts` filed a QA review with `ai_findings: null` and no verdict,
+ *    under an `ai` actor, and that review is what the publish gate consults.
+ *    The AI reviewer — whose verdict can only ever tighten the outcome — had
+ *    not spoken, and nothing on the review said so.
+ *  - `routes/reports.ts` drafted from a null result, found no sections in it,
+ *    and answered `changed: false, applied: []` — which reads as "the agent had
+ *    nothing to add to your report", not as "the run was closed".
+ *
+ * Both are the shape this codebase keeps finding: a discarded failure
+ * re-presented as a fact. Refused here so the answer names what happened and
+ * the remedy, which in every case is to run it again. `runAiPipeline` has
+ * already written the warn line that carries the job id.
+ *
+ * Not folded into `runAiPipeline` itself: the extract path deliberately returns
+ * a finished-but-unusable run rather than throwing, because the job *is*
+ * correctly recorded and turning that into an error would lose it. This is for
+ * the callers whose whole purpose is the result.
+ */
+export function assertRunStood(job: AiJobRow): void {
+  if (job.status === 'succeeded') return;
+  throw problems.conflict(
+    'This agent run was closed while it was out — its result is not on file, so nothing was drafted ' +
+      'from it. Run the agent again.',
+  );
+}
+
+/**
  * The `explain` run that describes this engagement as it currently stands.
  *
  * The explanation is prose about a *particular* calculation — the pipeline is

@@ -16,7 +16,7 @@ import { reportFigures } from '../domain/reportFigures.js';
 import { resolveExhibitReferences } from '../domain/reportExhibitIndex.js';
 import { resolveSignatures } from '../domain/reportSignatures.js';
 import { listSignatures } from '../repos/signatures.js';
-import { calculationPayload, runAiPipeline, type AiPipelineDeps } from './ai.js';
+import { assertRunStood, calculationPayload, runAiPipeline, type AiPipelineDeps } from './ai.js';
 import { InternalServiceError, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
@@ -201,6 +201,11 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
             qa_checks: deterministic.checks,
           },
         });
+        // The reviewer has to have actually spoken. A run settled out from
+        // under its worker comes back carrying no result at all, and filing
+        // that as the AI half of the review is the same thing as filing an
+        // outage — see `assertRunStood`, and the comment on the catch below.
+        assertRunStood(job);
         aiFindings = job.result;
         aiModel = job.model;
         status = combineWithAiVerdict(deterministic.status, job.result?.verdict);

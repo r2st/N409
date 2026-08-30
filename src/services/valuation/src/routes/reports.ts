@@ -37,7 +37,7 @@ import { buildReportSummary } from '../domain/reportSummary.js';
 import { fillFigures, reportFigures, type ReportFigures } from '../domain/reportFigures.js';
 import { applyNarrative, draftedSectionsFrom } from '../domain/narrativeApply.js';
 import { latestSucceededJob } from '../repos/aiJobs.js';
-import { calculationPayload, runAiPipeline, type AiPipelineDeps } from './ai.js';
+import { assertRunStood, calculationPayload, runAiPipeline, type AiPipelineDeps } from './ai.js';
 import { InternalServiceError, toProblem } from '../clients/internal.js';
 import { buildExhibits } from '../domain/reportExhibits.js';
 import { listComparableItems } from '../repos/comparableItems.js';
@@ -929,6 +929,12 @@ export function registerReportRoutes(
       }
     }
 
+    // The run has to have stood. A job the reaper closed — or one whose
+    // engagement went away underneath it — comes back with a null result, from
+    // which `draftedSectionsFrom` reads nothing and this route would answer
+    // `changed: false, applied: []`: the sentence an analyst reads as "the
+    // agent had nothing to add", over a run that never delivered an answer.
+    assertRunStood(job);
     const drafted = draftedSectionsFrom(job.result);
 
     /*
