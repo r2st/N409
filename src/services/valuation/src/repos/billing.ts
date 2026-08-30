@@ -88,6 +88,10 @@ export async function findPlanForSubscription(pool: pg.Pool, tier: string): Prom
  * and a downgrade *onto* a retired tier is not a thing Stripe can do, but a
  * renewal of one already there is.
  *
+ * Uncapped, like {@link listPlans}: `plan_limits` is the price list, a handful
+ * of rows an operator maintains by hand, and a cap on a read of it would only
+ * be able to hide the ambiguity the next paragraph exists to detect.
+ *
  * More than one tier at the same price, currency and interval resolves to
  * nothing rather than to whichever sorts first. Two rows priced identically is
  * a legitimate catalogue (a rename, a grandfathered tier), and picking between
@@ -98,8 +102,7 @@ export async function findPlanByPrice(pool: pg.Pool, price: SubscriptionPrice): 
   const { rows } = await pool.query<PlanLimit>(
     `SELECT tier, name, valuation_limit, price_cents, currency, interval
        FROM plan_limits
-      WHERE price_cents = $1 AND lower(currency) = $2 AND interval = $3
-      LIMIT 2`,
+      WHERE price_cents = $1 AND lower(currency) = $2 AND interval = $3`,
     [price.amount_cents, price.currency, price.interval],
   );
   return rows.length === 1 ? rows[0]! : null;
