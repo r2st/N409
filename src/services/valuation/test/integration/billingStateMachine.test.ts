@@ -849,6 +849,35 @@ describe.skipIf(!dbUp)('subscription transitions', () => {
     expect(last?.canceled_at?.getTime()).toBe(first?.canceled_at?.getTime());
   });
 
+  /**
+   * A subscription that arrives already ended still records when it ended.
+   *
+   * `canceled_at` was stamped by the two writers that *move* a row into the
+   * terminal state and by neither of the two that create one already in it — and
+   * creating one is a real path, taken whenever a `customer.subscription.updated`
+   * carrying `status: 'canceled'` is the first event about a subscription this
+   * platform holds no row for. The account then sat in the one state the machine
+   * treats as an ending with nothing saying when it was reached, which is the
+   * field the Art. 15 export and any final-period reconciliation read.
+   */
+  it('dates a subscription that is created already ended', async () => {
+    const user = await seedUser(ctx, { roles: ['valuation_user'] });
+    const stripeId = `sub_born_ended_${uniq()}`;
+    await deliver(subscriptionEvent(user.id, stripeId, 'canceled'));
+    const born = await subRow(stripeId);
+    expect(born?.status).toBe('canceled');
+    expect(born?.canceled_at, 'a cancelled subscription with no cancellation date').not.toBeNull();
+  });
+
+  it('leaves no subscription in its ended state without the date it ended', async () => {
+    // The invariant the case above breaks, asserted over everything this suite
+    // has written rather than only over the row it just made.
+    const { rows } = await ctx.pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM subscriptions WHERE status = 'canceled' AND canceled_at IS NULL`,
+    );
+    expect(rows[0]!.n).toBe('0');
+  });
+
   it('is a no-op at the repo, not an error, for a subscription id we never issued', async () => {
     expect(await cancelSubscription(ctx.pool, `sub_unknown_${uniq()}`)).toBeNull();
   });

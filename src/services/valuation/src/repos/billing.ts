@@ -230,8 +230,18 @@ export async function upsertSubscription(
     const { rows } = await pool.query<SubscriptionWrite>(
       `INSERT INTO subscriptions
          (id, user_id, plan_tier, status, stripe_subscription_id, stripe_customer_id,
-          current_period_start, current_period_end, cancel_at_period_end, quota_period_start)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, false), $7)
+          current_period_start, current_period_end, cancel_at_period_end, quota_period_start,
+          canceled_at)
+       -- A row may be *born* cancelled — see SUBSCRIPTION_INITIAL_STATUSES —
+       -- and it was born without a date, because only the update arm below
+       -- stamped one. So the one state the whole machine treats as terminal
+       -- could exist with nothing saying when it was reached, and canceled_at
+       -- is what the personal data export and any final-period reconciliation
+       -- read for "when did this customer leave". Reached whenever a
+       -- customer.subscription.updated carrying status 'canceled' is the first
+       -- event about a subscription this platform holds no row for.
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, false), $7,
+               CASE WHEN $4 = 'canceled' THEN now() END)
        ON CONFLICT (stripe_subscription_id) DO UPDATE SET
          plan_tier = EXCLUDED.plan_tier,
          status = EXCLUDED.status,
@@ -326,8 +336,11 @@ export async function upsertSubscription(
   }
   const { rows } = await pool.query<SubscriptionRow>(
     `INSERT INTO subscriptions
-       (id, user_id, plan_tier, status, current_period_start, current_period_end, quota_period_start)
-     VALUES ($1, $2, $3, $4, $5, $6, $5) RETURNING *`,
+       (id, user_id, plan_tier, status, current_period_start, current_period_end, quota_period_start,
+        canceled_at)
+     -- Same rule as the arm above: the terminal state never exists without the
+     -- date it was reached.
+     VALUES ($1, $2, $3, $4, $5, $6, $5, CASE WHEN $4 = 'canceled' THEN now() END) RETURNING *`,
     [
       newUlid(),
       input.userId,
