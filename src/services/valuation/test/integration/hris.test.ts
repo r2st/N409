@@ -590,6 +590,157 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     });
   });
 
+  describe('a sync that failed (R252)', () => {
+    /**
+     * `recordSyncError` writes `status = 'error'` and `findDueConnections`
+     * asked for `status = 'connected'`, so the first failure of any kind ended
+     * the schedule permanently — one 503 at three in the morning and the daily
+     * sync was over, with the panel still showing the cadence somebody chose.
+     */
+    const connectionRow = async (valuationId: string) => {
+      const { rows } = await ctx.pool.query<{
+        id: string;
+        status: string;
+        sync_failures: number;
+        next_sync_at: Date | null;
+      }>('SELECT id, status, sync_failures, next_sync_at FROM hris_connections WHERE valuation_id = $1', [
+        valuationId,
+      ]);
+      return rows[0]!;
+    };
+
+    const makeDue = (valuationId: string) =>
+      ctx.pool.query(
+        `UPDATE hris_connections
+            SET sync_frequency = 'weekly', next_sync_at = now() - interval '1 hour'
+          WHERE valuation_id = $1`,
+        [valuationId],
+      );
+
+    it('schedules a retry on a backoff after a provider failure', async () => {
+      const v = await connectedValuation();
+      await makeDue(v.id);
+      rosterFails = true;
+
+      await runDueHrisSyncs({
+        pool: ctx.pool,
+        fetchFn: mockFetch() as unknown as typeof fetch,
+        log: { warn: () => {} },
+      });
+
+      const row = await connectionRow(v.id);
+      expect(row.status).toBe('error');
+      expect(row.sync_failures).toBe(1);
+      // Not the ordinary fifteen-minute tick — that is how a provider's rate
+      // limit becomes a longer one — and not never, which is what it used to be.
+      const waitMinutes = (row.next_sync_at!.getTime() - Date.now()) / 60_000;
+      expect(waitMinutes).toBeGreaterThan(10);
+      expect(waitMinutes).toBeLessThan(20);
+    });
+
+    it('picks the connection up again when the retry falls due, and clears the count', async () => {
+      const v = await connectedValuation();
+      await makeDue(v.id);
+      rosterFails = true;
+      await runDueHrisSyncs({
+        pool: ctx.pool,
+        fetchFn: mockFetch() as unknown as typeof fetch,
+        log: { warn: () => {} },
+      });
+      expect((await connectionRow(v.id)).status).toBe('error');
+
+      // The provider comes back, and the retry time arrives.
+      rosterFails = false;
+      await ctx.pool.query(
+        `UPDATE hris_connections SET next_sync_at = now() - interval '1 minute' WHERE valuation_id = $1`,
+        [v.id],
+      );
+      const processed = await runDueHrisSyncs({
+        pool: ctx.pool,
+        fetchFn: mockFetch() as unknown as typeof fetch,
+        log: { warn: () => {} },
+      });
+
+      expect(processed).toBeGreaterThanOrEqual(1);
+      const row = await connectionRow(v.id);
+      expect(row.status).toBe('connected');
+      expect(row.sync_failures).toBe(0);
+    });
+
+    it('backs off further on each consecutive failure', async () => {
+      const v = await connectedValuation();
+      await makeDue(v.id);
+      rosterFails = true;
+      const waits: number[] = [];
+      for (let i = 0; i < 3; i++) {
+        await ctx.pool.query(
+          `UPDATE hris_connections SET next_sync_at = now() - interval '1 minute' WHERE valuation_id = $1`,
+          [v.id],
+        );
+        await runDueHrisSyncs({
+          pool: ctx.pool,
+          fetchFn: mockFetch() as unknown as typeof fetch,
+          log: { warn: () => {} },
+        });
+        const row = await connectionRow(v.id);
+        waits.push((row.next_sync_at!.getTime() - Date.now()) / 60_000);
+      }
+      expect((await connectionRow(v.id)).sync_failures).toBe(3);
+      expect(waits.map(Math.round)).toEqual([15, 30, 60]);
+    });
+
+    it('stops retrying, and waits for a person, when the authorisation has ended', async () => {
+      const v = await connectedValuation();
+      await makeDue(v.id);
+      await ctx.pool.query(
+        `UPDATE hris_connections SET token_expires_at = now() - interval '1 hour' WHERE valuation_id = $1`,
+        [v.id],
+      );
+      tokenResponder = () => jsonResponse({ error: 'invalid_grant' }, 400);
+
+      await runDueHrisSyncs({
+        pool: ctx.pool,
+        fetchFn: mockFetch() as unknown as typeof fetch,
+        credentials: { rippling: { clientId: 'cid', clientSecret: 'sec' } },
+        log: { warn: () => {} },
+      });
+
+      const row = await connectionRow(v.id);
+      expect(row.status).toBe('error');
+      // A refresh token the provider has refused will be refused identically
+      // every eight hours forever, so this one is deliberately not retried.
+      expect(row.next_sync_at).toBeNull();
+    });
+
+    it('restores the schedule when the client reconnects', async () => {
+      // What the reconnect message asks for is the schedule back. A reconnect
+      // that only cleared the error would leave the cadence select reading
+      // "Weekly" over a connection that never syncs again.
+      const v = await connectedValuation();
+      await makeDue(v.id);
+      await ctx.pool.query(
+        `UPDATE hris_connections
+            SET status = 'error', sync_failures = 4, next_sync_at = NULL
+          WHERE valuation_id = $1`,
+        [v.id],
+      );
+
+      const state = await signHrisState(
+        { valuationId: v.id, provider: 'rippling', userId: ops.id },
+        { secret: 'integration-test-secret-0123456789abcdef', issuer: 'n409', ttlSeconds: 3600 },
+      );
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/hris/callback?state=${encodeURIComponent(state)}&code=abc&company_id=co1`,
+      });
+
+      const row = await connectionRow(v.id);
+      expect(row.status).toBe('connected');
+      expect(row.sync_failures).toBe(0);
+      expect(row.next_sync_at).not.toBeNull();
+    });
+  });
+
   it('forbids HRIS import for non-ops users', async () => {
     const client = await seedUser(ctx, { roles: ['valuation_user'] });
     const v = await createValuation(

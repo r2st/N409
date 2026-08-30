@@ -22,6 +22,12 @@ export interface CapTableConnectionRow {
   last_synced_at: Date | null;
   last_sync_summary: Record<string, unknown> | null;
   last_error: string | null;
+  /**
+   * Failures since the last success. Drives the retry backoff in
+   * `recordSyncError`; see migration 0194 for why a scheduled connector needs
+   * one at all.
+   */
+  sync_failures: number;
 }
 
 export type PublicCapTableConnection = Omit<CapTableConnectionRow, 'access_token' | 'refresh_token'>;
@@ -81,7 +87,14 @@ export async function upsertConnection(
        external_company_name = COALESCE(EXCLUDED.external_company_name, cap_table_connections.external_company_name),
        connected_by = EXCLUDED.connected_by,
        connected_at = now(),
-       last_error = NULL
+       last_error = NULL,
+       -- Reconnecting is what the authorisation failures ask a person to do,
+       -- and what they ask it for is the schedule. A terminal failure clears
+       -- the next-sync time, so a reconnect that only cleared the error would
+       -- leave the cadence select reading Daily over a connection that never
+       -- syncs again -- the same lie in a new place.
+       sync_failures = 0,
+       next_sync_at = CASE WHEN cap_table_connections.sync_frequency = 'manual' THEN NULL ELSE now() END
      RETURNING *`,
     [
       newUlid(),
@@ -129,17 +142,53 @@ export async function recordSync(
   await pool.query(
     `UPDATE cap_table_connections
      SET last_synced_at = now(), last_sync_summary = $2, status = 'connected', last_error = NULL,
+         sync_failures = 0,
          next_sync_at = ${interval ? `now() + interval '${interval}'` : 'NULL'}
      WHERE id = $1 AND status <> 'revoked'`,
     [id, JSON.stringify(summary)],
   );
 }
 
-export async function recordSyncError(pool: pg.Pool, id: string, error: string): Promise<void> {
+/**
+ * Record a failed sync, and say when — if ever — to try again.
+ *
+ * The `status = 'error'` half is what this always did, and on its own it ended
+ * the schedule: both sweeps ask for `status = 'connected'`, and nothing moved a
+ * connection back. One 503 at three in the morning and the daily sync was over,
+ * with the panel still showing the cadence somebody chose.
+ *
+ * So the failure now schedules its own retry, on a backoff that grows with the
+ * number of failures since the last success — 15m, 30m, 1h, 2h, 4h, then 8h —
+ * and the sweeps admit `error` rows whose time has come. Retrying on the
+ * ordinary fifteen-minute tick would be the wrong answer in the other
+ * direction: that is how a provider's rate limit becomes a longer rate limit.
+ *
+ * `terminal` is for the failure a retry cannot clear — a refresh token the
+ * provider has refused, which it will refuse identically forever. Those clear
+ * `next_sync_at` and wait for a person to reconnect, which is what their
+ * message asks for. A connection whose cadence is `manual` also gets no time:
+ * it never had one.
+ */
+export async function recordSyncError(
+  pool: pg.Pool,
+  id: string,
+  error: string,
+  opts: { terminal?: boolean } = {},
+): Promise<void> {
   await pool.query(
-    `UPDATE cap_table_connections SET status = 'error', last_error = $2
-     WHERE id = $1 AND status <> 'revoked'`,
-    [id, error.slice(0, 500)],
+    `UPDATE cap_table_connections
+        SET status = 'error',
+            last_error = $2,
+            sync_failures = sync_failures + 1,
+            next_sync_at = CASE
+              WHEN $3::boolean THEN NULL
+              WHEN sync_frequency = 'manual' THEN NULL
+              -- Reads the pre-increment count: a first failure waits 15
+              -- minutes, a sixth and every one after it waits eight hours.
+              ELSE now() + interval '15 minutes' * power(2, LEAST(sync_failures, 5))
+            END
+      WHERE id = $1 AND status <> 'revoked'`,
+    [id, error.slice(0, 500), opts.terminal ?? false],
   );
 }
 
@@ -218,7 +267,7 @@ export async function findDueConnections(pool: pg.Pool, limit = 25): Promise<Cap
   const { rows } = await pool.query<CapTableConnectionRow>(
     `SELECT c.* FROM cap_table_connections c
        JOIN valuations v ON v.id = c.valuation_id AND v.archived_at IS NULL
-     WHERE c.status = 'connected' AND c.sync_frequency <> 'manual'
+     WHERE c.status IN ('connected', 'error') AND c.sync_frequency <> 'manual'
        AND c.next_sync_at IS NOT NULL AND c.next_sync_at <= now()
      ORDER BY c.next_sync_at ASC
      LIMIT $1`,

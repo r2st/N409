@@ -36,7 +36,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
-import { IntegrationError } from '../clients/deadline.js';
+import { IntegrationError, ReconnectRequiredError } from '../clients/deadline.js';
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
@@ -165,7 +165,13 @@ export async function syncCapTableConnection(
     // error with an unrelated one and lose the original entirely — including
     // for the scheduler above, which has no client to report it to at all.
     const message = describeTransportFailure(err);
-    await recordSyncError(deps.pool, connection.id, message).catch(() => undefined);
+    // `terminal` is the difference between a provider that is briefly unwell
+    // and an authorisation that has ended: the first is worth another tick on
+    // a backoff, the second will be refused identically forever and its
+    // message asks for a reconnect instead.
+    await recordSyncError(deps.pool, connection.id, message, {
+      terminal: err instanceof ReconnectRequiredError,
+    }).catch(() => undefined);
     throw err;
   }
 

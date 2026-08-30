@@ -30,7 +30,7 @@ import {
   upsertConnection,
   type HrisConnectionRow,
 } from '../repos/hrisConnections.js';
-import { IntegrationError } from '../clients/deadline.js';
+import { IntegrationError, ReconnectRequiredError } from '../clients/deadline.js';
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { createGrant } from '../repos/grants.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
@@ -172,7 +172,13 @@ export async function syncHrisConnection(
       deps.fetchFn,
     );
   } catch (err) {
-    await recordSyncError(deps.pool, connection.id, describeTransportFailure(err));
+    // `terminal` is the difference between a provider that is briefly unwell
+    // and an authorisation that has ended: the first is worth another tick on
+    // a backoff, the second will be refused identically forever and its
+    // message asks for a reconnect instead.
+    await recordSyncError(deps.pool, connection.id, describeTransportFailure(err), {
+      terminal: err instanceof ReconnectRequiredError,
+    }).catch(() => undefined);
     throw err;
   }
 
