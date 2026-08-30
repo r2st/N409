@@ -55,7 +55,13 @@ export interface AiTestResponse {
    * rather than swallowed so someone tuning prompt wording can tell "the model
    * handled this badly" from "the model never saw it".
    */
-  anonymization?: { applied: boolean; redacted: Record<string, number>; enforced?: boolean };
+  anonymization?: {
+    applied: boolean;
+    redacted: Record<string, number>;
+    /** What the request declared as known, in counts — never the names. */
+    declared?: { companies: number; people: number };
+    enforced?: boolean;
+  };
 }
 
 export interface AiModelsResponse {

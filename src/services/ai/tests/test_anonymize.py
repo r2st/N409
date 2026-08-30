@@ -61,6 +61,9 @@ def test_pipeline_redacts_corpus_and_reports_counts(monkeypatch):
     assert result["anonymization"] == {
         "applied": True,
         "redacted": {"emails": 1},
+        # The subject company is always declared; a pipeline payload declares
+        # people only since round 233.
+        "declared": {"companies": 1, "people": 0},
         "enforced": False,
     }
 

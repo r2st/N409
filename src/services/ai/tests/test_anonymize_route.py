@@ -114,7 +114,12 @@ def test_empty_request_is_a_clean_no_op():
     assert res.json() == {
         "text": "",
         "documents": [],
-        "anonymization": {"applied": True, "redacted": {}, "enforced": False},
+        "anonymization": {
+            "applied": True,
+            "redacted": {},
+            "declared": {"companies": 0, "people": 0},
+            "enforced": False,
+        },
     }
 
 

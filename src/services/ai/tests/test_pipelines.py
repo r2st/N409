@@ -338,7 +338,12 @@ def test_test_endpoint_runs_prompt(monkeypatch, client):
         "content": '{"answer": 42}',
         # Nothing identifying in this prompt, but the report is unconditional:
         # see test_prompt_redaction.py for the dry-run box's redaction.
-        "anonymization": {"applied": True, "redacted": {}, "enforced": False},
+        "anonymization": {
+            "applied": True,
+            "redacted": {},
+            "declared": {"companies": 0, "people": 0},
+            "enforced": False,
+        },
     }
     assert chat.calls[0] == {"system": "JSON only.", "user": "What is the answer?", "model": "stub/model-x"}
 

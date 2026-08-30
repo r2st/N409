@@ -438,7 +438,35 @@ class Redactor:
         return redacted
 
     def report(self) -> dict:
-        """What the persisted job record says about this request's redaction."""
+        """What the persisted job record says about this request's redaction.
+
+        Two claims, and they are not the same one. ``redacted`` is what was
+        struck; ``declared`` is what this request was *told* to look for. A run
+        that was handed the engagement owner's name and never saw it in the
+        documents reports ``{"names": 0}`` — and so does a run nobody told, and
+        those two have opposite meanings. Only the first is redaction working.
+
+        That gap is not hypothetical. Until round 233 no pipeline run declared
+        anything: ``_known_entities`` reads ``options.known_companies`` /
+        ``options.known_people``, which only ``/ai/anonymize`` had ever sent, so
+        every extraction, cap-table and narrative prompt carried the owner's
+        name in the clear. What made it survivable for that long is that the
+        record said ``applied: true`` and counted the emails and phone numbers
+        the patterns did catch, and nothing in it could have said the
+        declaration was missing. The operator's *preview* of the same documents
+        already recorded the counts (``cap_table_anonymized`` writes
+        ``known_companies`` / ``known_people`` to ``admin_events``); the runs
+        that actually ship text to an external model did not.
+
+        Counts, never the names. This is a record *about* handling client text
+        and must not become another copy of it — the same rule the audit event
+        states where it writes the same two numbers.
+        """
         if not self.applied:
             return {"applied": False, "redacted": {}}
-        return {"applied": True, "redacted": dict(self._totals), "enforced": self.enforced}
+        return {
+            "applied": True,
+            "redacted": dict(self._totals),
+            "declared": {"companies": len(self._companies), "people": len(self._people)},
+            "enforced": self.enforced,
+        }

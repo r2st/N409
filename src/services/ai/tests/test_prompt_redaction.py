@@ -340,9 +340,50 @@ def test_production_ignores_the_escape_hatch_for_every_runner(monkeypatch, promp
             assert not _leaks(sent["user"]), f"{name}: {_leaks(sent['user'])}"
 
 
+def test_the_record_says_what_was_declared_not_only_what_was_struck(prompts):
+    """A run that saw no name and a run nobody told read the same otherwise.
+
+    `redacted` counts what came out of the text. It is 0 for a person's name
+    when the documents never mentioned them — and also 0 when the caller
+    declared nobody, which is the only way a bare personal name goes out in the
+    clear (it matches no pattern; see `AnonymizeBody`). Those two have opposite
+    meanings and until this field existed the persisted job record could not
+    tell them apart. That is what let round 233's leak stand: every pipeline
+    payload declared nothing, and every record still said `applied: true`.
+    """
+    _, told = pipelines.run_missing_data(payload())
+    _, untold = pipelines.run_missing_data(payload(options={}))
+
+    assert told["anonymization"]["declared"] == {"companies": 1, "people": 1}
+    assert untold["anonymization"]["declared"] == {"companies": 1, "people": 0}
+    # The founder is struck in the first and not in the second — which is the
+    # difference the two declarations describe.
+    assert FOUNDER not in json.dumps(told)
+    assert told["anonymization"]["redacted"].get("names", 0) >= 1
+    assert untold["anonymization"]["redacted"].get("names", 0) == 0
+
+
+def test_the_declaration_is_counted_never_quoted(prompts):
+    """A record *about* handling client text must not be another copy of it.
+
+    The same rule the audit event states where it writes the same two numbers
+    (`cap_table_anonymized` in the valuation service records
+    `known_companies` / `known_people` as counts).
+    """
+    _, result = pipelines.run_missing_data(payload())
+    declared = json.dumps(result["anonymization"]["declared"])
+    for secret in SECRETS:
+        assert secret not in declared
+
+
 def test_a_request_with_nothing_to_redact_still_reports(prompts):
     _, result = pipelines.run_explain({"valuation": {"kind": "409a"}})
-    assert result["anonymization"] == {"applied": True, "redacted": {}, "enforced": False}
+    assert result["anonymization"] == {
+        "applied": True,
+        "redacted": {},
+        "declared": {"companies": 0, "people": 0},
+        "enforced": False,
+    }
 
 
 # ── Each layer, on its own ───────────────────────────────────────────────────
