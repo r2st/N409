@@ -461,6 +461,62 @@ describe.skipIf(!dbUp)('billing data flow', () => {
     });
 
     /**
+     * The quota is spent before the valuation exists, and the two are separate
+     * statements.
+     *
+     * The gate has to answer before any work is done, and `createValuation` is
+     * its own transaction — so anything that makes the insert fail leaves the
+     * subscriber one valuation poorer with nothing to show for it, and there is
+     * no way back from the product: the counter is only ever reset by a
+     * renewal. On an annual retainer the twelfth valuation could be spent on a
+     * 500 and the customer would wait a year to get it.
+     */
+    it('gives the quota back when the valuation it was charged for is never created', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await upsertSubscription(ctx.pool, {
+        userId: user.id,
+        planTier: 'annual_retainer',
+        status: 'active',
+        stripeSubscriptionId: `sub_release_${uniq()}`,
+      });
+      const used = async () =>
+        (
+          await ctx.pool.query<{ valuations_used: number }>(
+            'SELECT valuations_used FROM subscriptions WHERE user_id = $1',
+            [user.id],
+          )
+        ).rows[0]?.valuations_used;
+
+      const create = () =>
+        ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/valuations',
+          headers: { authorization: `Bearer ${user.token}` },
+          payload: { kind: '409a', company_name: 'Rolled Back Co' },
+        });
+
+      expect((await create()).statusCode).toBe(201);
+      expect(await used()).toBe(1);
+
+      const restore = interceptPoolQueries(ctx.pool, (sql) => {
+        if (sql.includes('INSERT INTO valuations')) throw new Error('connection terminated');
+        return undefined;
+      });
+      try {
+        expect((await create()).statusCode).toBeGreaterThanOrEqual(500);
+      } finally {
+        restore();
+      }
+      // Not 2: the valuation that second request paid for does not exist.
+      expect(await used()).toBe(1);
+
+      // And the allowance is genuinely spendable again rather than merely
+      // decremented — the gate reads the same counter.
+      expect((await create()).statusCode).toBe(201);
+      expect(await used()).toBe(2);
+    });
+
+    /**
      * And the other end of it. Cancellation is terminal on the row, so coming
      * back is a *new* subscription with a new Stripe id — the quota that comes
      * with it has to be the new plan's, counted from zero, and the resubscribe

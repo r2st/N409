@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { ApiProblem, isIsoCalendarDate, isUlid, problems } from '@n409/shared';
-import { consumeValuation, findActiveSubscription } from '../repos/billing.js';
+import { consumeValuation, findActiveSubscription, releaseValuation } from '../repos/billing.js';
 import {
   canCreateValuation,
   canReadValuation,
@@ -261,21 +261,50 @@ export function registerValuationRoutes(
       });
     }
 
-    const valuation = await createValuation(
-      deps.pool,
-      {
-        kind: body.kind,
-        companyName: body.company_name,
-        serviceName: body.service_name,
-        userId,
-        partnerId,
-        source: body.source ?? (partnerId ? 'partner' : undefined),
-        currency: body.currency,
-        serviceCountries: body.service_countries,
-        gclid: body.gclid,
-      },
-      actorFor(principal),
-    );
+    let valuation;
+    try {
+      valuation = await createValuation(
+        deps.pool,
+        {
+          kind: body.kind,
+          companyName: body.company_name,
+          serviceName: body.service_name,
+          userId,
+          partnerId,
+          source: body.source ?? (partnerId ? 'partner' : undefined),
+          currency: body.currency,
+          serviceCountries: body.service_countries,
+          gclid: body.gclid,
+        },
+        actorFor(principal),
+      );
+    } catch (err) {
+      /**
+       * The quota is spent above and the row is inserted here, and the two are
+       * separate statements — `createValuation` is its own transaction, so a
+       * failure means no valuation exists at all. Without this the subscriber
+       * was charged one of the plan's valuations for one they did not get, and
+       * there is no way back: the counter is only ever reset by a renewal, so
+       * on an annual retainer the twelfth could be spent on a 500 and the
+       * customer would wait a year for it.
+       *
+       * Best-effort and logged either way. The failure being handled is the
+       * reason to doubt the next statement too, and a refund that itself throws
+       * must not replace the error the caller needs to see.
+       */
+      if (subscription) {
+        try {
+          const released = await releaseValuation(deps.pool, userId);
+          req.log.warn({ err, userId, released }, 'valuation create failed — plan quota returned');
+        } catch (refundErr) {
+          req.log.error(
+            { err: refundErr, cause: err, userId, alert: true },
+            'valuation create failed and the plan quota it spent could not be returned',
+          );
+        }
+      }
+      throw err;
+    }
     return reply.status(201).send({ valuation });
   });
 

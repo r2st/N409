@@ -500,6 +500,45 @@ export async function consumeValuation(pool: pg.Pool, userId: string): Promise<b
   return rows.length > 0;
 }
 
+/**
+ * Give back the valuation {@link consumeValuation} charged for, when the
+ * valuation it was charged for was never created.
+ *
+ * The create route spends the quota and then inserts the row, in that order and
+ * as two statements: the gate has to answer before any work is done, and
+ * `createValuation` is its own transaction. So anything that made the insert
+ * fail — a pool blip, a `partner_id` that no longer resolves, a deadline — left
+ * the subscriber one valuation poorer with nothing to show for it. There is no
+ * way back from the product side either: the counter is only ever reset by a
+ * renewal, so on an annual retainer the twelfth valuation could be spent on a
+ * 500 and the customer would wait a year to get it back.
+ *
+ * A compensation rather than a shared transaction, because the two halves are
+ * owned by different modules and the alternative is threading a client through
+ * the whole create path for a failure that is rare by construction. The refund
+ * is bounded — `valuations_used > 0`, so it can never drive the counter
+ * negative — and is deliberately not conditioned on the counter still being the
+ * one this request incremented: if a renewal has reset it in the meantime the
+ * decrement lands on the new period and costs us at most the one valuation we
+ * already failed to deliver. Erring toward the customer is the right side of
+ * that to be wrong on.
+ *
+ * Returns whether anything was given back, so a caller can log the case where
+ * it could not be.
+ */
+export async function releaseValuation(pool: pg.Pool, userId: string): Promise<boolean> {
+  const { rows } = await pool.query<{ ok: boolean }>(
+    `UPDATE subscriptions s
+        SET valuations_used = s.valuations_used - 1
+      WHERE s.user_id = $1
+        AND s.status IN (${SERVED_SQL})
+        AND s.valuations_used > 0
+      RETURNING true AS ok`,
+    [userId],
+  );
+  return rows.length > 0;
+}
+
 export type AdminSubscription = SubscriptionRow & {
   email: string;
   plan_name: string;
