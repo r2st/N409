@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
@@ -53,26 +53,47 @@ const RunBody = z
  * The specialty endpoints return bare result objects, so the engine build is
  * fetched once from its health route and remembered — a restart of either
  * service re-reads it. 'unknown' when the engine cannot say (stubbed tests).
+ *
+ * Every way of not knowing is reported. The version is not a dependency and a
+ * run must never fail for want of it, which is why all three doors below end
+ * in a string rather than a throw — but the string is written to
+ * `calculations.engine_version` and stays there, and that column is
+ * provenance: it is the record of which build priced this company, read back
+ * by an auditor years later and by the rollforward that compares two runs. A
+ * row saying `unknown` is a run whose provenance was lost, and until this line
+ * existed nothing anywhere said so or why. The three reasons answer different
+ * questions — `http_error` is the engine refusing a request this service is
+ * authorised to make, `unreadable_version` is a health body that changed
+ * shape, `transport_error` is the unit being down — and 'unknown' collapsed
+ * all of them.
  */
 let cachedEngineVersion: string | null = null;
-async function engineVersion(engineUrl: string): Promise<string> {
+export async function engineVersion(engineUrl: string, log?: FastifyBaseLogger): Promise<string> {
   if (cachedEngineVersion) return cachedEngineVersion;
+  const unknown = (reason: string, extra: Record<string, unknown> = {}): string => {
+    log?.warn(
+      { reason, ...extra },
+      'engine build could not be read; this run is recorded with no engine version',
+    );
+    return 'unknown';
+  };
   try {
     const res = await fetch(`${engineUrl}/engine/v1/health`, {
       headers: internalAuthHeaders(),
       signal: AbortSignal.timeout(3000),
     });
-    if (!res.ok) return 'unknown';
+    if (!res.ok) return unknown('http_error', { status: res.status });
     const body = (await res.json()) as { engine_version?: unknown };
     if (typeof body.engine_version === 'string' && body.engine_version !== '') {
       cachedEngineVersion = body.engine_version;
       return cachedEngineVersion;
     }
-  } catch {
+    return unknown('unreadable_version');
+  } catch (err) {
     // The version is provenance, not a dependency — a run must not fail
     // because the health route was momentarily unreachable.
+    return unknown('transport_error', { err });
   }
-  return 'unknown';
 }
 
 /** Test hook: forget the remembered engine build. */
@@ -126,7 +147,7 @@ export function registerSpecialtyRoutes(
       throw err;
     }
 
-    const version = await engineVersion(deps.engineUrl);
+    const version = await engineVersion(deps.engineUrl, req.log);
     try {
       const result = await postJson<Record<string, unknown>>(
         'engine',
