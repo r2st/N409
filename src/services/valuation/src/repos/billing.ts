@@ -10,6 +10,7 @@ import {
   SERVED_SUBSCRIPTION_STATUSES,
   type InvoiceStatus,
   type PlanLimit,
+  type SubscriptionPrice,
   type InvoiceLineItem,
 } from '../domain/billing.js';
 
@@ -68,6 +69,40 @@ export async function findPlanForSubscription(pool: pg.Pool, tier: string): Prom
     [tier],
   );
   return rows[0] ?? null;
+}
+
+/**
+ * The plan a live subscription price names — or nothing, if it names none
+ * unambiguously.
+ *
+ * The reverse of {@link findPlan}: not "what does this tier cost" but "which
+ * tier is this what we charge for". Read when a `customer.subscription.*` event
+ * reports an item whose price is not the one the subscription's metadata was
+ * stamped with — i.e. after a plan change in Stripe's hosted portal, which
+ * swaps the item and never touches the metadata. See `subscriptionPrice`.
+ *
+ * Two refusals, both deliberate:
+ *
+ * `active` is not filtered, for the reason {@link findPlanForSubscription}
+ * spells out — a tier retired from the catalogue still has subscribers on it,
+ * and a downgrade *onto* a retired tier is not a thing Stripe can do, but a
+ * renewal of one already there is.
+ *
+ * More than one tier at the same price, currency and interval resolves to
+ * nothing rather than to whichever sorts first. Two rows priced identically is
+ * a legitimate catalogue (a rename, a grandfathered tier), and picking between
+ * them by row order would move a subscriber's quota on the strength of an
+ * ordering nobody chose.
+ */
+export async function findPlanByPrice(pool: pg.Pool, price: SubscriptionPrice): Promise<PlanLimit | null> {
+  const { rows } = await pool.query<PlanLimit>(
+    `SELECT tier, name, valuation_limit, price_cents, currency, interval
+       FROM plan_limits
+      WHERE price_cents = $1 AND lower(currency) = $2 AND interval = $3
+      LIMIT 2`,
+    [price.amount_cents, price.currency, price.interval],
+  );
+  return rows.length === 1 ? rows[0]! : null;
 }
 
 // ── Subscriptions ─────────────────────────────────────────────────────────────

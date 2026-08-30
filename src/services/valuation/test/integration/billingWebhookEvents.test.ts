@@ -309,6 +309,143 @@ describe.skipIf(!dbUp)('billing webhook events', () => {
     });
   });
 
+  describe('a plan change made in the Stripe portal', () => {
+    /*
+     * `metadata.plan_tier` is stamped once, by the checkout that started the
+     * subscription, and Stripe's hosted portal — the one this product's
+     * "Manage subscription" button opens — changes the plan by swapping the
+     * subscription's *item*. The metadata still names the tier the customer
+     * left, so trusting it wrote the old tier straight back over itself and
+     * the change reached nothing: not the quota join, not the Billing screen,
+     * not the ops MRR.
+     */
+    it('follows an upgrade onto the tier actually being billed', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const item = (amountCents: number) => ({
+        data: [
+          {
+            quantity: 1,
+            price: { unit_amount: amountCents, currency: 'usd', recurring: { interval: 'year' } },
+          },
+        ],
+      });
+      await deliver({
+        type: 'customer.subscription.created',
+        data: {
+          object: {
+            id: 'sub_upgrade_1',
+            status: 'active',
+            items: item(2_000_000),
+            metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+          },
+        },
+      });
+      expect((await subscriptionOf(user.id))?.plan_tier).toBe('annual_retainer');
+
+      // The portal moves them to Enterprise. The metadata is untouched — this
+      // is exactly what Stripe delivers.
+      await deliver({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_upgrade_1',
+            status: 'active',
+            items: item(5_000_000),
+            metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+          },
+        },
+      });
+      expect((await subscriptionOf(user.id))?.plan_tier).toBe('enterprise');
+      // And the quota moved with it: Enterprise is unlimited, the retainer is 12.
+      for (let i = 0; i < 13; i += 1) expect(await consumeValuation(ctx.pool, user.id)).toBe(true);
+    });
+
+    it('follows a downgrade, so the larger quota stops being served', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const item = (amountCents: number) => ({
+        data: [
+          {
+            quantity: 1,
+            price: { unit_amount: amountCents, currency: 'usd', recurring: { interval: 'year' } },
+          },
+        ],
+      });
+      await deliver({
+        type: 'customer.subscription.created',
+        data: {
+          object: {
+            id: 'sub_downgrade_1',
+            status: 'active',
+            items: item(5_000_000),
+            metadata: { user_id: user.id, plan_tier: 'enterprise' },
+          },
+        },
+      });
+      await deliver({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_downgrade_1',
+            status: 'active',
+            items: item(2_000_000),
+            metadata: { user_id: user.id, plan_tier: 'enterprise' },
+          },
+        },
+      });
+      const sub = await subscriptionOf(user.id);
+      expect(sub?.plan_tier).toBe('annual_retainer');
+      await ctx.pool.query(
+        "UPDATE subscriptions SET valuations_used = 12 WHERE stripe_subscription_id = 'sub_downgrade_1'",
+      );
+      // The retainer's twelve are spent; the unlimited tier they no longer pay
+      // for does not go on answering for them.
+      expect(await consumeValuation(ctx.pool, user.id)).toBe(false);
+    });
+
+    it('keeps the metadata tier when the item names no plan we sell', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await deliver({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_unknown_price_1',
+            status: 'active',
+            items: {
+              data: [
+                {
+                  quantity: 1,
+                  price: { unit_amount: 123_456, currency: 'usd', recurring: { interval: 'month' } },
+                },
+              ],
+            },
+            metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+          },
+        },
+      });
+      expect((await subscriptionOf(user.id))?.plan_tier).toBe('annual_retainer');
+    });
+
+    it('keeps the metadata tier for a subscription carrying more than one item', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const line = (amountCents: number) => ({
+        quantity: 1,
+        price: { unit_amount: amountCents, currency: 'usd', recurring: { interval: 'year' } },
+      });
+      await deliver({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_multi_item_1',
+            status: 'active',
+            items: { data: [line(5_000_000), line(2_000_000)] },
+            metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+          },
+        },
+      });
+      expect((await subscriptionOf(user.id))?.plan_tier).toBe('annual_retainer');
+    });
+  });
+
   describe('customer.subscription.deleted', () => {
     it('cancels the local row', async () => {
       const user = await seedUser(ctx, { roles: ['valuation_user'] });

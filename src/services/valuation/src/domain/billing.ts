@@ -524,3 +524,62 @@ export function invoicePaidMessage(r: {
     },
   };
 }
+
+// ── What plan a subscription is actually on ──────────────────────────────────
+
+/** A recurring price, in the three fields that identify a plan in the catalogue. */
+export interface SubscriptionPrice {
+  amount_cents: number;
+  currency: string;
+  interval: 'month' | 'year';
+}
+
+/**
+ * The price a Stripe subscription object is actually billing, when it names one
+ * unambiguously.
+ *
+ * `plan_tier` reaches this system as *metadata*, stamped onto the subscription
+ * once by `createSubscriptionCheckoutSession` and never written again. A plan
+ * change does not touch it: Stripe's hosted billing portal — which the portal
+ * route exists to open, and whose advertised job is "cancel, change plan,
+ * update the card" — swaps the subscription's *item* and leaves the metadata
+ * exactly as the original checkout wrote it. So the
+ * `customer.subscription.updated` that reports an upgrade carried the tier the
+ * customer just left, `upsertSubscription` wrote it back over itself, and the
+ * change was invisible here in both directions:
+ *
+ *   - a downgrade kept the larger `valuation_limit` the customer had stopped
+ *     paying for, because quota is joined from `plan_tier`;
+ *   - an upgrade went on refusing the thirteenth valuation with a 402 against
+ *     the old limit, on an account now paying the unlimited tier;
+ *
+ * and on both, the Billing screen, the ops dashboard's MRR and the invoice PDF
+ * all named the wrong plan. Nothing else on the event ever disagreed loudly
+ * enough to notice, because nothing else read the item at all.
+ *
+ * The item is the authority Stripe bills from, so it is what the tier is
+ * resolved against — see `findPlanByPrice`. Deliberately narrow about when it
+ * will answer: exactly one item, quantity one, a whole-minor-unit amount and a
+ * recurring interval the catalogue can hold. Every plan this product sells is
+ * one item at quantity one, so anything else is a subscription assembled
+ * outside this system, and guessing a tier for it would be worse than falling
+ * back to what the metadata says.
+ */
+export function subscriptionPrice(obj: Record<string, unknown>): SubscriptionPrice | null {
+  const items = obj.items as { data?: unknown } | undefined;
+  const data = Array.isArray(items?.data) ? (items.data as Array<Record<string, unknown>>) : null;
+  if (!data || data.length !== 1) return null;
+  const item = data[0]!;
+  const quantity = item.quantity;
+  if (quantity !== undefined && quantity !== null && quantity !== 1) return null;
+  const price = item.price as Record<string, unknown> | undefined;
+  if (!price || typeof price !== 'object') return null;
+  const amount = price.unit_amount;
+  if (typeof amount !== 'number' || !Number.isInteger(amount) || amount < 0) return null;
+  const currency = price.currency;
+  if (typeof currency !== 'string' || currency.trim() === '') return null;
+  const recurring = price.recurring as Record<string, unknown> | undefined;
+  const interval = recurring?.interval;
+  if (interval !== 'month' && interval !== 'year') return null;
+  return { amount_cents: amount, currency: currency.trim().toLowerCase(), interval };
+}

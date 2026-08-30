@@ -22,6 +22,7 @@ import {
   findInvoice,
   findInvoiceByStripeId,
   findPlan,
+  findPlanByPrice,
   findPlanForSubscription,
   findStripeCustomerId,
   INVOICE_PAGE_LIMIT,
@@ -43,6 +44,7 @@ import {
   formatMoneyCents,
   invoicePaidMessage,
   invoiceSections,
+  subscriptionPrice,
   usageView,
   type InvoiceLineItem,
 } from '../domain/billing.js';
@@ -470,9 +472,57 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         } else if (type === 'customer.subscription.updated' || type === 'customer.subscription.created') {
           const meta = (obj.metadata ?? {}) as Record<string, string>;
           if (meta.user_id && meta.plan_tier && typeof obj.id === 'string') {
+            /**
+             * The tier Stripe is actually billing, not the one the metadata was
+             * stamped with at checkout.
+             *
+             * A plan change in the hosted portal swaps the subscription's item
+             * and leaves `metadata.plan_tier` alone, so writing the metadata
+             * back is how an upgrade or a downgrade stayed invisible to
+             * everything downstream of `subscriptions.plan_tier` — the quota
+             * join, the Billing screen, the ops MRR. See `subscriptionPrice`.
+             *
+             * Falls back to the metadata when the item names no tier we can
+             * identify, which is the pre-existing behaviour and the only
+             * answer available. That fallback is *reported* when it disagrees
+             * with the price being charged, because a subscription billing an
+             * amount no catalogue row matches is a plan sold outside this
+             * system and the quota it is being granted is a guess.
+             */
+            const priced = subscriptionPrice(obj);
+            const billed = priced ? await findPlanByPrice(deps.pool, priced) : null;
+            const planTier = billed?.tier ?? meta.plan_tier;
+            if (billed && billed.tier !== meta.plan_tier) {
+              log.info(
+                { subscriptionId: obj.id, metadataTier: meta.plan_tier, billedTier: billed.tier },
+                'subscription plan changed in Stripe — tier resolved from the billed price',
+              );
+            } else if (!billed && priced) {
+              const stamped = await findPlanForSubscription(deps.pool, meta.plan_tier);
+              if (
+                stamped &&
+                (stamped.price_cents !== priced.amount_cents ||
+                  stamped.currency.toLowerCase() !== priced.currency ||
+                  stamped.interval !== priced.interval)
+              ) {
+                log.warn(
+                  {
+                    alert: true,
+                    actorType: 'system',
+                    source: 'stripe',
+                    subscriptionId: obj.id,
+                    metadataTier: meta.plan_tier,
+                    billedAmountCents: priced.amount_cents,
+                    billedCurrency: priced.currency,
+                    billedInterval: priced.interval,
+                  },
+                  'subscription bills a price no plan matches — quota is being granted from stale metadata',
+                );
+              }
+            }
             await upsertSubscription(deps.pool, {
               userId: meta.user_id,
-              planTier: meta.plan_tier,
+              planTier,
               status: mapStatus(String(obj.status ?? 'active')),
               stripeSubscriptionId: obj.id,
               stripeCustomerId: typeof obj.customer === 'string' ? obj.customer : null,
