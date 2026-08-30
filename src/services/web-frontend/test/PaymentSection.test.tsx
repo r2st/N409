@@ -102,20 +102,87 @@ describe('PaymentSection (price transparency before checkout)', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /pay/i })).toBeInTheDocument());
   });
 
-  it('starts checkout and surfaces a 503 as the invoice fallback', async () => {
-    const user = userEvent.setup();
+  const checkoutFails = (problem: Record<string, unknown>, status: number) =>
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.includes('/payments/quote')) return jsonResponse({ quote: QUOTE });
-      if (url.includes('/payments/checkout') && init?.method === 'POST')
-        return jsonResponse({ status: 503, detail: 'Payments are not configured' }, 503);
+      if (url.includes('/payments/checkout') && init?.method === 'POST') return jsonResponse(problem, status);
       throw new Error(`unexpected fetch ${url}`);
     });
 
+  const pressPay = async () => {
+    const user = userEvent.setup();
     render(<PaymentSection valuation={VALUATION} />);
     await waitFor(() => expect(screen.getByTestId('payment-quote')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: /pay/i }));
+  };
+
+  it('starts checkout and surfaces an unconfigured processor as the invoice fallback', async () => {
+    checkoutFails(
+      {
+        type: 'urn:n409:problem:payments-unconfigured',
+        status: 503,
+        title: 'Service Unavailable',
+        // The server's own words name an environment variable, which is why
+        // this one message is replaced rather than shown.
+        detail: 'Payments are not configured (STRIPE_SECRET_KEY unset)',
+      },
+      503,
+    );
+    await pressPay();
     await waitFor(() => expect(screen.getByText(/we will invoice you instead/i)).toBeInTheDocument());
+    expect(screen.queryByText(/STRIPE_SECRET_KEY/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The other two 503s, which are not the same situation and must not make the
+   * same promise. Both clear on their own and both are fixed by pressing Pay
+   * again shortly; an undertaking to invoice instead stops the client trying.
+   */
+  it.each([
+    [
+      'a maintenance window',
+      {
+        type: 'urn:n409:problem:unavailable',
+        status: 503,
+        title: 'Service Unavailable',
+        detail: 'The platform is in maintenance mode — changes are temporarily disabled.',
+      },
+      /maintenance mode/i,
+    ],
+    [
+      'a busy database',
+      {
+        type: 'urn:n409:problem:database-unavailable',
+        status: 503,
+        title: 'Service Unavailable',
+        detail: 'The database is temporarily unable to serve this request. Nothing was changed.',
+      },
+      /nothing was changed/i,
+    ],
+  ])('does not promise an invoice for %s', async (_name, problem, expected) => {
+    checkoutFails(problem, 503);
+    await pressPay();
+    await waitFor(() => expect(screen.getByText(expected)).toBeInTheDocument());
+    expect(screen.queryByText(/we will invoice you instead/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps the server’s sentence for a refusal that is not a 503', async () => {
+    checkoutFails(
+      {
+        type: 'urn:n409:problem:conflict',
+        status: 409,
+        title: 'Conflict',
+        detail:
+          'A payment for this is already being started. Wait a moment and check your billing page ' +
+          'before trying again — pressing Pay twice does not charge you twice.',
+      },
+      409,
+    );
+    await pressPay();
+    await waitFor(() =>
+      expect(screen.getByText(/pressing Pay twice does not charge you twice/i)).toBeInTheDocument(),
+    );
   });
 
   /**

@@ -195,7 +195,33 @@ describe('AccountingConnect — edges', () => {
       await screen.findByText('Xero');
 
       await user.click(screen.getByRole('button', { name: 'Connect' }));
-      expect(await screen.findByText('Could not start the connection.')).toBeInTheDocument();
+      // `fetch` itself rejected, so the request never arrived — a dropped
+      // connection, not the integration being absent.
+      expect(await screen.findByText(/could not reach the server/i)).toBeInTheDocument();
+    });
+
+    it('keeps the server’s reason for a refusal that is not the missing integration', async () => {
+      // A 503 status was the whole test before, so a retired engagement and a
+      // throttle both read as "this deployment does not have Xero".
+      const user = userEvent.setup();
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        if (String(url).includes('/connect'))
+          return jsonResponse(
+            {
+              type: 'urn:n409:problem:conflict',
+              title: 'Conflict',
+              status: 409,
+              detail: 'This engagement has been retired and can no longer accept a connection.',
+            },
+            409,
+          );
+        return jsonResponse({ providers: [connected({ connection: null })] });
+      });
+      renderComponent();
+      await screen.findByText('Xero');
+
+      await user.click(screen.getByRole('button', { name: 'Connect' }));
+      expect(await screen.findByText(/has been retired/i)).toBeInTheDocument();
     });
   });
 

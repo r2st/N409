@@ -138,7 +138,15 @@ describe('AccountingConnect (§23)', () => {
     const user = userEvent.setup();
     mockApi({
       'POST /valuations/01N409VAL000000000000000AA/accounting/wave/connect': () =>
-        jsonResponse({ title: 'Integration not configured', status: 503 }, 503),
+        jsonResponse(
+          {
+            type: 'urn:n409:problem:accounting-unavailable',
+            title: 'Integration not configured',
+            status: 503,
+            detail: 'Wave is not configured on this deployment',
+          },
+          503,
+        ),
     });
     renderComponent();
     await screen.findByText('Wave');

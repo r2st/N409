@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api, ApiError } from '../../lib/api';
+import { api, ApiError, describeRequestFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { Button, ErrorNote } from '../ui';
 
@@ -73,10 +73,14 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
       );
       window.location.assign(authorize_url);
     } catch (err) {
+      // The type, not the status: a retired engagement (409), a link that is
+      // not this caller's (404) and a throttle (429) all arrived as "Could not
+      // start the connection", and a maintenance-window 503 arrived as the
+      // integration being permanently absent from the deployment.
       setError(
-        err instanceof ApiError && err.status === 503
+        err instanceof ApiError && err.problem.type === 'urn:n409:problem:accounting-unavailable'
           ? 'This integration is not configured on this deployment yet.'
-          : 'Could not start the connection.',
+          : describeRequestFailure(err),
       );
       setBusy(null);
     }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeRequestFailure } from '../lib/api';
 import { formatDate, formatChargedCents } from '../lib/format';
 import type { Payment, PaymentQuote, Valuation } from '../lib/types';
 import { Button, ErrorNote, ListTruncationNote } from './ui';
@@ -70,12 +70,26 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
       );
       window.location.assign(checkout_url);
     } catch (err) {
+      /*
+       * Keyed on the problem type, because 503 is not one situation and this
+       * branch makes a promise about money.
+       *
+       * Three different 503s reach a checkout, and only one of them is the one
+       * being answered here. `urn:n409:problem:payments-unconfigured` really is
+       * "we cannot take your card today", and the invoice sentence is a better
+       * answer than the server's own — which names an environment variable.
+       * The other two are not: `urn:n409:problem:unavailable` is a maintenance
+       * window in which every write is refused on purpose, and
+       * `urn:n409:problem:database-unavailable` is a busy minute that ends by
+       * itself. Both clear, both are fixed by pressing Pay again shortly, and
+       * both were being answered with an undertaking to send an invoice
+       * instead. A client who reads that stops trying to pay and waits for a
+       * bill nobody is going to raise.
+       */
       setError(
-        err instanceof ApiError && err.status === 503
+        err instanceof ApiError && err.problem.type === 'urn:n409:problem:payments-unconfigured'
           ? 'Online payment is not available yet — we will invoice you instead.'
-          : err instanceof ApiError
-            ? err.message
-            : 'Could not start the checkout.',
+          : describeRequestFailure(err),
       );
       setBusy(false);
     }
