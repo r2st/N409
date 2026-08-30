@@ -3,19 +3,28 @@ name = "n409-ai"
 version = "0.1.0"
 description = "409.ai rebuild — AI service. M1: missing-data / extraction / comparables pipelines via OpenRouter."
 requires-python = ">=3.12"
+# Kept in step with requirements.txt, which is what CI, the Dockerfile and
+# infra/deploy.sh actually install from — and which carries the reasoning for
+# each floor. `dependencyCensus.test.ts` fails if the two lists diverge.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.32",
     "httpx>=0.28",
-    # Keep in step with requirements.txt, which carries the reasoning: 6.15.0 is
-    # the fix for PYSEC-2026-3655/3656, both reachable through the text
-    # extraction `documents.py` runs over uploaded files.
+    # 6.15.0 is the fix for PYSEC-2026-3655/3656, both reachable through the
+    # text extraction `documents.py` runs over uploaded files.
     "pypdf>=6.15.0",
+    # Imported directly by app code (pydantic in app/main.py, starlette in
+    # app/errors.py, anyio in app/limits.py) and, before R195, declared nowhere.
+    "pydantic>=2.9",
+    "starlette>=0.46",
+    "anyio>=4.0",
 ]
 
 [dependency-groups]
+# Mirrors requirements-dev.txt.
 dev = [
     "pytest>=8.3",
+    "pytest-cov>=6.0",
     "httpx>=0.28",
 ]
 

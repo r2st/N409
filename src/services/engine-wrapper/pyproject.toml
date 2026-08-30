@@ -3,23 +3,37 @@ name = "n409-engine-wrapper"
 version = "1.0.0"
 description = "409.ai rebuild — calculation engine (Python reimplementation of the R engine): OPM/Black-Scholes, DCF, market multiples, asset approach, Chaffee/Finnerty DLOM."
 requires-python = ">=3.12"
+# Kept in step with requirements.txt, which is what CI, the Dockerfile and
+# infra/deploy.sh actually install from — and which carries the reasoning for
+# each floor. `dependencyCensus.test.ts` fails if the two lists diverge: this
+# file installed nothing for several rounds while quietly declaring a narrower,
+# older truth than the one every real install got.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.32",
-]
-
-[project.optional-dependencies]
-# Live market-data feed (app.engine.market_feed). Optional: the module imports
-# yfinance lazily and degrades to a fallback payload when it is absent, so the
-# service installs and its tests pass without this heavy (pandas) dependency.
-market = [
+    # Not an optional extra any more. `market_universe` degrades to the curated
+    # snapshot without it, and a deployment that silently ranks snapshot figures
+    # of unknown vintage is the state this dependency was made mandatory to end.
+    # Pin the snapshot with ENGINE_LIVE_UNIVERSE=off instead of uninstalling.
     "yfinance>=0.2",
+    # Imported directly by app code (pydantic in app/main.py, starlette in
+    # app/errors.py, anyio in app/limits.py) and, before R195, declared nowhere:
+    # `starlette` permits `anyio>=3.6.2`, so a fresh install was entitled to
+    # hand app/limits.py an anyio three major lines below the one it was
+    # written against.
+    "pydantic>=2.9",
+    "starlette>=0.46",
+    "anyio>=4.0",
 ]
 
 [dependency-groups]
+# Mirrors requirements-dev.txt.
 dev = [
     "pytest>=8.3",
+    "pytest-cov>=6.0",
     "httpx>=0.28",
+    # Mutation testing of the numeric core — see docs/mutation-testing.md.
+    "mutmut>=3.7",
 ]
 
 [tool.pytest.ini_options]
