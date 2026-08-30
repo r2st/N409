@@ -429,8 +429,44 @@ def convertible_note(
     d = 1.0 / u
     disc_rf = math.exp(-r * dt)
     disc_risky = math.exp(-(r + cs) * dt)
+    # The CRR no-arbitrage condition, checked rather than clamped.
+    #
+    # The risk-neutral probability is only a probability while the drift over a
+    # step sits strictly inside the lattice's own move range, `d < e^{(r−q)dt} <
+    # u`, which is `|r − q|·dt < σ·√dt`. Outside it `p` leaves [0, 1] and the
+    # clamp that used to stand here pinned it to an endpoint — a tree that moves
+    # one way at every node, which is not a discretised diffusion at all. The
+    # conversion option is then priced against a deterministic ramp and comes
+    # back at exactly zero.
+    #
+    # The failure is silent and, worse, it is *flat*: once clamped, the value
+    # stops being a function of the input that broke it. On an ordinary
+    # 5-year convertible at 30% volatility, `dividend_yield` of 2.0 and of 5.0
+    # both returned a fair value of 872.28 — the same number, because both had
+    # been rounded to the same endpoint. A yield typed as `2` for 2% is the slip
+    # that gets there, and the two other roads are the same arithmetic: a
+    # risk-free rate typed as a whole number, or a genuinely low-volatility
+    # issuer on a coarse tree.
+    #
+    # Refused with the step count that would fix it, because the condition
+    # rearranges to `n > t·((r−q)/σ)²` and is often satisfiable: the 2.0 case
+    # above needs 212 steps against the default 200. Raising `n` here instead
+    # would be the engine quietly choosing a discretisation the caller set.
+    drift_per_step = abs(r - q) * dt
+    if drift_per_step >= sigma * math.sqrt(dt):
+        needed = math.floor(t * ((r - q) / sigma) ** 2) + 1
+        detail = (
+            f"raise steps to at least {needed}"
+            if needed <= MAX_TREE_STEPS
+            else f"no tree under the {MAX_TREE_STEPS}-step ceiling can carry it, so check that "
+            "risk_free_rate and dividend_yield are fractions (2% is 0.02)"
+        )
+        raise EngineInputError(
+            f"the binomial tree's drift over one step ({r:g} − {q:g} over {dt:g} years) is not "
+            f"inside its own move range at volatility {sigma:g} — the risk-neutral probability "
+            f"leaves [0, 1] and the tree stops being a diffusion; {detail}"
+        )
     p = (math.exp((r - q) * dt) - d) / (u - d)
-    p = min(max(p, 0.0), 1.0)
     coupon_per_period = f * _num(coupon_rate, "coupon_rate", minimum=0.0) / m
 
     # Coupon dates come from the same schedule `yield_dcf` discounts, so the

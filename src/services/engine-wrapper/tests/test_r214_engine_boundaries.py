@@ -16,6 +16,7 @@ import math
 import pytest
 
 from app.engine.compute import _resolve_discounts, compute
+from app.engine.debt_valuation import convertible_note
 from app.engine.dloc import control_premium_dloc, studies_dloc
 from app.engine.errors import EngineInputError
 
@@ -168,3 +169,58 @@ def test_the_synergy_deduction_is_applied_before_the_ceiling():
     out = control_premium_dloc(30.0, 0.99)
     assert out["control_premium_applied"] == pytest.approx(0.3)
     assert out["dloc"] == pytest.approx(1.0 - 1.0 / 1.3, abs=5e-7)
+
+
+# ── a binomial tree that stopped being a diffusion ───────────────────────────
+#
+# The CRR risk-neutral probability is only a probability while the drift over a
+# step sits strictly inside the lattice's move range. `convertible_note` used to
+# clamp it to [0, 1] instead of checking, which pins the tree to one direction at
+# every node — and the clamped value stops being a function of the input that
+# broke it.
+
+CONVERTIBLE = {
+    "face": 1000.0,
+    "coupon_rate": 0.05,
+    "frequency": 2,
+    "maturity_years": 5.0,
+    "conversion_ratio": 10.0,
+    "stock_price": 80.0,
+    "volatility": 0.30,
+    "risk_free_rate": 0.05,
+    "credit_spread": 0.03,
+}
+
+
+def test_a_dividend_yield_that_breaks_the_lattice_is_refused_with_the_step_count():
+    """`dividend_yield: 2.0` is 2% typed as a whole number."""
+    with pytest.raises(EngineInputError) as err:
+        convertible_note(**CONVERTIBLE, dividend_yield=2.0)
+    assert "steps to at least 212" in str(err.value)
+
+    # And 212 is not a brush-off: the note prices at that discretisation.
+    out = convertible_note(**CONVERTIBLE, dividend_yield=2.0, steps=212)
+    assert out["fair_value"] > 0
+
+
+def test_a_clamped_tree_had_stopped_responding_to_the_input():
+    """Two very different yields must not price identically.
+
+    Under the clamp both landed on the same endpoint and returned 872.28 —
+    the same number to the cent, from inputs two and a half times apart.
+    """
+    a = convertible_note(**CONVERTIBLE, dividend_yield=2.0, steps=2000)["fair_value"]
+    b = convertible_note(**CONVERTIBLE, dividend_yield=5.0, steps=2000)["fair_value"]
+    assert a != b
+
+
+def test_a_low_volatility_note_on_a_coarse_tree_is_refused_too():
+    """The condition is about σ against the drift, not about the yield."""
+    with pytest.raises(EngineInputError, match="move range"):
+        convertible_note(**{**CONVERTIBLE, "volatility": 0.005}, steps=10)
+
+
+def test_an_ordinary_convertible_is_untouched():
+    for q in (0.0, 0.02, 0.5):
+        out = convertible_note(**CONVERTIBLE, dividend_yield=q)
+        assert out["fair_value"] >= out["parity"]

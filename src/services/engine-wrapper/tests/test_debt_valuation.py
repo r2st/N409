@@ -514,17 +514,32 @@ def test_the_lattice_guard_leaves_a_high_but_workable_volatility_alone():
 
 
 @pytest.mark.parametrize(
-    ("instrument", "overrides"),
+    ("instrument", "overrides", "expected"),
     [
         # math.exp(-r·dt) — the risk-free discount factor.
-        pytest.param("convertible", {"risk_free_rate": -1e6}, id="convertible-rate-underflows"),
-        # math.exp((r − q)·dt) — the risk-neutral drift.
-        pytest.param("convertible", {"risk_free_rate": 1e6}, id="convertible-rate-overflows"),
+        pytest.param(
+            "convertible", {"risk_free_rate": -1e6}, "overflow", id="convertible-rate-underflows"
+        ),
+        # math.exp((r − q)·dt) — the risk-neutral drift. A rate this large fails
+        # the tree's no-arbitrage condition long before the exponential leaves
+        # the doubles, so that is the diagnosis the caller gets: it is the
+        # earlier failure and the more specific one, and it names the same
+        # field. See `convertible_note`'s drift check.
+        pytest.param(
+            "convertible",
+            {"risk_free_rate": 1e6},
+            "risk_free_rate",
+            id="convertible-rate-overflows",
+        ),
         # (1 + y/m)^(m·t) — the DCF discount factor.
-        pytest.param("term_loan", {"market_yield": 1e9}, id="term-loan-yield-overflows"),
+        pytest.param(
+            "term_loan", {"market_yield": 1e9}, "overflow", id="term-loan-yield-overflows"
+        ),
     ],
 )
-def test_an_overflowing_rate_answers_422_where_it_used_to_answer_500(instrument, overrides):
+def test_an_overflowing_rate_answers_422_where_it_used_to_answer_500(
+    instrument, overrides, expected
+):
     base = (
         CONVERTIBLE_BASE
         if instrument == "convertible"
@@ -538,7 +553,7 @@ def test_an_overflowing_rate_answers_422_where_it_used_to_answer_500(instrument,
     )
     res = _debt_post(instrument, {**base, **overrides})
     assert res.status_code == 422, res.text
-    assert "overflow" in res.json()["detail"].lower()
+    assert expected in res.json()["detail"].lower()
 
 
 def test_the_overflow_backstop_names_the_instrument():
