@@ -116,6 +116,30 @@ UNSYNTHESIZED_ANSWER = (
     "question to get a written answer."
 )
 
+#: What a result whose write-up was cut off says where the answer would be.
+#:
+#: A truncated completion is the one failure on this path that arrives looking
+#: exactly like a success: a 200, real prose, real citations, and a sentence
+#: that simply stops. `_safe_result` catches the pipelines' version of it
+#: because their answers are JSON and half a JSON object does not parse — a
+#: research answer is free text, so nothing anywhere contradicted it. It was
+#: stored `grounded`, listed in the sources exhibit, and handed to the narrative
+#: agent as material to draft a 409A's market discussion from, with the second
+#: half of its last claim missing. A figure cut off after its first digit is
+#: still a figure.
+#:
+#: So it degrades exactly as an unavailable synthesis model does: the sources
+#: are real and are kept, `synthesized=False` keeps the pair out of every report
+#: path, and the partial text is not carried in `content` for the same reason
+#: `UNSYNTHESIZED_ANSWER` is not written as a partial answer — a drafting step
+#: reading half a claim cannot tell it is half.
+TRUNCATED_ANSWER = (
+    "Sources were retrieved for this question and the write-up was cut off at "
+    "the model's output cap before it finished, so it has been discarded rather "
+    "than quoted half-written. The sources below are listed unread. Ask a "
+    "narrower question, or raise OPENROUTER_MAX_TOKENS, and re-run."
+)
+
 _log = logging.getLogger("research")
 
 _CITATION_RE = re.compile(r"\[(\d{1,2})\]")
@@ -286,6 +310,28 @@ def fallback_research(
             synthesized=False,
         )
 
+    if answer.truncated:
+        # See `TRUNCATED_ANSWER`. Ordered as retrieved rather than by citation:
+        # the answer is being discarded, so its ordering is not evidence of
+        # anything.
+        _log.warning(
+            "research synthesis truncated at the output cap, returning sources unread",
+            extra={
+                "event": "research_truncated",
+                "provider": provider,
+                "model": answer.model,
+                "count": len(hits),
+            },
+        )
+        return ResearchResult(
+            model=f"{provider}+{answer.model}",
+            content=TRUNCATED_ANSWER,
+            citations=[Citation(url=h.url, title=h.title) for h in hits],
+            prompt_tokens=answer.prompt_tokens,
+            completion_tokens=answer.completion_tokens,
+            synthesized=False,
+        )
+
     citations = order_by_citation(hits, answer.content)
     _log.info(
         "research answered",
@@ -396,6 +442,7 @@ __all__ = [
     "NO_RESULTS_ANSWER",
     "RECENCY_FILTERS",
     "REDACTION_MARKERS",
+    "TRUNCATED_ANSWER",
     "ResearchError",
     "ResearchResult",
     "UNSYNTHESIZED_ANSWER",

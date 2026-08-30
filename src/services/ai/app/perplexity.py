@@ -55,6 +55,7 @@ from .llm_http import (
     Deadline,
     DeadlineExceeded as _BaseDeadlineExceeded,
     backoff_sleep,
+    completion_truncated,
     env_float,
     env_int,
     token_count,
@@ -443,6 +444,22 @@ def research(
             content = _completion_text(data)
             if not content:
                 raise PerplexityError("perplexity returned an empty completion")
+            if completion_truncated(data):
+                # A 200 carrying a sentence that simply stops. Nothing here
+                # parses the answer — it is prose — so a truncated write-up was
+                # returned as a finished one, stored `grounded`, and quoted in a
+                # 409A's market discussion with the second half of its last
+                # claim missing.
+                #
+                # Raised rather than degraded, because on this path there is
+                # somewhere better to go: a `PerplexityError` is what `research`
+                # falls back to the keyless search-and-synthesise path on, and
+                # that path asks the same question again with its own cap. A
+                # half-written answer is not what this provider had to offer;
+                # it is this provider not having answered.
+                raise PerplexityError(
+                    "perplexity stopped at its output cap before finishing the answer"
+                )
 
             usage = data.get("usage")
             usage = usage if isinstance(usage, dict) else {}

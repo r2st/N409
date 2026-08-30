@@ -145,3 +145,34 @@ def token_count(value: object) -> int:
         return max(0, int(float(value)))
     except (TypeError, ValueError):
         return 0
+
+
+# ── Completion truncation ────────────────────────────────────────────────────
+#
+# Every provider here speaks the chat-completions shape, and every one of them
+# reports "I ran out of output room" the same way: a `finish_reason` on the
+# first choice. It lives here rather than in one client because the consequence
+# is provider-independent — a completion stopped at the cap is a *partial
+# success*, and a caller that cannot see the difference reports half an answer
+# as a whole one.
+
+#: `finish_reason` values that mean the model stopped at the output cap rather
+#: than because it had finished. Spelled several ways across providers.
+TRUNCATED_FINISH_REASONS = frozenset({"length", "max_tokens", "MAX_TOKENS"})
+
+
+def finish_reason(data: dict) -> str | None:
+    """Why the model stopped, if it said. Every level is provider-controlled."""
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first = choices[0]
+    if not isinstance(first, dict):
+        return None
+    reason = first.get("finish_reason")
+    return reason if isinstance(reason, str) and reason else None
+
+
+def completion_truncated(data: dict) -> bool:
+    """True when the body says the answer was cut off at the output cap."""
+    return finish_reason(data) in TRUNCATED_FINISH_REASONS

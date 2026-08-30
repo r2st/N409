@@ -24,9 +24,11 @@ from .llm_http import (
     MIN_ATTEMPT_S,
     RETRY_BACKOFF_BASE_S,
     TIMEOUT_S,
+    TRUNCATED_FINISH_REASONS,
     Deadline as _Deadline,
     DeadlineExceeded as _BaseDeadlineExceeded,
     backoff_sleep as _backoff_sleep,
+    finish_reason as _read_finish_reason,
     token_count as _token_count,
 )
 
@@ -127,12 +129,6 @@ class RequestRejected(OpenRouterError):
     def __init__(self, message: str, status: int | None = None) -> None:
         super().__init__(message)
         self.status = status
-
-
-# `finish_reason` values that mean the model stopped because it ran out of room
-# rather than because it had finished. OpenRouter normalises to "length"; some
-# upstream providers pass their own spelling through.
-TRUNCATED_FINISH_REASONS = frozenset({"length", "max_tokens", "MAX_TOKENS"})
 
 
 @dataclass
@@ -518,15 +514,9 @@ def _estimate_tokens(*texts: str) -> int:
 
 
 def _finish_reason(data: dict) -> str | None:
-    """Why the model stopped, if it said. Every level is model-controlled."""
-    choices = data.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return None
-    first = choices[0]
-    if not isinstance(first, dict):
-        return None
-    reason = first.get("finish_reason")
-    return reason if isinstance(reason, str) and reason else None
+    """Why the model stopped, if it said. Shared with the other providers —
+    every level is model-controlled, so `llm_http` assumes none of it."""
+    return _read_finish_reason(data)
 
 
 def _classify(

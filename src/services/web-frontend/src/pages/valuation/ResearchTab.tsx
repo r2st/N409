@@ -56,8 +56,9 @@ interface ResearchRow {
   stale: boolean;
   grounded: boolean;
   /**
-   * False when the sources are real but nothing wrote them up — the search ran
-   * and the synthesis model was unavailable. Such a row is never grounded, and
+   * False when the sources are real but nothing usable wrote them up — the
+   * search ran and either the synthesis model was unavailable or its answer was
+   * truncated at the output cap. Such a row is never grounded, and
    * the two reasons a row can be ungrounded read very differently to an
    * analyst: "the public record has nothing on this" is an answer, "we could
    * not summarise what it had" is a retry.
@@ -160,7 +161,7 @@ function TopicCard({
         {row?.synthesized === false && (
           <span
             className="rounded-full bg-red-50 px-2 py-0.5 text-[0.65rem] font-semibold text-red-800 ring-1 ring-red-200 ring-inset"
-            title="The search returned these sources but the synthesis model was unavailable. Nothing has been written from them, so this topic is excluded from report drafting and from the sources exhibit. Run it again."
+            title="The search returned these sources but no usable write-up came back — the synthesis model was unavailable, or its answer was cut off at the output cap. Nothing complete has been written from them, so this topic is excluded from report drafting and from the sources exhibit. The answer says which, and what to do about it."
           >
             not summarised
           </span>
