@@ -16,6 +16,7 @@ import math
 import pytest
 
 from app.engine.compute import _resolve_discounts, compute
+from app.engine.dloc import control_premium_dloc, studies_dloc
 from app.engine.errors import EngineInputError
 
 COMMON = {"name": "Common", "kind": "common", "shares": 8_000_000.0}
@@ -131,3 +132,39 @@ def test_the_blend_table_sums_to_the_discount_printed_beside_it():
     components = d.dlom_detail["components"]
     assert d.dlom == pytest.approx(sum(c["weighted"] for c in components), abs=5e-5)
     assert all(0.0 <= c["dlom"] < 1.0 for c in components)
+
+
+# ── a control premium past the DLOC ceiling ──────────────────────────────────
+#
+# `_invert_premium` reports the premium, the discount, and the formula joining
+# them. Past a premium of 19 the clamp replaced the discount and left the other
+# two describing the inversion, so the one row a reviewer recomputes by hand
+# stopped recomputing.
+
+
+def test_a_control_premium_past_the_ceiling_is_refused_not_clamped():
+    with pytest.raises(EngineInputError) as err:
+        control_premium_dloc(30.0)
+    assert "0.30" in str(err.value)  # the fraction convention the typo missed
+
+
+def test_the_reported_discount_is_the_one_the_reported_formula_produces():
+    for premium in (0.25, 0.4, 3.0, 19.0):
+        out = control_premium_dloc(premium)
+        assert out["formula"] == "DLOC = 1 − 1/(1 + control premium)"
+        assert out["dloc"] == pytest.approx(
+            1.0 - 1.0 / (1.0 + out["control_premium_applied"]), abs=5e-7
+        )
+
+
+def test_a_studies_table_reaches_the_same_ceiling():
+    """The studies method inverts through `_invert_premium` too."""
+    with pytest.raises(EngineInputError):
+        studies_dloc(studies=[{"study": "typo", "premium": 30.0}])
+
+
+def test_the_synergy_deduction_is_applied_before_the_ceiling():
+    """It is the premium actually inverted that has to clear the ceiling."""
+    out = control_premium_dloc(30.0, 0.99)
+    assert out["control_premium_applied"] == pytest.approx(0.3)
+    assert out["dloc"] == pytest.approx(1.0 - 1.0 / 1.3, abs=5e-7)

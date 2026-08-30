@@ -248,8 +248,32 @@ def _invert_premium(premium: float, synergy_share: float | None, *, method: str)
     share = 0.0 if synergy_share is None else _num(synergy_share, "dloc.synergy_share", minimum=0.0, maximum=0.99)
     control_only = observed * (1.0 - share)
     dloc = dloc_from_control_premium(control_only, f"dloc.{method} premium")
+    # Refused rather than clamped, because the clamp does not hold still: it
+    # replaces the inversion's answer with `_MAX_DLOC` and leaves every other
+    # field on this dict describing the inversion. The result carries
+    # `control_premium_applied`, the discount, and the `formula` joining them,
+    # and past a premium of 19 the three stop agreeing — 30.0 came back as
+    # `dloc: 0.95` beside a formula that gives 0.967742. That row is the one
+    # thing a reviewer recomputes by hand, and it is the whole reason the
+    # premium and the formula are reported at all.
+    #
+    # It is a typo away, not an exotic input: a 30% premium typed as `30`
+    # instead of `0.30` is the same slip `bs.discount_factor` documents for the
+    # risk-free rate, and it concludes a 95% discount for lack of control — a
+    # fair market value one twentieth of the pro-rata figure, returned as an
+    # ordinary 200. The synergy deduction is applied first, so a large observed
+    # premium with most of it treated as synergistic still passes.
+    if dloc > _MAX_DLOC:
+        raise EngineInputError(
+            f"dloc.{method}: a control premium of {control_only:g} inverts to a discount of "
+            f"{dloc:g}, above the {_MAX_DLOC:g} ceiling on a DLOC — a premium is a fraction, "
+            "so 30% is 0.30"
+        )
     out = {
         "method": method,
+        # The clamp stays as a backstop and is now unreachable from above: the
+        # refusal covers everything past `_MAX_DLOC`, and `dloc_from_control_premium`
+        # refuses a negative premium, so nothing reaches the floor either.
         "dloc": min(max(round(dloc, 6), 0.0), _MAX_DLOC),
         "observed_control_premium": round(observed, 6),
         "control_premium_applied": round(control_only, 6),
