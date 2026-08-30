@@ -1,4 +1,3 @@
-import { describeTransportFailure } from '@n409/shared';
 /**
  * Accounting software integrations (409.ai §23): OAuth2 connect + financial
  * data import for the six providers the onboarding flow advertises.
@@ -13,6 +12,7 @@ import { describeTransportFailure } from '@n409/shared';
  */
 
 import {
+  describeConnectorFailure,
   IMPORT_TIMEOUT_MS,
   IntegrationError,
   OAUTH_TIMEOUT_MS,
@@ -625,7 +625,15 @@ export async function fetchFinancials(
     return {
       ...pl,
       balance_sheet: null,
-      balance_sheet_error: describeTransportFailure(err),
+      // Same vouching rule as the routes': `asRows`/`asRecord` above exist
+      // because a shape these scrapers did not expect leaves a bare
+      // `TypeError`, and this string is stored on the connection and shown to
+      // the analyst as the balance sheet's reason. V8's wording is not a
+      // reason; it is a bug report addressed to us.
+      balance_sheet_error: describeConnectorFailure(
+        err,
+        'the balance sheet could not be read, and the reason was not the provider — it is in the service log',
+      ),
     };
   }
 }

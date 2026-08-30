@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import pLimit from 'p-limit';
 import { z } from 'zod';
-import { ApiProblem, describeTransportFailure, isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { signCapTableSyncState, verifyCapTableSyncState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -36,7 +36,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
-import { IntegrationError, ReconnectRequiredError } from '../clients/deadline.js';
+import { describeConnectorFailure, IntegrationError, ReconnectRequiredError } from '../clients/deadline.js';
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
@@ -89,6 +89,16 @@ const CallbackQuery = z.object({
   error: z.string().max(256).optional(),
   company_id: z.string().max(128).optional(),
 });
+
+/**
+ * What the connection says when the failure was not the provider's.
+ *
+ * Deliberately says where to look rather than what happened: the message an
+ * analyst needs is one nothing vouched for, so it goes to the log line beside
+ * this write, which every caller already emits with `err` intact.
+ */
+const OUR_SYNC_FAILURE =
+  'the sync could not be completed, and the reason was not the provider — it is in the service log';
 
 export interface SyncOutcome {
   diff: CapTableDiff;
@@ -164,7 +174,11 @@ export async function syncCapTableConnection(
     // may have failed on. A rejection here would replace an accurate provider
     // error with an unrelated one and lose the original entirely — including
     // for the scheduler above, which has no client to report it to at all.
-    const message = describeTransportFailure(err);
+    // Only a message something vouched for: since round 252 this block also
+    // renews the access token and writes it back, so a driver error can land
+    // here and `last_error` is served to the client verbatim. See
+    // `describeConnectorFailure`.
+    const message = describeConnectorFailure(err, OUR_SYNC_FAILURE);
     // `terminal` is the difference between a provider that is briefly unwell
     // and an authorisation that has ended: the first is worth another tick on
     // a backoff, the second will be refused identically forever and its

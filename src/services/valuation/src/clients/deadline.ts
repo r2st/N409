@@ -19,6 +19,7 @@
  * legitimately slow.
  */
 
+import { describeTransportFailure, transportFailureEchoesMessage } from '@n409/shared';
 import { parseRetryAfter } from '../domain/partnerWebhooks.js';
 
 /** Token exchange / connection identification — small, latency-sensitive calls. */
@@ -142,6 +143,39 @@ export function providerRefused(
     );
   }
   return new IntegrationError(`${label} ${what} failed (${res.status})`);
+}
+
+/**
+ * The sentence a connector writes into the column an analyst reads.
+ *
+ * `describeTransportFailure` gives two quite different answers and cannot tell
+ * a caller which one it gave. For a recognised network condition, a deadline,
+ * or a `fetch failed` that said nothing, it returns a sentence written in
+ * `failure.ts` and naming nothing but the condition. For everything else it
+ * returns `err.message` — and `last_error` is served to the client verbatim by
+ * every `toPublic`, so that branch publishes whatever was thrown.
+ *
+ * Which was safe while the guarded block was a provider call and nothing else.
+ * Round 252 put `accessTokenFor` inside it — the proactive token refresh — and
+ * `accessTokenFor` ends in `updateTokens`, a **write to Postgres**. So the
+ * catch that says "the client throws `IntegrationError` for everything a
+ * provider did, and anything else reaching here is ours" acquired a way for
+ * something of ours to arrive with a message: a driver error, which is column
+ * names, constraint names and the values Postgres refused. That is exactly the
+ * disclosure `errorBodyDisclosure` states the rule for, and exactly what the
+ * two sibling catches in these same files — the grant insert loop and the
+ * cap-table save — already substitute a written sentence for.
+ *
+ * So the vouching is explicit. An `IntegrationError` is a message this codebase
+ * authored for a caller to read; a transport condition is one `failure.ts`
+ * authored. Anything else is ours, gets `ours`, and goes to the log intact —
+ * both callers already log `err` in full.
+ */
+export function describeConnectorFailure(err: unknown, ours: string): string {
+  if (err instanceof IntegrationError || !transportFailureEchoesMessage(err)) {
+    return describeTransportFailure(err);
+  }
+  return ours;
 }
 
 export async function withDeadline<T>(

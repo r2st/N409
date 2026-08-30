@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import pLimit from 'p-limit';
 import { z } from 'zod';
-import { ApiProblem, describeTransportFailure, isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { signHrisState, verifyHrisState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -30,7 +30,7 @@ import {
   upsertConnection,
   type HrisConnectionRow,
 } from '../repos/hrisConnections.js';
-import { IntegrationError, ReconnectRequiredError } from '../clients/deadline.js';
+import { describeConnectorFailure, IntegrationError, ReconnectRequiredError } from '../clients/deadline.js';
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { createGrant } from '../repos/grants.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
@@ -147,6 +147,16 @@ async function accessTokenFor(
 }
 
 /**
+ * What the connection says when the failure was not the provider's.
+ *
+ * Deliberately says where to look rather than what happened: the message an
+ * analyst needs is one nothing vouched for, so it goes to the log line beside
+ * this write, which both callers already emit with `err` intact.
+ */
+const OUR_SYNC_FAILURE =
+  'the sync could not be completed, and the reason was not the provider — it is in the service log';
+
+/**
  * Pull the roster + grants and create any grants not already imported. Shared
  * by the pull route and the scheduler. Records success/error on the connection.
  */
@@ -176,7 +186,13 @@ export async function syncHrisConnection(
     // and an authorisation that has ended: the first is worth another tick on
     // a backoff, the second will be refused identically forever and its
     // message asks for a reconnect instead.
-    await recordSyncError(deps.pool, connection.id, describeTransportFailure(err), {
+    // Only a message something vouched for. The guarded block above is no
+    // longer a provider call alone: `accessTokenFor` renews a spent token and
+    // then *writes it back*, so a Postgres error can reach here and
+    // `describeTransportFailure` would put the driver's wording — constraint
+    // names, column names, refused values — into the column `toPublic` serves
+    // the client verbatim. See `describeConnectorFailure`.
+    await recordSyncError(deps.pool, connection.id, describeConnectorFailure(err, OUR_SYNC_FAILURE), {
       terminal: err instanceof ReconnectRequiredError,
     }).catch(() => undefined);
     throw err;

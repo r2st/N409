@@ -197,6 +197,7 @@ export {
   logFailure,
   logUnretried,
   markFailure,
+  transportFailureEchoesMessage,
   type BackoffOptions,
   type ClassifyHint,
   type FailureClass,

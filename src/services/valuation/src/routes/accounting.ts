@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { ApiProblem, describeTransportFailure, isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { signAccountingState, verifyAccountingState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -31,7 +31,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { applyEngineInputs, findParams, patchParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
-import { IntegrationError } from '../clients/deadline.js';
+import { describeConnectorFailure, IntegrationError } from '../clients/deadline.js';
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
@@ -105,6 +105,16 @@ async function accessTokenFor(
   await updateTokens(deps.pool, connection.id, refreshed);
   return refreshed.accessToken;
 }
+
+/**
+ * What the connection says when the failure was not the provider's.
+ *
+ * Deliberately says where to look rather than what happened: the message an
+ * analyst needs is one nothing vouched for, so it goes to the log line beside
+ * this write, which every caller already emits with `err` intact.
+ */
+const OUR_IMPORT_FAILURE =
+  'the import could not be completed, and the reason was not the provider — it is in the service log';
 
 export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingDeps): void {
   const fetchFn = deps.fetchFn ?? fetch;
@@ -264,7 +274,11 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
          * unwell, this write fails too, and the rejection replaced an accurate
          * "Xero report fetch failed (503)" with a 500 about something else.
          */
-        const message = describeTransportFailure(err);
+        // Only a message something vouched for: since round 252 this block
+        // also renews the access token and writes it back, so a driver error
+        // can land here and `last_error` is served to the client verbatim. See
+        // `describeConnectorFailure`.
+        const message = describeConnectorFailure(err, OUR_IMPORT_FAILURE);
         await recordImportError(deps.pool, connection.id, message).catch((bookErr: unknown) => {
           req.log.warn({ err: bookErr, connectionId: connection.id }, 'could not record import error');
         });

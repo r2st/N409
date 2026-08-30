@@ -577,6 +577,31 @@ function transportCode(err: unknown, depth = 0): string | null {
  * where the stack and the original message are worth having. This is what goes
  * in the column somebody opens a support ticket about.
  */
+/**
+ * Whether `describeTransportFailure` would answer with the error's **own**
+ * message rather than with one of the sentences written above.
+ *
+ * The two answers have completely different disclosure properties and the
+ * function that produces them cannot tell a caller which one it gave. A
+ * `TRANSPORT_REASONS` sentence, an `ABORT_NAMES` sentence and the
+ * reported-no-reason fallback were all written here and name nothing but a
+ * network condition; the remaining branch is `err.message`, whose contents
+ * belong to whoever threw. Every caller that writes the result into a column a
+ * person reads is publishing that message, and `errorBodyDisclosure`'s rule is
+ * that an error's own wording is publishable only when something vouched for
+ * it.
+ *
+ * So the classification is exported rather than left to be re-derived: a
+ * caller pairs this with whatever type *it* vouches for (in the valuation
+ * service, `IntegrationError`) and substitutes its own sentence for the rest.
+ */
+export function transportFailureEchoesMessage(err: unknown): boolean {
+  if (transportCode(err) !== null) return false;
+  const message = err instanceof Error ? err.message : String(err ?? '');
+  const trimmed = message.trim();
+  return trimmed !== '' && !OPAQUE_TRANSPORT_MESSAGES.has(trimmed.toLowerCase());
+}
+
 export function describeTransportFailure(err: unknown): string {
   const code = transportCode(err);
   if (code) return TRANSPORT_REASONS.get(code) ?? ABORT_NAMES.get(code)!;
