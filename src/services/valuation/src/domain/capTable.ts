@@ -989,6 +989,48 @@ export function validateCapTable(
         message: `${at}"${e.security_class}" has no shares outstanding — the waterfall allocation will refuse this row.`,
       });
     }
+    /*
+     * A row whose figures are finite and whose *products* are not.
+     *
+     * Every numeric cell is checked on its own — `bad_shares` refuses a share
+     * count that is not finite, `bad_conversion` a ratio at or below zero — and
+     * each of those checks passes for a row like `1e300` shares converting
+     * 1e300:1. The multiplication is what overflows, and the figures that
+     * overflow are the ones the whole valuation is quoted against:
+     *
+     *   - `asConvertedShares` is the fully-diluted denominator. An infinite one
+     *     makes every ownership percentage `Infinity / Infinity` — the workbook
+     *     writes NaN into the "% fully diluted" column, and the cap-table graph
+     *     draws every holder at NaN%.
+     *   - `liquidationPreference` is what preferred is paid before common. An
+     *     infinite one is a preference stack that consumes any exit.
+     *
+     * Both were persisted as `valid: true`, and both serialise through JSONB as
+     * `null` — `JSON.stringify(Infinity)` is `null` — so the stored summary came
+     * back from the database with a null where its own type declares a number,
+     * and the next reader divided by it.
+     *
+     * Only asked of rows whose inputs were readable: an unreadable or
+     * non-finite cell has already been reported as itself, and saying the
+     * product of it does not compute adds nothing.
+     */
+    if (Number.isFinite(e.shares)) {
+      for (const [what, value] of [
+        ['as-converted share count', asConvertedShares(e)],
+        ['liquidation preference', liquidationPreference(e)],
+      ] as const) {
+        if (Number.isFinite(value)) continue;
+        issues.push({
+          ...where,
+          severity: 'error',
+          code: 'figure_overflows',
+          message:
+            `${at}"${e.security_class}" has figures too large to compute with — its ${what} ` +
+            'overflows. Check the share count, price and multiples on this row.',
+        });
+      }
+    }
+
     summary.total_shares += Math.max(0, e.shares);
     if (e.class_type === 'common') summary.common_shares += e.shares;
     else if (e.class_type === 'preferred') summary.preferred_shares += e.shares;
@@ -1113,6 +1155,28 @@ export function validateCapTable(
    * denominator — so every holder's ownership percentage came out too high.
    */
   summary.fully_diluted_shares = fullyDilutedShares(entries);
+  /*
+   * The same overflow one row up, reached by addition rather than
+   * multiplication.
+   *
+   * A table may carry two thousand rows, so totals overflow on figures no
+   * single row would be refused for. The per-row check cannot see it and the
+   * summary is what the import screen reports back, so it is asked here — of
+   * every total this function publishes, not only the denominator, because each
+   * of them is read somewhere as a number.
+   */
+  for (const [what, value] of [
+    ['fully diluted share count', summary.fully_diluted_shares],
+    ['total share count', summary.total_shares],
+    ['preference stack', summary.total_preference_stack],
+  ] as const) {
+    if (Number.isFinite(value)) continue;
+    issues.push({
+      severity: 'error',
+      code: 'figure_overflows',
+      message: `This cap table's ${what} is too large to compute with — it overflows.`,
+    });
+  }
   /*
    * A table of rows that between them hold no shares.
    *

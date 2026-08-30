@@ -279,8 +279,7 @@ export function parseStripeEvent(raw: Buffer): StripeEventEnvelope | { error: st
   if (unstorable !== null) {
     return {
       error:
-        `Invalid webhook payload: field ${unstorable.path} contains ` +
-        UNSTORABLE_REASONS[unstorable.reason],
+        `Invalid webhook payload: field ${unstorable.path} contains ` + UNSTORABLE_REASONS[unstorable.reason],
     };
   }
 

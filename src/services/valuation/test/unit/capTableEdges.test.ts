@@ -328,3 +328,75 @@ describe('toWaterfallInputs — the figures it has to supply itself', () => {
     expect(inputs.option_pool_shares).toBe(1_000_000);
   });
 });
+
+/**
+ * R217, methodology M6: the figures that are finite in the sheet and infinite
+ * once multiplied.
+ *
+ * Every cell is checked on its own and every one of those checks passes for
+ * the rows below. What overflows is the product — and the products are the
+ * fully-diluted denominator the 409A is divided by, and the preference stack
+ * paid ahead of common.
+ */
+describe('validateCapTable — a derived figure that overflows', () => {
+  it('refuses shares × conversion ratio that is no longer a number', () => {
+    const rows = [
+      entry({
+        security_class: 'Series A Preferred',
+        class_type: 'preferred',
+        shares: 1e300,
+        conversion_ratio: 1e300,
+      }),
+    ];
+    // Neither input is refusable on its own: the share count is finite and the
+    // ratio is positive, which is all `bad_shares` and `bad_conversion` ask.
+    expect(codes(rows)).toContain('figure_overflows');
+    expect(validateCapTable(rows).valid).toBe(false);
+  });
+
+  it('refuses a preference stack that overflows on price × shares × multiple', () => {
+    const rows = [
+      entry({
+        security_class: 'Series B Preferred',
+        class_type: 'preferred',
+        shares: 100,
+        price_per_share: 1e308,
+        liquidation_multiple: 1e308,
+      }),
+    ];
+    expect(codes(rows)).toContain('figure_overflows');
+  });
+
+  it('refuses a total that overflows across rows no single row would be refused for', () => {
+    const rows = Array.from({ length: 4 }, (_, i) => entry({ security_class: `Class ${i}`, shares: 1e308 }));
+    // 1e308 is finite; four of them are not.
+    expect(rows.every((r) => Number.isFinite(r.shares))).toBe(true);
+    expect(codes(rows)).toContain('figure_overflows');
+  });
+
+  it('says so before the summary is published, which cannot carry the answer', () => {
+    // The reason this has to be an error rather than a number left in place:
+    // `Infinity` serialises through JSONB as `null`, so the stored summary
+    // comes back with a null where its own type declares a number.
+    const rows = [entry({ class_type: 'preferred', shares: 1e300, conversion_ratio: 1e300 })];
+    const summary = validateCapTable(rows).summary;
+    expect(JSON.parse(JSON.stringify(summary)).fully_diluted_shares).toBeNull();
+  });
+
+  it('leaves large-but-computable tables alone', () => {
+    // A trillion shares at a dollar with a 3x preference is arithmetic, not an
+    // overflow, and the guard must not decide otherwise.
+    const rows = [
+      entry({ shares: 1e12 }),
+      entry({
+        security_class: 'Series A Preferred',
+        class_type: 'preferred',
+        shares: 1e12,
+        price_per_share: 1,
+        liquidation_multiple: 3,
+        conversion_ratio: 2,
+      }),
+    ];
+    expect(codes(rows)).not.toContain('figure_overflows');
+  });
+});
