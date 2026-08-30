@@ -324,13 +324,21 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
      * That is the more honest shape anyway: the claim is about what the route
      * does with a database error, not about which payload happens to cause
      * one.
+     *
+     * A check violation rather than the unique violation this staged until
+     * R261, which now has a meaning of its own: a collision on
+     * `option_grants_external_idx` is the other door having imported the same
+     * grant a moment earlier, and is counted as skipped rather than raised.
+     * Every other refusal from this insert is still a refusal.
      */
     const v = await connectedValuation();
     const restore = interceptPoolQueries(ctx.pool, (sql) => {
       if (!/INSERT INTO option_grants/i.test(sql)) return undefined;
       const err = Object.assign(
-        new Error('duplicate key value violates unique constraint "option_grants_external_idx"'),
-        { code: '23505', constraint: 'option_grants_external_idx', table: 'option_grants' },
+        new Error(
+          'new row for relation "option_grants" violates check constraint "option_grants_options_count_check"',
+        ),
+        { code: '23514', constraint: 'option_grants_options_count_check', table: 'option_grants' },
       );
       throw err;
     });
@@ -972,6 +980,76 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       // And not a word of the driver's — `last_error` is served verbatim.
       expect(row.last_error).toContain('stopped before finishing');
       expect(row.last_error).not.toContain('injected');
+    });
+
+    /**
+     * The grant the other door imported while this pull was in flight (R261).
+     *
+     * Two doors reach `syncHrisConnection` — the fifteen-minute tick and the
+     * analyst's Import button — with no lock between them, and `seen` is a
+     * snapshot taken before the loop. The loser of the race hit
+     * `option_grants_external_idx`, which threw past the rest of the roster,
+     * moved a healthy connection to `error` on a backoff, and told the analyst
+     * their import "stopped before finishing" — for a grant that had *just*
+     * been imported successfully by the other door.
+     */
+    it('counts a grant a concurrent sync already created as skipped, not as a failure', async () => {
+      const v = await connectedValuation();
+      await dueWeekly(v.id);
+
+      // The other door lands between the dedupe read and the insert of `g1`.
+      let raced = false;
+      const restore = interceptPoolQueries(ctx.pool, async (sql, phase) => {
+        if (phase !== 'after' || raced || !sql.includes('external_id = ANY')) return;
+        raced = true;
+        await createGrant(
+          ctx.pool,
+          {
+            valuationId: v.id,
+            granteeName: 'Ada Lovelace',
+            granteeEmail: 'ada@acme.com',
+            grantDate: '2025-03-01',
+            optionsCount: 10000,
+            exercisePrice: 1.25,
+            currency: 'USD',
+            vestingTemplate: 'imported',
+            vestingStartDate: '2025-03-01',
+            vestingMonths: 48,
+            cliffMonths: 12,
+            frequencyMonths: 1,
+            createdBy: ops.id,
+            source: 'hris:rippling',
+            externalId: 'g1',
+          },
+          { actorType: 'system', actorId: 'other-door', source: 'hris_sync' },
+        );
+      });
+      let processed = 0;
+      try {
+        processed = await runDueHrisSyncs({
+          pool: ctx.pool,
+          fetchFn: mockFetch() as unknown as typeof fetch,
+          log: silentLog,
+        });
+      } finally {
+        restore();
+      }
+
+      expect(raced).toBe(true);
+      expect(processed).toBe(1);
+      // Both grants exist exactly once, and the connection is healthy.
+      const grants = await listGrants(ctx.pool, v.id);
+      expect(grants.grants.map((g) => g.external_id).sort()).toEqual(['g1', 'g2']);
+      const row = await connectionRow(v.id);
+      expect(row.status).toBe('connected');
+      expect(row.last_error).toBeNull();
+
+      // And the summary calls it what it is: already imported.
+      const { rows } = await ctx.pool.query<{ last_sync_summary: Record<string, unknown> }>(
+        'SELECT last_sync_summary FROM hris_connections WHERE valuation_id = $1',
+        [v.id],
+      );
+      expect(rows[0]!.last_sync_summary).toMatchObject({ grants_created: 1, grants_skipped: 1 });
     });
 
     it('records the failure when the success itself cannot be written', async () => {

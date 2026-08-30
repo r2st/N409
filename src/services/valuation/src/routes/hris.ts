@@ -36,6 +36,7 @@ import {
   ReconnectRequiredError,
   retryAfterSecondsFor,
 } from '../clients/deadline.js';
+import { isUniqueViolation } from '../db/pgError.js';
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { createGrant } from '../repos/grants.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
@@ -247,29 +248,59 @@ export async function syncHrisConnection(
         skipped++;
         continue;
       }
-      await createGrant(
-        deps.pool,
-        {
-          valuationId: connection.valuation_id,
-          granteeName: g.grantee_name,
-          granteeEmail: g.grantee_email,
-          grantDate: g.grant_date,
-          optionsCount: g.options_count,
-          exercisePrice: g.exercise_price,
-          currency: 'USD',
-          vestingTemplate: 'imported',
-          vestingStartDate: g.vesting_start_date,
-          vestingMonths: g.vesting_months,
-          cliffMonths: g.cliff_months,
-          frequencyMonths: g.frequency_months,
-          createdBy: opts.actorId,
-          source: `hris:${connection.provider}`,
-          externalId: g.external_id,
-        },
-        actor,
-      );
-      created++;
-      seen.add(g.external_id);
+      try {
+        await createGrant(
+          deps.pool,
+          {
+            valuationId: connection.valuation_id,
+            granteeName: g.grantee_name,
+            granteeEmail: g.grantee_email,
+            grantDate: g.grant_date,
+            optionsCount: g.options_count,
+            exercisePrice: g.exercise_price,
+            currency: 'USD',
+            vestingTemplate: 'imported',
+            vestingStartDate: g.vesting_start_date,
+            vestingMonths: g.vesting_months,
+            cliffMonths: g.cliff_months,
+            frequencyMonths: g.frequency_months,
+            createdBy: opts.actorId,
+            source: `hris:${connection.provider}`,
+            externalId: g.external_id,
+          },
+          actor,
+        );
+        created++;
+        seen.add(g.external_id);
+      } catch (err) {
+        /*
+         * The grant somebody else imported while this pull was in flight
+         * (R261, methodology M5).
+         *
+         * `seen` is a snapshot taken before the loop, and it is the only thing
+         * standing between two concurrent syncs of one connection. Two doors
+         * reach this function — the scheduler's fifteen-minute tick and the
+         * analyst's Import button — with no lock between them, and pressing
+         * Import while a scheduled pull is running is the ordinary way to
+         * arrive here, not an exotic one.
+         *
+         * What happened then was that the loser of the race hit
+         * `option_grants_external_idx`, and a unique violation is not one of
+         * the failures the catch below is for: it threw past the rest of the
+         * roster, moved a healthy connection to `error` on a backoff, and told
+         * the analyst their import "stopped before finishing" — for a grant
+         * that had just been imported successfully by the other door.
+         *
+         * `external_id` is this import's idempotency key; the index is the
+         * authoritative answer to the question `seen` was asked, one moment
+         * later. So the row already existing means already imported, which is
+         * what `skipped` counts. Narrowed to that one index, because any other
+         * unique violation on this table is a real refusal.
+         */
+        if (!isUniqueViolation(err, 'option_grants_external_idx')) throw err;
+        skipped++;
+        seen.add(g.external_id);
+      }
     }
   } catch (err) {
     /*
