@@ -119,6 +119,12 @@ export interface SubscriptionRow {
   valuations_used: number;
   created_at: Date;
   canceled_at: Date | null;
+  /**
+   * A cancellation scheduled for the end of the current period (migration
+   * 0187). Every self-serve cancellation passes through this: Stripe's portal
+   * sets it and leaves the subscription 'active' until the period runs out.
+   */
+  cancel_at_period_end: boolean;
 }
 
 /**
@@ -178,6 +184,14 @@ export async function upsertSubscription(
     stripeCustomerId?: string | null;
     periodStart?: Date | null;
     periodEnd?: Date | null;
+    /**
+     * Whether Stripe says this subscription is set to end at the period's
+     * close. `undefined` from a caller that cannot know — a Checkout Session
+     * object carries no such field — and left alone in that case, for the same
+     * reason the period is: an event that does not mention it is not an event
+     * reporting that no cancellation is scheduled.
+     */
+    cancelAtPeriodEnd?: boolean;
   },
 ): Promise<SubscriptionWrite> {
   // Stripe subscription id is the natural key when present; otherwise upsert on
@@ -186,8 +200,8 @@ export async function upsertSubscription(
     const { rows } = await pool.query<SubscriptionWrite>(
       `INSERT INTO subscriptions
          (id, user_id, plan_tier, status, stripe_subscription_id, stripe_customer_id,
-          current_period_start, current_period_end)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          current_period_start, current_period_end, cancel_at_period_end)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, false))
        ON CONFLICT (stripe_subscription_id) DO UPDATE SET
          plan_tier = EXCLUDED.plan_tier,
          status = EXCLUDED.status,
@@ -206,6 +220,11 @@ export async function upsertSubscription(
          -- the one on file alone".
          current_period_start = COALESCE(EXCLUDED.current_period_start, subscriptions.current_period_start),
          current_period_end = COALESCE(EXCLUDED.current_period_end, subscriptions.current_period_end),
+         -- Same rule, and the NULL is doing the same work: the Checkout Session
+         -- object has no cancel_at_period_end field, so writing EXCLUDED
+         -- unconditionally would have that event clear a scheduled cancellation
+         -- the subscription event had just recorded.
+         cancel_at_period_end = COALESCE($9, subscriptions.cancel_at_period_end),
          -- New billing period resets usage — compared against the value that
          -- is actually being written, not the one that was passed in.
          valuations_used = CASE
@@ -230,6 +249,7 @@ export async function upsertSubscription(
         input.stripeCustomerId ?? null,
         input.periodStart ?? null,
         input.periodEnd ?? null,
+        input.cancelAtPeriodEnd ?? null,
       ],
     );
     if (rows[0]) return rows[0];

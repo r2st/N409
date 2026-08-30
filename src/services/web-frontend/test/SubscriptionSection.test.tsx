@@ -199,6 +199,43 @@ describe('SubscriptionSection (feature 7)', () => {
   });
 
   /**
+   * What happens next, which the card never said.
+   *
+   * `current_period_end` arrived on this payload from the start and nothing
+   * rendered it, so the card named a plan and a status and stopped. That is
+   * worst on the state every self-serve cancellation actually passes through:
+   * Stripe's portal cancels by scheduling it for the end of the period and
+   * leaves the subscription 'active', so a customer who had just cancelled read
+   * "active" with nothing anywhere saying their plan ends.
+   */
+  describe('when the plan next bills, or stops', () => {
+    it('says when a live subscription renews', async () => {
+      mockApi(subscribed({ subscription: { current_period_end: '2027-03-01T00:00:00.000Z' } }));
+      render(<SubscriptionSection />);
+      expect((await screen.findByTestId('period-end')).textContent).toMatch(/^Renews on /);
+    });
+
+    it('says a scheduled cancellation ends the plan, not that it renews', async () => {
+      mockApi(
+        subscribed({
+          subscription: { current_period_end: '2027-03-01T00:00:00.000Z', cancel_at_period_end: true },
+        }),
+      );
+      render(<SubscriptionSection />);
+      const note = await screen.findByTestId('period-end');
+      expect(note.textContent).toContain('will not renew');
+      expect(note.textContent).not.toContain('Renews on');
+    });
+
+    it('says nothing when the period end is unknown', async () => {
+      mockApi(subscribed());
+      render(<SubscriptionSection />);
+      await screen.findByTestId('usage');
+      expect(screen.queryByTestId('period-end')).not.toBeInTheDocument();
+    });
+  });
+
+  /**
    * Self-serve management. Before this control existed the only route to
    * cancelling was to email support, and a customer whose card expired had no
    * way to fix it — churn the product created for itself.

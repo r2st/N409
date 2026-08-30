@@ -50,6 +50,7 @@ describe.skipIf(!dbUp)('billing webhook events', () => {
       current_period_start: Date | null;
       current_period_end: Date | null;
       canceled_at: Date | null;
+      cancel_at_period_end: boolean;
     }>('SELECT * FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1', [userId]);
     return rows[0] ?? null;
   };
@@ -306,6 +307,70 @@ describe.skipIf(!dbUp)('billing webhook events', () => {
         },
       });
       expect((await subscriptionOf(user.id))?.status).toBe('active');
+    });
+  });
+
+  describe('a cancellation scheduled for the end of the period', () => {
+    /*
+     * How every self-serve cancellation actually looks. Stripe's portal sets
+     * `cancel_at_period_end` and leaves the subscription 'active' until the
+     * period runs out — often a year, for the annual retainer — so a status
+     * read cannot tell a cancelled subscription from a renewing one.
+     */
+    it('records the schedule without ending the subscription', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const start = Math.floor(Date.now() / 1000);
+      const event = (cancelAtPeriodEnd: boolean) => ({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_cape_1',
+            status: 'active',
+            current_period_start: start,
+            current_period_end: start + 31_536_000,
+            cancel_at_period_end: cancelAtPeriodEnd,
+            metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+          },
+        },
+      });
+      await deliver(event(true));
+      let sub = await subscriptionOf(user.id);
+      expect([sub?.status, sub?.cancel_at_period_end]).toEqual(['active', true]);
+      // Still served — the customer paid for the rest of the period.
+      expect(await consumeValuation(ctx.pool, user.id)).toBe(true);
+
+      // And it is reversible: un-cancelling in the portal is the same event
+      // with the flag back off.
+      await deliver(event(false));
+      sub = await subscriptionOf(user.id);
+      expect(sub?.cancel_at_period_end).toBe(false);
+    });
+
+    it('is not blanked by a checkout session, which carries no such field', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await deliver({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_cape_2',
+            status: 'active',
+            cancel_at_period_end: true,
+            metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+          },
+        },
+      });
+      await deliver({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            mode: 'subscription',
+            payment_status: 'paid',
+            subscription: 'sub_cape_2',
+            metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+          },
+        },
+      });
+      expect((await subscriptionOf(user.id))?.cancel_at_period_end).toBe(true);
     });
   });
 

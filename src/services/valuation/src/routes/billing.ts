@@ -739,6 +739,12 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               stripeCustomerId: typeof obj.customer === 'string' ? obj.customer : null,
               periodStart: tsToDate(obj.current_period_start),
               periodEnd: tsToDate(obj.current_period_end),
+              // The subscription object is the only event that reports this, so
+              // it is the only place it is read. A self-serve cancellation is
+              // this flag going true and the status staying 'active' — see
+              // migration 0187.
+              cancelAtPeriodEnd:
+                typeof obj.cancel_at_period_end === 'boolean' ? obj.cancel_at_period_end : undefined,
             });
             // The other writer of a cancellation, and the one that lands first
             // about as often as not.

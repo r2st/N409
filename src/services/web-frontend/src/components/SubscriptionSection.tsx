@@ -25,6 +25,12 @@ interface Subscription {
   plan_tier: string;
   status: string;
   current_period_end: string | null;
+  /**
+   * A cancellation scheduled for the end of the current period (migration
+   * 0187). Optional because a response written before the column existed does
+   * not carry it, and "no cancellation scheduled" is the right reading of that.
+   */
+  cancel_at_period_end?: boolean;
 }
 interface Invoice {
   id: string;
@@ -216,6 +222,25 @@ export function SubscriptionSection() {
                 </>
               )}
             </div>
+          )}
+          {/* When the plan next bills, or when it stops.
+              `current_period_end` arrived on this payload from the start and
+              nothing rendered it, so the card named a plan and a status and
+              never said what happens next — and a customer who had just
+              cancelled in Stripe's portal read "active" with nothing to say
+              their plan ends, because a scheduled cancellation leaves the
+              status exactly where it was. */}
+          {mine.subscription.current_period_end && mine.subscription.status !== 'canceled' && (
+            <p
+              className={`mt-3 text-sm ${
+                mine.subscription.cancel_at_period_end ? 'text-amber-800' : 'text-ink-600'
+              }`}
+              data-testid="period-end"
+            >
+              {mine.subscription.cancel_at_period_end
+                ? `Cancelled — your plan ends on ${formatDate(mine.subscription.current_period_end)} and will not renew.`
+                : `Renews on ${formatDate(mine.subscription.current_period_end)}.`}
+            </p>
           )}
           {/* A declined renewal is nearly always an expired card, so say what
               happened and put the fix one click away rather than leaving the
