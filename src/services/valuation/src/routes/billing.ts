@@ -963,7 +963,33 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
           // A cancelled subscription's trial is not going to convert, and a
           // subscription id we do not carry is not our customer to write to.
           if (sub && sub.status !== 'canceled' && trialEnd) {
-            await announceTrialEnding(log, sub, trialEnd);
+            /**
+             * Nor is a trial the customer has already cancelled.
+             *
+             * A self-serve cancellation during a trial is `cancel_at_period_end`
+             * going true with the status left at 'trialing' (see migration
+             * 0187), and Stripe goes on firing `trial_will_end` for it — the
+             * event is about the trial's date, not about whether the plan will
+             * continue. The notice this sends says "unless you cancel before
+             * then, the plan continues and you will be charged", and for this
+             * subscriber both halves are false: they have cancelled, and no
+             * charge is coming. Its whole content is a claim about a conversion
+             * that is not going to happen.
+             *
+             * Silence is the right answer rather than a second wording, because
+             * they are not left uninformed: Stripe confirmed the cancellation,
+             * the Billing screen already reads "your plan ends on … and will
+             * not renew" off the same flag, and `subscription_canceled` reaches
+             * them when it does end.
+             */
+            if (sub.cancel_at_period_end) {
+              log.info(
+                { subscriptionId: obj.id, userId: sub.user_id },
+                'trial ending on a cancelled subscription — no conversion notice sent',
+              );
+            } else {
+              await announceTrialEnding(log, sub, trialEnd);
+            }
           }
         } else if (type === 'customer.subscription.deleted' && typeof obj.id === 'string') {
           const ended = await cancelSubscription(deps.pool, obj.id);

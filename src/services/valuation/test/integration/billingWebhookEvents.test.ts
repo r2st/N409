@@ -570,6 +570,42 @@ describe.skipIf(!dbUp)('billing webhook events', () => {
       expect(await noticesOf(user.id)).toEqual([]);
     });
 
+    /**
+     * A trial the customer has already cancelled is not converting either.
+     *
+     * A self-serve cancellation during a trial is `cancel_at_period_end` going
+     * true with the status left at 'trialing' (migration 0187), and Stripe goes
+     * on firing `trial_will_end` for it — the event is about the trial's date,
+     * not about whether the plan will continue. So the one notice whose whole
+     * content is "unless you cancel before then, the plan continues and you
+     * will be charged" went to the subscriber for whom both halves are false.
+     */
+    it('says nothing for a trial the customer has already cancelled', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await deliver({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_trial_canceled_1',
+            status: 'trialing',
+            cancel_at_period_end: true,
+            metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+          },
+        },
+      });
+      const sub = await subscriptionOf(user.id);
+      expect([sub?.status, sub?.cancel_at_period_end]).toEqual(['trialing', true]);
+
+      const res = await deliver({
+        type: 'customer.subscription.trial_will_end',
+        data: {
+          object: { id: 'sub_trial_canceled_1', trial_end: Math.floor(Date.now() / 1000) + 259_200 },
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(await noticesOf(user.id)).toEqual([]);
+    });
+
     it('says nothing for a subscription this platform does not carry', async () => {
       const res = await deliver({
         type: 'customer.subscription.trial_will_end',
