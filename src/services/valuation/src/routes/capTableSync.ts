@@ -541,7 +541,11 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       if (!connection || connection.status === 'revoked') {
         throw problems.unprocessable(`${CAP_TABLE_PROVIDER_LABELS[provider]} is not connected`);
       }
-      await setSyncFrequency(deps.pool, connection.id, parsed.data.frequency);
+      await setSyncFrequency(deps.pool, connection.id, parsed.data.frequency, {
+        actorType: 'human',
+        actorId: principal.id,
+        source: 'captable_sync',
+      });
       return { frequency: parsed.data.frequency };
     },
   );

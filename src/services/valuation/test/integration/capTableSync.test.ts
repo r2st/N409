@@ -6,6 +6,9 @@ import { signCapTableSyncState } from '../../src/auth/jwt.js';
 import { runDueCapTableSyncs } from '../../src/routes/capTableSync.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
+/** A sweep logger that keeps nothing — these cases assert on the row. */
+const silentLog = { warn: () => {}, error: () => {} };
+
 const dbUp = await isDbAvailable();
 
 const jsonResponse = (body: unknown, status = 200) =>
@@ -354,7 +357,7 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
       pool: ctx.pool,
       fetchFn: refusingFetch as unknown as typeof fetch,
       credentials: { carta: { clientId: 'cid', clientSecret: 'csecret' } },
-      log: { warn: () => {} },
+      log: silentLog,
     });
 
     expect(processed).toBe(0);
@@ -418,7 +421,7 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
     const processed = await runDueCapTableSyncs({
       pool: ctx.pool,
       fetchFn: trackingFetch as unknown as typeof fetch,
-      log: { warn: (o) => warnings.push(o) },
+      log: { warn: (o) => warnings.push(o), error: (o) => warnings.push(o) },
     });
 
     // All N were attempted; the one 500 is isolated → N-1 succeed.

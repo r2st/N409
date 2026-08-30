@@ -214,6 +214,7 @@ export const EVENT_CATALOG = {
    */
   integration_connected: D('Integration connected', 'integration', 'notice', 'client'),
   integration_disconnected: D('Integration disconnected', 'integration', 'notice', 'client'),
+  integration_schedule_changed: D('Integration schedule changed', 'integration', 'info', 'client'),
 } satisfies Record<string, EventDescriptor>;
 
 /**

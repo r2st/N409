@@ -2,7 +2,11 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import type { EventActor } from '../events/record.js';
-import { recordIntegrationConnected, recordIntegrationDisconnected } from '../events/integrationEvents.js';
+import {
+  recordIntegrationConnected,
+  recordIntegrationDisconnected,
+  recordIntegrationScheduleChanged,
+} from '../events/integrationEvents.js';
 import { openConnectionTokens, sealNullable, sealSecret } from '../crypto/connectionSecrets.js';
 import type { CapTableProvider, TokenSet } from '../clients/capTableSync.js';
 
@@ -241,15 +245,56 @@ export async function recordSyncError(
   );
 }
 
-export async function setSyncFrequency(pool: pg.Pool, id: string, frequency: SyncFrequency): Promise<void> {
+/**
+ * Set the cadence of the standing pull, and record who set it.
+ *
+ * The third transition this row can make, and the one R256 left when it gave
+ * the other two an event. `manual` -> `daily` is a person arranging for a third
+ * party to be read every day from here on without anyone being asked again, and
+ * `daily` -> `manual` is that arrangement ending — after which the connection
+ * simply stops producing data, and the only record of why is a column that says
+ * what it is now.
+ *
+ * The previous value comes from a `FOR UPDATE` sub-select rather than from the
+ * caller. The caller has a row it read before the round trip, which is the
+ * staleness R256 removed from `recordSync` for the same two columns; and taking
+ * it here means the event names the cadence that was actually replaced. No
+ * change, no event: setting Daily on a daily connection is a no-op the audit
+ * trail should not report as a change, though the write still happens, so
+ * pressing it re-bases `next_sync_at` exactly as it always did.
+ */
+export async function setSyncFrequency(
+  pool: pg.Pool,
+  id: string,
+  frequency: SyncFrequency,
+  actor: EventActor,
+): Promise<void> {
   const interval = FREQ_INTERVAL[frequency];
-  await pool.query(
-    `UPDATE cap_table_connections
-     SET sync_frequency = $2,
-         next_sync_at = ${interval ? `now() + interval '${interval}'` : 'NULL'}
-     WHERE id = $1 AND status <> 'revoked'`,
-    [id, frequency],
-  );
+  await withTransaction(pool, async (client) => {
+    const { rows } = await client.query<{
+      valuation_id: string;
+      provider: CapTableProvider;
+      previous_frequency: SyncFrequency;
+    }>(
+      `UPDATE cap_table_connections c
+       SET sync_frequency = $2,
+           next_sync_at = ${interval ? `now() + interval '${interval}'` : 'NULL'}
+      FROM (SELECT id, sync_frequency FROM cap_table_connections WHERE id = $1 FOR UPDATE) prev
+     WHERE c.id = prev.id AND c.status <> 'revoked'
+ RETURNING c.valuation_id, c.provider, prev.sync_frequency AS previous_frequency`,
+      [id, frequency],
+    );
+    const row = rows[0];
+    if (!row || row.previous_frequency === frequency) return;
+    await recordIntegrationScheduleChanged(client, {
+      valuationId: row.valuation_id,
+      family: 'cap_table',
+      provider: row.provider,
+      from: row.previous_frequency,
+      to: frequency,
+      actor,
+    });
+  });
 }
 
 /**

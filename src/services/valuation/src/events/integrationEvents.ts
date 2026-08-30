@@ -39,6 +39,40 @@ export async function recordIntegrationConnected(
   });
 }
 
+/**
+ * The cadence somebody chose for a standing pull of a client's data.
+ *
+ * The third transition of the same row, and the one left when R256 recorded the
+ * other two. `manual` -> `daily` is a person arranging for a third party's
+ * payroll roster to be read every day from now on, without anybody being asked
+ * again; `daily` -> `manual` is that arrangement quietly ending, which reads
+ * afterwards as a connection that simply stopped producing data. Neither left a
+ * trace: `sync_frequency` is a column, and a column says what it is now.
+ *
+ * `info` rather than the `notice` its two siblings carry, and for the same
+ * reason `monitoring_enabled` is `info`: the standing access itself was granted
+ * and recorded elsewhere, and this is the schedule on top of it.
+ */
+export async function recordIntegrationScheduleChanged(
+  client: pg.PoolClient,
+  args: IntegrationEventArgs & { from: string; to: string },
+): Promise<void> {
+  await recordEvent(client, {
+    valuationId: args.valuationId,
+    type: 'integration_schedule_changed',
+    actor: args.actor,
+    // The `{ changes: { field: { from, to } } }` shape rather than a bare
+    // `{ from, to }`: `extractChanges` reads the bare one as a field literally
+    // called `value`, so the trail would have rendered "value: manual → daily"
+    // over an event that names three other things.
+    payload: {
+      family: args.family,
+      provider: args.provider,
+      changes: { sync_frequency: { from: args.from, to: args.to } },
+    },
+  });
+}
+
 export async function recordIntegrationDisconnected(
   client: pg.PoolClient,
   args: IntegrationEventArgs,

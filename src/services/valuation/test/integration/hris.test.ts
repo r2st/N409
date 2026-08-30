@@ -13,6 +13,9 @@ import {
   type TestApp,
 } from './helpers.js';
 
+/** A sweep logger that keeps nothing — these cases assert on the row. */
+const silentLog = { warn: () => {}, error: () => {} };
+
 const dbUp = await isDbAvailable();
 
 const jsonResponse = (body: unknown, status = 200) =>
@@ -628,7 +631,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       await runDueHrisSyncs({
         pool: ctx.pool,
         fetchFn: mockFetch() as unknown as typeof fetch,
-        log: { warn: () => {} },
+        log: silentLog,
       });
 
       const row = await connectionRow(v.id);
@@ -652,7 +655,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       await runDueHrisSyncs({
         pool: ctx.pool,
         fetchFn: mockFetch() as unknown as typeof fetch,
-        log: { warn: () => {} },
+        log: silentLog,
       });
       expect((await connectionRow(v.id)).status).toBe('error');
 
@@ -665,7 +668,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       const processed = await runDueHrisSyncs({
         pool: ctx.pool,
         fetchFn: mockFetch() as unknown as typeof fetch,
-        log: { warn: () => {} },
+        log: silentLog,
       });
 
       expect(processed).toBeGreaterThanOrEqual(1);
@@ -687,7 +690,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
         await runDueHrisSyncs({
           pool: ctx.pool,
           fetchFn: mockFetch() as unknown as typeof fetch,
-          log: { warn: () => {} },
+          log: silentLog,
         });
         const row = await connectionRow(v.id);
         waits.push((row.next_sync_at!.getTime() - Date.now()) / 60_000);
@@ -705,11 +708,29 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       );
       tokenResponder = () => jsonResponse({ error: 'invalid_grant' }, 400);
 
+      const lines: Array<{ level: string; fields: Record<string, unknown> }> = [];
       await runDueHrisSyncs({
         pool: ctx.pool,
         fetchFn: mockFetch() as unknown as typeof fetch,
         credentials: { rippling: { clientId: 'cid', clientSecret: 'sec' } },
-        log: { warn: () => {} },
+        log: {
+          warn: (fields) => void lines.push({ level: 'warn', fields: fields as Record<string, unknown> }),
+          error: (fields) => void lines.push({ level: 'error', fields: fields as Record<string, unknown> }),
+        },
+      });
+
+      // And the log says which of the two failures this was (R258). It said
+      // `warn` for both, which in this estate is a written promise that the
+      // retry is coming — and for this one the row two lines down says it is
+      // not.
+      expect(lines).toHaveLength(1);
+      expect(lines[0]!.level).toBe('error');
+      expect(lines[0]!.fields).toMatchObject({
+        alert: true,
+        retried: false,
+        reconnect_required: true,
+        valuationId: v.id,
+        provider: 'rippling',
       });
 
       const row = await connectionRow(v.id);
@@ -815,6 +836,55 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       const types = (await integrationEvents(v.id)).map((e) => e.type);
       expect(types).toEqual(['integration_connected', 'integration_disconnected']);
     });
+
+    /**
+     * The third transition of the same row (R258). Setting a cadence is a
+     * person arranging for a third party to be read every day from here on
+     * without anybody being asked again, and setting it back to Manual is that
+     * arrangement ending — after which the connection simply stops producing
+     * data and the only record of why is a column saying what it is now.
+     */
+    const setFrequency = (valuationId: string, frequency: string) =>
+      ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${valuationId}/hris/rippling/frequency`,
+        headers: authHeader(ops.token),
+        payload: { frequency },
+      });
+
+    it('records who put the pull on a schedule, and what it was before', async () => {
+      const v = await connectedValuation();
+      expect((await setFrequency(v.id, 'daily')).statusCode).toBe(200);
+
+      const events = await integrationEvents(v.id);
+      expect(events.map((e) => e.type)).toEqual(['integration_connected', 'integration_schedule_changed']);
+      expect(events[1]!.actor_id).toBe(ops.id);
+      expect(events[1]!.payload).toMatchObject({
+        family: 'hris',
+        provider: 'rippling',
+        // The `{ changes: { field: { from, to } } }` shape, so the trail reads
+        // "Sync frequency: manual → daily" rather than naming a field called
+        // `value` — see `extractChanges`.
+        changes: { sync_frequency: { from: 'manual', to: 'daily' } },
+      });
+    });
+
+    it('records nothing for a cadence set to what it already was', async () => {
+      const v = await connectedValuation();
+      await setFrequency(v.id, 'daily');
+      expect((await setFrequency(v.id, 'daily')).statusCode).toBe(200);
+      expect((await integrationEvents(v.id)).map((e) => e.type)).toEqual([
+        'integration_connected',
+        'integration_schedule_changed',
+      ]);
+      // The write still happened, which is what pressing Daily on a daily
+      // connection has always done: `next_sync_at` is re-based from now.
+      const { rows } = await ctx.pool.query<{ next_sync_at: Date | null }>(
+        'SELECT next_sync_at FROM hris_connections WHERE valuation_id = $1',
+        [v.id],
+      );
+      expect(rows[0]!.next_sync_at).not.toBeNull();
+    });
   });
 
   describe('a cadence changed while the sync was running (R256)', () => {
@@ -873,7 +943,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       await runDueHrisSyncs({
         pool: ctx.pool,
         fetchFn: fetchThatChangesCadence(v.id, 'daily') as unknown as typeof fetch,
-        log: { warn: () => {} },
+        log: silentLog,
       });
 
       const row = await rowFor(v.id);
@@ -892,7 +962,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       await runDueHrisSyncs({
         pool: ctx.pool,
         fetchFn: fetchThatChangesCadence(v.id, 'manual') as unknown as typeof fetch,
-        log: { warn: () => {} },
+        log: silentLog,
       });
 
       const row = await rowFor(v.id);
@@ -957,7 +1027,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     const processed = await runDueHrisSyncs({
       pool: ctx.pool,
       fetchFn: trackingFetch as unknown as typeof fetch,
-      log: { warn: (o) => warnings.push(o) },
+      log: { warn: (o) => warnings.push(o), error: (o) => warnings.push(o) },
     });
 
     expect(rosterCalls).toBe(N);

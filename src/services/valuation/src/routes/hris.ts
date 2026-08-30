@@ -505,7 +505,11 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
       if (!connection || connection.status === 'revoked') {
         throw problems.unprocessable(`${HRIS_PROVIDER_LABELS[provider]} is not connected`);
       }
-      await setSyncFrequency(deps.pool, connection.id, parsed.data.frequency);
+      await setSyncFrequency(deps.pool, connection.id, parsed.data.frequency, {
+        actorType: 'human',
+        actorId: principal.id,
+        source: 'hris',
+      });
       return { frequency: parsed.data.frequency };
     },
   );
