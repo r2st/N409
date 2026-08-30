@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import { problems } from '@n409/shared';
-import { VALUATION_STATES, type ValuationState } from './valuation.js';
+import { VALUATION_STATES, stateLabel, type ValuationState } from './valuation.js';
 import { canTransition } from './workflow.js';
 
 /**
@@ -46,7 +46,8 @@ export function assertTransition(from: ValuationState, to: ValuationState): void
   if (from === to) return;
   if (!canTransition(from, to)) {
     throw problems.conflict(
-      `Illegal transition ${from} → ${to}. Legal next states from '${from}': ${legalStatesFrom(from)}.`,
+      `This valuation cannot move from “${stateLabel(from)}” to “${stateLabel(to)}”. ` +
+        `From “${stateLabel(from)}” it can go to: ${legalStatesFrom(from)}.`,
     );
   }
 }
@@ -105,7 +106,8 @@ export function assertTransitionForWrite(
      */
     if (live === to) {
       throw problems.conflict(
-        `This valuation is already '${to}' — someone else made that change while you were working.`,
+        `This valuation is already “${stateLabel(to)}” — someone else made that change while you ` +
+          'were working. Reload it before deciding what to do next.',
       );
     }
     assertTransition(live, to);
@@ -117,5 +119,7 @@ function legalStatesFrom(from: ValuationState): string {
   // Read through `canTransition` rather than off the table, so there is one
   // definition of "legal" and the message cannot disagree with the refusal.
   const legal = VALUATION_STATES.filter((s) => canTransition(from, s));
-  return legal.length > 0 ? legal.join(', ') : 'none — this state is terminal';
+  return legal.length > 0
+    ? legal.map((s) => `“${stateLabel(s)}”`).join(', ')
+    : 'nowhere — this is a final state';
 }

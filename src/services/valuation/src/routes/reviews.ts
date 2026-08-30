@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { stateLabel } from '../domain/valuation.js';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
@@ -73,7 +74,10 @@ export function registerReviewRoutes(
 
     const target = decisionTarget(valuation.state, decision);
     if (!target) {
-      throw problems.conflict(`'${valuation.state}' is not awaiting a review decision`);
+      throw problems.conflict(
+        `This valuation is “${stateLabel(valuation.state)}”, which is not awaiting a review ` +
+          'decision. Only one in review can be accepted or sent back.',
+      );
     }
 
     await assertPublishGate(deps.pool, valuation.id, target);

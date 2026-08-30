@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { authHeader, forceState, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
-import { VALUATION_STATES, type ValuationState } from '../../src/domain/valuation.js';
+import { VALUATION_STATES, stateLabel, type ValuationState } from '../../src/domain/valuation.js';
 import { canRestart, decisionTarget, nextState, RESTART_STATE } from '../../src/domain/workflow.js';
 import { clearValuationCache } from '../../src/repos/valuations.js';
 
@@ -185,7 +185,11 @@ describe.skipIf(!dbUp)('the doors into a valuation state', () => {
         const id = await engagementIn(from);
         const res = await advance(id);
         expect(res.statusCode, `advance from ${from}`).toBe(409);
-        expect(res.json().detail).toContain(`Cannot auto-advance from '${from}'`);
+        // The label, not the column value — round 255. Asserted through
+        // `stateLabel` rather than by quoting the words, so this stays true
+        // when a state is renamed and false if a refusal goes back to the key.
+        expect(res.json().detail).toContain(`from “${stateLabel(from)}”`);
+        expect(res.json().detail).not.toContain(`'${from}'`);
         expect(await stateOf(id)).toBe(from);
         expect(await transitions(id)).toEqual([]);
       }
@@ -254,7 +258,8 @@ describe.skipIf(!dbUp)('the doors into a valuation state', () => {
         const id = await engagementIn(from);
         const res = await restart(id);
         expect(res.statusCode, `restart from ${from}`).toBe(409);
-        expect(res.json().detail).toContain(`Cannot restart from '${from}'`);
+        expect(res.json().detail).toContain(`in “${stateLabel(from)}” cannot be restarted`);
+        expect(res.json().detail).not.toContain(`'${from}'`);
         expect(await stateOf(id)).toBe(from);
       }
     });
@@ -308,7 +313,10 @@ describe.skipIf(!dbUp)('the doors into a valuation state', () => {
         for (const decision of ['approve', 'request_changes'] as const) {
           const res = await decide(id, decision);
           expect(res.statusCode, `${from} / ${decision}`).toBe(409);
-          expect(res.json().detail).toContain(`'${from}' is not awaiting a review decision`);
+          expect(res.json().detail).toContain(
+            `is “${stateLabel(from)}”, which is not awaiting a review decision`,
+          );
+          expect(res.json().detail).not.toContain(`'${from}'`);
         }
         expect(await stateOf(id)).toBe(from);
       }
@@ -319,7 +327,7 @@ describe.skipIf(!dbUp)('the doors into a valuation state', () => {
       expect((await decide(id, 'approve')).json().valuation.state).toBe('draft_accepted');
       const again = await decide(id, 'approve');
       expect(again.statusCode).toBe(409);
-      expect(again.json().detail).toContain("'draft_accepted' is not awaiting a review decision");
+      expect(again.json().detail).toContain('is “Draft accepted”, which is not awaiting a review decision');
     });
 
     it('records one decision when two reviewers approve off one read', async () => {

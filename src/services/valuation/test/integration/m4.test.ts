@@ -352,7 +352,7 @@ describe.skipIf(!dbUp)('M4 — Polish', () => {
         payload: { ids: [a], action: 'set_state', state: 'published' },
       });
       expect(res.json().failed).toBe(1);
-      expect(res.json().results[0].error).toContain('Illegal transition');
+      expect(res.json().results[0].error).toContain('cannot move from');
     });
 
     it('bulk-assigns a reviewer', async () => {

@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
-import { VALUATION_STATES, type ValuationState } from '../domain/valuation.js';
+import { VALUATION_STATES, stateLabel, type ValuationState } from '../domain/valuation.js';
 import { BULK_ACTIONS, canRestart, canTransition, nextState, RESTART_STATE } from '../domain/workflow.js';
 import {
   findValuationById,
@@ -170,7 +170,10 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
 
     const next = nextState(valuation.state, { paidStatus: valuation.paid_status });
     if (!next) {
-      throw problems.conflict(`Cannot auto-advance from '${valuation.state}'`);
+      throw problems.conflict(
+        `There is no next step to advance to from “${stateLabel(valuation.state)}”. ` +
+          'Move it with a state change instead, or restart it.',
+      );
     }
     return { valuation: await applyState(valuation, next, principal, 'workflow') };
   });
@@ -183,7 +186,10 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     refuseIfRetired(valuation, 'accepting workflow changes');
 
     if (!canRestart(valuation.state)) {
-      throw problems.conflict(`Cannot restart from '${valuation.state}'`);
+      throw problems.conflict(
+        `A valuation in “${stateLabel(valuation.state)}” cannot be restarted — only one that timed ` +
+          'out, was cancelled or was ignored can.',
+      );
     }
     return { valuation: await applyState(valuation, RESTART_STATE, principal, 'workflow') };
   });
@@ -301,7 +307,10 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
         switch (action) {
           case 'set_state': {
             if (!canTransition(valuation.state, state!)) {
-              throw problems.conflict(`Illegal transition ${valuation.state} → ${state}`);
+              throw problems.conflict(
+                `This valuation cannot move from “${stateLabel(valuation.state)}” to ` +
+                  `“${stateLabel(state!)}”.`,
+              );
             }
             const updated = await applyState(valuation, state!, principal, 'bulk');
             results.push({ id, ok: true, state: updated.state });
@@ -309,14 +318,21 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
           }
           case 'advance': {
             const next = nextState(valuation.state, { paidStatus: valuation.paid_status });
-            if (!next) throw problems.conflict(`Cannot auto-advance from '${valuation.state}'`);
+            if (!next)
+              throw problems.conflict(
+                `There is no next step to advance to from “${stateLabel(valuation.state)}”. ` +
+                  'Move it with a state change instead, or restart it.',
+              );
             const updated = await applyState(valuation, next, principal, 'bulk');
             results.push({ id, ok: true, state: updated.state });
             break;
           }
           case 'restart': {
             if (!canRestart(valuation.state))
-              throw problems.conflict(`Cannot restart from '${valuation.state}'`);
+              throw problems.conflict(
+                `A valuation in “${stateLabel(valuation.state)}” cannot be restarted — only one that ` +
+                  'timed out, was cancelled or was ignored can.',
+              );
             const updated = await applyState(valuation, RESTART_STATE, principal, 'bulk');
             results.push({ id, ok: true, state: updated.state });
             break;

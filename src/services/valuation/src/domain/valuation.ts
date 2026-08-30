@@ -37,6 +37,48 @@ export const VALUATION_STATES = [
 ] as const;
 export type ValuationState = (typeof VALUATION_STATES)[number];
 
+/**
+ * What each state is called in the sentences people read.
+ *
+ * The keys are column values — `onboarding_completed`, `draft_changes`,
+ * `user_finished` — and eight refusals interpolated them straight into a
+ * `detail`, so an operator who tried an illegal move was answered with "Illegal
+ * transition draft_changes → published" and a comma-separated list of more of
+ * the same. Nowhere else on the platform are those words shown: the browser has
+ * carried `STATE_LABELS` since long before this, and every screen an operator
+ * reaches this API from is already labelling the identical column "Changes
+ * requested".
+ *
+ * `Record<ValuationState, string>` rather than a lookup with a fallback, so a
+ * fifteenth state is a compile error here rather than a raw key surfacing in a
+ * refusal months later. The values are pinned against the browser's map by
+ * `valuationStateLabels.test.ts` — web-frontend does not depend on
+ * `@n409/shared`, so the two maps are copies, and a copy nothing compares is a
+ * copy that drifts.
+ */
+export const VALUATION_STATE_LABELS: Record<ValuationState, string> = {
+  pending: 'Pending',
+  started: 'Started',
+  onboarding_completed: 'Onboarding done',
+  user_finished: 'Client finished',
+  completed: 'Completed',
+  paid: 'Paid',
+  review: 'In review',
+  reviewed: 'Reviewed',
+  drafted: 'Drafted',
+  draft_accepted: 'Draft accepted',
+  draft_changes: 'Changes requested',
+  published: 'Published',
+  timeout: 'Timed out',
+  cancelled: 'Cancelled',
+  ignored: 'Ignored',
+};
+
+/** A state as an operator sees it named everywhere else. */
+export function stateLabel(state: ValuationState): string {
+  return VALUATION_STATE_LABELS[state];
+}
+
 export const VALUATION_SOURCES = ['partner', 'referral', 'ads', 'repeat'] as const;
 export type ValuationSource = (typeof VALUATION_SOURCES)[number];
 
