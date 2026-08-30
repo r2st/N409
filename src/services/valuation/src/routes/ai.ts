@@ -533,8 +533,40 @@ export async function runAiPipeline(
       );
     }
     if (Object.keys(applied).length > 0) {
-      appliedInputs = applied;
-      await applyEngineInputs(deps.pool, valuation.id, applied, args.actor);
+      /*
+       * The engagement as it stands now, not as it stood when the run started.
+       *
+       * `refuseIfRetired` fires on the route before the payload is assembled,
+       * and on the auto-pipeline immediately before this call — and then the AI
+       * service is given up to three minutes. Somebody withdrawing the
+       * engagement inside that window is the ordinary case rather than the
+       * exotic one: a run is exactly the length of time in which a decision
+       * about a file gets made. R232 closed the same shape one step earlier,
+       * where a queued run held a copy of the engagement as old as the queue;
+       * this is the step after it, and it is the one that writes.
+       *
+       * Nobody is watching this write. It is the auto-pipeline's, it lands as
+       * `params_updated` with an `ai` actor, and it is precisely what every
+       * button in the product has stopped accepting — an extraction applied to
+       * work the firm has withdrawn, with the run that produced it recorded as
+       * having succeeded.
+       *
+       * Skipped rather than raised: the job itself is finished and correctly
+       * recorded, and turning a completed run into an error would lose that.
+       * The response reports nothing applied, which is what happened.
+       */
+      const live = await findValuationById(deps.pool, valuation.id);
+      if (!live || live.archived_at !== null) {
+        deps.log.warn(
+          { valuationId: valuation.id, jobId: job.id, deleted: !live },
+          live
+            ? 'the engagement was retired while the extraction ran; its engine inputs were not applied'
+            : 'the engagement was deleted while the extraction ran; its engine inputs were not applied',
+        );
+      } else {
+        appliedInputs = applied;
+        await applyEngineInputs(deps.pool, valuation.id, applied, args.actor);
+      }
     }
   }
   return { job: completed, appliedInputs, rejectedInputs };
