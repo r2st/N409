@@ -1213,6 +1213,56 @@ export function validateCapTable(
   }
 
   /*
+   * A preference stack whose order nobody stated.
+   *
+   * Seniority is the one preferred column the platform *has* to supply itself
+   * when the sheet leaves it blank, and what it supplies is load-bearing: it
+   * decides which class is paid out of the first dollar of an exit. The rule is
+   * that an unstated rank sits pari passu behind every stated one
+   * (`toWaterfallInputs`, `capTableGraph.stackOrder`), which is the right
+   * reading — nothing on a blank column makes one row junior to another — but
+   * it is a reading, and the reader should know it is being made.
+   *
+   * It was said in exactly one place: `graphIssues.partial_seniority`, on the
+   * cap-table *graph* endpoint, and only for the mixed case. The wholly blank
+   * case — the ordinary one, since the Pulley preset maps no seniority column
+   * at all and a Carta sheet often ships it empty — was silent everywhere, and
+   * that is the case where the assumption does the most work: every class in
+   * the stack sharing rank 1 splits the senior tranche pro-rata by preference
+   * instead of paying out in order.
+   *
+   * Here rather than only there because this is the validation the import
+   * screen shows, the PUT stores and `findCapTable` re-derives on every read,
+   * so it reaches the analyst who never opens the graph. A warning, like
+   * `default_liq_pref` beside it: a defaulted figure is not a broken row.
+   */
+  const preferredEntries = entries.filter((e) => e.class_type === 'preferred');
+  if (preferredEntries.length > 1) {
+    const statedSeniority = preferredEntries.filter((e) => e.seniority !== null).length;
+    if (statedSeniority === 0) {
+      issues.push({
+        severity: 'warning',
+        code: 'no_seniority',
+        message:
+          `None of the ${preferredEntries.length} preferred classes states a seniority, so the whole ` +
+          'preference stack is treated as pari passu — every class shares the first dollar of an exit ' +
+          'pro-rata by preference rather than being paid in order. Map a seniority column, or set the ' +
+          'ranks by hand, if the charter says otherwise.',
+      });
+    } else if (statedSeniority < preferredEntries.length) {
+      // The same rule `graphIssues` states, so a reader who never opens the
+      // graph is told the same thing in the same words.
+      issues.push({
+        severity: 'warning',
+        code: 'partial_seniority',
+        message:
+          `${statedSeniority} of ${preferredEntries.length} preferred classes state a seniority. ` +
+          'The rest are treated as pari passu behind them, which may not be what the charter says.',
+      });
+    }
+  }
+
+  /*
    * The totals rows the sheet carried, and what they say about this import.
    *
    * Reported at all because a row silently dropped is indistinguishable from a

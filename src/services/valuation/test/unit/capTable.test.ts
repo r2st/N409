@@ -392,10 +392,54 @@ describe('capTable', () => {
       expect(issue?.security_class).toBe(good[1]!.security_class);
     });
 
-    it('accepts an absent seniority, which toWaterfallInputs defaults positionally', () => {
+    it('accepts an absent seniority, which toWaterfallInputs defaults to the top rank', () => {
       const v = validateCapTable([{ ...good[1]!, seniority: null }]);
       expect(v.issues.some((i) => i.code === 'bad_seniority')).toBe(false);
       expect(toWaterfallInputs([{ ...good[1]!, seniority: null }]).preferred[0]!.seniority).toBe(1);
+    });
+
+    /**
+     * The stack order the platform supplies for itself, said out loud.
+     *
+     * A blank seniority column is read as pari passu, and that reading decides
+     * who is paid out of the first dollar of an exit. It was stated in one
+     * place only — `graphIssues.partial_seniority`, on the graph endpoint —
+     * and only for the mixed case, so the ordinary wholly-blank sheet (the
+     * Pulley preset maps no seniority column at all) went through the import
+     * screen, the stored validation and the workbook without a word.
+     */
+    describe('a preference stack whose order nobody stated', () => {
+      const pref = (security_class: string, seniority: number | null) => ({
+        ...good[1]!,
+        security_class,
+        seniority,
+      });
+
+      it('warns when no preferred class states a seniority', () => {
+        const v = validateCapTable([pref('Series Seed', null), pref('Series A', null)]);
+        expect(v.valid).toBe(true);
+        const issue = v.issues.find((i) => i.code === 'no_seniority');
+        expect(issue?.severity).toBe('warning');
+        expect(issue?.message).toContain('pari passu');
+      });
+
+      it('warns when only some of them do, in the words the graph uses', () => {
+        const v = validateCapTable([pref('Series Seed', 1), pref('Series A', null)]);
+        expect(v.issues.find((i) => i.code === 'partial_seniority')?.message).toContain(
+          '1 of 2 preferred classes',
+        );
+        expect(v.issues.some((i) => i.code === 'no_seniority')).toBe(false);
+      });
+
+      it('says nothing when every class states one, or when there is only one class', () => {
+        const stated = validateCapTable([pref('Series Seed', 1), pref('Series A', 2)]);
+        const lone = validateCapTable([pref('Series Seed', null)]);
+        for (const v of [stated, lone]) {
+          expect(v.issues.some((i) => i.code === 'no_seniority' || i.code === 'partial_seniority')).toBe(
+            false,
+          );
+        }
+      });
     });
 
     it('accepts the ordinary ranks a preference stack is written with', () => {
