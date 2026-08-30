@@ -154,7 +154,7 @@ export function CommentsSection({
                 </li>
               );
             })}
-            {!loadError && notes.length === 0 && <li className="text-sm text-ink-400">No notes yet.</li>}
+            {comments && notes.length === 0 && <li className="text-sm text-ink-400">No notes yet.</li>}
           </ul>
           {/*
            * One request carries both halves, so a failure here is the same
@@ -243,7 +243,7 @@ export function CommentsSection({
            * conversation." — two sentences contradicting each other, with the
            * false one carrying the call to action.
            */}
-          {!loadError && thread.length === 0 && (
+          {comments && thread.length === 0 && (
             <li className="text-sm text-ink-400">No messages yet — start the conversation below.</li>
           )}
         </ul>

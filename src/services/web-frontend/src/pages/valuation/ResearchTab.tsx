@@ -318,6 +318,14 @@ export function ResearchTab() {
   // Clients see only what was retrieved; running it spends money, so the whole
   // control column is ops-only rather than disabled-and-visible.
   const topics = meta?.topics ?? [];
+  /*
+   * Whether the registry has finished answering. A client never asks for it —
+   * the run controls are ops-only — so for them `meta` stays null for good and
+   * the answer is "yes, and there are none". For ops it is null twice over:
+   * before the reply and after a failed one, and only the first of those was
+   * ever distinguished from an empty registry.
+   */
+  const topicsSettled = !ops || meta !== null || topicsFailed;
 
   return (
     <div className="space-y-6">
@@ -346,7 +354,7 @@ export function ResearchTab() {
         </p>
       )}
 
-      {topics.length === 0 && data.research.length === 0 && !topicsFailed && (
+      {topicsSettled && topics.length === 0 && data.research.length === 0 && !topicsFailed && (
         <EmptyState title="No market research yet">
           {data.can_run
             ? 'Set the industry on the Company tab, then run a topic.'
@@ -369,7 +377,8 @@ export function ResearchTab() {
       ))}
 
       {/* A client with no topic registry still sees what was retrieved. */}
-      {topics.length === 0 &&
+      {topicsSettled &&
+        topics.length === 0 &&
         data.research.map((row) => (
           <section key={row.id} className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
             <div className="flex flex-wrap items-baseline gap-2">

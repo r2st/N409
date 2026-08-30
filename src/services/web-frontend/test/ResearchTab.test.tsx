@@ -108,6 +108,38 @@ function renderTab() {
 describe('ResearchTab', () => {
   beforeEach(() => vi.restoreAllMocks());
 
+  /**
+   * R226. `topics` is `meta?.topics ?? []`, and `meta` is null for the whole
+   * of the registry's round trip — so for the seconds before it answered, an
+   * engagement with no research yet was told "No market research yet — set the
+   * industry on the Company tab, then run a topic", and then handed the three
+   * topic cards that instruction says do not exist. The registry not having
+   * answered is not the registry being empty.
+   */
+  it('does not send an analyst to the Company tab while the topics are still loading', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.includes('/research/topics')) return new Promise(() => {}) as Promise<Response>;
+      return jsonResponse({ ...RESEARCH, research: [] });
+    });
+    renderTab();
+
+    // The tab itself has arrived — the blurb above the list is on screen.
+    await screen.findByText(/Web-grounded research from public sources/);
+    expect(screen.queryByText('No market research yet')).not.toBeInTheDocument();
+  });
+
+  it('says there is none once the registry comes back empty', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.includes('/research/topics')) return jsonResponse({ ...TOPICS, topics: [] });
+      return jsonResponse({ ...RESEARCH, research: [] });
+    });
+    renderTab();
+
+    expect(await screen.findByText('No market research yet')).toBeInTheDocument();
+  });
+
   it('renders an answer with its sources as links', async () => {
     mockApi();
     renderTab();
