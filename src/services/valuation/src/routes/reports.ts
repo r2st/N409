@@ -58,6 +58,7 @@ import { findCurrentVolatilityEstimate } from '../repos/volatilityEstimates.js';
 import { findCurrentProjection } from '../repos/projections.js';
 import { findAppliedRollforwardRun } from '../repos/rollforwardRuns.js';
 import { FMV_TREND_KINDS, sameCompanyFilter } from '../domain/valuationHistory.js';
+import { kindLabel } from '../domain/valuationSelector.js';
 import { fitsInt4, int4Version } from '../domain/int4.js';
 import { latestCalculationForKind } from '../repos/calculations.js';
 import { findBrandingByPartnerId } from '../repos/branding.js';
@@ -552,7 +553,14 @@ async function renderVersionPdf(
     company_name: valuation.company_name,
     meta: [
       { label: 'Engagement', value: valuation.id },
-      { label: 'Kind', value: valuation.kind },
+      // The product's own name for the kind, not the enum key. The cover of a
+      // 718 engagement read `Kind: 718` — a database value on the front of a
+      // document that goes to an auditor and a board, while every other surface
+      // in the product, down to the picker the engagement was created from,
+      // calls it "ASC 718 stock-based compensation". `kindLabel` echoes an
+      // unmapped key, so a kind added to the enum and not to the map degrades
+      // to exactly what was printed before rather than to a blank.
+      { label: 'Kind', value: kindLabel(valuation.kind) },
       // Ahead of "Rendered", and stated separately from it. A reader who takes
       // the cover date as the valuation date takes the wrong one otherwise, and
       // on a §409A the valuation date is what a grant's safe harbour is measured

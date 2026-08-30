@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { brandingFor } from '../../src/routes/reports.js';
+import { sampleReportPdfInput } from '../../src/domain/sampleReportPdf.js';
+import { kindLabel } from '../../src/domain/valuationSelector.js';
 import type { ValuationRow } from '../../src/repos/valuations.js';
 
 /**
@@ -94,5 +96,20 @@ describe('report cover branding', () => {
     ).resolves.toBeUndefined();
     // `findBrandingByPartnerId` filters archived rows out in SQL.
     await expect(brandingFor(poolWith(null), VALUATION)).resolves.toBeUndefined();
+  });
+});
+
+describe('report cover facts', () => {
+  it('names the kind the way the product does, not by its enum key', () => {
+    const meta = sampleReportPdfInput('718').meta;
+    const kind = meta.find((m) => m.label === 'Kind')!.value;
+    // `Kind: 718` was a database value on the front of a document that goes to
+    // an auditor and a board.
+    expect(kind).toBe('ASC 718 stock-based compensation');
+    expect(kind).not.toBe('718');
+  });
+
+  it('degrades to the raw key for a kind nobody has named', () => {
+    expect(kindLabel('not-a-kind')).toBe('not-a-kind');
   });
 });

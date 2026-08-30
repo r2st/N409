@@ -10,6 +10,7 @@ import {
 } from './helpers.js';
 import { VALUATION_KINDS, type ValuationKind } from '../../src/domain/valuation.js';
 import { templateForKind, TEMPLATE_VAR_NAMES } from '../../src/domain/report.js';
+import { kindLabel } from '../../src/domain/valuationSelector.js';
 
 /**
  * Every report type this platform sells, drafted and delivered.
@@ -132,7 +133,9 @@ describe.skipIf(!dbUp)('a deliverable for every report type', () => {
       expect(outline.keywords).toContain(kind);
       // The cover fact block, as a screen reader is given it: this engagement,
       // this kind, and the template it was drafted from.
-      expect(outline.actualText).toContain(`Kind: ${kind}`);
+      // The kind as the product names it, not the enum key — see the cover
+      // meta in `renderVersionPdf`.
+      expect(outline.actualText).toContain(`Kind: ${kindLabel(kind)}`);
       expect(outline.actualText).toContain(`Template: ${templateForKind(kind).version}`);
       expect(outline.actualText).toContain(`Engagement: ${valuationId}`);
       // The chapters, tagged — including the certification no kind may omit.

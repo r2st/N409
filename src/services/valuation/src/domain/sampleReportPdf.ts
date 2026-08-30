@@ -15,6 +15,7 @@ import { formatCurrency, formatExactPercent, formatPercent } from './reportSumma
 import { esc, table } from './exhibitHtml.js';
 import type { CalculationRow } from '../repos/calculations.js';
 import type { ValuationKind } from './valuation.js';
+import { kindLabel } from './valuationSelector.js';
 
 /**
  * The downloadable sample 409A (`GET /api/v1/sample-report/pdf`).
@@ -1056,7 +1057,7 @@ export function sampleReportPdfInput(kind: ValuationKind = '409a'): ReportPdfInp
       // First, so it is the first fact on the cover rather than the last.
       { label: 'Notice', value: SAMPLE_NOTICE },
       { label: 'Engagement', value: 'SAMPLE-409A' },
-      { label: 'Kind', value: kind },
+      { label: 'Kind', value: kindLabel(kind) },
       { label: 'Valuation date', value: SAMPLE_VALUATION_DATE },
       { label: 'Template', value: template.version },
       { label: 'Currency', value: SAMPLE_CURRENCY },
