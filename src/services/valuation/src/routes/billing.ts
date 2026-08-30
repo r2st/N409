@@ -42,6 +42,7 @@ import { parseStripeEvent, stripeEventKey } from '../domain/stripeEvents.js';
 import { classifyStripeEvent, recordStripeEvent } from '../repos/stripeEvents.js';
 import {
   formatMoneyCents,
+  invoiceLineItems,
   invoicePaidMessage,
   invoiceSections,
   subscriptionCanceledMessage,
@@ -679,9 +680,18 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             const currency = String(obj.currency ?? 'usd');
             const periodStart = tsToDate(obj.period_start);
             const periodEnd = tsToDate(obj.period_end);
-            const lineItems: InvoiceLineItem[] = [
-              { description: String(obj.description ?? 'Subscription'), amount_cents: amount },
-            ];
+            // The invoice as Stripe itemised it, when the items add up to what
+            // was charged. A mid-cycle plan change is prorated as a credit for
+            // the plan left and a charge for the plan joined, and those two
+            // lines are the customer's only explanation of the figure. See
+            // `invoiceLineItems` for when it declines to itemise.
+            const lineItems: InvoiceLineItem[] = invoiceLineItems(
+              obj,
+              amount,
+              typeof obj.description === 'string' && obj.description.trim() !== ''
+                ? obj.description.trim()
+                : 'Subscription',
+            );
             const { invoice: saved, created } = await recordPaidInvoice(deps.pool, {
               userId,
               subscriptionId,

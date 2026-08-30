@@ -628,3 +628,65 @@ export function subscriptionCanceledMessage(r: {
     },
   };
 }
+
+/**
+ * What an invoice was actually made of, from the Stripe invoice object.
+ *
+ * This was one line, always: `{ description: obj.description ?? 'Subscription',
+ * amount_cents: <the whole invoice> }`. A Stripe invoice's top-level
+ * `description` is null unless somebody set one, so in practice every invoice
+ * this system has ever recorded says "Subscription" for the total and nothing
+ * else — and `line_items` exists precisely so the PDF can itemise a charge
+ * eighteen months after the fact.
+ *
+ * The case where that costs something real is a plan change mid-cycle. Stripe
+ * prorates it as two lines — the unused time on the plan being left, as a
+ * credit, and the remaining time on the plan being joined — and the customer's
+ * whole explanation of an amount they did not expect is those two lines. Netted
+ * into one figure labelled "Subscription", the invoice cannot answer the only
+ * question anybody asks it.
+ *
+ * The breakdown is recorded only when it is a breakdown *of this amount*:
+ * every line a whole number of minor units, and their sum equal to what was
+ * charged. Stripe's own `amount_paid` is the authority on the charge and is
+ * what the PDF totals, so lines that do not add up to it — an applied credit
+ * balance, a partial payment — would render a table whose rows contradict its
+ * own total. In that case the single summary line is still the honest answer:
+ * one figure, correctly labelled, rather than an itemisation that argues with
+ * itself.
+ */
+const MAX_INVOICE_LINES = 50;
+
+export function invoiceLineItems(
+  obj: Record<string, unknown>,
+  amountCents: number,
+  fallbackDescription: string,
+): InvoiceLineItem[] {
+  const summary: InvoiceLineItem[] = [{ description: fallbackDescription, amount_cents: amountCents }];
+  const lines = obj.lines as { data?: unknown } | undefined;
+  const data = Array.isArray(lines?.data) ? (lines.data as Array<Record<string, unknown>>) : null;
+  if (!data || data.length === 0 || data.length > MAX_INVOICE_LINES) return summary;
+
+  const items: InvoiceLineItem[] = [];
+  let sum = 0;
+  for (const line of data) {
+    if (!line || typeof line !== 'object') return summary;
+    const amount = line.amount;
+    if (typeof amount !== 'number' || !Number.isInteger(amount)) return summary;
+    const description =
+      typeof line.description === 'string' && line.description.trim() !== ''
+        ? line.description.trim()
+        : fallbackDescription;
+    const quantity =
+      typeof line.quantity === 'number' && Number.isInteger(line.quantity) && line.quantity > 0
+        ? line.quantity
+        : undefined;
+    items.push(
+      quantity === undefined
+        ? { description, amount_cents: amount }
+        : { description, amount_cents: amount, quantity },
+    );
+    sum += amount;
+  }
+  return sum === amountCents ? items : summary;
+}

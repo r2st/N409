@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   canConsume,
+  invoiceLineItems,
   invoiceNumber,
   invoicePaidMessage,
   invoiceSections,
@@ -281,5 +282,69 @@ describe('an invoice that has been refunded', () => {
     for (const s of invoiceSections({ ...base, refunded_cents: 30_000 })) {
       expect(sanitizeHtml(s.html)).toBe(s.html);
     }
+  });
+});
+
+describe('invoiceLineItems — what an invoice was made of', () => {
+  const proration = {
+    lines: {
+      data: [
+        { description: 'Unused time on Annual retainer after 30 Aug 2026', amount: -1_400_000 },
+        { description: 'Remaining time on Enterprise after 30 Aug 2026', amount: 3_400_000 },
+      ],
+    },
+  };
+
+  it('itemises a mid-cycle plan change instead of netting it into one figure', () => {
+    expect(invoiceLineItems(proration, 2_000_000, 'Subscription')).toEqual([
+      { description: 'Unused time on Annual retainer after 30 Aug 2026', amount_cents: -1_400_000 },
+      { description: 'Remaining time on Enterprise after 30 Aug 2026', amount_cents: 3_400_000 },
+    ]);
+  });
+
+  it('falls back to one summary line when the lines do not add up to what was charged', () => {
+    // An applied credit balance: the charge is real, the itemisation is not an
+    // itemisation of it, and a table whose rows contradict its own total is
+    // worse than one honest figure.
+    expect(invoiceLineItems(proration, 500_000, 'Subscription')).toEqual([
+      { description: 'Subscription', amount_cents: 500_000 },
+    ]);
+  });
+
+  it('falls back for an invoice with no lines at all', () => {
+    expect(invoiceLineItems({}, 240_000, 'Subscription')).toEqual([
+      { description: 'Subscription', amount_cents: 240_000 },
+    ]);
+    expect(invoiceLineItems({ lines: { data: [] } }, 240_000, 'Subscription')).toEqual([
+      { description: 'Subscription', amount_cents: 240_000 },
+    ]);
+  });
+
+  it('falls back rather than storing an amount that is not whole minor units', () => {
+    const bad = {
+      lines: {
+        data: [
+          { description: 'Odd', amount: 1.5 },
+          { description: 'Odd', amount: 2.5 },
+        ],
+      },
+    };
+    expect(invoiceLineItems(bad, 4, 'Subscription')).toEqual([
+      { description: 'Subscription', amount_cents: 4 },
+    ]);
+  });
+
+  it('names a line with no description of its own after the invoice', () => {
+    const unnamed = { lines: { data: [{ amount: 240_000 }] } };
+    expect(invoiceLineItems(unnamed, 240_000, 'Annual retainer')).toEqual([
+      { description: 'Annual retainer', amount_cents: 240_000 },
+    ]);
+  });
+
+  it('carries a quantity through when the line states a real one', () => {
+    const seats = { lines: { data: [{ description: 'Seats', amount: 240_000, quantity: 4 }] } };
+    expect(invoiceLineItems(seats, 240_000, 'Subscription')).toEqual([
+      { description: 'Seats', amount_cents: 240_000, quantity: 4 },
+    ]);
   });
 });

@@ -590,6 +590,41 @@ describe.skipIf(!dbUp)('billing webhook events', () => {
       expect(rows[0]!.status).toBe('paid');
     });
 
+    it('records a prorated plan change as the two lines that explain it', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await upsertSubscription(ctx.pool, {
+        userId: user.id,
+        planTier: 'enterprise',
+        stripeSubscriptionId: 'sub_proration_1',
+      });
+      await deliver({
+        type: 'invoice.paid',
+        data: {
+          object: {
+            id: 'in_proration_1',
+            subscription: 'sub_proration_1',
+            amount_paid: 2_000_000,
+            currency: 'usd',
+            lines: {
+              data: [
+                { description: 'Unused time on Annual retainer', amount: -1_400_000 },
+                { description: 'Remaining time on Enterprise', amount: 3_400_000 },
+              ],
+            },
+          },
+        },
+      });
+      const { rows } = await ctx.pool.query<{ line_items: Array<{ description: string }> }>(
+        "SELECT line_items FROM invoices WHERE stripe_invoice_id = 'in_proration_1'",
+      );
+      // Netted into one line reading "Subscription", the invoice cannot answer
+      // the only question a customer asks a proration.
+      expect(rows[0]!.line_items.map((li) => li.description)).toEqual([
+        'Unused time on Annual retainer',
+        'Remaining time on Enterprise',
+      ]);
+    });
+
     it('is idempotent — Stripe delivers at least once', async () => {
       const user = await seedUser(ctx, { roles: ['valuation_user'] });
       await upsertSubscription(ctx.pool, {
