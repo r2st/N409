@@ -25,6 +25,7 @@ import {
   findPlanByPrice,
   findPlanForSubscription,
   findStripeCustomerId,
+  findSubscriptionByStripeCustomerId,
   findSubscriptionByStripeId,
   INVOICE_PAGE_LIMIT,
   listAllInvoices,
@@ -1273,6 +1274,9 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
           // subscription carrying no metadata) and the first sign of trouble
           // was Stripe cancelling it weeks later.
           const stripeSubId = typeof obj.subscription === 'string' ? obj.subscription : null;
+          const failedInvoiceId = typeof obj.id === 'string' ? obj.id : null;
+          const amountDueCents = Number(obj.amount_due ?? 0);
+          const failedCurrency = String(obj.currency ?? 'usd');
           if (stripeSubId) {
             const sub = await markSubscriptionPastDue(deps.pool, stripeSubId);
             // The invoice's own currency, not the platform's. The amount is
@@ -1300,13 +1304,120 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
                   status: sub.status,
                 },
               });
-              await alertPaymentFailed(
-                log,
-                sub.user_id,
-                Number(obj.amount_due ?? 0),
-                String(obj.currency ?? 'usd'),
+              /**
+               * And said out loud, which it was not.
+               *
+               * A declined renewal wrote an audit row and two notifications
+               * and produced no log line at all — the function called
+               * `alertPaymentFailed` logs only when the notification insert
+               * *fails*. So the one billing transition that predicts churn was
+               * legible in the trail and in the notification centre and
+               * invisible to every log-side view of this service: no way to
+               * count declines over a window, no way to see a run of them
+               * against one account or one card BIN, and nothing to correlate
+               * with the `evt_…` the Stripe dashboard is showing.
+               *
+               * `warn` and no `alert: true`, on the contract's own reasoning
+               * rather than by feel. `logFailure` reserves the flag for a
+               * failure no retry is coming for, and a declined renewal is the
+               * opposite: Stripe's own dunning schedule re-attempts the
+               * invoice for weeks, the subscriber has been told to fix the
+               * card, the billing group has been told a renewal failed, and
+               * the plan is still served throughout ('past_due' is a served
+               * status). The permanent one is the branch below, which nobody
+               * is retrying and nobody has been told about.
+               *
+               * Fields are the ones a reconciliation needs and the ones the
+               * audit row carries, so the two read as one story: which
+               * account, which subscription, which invoice, how much, and the
+               * status the row now holds.
+               */
+              log.warn(
+                {
+                  actorType: 'system',
+                  source: 'stripe',
+                  userId: sub.user_id,
+                  subscriptionId: sub.id,
+                  stripeSubscriptionId: stripeSubId,
+                  stripeInvoiceId: failedInvoiceId,
+                  amountDueCents,
+                  currency: failedCurrency,
+                  status: sub.status,
+                  attemptCount: typeof obj.attempt_count === 'number' ? obj.attempt_count : null,
+                },
+                'subscription renewal payment failed — account marked past due',
               );
+              await alertPaymentFailed(log, sub.user_id, amountDueCents, failedCurrency);
+            } else {
+              /**
+               * A declined renewal we hold no live subscription for.
+               *
+               * `markSubscriptionPastDue` answers null for two situations and
+               * this branch did not exist for either: a subscription id we
+               * carry no row for, and one whose row is already `canceled`. The
+               * second is ordinary — Stripe raises a final invoice against a
+               * subscription that has ended and it declines, and there is
+               * nothing to mark past due. The first is not: a subscriber is
+               * being billed for a plan this platform has no record of, so no
+               * status moves, nobody is told, and the account keeps whatever
+               * entitlement it has until Stripe gives up weeks later. That is
+               * the shape `alertSecondLiveSubscription` exists for, arriving
+               * through the money side instead.
+               *
+               * Told apart by the same discriminator `handleInvoiceRefund`
+               * uses for a refund against an invoice that is not on file: a
+               * webhook endpoint receives every event on the Stripe account,
+               * so a failed invoice by itself says only that *somebody's*
+               * renewal declined. A customer we hold a subscription for — in
+               * any state, because the interesting case is precisely a row
+               * that has drifted out of step — is our money; one we have never
+               * seen is another integration's and stays silent, which is the
+               * pre-existing behaviour for it.
+               *
+               * `alert: true` here and not above: no retry of ours is coming,
+               * the customer has not been told (there is no user to tell), and
+               * only a person reconciling this against Stripe can resolve it.
+               */
+              const known = await findSubscriptionByStripeId(deps.pool, stripeSubId);
+              const customerId = typeof obj.customer === 'string' ? obj.customer : null;
+              // Asked of the subscription id first, not of the customer: a
+              // subscriber who resubscribed has two rows and the newest is not
+              // the one this invoice is about, so reading the customer alone
+              // would call an ordinary final invoice on a cancelled plan an
+              // unreconciled one.
+              const ours =
+                !known && customerId ? await findSubscriptionByStripeCustomerId(deps.pool, customerId) : null;
+              if (ours) {
+                log.error(
+                  {
+                    alert: true,
+                    actorType: 'system',
+                    source: 'stripe',
+                    userId: ours.user_id,
+                    stripeSubscriptionId: stripeSubId,
+                    stripeCustomerId: customerId,
+                    stripeInvoiceId: failedInvoiceId,
+                    amountDueCents,
+                    currency: failedCurrency,
+                  },
+                  'a renewal failed for a subscriber of ours against a subscription we hold no row for — nothing marked past due',
+                );
+              } else {
+                log.info(
+                  {
+                    stripeSubscriptionId: stripeSubId,
+                    stripeInvoiceId: failedInvoiceId,
+                    currency: failedCurrency,
+                  },
+                  'invoice payment failed for a subscription that is not live here — nothing to mark past due',
+                );
+              }
             }
+          } else {
+            log.info(
+              { stripeInvoiceId: failedInvoiceId, currency: failedCurrency },
+              'invoice payment failed outside a subscription — nothing to mark past due',
+            );
           }
         }
       } catch (err) {
