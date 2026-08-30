@@ -87,11 +87,39 @@ export class IntegrationError extends Error {
    */
   readonly status?: number;
 
-  constructor(message: string, status?: number) {
+  /**
+   * The wait the provider itself named, in seconds, when it sent one.
+   *
+   * `providerRefused` has parsed `Retry-After` since R255 and spent it on the
+   * *sentence* — "try again in about 120s" — while the schedule that actually
+   * decides when we come back never saw it. So a provider answering a
+   * scheduled sync with `429 Retry-After: 7200` got another request in fifteen
+   * minutes, and another thirty minutes after that, which is the "how a rate
+   * limit becomes a longer rate limit" this file warns about, committed by the
+   * code that warns about it.
+   *
+   * Read by `recordSyncError`. `undefined` where the provider named no time,
+   * which is every failure that is not a refusal carrying the header.
+   */
+  readonly retryAfterSeconds?: number;
+
+  constructor(message: string, status?: number, retryAfterSeconds?: number) {
     super(message);
     this.name = 'IntegrationError';
     if (status !== undefined) this.status = status;
+    if (retryAfterSeconds !== undefined) this.retryAfterSeconds = retryAfterSeconds;
   }
+}
+
+/**
+ * The wait a failure carries, for the schedule that has to choose a next
+ * attempt. Null for everything that named no time — which is most failures,
+ * and the ladder's own business.
+ */
+export function retryAfterSecondsFor(err: unknown): number | null {
+  return err instanceof IntegrationError && err.retryAfterSeconds !== undefined
+    ? err.retryAfterSeconds
+    : null;
 }
 
 /**
@@ -160,16 +188,23 @@ export function providerRefused(
   what: string,
   res: { status: number; headers: { get(name: string): string | null } },
 ): IntegrationError {
+  // Read for every refusal allowed to carry one, not only the status that gets
+  // its own sentence. RFC 9110 §10.2.3 puts `Retry-After` on 503 as well as
+  // 429, and a provider in maintenance naming a two-hour window is saying
+  // exactly what a rate limit says: come back then, and not before.
+  const seconds =
+    res.status === 429 || res.status === 503 ? parseRetryAfter(res.headers.get('retry-after')) : null;
+  const wait = seconds === null ? undefined : Math.max(1, seconds);
   if (res.status === 429) {
-    const seconds = parseRetryAfter(res.headers.get('retry-after'));
     return new IntegrationError(
-      seconds === null
+      wait === undefined
         ? `${label} is rate-limiting us — wait a few minutes and try again.`
-        : `${label} is rate-limiting us — try again in about ${Math.max(1, seconds)}s.`,
+        : `${label} is rate-limiting us — try again in about ${wait}s.`,
       res.status,
+      wait,
     );
   }
-  return new IntegrationError(`${label} ${what} failed (${res.status})`, res.status);
+  return new IntegrationError(`${label} ${what} failed (${res.status})`, res.status, wait);
 }
 
 /**

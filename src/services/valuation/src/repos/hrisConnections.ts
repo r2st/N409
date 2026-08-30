@@ -217,12 +217,27 @@ export async function recordSync(pool: pg.Pool, id: string, summary: Record<stri
  * `next_sync_at` and wait for a person to reconnect, which is what their
  * message asks for. A connection whose cadence is `manual` also gets no time:
  * it never had one.
+ *
+ * `retryAfterSeconds` is the wait the provider *named*, and it is honoured as a
+ * floor rather than as the answer. R255 taught `providerRefused` to read
+ * `Retry-After` and spend it on the sentence an analyst reads; nothing carried
+ * it as far as this column, so a scheduled sync answered `429 Retry-After:
+ * 7200` came back in fifteen minutes to be refused again, and again thirty
+ * minutes after that — the failure mode the comment above names, committed by
+ * the schedule that names it.
+ *
+ * A floor, and not the whole answer, because the two numbers know different
+ * things. The header knows when *this* provider will next serve a request; the
+ * ladder knows this connection has now failed six times running. Taking the
+ * later of them can only ever wait longer, so it cannot reintroduce the
+ * hammering, while a provider naming two hours is believed over a ladder that
+ * would have said fifteen minutes.
  */
 export async function recordSyncError(
   pool: pg.Pool,
   id: string,
   error: string,
-  opts: { terminal?: boolean } = {},
+  opts: { terminal?: boolean; retryAfterSeconds?: number | null } = {},
 ): Promise<void> {
   await pool.query(
     `UPDATE hris_connections
@@ -238,10 +253,15 @@ export async function recordSyncError(
               WHEN sync_frequency = 'manual' THEN NULL
               -- Reads the pre-increment count: a first failure waits 15
               -- minutes, a sixth and every one after it waits eight hours.
-              ELSE now() + interval '15 minutes' * power(2, LEAST(sync_failures, 5))
+              ELSE GREATEST(
+                now() + interval '15 minutes' * power(2, LEAST(sync_failures, 5)),
+                -- NULL whenever the provider named nothing, and GREATEST
+                -- ignores NULLs, so the ladder stands alone in the ordinary case.
+                now() + make_interval(secs => $4::double precision)
+              )
             END
       WHERE id = $1 AND status <> 'revoked'`,
-    [id, error.slice(0, 500), opts.terminal ?? false],
+    [id, error.slice(0, 500), opts.terminal ?? false, opts.retryAfterSeconds ?? null],
   );
 }
 

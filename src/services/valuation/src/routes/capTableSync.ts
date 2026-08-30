@@ -36,7 +36,12 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
-import { describeConnectorFailure, IntegrationError, ReconnectRequiredError } from '../clients/deadline.js';
+import {
+  describeConnectorFailure,
+  IntegrationError,
+  ReconnectRequiredError,
+  retryAfterSecondsFor,
+} from '../clients/deadline.js';
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
@@ -190,6 +195,8 @@ export async function syncCapTableConnection(
     // message asks for a reconnect instead.
     await recordSyncError(deps.pool, connection.id, message, {
       terminal: err instanceof ReconnectRequiredError,
+      // See `recordSyncError`: a provider that named a wait is waited for.
+      retryAfterSeconds: retryAfterSecondsFor(err),
     }).catch(() => undefined);
     throw err;
   }

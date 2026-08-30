@@ -51,6 +51,8 @@ const ROSTER = {
 let rosterBody: unknown = ROSTER;
 /** When set, the roster endpoint answers 503 — a provider-side failure. */
 let rosterFails = false;
+/** When set, the roster endpoint answers 429 with this `Retry-After` header. */
+let rosterRateLimitedFor: string | null = null;
 /** Every form body the provider's token endpoint was posted, in order. */
 let tokenCalls: Array<Record<string, string>> = [];
 /** Every bearer token the roster endpoint was presented, in order. */
@@ -73,6 +75,12 @@ function mockFetch() {
     if (u.includes('/employees')) {
       const auth = (init?.headers as Record<string, string> | undefined)?.authorization ?? '';
       rosterTokens.push(auth.replace(/^Bearer /, ''));
+      if (rosterRateLimitedFor !== null) {
+        return new Response(JSON.stringify({ error: 'rate limited' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': rosterRateLimitedFor },
+        });
+      }
       return rosterFails ? jsonResponse({ error: 'upstream' }, 503) : jsonResponse(rosterBody);
     }
     throw new Error(`unexpected fetch ${u}`);
@@ -93,6 +101,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
   beforeEach(() => {
     rosterBody = ROSTER;
     rosterFails = false;
+    rosterRateLimitedFor = null;
     tokenCalls = [];
     rosterTokens = [];
     tokenResponder = defaultTokenResponder;
@@ -646,6 +655,53 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       // card that asks for a reconnect here sends somebody to redo a working
       // authorisation to fix a hiccup that clears itself in fifteen minutes.
       expect(row.reconnect_required).toBe(false);
+    });
+
+    /**
+     * R261 (M5). `providerRefused` has read `Retry-After` since R255 and spent
+     * it on the sentence an analyst reads — "try again in about 7200s" — while
+     * the column that decides when the sweep actually returns never saw it. So
+     * a provider naming two hours got another request in fifteen minutes, and
+     * another thirty minutes after that: the failure this ladder's own comment
+     * says it exists to avoid.
+     */
+    it('waits at least as long as a rate-limiting provider asked', async () => {
+      const v = await connectedValuation();
+      await makeDue(v.id);
+      rosterRateLimitedFor = '7200';
+
+      await runDueHrisSyncs({
+        pool: ctx.pool,
+        fetchFn: mockFetch() as unknown as typeof fetch,
+        log: silentLog,
+      });
+
+      const row = await connectionRow(v.id);
+      expect(row.status).toBe('error');
+      // The ladder's first rung is fifteen minutes; the provider said two hours.
+      const waitMinutes = (row.next_sync_at!.getTime() - Date.now()) / 60_000;
+      expect(waitMinutes).toBeGreaterThan(115);
+      expect(waitMinutes).toBeLessThan(125);
+      expect(row.reconnect_required).toBe(false);
+    });
+
+    it('keeps the ladder when the provider asked for less than it', async () => {
+      // A floor, not the answer: the header knows when this provider will next
+      // serve a request, the ladder knows how long this connection has been
+      // failing, and the later of the two can only ever wait longer.
+      const v = await connectedValuation();
+      await makeDue(v.id);
+      rosterRateLimitedFor = '30';
+
+      await runDueHrisSyncs({
+        pool: ctx.pool,
+        fetchFn: mockFetch() as unknown as typeof fetch,
+        log: silentLog,
+      });
+
+      const waitMinutes = ((await connectionRow(v.id)).next_sync_at!.getTime() - Date.now()) / 60_000;
+      expect(waitMinutes).toBeGreaterThan(10);
+      expect(waitMinutes).toBeLessThan(20);
     });
 
     it('picks the connection up again when the retry falls due, and clears the count', async () => {

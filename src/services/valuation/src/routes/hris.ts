@@ -30,7 +30,12 @@ import {
   upsertConnection,
   type HrisConnectionRow,
 } from '../repos/hrisConnections.js';
-import { describeConnectorFailure, IntegrationError, ReconnectRequiredError } from '../clients/deadline.js';
+import {
+  describeConnectorFailure,
+  IntegrationError,
+  ReconnectRequiredError,
+  retryAfterSecondsFor,
+} from '../clients/deadline.js';
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { createGrant } from '../repos/grants.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
@@ -199,6 +204,10 @@ export async function syncHrisConnection(
     // the client verbatim. See `describeConnectorFailure`.
     await recordSyncError(deps.pool, connection.id, describeConnectorFailure(err, OUR_SYNC_FAILURE), {
       terminal: err instanceof ReconnectRequiredError,
+      // When the provider named a time, the schedule waits at least that long
+      // — the sentence has said "try again in about 120s" since R255 while the
+      // sweep came back in fifteen minutes regardless.
+      retryAfterSeconds: retryAfterSecondsFor(err),
     }).catch(() => undefined);
     throw err;
   }
