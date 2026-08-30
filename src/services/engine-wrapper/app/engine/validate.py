@@ -271,6 +271,9 @@ def _check_opm_inputs(c: _Collector, inputs: dict) -> None:
 def _check_income(c: _Collector, inputs: dict, *, auto_wacc: bool = False) -> None:
     income = _dict(inputs.get("income"))
     fcf = income.get("free_cash_flows")
+    # The flow the Gordon perpetuity capitalises, kept for the check further
+    # down that needs the terminal method resolved first.
+    final_flow: float | None = None
     if not isinstance(fcf, list) or not fcf:
         c.error(
             "required",
@@ -300,6 +303,8 @@ def _check_income(c: _Collector, inputs: dict, *, auto_wacc: bool = False) -> No
                     f"free_cash_flows[{i}] must be a finite number",
                 )
         clean = [v for v in flows if v is not None]
+        if len(clean) == len(flows):
+            final_flow = clean[-1]
         if clean and all(v <= 0 for v in clean):
             c.warn(
                 "all_negative_fcf",
@@ -333,6 +338,39 @@ def _check_income(c: _Collector, inputs: dict, *, auto_wacc: bool = False) -> No
     #
     # Absent still means zero. Anything present has to be a number.
     terminal_method = _check_dcf_terminal(c, income)
+
+    # The Gordon perpetuity reads exactly one of the projected flows — the last
+    # one — and capitalises it forever. `all_negative_fcf` above warns on the
+    # wrong predicate for the failure its own hint describes: a forecast of
+    # [1M, 1M, 1M, 1M, -1M] is not "every projected cash flow", so it cleared the
+    # pre-flight with `ok: true` and nothing said, and then concluded a
+    # *negative* enterprise value of -$1.54M out of a positive $2.36M explicit
+    # period — the terminal leg alone was -$3.90M. One bad terminal year, which
+    # is what a big final-year capex or a working-capital build looks like in a
+    # model, inverts the sign of the whole approach.
+    #
+    # Zero is included and is the quieter half: `FCF·(1+g)/(r−g)` is exactly
+    # 0.00, so the terminal value silently disappears and the DCF becomes the
+    # explicit period alone — typically a third of the value a reader expects,
+    # with no line in the result saying a terminal value was struck at all.
+    #
+    # A warning rather than an error, like `all_negative_fcf`: the arithmetic is
+    # sound and the flow may be exactly what the analyst means, but a perpetuity
+    # is a claim about a stable mature business and the last forecast year is
+    # the one input that claim rests on. Only for `gordon` — an exit multiple
+    # capitalises nothing and strikes its multiple on `terminal_metric`, which
+    # `income_dcf` already refuses when it is not positive.
+    if terminal_method == "gordon" and final_flow is not None and final_flow <= 0:
+        c.warn(
+            "terminal_flow_not_positive",
+            "inputs.income.free_cash_flows",
+            f"the final projected cash flow is {final_flow:g}, and the Gordon terminal "
+            "value capitalises that one flow in perpetuity",
+            "A non-positive terminal flow makes the terminal value zero or negative, "
+            "which can invert the sign of the whole income approach. Extend the "
+            "forecast to a normalised year, use the exit-multiple terminal method, or "
+            "reweight away from the income approach.",
+        )
 
     raw_growth = income.get("terminal_growth")
     growth = 0.0

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.engine.approaches import income_dcf
 from app.engine.compute import compute
 from app.engine.debt_valuation import (
     convertible_note,
@@ -20,6 +21,7 @@ from app.engine.debt_valuation import (
     yield_dcf,
 )
 from app.engine.errors import EngineInputError
+from app.engine.validate import split_issues, validate_payload
 
 # The ordinary shape of a 2023-24 down round: $80M of preference stacked over a
 # $5M post-money. Common is deeply out of the money but not worthless.
@@ -187,3 +189,74 @@ class TestScheduleDating:
         # the note's straight-debt floor.
         assert priced["fair_value"] > priced["parity"] > 0
         assert priced["option_value"] > 0
+
+
+# ── the one flow the Gordon perpetuity actually reads ────────────────────────
+
+
+class TestTerminalFlow:
+    """`all_negative_fcf` warns on "every projected cash flow"; the Gordon
+    terminal value reads exactly one of them."""
+
+    BASE = {
+        "weight_asset": 0,
+        "weight_opm": 0,
+        "weight_income": 1,
+        "weight_market": 0,
+        "dlom": 0.2,
+    }
+
+    @staticmethod
+    def _payload(flows):
+        return {
+            "income": {
+                "free_cash_flows": flows,
+                "discount_rate": 0.15,
+                "terminal_growth": 0.02,
+            }
+        }
+
+    @classmethod
+    def _warn_codes(cls, payload):
+        _, warnings = split_issues(validate_payload(cls.BASE, payload))
+        return [w.code for w in warnings]
+
+    def test_a_negative_terminal_year_is_warned_about(self):
+        """Four good years and one bad one is not "every projected cash flow",
+        so nothing used to be said — and the approach comes back negative."""
+        warn_codes = self._warn_codes(self._payload([1e6, 1e6, 1e6, 1e6, -1e6]))
+        assert "terminal_flow_not_positive" in warn_codes
+        assert "all_negative_fcf" not in warn_codes
+
+        # What the warning is about: the terminal leg alone is -$3.90M against a
+        # +$2.36M explicit period, so the whole approach inverts.
+        priced = income_dcf([1e6, 1e6, 1e6, 1e6, -1e6], 0.15, 0.02)
+        assert priced["pv_explicit"] > 0
+        assert priced["pv_terminal"] < 0
+        assert priced["enterprise_value"] < 0
+
+    def test_a_zero_terminal_year_is_the_quieter_half(self):
+        """`FCF·(1+g)/(r−g)` is exactly 0.00, so the terminal value disappears
+        and the DCF silently becomes its explicit period alone."""
+        assert "terminal_flow_not_positive" in self._warn_codes(
+            self._payload([1e6, 1e6, 1e6, 1e6, 0.0])
+        )
+
+        priced = income_dcf([1e6, 1e6, 1e6, 1e6, 0.0], 0.15, 0.02)
+        assert priced["terminal_value"] == 0.0
+        assert priced["enterprise_value"] == priced["pv_explicit"]
+
+    def test_an_ordinary_forecast_is_not_warned_about(self):
+        assert "terminal_flow_not_positive" not in self._warn_codes(
+            self._payload([1e6, 1.1e6, 1.2e6, 1.3e6, 1.4e6])
+        )
+
+    def test_an_exit_multiple_terminal_value_is_not_warned_about(self):
+        """It capitalises nothing — the multiple is struck on `terminal_metric`,
+        which `income_dcf` already refuses when it is not positive."""
+        payload = self._payload([1e6, 1e6, 1e6, 1e6, -1e6])
+        payload["income"].update(
+            {"terminal_method": "exit_multiple", "exit_multiple": 8.0, "terminal_metric": 2e6}
+        )
+        payload["income"].pop("terminal_growth")
+        assert "terminal_flow_not_positive" not in self._warn_codes(payload)
