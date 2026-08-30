@@ -345,6 +345,60 @@ describe('PartnerDetailPage — the API token panel', () => {
     expect(await screen.findByText('Could not load API tokens.')).toBeInTheDocument();
   });
 
+  /**
+   * R226. The panel held one nullable list and coerced it with `?? []` before
+   * deciding what to draw, so "No active tokens." was printed both during the
+   * load and — under the banner — after it failed. On a credentials surface
+   * that is the sentence that decides whether anyone goes looking for the key
+   * a partner's integration is still authenticating with. Its siblings, the
+   * personal-token card in Settings and the same panel in the partner portal,
+   * both wait for the reply; this one did not.
+   */
+  it('does not report unread tokens as no live credential', async () => {
+    mockApi({}, [
+      {
+        when: (path, method) => method === 'GET' && path.includes('/tokens'),
+        reply: () => problem(500, 'boom'),
+      },
+    ]);
+    renderPage();
+
+    await screen.findByText('Could not load API tokens.');
+    expect(screen.queryByText('No active tokens.')).not.toBeInTheDocument();
+  });
+
+  it('waits before saying a partner holds no active token', async () => {
+    // A token read that never comes back: the panel must show the wait rather
+    // than the answer it would have given if the list had arrived empty.
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) =>
+      String(url).includes('/tokens')
+        ? (new Promise(() => {}) as Promise<Response>)
+        : Promise.resolve(json({ partner: detail, valuations: [], page: 1, per_page: 10, total: 0 })),
+    );
+    renderPage();
+
+    expect(await screen.findByText('Loading API tokens')).toBeInTheDocument();
+    expect(screen.queryByText('No active tokens.')).not.toBeInTheDocument();
+  });
+
+  it('re-runs the token read from the failure note', async () => {
+    let attempts = 0;
+    mockApi({}, [
+      {
+        when: (path, method) => method === 'GET' && path.includes('/tokens'),
+        reply: () => (++attempts === 1 ? problem(500, 'boom') : json({ tokens: [], truncated: false })),
+      },
+    ]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('Could not load API tokens.');
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('No active tokens.')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load API tokens.')).not.toBeInTheDocument();
+  });
+
   it('reports a refused issue without clearing the name that was typed', async () => {
     mockApi({}, [
       {

@@ -237,8 +237,18 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
   const [tokensTruncated, setTokensTruncated] = useState(false);
   const [name, setName] = useState('');
   const [issued, setIssued] = useState<{ name: string; secret: string } | null>(null);
+  /*
+   * The failed *read* is held apart from a refused create or revoke, because
+   * the panel draws a different thing for each. An action failure is a banner
+   * over a list that is still true; a read failure means there is no list, and
+   * "No active tokens." underneath it is the panel telling an administrator
+   * that this partner's integration holds no live credential — which is the
+   * one sentence on this screen that decides whether anyone goes looking.
+   */
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { token, retryProps } = useRetry(() => setLoadError(null));
 
   // `:id` changes without this page being torn down — one firm's detail links
   // straight to another's — so a late reply lists one partner's live API
@@ -254,11 +264,12 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
       if (current()) {
         setTokens(rows);
         setTokensTruncated(truncated);
+        setLoadError(null);
       }
     } catch {
-      if (current()) setError('Could not load API tokens.');
+      if (current()) setLoadError('Could not load API tokens.');
     }
-  }, [partnerId, claim]);
+  }, [partnerId, claim, token]);
 
   useEffect(() => {
     void load();
@@ -288,12 +299,12 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
     }
   });
 
-  const revoke = async (token: ApiToken) => {
-    if (!window.confirm(`Revoke "${token.name}"? Any integration using it stops working immediately.`))
+  const revoke = async (target: ApiToken) => {
+    if (!window.confirm(`Revoke "${target.name}"? Any integration using it stops working immediately.`))
       return;
     setBusy(true);
     try {
-      await api(`/api-tokens/${token.id}`, { method: 'DELETE' });
+      await api(`/api-tokens/${target.id}`, { method: 'DELETE' });
       await load();
     } catch {
       setError('Could not revoke the token.');
@@ -332,6 +343,11 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
         </div>
       )}
 
+      {loadError && (
+        <div className="mt-4">
+          <LoadError message={loadError} {...retryProps} />
+        </div>
+      )}
       {error && (
         <div className="mt-4">
           <ErrorNote>{error}</ErrorNote>
@@ -355,9 +371,9 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
         </Button>
       </form>
 
-      {live.length === 0 ? (
-        <p className="mt-4 text-sm text-ink-400">No active tokens.</p>
-      ) : (
+      {!tokens && !loadError && <Spinner label="Loading API tokens" />}
+      {tokens && live.length === 0 && <p className="mt-4 text-sm text-ink-400">No active tokens.</p>}
+      {live.length > 0 && (
         <div className="mt-4 overflow-x-auto overscroll-x-contain">
           <table className="w-full min-w-[560px] text-sm" aria-label="API tokens">
             <thead>
