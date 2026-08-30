@@ -15,13 +15,13 @@ import { scanRoutes, type SourceRoute } from './routeSource.js';
  * The list was hand-maintained and stood inside the integration file, which
  * has two consequences that both showed up:
  *
- *   * it goes stale silently. Thirteen collection endpoints were added after
- *     the list was written — the admin billing dashboard, the plan catalogue,
- *     the firm's intake links, the grant templates, the tag catalogue, the
- *     token consoles, `/me/billing`, `/me/subscription`, the user picker and
- *     the user export among them — and none of them was ever measured. A
- *     missing endpoint does not fail; it is simply not asked, which is the
- *     failure mode of every hand-kept roster in this repo; and
+ *   * it goes stale silently. Eleven collection endpoints were added after the
+ *     list was written — the admin billing dashboard, the plan catalogue, the
+ *     firm's intake links, the two token consoles, the admin blog roster, the
+ *     retention policies, `/me/billing`, `/me/subscription`, the user picker
+ *     and the user CSV export — and none of them was ever measured. A missing
+ *     endpoint does not fail; it is simply not asked, which is the failure
+ *     mode of every hand-kept roster in this repo; and
  *   * it could only be checked where a database is up. The suite that would
  *     have noticed the drift skips itself entirely on a machine with no
  *     Postgres, so on those machines the roster had no guard at all.
@@ -64,8 +64,6 @@ export const SCALING_ENDPOINTS: Array<[string, string]> = [
   ['funds', '/api/v1/funds'],
   ['debt instruments', '/api/v1/debt/instruments'],
   ['report templates', '/api/v1/report-templates'],
-  ['grant templates', '/api/v1/grant-templates'],
-  ['tag catalogue', '/api/v1/tag-catalogue'],
   ['blog posts', '/api/v1/blog/posts'],
   ['help articles', '/api/v1/help/articles'],
   ['support messages', '/api/v1/support/messages'],

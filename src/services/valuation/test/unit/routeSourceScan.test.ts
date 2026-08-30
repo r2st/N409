@@ -100,4 +100,28 @@ describe('the route source scan', () => {
     expect(patch!.body).toContain('activeFromPatch');
     expect(patch!.body).toContain('User not found');
   });
+
+  it('stops a handler body at the next registration, not 250 lines later', () => {
+    // The other end of the same cut, and the one that was missing. A one-line
+    // handler closes with `}));`, which the indentation terminator does not
+    // match, so its body ran to the `maxBodyLines` cap and absorbed every
+    // handler registered underneath it inside that window.
+    //
+    // `GET /api/v1/grant-templates` is three lines returning a module
+    // constant. Its body used to reach `listGrants(...)` and
+    // `requirePrincipal(req)` in the route below it, which is how
+    // `authorizationCoverageCensus` came to report it — and two others like it
+    // — as consulting the caller.
+    const constant = ALL.find((r) => key(r) === 'GET /api/v1/grant-templates');
+    expect(constant).toBeDefined();
+    expect(constant!.body).toContain('VESTING_TEMPLATES');
+    expect(constant!.body).not.toContain('requirePrincipal');
+    expect(constant!.body).not.toContain('listGrants');
+
+    // And the bound did not cost the block-bodied case anything: the route
+    // registered immediately after it still carries its own guard.
+    const grants = ALL.find((r) => key(r) === 'GET /api/v1/valuations/:id/grants');
+    expect(grants!.body).toContain('requirePrincipal');
+    expect(grants!.body).toContain('listGrants');
+  });
 });

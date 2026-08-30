@@ -211,6 +211,15 @@ function consultsCaller(route: Route): boolean {
  * response is a *constant of the codebase* — it would be identical for a
  * platform with no rows in it — because that is the only case where "who is
  * asking" genuinely cannot change the answer.
+ *
+ * Three of the four below were not on this list until R250, and they were not
+ * passing the sweep either — they were passing `bodyFrom`. All three are
+ * one-line handlers, which close with `}));` rather than with the `});` the
+ * scan terminates on, so each one's "body" ran on into the routes registered
+ * beneath it and the sweep found the *next* handler's `requirePrincipal`. The
+ * scan is fixed (`support/routeSource.ts`), and the fix is what surfaced them:
+ * a route that consults nobody has to say why, rather than borrowing a
+ * neighbour's guard.
  */
 const SAME_FOR_EVERYONE: ReadonlyArray<{ method: string; url: string; reason: string }> = [
   {
@@ -220,6 +229,30 @@ const SAME_FOR_EVERYONE: ReadonlyArray<{ method: string; url: string; reason: st
       'the questionnaire form for a report kind — sections and cross-field rules compiled into the ' +
       'binary, selected by ?kind and read from no table; the wizard renders from it before an ' +
       'engagement exists, so there is no row and no tenant for it to be scoped to',
+  },
+  {
+    method: 'GET',
+    url: '/api/v1/cap-table/formats',
+    reason:
+      'the column-mapping presets for the cap-table importer — FORMAT_PRESETS and CAP_TABLE_FIELDS, ' +
+      'both module constants describing the file layouts Carta and Pulley export; the handler takes ' +
+      'no request argument at all and reads no table, so there is nothing about the caller to consult',
+  },
+  {
+    method: 'GET',
+    url: '/api/v1/grant-templates',
+    reason:
+      'the vesting-schedule presets the grant form offers — VESTING_TEMPLATES, a module constant ' +
+      'describing four-year-with-a-cliff and its variants; it names no engagement and no tenant, and ' +
+      'the same list is correct for a platform with no grants in it',
+  },
+  {
+    method: 'GET',
+    url: '/api/v1/tag-catalogue',
+    reason:
+      'the tag vocabulary itself, from `catalogue()` over TAG_CATALOGUE — the same fixed list the ' +
+      'tagging agent is given and the one both write paths validate against, so it is a description ' +
+      'of the codebase rather than of anybody’s data',
   },
 ];
 

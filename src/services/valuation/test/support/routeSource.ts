@@ -36,6 +36,8 @@ import path from 'node:path';
  * source by `routeSourceScan.test.ts`, so a fourth spelling has to be added
  * here rather than silently shrinking the table.
  *
+ * The third thing they agreed on was where a handler *ends* — see `bodyFrom`.
+ *
  * It stays a source scan, and inherits that shape's limits: it sees what is
  * written, not what is mounted. `mutatingValuationRoutes` (routeTable.ts) reads
  * the live tree for the sweeps that need the real thing.
@@ -90,12 +92,26 @@ function prefixRanges(lines: string[]): Array<{ from: number; to: number; prefix
  * level deeper than one registered at the top of the function, and a hard-coded
  * column truncates its body at the first nested closing brace — which reads as
  * a handler that calls no guard.
+ *
+ * `stopAt` is the next registration in the file, and it is the half that was
+ * missing. The indentation terminator only fires on a handler written as a
+ * block; a one-line handler closes with `}));` or `);`, neither of which
+ * matches, so the body ran on for `maxBodyLines` — 250 — and swallowed however
+ * many *later* handlers fitted in them. Every census over these bodies then
+ * asked its question of a neighbour's code: three collection routes that
+ * answer from a compile-time constant and consult nobody were reported as
+ * consulting the caller by `authorizationCoverageCensus`, because the guard it
+ * found belonged to the route registered underneath them.
+ *
+ * A handler cannot extend past the next registration, so the bound costs
+ * nothing and closes the whole class — it is not specific to the one-liner
+ * spelling that exposed it.
  */
-function bodyFrom(lines: string[], start: number, maxLines: number): string {
+function bodyFrom(lines: string[], start: number, maxLines: number, stopAt = lines.length): string {
   const indent = /^\s*/.exec(lines[start] ?? '')![0];
   const closes = new RegExp(`^${indent}\\}\\);\\s*$`);
   let body = '';
-  for (let j = start; j < Math.min(lines.length, start + maxLines); j++) {
+  for (let j = start; j < Math.min(lines.length, start + maxLines, stopAt); j++) {
     body += `${lines[j]}\n`;
     if (j > start && closes.test(lines[j] ?? '')) break;
   }
@@ -111,6 +127,7 @@ export function scanRoutes(routesDir: string, opts: { maxBodyLines?: number } = 
     const lines = source.split('\n');
     const ranges = prefixRanges(lines);
 
+    const registrations = lines.map((line, i) => (VERB.test(line) ? i : -1)).filter((i) => i >= 0);
     lines.forEach((line, i) => {
       const verb = VERB.exec(line);
       if (!verb) return;
@@ -124,7 +141,7 @@ export function scanRoutes(routesDir: string, opts: { maxBodyLines?: number } = 
         line: i + 1,
         method: verb[1]!.toUpperCase(),
         url: resolved,
-        body: bodyFrom(lines, i, maxBodyLines),
+        body: bodyFrom(lines, i, maxBodyLines, registrations.find((at) => at > i) ?? lines.length),
       });
     });
   }
