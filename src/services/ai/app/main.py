@@ -50,7 +50,7 @@ from .perplexity import verify_api_key as verify_perplexity_key
 from .websearch import configured_provider as search_provider
 from .websearch import is_configured as search_configured
 from .websearch import verify_provider as verify_search_provider
-from .pipelines import PIPELINES, TruncatedCompletionError
+from .pipelines import PIPELINES, SuppressedCompletionError, TruncatedCompletionError
 from .ratelimit import limit_per_minute, make_rate_limit_middleware
 from .security_headers import make_security_headers_middleware
 
@@ -620,6 +620,11 @@ def run_pipeline(pipeline: str, request: PipelineRequest) -> PipelineResponse:
     except OpenRouterError as exc:
         # 503 → the valuation service records the job as failed and returns 502.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except SuppressedCompletionError as exc:
+        # Ahead of the ValueError arm for the same reason the truncation one is,
+        # and 422 for the same reason: the same prompt trips the same filter
+        # every time, so a 502 would be retried and would fail identically.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except TruncatedCompletionError as exc:
         # Ahead of the ValueError arm, and 422 rather than its 502: the answer
         # was cut off because the request asked for more output than the cap

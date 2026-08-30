@@ -51,6 +51,7 @@ import httpx
 from .http_client import new_client
 from .llm_http import (
     MAX_RETRIES,
+    SUPPRESSED_FINISH_REASONS,
     TRUNCATED_FINISH_REASONS,
     BudgetExhausted as _BudgetExhausted,
     Deadline,
@@ -640,6 +641,15 @@ def chat(
         billed = estimate_tokens(system, user, content) if estimated else self_total
         cumulative = _budget.add(billed)
         finish_reason = _stop_reason(data)
+        if finish_reason in SUPPRESSED_FINISH_REASONS:
+            _log.warning(
+                "llm completion withheld by a content filter",
+                extra={
+                    "event": "llm_suppressed",
+                    "model": f"{MODEL_PREFIX}{model_id}",
+                    "detail": finish_reason,
+                },
+            )
         if finish_reason in TRUNCATED_FINISH_REASONS:
             # The operator who has to raise BEDROCK_MAX_TOKENS has no other way
             # to learn that it is being hit; the caller may still accept the

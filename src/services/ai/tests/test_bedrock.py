@@ -396,6 +396,35 @@ class TestChat:
         assert result.finish_reason == "end_turn"
         assert not result.truncated
 
+    @pytest.mark.parametrize("reason", ["content_filtered", "guardrail_intervened"])
+    def test_a_withheld_answer_is_seen_as_one_rather_than_as_a_completion(
+        self, monkeypatch, reason
+    ):
+        """Converse's other two ways of saying "this is not the model's answer".
+
+        A guardrail substitutes its own message for the model's, so what is in
+        the content block was written by nobody with an opinion about the
+        subject — and `.truncated` is False for it, which is what made it read
+        as a whole answer.
+        """
+        configure(monkeypatch)
+        body = {
+            **CONVERSE_OK,
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"text": "Sorry, I can't help with that."}],
+                }
+            },
+            "stopReason": reason,
+        }
+        result = chat(
+            "s", "u", model=PREFIXED, client=transport(lambda r: httpx.Response(200, json=body))
+        )
+        assert result.finish_reason == reason
+        assert result.suppressed is True
+        assert result.truncated is False
+
     def test_a_missing_or_junk_stop_reason_is_simply_unknown(self, monkeypatch):
         # Provider-controlled, like every other level of the body: absent, or
         # present as a non-string, must not raise and must not read as whole-

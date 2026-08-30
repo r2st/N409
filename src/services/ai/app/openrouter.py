@@ -24,6 +24,7 @@ from .llm_http import (
     MAX_RETRY_AFTER_S,
     MIN_ATTEMPT_S,
     RETRY_BACKOFF_BASE_S,
+    SUPPRESSED_FINISH_REASONS,
     TIMEOUT_S,
     TRUNCATED_FINISH_REASONS,
     BudgetExhausted as _BudgetExhausted,
@@ -162,6 +163,19 @@ class LlmResult:
         was recorded as having succeeded.
         """
         return self.finish_reason in TRUNCATED_FINISH_REASONS
+
+    @property
+    def suppressed(self) -> bool:
+        """True when the provider withheld the answer rather than the model finishing it.
+
+        The twin of `truncated`, and it arrives looking even more like a
+        success: a content filter returns the fragment written before it
+        tripped, and a Bedrock guardrail returns its own message in place of
+        the model's. Either way the text in `content` is not what was asked
+        for, and nothing downstream can tell — which is the whole argument
+        `truncated` was added on.
+        """
+        return self.finish_reason in SUPPRESSED_FINISH_REASONS
 
 
 def max_output_tokens() -> int:
@@ -576,6 +590,15 @@ def chat(
             billed = _estimate_tokens(system, user, content) if estimated else self_total
             cumulative = _budget.add(billed)
             finish_reason = _finish_reason(data)
+            if finish_reason in SUPPRESSED_FINISH_REASONS:
+                _log.warning(
+                    "llm completion withheld by a content filter",
+                    extra={
+                        "event": "llm_suppressed",
+                        "model": candidate,
+                        "detail": finish_reason,
+                    },
+                )
             if finish_reason in TRUNCATED_FINISH_REASONS:
                 # Worth a line of its own: the caller may well accept this
                 # answer, and the operator who has to raise OPENROUTER_MAX_TOKENS

@@ -29,7 +29,7 @@ import pytest
 from app import perplexity
 from app import research as research_mod
 from app.openrouter import LlmResult
-from app.research import TRUNCATED_ANSWER, research
+from app.research import SUPPRESSED_ANSWER, TRUNCATED_ANSWER, research
 from app.websearch import SearchHit
 
 HITS = [
@@ -204,4 +204,72 @@ class TestThePerplexityPath:
         body = {**PPLX_TRUNCATED, "choices": [{"message": {"content": "Whole."}, "finish_reason": "stop"}]}
         out = research("public question", perplexity_client=_pplx(lambda r: httpx.Response(200, json=body)))
         assert out.content == "Whole."
+        assert out.grounded is True
+
+
+# ── The same argument, one stop reason over ──────────────────────────────────
+#
+# A content filter and a Bedrock guardrail say "this is not the model's
+# finished answer" as plainly as the output cap does, and on this path — free
+# text, nothing parsing it — either one arrived as a 200 carrying real prose
+# and real citations. A guardrail substitutes its own message for the model's,
+# so the text stored `grounded` and handed to the narrative agent was written
+# by neither the model nor anybody else with an opinion about the market.
+
+
+def _suppressed_chat(system, user, *, model=None, client=None):
+    return LlmResult(
+        model="openai/gpt-oss-20b:free",
+        content="I can't help with that request.",
+        prompt_tokens=40,
+        completion_tokens=8,
+        finish_reason="content_filter",
+    )
+
+
+class TestAWithheldSynthesis:
+    @pytest.fixture
+    def withheld(self, monkeypatch, found):
+        monkeypatch.setattr(research_mod, "chat", _suppressed_chat)
+        return research("public question")
+
+    def test_it_is_not_grounded_so_no_report_can_quote_it(self, withheld):
+        assert withheld.grounded is False
+
+    def test_the_filters_own_words_are_not_carried_as_the_answer(self, withheld):
+        assert "can't help" not in withheld.content
+        assert withheld.content == SUPPRESSED_ANSWER
+
+    def test_the_sources_survive(self, withheld):
+        assert [c.url for c in withheld.citations] == [h.url for h in HITS]
+
+    def test_a_finished_answer_is_untouched(self, monkeypatch, found):
+        def complete(system, user, *, model=None, client=None):
+            return LlmResult(model="m", content="A finished answer [1].", finish_reason="stop")
+
+        monkeypatch.setattr(research_mod, "chat", complete)
+        assert research("public question").grounded is True
+
+    def test_a_withheld_sonar_answer_falls_through_to_the_search_path(
+        self, monkeypatch, found
+    ):
+        """Somewhere better to go: the keyless path asks the same public
+        question of a different model, which may well not trip anything."""
+        monkeypatch.setenv("PERPLEXITY_API_KEY", PPLX_KEY)
+        perplexity.reset_key_cache()
+
+        def complete(system, user, *, model=None, client=None):
+            return LlmResult(model="openai/gpt-oss-20b:free", content="A finished answer [1].")
+
+        monkeypatch.setattr(research_mod, "chat", complete)
+        body = {
+            **PPLX_TRUNCATED,
+            "choices": [
+                {"message": {"content": "I can't help"}, "finish_reason": "content_filter"}
+            ],
+        }
+        out = research(
+            "public question", perplexity_client=_pplx(lambda r: httpx.Response(200, json=body))
+        )
+        assert out.model.startswith("duckduckgo+")
         assert out.grounded is True

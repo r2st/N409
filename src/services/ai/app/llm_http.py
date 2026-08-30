@@ -166,6 +166,21 @@ def token_count(value: object) -> int:
 #: than because it had finished. Spelled several ways across providers.
 TRUNCATED_FINISH_REASONS = frozenset({"length", "max_tokens", "MAX_TOKENS"})
 
+#: Values that mean the provider *withheld* the answer rather than the model
+#: finishing it: a content filter tripped, or a Bedrock guardrail stepped in.
+#:
+#: The second half of the same story as `TRUNCATED_FINISH_REASONS`, and it was
+#: the half nobody read. Both providers can say this — chat-completions spells
+#: it `content_filter`, Converse spells it `content_filtered` and, when a
+#: guardrail is attached to the account, `guardrail_intervened` — and in both
+#: cases what comes back in the content field is *not the model's answer*: it
+#: is the fragment generated before the filter tripped, or the guardrail's own
+#: substituted message. Returned as a completion, that fragment or that
+#: substitution is quoted as though the model had written it.
+SUPPRESSED_FINISH_REASONS = frozenset(
+    {"content_filter", "content_filtered", "guardrail_intervened"}
+)
+
 
 def finish_reason(data: dict) -> str | None:
     """Why the model stopped, if it said. Every level is provider-controlled."""
@@ -182,6 +197,11 @@ def finish_reason(data: dict) -> str | None:
 def completion_truncated(data: dict) -> bool:
     """True when the body says the answer was cut off at the output cap."""
     return finish_reason(data) in TRUNCATED_FINISH_REASONS
+
+
+def completion_suppressed(data: dict) -> bool:
+    """True when the body says the provider withheld the answer."""
+    return finish_reason(data) in SUPPRESSED_FINISH_REASONS
 
 
 def stop_reason(data: dict) -> str | None:

@@ -140,6 +140,23 @@ TRUNCATED_ANSWER = (
     "narrower question, or raise OPENROUTER_MAX_TOKENS, and re-run."
 )
 
+#: What a result whose write-up the provider withheld says where the answer
+#: would be.
+#:
+#: The same argument as `TRUNCATED_ANSWER`, one stop reason over. A content
+#: filter returns the fragment written before it tripped and a Bedrock
+#: guardrail returns its own message instead of the model's, and on this path —
+#: free text, nothing parsing it — either one is stored `grounded`, listed in
+#: the sources exhibit and handed to the narrative agent as material for a
+#: 409A's market discussion. A guardrail's "I can't help with that" quoted as a
+#: market conclusion is worse than no conclusion, and indistinguishable from one.
+SUPPRESSED_ANSWER = (
+    "Sources were retrieved for this question but the write-up was withheld by "
+    "the provider's content filter, so what came back is not the model's answer "
+    "and has been discarded rather than quoted. The sources below are listed "
+    "unread. Re-run the question, or ask it differently."
+)
+
 _log = logging.getLogger("research")
 
 _CITATION_RE = re.compile(r"\[(\d{1,2})\]")
@@ -307,6 +324,29 @@ def fallback_research(
             # Ordered as retrieved: `order_by_citation` promotes the sources an
             # answer cited, and there is no answer to have cited any of them.
             citations=[Citation(url=h.url, title=h.title) for h in hits],
+            synthesized=False,
+        )
+
+    if answer.suppressed:
+        # See `SUPPRESSED_ANSWER`. Ordered as retrieved rather than by citation
+        # for the same reason the truncated case is: the answer is being
+        # discarded, so its ordering is not evidence of anything.
+        _log.warning(
+            "research synthesis withheld by a content filter, returning sources unread",
+            extra={
+                "event": "research_suppressed",
+                "provider": provider,
+                "model": answer.model,
+                "detail": answer.finish_reason,
+                "count": len(hits),
+            },
+        )
+        return ResearchResult(
+            model=f"{provider}+{answer.model}",
+            content=SUPPRESSED_ANSWER,
+            citations=[Citation(url=h.url, title=h.title) for h in hits],
+            prompt_tokens=answer.prompt_tokens,
+            completion_tokens=answer.completion_tokens,
             synthesized=False,
         )
 

@@ -648,6 +648,31 @@ class TruncatedCompletionError(ValueError):
     """
 
 
+class SuppressedCompletionError(ValueError):
+    """The provider withheld the answer — a content filter or a guardrail.
+
+    A `ValueError` for the same reason `TruncatedCompletionError` is, and its
+    own type for the same reason: `main` answers 422 rather than 502, because
+    the same prompt trips the same filter however many times it is sent and the
+    fix is in the request, not in retrying it.
+
+    Refused even when what came back happens to parse, which is where this
+    differs from truncation. A truncated answer's prefix is the model's own
+    words and is worth keeping; a suppressed one's content is the fragment that
+    survived the filter, or the guardrail's substituted message — text the model
+    did not write, about to be recorded as text the model wrote.
+    """
+
+
+def _suppressed_error(llm: LlmResult) -> SuppressedCompletionError:
+    """The refusal, naming what the provider said it did."""
+    return SuppressedCompletionError(
+        f"the provider withheld this completion ({llm.finish_reason}) — the answer "
+        "returned is not the model's, so nothing was read from it; review the "
+        "prompt and the documents it carries"
+    )
+
+
 def _truncated_error(llm: LlmResult) -> TruncatedCompletionError:
     """The refusal, naming the cap that was actually hit.
 
@@ -694,7 +719,14 @@ def _safe_result(llm: LlmResult) -> dict:
     answer in JSON, of a shape the prompt did not ask for, and a retry can fix
     that. Raised as a plain `ValueError`, which `main` already answers 502 —
     "the model said something unusable" — rather than recording a success.
+
+    A withheld completion is the fourth way in, and it does not need the parse
+    to fail: `content` on that path is the fragment a content filter left, or a
+    guardrail's substituted message, so it is refused before anything is read
+    from it. See `SuppressedCompletionError`.
     """
+    if llm.suppressed:
+        raise _suppressed_error(llm)
     try:
         parsed = extract_json(llm.content)
     except ValueError as exc:

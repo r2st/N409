@@ -59,6 +59,7 @@ from .llm_http import (
     DeadlineExceeded as _BaseDeadlineExceeded,
     TokenLedger,
     backoff_sleep,
+    completion_suppressed,
     completion_truncated,
     env_float,
     env_int,
@@ -487,6 +488,16 @@ def research(
             content = _completion_text(data)
             if not content:
                 raise PerplexityError("perplexity returned an empty completion")
+            if completion_suppressed(data):
+                # The same argument as the truncation arm below, one stop
+                # reason over: what comes back when a filter trips is the
+                # fragment written before it did, not an answer. Raised rather
+                # than degraded because `research` has somewhere better to go —
+                # the keyless path asks the same public question of a different
+                # model, which may well not trip anything.
+                raise PerplexityError(
+                    "perplexity withheld the answer (content filter) before finishing it"
+                )
             if completion_truncated(data):
                 # A 200 carrying a sentence that simply stops. Nothing here
                 # parses the answer — it is prose — so a truncated write-up was

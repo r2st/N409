@@ -322,6 +322,62 @@ class TestATruncatedCompletion:
         assert pipelines._safe_result(llm) == {"summaries": []}
 
 
+# ── A completion the provider withheld ───────────────────────────────────────
+#
+# The other half of `stopReason`, and the half nobody read. R236 taught both
+# clients to see `max_tokens`; a content filter and a Bedrock guardrail say the
+# same kind of thing — "this is not the model's finished answer" — and both
+# came back looking exactly like one. What is in `content` on that path is the
+# fragment written before the filter tripped, or the guardrail's own
+# substituted message.
+
+
+class TestASuppressedCompletion:
+    def _filtered(self, content: str, reason: str = "content_filter") -> dict:
+        return {
+            "model": "solo/model",
+            "choices": [{"message": {"content": content}, "finish_reason": reason}],
+            "usage": {"prompt_tokens": 9, "completion_tokens": 5},
+        }
+
+    @pytest.mark.parametrize(
+        "reason", ["content_filter", "content_filtered", "guardrail_intervened"]
+    )
+    def test_every_spelling_of_withheld_counts(self, reason, solo):
+        client = _Client([_Reply(self._filtered("partial", reason))])
+        result = chat("sys", "user", client=client)
+        assert result.suppressed is True
+        assert result.truncated is False
+
+    def test_a_finished_answer_is_not_marked_suppressed(self, solo):
+        assert chat("sys", "user", client=_Client([_Reply(GOOD_BODY)])).suppressed is False
+
+    def test_a_withheld_answer_is_refused_rather_than_folded_into_notes(self):
+        """What it did before: a guardrail's "I can't help with that" recorded
+        as the model's answer, under `notes`, on a job row saying `succeeded`."""
+        llm = LlmResult(
+            model="m",
+            content="Sorry, I can't help with that request.",
+            finish_reason="guardrail_intervened",
+        )
+        with pytest.raises(pipelines.SuppressedCompletionError) as caught:
+            pipelines._safe_result(llm)
+        assert "withheld" in str(caught.value)
+
+    def test_it_is_refused_even_when_what_came_back_happens_to_parse(self):
+        """Where this differs from truncation, and why. A truncated answer's
+        prefix is the model's own words; a suppressed one's content is whatever
+        survived the filter, or text the model never wrote at all."""
+        llm = LlmResult(model="m", content='{"summaries": []}', finish_reason="content_filter")
+        with pytest.raises(pipelines.SuppressedCompletionError):
+            pipelines._safe_result(llm)
+
+    def test_it_is_a_value_error_so_the_old_catch_still_holds(self):
+        llm = LlmResult(model="m", content="anything", finish_reason="content_filter")
+        with pytest.raises(ValueError):
+            pipelines._safe_result(llm)
+
+
 # ── Accounting, when the provider does not do it for us ──────────────────────
 
 
@@ -429,6 +485,17 @@ class TestThePipelineRouteStatus:
         res = api.post("/ai/v1/pipelines/explain", json=PIPELINE_BODY)
         assert res.status_code == 422
         assert "output cap" in res.json()["detail"]
+
+    def test_a_withheld_answer_is_a_422_not_a_502_or_a_200(self, api, monkeypatch):
+        def _filtered(system, user, *, model=None, client=None):
+            return LlmResult(
+                model="m", content="I can't help with that.", finish_reason="content_filter"
+            )
+
+        monkeypatch.setattr(pipelines, "chat", _filtered)
+        res = api.post("/ai/v1/pipelines/explain", json=PIPELINE_BODY)
+        assert res.status_code == 422
+        assert "withheld" in res.json()["detail"]
 
     def test_a_truncated_answer_no_longer_reports_an_empty_success(self, api, monkeypatch):
         """What it did before: 200, `summary: ""`, `methodology: []` — a job row
