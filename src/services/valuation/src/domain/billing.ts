@@ -4,6 +4,8 @@
  * unit-testable without Stripe or the DB.
  */
 
+import { numberFormat } from './numberFormat.js';
+
 export interface PlanLimit {
   tier: string;
   name: string;
@@ -121,12 +123,12 @@ export function isEntryPrice(plan: Pick<PlanLimit, 'interval'>): boolean {
 export function formatMoneyCents(cents: number, currency: string): string {
   const code = (currency || 'usd').trim().toUpperCase();
   try {
-    const format = new Intl.NumberFormat('en-US', { style: 'currency', currency: code });
+    const format = numberFormat('en-US', { style: 'currency', currency: code });
     return format.format(cents / minorUnitScale(format));
   } catch {
     // A code `Intl` cannot parse: the amount is printed beside it rather than
     // withheld, and cents is the only scale left to assume.
-    const plain = new Intl.NumberFormat('en-US', {
+    const plain = numberFormat('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(cents / 100);

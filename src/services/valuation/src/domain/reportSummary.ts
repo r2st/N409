@@ -3,6 +3,7 @@ import type { CalculationRow } from '../repos/calculations.js';
 import { stageLabel } from './developmentStage.js';
 import { volatilityNarrative } from './volatility.js';
 import type { VolatilityEstimateRow } from '../repos/volatilityEstimates.js';
+import { numberFormat } from './numberFormat.js';
 
 /**
  * Executive summary + charts for the report PDF, derived from the calculation
@@ -104,7 +105,7 @@ export function num(value: unknown): number | null {
 /** `$1,234.5678` at four decimals — a per-share FMV is quoted to the cent-fraction. */
 export function formatCurrency(value: number, currency: string, fractionDigits = 2): string {
   try {
-    return new Intl.NumberFormat('en-US', {
+    return numberFormat('en-US', {
       style: 'currency',
       currency,
       minimumFractionDigits: fractionDigits,
@@ -495,7 +496,7 @@ export function buildReportSummary(
     const capTableBasis = results.fully_diluted_basis === 'cap_table_common';
     figures.push({
       label: capTableBasis ? 'Common shares outstanding' : 'Fully diluted common',
-      value: new Intl.NumberFormat('en-US').format(Math.round(dilutedShares)),
+      value: numberFormat('en-US').format(Math.round(dilutedShares)),
       note: capTableBasis
         ? 'Common classes per the cap table; options are allocated separately'
         : 'Common shares plus options outstanding',

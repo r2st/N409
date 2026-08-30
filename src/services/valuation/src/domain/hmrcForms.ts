@@ -25,6 +25,7 @@
 
 import { isIsoCalendarDate } from '@n409/shared';
 import type { ValuationKind } from './valuation.js';
+import { numberFormat } from './numberFormat.js';
 
 export type HmrcScheme = 'emi' | 'csop';
 export type HmrcFormCode = 'VAL230' | 'VAL231';
@@ -107,7 +108,7 @@ function num(value: unknown): number | null {
 function money(value: unknown, currency: string, digits = 4): string | null {
   const n = num(value);
   if (n === null) return null;
-  return new Intl.NumberFormat('en-GB', {
+  return numberFormat('en-GB', {
     style: 'currency',
     currency: currency || 'GBP',
     minimumFractionDigits: digits,
@@ -117,7 +118,7 @@ function money(value: unknown, currency: string, digits = 4): string | null {
 
 function count(value: unknown): string | null {
   const n = num(value);
-  return n === null ? null : new Intl.NumberFormat('en-GB').format(n);
+  return n === null ? null : numberFormat('en-GB').format(n);
 }
 
 function yesNo(value: unknown): string | null {

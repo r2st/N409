@@ -21,6 +21,7 @@ import { VOLATILITY_CONFIDENCE_NOTES, VOLATILITY_METHOD_LABELS } from './volatil
 import type { VolatilityEstimateRow } from '../repos/volatilityEstimates.js';
 import type { ProjectionRow, ProjectionYear } from '../repos/projections.js';
 import type { RollforwardRunRow } from '../repos/rollforwardRuns.js';
+import { numberFormat } from './numberFormat.js';
 
 /**
  * The supporting exhibits of the deliverable — the schedules a reviewer checks
@@ -1944,7 +1945,7 @@ export function allocationExhibit(
   if (paths !== null) {
     simulation.push([
       'Simulated paths',
-      new Intl.NumberFormat('en-US').format(Math.round(paths)) +
+      numberFormat('en-US').format(Math.round(paths)) +
         (allocation.antithetic === true ? ' (antithetic pairs)' : ''),
     ]);
   }

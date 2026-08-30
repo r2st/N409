@@ -4,6 +4,7 @@ import { formatCurrency, formatExactPercent, formatPercent, num } from './report
 import type { ExhibitContext } from './reportExhibits.js';
 import type { HmrcForm } from './hmrcForms.js';
 import { esc, P, section, table } from './exhibitHtml.js';
+import { numberFormat } from './numberFormat.js';
 
 /**
  * Render-time schedules for the specialty report types — the same contract
@@ -66,9 +67,7 @@ function shown(value: number, ctx: ExhibitContext, digits = 0): string {
 function count(value: unknown): string | null {
   const n = num(value);
   if (n === null) return null;
-  return Number.isInteger(n)
-    ? INT.format(n)
-    : new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(n);
+  return Number.isInteger(n) ? INT.format(n) : numberFormat('en-US', { maximumFractionDigits: 2 }).format(n);
 }
 
 function pct(value: unknown, digits = 1): string | null {

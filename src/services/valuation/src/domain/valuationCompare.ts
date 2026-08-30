@@ -19,6 +19,7 @@ import {
 import { toCsv } from './csv.js';
 import { isSpecialtyKind } from './specialty.js';
 import type { ValuationKind } from './valuation.js';
+import { numberFormat } from './numberFormat.js';
 
 /**
  * Side-by-side comparison of two valuations.
@@ -169,7 +170,7 @@ function formatValue(value: number | string | null, format: CompareFormat, curre
     case 'percent':
       return formatPercent(value);
     case 'integer':
-      return new Intl.NumberFormat('en-US').format(Math.round(value));
+      return numberFormat('en-US').format(Math.round(value));
     case 'number':
       return value.toFixed(2);
     case 'scalar':
@@ -188,7 +189,7 @@ function formatValue(value: number | string | null, format: CompareFormat, curre
  * rendering is the number the engine reported.
  */
 function formatScalar(value: number): string {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 4 }).format(value);
+  return numberFormat('en-US', { maximumFractionDigits: 4 }).format(value);
 }
 
 /**
@@ -209,7 +210,7 @@ function formatDelta(delta: number, format: CompareFormat, currency: string): st
     case 'percent':
       return `${sign}${(magnitude * 100).toFixed(1)} pts`;
     case 'integer':
-      return `${sign}${new Intl.NumberFormat('en-US').format(Math.round(magnitude))}`;
+      return `${sign}${numberFormat('en-US').format(Math.round(magnitude))}`;
     case 'scalar':
       return `${sign}${formatScalar(magnitude)}`;
     default:

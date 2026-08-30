@@ -1,6 +1,7 @@
 import type { ParamsPatch } from '../routes/params.js';
 import type { EngineInputsPatch } from '../routes/engineInputs.js';
 import type { Asc718Portfolio } from './asc718.js';
+import { numberFormat } from './numberFormat.js';
 
 /**
  * Three worked engagements, as reference data.
@@ -1760,13 +1761,13 @@ export function asc718SectionHtml(
   opts: { currency: string; grantLabels?: readonly string[] },
 ): string {
   const money = (v: number, digits = 2) =>
-    new Intl.NumberFormat('en-US', {
+    numberFormat('en-US', {
       style: 'currency',
       currency: opts.currency,
       minimumFractionDigits: digits,
       maximumFractionDigits: digits,
     }).format(v);
-  const int = (v: number) => new Intl.NumberFormat('en-US').format(Math.round(v));
+  const int = (v: number) => numberFormat('en-US').format(Math.round(v));
   const pct = (v: number) => `${(v * 100).toFixed(2)}%`;
 
   const rows = portfolio.grants
