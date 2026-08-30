@@ -46,11 +46,13 @@ import {
   invoiceLineItems,
   invoicePaidMessage,
   invoiceSections,
+  localSubscriptionStatus,
   subscriptionCanceledMessage,
   subscriptionPrice,
   trialEndingMessage,
   usageView,
   type InvoiceLineItem,
+  type LocalSubscriptionStatus,
 } from '../domain/billing.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { fitsInt4 } from '../domain/int4.js';
@@ -84,12 +86,23 @@ const billingUnavailable = (detail: string) =>
 
 const SubscribeBody = z.object({ plan_tier: z.string().min(1) });
 
-/** Stripe subscription status → local status. */
-function mapStatus(stripe: string): 'active' | 'trialing' | 'past_due' | 'canceled' {
-  if (stripe === 'trialing') return 'trialing';
-  if (stripe === 'active') return 'active';
-  if (stripe === 'canceled' || stripe === 'incomplete_expired') return 'canceled';
-  return 'past_due'; // past_due, unpaid, incomplete
+/**
+ * Stripe subscription status → local status, with a status nobody has
+ * considered reported rather than absorbed.
+ *
+ * The mapping itself is `domain/billing.ts`, where the reading given to each of
+ * Stripe's eight is written down — including the two that are served
+ * indefinitely without anything being owed. See STRIPE_STATUS_MAP.
+ */
+function mapStatus(log: FastifyBaseLogger, stripe: string): LocalSubscriptionStatus {
+  const { status, known } = localSubscriptionStatus(stripe);
+  if (!known) {
+    log.warn(
+      { alert: true, actorType: 'system', source: 'stripe', stripeStatus: stripe, heldAs: status },
+      'unrecognised Stripe subscription status — held as past_due, which is a served status',
+    );
+  }
+  return status;
 }
 
 const tsToDate = (v: unknown): Date | null =>
@@ -734,7 +747,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             const written = await recordSubscription(log, {
               userId: meta.user_id,
               planTier,
-              status: mapStatus(String(obj.status ?? 'active')),
+              status: mapStatus(log, String(obj.status ?? 'active')),
               stripeSubscriptionId: obj.id,
               stripeCustomerId: typeof obj.customer === 'string' ? obj.customer : null,
               periodStart: tsToDate(obj.current_period_start),

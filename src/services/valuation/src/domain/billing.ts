@@ -735,3 +735,84 @@ export function trialEndingMessage(r: {
     },
   };
 }
+
+// ── Stripe's subscription statuses, and what each one means here ─────────────
+
+/**
+ * Every status a Stripe subscription can hold.
+ *
+ * The local mapping was a short if-chain ending in `return 'past_due'`, with a
+ * trailing comment listing three statuses it was standing in for. Stripe has
+ * eight, and the two the comment did not name are the two that matter:
+ *
+ * - `unpaid` is where dunning *ends* on a Stripe account configured to keep the
+ *   subscription rather than cancel it. Every retry has been made and none
+ *   worked; nothing further is coming.
+ * - `paused` is not a dunning state at all. It is a subscription with
+ *   collection paused, or a trial that ended with no payment method under
+ *   `pause` end-behaviour. Nothing is owed and nothing is being retried.
+ *
+ * Both fell into 'past_due', which is a served status — so an account in either
+ * keeps the plan's full quota indefinitely, and the Billing screen tells the
+ * subscriber their last payment did not go through, which in the `paused` case
+ * never happened. That is the whole answer to "is there a grace period": there
+ * is, it is `past_due`, and it has no end. Bounding it is a policy decision
+ * with revenue consequences and is not made here; naming it is, so that the
+ * next status Stripe adds is a decision somebody takes rather than a default
+ * they inherit.
+ *
+ * The list is declared and the mapping is total over it, held by a census, so a
+ * status can no longer arrive unconsidered.
+ */
+export const STRIPE_SUBSCRIPTION_STATUSES = [
+  'incomplete',
+  'incomplete_expired',
+  'trialing',
+  'active',
+  'past_due',
+  'canceled',
+  'unpaid',
+  'paused',
+] as const;
+export type StripeSubscriptionStatus = (typeof STRIPE_SUBSCRIPTION_STATUSES)[number];
+
+export type LocalSubscriptionStatus = 'active' | 'trialing' | 'past_due' | 'canceled';
+
+/**
+ * Stripe's status → the four this schema holds (migration 0080).
+ *
+ * `incomplete` and `incomplete_expired` are the two halves of a subscription
+ * whose first payment never cleared: the first is still recoverable and is held
+ * where a failed renewal is held, the second is Stripe's own terminal verdict
+ * on it. `unpaid` and `paused` are the two documented above — served, for want
+ * of a status that says otherwise, and each an entry in this table rather than
+ * a fallthrough so the reading is visible.
+ */
+export const STRIPE_STATUS_MAP: Record<StripeSubscriptionStatus, LocalSubscriptionStatus> = {
+  incomplete: 'past_due',
+  incomplete_expired: 'canceled',
+  trialing: 'trialing',
+  active: 'active',
+  past_due: 'past_due',
+  canceled: 'canceled',
+  unpaid: 'past_due',
+  paused: 'past_due',
+};
+
+/**
+ * The local status for whatever Stripe said, including something it has not
+ * said yet.
+ *
+ * An unknown status is held as `past_due` — the same reading the if-chain gave
+ * it, and the conservative one: it neither hands over a plan (`active`) nor
+ * ends a subscription that may well be live (`canceled`). It is *logged* by the
+ * caller, which the fallthrough could not be, because a status nobody has
+ * considered being served is exactly the thing worth finding out about.
+ */
+export function localSubscriptionStatus(stripe: string): {
+  status: LocalSubscriptionStatus;
+  known: boolean;
+} {
+  const mapped = (STRIPE_STATUS_MAP as Record<string, LocalSubscriptionStatus>)[stripe];
+  return mapped ? { status: mapped, known: true } : { status: 'past_due', known: false };
+}
