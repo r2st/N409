@@ -247,6 +247,15 @@ export function CapTableSyncPanel({
                       <Button
                         variant="secondary"
                         disabled={!p.configured || busy === p.provider}
+                        // Same rule as the Connect button above, and the same
+                        // reason it has one: a reader who has tabbed to a control
+                        // that will not take the press is told nothing by the
+                        // grey. R252 added this button without it.
+                        title={
+                          p.configured
+                            ? undefined
+                            : `${p.label} has no credentials on this deployment, so it cannot be reconnected here.`
+                        }
                         onClick={() => connect(p.provider)}
                       >
                         Reconnect {p.label}
