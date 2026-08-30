@@ -842,11 +842,33 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     stripeEventId: string | null,
     written: Awaited<ReturnType<typeof upsertSubscription>>,
     before: { plan_tier: string; status: string; cancel_at_period_end: boolean } | null,
+    /**
+     * The Checkout Session this write came out of, on the one delivery that
+     * knows it.
+     *
+     * The catalogue entry for these rows says `checkout_started` and the
+     * webhook row it precedes are "the join between 'a person clicked Manage
+     * subscription' and 'the plan changed an hour later'" — and the field that
+     * would join them was written on one side only. `checkout_started` carries
+     * `checkout_session_id`; `subscription_started` carried the Stripe event
+     * id, the subscription id and the customer, none of which appear on the
+     * request-side row. So the documented join was in fact "same user, roughly
+     * the same minute", which is exactly the reasoning that fails on the
+     * account that started two checkouts before either completed — the account
+     * `alertSecondLiveSubscription` exists for.
+     *
+     * Only `checkout.session.completed` carries it. A `customer.subscription.*`
+     * event names no session, and stamping the field null there would say the
+     * subscription came from no checkout rather than from a delivery that
+     * cannot see which.
+     */
+    checkoutSessionId?: string | null,
   ): Promise<void> {
     const common = {
       stripe_event_id: stripeEventId,
       subscription_id: written.id,
       stripe_subscription_id: written.stripe_subscription_id,
+      ...(checkoutSessionId ? { checkout_session_id: checkoutSessionId } : {}),
     };
     if (written.newly_canceled) {
       await audit({
@@ -962,6 +984,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       try {
         if (type === 'checkout.session.completed' && obj.mode === 'subscription') {
           const meta = (obj.metadata ?? {}) as Record<string, string>;
+          const checkoutSessionId = typeof obj.id === 'string' ? obj.id : null;
           if (meta.user_id && meta.plan_tier) {
             const started = await recordSubscription(log, {
               userId: meta.user_id,
@@ -978,7 +1001,68 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               stripeSubscriptionId: typeof obj.subscription === 'string' ? obj.subscription : null,
               stripeCustomerId: typeof obj.customer === 'string' ? obj.customer : null,
             });
-            if (started) await auditSubscriptionWrite(key.eventId, started, null);
+            if (started) {
+              await auditSubscriptionWrite(key.eventId, started, null, checkoutSessionId);
+              log.info(
+                {
+                  actorType: 'system',
+                  source: 'stripe',
+                  userId: started.user_id,
+                  subscriptionId: started.id,
+                  stripeSubscriptionId: started.stripe_subscription_id,
+                  checkoutSessionId,
+                  planTier: started.plan_tier,
+                  status: started.status,
+                  inserted: started.inserted,
+                },
+                'subscription checkout completed',
+              );
+            }
+          } else {
+            /**
+             * A subscription checkout of ours that completed with nothing on it
+             * to attribute.
+             *
+             * `createSubscriptionCheckoutSession` stamps `user_id` and
+             * `plan_tier` into the session's metadata and into
+             * `subscription_data.metadata`, so a session missing either is not
+             * one this code opened — most often it is another integration's, on
+             * a Stripe account that delivers every event to this endpoint, and
+             * silence has always been right for those.
+             *
+             * The exception is the discriminator the payments webhook already
+             * uses for a settled session with no payment row:
+             * `client_reference_id` is set to the user's id on every session we
+             * open, and no stranger's session carries a ULID of ours. When it
+             * is there and the metadata is not, a subscriber has been put on a
+             * recurring charge that this platform recorded nothing for — no
+             * row, no quota, no plan on the Billing screen, and `invoice.paid`
+             * will not find the subscription either, so the renewals go
+             * unrecorded after it. That was dropped without a word.
+             *
+             * Acknowledged rather than 5xx'd, for the reason the unreconciled
+             * settlement is: redelivery cannot put the metadata back, and a
+             * retry loop for days would bury the one line worth reading.
+             */
+            const claimedUserId =
+              typeof obj.client_reference_id === 'string' && isUlid(obj.client_reference_id)
+                ? obj.client_reference_id
+                : null;
+            if (claimedUserId) {
+              log.error(
+                {
+                  alert: true,
+                  actorType: 'system',
+                  source: 'stripe',
+                  userId: claimedUserId,
+                  checkoutSessionId,
+                  stripeSubscriptionId: typeof obj.subscription === 'string' ? obj.subscription : null,
+                  stripeCustomerId: typeof obj.customer === 'string' ? obj.customer : null,
+                  paymentStatus: typeof obj.payment_status === 'string' ? obj.payment_status : null,
+                },
+                'a subscription checkout of ours completed carrying no plan we could attribute — no subscription recorded',
+              );
+            }
           }
         } else if (type === 'customer.subscription.updated' || type === 'customer.subscription.created') {
           const meta = (obj.metadata ?? {}) as Record<string, string>;
@@ -1058,6 +1142,53 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             // The other writer of a cancellation, and the one that lands first
             // about as often as not.
             if (written?.newly_canceled) await announceSubscriptionCanceled(log, written);
+          } else if (typeof obj.id === 'string') {
+            /**
+             * A subscription event about a subscription we do carry, arriving
+             * with nothing on it that says whose or which plan.
+             *
+             * The guard above is the whole handler: no `user_id` and
+             * `plan_tier` in the metadata and the delivery does nothing at all.
+             * For a subscription this platform has never seen that is right and
+             * always was — a shared Stripe account carries other integrations'
+             * subscriptions, and an enterprise plan somebody added in the
+             * dashboard is not ours to write.
+             *
+             * A subscription id we hold a row for is the other case, and it was
+             * silent in exactly the same way. Our own sessions stamp
+             * `subscription_data.metadata`, so the state that reaches here is a
+             * subscription whose metadata was edited away in the Stripe
+             * dashboard — after which *every* event about it is ignored: a
+             * plan swap, a card recovered out of past_due, and a cancellation
+             * that then reaches this platform only if the separate `.deleted`
+             * delivery lands. The row sits at whatever status it last held and
+             * keeps granting quota from it.
+             *
+             * Reported rather than guessed at. The row names the user and the
+             * tier, so this handler could fill the metadata's job in — but
+             * `plan_tier` off the row is the stale value that
+             * `subscriptionPrice` above exists to stop being trusted, and
+             * writing a status through on a guess is how an ended plan comes
+             * back. A person putting the metadata back in Stripe is the fix,
+             * and the redelivery that follows it lands normally.
+             */
+            const carried = await findSubscriptionByStripeId(deps.pool, obj.id);
+            if (carried) {
+              log.error(
+                {
+                  alert: true,
+                  actorType: 'system',
+                  source: 'stripe',
+                  userId: carried.user_id,
+                  subscriptionId: carried.id,
+                  stripeSubscriptionId: obj.id,
+                  stripeStatus: typeof obj.status === 'string' ? obj.status : null,
+                  heldStatus: carried.status,
+                  heldPlanTier: carried.plan_tier,
+                },
+                'a subscription we carry sent an update with no metadata to attribute it — nothing was written',
+              );
+            }
           }
         } else if (type === 'customer.subscription.trial_will_end' && typeof obj.id === 'string') {
           const sub = await findSubscriptionByStripeId(deps.pool, obj.id);

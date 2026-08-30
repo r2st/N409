@@ -334,3 +334,231 @@ describe.skipIf(!dbUp)('a delayed payment method that fails to settle', () => {
     expect(lines.slice(mark).filter((l) => String(l.msg).includes('failed to settle'))).toHaveLength(0);
   });
 });
+
+/**
+ * Tracing one subscription from the click that started it.
+ *
+ * The audit catalogue says `checkout_started` and the webhook row it precedes
+ * are "the join between 'a person clicked Manage subscription' and 'the plan
+ * changed an hour later'". `checkout_started` records `checkout_session_id`;
+ * `subscription_started` recorded the event, the subscription and the customer
+ * and never the session — so the documented join was "same user, roughly the
+ * same minute", which is precisely the reasoning that fails on the account that
+ * started two checkouts before either completed.
+ */
+describe.skipIf(!dbUp)('a subscription checkout on the billing webhook', () => {
+  let ctx: TestApp;
+  let lines: Array<Record<string, unknown>>;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, LOG_LEVEL: 'info' });
+    lines = [];
+    (ctx.app.log as unknown as Record<symbol, unknown>)[pino.symbols.streamSym] = new Writable({
+      write(chunk, _enc, cb) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        cb();
+      },
+    });
+  });
+  afterAll(async () => ctx?.teardown());
+
+  const deliver = (event: unknown) => {
+    const payload = JSON.stringify(event);
+    return ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/billing/webhook',
+      headers: signedHeaders(payload),
+      payload,
+    });
+  };
+
+  it('records the session id on the subscription it started', async () => {
+    const userId = (
+      await createUser(ctx.pool, {
+        email: 'sub-join@obs.example.com',
+        passwordDigest: 'x',
+        roles: ['valuation_user'],
+      })
+    ).id;
+
+    expect(
+      (
+        await deliver({
+          id: 'evt_obs_checkout_1',
+          type: 'checkout.session.completed',
+          created: Math.floor(Date.UTC(2026, 2, 4, 9, 0, 0) / 1000),
+          data: {
+            object: {
+              id: 'cs_obs_sub_join',
+              object: 'checkout.session',
+              mode: 'subscription',
+              payment_status: 'paid',
+              subscription: 'sub_obs_join',
+              customer: 'cus_obs_join',
+              client_reference_id: userId,
+              metadata: { user_id: userId, plan_tier: 'annual_retainer' },
+            },
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const { rows } = await ctx.pool.query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM admin_events WHERE type = 'subscription_started' AND subject_id = $1`,
+      [userId],
+    );
+    expect(rows).toHaveLength(1);
+    // The field the request-side row is written with, so the two join on a
+    // value rather than on a timestamp.
+    expect(rows[0]!.payload.checkout_session_id).toBe('cs_obs_sub_join');
+    expect(rows[0]!.payload.stripe_event_id).toBe('evt_obs_checkout_1');
+  });
+
+  it('alerts when a checkout of ours completes with no plan to attribute it to', async () => {
+    // `client_reference_id` is a ULID of ours and the metadata is gone: a
+    // subscriber has been put on a recurring charge this platform recorded
+    // nothing for, and the delivery used to be dropped without a word.
+    const userId = (
+      await createUser(ctx.pool, {
+        email: 'sub-unattributed@obs.example.com',
+        passwordDigest: 'x',
+        roles: ['valuation_user'],
+      })
+    ).id;
+
+    const mark = lines.length;
+    expect(
+      (
+        await deliver({
+          id: 'evt_obs_checkout_2',
+          type: 'checkout.session.completed',
+          created: Math.floor(Date.UTC(2026, 2, 4, 10, 0, 0) / 1000),
+          data: {
+            object: {
+              id: 'cs_obs_unattributed',
+              object: 'checkout.session',
+              mode: 'subscription',
+              payment_status: 'paid',
+              subscription: 'sub_obs_unattributed',
+              customer: 'cus_obs_unattributed',
+              client_reference_id: userId,
+              metadata: {},
+            },
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const alert = lines.slice(mark).find((l) => l.alert === true);
+    expect(alert).toBeDefined();
+    expect(alert!.userId).toBe(userId);
+    expect(alert!.checkoutSessionId).toBe('cs_obs_unattributed');
+    expect(alert!.stripeSubscriptionId).toBe('sub_obs_unattributed');
+    expect(alert!.stripeEventId).toBe('evt_obs_checkout_2');
+  });
+
+  it('stays quiet about a subscription checkout that is not ours', async () => {
+    const mark = lines.length;
+    expect(
+      (
+        await deliver({
+          id: 'evt_obs_checkout_3',
+          type: 'checkout.session.completed',
+          created: Math.floor(Date.UTC(2026, 2, 4, 11, 0, 0) / 1000),
+          data: {
+            object: {
+              id: 'cs_obs_stranger',
+              object: 'checkout.session',
+              mode: 'subscription',
+              payment_status: 'paid',
+              subscription: 'sub_obs_stranger',
+              customer: 'cus_obs_stranger',
+              metadata: {},
+            },
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(lines.slice(mark).find((l) => l.alert === true)).toBeUndefined();
+  });
+
+  /**
+   * The other half of the same silence: a subscription this platform carries
+   * whose metadata was edited away in the Stripe dashboard. Every event about
+   * it — a plan swap, a card recovered, a cancellation — was ignored, and the
+   * row went on granting quota from whatever status it last held.
+   */
+  it('alerts when a subscription we carry updates with no metadata', async () => {
+    const userId = (
+      await createUser(ctx.pool, {
+        email: 'sub-stripped@obs.example.com',
+        passwordDigest: 'x',
+        roles: ['valuation_user'],
+      })
+    ).id;
+    await ctx.pool.query(
+      `INSERT INTO subscriptions (id, user_id, plan_tier, status, stripe_subscription_id, stripe_customer_id)
+       VALUES ($1, $2, 'annual_retainer', 'active', 'sub_obs_stripped', 'cus_obs_stripped')`,
+      [newUlid(), userId],
+    );
+
+    const mark = lines.length;
+    expect(
+      (
+        await deliver({
+          id: 'evt_obs_stripped_1',
+          type: 'customer.subscription.updated',
+          created: Math.floor(Date.UTC(2026, 2, 4, 12, 0, 0) / 1000),
+          data: {
+            object: {
+              id: 'sub_obs_stripped',
+              object: 'subscription',
+              status: 'canceled',
+              customer: 'cus_obs_stripped',
+              metadata: {},
+            },
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const alert = lines.slice(mark).find((l) => l.alert === true);
+    expect(alert).toBeDefined();
+    expect(alert!.userId).toBe(userId);
+    expect(alert!.stripeSubscriptionId).toBe('sub_obs_stripped');
+    expect(alert!.stripeStatus).toBe('canceled');
+    expect(alert!.heldStatus).toBe('active');
+    // And nothing was written on a guess: the row still says what it said.
+    const { rows } = await ctx.pool.query<{ status: string }>(
+      `SELECT status FROM subscriptions WHERE stripe_subscription_id = 'sub_obs_stripped'`,
+    );
+    expect(rows[0]!.status).toBe('active');
+  });
+
+  it('stays quiet about a subscription update for a subscription we do not carry', async () => {
+    const mark = lines.length;
+    expect(
+      (
+        await deliver({
+          id: 'evt_obs_stripped_2',
+          type: 'customer.subscription.updated',
+          created: Math.floor(Date.UTC(2026, 2, 4, 13, 0, 0) / 1000),
+          data: {
+            object: {
+              id: 'sub_obs_not_ours',
+              object: 'subscription',
+              status: 'active',
+              customer: 'cus_obs_not_ours',
+              metadata: {},
+            },
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(lines.slice(mark).find((l) => l.alert === true)).toBeUndefined();
+  });
+
+  it('is reading a log stream at all', () => {
+    expect(lines.length).toBeGreaterThan(0);
+  });
+});
