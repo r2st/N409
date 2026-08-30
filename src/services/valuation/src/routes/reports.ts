@@ -60,7 +60,8 @@ import { findAppliedRollforwardRun } from '../repos/rollforwardRuns.js';
 import { FMV_TREND_KINDS, sameCompanyFilter } from '../domain/valuationHistory.js';
 import { fitsInt4, int4Version } from '../domain/int4.js';
 import { latestCalculationForKind } from '../repos/calculations.js';
-import { findPartnerById } from '../repos/adminUsers.js';
+import { findBrandingByPartnerId } from '../repos/branding.js';
+import { resolveBranding } from '../domain/branding.js';
 import { fetchPartnerLogoCached } from '../clients/partnerLogoCache.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { recordEvent, type EventActor } from '../events/record.js';
@@ -236,21 +237,53 @@ async function loadOrCreateReport(
   }
 }
 
-/** White-label branding for partner engagements (improvement 8). */
-async function brandingFor(
+/**
+ * White-label branding for partner engagements (improvement 8).
+ *
+ * Resolved through `resolveBranding`, the same function the SPA, the login page
+ * and the client intake read — because a firm's brand has to be one brand. This
+ * read used to go to `findPartnerById`, whose column list predates migration
+ * 0091 and stops at `name`/`brand_color`/`logo_url`, so the cover was rendering
+ * from the pre-white-label fields alone. Two things followed from that.
+ *
+ * The cover named the firm by `partners.name`, which 0091 is explicit about
+ * being "the internal label ops picked for the channel and is not necessarily
+ * what clients should read". A firm that set `brand_name` saw it in the
+ * product, on its login page and in its client intake, and then read its ops
+ * channel label on the one artefact that leaves the building.
+ *
+ * And the brand assets ignored `white_label_enabled` entirely. That switch is
+ * the whole staging story — a firm loads its colour and logo, checks the
+ * preview, and goes live in one flip — so a brand that was deliberately *not*
+ * live was going out on every client-facing report, and turning the switch off
+ * again reverted everything except the deliverable.
+ *
+ * The attribution line itself is not gated: naming the firm that prepared the
+ * report is a fact about the engagement and predates white label (0047). What
+ * is gated is the firm's colour and mark, which are the brand.
+ */
+export async function brandingFor(
   pool: pg.Pool,
   valuation: ValuationRow,
 ): Promise<{ partner_name: string; brand_color: string | null; logo: Buffer | null } | undefined> {
   if (!valuation.partner_id) return undefined;
-  const partner = await findPartnerById(pool, valuation.partner_id);
-  if (!partner || partner.archived_at) return undefined;
+  // Archived partners resolve to null here, the same rule every other branding
+  // read applies — a closed firm stops branding anything.
+  const source = await findBrandingByPartnerId(pool, valuation.partner_id);
+  if (!source) return undefined;
+  const branding = resolveBranding(source);
+  if (!branding.white_label) return { partner_name: source.name, brand_color: null, logo: null };
   return {
-    partner_name: partner.name,
-    brand_color: partner.brand_color,
+    partner_name: branding.name,
+    // The resolved accent, not the raw column: `resolveBranding` lifts a
+    // colour that cannot be seen on a light ground, and the cover band and rule
+    // are drawn on one. Same value the SPA paints with, so a report and the
+    // app it came from are the same green.
+    brand_color: branding.accent,
     // Cached for a beat: the logo is the same bytes on every render, and
     // fetching it is a DNS lookup plus an HTTP GET on the render's critical
     // path. See clients/partnerLogoCache.ts.
-    logo: await fetchPartnerLogoCached(partner.logo_url),
+    logo: await fetchPartnerLogoCached(branding.logo_url),
   };
 }
 
