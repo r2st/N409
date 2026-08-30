@@ -592,6 +592,12 @@ def convertible_note(
 # ── SAFE / convertible instrument ────────────────────────────────────────────
 
 
+#: The grid a conversion price is reported on. Six decimals of a dollar per
+#: share, and the *whole* grid — there is no finer price for the response to
+#: fall back to, so a positive price below half of it has nowhere to be stated.
+CONVERSION_PRICE_QUANTUM = 1e-6
+
+
 def _positive_cap(value, name: str) -> float:
     """A valuation cap, which is a company valuation and so cannot be zero.
 
@@ -674,13 +680,32 @@ def safe_conversion(
     discount_price = round_price * (1.0 - eff_discount)
     cap_price = cap / shares if cap is not None else None
     conversion_price = discount_price if cap_price is None else min(discount_price, cap_price)
-    if conversion_price <= 0:
+    # Zero, and everything that is published as zero.
+    #
+    # The guard used to read the unrounded price while the response reported
+    # `round(conversion_price, 6)`, so the whole band below half a microdollar
+    # cleared it and then came back stated as `0.0` — the exact state
+    # `_positive_cap` refuses a zero cap for, reached by a cap that is merely
+    # small. A `valuation_cap` of 8 on a ten-million-share round is $8e-07 a
+    # share: the response said the instrument converted at a price of zero,
+    # handed the holder 1.25e+11 shares, and put its ownership at 99.99%, as a
+    # 200. And 8 for $8,000,000 is the ordinary units slip — the same one
+    # `anomalies.UNIT_MISMATCH_FACTOR` exists to catch on the other side of the
+    # engine — not an exotic input.
+    #
+    # Six decimals is the whole grid this figure is stated on; there is no finer
+    # price for the document to fall back to, so a price below it is refused
+    # rather than printed. The same rule `compute._concluded_fmv_per_share`
+    # applies to the conclusion, for the same reason.
+    if round(conversion_price, 6) <= 0:
         # Both legs, because the conversion price is the lower of them and the
         # message has to say which one put it on the floor.
         raise EngineInputError(
-            f"the conversion price resolved to {conversion_price:g} — the discount leg is "
+            f"the conversion price resolved to {conversion_price:g}, which is at or below the "
+            f"{CONVERSION_PRICE_QUANTUM:g} per share it is reported at — the discount leg is "
             f"{discount_price:g} (round price {round_price:g} less {eff_discount:.4g}) and the "
-            f"cap leg is {'none' if cap_price is None else format(cap_price, 'g')}"
+            f"cap leg is {'none' if cap_price is None else format(cap_price, 'g')}; check that "
+            "valuation_cap and next_round_pre_money are whole dollars rather than millions"
         )
 
     safe_shares = inv / conversion_price
