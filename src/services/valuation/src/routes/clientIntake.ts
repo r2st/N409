@@ -32,12 +32,14 @@ import {
   listIntakeLinks,
   redeemIntakeToken,
   revokeIntakeLink,
+  findLiveSubmittedIntakeLink,
   saveIntakeAnswers,
   submitIntakeLink,
   toPublicLink,
 } from '../repos/clientIntake.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
 
 /**
  * Firm-branded client intake.
@@ -278,7 +280,7 @@ export function registerClientIntakeRoutes(
     if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
 
     const link = await redeemIntakeToken(deps.pool, parsed.data.token);
-    if (!link) throw problems.unauthorized('This intake link is invalid, expired, or withdrawn');
+    if (!link) throw problems.unauthorized(DEAD_LINK_DETAIL.intake);
 
     const now = new Date();
     const answers = link.answers ?? {};
@@ -308,10 +310,40 @@ export function registerClientIntakeRoutes(
 
     const answers = filterIntakeAnswers(parsed.data.answers);
     const link = await saveIntakeAnswers(deps.pool, parsed.data.token, answers);
-    // One failure response for "dead link" and "already submitted" alike: this
-    // is an unauthenticated endpoint, and distinguishing them tells a guesser
-    // which of their guesses was a real token.
-    if (!link) throw problems.unauthorized('This intake link can no longer be edited');
+    if (!link) {
+      /*
+       * "Dead link" and "already submitted" are told apart here, and were not.
+       *
+       * The reason they were merged is sound where it applies — this endpoint
+       * is unauthenticated, and a message that separates a real token from an
+       * unrecognised one is an oracle for whether a token exists. Every *dead*
+       * state still shares one sentence for exactly that reason.
+       *
+       * Submission is not one of those states, because it is not a secret this
+       * endpoint is keeping. `redeemIntakeToken` resolves a submitted link on
+       * purpose — the client is expected to reopen it and read back what they
+       * sent — so `POST /intake/portal` answers the same token with
+       * `status: 'submitted'`, `can_edit: false` and the timestamp. A guesser
+       * holding a token that reaches this branch can learn the same fact one
+       * call away, so withholding it here bought nothing and cost the reader
+       * the difference between the two sentences.
+       *
+       * That difference is the whole thing. A client who submitted on Friday,
+       * reopens the tab on Monday and types into it was being told the link
+       * "can no longer be edited" — which reads as *the link died and your
+       * answers are gone*, the one conclusion that is both wrong and alarming.
+       * What actually happened is that their questionnaire is in.
+       */
+      const submitted = await findLiveSubmittedIntakeLink(deps.pool, parsed.data.token);
+      if (submitted) {
+        throw problems.conflict(
+          'This questionnaire has already been submitted, so it can no longer be edited. ' +
+            'Your answers were received and nothing has been lost. ' +
+            'Reply to the firm that sent the link if something needs to change.',
+        );
+      }
+      throw problems.unauthorized(DEAD_LINK_DETAIL.intake);
+    }
 
     return {
       answers: link.answers,
@@ -329,7 +361,7 @@ export function registerClientIntakeRoutes(
     // Read first so an incomplete form gets a useful 422 rather than being
     // rejected as though its link were dead.
     const current = await redeemIntakeToken(deps.pool, parsed.data.token);
-    if (!current) throw problems.unauthorized('This intake link is invalid, expired, or withdrawn');
+    if (!current) throw problems.unauthorized(DEAD_LINK_DETAIL.intake);
 
     const answers = current.answers ?? {};
     const completion = computeCompletion(answers);
@@ -344,7 +376,28 @@ export function registerClientIntakeRoutes(
     }
 
     const link = await submitIntakeLink(deps.pool, parsed.data.token);
-    if (!link) throw problems.unauthorized('This intake link can no longer be edited');
+    if (!link) {
+      /*
+       * The re-entrant submit, which is the version of this that hurts most.
+       *
+       * `submitIntakeLink` stamps `submitted_at` only where it is still null,
+       * so a second submit lands here — and a second submit is the ordinary
+       * case, not an exotic one: the request takes a moment, the button does
+       * not visibly change, and the client presses it again. They were then
+       * told the link was no good, immediately after the press that actually
+       * worked.
+       *
+       * Answered like the save path and for the same reason: the state is
+       * already legible to this token through `POST /intake/portal`, so saying
+       * so costs nothing and the alternative is a client who believes their
+       * questionnaire did not go through.
+       */
+      const submitted = await findLiveSubmittedIntakeLink(deps.pool, parsed.data.token);
+      if (submitted) {
+        return { submitted_at: submitted.submitted_at, completion, issues };
+      }
+      throw problems.unauthorized(DEAD_LINK_DETAIL.intake);
+    }
 
     return { submitted_at: link.submitted_at, completion, issues };
   });

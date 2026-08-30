@@ -132,18 +132,44 @@ describe('AuditorPortalPage access', () => {
     expect(await screen.findByText('This auditor link has expired.')).toBeInTheDocument();
   });
 
-  it('falls back to a plain refusal when the server gives no reason', async () => {
+  /*
+   * The two fallbacks are for the case the server never answered in its own
+   * words, and they used to guess at a cause: "Access denied", and "This link
+   * is invalid or expired."
+   *
+   * Both guesses point the reader at their link, and in neither situation is
+   * the link what is wrong — a proxy's HTML error page and a fetch that never
+   * left the browser say nothing about the token. The auditor's only move on
+   * "your link is expired" is to email the valuation team for a new one, which
+   * will fail in exactly the same way, so the wrong guess costs a round trip
+   * through a person. What the fallbacks say now is what is actually known:
+   * the service could not be reached, and the link does not need replacing.
+   */
+  it('does not blame the link when the server gave no reason', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('not json', { status: 503 }));
+    window.location.hash = '#token=stale';
+    render(<AuditorPortalPage />);
+    expect(await screen.findByText(/could not be reached just now/i)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing is wrong with your link/i)).toBeInTheDocument();
+  });
+
+  it('names the status when the refusal is the server’s but the body is not', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('not json', { status: 403 }));
     window.location.hash = '#token=stale';
     render(<AuditorPortalPage />);
-    expect(await screen.findByText('Access denied')).toBeInTheDocument();
+    // The status is the only fact there is, so it is the one carried — an
+    // auditor quoting "error 403" to the team who sent the link gets a much
+    // shorter conversation than one quoting "Access denied".
+    expect(await screen.findByText(/error 403/)).toBeInTheDocument();
+    expect(screen.getByText(/issue a fresh link/i)).toBeInTheDocument();
   });
 
   it('falls back again when the request never reaches the server', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue('not an Error');
     window.location.hash = '#token=abc123';
     render(<AuditorPortalPage />);
-    expect(await screen.findByText('This link is invalid or expired.')).toBeInTheDocument();
+    expect(await screen.findByText(/could not reach the valuation service/i)).toBeInTheDocument();
+    expect(screen.getByText(/does not need replacing/i)).toBeInTheDocument();
   });
 });
 

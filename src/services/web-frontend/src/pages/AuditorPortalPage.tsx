@@ -133,11 +133,33 @@ export function AuditorPortalPage() {
       body: JSON.stringify({ token: fromHash }),
     })
       .then(async (res) => {
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? 'Access denied');
+        if (!res.ok) {
+          // The fallbacks are for the case the server never got to answer in
+          // its own words — a proxy's HTML error page, an offline browser —
+          // where `detail` is absent and "Access denied" used to be the whole
+          // message. They are the two situations the reader is in, and neither
+          // is one they fix by asking for another link.
+          const detail = (await res.json().catch(() => ({}))).detail;
+          throw new Error(
+            detail ??
+              (res.status >= 500
+                ? 'The valuation service could not be reached just now. Nothing is wrong with your ' +
+                  'link — wait a minute and reload this page.'
+                : `This auditor link could not be opened (error ${res.status}). Reload the page, and ` +
+                  'if it keeps failing ask the valuation team who sent it to issue a fresh link.'),
+          );
+        }
         return res.json();
       })
       .then(setBundle)
-      .catch((err) => setError(err instanceof Error ? err.message : 'This link is invalid or expired.'));
+      .catch((err) =>
+        setError(
+          err instanceof Error && err.message
+            ? err.message
+            : 'This page could not reach the valuation service. Check your connection and reload; ' +
+                'your link does not need replacing.',
+        ),
+      );
   }, []);
 
   if (error) {

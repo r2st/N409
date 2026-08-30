@@ -178,8 +178,30 @@ describe.skipIf(!dbUp)('client intake links', () => {
     expect(reread.json().status).toBe('submitted');
     expect(reread.json().can_edit).toBe(false);
 
-    expect((await save(token, { legal_name: 'Changed after the fact' })).statusCode).toBe(401);
-    expect((await submit(token)).statusCode).toBe(401);
+    /*
+     * Both refusals name submission, and neither claims the link is dead.
+     *
+     * They used to answer 401 "This intake link can no longer be edited" — the
+     * same body a withdrawn or expired link gets — so a client who submitted on
+     * Friday and typed into the still-open tab on Monday was told their link
+     * was no good, which reads as "your answers are gone". The three lines
+     * above are the proof that nothing was being protected: the same token has
+     * just read back `status: 'submitted'` from the portal endpoint, so the
+     * fact the 401 withheld was one call away for the same caller.
+     *
+     * The dead states stay merged behind one sentence; see `linkRefusal.ts`.
+     */
+    const late = await save(token, { legal_name: 'Changed after the fact' });
+    expect(late.statusCode).toBe(409);
+    expect(late.json().detail).toMatch(/already been submitted/i);
+    expect(late.json().detail).toMatch(/nothing has been lost/i);
+
+    // A second submit is the ordinary double-press, and is idempotent: the
+    // client is told the thing they wanted is true, with the original
+    // timestamp, rather than being refused for having succeeded.
+    const again = await submit(token);
+    expect(again.statusCode).toBe(200);
+    expect(again.json().submitted_at).toBe(reread.json().submitted_at);
   });
 
   it('kills a withdrawn link for the client immediately', async () => {
@@ -193,12 +215,34 @@ describe.skipIf(!dbUp)('client intake links', () => {
     });
     expect(revoked.statusCode).toBe(204);
 
-    expect((await openPortal(token)).statusCode).toBe(401);
+    const opened = await openPortal(token);
+    expect(opened.statusCode).toBe(401);
     expect((await save(token, { legal_name: 'Too late' })).statusCode).toBe(401);
+
+    /*
+     * A withdrawn link and a token that was never issued are answered
+     * identically, and that is the load-bearing property of the whole
+     * dead-link message: it is why one sentence covers four conditions instead
+     * of each naming its own. Distinguishing them would tell a caller which of
+     * their guesses corresponds to a real link.
+     *
+     * Asserted as an equality between two live responses rather than as a
+     * substring, because a substring check goes on passing after the two have
+     * drifted apart — which is the only way this property is ever lost.
+     */
+    const neverIssued = await openPortal('not-a-real-token');
+    expect(neverIssued.statusCode).toBe(opened.statusCode);
+    expect(opened.json().detail).toBe(neverIssued.json().detail);
   });
 
   it('rejects a token that was never issued', async () => {
-    expect((await openPortal('not-a-real-token')).statusCode).toBe(401);
+    const res = await openPortal('not-a-real-token');
+    expect(res.statusCode).toBe(401);
+    // Merged with three other causes, but not therefore contentless: it names
+    // the one a reader can act on themselves — these tokens are 43 characters
+    // on the end of a URL and mail clients wrap them — and who reissues it.
+    expect(res.json().detail).toMatch(/cut short when it was copied/i);
+    expect(res.json().detail).toMatch(/reply to the firm/i);
   });
 
   it('keeps one firm out of another firm’s pipeline', async () => {

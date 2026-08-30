@@ -220,6 +220,39 @@ export async function saveIntakeAnswers(
   return rows[0] ?? null;
 }
 
+/**
+ * The one live link that a save was refused *because it was already submitted*.
+ *
+ * `saveIntakeAnswers` returns null for two unrelated situations — the link is
+ * dead, or it is alive but finished — and the route used to answer both with
+ * the same sentence so that an unauthenticated caller could not tell a real
+ * token from a guess. That property is kept for every dead state and dropped
+ * for this one, and the scoping here is what makes dropping it provably free.
+ *
+ * `LIVE_LINK_SQL` is applied, so the rows this returns are exactly the rows
+ * `redeemIntakeToken` would also return — the ones `POST /intake/portal`
+ * already answers with `status: 'submitted'`, `can_edit: false` and the
+ * timestamp. A caller holding such a token can therefore learn the same fact
+ * from the read endpoint whatever this one says, and no token that the read
+ * endpoint refuses gets a distinguishable answer here.
+ *
+ * Dropping the `LIVE_LINK_SQL` clause would quietly change that: a link that
+ * was submitted and has since expired would start reporting "already
+ * submitted" where the read endpoint reports the dead-link sentence, which is
+ * the oracle the merged message exists to prevent.
+ */
+export async function findLiveSubmittedIntakeLink(
+  pool: pg.Pool,
+  rawToken: string,
+): Promise<ClientIntakeLinkRow | null> {
+  const { rows } = await pool.query<ClientIntakeLinkRow>(
+    `SELECT * FROM client_intake_links
+      WHERE token_hash = $1 AND submitted_at IS NOT NULL AND ${LIVE_LINK_SQL}`,
+    [hashToken(rawToken)],
+  );
+  return rows[0] ?? null;
+}
+
 /** Stamp the submission. Null when the link is dead or already submitted. */
 export async function submitIntakeLink(pool: pg.Pool, rawToken: string): Promise<ClientIntakeLinkRow | null> {
   const { rows } = await pool.query<ClientIntakeLinkRow>(

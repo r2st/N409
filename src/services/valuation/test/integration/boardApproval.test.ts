@@ -342,9 +342,27 @@ describe.skipIf(!dbUp)('feature 5 — board approval workflow', () => {
         payload: { token },
       });
       expect(after.statusCode).toBe(404);
+
       // Same answer an unknown token gets — telling the two apart tells a
       // guesser which of their guesses was once real.
-      expect(after.json().detail).toContain('invalid or has expired');
+      //
+      // Asserted against the unknown token's actual response rather than
+      // against a substring of the sentence. The property is that the two are
+      // indistinguishable, and a substring check passes just as happily when
+      // the two have drifted apart, which is the only way this can break.
+      const unknown = await app.inject({
+        method: 'POST',
+        url: '/api/v1/board/resolution',
+        payload: { token: 'not-a-token-anybody-ever-minted' },
+      });
+      expect(unknown.statusCode).toBe(after.statusCode);
+      expect(after.json().detail).toBe(unknown.json().detail);
+
+      // And it is a sentence somebody can act on, not a diagnosis they cannot.
+      // The merged answer is still allowed to name the cause a reader can fix
+      // and the person who reissues the link.
+      expect(after.json().detail).toMatch(/cut short when it was copied/i);
+      expect(after.json().detail).toMatch(/new signing link/i);
     });
 
     it('refuses a signature from an expired token', async () => {

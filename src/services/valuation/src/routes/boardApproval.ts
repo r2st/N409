@@ -31,6 +31,7 @@ import {
   type BoardSignoffRow,
 } from '../repos/boardApprovals.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
 import type { SupportEmailSource } from '../hooks/autoEmails.js';
 
 /**
@@ -86,7 +87,7 @@ const BOARD_PUBLIC_RATE_WINDOW_MS = 10 * 60 * 1000;
  * to ask for another rather than to conclude the system is broken, and the
  * sentence says that without saying which case they are in.
  */
-const DEAD_TOKEN_DETAIL = 'This signing link is invalid or has expired — ask for a fresh one';
+const DEAD_TOKEN_DETAIL = DEAD_LINK_DETAIL.board;
 
 function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Board approval is operations-only');

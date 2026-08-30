@@ -198,7 +198,46 @@ describe.skipIf(!dbUp)('external auditor portal (feature 8)', () => {
   });
 
   it('rejects a garbage token', async () => {
-    expect((await redeem('not-a-real-token')).statusCode).toBe(401);
+    const res = await redeem('not-a-real-token');
+    expect(res.statusCode).toBe(401);
+    // One sentence covers unknown, expired and revoked alike, so that a caller
+    // cannot use the difference to learn whether a token was ever real. Merged
+    // is not the same as empty: it still names the cause the reader can fix
+    // without help, and who to ask for the ones they cannot.
+    expect(res.json().detail).toMatch(/cut short when it was copied/i);
+    expect(res.json().detail).toMatch(/valuation team/i);
+  });
+
+  it('answers an expired, a revoked and an unknown link identically', async () => {
+    /*
+     * The property the merged sentence exists for, asserted across all three
+     * conditions at once rather than one at a time. Each of the three tests
+     * above checks its own status code, and three passing status codes say
+     * nothing about whether the *bodies* have drifted apart — which is the only
+     * way the oracle reopens, and it reopens silently.
+     */
+    const expiredValuation = await seedValuation();
+    const expired = (await createLink(owner.token, expiredValuation.id)).json().token;
+    await ctx.pool.query(
+      `UPDATE auditor_access SET expires_at = now() - interval '1 day' WHERE valuation_id = $1`,
+      [expiredValuation.id],
+    );
+
+    const revokedValuation = await seedValuation();
+    const createdRevoked = await createLink(owner.token, revokedValuation.id);
+    await ctx.app.inject({
+      method: 'DELETE',
+      url: `/api/v1/valuations/${revokedValuation.id}/auditor-access/${createdRevoked.json().access.id}`,
+      headers: authHeader(owner.token),
+    });
+
+    const answers = await Promise.all(
+      [expired, createdRevoked.json().token, 'not-a-real-token'].map((t) => redeem(t)),
+    );
+    for (const res of answers) {
+      expect(res.statusCode).toBe(answers[0]!.statusCode);
+      expect(res.json().detail).toBe(answers[0]!.json().detail);
+    }
   });
 
   /**

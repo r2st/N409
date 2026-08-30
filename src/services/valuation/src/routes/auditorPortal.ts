@@ -27,6 +27,7 @@ import { sliceChars } from '../domain/textSlice.js';
 import type { ValuationHub } from '../realtime/hub.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
 
 /**
  * External auditor portal (feature 8). An ops user (or the valuation owner)
@@ -171,7 +172,7 @@ export function registerAuditorPortalRoutes(
     const parsed = RedeemBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid request', parsed.error);
     const access = await redeemAuditorToken(deps.pool, parsed.data.token);
-    if (!access) throw problems.unauthorized('This auditor link is invalid, expired, or revoked');
+    if (!access) throw problems.unauthorized(DEAD_LINK_DETAIL.auditor);
 
     const valuation = await findValuationById(deps.pool, access.valuation_id);
     if (!valuation) throw problems.notFound();
@@ -347,7 +348,7 @@ export function registerAuditorPortalRoutes(
     // and `access_count` is what ops read to decide whether a link is still in
     // use. See `verifyAuditorToken`.
     const access = await verifyAuditorToken(deps.pool, token);
-    if (!access) throw problems.unauthorized('This auditor link is invalid, expired, or revoked');
+    if (!access) throw problems.unauthorized(DEAD_LINK_DETAIL.auditor);
 
     const valuation = await findValuationById(deps.pool, access.valuation_id);
     // Not a bare 404. The reader is outside the product with no account to ask
