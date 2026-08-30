@@ -139,3 +139,40 @@ describe('a string the JSONB insert can hold', () => {
     expect(boundedJson({ value })).toEqual({ value });
   });
 });
+
+describe('a diagnostic row is not a second copy of the client documents', () => {
+  it('records the size of a document body, never its bytes', () => {
+    const body = Buffer.from('OFFER LETTER — Ada Lovelace, 250,000 options').toString('base64');
+    const out = boundedJson({
+      valuation: { company_name: 'Zephyr Dynamics, Inc.' },
+      documents: [{ id: 'd1', filename: 'Cap Table.xlsx', kind: 'cap_table', content_base64: body }],
+    }) as { documents: Array<Record<string, unknown>> };
+    const doc = out.documents[0]!;
+    // Which document went in, still answerable.
+    expect(doc.id).toBe('d1');
+    expect(doc.filename).toBe('Cap Table.xlsx');
+    expect(doc.content_type).toBeUndefined();
+    // Its contents, not stored, and not silently either.
+    expect(doc.content_base64).toEqual({ __truncated__: `content_base64, ${body.length} characters` });
+    expect(JSON.stringify(out)).not.toContain(body.slice(0, 40));
+  });
+
+  it('records the size of pasted client text the same way', () => {
+    // The `/ai/anonymize` body: up to 200,000 characters an operator pasted out
+    // of a client's spreadsheet, which the 2,000-char bound made shorter and
+    // did not make anonymous.
+    const out = boundedJson({ text: 'Ada Lovelace holds 2,000,000 shares', document_ids: ['d1'] }) as Record<
+      string,
+      unknown
+    >;
+    expect(out.text).toEqual({ __truncated__: 'text, 35 characters' });
+    expect(out.document_ids).toEqual(['d1']);
+  });
+
+  it('leaves a field of the same name that is not a body alone', () => {
+    // The rule is about a string somebody typed or uploaded. A structured value
+    // under one of these names is something else, and reporting a length for it
+    // would be a claim about a value this was not written for.
+    expect(boundedJson({ text: { blocks: 2 } })).toEqual({ text: { blocks: 2 } });
+  });
+});

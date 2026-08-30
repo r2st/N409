@@ -39,6 +39,44 @@ export const MAX_ITEMS = 50;
 export const MAX_STRING = 2_000;
 
 /**
+ * Keys whose value is a copy of client material rather than a description of a
+ * call, replaced by their size instead of being stored.
+ *
+ * `network_items` keeps the request of every engine and AI call, and the AI
+ * pipeline request carries `documents[].content_base64` — the *decrypted* bytes
+ * of an uploaded cap table, offer letter or board consent, read back out of the
+ * blob store by `encodeDocuments`. Bounding a string to 2,000 characters does
+ * not make that a description of the call; it makes it the first 1,500 bytes of
+ * the document, in plaintext jsonb, in the nightly dump.
+ *
+ * The asymmetry is what makes it worth fixing rather than shrugging at. The
+ * primary copy is envelope-encrypted on disk precisely so that a stolen backup
+ * yields no client documents (`storage/documentEncryption.ts`), and this is a
+ * second copy of the same bytes with none of that — the identical argument
+ * `crypto/connectionSecrets.ts` makes about the OAuth tokens that were
+ * enumerated in the log redact list and then stored in the clear. Two lines
+ * above the call that writes these rows, `createAiJob` states the rule this
+ * breaks: "Persist provenance, not payloads: which docs went in, not their
+ * bytes." And `encodeDocuments` keeps the *filename* off its log lines because
+ * "this platform's uploads are offer letters and board consents, and their
+ * names carry the people in them", while assembling a payload whose bodies were
+ * copied verbatim.
+ *
+ * Nothing reads them. The network log answers which call was made, how long it
+ * took and what came back — the document's id, filename and content type say
+ * which file went in, and no reader of a diagnostic row has ever wanted its
+ * first page.
+ *
+ * Enumerated by name, and here rather than at the call sites, for the reason
+ * every other rule in this codebase is centralised: the next caller inherits it
+ * instead of rediscovering it. `text` is the `/ai/anonymize` body — up to
+ * 200,000 characters an operator pasted out of a client's spreadsheet, which is
+ * the same material by a different route. Both are replaced with a marker
+ * naming the size, so the row still says a body was sent and how big it was.
+ */
+export const CLIENT_BODY_KEYS: ReadonlySet<string> = new Set(['content_base64', 'text']);
+
+/**
  * A string this can be certain will insert.
  *
  * Both of this function's promises are about the write: the bounds keep the
@@ -129,7 +167,14 @@ export function boundedJson(value: unknown, depth = 0, seen: Set<object> = new S
   try {
     const out: Record<string, unknown> = {};
     for (const key of keys.slice(0, MAX_ITEMS)) {
-      out[key] = boundedJson((obj as Record<string, unknown>)[key], depth + 1, seen);
+      const raw = (obj as Record<string, unknown>)[key];
+      // The size, not the material. Only for a string: a `text` field holding
+      // an object is something else entirely, and reporting its length would be
+      // a claim about a value this rule was not written for.
+      out[key] =
+        CLIENT_BODY_KEYS.has(key) && typeof raw === 'string'
+          ? truncated(`${key}, ${raw.length} characters`)
+          : boundedJson(raw, depth + 1, seen);
     }
     if (keys.length > MAX_ITEMS) out.__truncated__ = `${keys.length - MAX_ITEMS} more keys`;
     return out;
