@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { SCALING_ENDPOINTS as ENDPOINTS } from '../support/listEndpoints.js';
 
 const dbUp = await isDbAvailable();
 
@@ -32,6 +33,12 @@ const dbUp = await isDbAvailable();
  * `pool.query` is the seam, as in `batchedReads.test.ts`: reads go through the
  * pool, and writes on a checked-out transaction client are invisible to it —
  * which is the right cut for GET routes.
+ *
+ * The roster lives in `support/listEndpoints.ts` rather than here, because a
+ * hand-kept list inside a suite that skips itself without a database has no
+ * guard on the machines where it is skipped — and it had drifted thirteen
+ * endpoints behind. `listScalingCoverage.test.ts` is the guard, and it needs
+ * no database.
  */
 
 interface QueryTap {
@@ -56,61 +63,6 @@ function tapQueries(pool: pg.Pool): QueryTap {
     },
   };
 }
-
-/**
- * The collection endpoints, as `[label, url]`. `:partner` is substituted with
- * the seeded firm so the firm console — which is partner-scoped and answers
- * 400 to an ops caller without one — is measured rather than skipped.
- */
-const ENDPOINTS: Array<[string, string]> = [
-  ['valuations', '/api/v1/valuations?per_page=50'],
-  ['valuations (sorted)', '/api/v1/valuations?per_page=50&sort=company_name:asc'],
-  ['valuations counts', '/api/v1/valuations/counts'],
-  ['valuations export', '/api/v1/valuations/export'],
-  ['engagements', '/api/v1/engagements?per_page=50'],
-  ['inbox', '/api/v1/inbox?per_page=50'],
-  ['tasks', '/api/v1/tasks'],
-  ['reviews', '/api/v1/reviews'],
-  ['search', '/api/v1/search?q=Scaling'],
-  ['stats dashboard', '/api/v1/stats/dashboard'],
-  ['firm dashboard', '/api/v1/firm/dashboard?partner_id=:partner'],
-  ['firm clients', '/api/v1/firm/clients?partner_id=:partner'],
-  ['firm attention', '/api/v1/firm/attention?partner_id=:partner'],
-  ['partner valuations', '/api/v1/partners/:partner/valuations'],
-  ['organizations', '/api/v1/organizations'],
-  ['monitors', '/api/v1/monitors'],
-  ['notifications', '/api/v1/notifications'],
-  ['saved views', '/api/v1/saved-views'],
-  ['funds', '/api/v1/funds'],
-  ['debt instruments', '/api/v1/debt/instruments'],
-  ['report templates', '/api/v1/report-templates'],
-  ['blog posts', '/api/v1/blog/posts'],
-  ['help articles', '/api/v1/help/articles'],
-  ['support messages', '/api/v1/support/messages'],
-  ['contact submissions', '/api/v1/contact/submissions'],
-  ['users', '/api/v1/users'],
-  ['user invitations', '/api/v1/users/invitations'],
-  ['partners', '/api/v1/partners'],
-  ['admin events', '/api/v1/admin/events'],
-  ['admin jobs', '/api/v1/admin/jobs'],
-  ['admin job alerts', '/api/v1/admin/jobs/alerts'],
-  ['admin email outbox', '/api/v1/admin/email-outbox'],
-  ['admin email suppressions', '/api/v1/admin/email/suppressions'],
-  ['admin email delivery stats', '/api/v1/admin/email/delivery-stats'],
-  ['admin document triage', '/api/v1/admin/documents/triage'],
-  ['admin data remediation', '/api/v1/admin/data-remediation'],
-  ['admin retention actions', '/api/v1/admin/retention/actions'],
-  ['admin retention holds', '/api/v1/admin/retention/holds'],
-  ['admin retired valuations', '/api/v1/admin/retention/valuations/retired'],
-  ['admin prompts', '/api/v1/admin/prompts'],
-  ['admin narrative prompts', '/api/v1/admin/narrative-prompts'],
-  ['admin auto-emails', '/api/v1/admin/auto-emails'],
-  ['admin communication templates', '/api/v1/admin/communication-templates'],
-  ['admin api tokens', '/api/v1/admin/api-tokens'],
-  ['admin webhook delivery stats', '/api/v1/admin/webhooks/deliveries/stats'],
-  ['admin failed webhook deliveries', '/api/v1/admin/webhooks/deliveries/failed'],
-  ['admin system metrics', '/api/v1/admin/system/metrics'],
-];
 
 /** Rows behind the first measurement, and the multiple behind the second. */
 const SEED_ROWS = 4;
