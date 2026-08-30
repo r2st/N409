@@ -41,7 +41,13 @@ import {
   verifyWebhookSignature,
 } from '../payments/stripe.js';
 import { requirePrincipal } from '../plugins/auth.js';
-import { collectedTotals, disputeStatusOf, refundState, type DisputeStatus } from '../domain/payments.js';
+import {
+  collectedTotals,
+  disputeStatusOf,
+  hasSettled,
+  refundState,
+  type DisputeStatus,
+} from '../domain/payments.js';
 import { fitsInt4 } from '../domain/int4.js';
 import { createNotifications } from '../repos/notifications.js';
 import {
@@ -495,9 +501,20 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
   /**
    * The receipt for a settled engagement payment, itemised.
    *
-   * Only a succeeded payment has one. A pending checkout is an intention and a
-   * failed one is nothing at all, and issuing a document headed "Receipt" for
-   * either is how a client comes to believe they have paid.
+   * Only a payment that settled has one. A pending checkout is an intention and
+   * a failed or expired one is nothing at all, and issuing a document headed
+   * "Receipt" for either is how a client comes to believe they have paid.
+   *
+   * Settled is not the same as *still holding the money*, and the guard here
+   * asked the second question. `status === 'succeeded'` excluded 'refunded' —
+   * the status a full refund and a lost chargeback both move a row to — so a
+   * client whose money had come back in full could not obtain the one document
+   * that says so. `receiptSections` has rendered the "Refunded / Net paid"
+   * lines since it was written, and they were reachable only for a *partial*
+   * refund, which leaves the row 'succeeded'. What was left for the total case
+   * was Stripe's own receipt, which states the gross and knows nothing about
+   * the money going back — the exact document that reader exists to replace.
+   * See PAYMENT_SETTLED_STATUSES.
    */
   app.get(
     '/api/v1/valuations/:id/payments/:paymentId/receipt.pdf',
@@ -509,7 +526,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       if (!isUlid(paymentId)) throw problems.notFound();
       const payment = await findPaymentForValuation(deps.pool, id, paymentId);
       if (!payment) throw problems.notFound();
-      if (payment.status !== 'succeeded') {
+      if (!hasSettled(payment.status)) {
         throw problems.conflict('No receipt: this payment has not settled.');
       }
 
@@ -518,7 +535,18 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         company_name: valuation.company_name,
         meta: [
           { label: 'Receipt', value: valuation.number },
-          { label: 'Status', value: payment.dispute_status ? 'disputed' : 'paid' },
+          /*
+           * Three answers, not two. A row on 'refunded' has settled — that is
+           * why it has a receipt at all — but heading it "paid" is the claim
+           * this document must not make about money that has gone back. The
+           * dispute still wins where both are true: a chargeback is live and is
+           * what the reader has to act on, and the refund lines in the body
+           * below state the amount either way.
+           */
+          {
+            label: 'Status',
+            value: payment.dispute_status ? 'disputed' : payment.status === 'refunded' ? 'refunded' : 'paid',
+          },
           /*
            * `settled_at`, not `updated_at` (migration 0195).
            *

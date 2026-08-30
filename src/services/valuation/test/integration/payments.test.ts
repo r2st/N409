@@ -253,6 +253,58 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
       expect(res.statusCode).toBe(409);
     });
 
+    it('issues a receipt for a payment that was refunded in full', async () => {
+      /*
+       * `status === 'succeeded'` is the answer to "is this row still holding
+       * money", and the guard asked it where "did this client ever pay us" was
+       * the question. A full refund and a lost chargeback both move the row to
+       * 'refunded', so the receipt's own refund branch — written to state what
+       * was returned and what is left — was reachable only for the *partial*
+       * case, which leaves the row 'succeeded'. The client whose money all came
+       * back was left with Stripe's receipt for the gross.
+       */
+      const { vid, payment } = await settledPayment('Receipt Full Refund Co', 'cs_test_receipt_full');
+      await recordRefund(ctx.pool, payment.id, { refundedCents: 219_000, fullyRefunded: true });
+      const { rows } = await ctx.pool.query<{ status: string }>('SELECT status FROM payments WHERE id = $1', [
+        payment.id,
+      ]);
+      expect(rows[0]!.status).toBe('refunded');
+
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments/${payment.id}/receipt.pdf`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      const text = readable(res.rawPayload);
+      expect(text).toContain('Refunded');
+      // Gross, what came back, and nothing left.
+      expect(text).toContain('$2,190.00');
+      expect(text).toContain('$0.00');
+      // And the document must not head itself "paid" over money that has gone.
+      expect(text).toContain('refunded');
+    });
+
+    it('refuses a receipt for a payment that failed or expired', async () => {
+      // The other half of the guard: 'settled' widened to include 'refunded'
+      // and must not have widened to everything that is not pending.
+      const vid = await createValuation('Receipt Expired Co');
+      const payment = await createPayment(ctx.pool, {
+        valuationId: vid,
+        sessionId: 'cs_test_receipt_expired',
+        amountCents: 119_000,
+        currency: 'USD',
+        createdBy: ops.id,
+      });
+      await markPayment(ctx.pool, payment.id, 'expired');
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments/${payment.id}/receipt.pdf`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(409);
+    });
+
     it('404s a payment belonging to another valuation', async () => {
       const { payment } = await settledPayment('Receipt Scope A', 'cs_test_receipt_4');
       const other = await createValuation('Receipt Scope B');

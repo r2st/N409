@@ -80,6 +80,33 @@ export function isTerminalPaymentStatus(status: PaymentStatus): boolean {
  */
 export const PAYMENT_REVERSIBLE_STATUSES = ['succeeded', 'refunded'] as const;
 
+/**
+ * The statuses that mean the money actually arrived — the rows a receipt is
+ * about.
+ *
+ * The same pair as {@link PAYMENT_REVERSIBLE_STATUSES}, and not by coincidence:
+ * a reversal can only be recorded against a charge that settled, so "settled"
+ * and "reversible" are two names for one fact. They are stated separately
+ * because they answer different questions, and a future status that settles
+ * without being reversible would belong to only one of them.
+ *
+ * `refunded` is the member that was missing where it mattered. The receipt
+ * route asked `status === 'succeeded'`, which is the answer to "is this
+ * payment currently holding money" rather than to "did this client ever pay
+ * us". A *partial* refund leaves the row 'succeeded' and got a receipt stating
+ * the refund and the net; a *full* one moves it to 'refunded' and got a 409 —
+ * so `receiptSections`' refund branch was unreachable for exactly the reversal
+ * a client is most likely to want documented, and the only record left was
+ * Stripe's own receipt, which states the gross and knows nothing about the
+ * money going back.
+ */
+export const PAYMENT_SETTLED_STATUSES = ['succeeded', 'refunded'] as const;
+
+/** Did money actually arrive on this row? See {@link PAYMENT_SETTLED_STATUSES}. */
+export function hasSettled(status: string): boolean {
+  return (PAYMENT_SETTLED_STATUSES as readonly string[]).includes(status);
+}
+
 /** Stripe's dispute lifecycle, narrowed to the three outcomes we act on. */
 export type DisputeStatus = 'open' | 'won' | 'lost';
 
