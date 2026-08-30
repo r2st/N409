@@ -1,5 +1,8 @@
+import { fileURLToPath } from 'node:url';
+import * as fontkit from 'fontkit';
 import { describe, expect, it } from 'vitest';
 import {
+  CHART_SERIES_LIMITS,
   chartHeight,
   donutColor,
   donutSegments,
@@ -8,7 +11,7 @@ import {
   type ChartSpec,
   type ReportPdfInput,
 } from '../src/pdf.js';
-import { extractText } from './support/pdfText.js';
+import { extractText, pageLines } from './support/pdfText.js';
 
 /**
  * The two chart shapes added for composition and for trend.
@@ -298,5 +301,134 @@ describe('rendering the new charts', () => {
     const pages = (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
     expect(pages).toBeGreaterThan(1);
     expect(extractText(pdf)).toContain('Trend 5');
+  });
+});
+
+/**
+ * The axis of a trend chart, measured on the page.
+ *
+ * A line chart is the one figure in the report whose horizontal extent is
+ * decided per point rather than by the measure: markers are laid across the
+ * plot and each label is centred on its own marker. Both ways that can go
+ * wrong are invisible to a test that only reads the text back — the label is
+ * still *in* the document when it is set into the margin, and still in it when
+ * forty of them are stacked on the same forty points of axis.
+ *
+ * So this reads the laid-out lines and measures them against the same face the
+ * renderer draws with. `pdfPathological.test.ts` holds the rest of the document
+ * inside the type area but by the start of each line, which a label centred on
+ * the last marker passes while hanging off the right of it.
+ */
+describe('a trend chart’s labels', () => {
+  const PAGE = { width: 612, margin: 72 };
+  const RIGHT = PAGE.width - PAGE.margin;
+  const face = fontkit.openSync(
+    fileURLToPath(new URL('../assets/fonts/DejaVuSans.ttf', import.meta.url)),
+  ) as fontkit.Font;
+  const bold = fontkit.openSync(
+    fileURLToPath(new URL('../assets/fonts/DejaVuSans-Bold.ttf', import.meta.url)),
+  ) as fontkit.Font;
+  /** What pdfkit's own `widthOfString` computes, from the same font program. */
+  const width = (text: string, size: number, weight: fontkit.Font = face) =>
+    (weight.layout(text).advanceWidth / weight.unitsPerEm) * size;
+
+  /** Every label a chart draws: the small type, on the page the chart is on. */
+  const chartLabels = (pdf: Buffer) =>
+    pageLines(pdf)
+      .flat()
+      .filter((line) => line.size === 7.5);
+
+  const trend = (n: number, label: (i: number) => string, display: (i: number) => string) =>
+    withChart({
+      type: 'line',
+      title: 'Fair market value per common share over time',
+      points: Array.from({ length: n }, (_, i) => ({
+        label: label(i),
+        value: 1 + i * 0.11,
+        display: display(i),
+      })),
+    });
+
+  it('keeps the last point’s date and value inside the right margin', async () => {
+    // The rightmost marker sits eight points short of the margin; a 60pt box
+    // centred on it ends 22pt past it. A four-figure per-share value is the
+    // widest thing the summary puts there.
+    const pdf = await renderReportPdf(
+      trend(
+        4,
+        (i) => `202${i + 2}-06-30`,
+        (i) => `$1,234.567${i}`,
+      ),
+    );
+    const escaped = chartLabels(pdf).filter(
+      (line) => line.x + width(line.text, line.size) > RIGHT + 0.5 || line.x < PAGE.margin - 0.5,
+    );
+    expect(escaped.map((l) => `${l.text} at ${l.x.toFixed(1)}`)).toEqual([]);
+  });
+
+  it('still draws the first and last dates once the axis is full', async () => {
+    const n = CHART_SERIES_LIMITS.line;
+    const pdf = await renderReportPdf(
+      trend(
+        n,
+        (i) => `20${String(10 + i).padStart(2, '0')}-06-30`,
+        () => '$1.0000',
+      ),
+    );
+    const text = extractText(pdf);
+    expect(text).toContain('2010-06-30');
+    expect(text).toContain(`20${10 + n - 1}-06-30`);
+  });
+
+  it('thins the dates to what the axis holds rather than stacking them', async () => {
+    const n = CHART_SERIES_LIMITS.line;
+    const pdf = await renderReportPdf(
+      trend(
+        n,
+        (i) => `20${String(10 + i).padStart(2, '0')}-06-30`,
+        () => '$1.0000',
+      ),
+    );
+    // Dates only: the gridline values and the two endpoint figures are set in
+    // the same size, and the endpoints in bold.
+    const dates = chartLabels(pdf)
+      .filter((line) => /^\d{4}-\d{2}-\d{2}$/.test(line.text))
+      .sort((a, b) => a.x - b.x);
+    expect(dates.length).toBeGreaterThan(1);
+    expect(dates.length).toBeLessThan(n);
+    // No two of them share a point of axis.
+    for (const [i, date] of dates.entries()) {
+      const next = dates[i + 1];
+      if (!next) continue;
+      expect(date.x + width(date.text, date.size)).toBeLessThanOrEqual(next.x);
+    }
+  });
+
+  it('dates every point of a series the axis can hold', async () => {
+    const pdf = await renderReportPdf(
+      trend(
+        5,
+        (i) => `202${i}-06-30`,
+        () => '$1.0000',
+      ),
+    );
+    const text = extractText(pdf);
+    for (let i = 0; i < 5; i++) expect(text).toContain(`202${i}-06-30`);
+  });
+
+  it('keeps a bold endpoint figure inside the margin too', async () => {
+    const pdf = await renderReportPdf(
+      trend(
+        2,
+        (i) => `202${i + 4}-06-30`,
+        () => '$12,345.6789',
+      ),
+    );
+    const figures = chartLabels(pdf).filter((line) => line.text.startsWith('$'));
+    expect(figures.length).toBeGreaterThan(0);
+    for (const figure of figures) {
+      expect(figure.x + width(figure.text, figure.size, bold)).toBeLessThanOrEqual(RIGHT + 0.5);
+      expect(figure.x).toBeGreaterThanOrEqual(PAGE.margin - 0.5);
+    }
   });
 });

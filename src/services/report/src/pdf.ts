@@ -1780,6 +1780,8 @@ export function chartHeight(spec: ChartSpec): number {
 
 const WATERFALL_PLOT_HEIGHT = 150;
 const LINE_PLOT_HEIGHT = 140;
+/** Width of the box a line chart's point and axis labels are centred in. */
+const LABEL_BOX = 60;
 const DONUT_SIZE = 130;
 const CHART_INK = '#222222';
 const CHART_MUTED = '#8a8a8a';
@@ -2047,16 +2049,78 @@ function renderLineChart(
     doc.lineWidth(1.6).strokeColor(accent).stroke();
   }
 
+  /*
+   * A label box centred on its marker, nudged so it cannot cross the measure.
+   *
+   * The rightmost marker sits eight points short of the right margin, so a box
+   * centred on it hung 22pt past it — and every trend chart has a rightmost
+   * marker. The most recent date and, above it, the concluded value a board
+   * reads this chart for were both set into the right margin on every report
+   * that carried one, by five points for an ISO date and by nineteen for a
+   * per-share figure in the thousands. Nudging the box keeps the label with its
+   * marker to within half a box while putting it back inside the type area.
+   */
+  const labelBoxLeft = (px: number) =>
+    Math.min(Math.max(px - LABEL_BOX / 2, left), left + usable - LABEL_BOX);
+
+  /*
+   * X labels thinned to what the axis can hold, endpoints always kept.
+   *
+   * The value labels were thinned to the endpoints from the start; the date
+   * beneath each marker was not, and the series this chart plots is bounded at
+   * `CHART_SERIES_LIMITS.line` — forty. Forty ISO dates, each about 35pt wide,
+   * across a 400pt axis is 10pt of room per label: the axis of a client's
+   * longest-running engagement was a solid band of overlapping digits, and the
+   * chart was least readable on exactly the reports with the most history.
+   *
+   * Nothing is dropped from the chart by this: every point keeps its marker and
+   * its place on the line, the alternative text still names its points, and the
+   * note under the plot still says what the series is. It is the axis ticks
+   * that are thinned, which is what an axis does when the ticks outnumber the
+   * room — and the two labels a reader looks for, the first and the last, are
+   * the two the spacing is anchored on.
+   */
+  doc.font(FONTS.regular).fontSize(7.5);
+  const widestLabel = Math.min(LABEL_BOX, Math.max(...coords.map((c) => doc.widthOfString(c.label))));
+  const pitch = widestLabel + 6;
+  // Chosen on where a label is *drawn* rather than on where its marker is: the
+  // nudge above moves the last box up to half a box left of its point, which an
+  // evenly-spaced-by-index selection does not know about and which is exactly
+  // where two labels would touch.
+  const labelCentre = (px: number) => labelBoxLeft(px) + LABEL_BOX / 2;
+  const labelled: number[] = [];
+  coords.forEach((c, i) => {
+    const previous = labelled[labelled.length - 1];
+    if (previous === undefined || labelCentre(c.px) - labelCentre(coords[previous]!.px) >= pitch) {
+      labelled.push(i);
+    }
+  });
+  // The most recent point is the one the chart is read for, so it is kept even
+  // when the walk above stopped short of it — at the cost of whichever earlier
+  // labels it would land on.
+  const lastPoint = coords.length - 1;
+  if (labelled[labelled.length - 1] !== lastPoint) {
+    while (
+      labelled.length > 0 &&
+      labelCentre(coords[lastPoint]!.px) - labelCentre(coords[labelled[labelled.length - 1]!]!.px) < pitch
+    ) {
+      labelled.pop();
+    }
+    labelled.push(lastPoint);
+  }
+  const labelledSet = new Set(labelled);
+
   coords.forEach((c, i) => {
     doc.circle(c.px, c.py, 2.6).fillColor(accent).fill();
     // Only the endpoints carry a value. Labelling every marker on a six-point
     // series produces a chart made of overlapping numbers.
     if (i === 0 || i === coords.length - 1) {
       doc.font(FONTS.bold).fontSize(7.5).fillColor(CHART_INK);
-      oneLine(doc, c.display, c.px - 30, c.py - 13, { width: 60, align: 'center' });
+      oneLine(doc, c.display, labelBoxLeft(c.px), c.py - 13, { width: LABEL_BOX, align: 'center' });
     }
+    if (!labelledSet.has(i)) return;
     doc.font(FONTS.regular).fontSize(7.5).fillColor('#777777');
-    oneLine(doc, c.label, c.px - 30, baseline + 6, { width: 60, align: 'center' });
+    oneLine(doc, c.label, labelBoxLeft(c.px), baseline + 6, { width: LABEL_BOX, align: 'center' });
   });
 
   doc.x = left;
