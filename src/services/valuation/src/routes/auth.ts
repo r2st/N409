@@ -56,6 +56,7 @@ import { sendTransactionalEmail, sendTransactionalEmailInBackground } from '../e
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
 
 const RegisterBody = z.object({
   email: EmailAddress,
@@ -278,7 +279,16 @@ export function registerAuthRoutes(
     const digest = await hashPassword(password);
 
     if (await findUserByEmail(deps.pool, email)) {
-      throw problems.conflict('An account with this email already exists');
+      // The remedy, not just the fact. Somebody who has forgotten they signed
+      // up cannot tell from "an account already exists" whether to try a
+      // different address or to go and sign in, and the two are the whole
+      // decision. No new disclosure: the sentence already conceded the
+      // address is registered.
+      throw problems.conflict(
+        'An account with this email address already exists, so there is nothing to create. ' +
+          'Sign in instead — and if you do not remember the password, use “Forgot password” on ' +
+          'the sign-in page to set a new one.',
+      );
     }
     const user = await createUser(deps.pool, {
       email,
@@ -655,7 +665,7 @@ export function registerAuthRoutes(
 
     const digest = await hashPassword(parsed.data.password);
     const reset = await resetPasswordWithToken(deps.pool, parsed.data.token, digest);
-    if (!reset) throw problems.badRequest('This reset link is invalid, expired, or already used');
+    if (!reset) throw problems.badRequest(DEAD_LINK_DETAIL.reset);
     await recordAdminEvent(deps.pool, {
       type: 'user_password_changed',
       // Nobody is signed in here — the token is the whole authority — so the
@@ -684,8 +694,7 @@ export function registerAuthRoutes(
     }
 
     const { outcome, userId } = await verifyEmailWithToken(deps.pool, parsed.data.token);
-    if (outcome === 'invalid')
-      throw problems.badRequest('This verification link is invalid, expired, or already used');
+    if (outcome === 'invalid') throw problems.badRequest(DEAD_LINK_DETAIL.verification);
     if (outcome === 'verified')
       await recordAdminEvent(deps.pool, {
         type: 'user_email_verified',
@@ -774,7 +783,7 @@ export function registerAuthRoutes(
     }
 
     const invitation = await findPendingInvitationByToken(deps.pool, parsed.data.token);
-    if (!invitation) throw problems.badRequest('This invitation is invalid, expired, or has been revoked');
+    if (!invitation) throw problems.badRequest(DEAD_LINK_DETAIL.invitation);
     return { email: invitation.email, expires_at: invitation.expires_at };
   });
 
@@ -807,9 +816,19 @@ export function registerAuthRoutes(
       firstName: first_name,
       lastName: last_name,
     });
-    if (result.status === 'invalid')
-      throw problems.badRequest('This invitation is invalid, expired, or has been revoked');
-    if (result.status === 'conflict') throw problems.conflict('An account with this email already exists');
+    if (result.status === 'invalid') throw problems.badRequest(DEAD_LINK_DETAIL.invitation);
+    if (result.status === 'conflict') {
+      // Reached by somebody who *was* invited, so "an account already exists"
+      // reads as the invitation having failed. It has not: the address is
+      // already on the platform, the invitation needed a new account and
+      // therefore has nothing to do, and what they want is to sign in.
+      throw problems.conflict(
+        'An account already exists for the address this invitation was sent to, so there is no ' +
+          'new account to set up. Sign in with that address — use “Forgot password” if you need a ' +
+          'new one. If you still cannot see the organisation you were invited to, ask whoever ' +
+          'invited you to add your existing account to it.',
+      );
+    }
     await recordAdminEvent(deps.pool, {
       type: 'invitation_accepted',
       actor: { actorType: 'human', actorId: result.user.id },

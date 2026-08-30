@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { DEAD_LINK_DETAIL } from '../../src/domain/linkRefusal.js';
 
 const dbUp = await isDbAvailable();
 
@@ -68,7 +69,9 @@ describe.skipIf(!dbUp)('invitations issued by an account that is then deactivate
       payload: { token, password: 'a-perfectly-fine-passw0rd' },
     });
     expect(accepted.statusCode).toBe(400);
-    expect(accepted.json().detail).toMatch(/invalid, expired, or has been revoked/i);
+    // The shared refusal for every dead invitation state — merged on purpose,
+    // so a guesser cannot tell "withdrawn" from "never existed".
+    expect(accepted.json().detail).toBe(DEAD_LINK_DETAIL.invitation);
 
     // Retired rather than deleted: the console keeps showing who invited whom.
     const { rows } = await ctx.pool.query<{ revoked_at: Date | null }>(
