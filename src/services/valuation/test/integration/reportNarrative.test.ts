@@ -41,10 +41,12 @@ async function startAiStub(state: {
   calls: number;
   sections: Array<Record<string, unknown>>;
   duringRun?: (() => Promise<void>) | null;
+  lastPayload?: Record<string, unknown> | null;
 }) {
   const stub = Fastify({ logger: false });
-  stub.post('/ai/v1/pipelines/report_narrative', async (_req, reply) => {
+  stub.post('/ai/v1/pipelines/report_narrative', async (req, reply) => {
     state.calls += 1;
+    state.lastPayload = (req.body ?? {}) as Record<string, unknown>;
     if (state.duringRun) await state.duringRun();
     return reply.status(200).send({ model: 'stub-model', result: { sections: state.sections } });
   });
@@ -343,6 +345,73 @@ describe.skipIf(!dbUp)('drafting the report narrative', () => {
   it('is operations-only', async () => {
     const id = await engagement('Narrative Ten, Inc.');
     expect((await draft(id, { reuse: false }, client.token)).statusCode).toBe(403);
+  });
+
+  it('gives the agent the calculation it is drafting prose about', async () => {
+    /*
+     * The generic AI route refuses `report_narrative` without a calculation and
+     * ships one in the payload; this route — the only one whose output reaches
+     * the deliverable — shipped none, so the AI service substituted
+     * "(no calculation provided)" and the model wrote a Conclusion of Value
+     * against an instruction to use figures it had never been shown.
+     */
+    const id = await engagement('Narrative Twelve, Inc.');
+    await draft(id, { reuse: false });
+    const calc = state.lastPayload?.calculation as Record<string, unknown> | undefined;
+    expect(calc).toBeTruthy();
+    expect(Number(calc!.fmv_per_share)).toBe(1.2345);
+    expect(Number(calc!.equity_value)).toBe(42_000_000);
+  });
+
+  it('refuses to draft prose about a valuation nothing has computed', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(client.token),
+      payload: { kind: '409a', company_name: 'Narrative Thirteen, Inc.' },
+    });
+    const id = created.json().valuation.id as string;
+    await app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${id}/report`,
+      headers: authHeader(ops.token),
+    });
+    const before = state.calls;
+    const res = await draft(id, { reuse: false });
+    expect(res.statusCode).toBe(422);
+    // And no agent call was paid for on the way to the refusal.
+    expect(state.calls).toBe(before);
+  });
+
+  it('does not reuse a draft written before the run it would describe', async () => {
+    /*
+     * Draft, notice a wrong input, fix it, recompute, redraft — the ordinary
+     * sequence. Reuse used to hand back the superseded run's prose, so the
+     * report restated the old equity value beside the new schedules.
+     */
+    const id = await engagement('Narrative Fourteen, Inc.');
+    await draft(id, { reuse: false });
+    const after = state.calls;
+
+    await createCalculation(
+      pool,
+      {
+        valuationId: id,
+        engineVersion: '1.4.0',
+        status: 'succeeded',
+        inputs: { params: {}, inputs: {} },
+        results: { equity_value: 51_000_000, fmv_per_share: 1.5 },
+        equityValue: 51_000_000,
+        fmvPerShare: 1.5,
+        createdBy: client.id,
+      },
+      { ...actor, actorId: client.id },
+    );
+
+    await draft(id, { reuse: true, overwrite: true });
+    expect(state.calls).toBe(after + 1);
+    // And the fresh run was told about the run that superseded the draft.
+    expect(Number((state.lastPayload?.calculation as Record<string, unknown>).fmv_per_share)).toBe(1.5);
   });
 
   it('sanitizes what the model returned', async () => {

@@ -37,7 +37,7 @@ import { buildReportSummary } from '../domain/reportSummary.js';
 import { fillFigures, reportFigures, type ReportFigures } from '../domain/reportFigures.js';
 import { applyNarrative, draftedSectionsFrom } from '../domain/narrativeApply.js';
 import { latestSucceededJob } from '../repos/aiJobs.js';
-import { runAiPipeline, type AiPipelineDeps } from './ai.js';
+import { calculationPayload, runAiPipeline, type AiPipelineDeps } from './ai.js';
 import { InternalServiceError, toProblem } from '../clients/internal.js';
 import { buildExhibits } from '../domain/reportExhibits.js';
 import { listComparableItems } from '../repos/comparableItems.js';
@@ -822,13 +822,54 @@ export function registerReportRoutes(
     }
 
     /*
+     * The run this narrative is written about.
+     *
+     * Read here, before the agent, rather than only afterwards for the figure
+     * fallback — because the agent needs it and was not being given it. Every
+     * other caller of `report_narrative` attaches the calculation:
+     * `CALCULATION_DEPENDENT_PIPELINES` makes the generic AI route refuse to
+     * run this agent without one and ship `calculation` in the payload. This
+     * route, the only one whose output reaches the deliverable, shipped params
+     * and research and nothing else, so `_calculation_summary` on the far side
+     * substituted "(no calculation provided)" and the model drafted a
+     * Conclusion of Value, an approach discussion and a reconciliation against
+     * an instruction to "use the actual figures above" with no figures above
+     * it. What came back read like a report and stated nobody's numbers.
+     *
+     * Refused rather than drafted from nothing, for the same reason the generic
+     * route refuses: prose about a valuation that has not been computed is not
+     * a cheaper draft, it is a fabricated one, and this is the path that writes
+     * it into the report body.
+     */
+    const calculation = await latestCalculationForKind(deps.pool, valuation.id, valuation.kind);
+    if (!calculation) {
+      throw problems.unprocessable('Run a calculation before drafting the report narrative');
+    }
+
+    /*
      * Reuse a recent draft rather than paying for a new one.
      *
      * The agent is expensive and the answer only moves when the calculation
      * does. `reuse: false` forces a fresh run, which is what an analyst who has
      * just changed the research or the params wants.
+     *
+     * "The answer only moves when the calculation does" was the whole
+     * justification and nothing checked it. A stored draft is reused however
+     * many runs have landed since it was written, so the ordinary sequence —
+     * draft, notice a wrong input, fix it, recompute, redraft — put the prose
+     * of the *superseded* run back into the report, quoting the old equity
+     * value and the old per-share against the new schedules. The reader of the
+     * deliverable has no way to see that; the QA gate's `stale_figure` check
+     * would catch a frozen conclusion only if it happened to still be in the
+     * body it grades.
+     *
+     * So the cached draft is used only while it is at least as new as the run
+     * it purports to describe. Comparing against `created_at` rather than the
+     * job's completion is deliberate: what the agent saw is the calculation
+     * that existed when the payload was assembled.
      */
-    let job = parsed.data.reuse ? await latestSucceededJob(deps.pool, id, 'report_narrative') : null;
+    const cached = parsed.data.reuse ? await latestSucceededJob(deps.pool, id, 'report_narrative') : null;
+    let job = cached && cached.created_at > calculation.created_at ? cached : null;
     if (!job) {
       try {
         ({ job } = await runAiPipeline(deps.ai, {
@@ -839,6 +880,7 @@ export function registerReportRoutes(
           createdBy: principal.id,
           actor: { actorType: 'ai', actorId: principal.id, source: 'ai-service' },
           includeDocuments: false,
+          extraPayload: { calculation: calculationPayload(calculation) },
         }));
       } catch (err) {
         if (err instanceof InternalServiceError) throw toProblem(err);
@@ -875,10 +917,11 @@ export function registerReportRoutes(
      * text is one nobody has written. That is the whole overwrite rule.
      */
     const baseline = target.version === 1 ? target : await getVersionContent(deps.pool, current.id, 1);
-    // Same reading as the render below it: `applyNarrative` is told the kind,
-    // and the figures it falls back on must come from the run that kind is
-    // reported in — not from a compute of the other shape run afterwards.
-    const calculation = await latestCalculationForKind(deps.pool, valuation.id, valuation.kind);
+    // `calculation` above: the same reading as the render below it —
+    // `applyNarrative` is told the kind, and the figures it falls back on must
+    // come from the run that kind is reported in, not from a compute of the
+    // other shape run afterwards. It is also the run the drafted prose was
+    // written against, which is the one the substituted figures must agree with.
     const outcome = applyNarrative(target.content, drafted, {
       overwrite: parsed.data.overwrite,
       baseline: baseline?.content ?? null,
