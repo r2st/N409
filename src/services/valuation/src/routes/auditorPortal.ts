@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isUlid, logUnretried, problems } from '@n409/shared';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { isOps, REPORT_VISIBLE_STATES, type Principal } from '../auth/rbac.js';
 import { reportStatusFor } from '../domain/report.js';
@@ -427,7 +427,7 @@ export function registerAuditorPortalRoutes(
           })),
       );
     } catch (err) {
-      req.log.warn({ err, valuationId: valuation.id }, 'auditor note notification failed');
+      logUnretried(req.log, err, { valuationId: valuation.id }, 'auditor note notification failed');
     }
 
     // Echoed back so the portal can show the auditor what it recorded rather

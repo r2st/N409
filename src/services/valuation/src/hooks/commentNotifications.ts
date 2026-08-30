@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
+import { logUnretried } from '@n409/shared';
 import type { CommentKind } from '../domain/operations.js';
 import { CLIENT_MESSAGE_ROLES } from '../domain/roles.js';
 import { sliceChars } from '../domain/textSlice.js';
@@ -97,10 +98,14 @@ export async function notifyCommentPosted(
   try {
     await deliver(deps, valuation, comment);
   } catch (err) {
-    deps.log?.warn(
-      { err, valuationId: valuation.id, commentId: comment.id, kind: comment.kind },
-      'comment notification failed; the comment stands and nobody was told',
-    );
+    if (deps.log) {
+      logUnretried(
+        deps.log,
+        err,
+        { valuationId: valuation.id, commentId: comment.id, kind: comment.kind },
+        'comment notification failed; the comment stands and nobody was told',
+      );
+    }
   }
 }
 

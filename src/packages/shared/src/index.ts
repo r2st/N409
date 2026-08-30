@@ -1,6 +1,7 @@
 export {
   createLogger,
   REDACT_PATHS,
+  RENDERED_MESSAGE_FIELDS,
   SENSITIVE_FIELDS,
   serializeError,
   serializeRequest,
@@ -194,6 +195,7 @@ export {
   FAILURE_KIND,
   isTransient,
   logFailure,
+  logUnretried,
   markFailure,
   type BackoffOptions,
   type ClassifyHint,

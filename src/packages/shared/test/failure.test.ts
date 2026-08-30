@@ -11,6 +11,7 @@ import {
   classifyStatus,
   isTransient,
   logFailure,
+  logUnretried,
   markFailure,
 } from '../src/failure.js';
 
@@ -224,5 +225,35 @@ describe('logFailure', () => {
     const { log, errors } = recorder();
     logFailure(log, pgError('23505'), { where: 'db' }, 'call failed');
     expect(errors[0]).toMatchObject({ failure_kind: 'permanent', alert: true });
+  });
+
+  /**
+   * The case `logFailure` gets wrong by construction, and the reason
+   * `logUnretried` exists: a transient error on work nothing revisits.
+   *
+   * `warn` in this codebase promises that a retry is coming. A dropped
+   * post-commit announcement has no retry — the row is committed, the webhook
+   * was answered 2xx — so the transience of the cause says nothing about the
+   * durability of the consequence.
+   */
+  it('logUnretried errors and alerts even when the error itself is transient', () => {
+    const { log, warns, errors } = recorder();
+    const failure = logUnretried(
+      log,
+      syscallError('ECONNREFUSED'),
+      { valuationId: 'v1' },
+      'notification lost',
+    );
+    expect(warns).toHaveLength(0);
+    expect(errors[0]).toMatchObject({
+      valuationId: 'v1',
+      failure_kind: 'transient',
+      failure_reason: 'syscall.ECONNREFUSED',
+      retried: false,
+      alert: true,
+    });
+    // The classification is still returned and still logged: *why* it was lost
+    // is the next thing a person needs.
+    expect(failure.kind).toBe('transient');
   });
 });

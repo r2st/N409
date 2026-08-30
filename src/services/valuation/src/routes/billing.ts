@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, logUnretried, problems } from '@n409/shared';
 import { renderReportPdf } from '../clients/reportRender.js';
 import { isOps } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -440,7 +440,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         })),
       ]);
     } catch (err) {
-      log.warn({ err, userId }, 'dunning notification failed');
+      logUnretried(log, err, { userId }, 'dunning notification failed');
     }
   }
 
@@ -510,7 +510,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         );
       }
     } catch (err) {
-      log.warn({ err, invoice: inv.number }, 'invoice paid announcement failed');
+      logUnretried(log, err, { invoice: inv.number }, 'invoice paid announcement failed');
     }
   }
 
@@ -571,7 +571,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         );
       }
     } catch (err) {
-      log.warn({ err, userId: sub.user_id }, 'subscription cancellation announcement failed');
+      logUnretried(log, err, { userId: sub.user_id }, 'subscription cancellation announcement failed');
     }
   }
 
@@ -640,7 +640,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         );
       }
     } catch (err) {
-      log.warn({ err, userId: sub.user_id }, 'trial ending announcement failed');
+      logUnretried(log, err, { userId: sub.user_id }, 'trial ending announcement failed');
     }
   }
 

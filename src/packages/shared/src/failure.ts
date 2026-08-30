@@ -369,6 +369,56 @@ export function logFailure(
   return failure;
 }
 
+/**
+ * Log a failure on work that nothing will come back for.
+ *
+ * {@link logFailure} answers "is a retry coming?" by asking the *error*, which
+ * is the right question wherever a retry loop is listening to the answer. It is
+ * the wrong question for the largest failure population in this estate: the
+ * post-commit announcement. A comment is stored and the notification insert
+ * throws; a Stripe invoice settles and the receipt does not go out; an auditor
+ * files a finding and nobody is told. Each of those is caught deliberately —
+ * returning 5xx for work that in fact landed is worse, and for a webhook it
+ * earns a redelivery that re-applies the part that already worked — and each
+ * one then logged at `warn`, because the error underneath was usually something
+ * transient like a busy pool.
+ *
+ * But `warn` in this codebase carries a promise, and it is written down one
+ * function up: transient is `warn` *because the retry is going to handle it*.
+ * Here there is no retry. No sweep revisits a dropped notification, the webhook
+ * was answered 2xx, and the announcement is gone whatever kind of error lost
+ * it. The transience of the cause says nothing about the durability of the
+ * consequence, and the consequence is what an operator is being asked to act
+ * on: somebody who should have been told something was not.
+ *
+ * So the level is chosen by the caller's knowledge rather than the error's
+ * class. `failure_reason` is still classified and still logged, because *why*
+ * it was lost is exactly what a person needs next.
+ */
+export function logUnretried(
+  log: FailureLogger,
+  err: unknown,
+  context: Record<string, unknown>,
+  message: string,
+  hint: ClassifyHint = {},
+): FailureClass {
+  const failure = classifyFailure(err, hint);
+  log.error(
+    {
+      ...context,
+      err,
+      failure_kind: failure.kind,
+      failure_reason: failure.reason,
+      // Says which of the two arms above did *not* fire, so a reader who knows
+      // the contract can tell "transient, and lost anyway" from "permanent".
+      retried: false,
+      alert: true,
+    },
+    message,
+  );
+  return failure;
+}
+
 // ── The database, seen from a request handler ────────────────────────────────
 
 /**

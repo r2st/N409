@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, logUnretried, problems } from '@n409/shared';
 import { renderReportPdf } from '../clients/reportRender.js';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { formatMoneyCents, paymentReceivedMessage, receiptSections } from '../domain/billing.js';
@@ -584,7 +584,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         })),
       );
     } catch (err) {
-      log.warn({ err, valuationId: args.valuationId }, 'billing alert notification failed');
+      logUnretried(log, err, { valuationId: args.valuationId }, 'billing alert notification failed');
     }
   }
 
@@ -808,7 +808,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         );
       }
     } catch (err) {
-      log.warn({ err, paymentId: payment.id }, 'payment receipt announcement failed');
+      logUnretried(log, err, { paymentId: payment.id }, 'payment receipt announcement failed');
     }
   }
 
@@ -978,7 +978,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
           })),
       ]);
     } catch (err) {
-      log.warn({ err, invoice: invoice.number }, 'invoice refund notification failed');
+      logUnretried(log, err, { invoice: invoice.number }, 'invoice refund notification failed');
     }
     return { received: true, refunded: full };
   }
@@ -1184,7 +1184,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
           })),
         );
       } catch (err) {
-        log.warn({ err, paymentId: payment.id }, 'dispute alert notification failed');
+        logUnretried(log, err, { paymentId: payment.id }, 'dispute alert notification failed');
       }
     }
     return { received: true, dispute_status: status };
