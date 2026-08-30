@@ -166,6 +166,21 @@ function used(): Map<string, string[]> {
     if (file.endsWith('flags.ts')) {
       for (const m of text.matchAll(/^\s+env:\s*['"]([A-Z][A-Z0-9_]{2,})['"]/gm)) note(m[1]!, rel);
     }
+    // The AI tier's spend ceilings: `TokenLedger("OPENROUTER_TOKEN_BUDGET")`.
+    //
+    // Both were visible here until the two providers' budget bookkeeping was
+    // factored into one class, whose constructor takes the variable name as an
+    // argument and reads it a file away. `os.environ.get` then appears once, in
+    // `llm_http.py`, next to a parameter rather than a name — so this scan lost
+    // sight of both ceilings and reported them as documented variables nothing
+    // reads. That is the same failure as the `PORT`/`SMTP_PORT` helper and the
+    // key ring above, and it is worth naming again: extracting a repeated read
+    // into a helper is an ordinary refactor, and the advice this file would
+    // then give — delete them from `.env.example` — would silently uncap the
+    // spend on a billed provider.
+    for (const m of text.matchAll(/\bTokenLedger\(\s*["']([A-Z][A-Z0-9_]{2,})["']/g)) {
+      note(m[1]!, rel);
+    }
     // The at-rest key ring: `keyRing(env, KEY_NAMES)` / `keyRing(env, ['FOO'])`.
     //
     // Three subsystems seal something at rest — document blobs, TOTP seeds, and

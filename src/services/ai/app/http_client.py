@@ -47,12 +47,16 @@ import httpx
 # rather than merely large.
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
-_LIMIT_VAR = "MAX_RESPONSE_BYTES"
+#: Named through the `_VAR` convention rather than inline, because that is the
+#: spelling `envExample.test.ts` can see — a variable it cannot see is one it
+#: will report as read by nothing, and the advice that follows is to delete it
+#: from the deployment contract.
+MAX_RESPONSE_BYTES_VAR = "MAX_RESPONSE_BYTES"
 
 
 def max_response_bytes(default: int = MAX_RESPONSE_BYTES) -> int:
     """Configured ceiling (MAX_RESPONSE_BYTES); 0 disables it."""
-    raw = os.environ.get(_LIMIT_VAR)
+    raw = os.environ.get(MAX_RESPONSE_BYTES_VAR)
     if raw is None or raw.strip() == "":
         return default
     try:
