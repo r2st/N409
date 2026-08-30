@@ -23,6 +23,7 @@ import {
   toProblem,
   type UpstreamIssue,
 } from '../clients/internal.js';
+import { sanitizeExtractedInputs } from './engineInputs.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { RECALC_APPROACHES } from '../domain/approaches.js';
@@ -230,8 +231,30 @@ export async function buildCalculationInputs(
     latestSucceededJob(pool, valuationId, 'extract'),
     listComparableItems(pool, valuationId),
   ]);
-  const extracted = extractJob?.result?.engine_inputs;
-  if (extracted && typeof extracted === 'object') {
+  /*
+   * The extraction is filtered through the same bounds hand-entry enforces,
+   * for the reason `sanitizeExtractedInputs` exists — and it was not.
+   *
+   * Both *apply* paths sanitize: the auto-apply inside `runAiPipeline` and the
+   * manual `/ai/extract/apply` route, which re-sanitizes on read precisely
+   * because a stored job can predate the check. This read did neither, and it
+   * is the one that reaches the engine. So a figure the apply path had already
+   * examined and refused — a volatility of 65 for "65%", a share count read
+   * out of a parenthesised negative, a balance above `MAX_QUANTITY` — was
+   * dropped from `engine_inputs` with a warning line, and then merged straight
+   * into the calculation payload from the job result on every run after that.
+   * Params could not override it, because the refusal is exactly why params
+   * has no value for that field, so the rejected figure was the only one the
+   * engine ever saw, and the engine's own range checks are warnings.
+   *
+   * Sanitizing here costs nothing for a well-formed extraction — the fields
+   * the AI service is allowed to emit are the fields this accepts — and makes
+   * the property `extractedInputs.test.ts` states ("anything the AI path
+   * applies would also have been accepted from a human") true of the path that
+   * prices the company, not only of the one that stores the number.
+   */
+  const { applied: extracted } = sanitizeExtractedInputs(extractJob?.result?.engine_inputs);
+  if (Object.keys(extracted).length > 0) {
     inputs = deepMerge(inputs, extracted as Record<string, unknown>);
   }
   const applied = paramsRow.engine_inputs;
