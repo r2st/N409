@@ -13,7 +13,7 @@
  * migration 0155 for why.
  */
 
-import { findNulByte } from './nulBytes.js';
+import { findUnstorableText, UNSTORABLE_REASONS } from './nulBytes.js';
 
 /** Which endpoint received the delivery. */
 export type StripeEndpoint = 'payments' | 'billing';
@@ -273,10 +273,14 @@ export function parseStripeEvent(raw: Buffer): StripeEventEnvelope | { error: st
   }
   if (!isPlainObject(parsed)) return { error: 'Invalid webhook payload: not a JSON object' };
 
-  const nul = findNulByte(parsed);
-  if (nul !== null) {
+  // The whole envelope is kept as `jsonb`, so an unpaired surrogate is refused
+  // here for the same reason a NUL is — see domain/nulBytes.ts.
+  const unstorable = findUnstorableText(parsed);
+  if (unstorable !== null) {
     return {
-      error: `Invalid webhook payload: field ${nul} contains a NUL byte, which cannot be stored`,
+      error:
+        `Invalid webhook payload: field ${unstorable.path} contains ` +
+        UNSTORABLE_REASONS[unstorable.reason],
     };
   }
 

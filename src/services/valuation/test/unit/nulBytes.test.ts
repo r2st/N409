@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { findNulByte, MAX_SCAN_DEPTH } from '../../src/domain/nulBytes.js';
+import { findUnstorableText, MAX_SCAN_DEPTH } from '../../src/domain/nulBytes.js';
 
 /**
  * The walk behind the boundary guard in app.ts.
@@ -28,55 +28,104 @@ describe('the gap this closes', () => {
   });
 });
 
-describe('findNulByte', () => {
+/** The path alone, for the cases that are only about where the walk stopped. */
+const at = (value: unknown): string | null => findUnstorableText(value)?.path ?? null;
+
+describe('findUnstorableText', () => {
   it('passes ordinary payloads, including awkward Unicode', () => {
-    expect(findNulByte({ name: 'Ünïcödé 🏢 Ltd', n: 3, ok: true, missing: null })).toBeNull();
+    expect(at({ name: 'Ünïcödé 🏢 Ltd', n: 3, ok: true, missing: null })).toBeNull();
     // Other control characters are not this guard's business: Postgres stores
     // them, and the PDF renderer strips the ones it cannot draw.
-    expect(findNulByte({ name: 'abc' })).toBeNull();
+    expect(at({ name: 'abc' })).toBeNull();
   });
 
   it('names the field it found, so the refusal can say which', () => {
-    expect(findNulByte({ company_name: `Acme${NUL}` })).toBe('company_name');
-    expect(findNulByte({ rows: [{ ok: 'y' }, { holder: `A${NUL}` }] })).toBe('rows[1].holder');
+    expect(at({ company_name: `Acme${NUL}` })).toBe('company_name');
+    expect(at({ rows: [{ ok: 'y' }, { holder: `A${NUL}` }] })).toBe('rows[1].holder');
   });
 
   it('searches keys as well as values', () => {
     // The cap-table column mapping is a `z.record(z.string(), z.string())` and
     // lands in jsonb with its keys intact; an unstorable key is as fatal there
     // as an unstorable value.
-    expect(findNulByte({ mapping: { [`col${NUL}`]: 'shares' } })).toBe(`mapping.col${NUL} (key)`);
+    expect(at({ mapping: { [`col${NUL}`]: 'shares' } })).toBe(`mapping.col${NUL} (key)`);
   });
 
   it('reports the first hit and stops', () => {
-    expect(findNulByte({ a: `x${NUL}`, b: `y${NUL}` })).toBe('a');
+    expect(at({ a: `x${NUL}`, b: `y${NUL}` })).toBe('a');
   });
 
   it('leaves the bodies that are bytes on purpose alone', () => {
     // Webhook routes install their own buffer parser so they can verify a
     // signature over the exact bytes; those never reach a text column as they
     // stand, and a buffer has no `.includes(string)` semantics to test anyway.
-    expect(findNulByte(Buffer.from([0, 1, 2]))).toBeNull();
-    expect(findNulByte(new Date(0))).toBeNull();
+    expect(at(Buffer.from([0, 1, 2]))).toBeNull();
+    expect(at(new Date(0))).toBeNull();
   });
 
   it('handles the root being a bare string', () => {
-    expect(findNulByte(`a${NUL}`)).toBe('(root)');
-    expect(findNulByte('a')).toBeNull();
+    expect(at(`a${NUL}`)).toBe('(root)');
+    expect(at('a')).toBeNull();
   });
 
   it('stops descending past the depth bound rather than recursing forever', () => {
     const nest = (depth: number): unknown => (depth === 0 ? { leaf: `x${NUL}` } : { down: nest(depth - 1) });
-    expect(findNulByte(nest(MAX_SCAN_DEPTH - 2))).toContain('leaf');
+    expect(at(nest(MAX_SCAN_DEPTH - 2))).toContain('leaf');
     // Deeper than the bound is not searched. That is the trade the bound makes:
     // no request is allowed to turn the guard into unbounded work, and a body
     // nested twelve deep is not a shape any schema in this service accepts.
-    expect(findNulByte(nest(MAX_SCAN_DEPTH + 5))).toBeNull();
+    expect(at(nest(MAX_SCAN_DEPTH + 5))).toBeNull();
   });
 
   it('is not confused by an object with no prototype', () => {
     const bare = Object.create(null) as Record<string, unknown>;
     bare.name = `a${NUL}`;
-    expect(findNulByte(bare)).toBe('name');
+    expect(at(bare)).toBe('name');
+  });
+});
+
+/**
+ * R217, methodology M6: the second character with no UTF-8 encoding.
+ *
+ * Reached from the portal's own forms — a company name pasted with half an
+ * emoji in it. `POST /api/v1/valuations` and the company-profile editor both
+ * answered 500, because `recordEvent` writes the same strings into a `jsonb`
+ * column and Postgres refuses an unpaired `\ud800` escape.
+ */
+describe('an unpaired surrogate', () => {
+  const HIGH = '\uD800';
+  const LOW = '\uDC00';
+
+  it('is invisible to zod and to a raw-body scan, exactly as the NUL is', () => {
+    expect(z.string().min(1).max(200).safeParse(`Acme${HIGH}`).success).toBe(true);
+    // Well-formed JSON.stringify (ES2019) emits the half as a literal escape,
+    // so the bytes on the wire are ASCII and a raw scan sees nothing.
+    expect(JSON.stringify({ name: `a${HIGH}b` })).toBe('{"name":"a\\ud800b"}');
+  });
+
+  it('finds a lone half of either kind, and names the field', () => {
+    expect(findUnstorableText({ company_name: `Acme${HIGH}` })).toEqual({
+      path: 'company_name',
+      reason: 'lone_surrogate',
+    });
+    expect(findUnstorableText({ a: `${LOW}x` })).toEqual({ path: 'a', reason: 'lone_surrogate' });
+    // A low half before a high one is two lone halves, not a pair.
+    expect(findUnstorableText({ a: `${LOW}${HIGH}` })).toEqual({ path: 'a', reason: 'lone_surrogate' });
+  });
+
+  it('leaves real astral characters alone', () => {
+    // The whole point: emoji, CJK extension B, musical symbols and flags are
+    // surrogate *pairs* and are stored exactly as sent.
+    expect(findUnstorableText({ a: '🏢 Ltd', b: '𝄞', c: '🇬🇧', d: '𠮷野家' })).toBeNull();
+  });
+
+  it('searches keys, and reports the NUL first when a payload carries both', () => {
+    expect(findUnstorableText({ [`col${HIGH}`]: 'shares' })).toEqual({
+      path: `col${HIGH} (key)`,
+      reason: 'lone_surrogate',
+    });
+    // Order within a string: the NUL is the older, better-known refusal and
+    // the message is more actionable, so it wins when one value has both.
+    expect(findUnstorableText({ a: `${HIGH}${NUL}` })?.reason).toBe('nul');
   });
 });

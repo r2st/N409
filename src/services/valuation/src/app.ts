@@ -155,7 +155,7 @@ import { probeReady, setNetworkSink } from './clients/internal.js';
 import { configureReportRenderer, registerReportRenderMetrics } from './clients/reportRender.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
-import { findNulByte } from './domain/nulBytes.js';
+import { findUnstorableText, unstorableTextMessage } from './domain/nulBytes.js';
 
 export interface AppDeps {
   config: Config;
@@ -312,19 +312,21 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   /**
-   * Refuse a request carrying a NUL byte, before any handler can hand one to
-   * the driver.
+   * Refuse a request carrying text Postgres will not store, before any handler
+   * can hand it to the driver.
    *
    * Global rather than per-schema because the exposure is per-*column*, not per
-   * route: `U+0000` has no UTF-8 encoding Postgres will store, so every string
-   * that reaches a `text`, `jsonb` or array parameter is a candidate and there
-   * are several hundred of them. A guard on the boundary is one place to be
-   * right; the alternative is a `.refine` on every `z.string()` in the service
-   * and a census to keep them there. See domain/nulBytes.ts.
+   * route: neither `U+0000` nor an unpaired surrogate has a UTF-8 encoding
+   * Postgres will store, so every string that reaches a `text`, `jsonb` or
+   * array parameter is a candidate and there are several hundred of them. A
+   * guard on the boundary is one place to be right; the alternative is a
+   * `.refine` on every `z.string()` in the service and a census to keep them
+   * there. See domain/nulBytes.ts for what each character does below.
    *
-   * `preValidation` is the first hook with a parsed body, and the byte only
-   * exists once the body is parsed — a JSON client sends the escape sequence,
-   * not the byte. Query strings arrive decoded, so `%00` is caught here too.
+   * `preValidation` is the first hook with a parsed body, and the character
+   * only exists once the body is parsed — a JSON client sends the escape
+   * sequence, not the code unit. Query strings arrive decoded, so `%00` and a
+   * percent-encoded `%ED%A0%80` are caught here too.
    *
    * This runs ahead of route-level authentication, so an unauthenticated caller
    * sending one gets 400 rather than 401. That is the same ordering Fastify's
@@ -332,9 +334,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
    * field of the caller's own request.
    */
   app.addHook('preValidation', (req, _reply, done) => {
-    const at = findNulByte(req.body) ?? findNulByte(req.query);
+    const at = findUnstorableText(req.body) ?? findUnstorableText(req.query);
     if (at) {
-      done(problems.badRequest(`Field ${at} contains a NUL byte, which cannot be stored`));
+      done(problems.badRequest(unstorableTextMessage(at)));
       return;
     }
     done();
