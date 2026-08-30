@@ -6,7 +6,7 @@ import { signCapTableSyncState, signHrisState } from '../../src/auth/jwt.js';
 import { runDueCapTableSyncs } from '../../src/routes/capTableSync.js';
 import { runDueHrisSyncs } from '../../src/routes/hris.js';
 import { oldestActiveJobs } from '../../src/repos/jobs.js';
-import { AI_JOB_STALE_MS, createAiJob, reapStaleAiJobs } from '../../src/repos/aiJobs.js';
+import { AI_JOB_STALE_MS, completeAiJob, createAiJob, reapStaleAiJobs } from '../../src/repos/aiJobs.js';
 import {
   authHeader,
   interceptPoolQueries,
@@ -560,6 +560,57 @@ describe.skipIf(!dbUp)('what an operation leaves behind when it dies halfway', (
       // and not an exemption.
       await age(fresh.id, AI_JOB_STALE_MS * 3);
       expect((await reapStaleAiJobs(ctx.pool)).map((r) => r.id)).toContain(fresh.id);
+    });
+
+    /**
+     * The worker that comes back after the reaper has already closed its run.
+     *
+     * `setPipelineRunStatus` has refused this since the auto-pipeline shipped —
+     * "a run can be reaped while its worker is still wedged on an upstream
+     * call" — and `completeAiJob` did not. The window is narrower here
+     * (fifteen minutes against a 180-second call budget) and it is not closed:
+     * the settlement is a write, and a write waits for a pool connection, in
+     * exactly the incident that made the run slow enough to reap.
+     *
+     * Unconditional, the late settle reopened a reaped job as `succeeded` with
+     * a latency figure and no trace of the reap, and put a second
+     * `ai_job_completed` on the spine — two contradictory endings for one run,
+     * with nothing to say which was the run's.
+     */
+    it('refuses a worker settling a run the reaper has already closed', async () => {
+      const job = await createAiJob(ctx.pool, {
+        valuationId,
+        pipeline: 'comparables',
+        input: {},
+        createdBy: ops.id,
+      });
+      await age(job.id, AI_JOB_STALE_MS * 2);
+      await reapStaleAiJobs(ctx.pool);
+
+      // The worker returns holding the row as it was when it started.
+      const late = await completeAiJob(
+        ctx.pool,
+        job,
+        { status: 'succeeded', model: 'gpt-test', result: { ok: true }, latencyMs: 1234 },
+        { actorType: 'system', actorId: 'test', source: 'test' },
+      );
+
+      expect(late.status, 'the reaper’s ending is the one that stands').toBe('failed');
+      expect(late.error).toContain('reaped');
+      expect(late.result).toBeNull();
+      expect(late.latency_ms, 'a latency nobody measured must not appear').toBeNull();
+
+      const settled = await statusOf(job.id);
+      expect(settled.status).toBe('failed');
+
+      // One ending on the spine, not two.
+      const { rows } = await ctx.pool.query<{ payload: Record<string, unknown> }>(
+        `SELECT payload FROM valuation_events
+          WHERE valuation_id = $1 AND payload->>'job_id' = $2`,
+        [valuationId, job.id],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.payload).toMatchObject({ status: 'failed', reaped: true });
     });
 
     it('settles a job whose own failure write could not be recorded', async () => {

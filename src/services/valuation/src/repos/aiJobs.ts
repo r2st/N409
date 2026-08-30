@@ -47,7 +47,30 @@ export async function createAiJob(
   return rows[0]!;
 }
 
-/** Marks the job finished and writes the ai_job_completed audit event. */
+/**
+ * Marks the job finished and writes the ai_job_completed audit event — once,
+ * and only while the run is still running.
+ *
+ * `'succeeded'` and `'failed'` are final, for the reason `setPipelineRunStatus`
+ * states next door and this did not: a run can be reaped while its worker is
+ * still alive, and that worker eventually comes back and settles the row it is
+ * holding. The reaper below is fifteen minutes, five times the pipeline's own
+ * budget, so the worker is not usually the one that is late — but the
+ * settlement is a write, and a write waits for a pool connection like any
+ * other. The incident where that matters is the one where the pool is the
+ * problem, which is also the incident that makes runs slow enough to reap.
+ *
+ * Unconditional, it wrote a second terminal state over the first: a job the
+ * reaper had closed as failed reopened as `succeeded` with a latency figure
+ * and no trace of the reap, or the reverse — and the audit spine took a second
+ * `ai_job_completed` for one run, so the trail carries two contradictory
+ * endings and no way to say which was the run's. The AI tab reads the last
+ * one; the queue-stall figures were computed off the first.
+ *
+ * The settled row is returned unchanged, so a caller that came back late gets
+ * the ending that stands rather than an error — its own work is finished
+ * either way, and there is nothing for it to do differently.
+ */
 export async function completeAiJob(
   pool: pg.Pool,
   job: AiJobRow,
@@ -64,7 +87,7 @@ export async function completeAiJob(
     const { rows } = await client.query<AiJobRow>(
       `UPDATE ai_jobs
        SET status = $2, model = $3, result = $4, error = $5, latency_ms = $6, completed_at = now()
-       WHERE id = $1 RETURNING *`,
+       WHERE id = $1 AND status = 'running' RETURNING *`,
       [
         job.id,
         outcome.status,
@@ -74,6 +97,16 @@ export async function completeAiJob(
         outcome.latencyMs,
       ],
     );
+    const settled = rows[0];
+    if (!settled) {
+      // Somebody else ended this run — the reaper, or a duplicate settle. No
+      // event, because the ending it would describe is not the one on the row.
+      const { rows: live } = await client.query<AiJobRow>('SELECT * FROM ai_jobs WHERE id = $1', [job.id]);
+      // A row that has vanished under its own worker (its valuation was deleted
+      // mid-run) is not something this can report on either; hand back what the
+      // caller already holds.
+      return live[0] ?? job;
+    }
     await recordEvent(client, {
       valuationId: job.valuation_id,
       type: PIPELINE_EVENT_TYPES.aiJobCompleted,
@@ -86,7 +119,7 @@ export async function completeAiJob(
         latency_ms: outcome.latencyMs,
       },
     });
-    return rows[0]!;
+    return settled;
   });
 }
 
