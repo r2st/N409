@@ -10,7 +10,14 @@ import { isIsoCalendarDate } from '@n409/shared';
 import { isStorableEmail, MAX_EMAIL_LENGTH } from '../domain/email.js';
 import { INT4_MAX } from '../domain/int4.js';
 import { clampScheduleMonths } from '../domain/vesting.js';
-import { IMPORT_TIMEOUT_MS, IntegrationError, OAUTH_TIMEOUT_MS, readJson, withDeadline } from './deadline.js';
+import {
+  IMPORT_TIMEOUT_MS,
+  IntegrationError,
+  OAUTH_TIMEOUT_MS,
+  providerRefused,
+  readJson,
+  withDeadline,
+} from './deadline.js';
 import { refreshOAuthTokens, type RefreshedTokens } from './oauthRefresh.js';
 
 export const HRIS_PROVIDERS = ['rippling', 'gusto', 'deel'] as const;
@@ -111,8 +118,7 @@ export async function exchangeCode(
       signal,
     }),
   );
-  if (!res.ok)
-    throw new IntegrationError(`${HRIS_PROVIDER_LABELS[provider]} token exchange failed (${res.status})`);
+  if (!res.ok) throw providerRefused(HRIS_PROVIDER_LABELS[provider], 'token exchange', res);
   const body = (await readJson(res, HRIS_PROVIDER_LABELS[provider])) as TokenResponse;
   if (!body.access_token)
     throw new IntegrationError(`${HRIS_PROVIDER_LABELS[provider]} returned no access token`);
@@ -412,8 +418,15 @@ export async function fetchRosterAndGrants(
       signal,
     }),
   );
-  if (!res.ok)
-    throw new IntegrationError(`${HRIS_PROVIDER_LABELS[provider]} roster fetch failed (${res.status})`);
+  // Through the shared refusal, like every other outbound call in this estate.
+  // These two sites — this and the token exchange above — were the last that
+  // wrote the status into a sentence themselves, which meant a rate-limited
+  // provider was reported as "Gusto roster fetch failed (429)". That reads like
+  // a broken integration and prompts exactly the wrong response: pressing
+  // Import now again, immediately, which is how a rate limit becomes a longer
+  // one. `providerRefused` answers a 429 with the provider's own Retry-After
+  // instead, and leaves every other status with the wording it had.
+  if (!res.ok) throw providerRefused(HRIS_PROVIDER_LABELS[provider], 'roster fetch', res);
   const payload = await readJson(res, HRIS_PROVIDER_LABELS[provider]);
   const { roster, grants, rejected } = mapEmployees(payload);
   return {
