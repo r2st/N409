@@ -5,8 +5,11 @@ import {
   IntegrationError,
   MAX_PROVIDER_PAGES,
   nextPageUrl,
+  PAGED_PULL_BUDGET_MS,
+  pagedPullBudget,
   providerSaysMore,
 } from '../../src/clients/deadline.js';
+import { classifyFailure } from '@n409/shared';
 
 /**
  * A provider's employee list that did not fit in one request (round 259,
@@ -178,5 +181,53 @@ describe('fetchCapTable paging', () => {
     const pulled = await fetchCapTable('pulley', capTokens, fn);
     expect(urls).toHaveLength(1);
     expect(pulled.entries).toHaveLength(1);
+  });
+});
+
+/**
+ * The deadline the page walk multiplied (round 261, methodology M5).
+ *
+ * `withDeadline` bounds a request. R259 put it inside a twenty-iteration loop,
+ * which turned one thirty-second bound into twenty of them: a provider
+ * answering every page in twenty-nine seconds trips nothing, holds an
+ * analyst's handler for ten minutes behind an edge that gave up long before,
+ * and on the scheduler stretches a fifteen-minute tick — four connections at a
+ * time out of twenty-five due — into an hour, dropping every tick underneath
+ * it.
+ */
+describe('the budget a paged pull spends across all its pages (R261)', () => {
+  it('gives the first page the per-request deadline, not the whole budget', () => {
+    const budget = pagedPullBudget('Carta', 120_000, () => 1_000);
+    // 30s, the per-request bound: a budget is not licence for one slow socket.
+    expect(budget.nextPageTimeoutMs()).toBe(30_000);
+  });
+
+  it('shrinks a page deadline to what is left, so the walk ends inside the budget', () => {
+    let now = 0;
+    const budget = pagedPullBudget('Carta', 120_000, () => now);
+    expect(budget.nextPageTimeoutMs()).toBe(30_000);
+    now = 110_000;
+    expect(budget.nextPageTimeoutMs()).toBe(10_000);
+  });
+
+  it('refuses the next page once the budget is spent, and says a retry is worth it', () => {
+    let now = 0;
+    const budget = pagedPullBudget('Carta', 120_000, () => now);
+    now = 120_001;
+    let thrown: unknown;
+    try {
+      budget.nextPageTimeoutMs();
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(IntegrationError);
+    expect((thrown as Error).message).toContain('Carta');
+    // A provider that was slow once is worth another attempt on the backoff —
+    // and the classifier can only read that off the error if it was said.
+    expect(classifyFailure(thrown)).toMatchObject({ kind: 'transient' });
+  });
+
+  it('is the same budget for every paged pull', () => {
+    expect(PAGED_PULL_BUDGET_MS).toBe(120_000);
   });
 });

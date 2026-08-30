@@ -15,7 +15,7 @@ import { cellText, meansNoFigure, parseNumericCell } from '../domain/capTable.js
 import { findUnstorableText, UNSTORABLE_REASONS } from '../domain/nulBytes.js';
 import type { CapTableEntry, CapTableClassType, NumericCapTableField } from '../domain/capTable.js';
 import {
-  IMPORT_TIMEOUT_MS,
+  pagedPullBudget,
   IntegrationError,
   MAX_PROVIDER_PAGES,
   nextPageUrl,
@@ -570,6 +570,8 @@ export async function fetchCapTable(
    */
   const pages: Record<string, unknown>[] = [];
   let pageUrl = url;
+  // One budget for the walk, not one deadline per page. See `pagedPullBudget`.
+  const budget = pagedPullBudget(label);
   for (let page = 0; ; page++) {
     if (page >= MAX_PROVIDER_PAGES) {
       throw new IntegrationError(
@@ -578,7 +580,7 @@ export async function fetchCapTable(
           'spreadsheet instead.',
       );
     }
-    const res = await withDeadline(label, IMPORT_TIMEOUT_MS, (signal) =>
+    const res = await withDeadline(label, budget.nextPageTimeoutMs(), (signal) =>
       fetchFn(pageUrl, {
         headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
         signal,

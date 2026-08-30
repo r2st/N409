@@ -11,7 +11,7 @@ import { isStorableEmail, MAX_EMAIL_LENGTH } from '../domain/email.js';
 import { INT4_MAX } from '../domain/int4.js';
 import { clampScheduleMonths } from '../domain/vesting.js';
 import {
-  IMPORT_TIMEOUT_MS,
+  pagedPullBudget,
   IntegrationError,
   MAX_PROVIDER_PAGES,
   nextPageUrl,
@@ -440,8 +440,12 @@ async function fetchEmployeePages(
   const e = ENDPOINTS[provider];
   const pages: Record<string, unknown>[] = [];
   let url = `${e.apiBase}/v1/employees?include=equity`;
+  // One budget for the walk, not one deadline per page: twenty pages at
+  // twenty-nine seconds each trips nothing and takes ten minutes. See
+  // `pagedPullBudget`.
+  const budget = pagedPullBudget(label);
   for (let page = 0; page < MAX_PROVIDER_PAGES; page++) {
-    const res = await withDeadline(label, IMPORT_TIMEOUT_MS, (signal) =>
+    const res = await withDeadline(label, budget.nextPageTimeoutMs(), (signal) =>
       fetchFn(url, {
         headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' },
         signal,

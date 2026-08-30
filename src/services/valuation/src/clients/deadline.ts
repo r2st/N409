@@ -264,6 +264,64 @@ export async function withDeadline<T>(
 }
 
 /**
+ * The longest one paged collection may take in total, across every page.
+ *
+ * {@link withDeadline} bounds *a request*, and until R259 that was the whole of
+ * a pull: one call, one deadline, 30 seconds. R259 turned both import paths
+ * into page walks bounded by {@link MAX_PROVIDER_PAGES}, and a per-request
+ * deadline inside a twenty-iteration loop is not a deadline — it is twenty of
+ * them, and the pull's real bound became ten minutes.
+ *
+ * Which is the exact failure the top of this file exists to remove, moved one
+ * level out. A provider that answers each page in twenty-nine seconds is not
+ * black-holing a socket and never trips `withDeadline`, but the analyst who
+ * pressed Import is watching a spinner behind an edge that gave up on the
+ * request minutes ago, and the handler is still holding its slot. On the
+ * scheduler it is worse: the sweep runs four at a time against up to
+ * twenty-five due connections, so one slow provider stretches a tick that is
+ * meant to fit inside fifteen minutes into an hour, and `nonOverlapping` drops
+ * every tick underneath it — for every other connection too.
+ *
+ * Two minutes is several times the largest honest pull this platform has seen
+ * (a few thousand grants over a handful of pages) and well inside the edge
+ * timeouts in front of the manual route. It is a budget, not a per-page
+ * allowance: each page gets whatever is left of it, capped at
+ * {@link IMPORT_TIMEOUT_MS}, so the whole walk ends within the budget rather
+ * than a page past it.
+ */
+export const PAGED_PULL_BUDGET_MS = 120_000;
+
+/**
+ * The shrinking deadline of one paged pull.
+ *
+ * Transient, like {@link withDeadline}'s own timeout and for the same reason: a
+ * provider that was slow this time is worth another attempt on the backoff, and
+ * the classifier cannot read that off an `IntegrationError` unless it is said.
+ */
+export function pagedPullBudget(
+  label: string,
+  budgetMs: number = PAGED_PULL_BUDGET_MS,
+  now: () => number = Date.now,
+): { nextPageTimeoutMs: () => number } {
+  const endsAt = now() + budgetMs;
+  return {
+    nextPageTimeoutMs() {
+      const left = endsAt - now();
+      if (left <= 0) {
+        throw markFailure(
+          new IntegrationError(
+            `${label} was still sending pages after ${Math.round(budgetMs / 1000)}s — the import was ` +
+              'stopped rather than held open any longer. Try again, or import from a file.',
+          ),
+          'transient',
+        );
+      }
+      return Math.min(left, IMPORT_TIMEOUT_MS);
+    },
+  };
+}
+
+/**
  * The most JSON we will hold from a provider before giving up on the answer.
  *
  * `res.json()` reads to the end of the stream before it parses, so the size of
