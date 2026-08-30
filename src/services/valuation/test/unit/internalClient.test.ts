@@ -350,21 +350,30 @@ describe('the AI pipeline deadline outlasts the AI service budget', () => {
  * thing not written.
  */
 describe('internal client — the body is inside the error boundary too', () => {
-  /** Headers arrived; the body then aborts, the way undici reports our deadline. */
-  const abortMidBody = (name: 'TimeoutError' | 'AbortError' = 'TimeoutError') =>
-    ({
-      ok: true,
-      status: 200,
-      text: () => Promise.reject(Object.assign(new Error('The operation was aborted'), { name })),
-    }) as unknown as Response;
+  /**
+   * Headers arrived; the body then fails.
+   *
+   * A real `Response` over a stream that errors, rather than an object with a
+   * rejecting `text()`: the read is capped now (`MAX_INTERNAL_BODY_BYTES`), so
+   * it goes through the body stream, and a double that has only `text()` would
+   * be asserting against a shape the client no longer uses.
+   */
+  const failingBody = (err: Error): Response =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(err);
+        },
+      }),
+      { status: 200 },
+    );
 
-  /** Headers arrived; the connection then died — undici's `terminated`. */
-  const resetMidBody = () =>
-    ({
-      ok: true,
-      status: 200,
-      text: () => Promise.reject(new TypeError('terminated')),
-    }) as unknown as Response;
+  /** The body aborts, the way undici reports our deadline. */
+  const abortMidBody = (name: 'TimeoutError' | 'AbortError' = 'TimeoutError') =>
+    failingBody(Object.assign(new Error('The operation was aborted'), { name }));
+
+  /** The connection died — undici's `terminated`. */
+  const resetMidBody = () => failingBody(new TypeError('terminated'));
 
   afterEach(() => {
     setNetworkSink(null);

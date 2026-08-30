@@ -14,6 +14,7 @@ import {
 import { Semaphore } from '../pipeline/semaphore.js';
 import { circuits, internalAuthHeaders } from './internal.js';
 import { sliceChars } from '../domain/textSlice.js';
+import { readCappedBytes } from './deadline.js';
 
 /**
  * PDF rendering, delegated to the report service when there is one.
@@ -254,6 +255,29 @@ export const MAX_DELEGATED_QUEUED = 12;
  * The alternative was a comment in each file naming the other, which is the
  * arrangement that let the deployed units sit four weeks behind the repo.
  */
+/**
+ * The most rendered PDF we will hold from the report unit.
+ *
+ * `MAX_DELEGATED_IN_FLIGHT` renders can be reading a body at once, and
+ * `RENDER_BYTES_PER_CONCURRENT` is the heap this service already budgets for
+ * each of them — so an uncapped read is that admission control multiplied by
+ * whatever the far end sends. A 409A deliverable with every exhibit is a few
+ * megabytes; this is chosen well above that and below the point where four
+ * concurrent reads are the largest thing on the box.
+ */
+export const MAX_RENDERED_PDF_BYTES = 32 * 1024 * 1024;
+
+/**
+ * The most rejection body we will hold before calling it unreadable.
+ *
+ * A problem document is a sentence and, for the 422, a zod issue list over the
+ * wire schema — kilobytes. This is not sized for that but for what else can
+ * answer on that port: an ingress error page, a wrong service, a body with no
+ * end. The 500-character cut below is what reaches the log; this is what
+ * reaches memory.
+ */
+export const MAX_RENDER_DETAIL_BYTES = 1024 * 1024;
+
 export const RENDER_IDLE_BYTES = 116 * 1024 * 1024;
 export const RENDER_BYTES_PER_CONCURRENT = 10 * 1024 * 1024;
 
@@ -589,12 +613,19 @@ async function postForPdf(
     // The body of a rejection is the whole diagnostic — a 422 here is the wire
     // schema refusing a real report, which is a contract drift somebody has to
     // read the field list to fix. Bounded, because it goes in a log line.
+    //
+    // The bound is on the *read*, not only on the slice. `sliceChars(await
+    // res.text(), 500)` cuts a string this line has already buffered whole, so
+    // the 500 was a statement about the log and never about the heap: a proxy
+    // in front of the render unit serving an endless error page was held here
+    // in full before a single character was dropped.
     let detail: string;
     try {
+      const bytes = await readCappedBytes(res, MAX_RENDER_DETAIL_BYTES);
       // `sliceChars`, not `slice`: a body cut at 500 UTF-16 units can be cut
       // through an astral character, and the orphaned half is a string this
       // message cannot be logged or stored with. See domain/textSlice.ts.
-      detail = sliceChars(await res.text(), 500);
+      detail = bytes === null ? '<oversized body>' : sliceChars(bytes.toString('utf8'), 500);
     } catch {
       detail = '<unreadable body>';
     }
@@ -605,8 +636,17 @@ async function postForPdf(
     // The deadline covers the body stream too, so a service that answers and
     // then stalls fails here with the same TimeoutError the fetch would raise —
     // which is why this read is inside a boundary rather than after one.
-    bytes = Buffer.from(await res.arrayBuffer());
+    const read = await readCappedBytes(res, MAX_RENDERED_PDF_BYTES);
+    if (read === null) {
+      throw new DelegationError(
+        'rejected',
+        res.status,
+        `render exceeded ${MAX_RENDERED_PDF_BYTES / (1024 * 1024)} MB`,
+      );
+    }
+    bytes = read;
   } catch (err) {
+    if (err instanceof DelegationError) throw err;
     const aborted = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
     throw new DelegationError(aborted ? 'timeout' : 'unreachable', res.status, describe(err), err);
   }

@@ -13,6 +13,7 @@ import {
   type FailureClass,
 } from '@n409/shared';
 import { sliceChars } from '../domain/textSlice.js';
+import { MAX_INTEGRATION_JSON_BYTES, readCappedBytes } from './deadline.js';
 
 /**
  * Thin JSON client for the internal AI / engine services. Failures surface as
@@ -33,6 +34,18 @@ export interface UpstreamIssue {
   severity: 'error' | 'warning';
   hint: string | null;
 }
+
+/**
+ * The most body we will hold from an internal service before giving up.
+ *
+ * Far above every real answer: an engine compute carries an allocation and a
+ * trace, a sensitivity response a grid whose dimensions the route caps at
+ * 9 x 9, and an AI pipeline result is bounded by the model's token ceiling.
+ * Chosen to be out of the way of a legitimate response rather than to be
+ * tight, and deliberately the same figure as `MAX_INTEGRATION_JSON_BYTES` so
+ * the two client families do not have to be reasoned about separately.
+ */
+export const MAX_INTERNAL_BODY_BYTES = MAX_INTEGRATION_JSON_BYTES;
 
 export class InternalServiceError extends Error {
   constructor(
@@ -462,7 +475,18 @@ async function postJsonOnce<T>(
     return failExchange(err);
   }
   /**
-   * The body, under the same error boundary as the fetch that promised it.
+   * The body, under the same error boundary as the fetch that promised it, and
+   * under a ceiling.
+   *
+   * `res.text()` reads to the end of the stream before it returns, so how much
+   * heap this line holds was the upstream's choice and not ours — the same
+   * thing `MAX_INTEGRATION_JSON_BYTES` was written about for the third-party
+   * clients, and the reason it is not a smaller worry here is only that the
+   * upstream is ours. "Ours" is a deployment fact: `ENGINE_URL` and `AI_URL`
+   * are environment variables, and a service pointed at something else — a
+   * proxy serving a multi-gigabyte error page, a port that answers with
+   * whatever is on it — kills this process with no status code and nothing in
+   * the log saying why.
    *
    * `AbortSignal.timeout` does not stop at the response headers — it aborts the
    * body stream too — so an upstream that answers and then stalls mid-body
@@ -481,7 +505,11 @@ async function postJsonOnce<T>(
    */
   let text: string;
   try {
-    text = await res.text();
+    const bytes = await readCappedBytes(res, MAX_INTERNAL_BODY_BYTES);
+    if (bytes === null) {
+      throw new Error(`answered with a body larger than ${MAX_INTERNAL_BODY_BYTES / (1024 * 1024)} MB`);
+    }
+    text = bytes.toString('utf8');
   } catch (err) {
     return failExchange(err);
   }
