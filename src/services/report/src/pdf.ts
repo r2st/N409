@@ -519,10 +519,20 @@ export function verifyFontAssets(): void {
   }
 }
 
-/** The face a registered font name belongs to, or null if we did not register it. */
+/**
+ * The face a registered font name belongs to, or null if we did not register it.
+ *
+ * Built once rather than scanned per call. This is asked on *every* `doc.font()`
+ * — pdfkit reselects the face for each cell of a table and each run of a
+ * paragraph — and the linear `Object.entries` scan it used to do allocated four
+ * entry pairs each time, which measured at 1.7% of a large render.
+ */
+const FACE_BY_FONT_NAME: ReadonlyMap<string, FaceName> = new Map(
+  Object.entries(FACES).map(([key, entry]) => [entry.name, key as FaceName]),
+);
+
 function faceNamed(name: string): FaceName | null {
-  for (const [key, entry] of Object.entries(FACES)) if (entry.name === name) return key as FaceName;
-  return null;
+  return FACE_BY_FONT_NAME.get(name) ?? null;
 }
 
 /**
@@ -622,6 +632,14 @@ const ODD_SPACES = /[\u2007\u2009\u200a\u202f\u2060]/g;
 const CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 
 /**
+ * A character `fontSafe` might have to act on: anything outside printable ASCII
+ * (plus the three whitespace instructions pdfkit lays out), or a hyphen, which
+ * may be a minus sign in disguise. Not `g`-flagged — it is only ever `test`ed,
+ * and a sticky `lastIndex` would make alternate calls lie.
+ */
+const NEEDS_SANITIZING = /[^\u0020-\u007e\t\n\r]|-/;
+
+/**
  * A hyphen-minus doing a minus sign's job: `-$1,200,000`, `-27.5%`, `(-5)`.
  *
  * The document was setting two different glyphs for one meaning, on one page.
@@ -670,6 +688,15 @@ export function typographicMinus(text: string): string {
  * that same form to `.text()`, where it is sanitized again.
  */
 export function fontSafe(text: string, face: FaceName = 'regular'): string {
+  // Nothing here has anything to do: no hyphen for `typographicMinus` to
+  // reconsider, and nothing outside printable ASCII for the three character
+  // classes below or for the coverage loop. That is the overwhelming majority
+  // of the strings this sees, because pdfkit measures *word by word* while
+  // wrapping — a large report makes 60k of these calls and most of them are on
+  // a four-character word. The classes are all disjoint from this set (tab,
+  // newline and carriage return are deliberately outside CONTROLS), so the fast
+  // path returns exactly what the slow one would.
+  if (!NEEDS_SANITIZING.test(text)) return text;
   const out = typographicMinus(text).replace(ZERO_WIDTH, '').replace(ODD_SPACES, ' ').replace(CONTROLS, '');
   // Fast path: the overwhelming majority of report text is ASCII, which every
   // face covers, and scanning is cheaper than rebuilding.
@@ -1294,22 +1321,41 @@ export function columnWidths(
   usable: number,
   measure: (text: string, bold: boolean) => number,
   headerRows: number,
+  /**
+   * Precomputed alignments, where the caller already has them. `tableGeometry`
+   * does — it needs them to draw with — and deriving them twice over a
+   * four-hundred-row cap table is a scan of every cell for nothing.
+   */
+  alignments?: readonly CellAlign[],
 ): number[] {
   const cols = Math.max(1, ...rows.map((r) => r.length));
   if (cols === 1) return [usable];
 
   const ceiling = Math.max(MIN_COLUMN_WIDTH, usable * 0.5);
-  const widthOf = (c: number, from: number) => {
-    let widest = 0;
-    rows.forEach((row, rowIdx) => {
-      if (rowIdx < from) return;
+  const clamp = (widest: number) => Math.min(ceiling, Math.max(MIN_COLUMN_WIDTH, widest + TABLE_PADDING * 2));
+  /*
+   * Both widths every column can be asked for, taken in one pass over the cells.
+   *
+   * The two questions below — how wide is this column, and how wide are its
+   * *figures* — used to be answered by two separate sweeps that measured the
+   * same body cells twice. Measurement is the expensive thing a table does
+   * (`widthOfString` shapes the string through the embedded face), so the
+   * second sweep was a straight duplicate on every over-full table, which is
+   * every wide exhibit in a 409A.
+   */
+  const naturalWidest = new Array<number>(cols).fill(0);
+  const bodyWidest = new Array<number>(cols).fill(0);
+  rows.forEach((row, rowIdx) => {
+    const bold = rowIdx < headerRows;
+    for (let c = 0; c < cols; c++) {
       const cell = row[c] ?? '';
-      if (cell === '') return;
-      widest = Math.max(widest, measure(cell, rowIdx < headerRows));
-    });
-    return Math.min(ceiling, Math.max(MIN_COLUMN_WIDTH, widest + TABLE_PADDING * 2));
-  };
-  const natural = Array.from({ length: cols }, (_, c) => widthOf(c, 0));
+      if (cell === '') continue;
+      const width = measure(cell, bold);
+      if (width > naturalWidest[c]!) naturalWidest[c] = width;
+      if (!bold && width > bodyWidest[c]!) bodyWidest[c] = width;
+    }
+  });
+  const natural = naturalWidest.map(clamp);
 
   const total = natural.reduce((sum, w) => sum + w, 0);
   if (total <= 0) return Array.from({ length: cols }, () => usable / cols);
@@ -1319,7 +1365,7 @@ export function columnWidths(
   // Over-full. Decide which columns hold figures the same way the renderer
   // decides which to right-align, so a column cannot be aligned as a figure and
   // widthed as prose.
-  const alignment = columnAlignments(rows, headerRows);
+  const alignment = alignments ?? columnAlignments(rows, headerRows);
   const numeric = alignment.map((a) => a === 'right');
 
   // What a numeric column *reserves* is the width of its widest figure, not of
@@ -1334,7 +1380,7 @@ export function columnWidths(
   //
   // Only the squeeze reaches here, so this narrows nothing that already fitted:
   // a table with room keeps its headings on one line via the branch above.
-  const reserved = natural.map((w, i) => (numeric[i] ? Math.min(w, widthOf(i, headerRows)) : w));
+  const reserved = natural.map((w, i) => (numeric[i] ? Math.min(w, clamp(bodyWidest[i]!)) : w));
   const reservedTotal = reserved.reduce((sum, w) => sum + w, 0);
   // Dropping the headings from the reservation is often the whole shortfall. When
   // it is, every column grows from there in proportion — which lets the headings
@@ -3223,36 +3269,75 @@ interface TableGeometry {
  * it a second way there would let the two disagree at exactly the boundary
  * where it matters.
  */
+/**
+ * Geometry is derived once per table, not once per question asked about it.
+ *
+ * A table preceded by a heading — every exhibit in a 409A — used to have its
+ * columns measured *three* times over: `renderBlock` asks `openingHeight` how
+ * much of the table has to fit under the heading, which builds a geometry to
+ * answer; `renderTable` builds its own; and then `renderTable` asks
+ * `tableLeadHeight` the same question again, which builds a third. Each build
+ * shapes every cell of the table through the embedded face. On a cap table with
+ * a few hundred share classes that is three full sweeps to place one heading.
+ *
+ * Keyed on the block, which `htmlToBlocks` creates fresh for each render, and
+ * carrying the document and page width it was derived under so a geometry can
+ * never be served to a document that would have measured differently.
+ */
+const tableGeometryCache = new WeakMap<
+  Extract<Block, { type: 'table' }>,
+  { doc: PDFKit.PDFDocument; usable: number; geometry: TableGeometry }
+>();
+
 function tableGeometry(
   doc: PDFKit.PDFDocument,
   block: Extract<Block, { type: 'table' }>,
   usable: number,
 ): TableGeometry {
+  const cached = tableGeometryCache.get(block);
+  if (cached && cached.doc === doc && cached.usable === usable) return cached.geometry;
+
   const measure = (text: string, bold: boolean) =>
     doc
       .font(bold ? FONTS.bold : FONTS.regular)
       .fontSize(TABLE_FONT_SIZE)
       .widthOfString(text);
 
-  const widths = columnWidths(block.rows, usable, measure, block.headerRows);
   const aligns = columnAlignments(block.rows, block.headerRows);
+  const widths = columnWidths(block.rows, usable, measure, block.headerRows, aligns);
   const offsets: number[] = [];
   widths.reduce((x, width) => {
     offsets.push(x);
     return x + width;
   }, 0);
 
+  /*
+   * Row heights are memoised on the row itself, for the same reason: every body
+   * row is measured once to decide whether it still fits on this page and again
+   * inside `drawRow` to know how tall to draw it, and the header rows are
+   * measured once more by `tableLeadHeight`. The answer cannot differ between
+   * those calls — it depends on the row, the face and the column widths, all
+   * fixed by the time the geometry exists.
+   */
+  const heights: [WeakMap<string[], number>, WeakMap<string[], number>] = [new WeakMap(), new WeakMap()];
   const heightOf = (row: string[], bold: boolean): number => {
-    const heights = row.map((cell, c) =>
+    const memo = heights[bold ? 1 : 0];
+    const hit = memo.get(row);
+    if (hit !== undefined) return hit;
+    const cellHeights = row.map((cell, c) =>
       doc
         .font(bold ? FONTS.bold : FONTS.regular)
         .fontSize(TABLE_FONT_SIZE)
         .heightOfString(cell || ' ', { width: (widths[c] ?? usable) - TABLE_PADDING * 2 }),
     );
-    return Math.max(14, ...heights, 0) + TABLE_PADDING * 2;
+    const height = Math.max(14, ...cellHeights, 0) + TABLE_PADDING * 2;
+    memo.set(row, height);
+    return height;
   };
 
-  return { widths, aligns, offsets, heightOf };
+  const geometry = { widths, aligns, offsets, heightOf };
+  tableGeometryCache.set(block, { doc, usable, geometry });
+  return geometry;
 }
 
 /**
