@@ -148,7 +148,7 @@ key and restart; no code changes.
    | Endpoint | Events |
    |---|---|
    | `https://n409.aiknol.com/api/v1/stripe/webhook` | `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed` |
-   | `https://n409.aiknol.com/api/v1/billing/webhook` | `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_succeeded`, `invoice.payment_failed` |
+   | `https://n409.aiknol.com/api/v1/billing/webhook` | `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `customer.subscription.trial_will_end`, `invoice.paid`, `invoice.payment_succeeded`, `invoice.payment_failed` |
 
    The two `async_payment_*` events are not optional. Any delayed-notification
    method — ACH direct debit, SEPA, Bacs, boleto, OXXO, Konbini — completes its
@@ -167,6 +167,12 @@ key and restart; no code changes.
    against a Stripe *invoice* and has no `payments` row, so the handler falls
    through to the invoice when the charge matches no engagement; there is one
    place refunds are recorded and one endpoint to subscribe it on.
+
+   `customer.subscription.trial_will_end` is the only warning a trial gets.
+   Stripe fires it three days out, and `trialing` is a served status here — the
+   plan's full quota — so unsubscribed, a trial ends as a card charge the
+   subscriber was not expecting or, with no card on file, as the quota silently
+   stopping.
 
    `invoice.payment_failed` is the dunning signal. A subscription renewal that
    fails is almost always an expired card rather than a decision, and it is
