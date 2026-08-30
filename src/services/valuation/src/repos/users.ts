@@ -422,3 +422,40 @@ export async function bumpSessionEpoch(pool: pg.Pool, id: string): Promise<numbe
   if (epoch === undefined) throw new Error(`no such user: ${id}`);
   return epoch;
 }
+
+/**
+ * The engagement owner's own name and stated company, for redaction.
+ *
+ * The AI pipelines send a client's cap table, their uploaded financials and
+ * the free text they typed about themselves to an external model, and the
+ * redactor strikes only the entities it is *told*. It is told the subject
+ * company off the valuation row and nothing else, so the two most obvious
+ * identifiers this platform holds about the person the engagement is for — the
+ * name they signed up with and the employer they named — went out in the clear
+ * on every run. `/ai/anonymize` has struck both since it was written, on the
+ * reasoning that "they are known, they are on the sheet, and nothing about the
+ * request would reveal that they had been missed"; that reasoning is about the
+ * material, not about which route is carrying it.
+ *
+ * Three columns rather than `findUserById`'s `SELECT u.*`. This runs on every
+ * AI pipeline run, and the wide read materialises `password_digest` and the
+ * encrypted `totp_secret` — which `findAuthPrincipal` exists precisely to keep
+ * out of a hot path — plus a two-table join for a role array nobody reads.
+ *
+ * Deleted and suspended accounts are *not* excluded, unlike `findUsersByIds`.
+ * That query answers "who may we write to"; this one answers "whose name must
+ * not leave the building", and an engagement whose owner has since been
+ * deactivated is still that person's engagement. Excluding them would take the
+ * redaction away at the moment the account is closed.
+ */
+export async function findRedactionIdentity(
+  pool: pg.Pool,
+  id: string,
+): Promise<{ first_name: string | null; last_name: string | null; company_name: string | null } | null> {
+  const { rows } = await pool.query<{
+    first_name: string | null;
+    last_name: string | null;
+    company_name: string | null;
+  }>('SELECT first_name, last_name, company_name FROM users WHERE id = $1', [id]);
+  return rows[0] ?? null;
+}

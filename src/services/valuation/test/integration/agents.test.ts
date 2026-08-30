@@ -134,6 +134,48 @@ describe.skipIf(!dbUp)('analyst agent wiring', () => {
     expect(payload.valuation).toMatchObject({ company_name: 'AgentCo' });
   });
 
+  it('declares the engagement owner and their stated company as entities to redact', async () => {
+    /*
+     * The redactor strikes what a pattern can find and what it is *told*. A
+     * personal name in a cap table column is neither honorific-led nor
+     * label-led, so the only way it is struck is a declaration — and the
+     * pipeline payload declared nothing at all, while `/ai/anonymize` over the
+     * same documents declared both of these.
+     *
+     * Asserted on the payload rather than on the redacted output because this
+     * side of the wire is the side that can lose it: the AI service reads
+     * `options.known_people` faithfully, and an empty list there is a request
+     * that asked for nothing to be struck.
+     */
+    await pool.query(`UPDATE users SET first_name = $2, last_name = $3, company_name = $4 WHERE id = $1`, [
+      ops.id,
+      'Ada',
+      'Lovelace',
+      'Zephyr Dynamics, Inc.',
+    ]);
+    delete seen['comp_selection'];
+    expect((await runAgent('comp_selection')).statusCode).toBe(201);
+    const options = (seen['comp_selection'] as Record<string, any>).options;
+    expect(options.known_people).toEqual(['Ada Lovelace']);
+    expect(options.known_companies).toEqual(['Zephyr Dynamics, Inc.']);
+    // The switch the payload has always carried is still on it.
+    expect(options.anonymize).toBe(true);
+  });
+
+  it('declares nothing rather than an empty name when the owner has no name on file', async () => {
+    // `[null, null].join(' ')` is `' '`, and a one-space "name" declared as an
+    // entity is a redaction rule that matches every space in the corpus.
+    await pool.query(
+      `UPDATE users SET first_name = NULL, last_name = NULL, company_name = NULL WHERE id = $1`,
+      [ops.id],
+    );
+    delete seen['comp_selection'];
+    expect((await runAgent('comp_selection')).statusCode).toBe(201);
+    const options = (seen['comp_selection'] as Record<string, any>).options;
+    expect(options.known_people).toEqual([]);
+    expect(options.known_companies).toEqual([]);
+  });
+
   it('honors the on/off toggle: a disabled agent is refused before the AI call', async () => {
     const prompt = await promptFor('assumptions');
     delete seen['assumptions'];

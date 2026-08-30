@@ -21,7 +21,7 @@ import {
 import { applyEngineInputs, findParams } from '../repos/params.js';
 import { sanitizeExtractedInputs, type RejectedInput } from './engineInputs.js';
 import { findDocumentsByIds, listDocuments, type DocumentRow } from '../repos/documents.js';
-import { findUserById } from '../repos/users.js';
+import { findRedactionIdentity, findUserById } from '../repos/users.js';
 import {
   completeAiJob,
   createAiJob,
@@ -330,6 +330,42 @@ export async function runAiPipeline(
   // silently wrong the first time a tag was added on this side.
   const tagCatalogue = pipeline === 'tagging' ? tagCataloguePayload() : null;
 
+  /*
+   * The names the redactor cannot find on its own.
+   *
+   * `anonymize.py` strikes two kinds of thing: what a pattern can key on
+   * (emails, phone numbers, SSNs, honorific-led names) and what the caller
+   * *declares*. A bare personal name in a cap table column matches no pattern —
+   * "no honorific, no 'Prepared by', nothing a pattern can key on", as
+   * `AnonymizeBody` puts it — so declaring it is the only way it is struck.
+   *
+   * The pipeline payload declared nothing. `_known_entities` reads the subject
+   * company off `valuation.company_name` and then looks for
+   * `options.known_companies` / `options.known_people`, which only
+   * `/ai/anonymize` has ever sent. So every pipeline run — the cap-table agent
+   * reading a synced holder list, the extraction pass over an uploaded
+   * spreadsheet, the narrative agent — shipped the engagement owner's name and
+   * the employer they named at signup to an external model in the clear, while
+   * the operator's preview of the *same documents* struck both.
+   *
+   * Best-effort, like the preview's: a lookup that fails must not cost the run.
+   * It does change what is struck, so the failure is logged rather than
+   * swallowed — "redaction was applied" and "these entities were applied" are
+   * different claims, and this is the one place they can come apart.
+   */
+  const client = await findRedactionIdentity(deps.pool, valuation.user_id).catch((err: unknown) => {
+    deps.log?.warn(
+      { err, valuationId: valuation.id, pipeline },
+      'could not read the engagement owner for prompt redaction; their name is not being struck',
+    );
+    return null;
+  });
+  const clientName = [client?.first_name, client?.last_name].filter(Boolean).join(' ').trim();
+  const knownCompanies = [...new Set(client?.company_name ? [client.company_name] : [])].filter(
+    (name) => name.trim() !== '',
+  );
+  const knownPeople = clientName ? [clientName] : [];
+
   const payload = {
     valuation: {
       id: valuation.id,
@@ -346,7 +382,11 @@ export async function runAiPipeline(
     ...(researchPayload ? { market_research: researchPayload } : {}),
     ...(profilePayload ? { company_profile: profilePayload } : {}),
     ...(tagCatalogue ? { tag_catalogue: tagCatalogue } : {}),
-    options: { anonymize: args.anonymize },
+    options: {
+      anonymize: args.anonymize,
+      known_companies: knownCompanies,
+      known_people: knownPeople,
+    },
     ...(args.extraPayload ?? {}),
   };
 
