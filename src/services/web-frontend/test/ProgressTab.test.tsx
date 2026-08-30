@@ -146,13 +146,19 @@ describe('ProgressTab (client portal §5.6)', () => {
         ...PROGRESS,
         halted: true,
         waiting_on_client: false,
-        state: 'cancelled',
+        // `timeout` rather than `cancelled`: this banner is on a client-facing
+        // page, and 'cancelled' is the one halted state whose column value
+        // happens to read as English. R262 — the banner said "(state:
+        // timeout)" beside a badge reading "Timed out".
+        state: 'timeout',
         report: { available: false },
       }),
     );
     renderTab();
 
     expect(await screen.findByText(/not progressing/)).toBeInTheDocument();
+    expect(screen.getByText(/Timed out/)).toBeInTheDocument();
+    expect(screen.queryByText(/state: timeout/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Download your report' })).not.toBeInTheDocument();
   });
 

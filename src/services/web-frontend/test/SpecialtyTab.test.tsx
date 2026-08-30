@@ -193,6 +193,10 @@ describe('SpecialtyTab', () => {
     mockApi(UNSUPPORTED);
     renderTab('409a');
     expect(await screen.findByText(/No specialty engine for this report type/)).toBeInTheDocument();
+    // R262: "A 409a engagement runs through…" named the column value in a
+    // sentence, on a tab whose own picker calls it "IRC §409A".
+    expect(screen.getByText(/IRC §409A/)).toBeInTheDocument();
+    expect(screen.queryByText(/A 409a engagement/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Run/ })).not.toBeInTheDocument();
   });
 });

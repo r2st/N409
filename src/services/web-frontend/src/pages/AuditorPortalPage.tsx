@@ -3,7 +3,7 @@ import { AuthShell } from '../components/AuthShell';
 import { HelpIcon } from '../components/HelpIcon';
 import { Button, ErrorNote, Field, inputClass, ListTruncationNote, Spinner } from '../components/ui';
 import { required, useFormValidation } from '../lib/useFormValidation';
-import { formatDate, moneyFormatter, PER_SHARE_DIGITS } from '../lib/format';
+import { formatDate, kindLabel, moneyFormatter, PER_SHARE_DIGITS, stateLabel } from '../lib/format';
 import { sanitizeHtml } from '../lib/m2';
 
 interface Section {
@@ -213,7 +213,7 @@ export function AuditorPortalPage() {
         {bundle.valuation.company_name}
       </h1>
       <p className="tnum mt-1 text-sm text-ink-400">
-        {bundle.valuation.number} · {bundle.valuation.kind.toUpperCase()} · {bundle.valuation.state}
+        {bundle.valuation.number} · {kindLabel(bundle.valuation.kind)} · {stateLabel(bundle.valuation.state)}
       </p>
       <p className="mt-1 text-xs text-ink-400">Access expires {formatDate(bundle.access_expires_at)}</p>
 

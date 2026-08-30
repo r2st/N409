@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, apiDownload, describeActionFailure } from '../../lib/api';
-import { formatDateTime, formatNumber, formatPerShare } from '../../lib/format';
+import { formatDateTime, formatNumber, formatPerShare, kindLabel } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import {
   Button,
@@ -202,7 +202,8 @@ export function SpecialtyTab() {
   if (!data.supported || !data.engine) {
     return (
       <EmptyState title="No specialty engine for this report type">
-        A {data.kind} engagement runs through the standard calculation pipeline. Use the Calculations tab.
+        A &ldquo;{kindLabel(data.kind)}&rdquo; runs through the standard calculation pipeline. Use the
+        Calculations tab.
       </EmptyState>
     );
   }

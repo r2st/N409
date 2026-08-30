@@ -5,7 +5,7 @@ import { api, apiDownload, ApiError, ifMatch, describeActionFailure } from '../l
 import { required, useFormValidation } from '../lib/useFormValidation';
 import { useAuth } from '../lib/auth';
 import { editableFields, isOps } from '../lib/rbac';
-import { eventLabel, formatDate, formatDateTime, STATE_LABELS } from '../lib/format';
+import { eventLabel, formatDate, formatDateTime, sourceLabel, STATE_LABELS } from '../lib/format';
 import { VALUATION_STATES } from '../lib/types';
 import type { Valuation, ValuationEvent } from '../lib/types';
 import { useWorkspace } from './valuation/ValuationWorkspace';
@@ -242,7 +242,7 @@ export function ValuationDetailPage() {
                     : 'Paid'
               }
             />
-            {ops && <Meta label="Source" value={valuation.source} />}
+            {ops && <Meta label="Source" value={valuation.source ? sourceLabel(valuation.source) : null} />}
             {ops && <Meta label="Reviewer" value={valuation.assigned_reviewer_id} />}
             <Meta
               label="QSBS attestation"

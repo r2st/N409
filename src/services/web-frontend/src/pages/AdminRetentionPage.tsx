@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, describeActionFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
-import { formatDateTime } from '../lib/format';
+import { formatDateTime, kindLabel } from '../lib/format';
 import {
   Button,
   ErrorNote,
@@ -654,7 +654,7 @@ export function AdminRetentionPage() {
               <li key={v.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-sm">
                 <span className="tnum text-xs text-ink-400">#{v.number}</span>
                 <span className="font-semibold text-ink-900">{v.company_name}</span>
-                <span className="text-xs text-ink-400">{v.kind}</span>
+                <span className="text-xs text-ink-400">{kindLabel(v.kind)}</span>
                 {/* The reason is what tells an admin whether this is the row
                     the support ticket is about. A policy archival has none,
                     and that absence is itself the answer. */}

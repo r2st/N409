@@ -20,7 +20,7 @@ function bundleWithSections(sections: Array<{ heading: string; html: string }>) 
       number: '1042',
       company_name: 'Acme Robotics, Inc.',
       kind: '409a',
-      state: 'delivered',
+      state: 'published',
       currency: 'USD',
     },
     report: { template_version: 'v54', status: 'final', content: { title: 'Report', sections } },
@@ -188,7 +188,15 @@ describe('AuditorPortalPage bundle', () => {
   it('identifies the engagement and when the access lapses', async () => {
     mountBundle({});
     expect(await screen.findByText('Acme Robotics, Inc.')).toBeInTheDocument();
-    expect(screen.getByText('1042 · 409A · delivered')).toBeInTheDocument();
+    /*
+     * R262. This header is read by an outside auditor, and it said
+     * "409A · draft_accepted" — an uppercased column value and a raw one. The
+     * fixture said `delivered`, which is not a state this column has; the
+     * server sends `valuation.state` straight from the row, so a fixture that
+     * cannot occur was hiding what the real values look like here.
+     */
+    expect(screen.getByText(/1042 · IRC §409A · Published/)).toBeInTheDocument();
+    expect(screen.queryByText(/published/)).not.toBeInTheDocument();
     expect(screen.getByText(/Access expires/)).toBeInTheDocument();
   });
 
@@ -231,7 +239,7 @@ describe('AuditorPortalPage bundle', () => {
         number: '2051',
         company_name: 'Awards Ltd',
         kind: 'ifrs2',
-        state: 'delivered',
+        state: 'published',
         currency: 'USD',
       },
       conclusion: {

@@ -84,6 +84,34 @@ export const SOURCE_LABELS: Record<string, string> = {
 };
 
 /**
+ * The three maps above, read from a value typed as a plain `string`.
+ *
+ * Every one of these columns arrives from the API as `string` — `ProgressTab`'s
+ * `progress.state`, the auditor bundle's `valuation.kind`, `SpecialtyTab`'s
+ * `data.kind` — so indexing the `Record<ValuationState, string>` at the call
+ * site takes a cast, and four call sites answered the reader with the raw
+ * column value rather than write one. A client on the progress page was told
+ * "This valuation is not progressing (state: draft_changes)" on the same screen
+ * as a badge reading "Changes requested"; an external auditor's header said
+ * `IFRS2 · draft_accepted`.
+ *
+ * Round 255 fixed the same thing on the server, where `stateLabel` is exactly
+ * this function. The echo fallback is deliberate and matches it: a value the
+ * enum has grown and this build has not is still a fact the reader needs.
+ */
+export function kindLabel(kind: string): string {
+  return KIND_LABELS[kind as ValuationKind] ?? kind;
+}
+
+export function stateLabel(state: string): string {
+  return STATE_LABELS[state as ValuationState] ?? state;
+}
+
+export function sourceLabel(source: string): string {
+  return SOURCE_LABELS[source] ?? source;
+}
+
+/**
  * A calendar day, spelled `YYYY-MM-DD` and nothing else.
  *
  * Anchored at both ends on purpose: a timestamp *starts* with this shape, and

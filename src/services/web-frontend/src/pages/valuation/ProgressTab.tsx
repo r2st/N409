@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, describeActionFailure } from '../../lib/api';
 import { filenameStem, useDownload } from '../../lib/useDownload';
-import { formatDate, formatDateTime } from '../../lib/format';
+import { formatDate, formatDateTime, stateLabel } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import {
   LoadError,
@@ -226,7 +226,8 @@ export function ProgressTab() {
     <div className="space-y-8">
       {progress.halted && (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          This valuation is not progressing (state: {progress.state}). Contact support if this is unexpected.
+          This valuation is not progressing — it is &ldquo;{stateLabel(progress.state)}&rdquo;. Contact
+          support if this is unexpected.
         </div>
       )}
 

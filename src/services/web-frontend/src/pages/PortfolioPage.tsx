@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, describeActionFailure } from '../lib/api';
-import { formatPerShare, moneyFormatter } from '../lib/format';
+import { formatPerShare, moneyFormatter, stateLabel } from '../lib/format';
 import { HelpIcon } from '../components/HelpIcon';
 import {
   Button,
@@ -409,8 +409,19 @@ export function PortfolioPage() {
                             </Link>
                             <span className="ml-2 text-xs text-ink-400">{e.number}</span>
                           </td>
-                          <td className="px-4 py-2.5 text-ink-600">{e.entity_type}</td>
-                          <td className="px-4 py-2.5 text-ink-600">{e.state}</td>
+                          {/*
+                            Both of these were the column value. `ENTITY_LABELS`
+                            is used forty lines up on the organization's own
+                            entity type, and `STATE_LABELS` has been in the
+                            browser since before this page existed — so the
+                            roll-up printed `llc` and `draft_changes` in a table
+                            the engagement list draws as "LLC" and a "Changes
+                            requested" badge (round 262).
+                          */}
+                          <td className="px-4 py-2.5 text-ink-600">
+                            {ENTITY_LABELS[e.entity_type] ?? e.entity_type}
+                          </td>
+                          <td className="px-4 py-2.5 text-ink-600">{stateLabel(e.state)}</td>
                           <FigureCell
                             value={e.equity_value}
                             label={e.equity_figure}
