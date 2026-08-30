@@ -109,6 +109,35 @@ export const SENSITIVE_FIELDS: readonly string[] = [
 ];
 
 /**
+ * Property names whose *value* is a rendered message, whatever key it is logged
+ * under.
+ *
+ * `SENSITIVE_FIELDS` works because pino can censor a value it can name, and
+ * every entry on it is a field that holds one kind of thing. `subject` and
+ * `body` are not: they hold whatever a template author wrote, and this platform
+ * lets an author write `{{recipient_name}}` into either — it is offered by name
+ * in the variable catalog (`domain/templateVariables.ts`) and used by the
+ * seeded templates. `alwaysTemplateVars` then resolves that placeholder to the
+ * recipient's given name, and *falls back to their address* when we hold no
+ * name, "the catalog promises the address, not a gap". So a rendered subject is
+ * an address for every recipient whose name was never captured, which is most
+ * of the ones a send goes to from a form.
+ *
+ * Redaction cannot reach that. The address is a substring of the subject the
+ * way a credential is a substring of a URL (see `serializeRequest` below), and
+ * a `redact` path addresses properties. Nor can `SENSITIVE_FIELDS` hold
+ * `subject`: the ops outbox console reports it, and the field is only unsafe
+ * when it is the *rendered* string rather than the template.
+ *
+ * So the rule is stated where it can be enforced — as a census over the log
+ * sites (`loggedFieldRenames.test.ts`), which refuses these two as a *source*
+ * under any key at all. What identifies the message is its id and its
+ * `template_key`, both of which say which send this was without quoting what it
+ * said.
+ */
+export const RENDERED_MESSAGE_FIELDS: readonly string[] = ['subject', 'body'];
+
+/**
  * How deep into a log object a sensitive field is redacted.
  *
  * Four levels covers the shapes this platform actually logs — a bare field, a

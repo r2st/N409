@@ -79,10 +79,12 @@ export interface TransitionDeps extends TransitionRenderDeps {
 export function logTransport(log: FastifyBaseLogger): EmailTransport {
   return {
     async send(email) {
-      log.info(
-        { emailId: email.id, subject: email.subject, template: email.template_key },
-        'email delivered (log transport)',
-      );
+      // Not the subject. It is a *rendered* template, and `{{recipient_name}}`
+      // — offered to template authors by name — resolves to the recipient's
+      // address whenever we hold no given name for them, so the line that had
+      // the address taken out of it above was putting it back one field over.
+      // `template_key` says which message this was; see `RENDERED_MESSAGE_FIELDS`.
+      log.info({ emailId: email.id, template: email.template_key }, 'email delivered (log transport)');
     },
   };
 }

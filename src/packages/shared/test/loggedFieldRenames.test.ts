@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { SENSITIVE_FIELDS } from '../src/logger.js';
+import { RENDERED_MESSAGE_FIELDS, SENSITIVE_FIELDS } from '../src/logger.js';
 
 /**
  * The redact list protects a *key*, and a log site can rename the key.
@@ -126,9 +126,11 @@ interface Finding extends LoggedProperty {
   file: string;
 }
 
-function scan(): { findings: Finding[]; calls: number } {
+function scan(): { findings: Finding[]; rendered: Finding[]; calls: number } {
   const sensitive = new Set(SENSITIVE_FIELDS);
+  const renderedFields = new Set(RENDERED_MESSAGE_FIELDS);
   const findings: Finding[] = [];
+  const rendered: Finding[] = [];
   let calls = 0;
   for (const file of [
     ...sourceFiles(path.join(repoRoot, 'src/services')),
@@ -144,14 +146,15 @@ function scan(): { findings: Finding[]; calls: number } {
         if (sensitive.has(prop.source) && !sensitive.has(prop.key)) {
           findings.push({ file: rel, ...prop });
         }
+        if (renderedFields.has(prop.source)) rendered.push({ file: rel, ...prop });
       }
     }
   }
-  return { findings, calls };
+  return { findings, rendered, calls };
 }
 
 describe('a log site cannot rename a redacted field out of its redaction', () => {
-  const { findings, calls } = scan();
+  const { findings, rendered, calls } = scan();
 
   it('is reading the log calls the services actually make', () => {
     // Vacuity guard, and the only thing standing between this file and the
@@ -197,6 +200,36 @@ describe('a log site cannot rename a redacted field out of its redaction', () =>
         (p) => sensitive.has(p.source) && !sensitive.has(p.key),
       ),
     ).toEqual([]);
+  });
+
+  /**
+   * The half a redact list cannot hold.
+   *
+   * `subject` is not on `SENSITIVE_FIELDS` and must not be — the ops outbox
+   * console reports it, and the *template* is not a disclosure. What is one is
+   * the rendered string: `{{recipient_name}}` is offered to template authors by
+   * name and `alwaysTemplateVars` resolves it to the recipient's address
+   * whenever we hold no given name for them. Pino cannot see that, because the
+   * address is a substring rather than a property — the same reason the URL
+   * needs its own serializer.
+   *
+   * So the rule is about the *source*, under any key: an id and a
+   * `template_key` say which message this was without quoting what it said.
+   */
+  it('quotes no rendered message in a log line', () => {
+    expect(
+      rendered.map((f) => `${f.file}: { ${f.key}: …${f.source} }`).sort(),
+      'a rendered subject or body on a log line — say which message it was, not what it said',
+    ).toEqual([]);
+  });
+
+  it('would catch the log-transport line this rule was written for', () => {
+    const renderedFields = new Set(RENDERED_MESSAGE_FIELDS);
+    expect(
+      loggedProperties('{ emailId: email.id, subject: email.subject, template: email.template_key }')
+        .filter((p) => renderedFields.has(p.source))
+        .map((p) => p.key),
+    ).toEqual(['subject']);
   });
 
   it('logs no redacted field under an unredacted key', () => {

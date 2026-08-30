@@ -373,7 +373,17 @@ export function smtpTransport(opts: SmtpTransportOptions, log?: FastifyBaseLogge
       // message put a subscriber's address in the clear. The outbox row id
       // answers the same question ("which message") and is not personal data;
       // the address is one join away for anyone entitled to it.
-      log?.info({ emailId: email.id, subject: email.subject }, 'email delivered (smtp)');
+      //
+      // And not the subject, which was left behind when the address was taken
+      // out and puts it back one field over. A subject is a *rendered*
+      // template, `{{recipient_name}}` is offered to template authors by name,
+      // and `alwaysTemplateVars` resolves it to the recipient's address for
+      // every recipient whose given name we never captured — "the catalog
+      // promises the address, not a gap". Redaction cannot reach it there: the
+      // address is a substring of one string rather than a property, which is
+      // the same reason `req.url` needs a serializer of its own. See
+      // `RENDERED_MESSAGE_FIELDS`; `template_key` says which message this was.
+      log?.info({ emailId: email.id, template: email.template_key }, 'email delivered (smtp)');
     },
   };
 }
