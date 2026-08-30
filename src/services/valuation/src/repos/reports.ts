@@ -4,16 +4,39 @@ import { withTransaction, type Queryable } from '../db/pool.js';
 import { EVENT_TYPES } from '../domain/valuation.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { lockPublishGate } from './publishLock.js';
-import { DELIVERED_REPORT_STATES, type ReportContent } from '../domain/report.js';
+import {
+  DELIVERED_REPORT_STATES,
+  reportStatusFor,
+  type ReportContent,
+  type ReportStatus,
+} from '../domain/report.js';
+import type { ValuationState } from '../domain/valuation.js';
 
 export interface ReportRow {
   id: string;
   valuation_id: string;
   template_version: string;
-  status: 'draft' | 'accepted' | 'changes' | 'published';
   current_version: number;
   created_at: Date;
   updated_at: Date;
+}
+
+/**
+ * The row as a caller may show it: the stored columns, plus the status derived
+ * from the engagement.
+ *
+ * `status` is deliberately absent from {@link ReportRow} above. The column
+ * exists — `SELECT *` still returns it — and it has held `'draft'` on every
+ * row this system has ever created, because nothing writes it; see
+ * `reportStatusFor`. Leaving it off the type is what makes the compiler refuse
+ * the stale reading: a route that wants to tell somebody what the report is at
+ * has to say which engagement it is asking about.
+ */
+export type ReportView = ReportRow & { status: ReportStatus };
+
+/** The row plus its derived status, for anything leaving the service. */
+export function reportView(report: ReportRow, state: ValuationState): ReportView {
+  return { ...report, status: reportStatusFor(state) };
 }
 
 export interface ReportVersionRow {

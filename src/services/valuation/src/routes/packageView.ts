@@ -10,6 +10,7 @@ import { listAiJobs } from '../repos/aiJobs.js';
 import { listCalculations } from '../repos/calculations.js';
 import { listOverwrites } from '../repos/overwrites.js';
 import { findReportByValuation, listVersions } from '../repos/reports.js';
+import { reportStatusFor } from '../domain/report.js';
 import { listTasks } from '../repos/tasks.js';
 import { listRounds, listTransactions } from '../repos/transactions.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -105,7 +106,7 @@ export function registerPackageRoutes(app: FastifyInstance, deps: { pool: pg.Poo
         report: report
           ? {
               id: report.id,
-              status: report.status,
+              status: reportStatusFor(valuation.state),
               template_version: report.template_version,
               current_version: report.current_version,
               versions: reportVersions,

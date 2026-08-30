@@ -48,6 +48,7 @@ import { findPartnerIdentity } from '../repos/branding.js';
 import { findApiTokenById } from '../repos/apiTokens.js';
 import { latestCalculationForKind } from '../repos/calculations.js';
 import { findReportByValuation, getVersionContent, listVersions } from '../repos/reports.js';
+import { reportStatusFor } from '../domain/report.js';
 import { deliverablePdf } from './reports.js';
 import { MAX_DOCUMENT_BYTES, rethrowRejectedUpload, storeDocument } from './documents.js';
 import type { ScanPolicy } from '../documents/virusScan.js';
@@ -1145,7 +1146,7 @@ export function registerPartnerApiRoutes(
           payload: {
             version: full.version,
             size_bytes: pdf.length,
-            report_status: report.status,
+            report_status: reportStatusFor(valuation.state),
             partner_id: token.partnerId,
           },
         }),

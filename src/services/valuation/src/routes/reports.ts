@@ -9,6 +9,7 @@ import {
   contentFromManagedTemplate,
   DELIVERED_REPORT_STATES,
   instantiateTemplate,
+  reportStatusFor,
   sanitizeContent,
   templateForKind,
   visibleSections,
@@ -26,6 +27,7 @@ import {
   getVersionPdf,
   listVersions,
   REPORT_VERSION_PAGE_LIMIT,
+  reportView,
   saveVersion,
   storeRenderedPdf,
   type ReportRow,
@@ -630,7 +632,9 @@ export function registerReportRoutes(
     // fields.
     reply.header('ETag', versionEtag(report.current_version));
     return {
-      report,
+      // The editorial status the tab prints, derived from the engagement rather
+      // than read off a column nothing writes — see `reportStatusFor`.
+      report: reportView(report, valuation.state),
       version: version
         ? { version: version.version, content: version.content, rendered_at: version.rendered_at }
         : null,
@@ -661,7 +665,7 @@ export function registerReportRoutes(
     });
     reply.header('ETag', versionEtag(saved.report.current_version));
     return {
-      report: saved.report,
+      report: reportView(saved.report, valuation.state),
       version: { version: saved.version.version, content: saved.version.content, rendered_at: null },
     };
   });
@@ -731,7 +735,7 @@ export function registerReportRoutes(
     });
     reply.header('ETag', versionEtag(saved.report.current_version));
     return {
-      report: saved.report,
+      report: reportView(saved.report, valuation.state),
       version: { version: saved.version.version, content: saved.version.content, rendered_at: null },
     };
   });
@@ -777,7 +781,7 @@ export function registerReportRoutes(
       templateVersion,
     });
     return {
-      report: saved.report,
+      report: reportView(saved.report, valuation.state),
       version: { version: saved.version.version, content: saved.version.content, rendered_at: null },
       template_version: templateVersion,
     };
@@ -980,7 +984,11 @@ export function registerReportRoutes(
         valuationId: valuation.id,
         type: 'report_downloaded',
         actor,
-        payload: { version: version.version, size_bytes: pdf.length, report_status: report.status },
+        payload: {
+          version: version.version,
+          size_bytes: pdf.length,
+          report_status: reportStatusFor(valuation.state),
+        },
       }),
     );
 

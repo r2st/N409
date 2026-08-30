@@ -285,6 +285,40 @@ describe.skipIf(!dbUp)('auditor review journey', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json().report_status).toBe('available');
       expect(res.json().report).not.toBeNull();
+      // The document's own status, which is a different question from whether
+      // the bundle carries one. At `drafted` it is a draft.
+      expect(res.json().report.status).toBe('draft');
+    });
+
+    /**
+     * The heading over the document an auditor is reading.
+     *
+     * `reports.status` was a column nothing ever wrote — it defaulted to
+     * `'draft'` on creation and stayed there for the life of the engagement —
+     * and this bundle handed it to the portal, which titles the card
+     * `Report — <status>`. So the one reader who is outside the firm, holding
+     * the issued deliverable of a published engagement with no DRAFT watermark
+     * on it, was told in the heading that it was a draft. Derived from the
+     * engagement now; see `reportStatusFor`.
+     */
+    it('calls the report of a published engagement final, not a draft', async () => {
+      const v = await seedValuation('Issued Co');
+      await forceState(ctx, v.id, 'published');
+      await createReport(ctx.pool, {
+        valuationId: v.id,
+        templateVersion: 'v1',
+        content: { title: 'Valuation report', sections: [] } as never,
+        actor: { ...actor, actorId: ops.id },
+      });
+
+      const token = await mintLink(v.id, 'BDO');
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/auditor/portal',
+        payload: { token },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().report.status).toBe('published');
     });
   });
 });

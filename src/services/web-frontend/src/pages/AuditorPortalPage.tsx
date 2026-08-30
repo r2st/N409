@@ -75,6 +75,23 @@ interface Bundle {
   can_submit_notes?: boolean;
 }
 
+/**
+ * What the heading calls the document, for a reader outside the firm.
+ *
+ * The server derives this from the engagement's own state now, so it moves —
+ * it used to be a stored column nothing ever wrote, which meant an auditor
+ * reading the issued, unstamped report of a published engagement was told in
+ * the card heading that it was a draft. The words are the ones that matter to
+ * somebody who has to decide whether they are holding the file of record:
+ * "final" is the only one that says yes.
+ */
+const REPORT_STATUS_LABELS: Record<string, string> = {
+  draft: 'draft',
+  changes: 'draft, changes requested',
+  accepted: 'draft, accepted by the analyst',
+  published: 'final',
+};
+
 type Disposition = 'question' | 'change_requested' | 'approved';
 
 /**
@@ -258,7 +275,7 @@ export function AuditorPortalPage() {
       )}
 
       {bundle.report && (
-        <Card title={`Report — ${bundle.report.status}`}>
+        <Card title={`Report — ${REPORT_STATUS_LABELS[bundle.report.status] ?? bundle.report.status}`}>
           {bundle.report.content.sections.map((s, i) => (
             <div key={i} className="mb-5 last:mb-0">
               <h3 className="mb-1.5 font-display text-base font-semibold text-ink-900">{s.heading}</h3>

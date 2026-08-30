@@ -1,5 +1,5 @@
 import { esc } from './exhibitHtml.js';
-import type { ValuationKind } from './valuation.js';
+import type { ValuationKind, ValuationState } from './valuation.js';
 
 /**
  * Report domain: versioned templates (features.md — "bound to template
@@ -31,6 +31,68 @@ import type { ValuationKind } from './valuation.js';
  * holds those bytes.
  */
 export const DELIVERED_REPORT_STATES: ReadonlySet<string> = new Set(['published']);
+
+/**
+ * The four values `report_status` (migration 0010) can hold, and the only
+ * definition of which one a report is at.
+ *
+ * The column has been on `reports` since M2, defaulted to `'draft'`, and no
+ * statement in this repository has ever written it. `saveVersion` moves
+ * `current_version`, `template_version` and `updated_at` and leaves `status`
+ * alone; nothing else updates the row at all. So three of the four members
+ * were unreachable and the fourth was a constant — and four surfaces printed
+ * it as though it were a fact somebody maintained: the report tab's badge, the
+ * package explorer, the partner API's `report_downloaded` event, and the
+ * auditor portal, which titles the document an auditor is reading
+ * `Report — draft`.
+ *
+ * That last one is the reason this is not merely untidy. The portal shares the
+ * report from `drafted` onward, `published` included, so an auditor holding
+ * the issued, unstamped deliverable of a published engagement was told in the
+ * card heading that it is a draft. The PDF itself already disagrees: the DRAFT
+ * watermark is keyed on the engagement's state, not on this column.
+ *
+ * The editorial round trip the column was meant to describe already exists and
+ * is already guarded — it is `drafted → draft_changes → draft_accepted →
+ * published` on the engagement, the sequence `WORKFLOW_TRANSITIONS` polices
+ * and the publish gate stands at the end of. A second copy of it in a column
+ * nobody writes is not a second source of truth, it is a stale one, so the
+ * status is derived from the engagement rather than stored beside it.
+ *
+ * A `Record` over every state rather than a lookup with a fallback: a state
+ * added to `VALUATION_STATES` should fail the compile here until somebody says
+ * what the report is at while the engagement sits in it.
+ */
+export const REPORT_STATUSES = ['draft', 'accepted', 'changes', 'published'] as const;
+
+export type ReportStatus = (typeof REPORT_STATUSES)[number];
+
+const REPORT_STATUS_BY_STATE: Record<ValuationState, ReportStatus> = {
+  // Everything before the body exists is a draft, including the states an
+  // engagement can be restarted into or abandoned in: a cancelled engagement's
+  // report is not "published", it is whatever was last written, unfinished.
+  pending: 'draft',
+  started: 'draft',
+  onboarding_completed: 'draft',
+  user_finished: 'draft',
+  completed: 'draft',
+  paid: 'draft',
+  review: 'draft',
+  reviewed: 'draft',
+  drafted: 'draft',
+  timeout: 'draft',
+  cancelled: 'draft',
+  ignored: 'draft',
+  // The three the round trip actually names.
+  draft_changes: 'changes',
+  draft_accepted: 'accepted',
+  published: 'published',
+};
+
+/** What the report of an engagement in `state` is at. */
+export function reportStatusFor(state: ValuationState): ReportStatus {
+  return REPORT_STATUS_BY_STATE[state];
+}
 
 export interface ReportSection {
   key: string;

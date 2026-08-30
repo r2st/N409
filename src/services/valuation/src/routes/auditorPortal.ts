@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { isOps, REPORT_VISIBLE_STATES, type Principal } from '../auth/rbac.js';
+import { reportStatusFor } from '../domain/report.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
 import { findReportByValuation, getVersionContent } from '../repos/reports.js';
@@ -204,7 +205,11 @@ export function registerAuditorPortalRoutes(
     if (reportRow) {
       const version = await getVersionContent(deps.pool, reportRow.id, reportRow.current_version);
       report = version
-        ? { template_version: reportRow.template_version, status: reportRow.status, content: version.content }
+        ? {
+            template_version: reportRow.template_version,
+            status: reportStatusFor(valuation.state),
+            content: version.content,
+          }
         : null;
     }
 
