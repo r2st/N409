@@ -54,6 +54,14 @@ interface MySub {
   invoices: Invoice[];
   /** A Stripe customer exists and payments are configured. */
   portal_available?: boolean;
+  /**
+   * The usage figures count a period the subscription is no longer showing —
+   * true only after a declined renewal, which advances the period and leaves
+   * the counter on the last one that was paid for (migration 0190). Optional
+   * because a response written before the flag existed does not carry it, and
+   * "the two agree" is the right reading of that.
+   */
+  quota_awaiting_renewal?: boolean;
 }
 
 /** Statuses where the subscription needs the customer's attention, not ours. */
@@ -223,6 +231,23 @@ export function SubscriptionSection() {
               )}
             </div>
           )}
+          {/* Which period that count belongs to, on the one occasion it is not
+              the period named below it.
+              A declined renewal advances `current_period_start` — Stripe moves
+              it when it raises the invoice, not when the invoice settles — and
+              the quota reset is gated on the money, so the counter stays on the
+              last period that was paid for. Both halves are right and the pair
+              was unreadable: "12 of 12 used" beside "Renews on <the new date>"
+              says a plan was spent in a period it cannot have been spent in,
+              and nothing said that settling the renewal is what brings the
+              allowance back. The dunning banner under this talks about keeping
+              the plan active, which is not the same promise. */}
+          {mine.quota_awaiting_renewal && (
+            <p className="mt-1 text-xs text-ink-500" data-testid="quota-awaiting-renewal">
+              Counted against the period you last paid for — a fresh allowance starts when the renewal payment
+              goes through.
+            </p>
+          )}
           {/* When the plan next bills, or when it stops.
               `current_period_end` arrived on this payload from the start and
               nothing rendered it, so the card named a plan and a status and
@@ -357,6 +382,8 @@ interface AdminSub {
   status: string;
   valuations_used: number;
   valuation_limit: number | null;
+  /** The count is for the period last paid for, not the one on the row. */
+  quota_awaiting_renewal?: boolean;
 }
 interface AdminInvoice {
   id: string;
@@ -480,6 +507,15 @@ function AdminBillingDashboard() {
                 <td className="tnum px-4 py-2.5 text-right text-ink-900">
                   {s.valuations_used}
                   {s.valuation_limit === null ? '' : ` / ${s.valuation_limit}`}
+                  {/* Same pair, same screen: a declined renewal advances the
+                      period and leaves the counter on the one that was paid
+                      for, so this figure is not about the period the row's
+                      status and dates describe. */}
+                  {s.quota_awaiting_renewal && (
+                    <div className="text-xs font-normal text-ink-500" data-testid="admin-quota-prior-period">
+                      prior period
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}

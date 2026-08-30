@@ -236,6 +236,48 @@ describe('SubscriptionSection (feature 7)', () => {
   });
 
   /**
+   * Which period the usage figures belong to.
+   *
+   * Stripe advances the billing period when it *raises* the renewal invoice,
+   * not when the invoice settles, so a declined renewal leaves the row showing
+   * the next period while the counter stays on the last one that was paid for
+   * (migration 0190). Both halves are right; the pair was unreadable, because
+   * this card puts "12 of 12 valuations used" directly above "Renews on
+   * <the new date>" and said nowhere that the two are about different periods
+   * — or that settling the renewal is what brings the allowance back.
+   */
+  describe('the period the usage count belongs to', () => {
+    it('says the count is for the period last paid for when the renewal has not cleared', async () => {
+      mockApi(
+        subscribed({
+          quota_awaiting_renewal: true,
+          usage: { limit: 12, used: 12, remaining: 0, unlimited: false, exhausted: true },
+          subscription: { status: 'past_due', current_period_end: '2027-03-01T00:00:00.000Z' },
+        }),
+      );
+      render(<SubscriptionSection />);
+      const note = await screen.findByTestId('quota-awaiting-renewal');
+      expect(note.textContent).toContain('period you last paid for');
+      // The actionable half: what makes the allowance come back.
+      expect(note.textContent).toContain('renewal payment');
+    });
+
+    it('stays silent on an ordinary subscription, where the two periods agree', async () => {
+      mockApi(subscribed({ subscription: { current_period_end: '2027-03-01T00:00:00.000Z' } }));
+      render(<SubscriptionSection />);
+      await screen.findByTestId('usage');
+      expect(screen.queryByTestId('quota-awaiting-renewal')).not.toBeInTheDocument();
+    });
+
+    it('stays silent for a response written before the flag existed', async () => {
+      mockApi(subscribed({ quota_awaiting_renewal: undefined }));
+      render(<SubscriptionSection />);
+      await screen.findByTestId('usage');
+      expect(screen.queryByTestId('quota-awaiting-renewal')).not.toBeInTheDocument();
+    });
+  });
+
+  /**
    * Self-serve management. Before this control existed the only route to
    * cancelling was to email support, and a customer whose card expired had no
    * way to fix it — churn the product created for itself.

@@ -50,6 +50,7 @@ import {
   invoicePaidMessage,
   invoiceSections,
   localSubscriptionStatus,
+  quotaAwaitsRenewal,
   subscriptionCanceledMessage,
   subscriptionPrice,
   trialEndingMessage,
@@ -270,6 +271,16 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       subscription: sub,
       plan,
       usage,
+      /**
+       * Which period `usage` is counting, when it is not the one `subscription`
+       * is showing.
+       *
+       * True only after a declined renewal, which moves the period and leaves
+       * the counter on the last one paid for — so the two figures this payload
+       * puts side by side are about different periods and the screen said so
+       * nowhere. See `quotaAwaitsRenewal`.
+       */
+      quota_awaiting_renewal: sub ? quotaAwaitsRenewal(sub) : false,
       invoices: invoicePage.invoices,
       // A subscriber accrues an invoice a month, so this list is long for the
       // customers who have been here longest — exactly the ones most likely to
@@ -353,7 +364,13 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       billingSummary(deps.pool),
     ]);
     return {
-      subscriptions: subscriptions.subscriptions,
+      // The same flag `/me/subscription` carries, on the screen that is read to
+      // decide who to chase: a past-due row's usage cell states the count for
+      // the period that was last paid for, not the one the row is showing.
+      subscriptions: subscriptions.subscriptions.map((sub) => ({
+        ...sub,
+        quota_awaiting_renewal: quotaAwaitsRenewal(sub),
+      })),
       subscriptions_truncated: subscriptions.truncated,
       invoices: invoices.invoices,
       invoices_truncated: invoices.truncated,

@@ -153,6 +153,48 @@ export function canConsume(state: UsageState): boolean {
 }
 
 /**
+ * Whether the counter beside the plan's limit is counting an earlier period
+ * than the one the subscription is showing.
+ *
+ * The two are the same on every ordinary subscription, and they come apart on
+ * exactly one transition — the one R240 added `quota_period_start` for. Stripe
+ * advances `current_period_start` when it *raises* the renewal invoice, not
+ * when the invoice settles, so a declined renewal arrives carrying the next
+ * period and `past_due` together. The reset is gated on the money as well as
+ * the date, so the period moves and the counter stays where the last paid
+ * period left it.
+ *
+ * Which is right, and unreadable where it is shown. `/me/subscription` states
+ * "9 of 12 valuations used" beside "Renews on <the new period's end>", and
+ * those two figures are about different periods: the count belongs to a period
+ * that has closed, and the allowance for the one being named has not been paid
+ * for and does not exist yet. A subscriber with none left reads it as their
+ * plan being spent with a month still to run, and nothing on the screen says
+ * that settling the renewal is what brings the allowance back — the dunning
+ * banner beside it talks about keeping the plan active and not about quota.
+ *
+ * The data export was given `quota_period_start` for precisely this reason
+ * when the column was added (repos/dataExport.ts) and the screens were not, so
+ * the fact was exportable and unstated on the two surfaces that show the pair.
+ *
+ * Compared as instants, and `Object.is` so two unparseable dates are not
+ * reported as a disagreement. A row with neither period — a subscription
+ * recorded from a Checkout Session before the subscription event lands — has
+ * nothing to disagree about.
+ */
+export function quotaAwaitsRenewal(sub: {
+  current_period_start: Date | string | null;
+  quota_period_start: Date | string | null;
+}): boolean {
+  return !Object.is(periodInstant(sub.current_period_start), periodInstant(sub.quota_period_start));
+}
+
+function periodInstant(value: Date | string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  return new Date(value).getTime();
+}
+
+/**
  * Is this plan's `price_cents` an entry price rather than the price?
  *
  * A recurring tier bills one amount, so its figure is exact. The `one_time`

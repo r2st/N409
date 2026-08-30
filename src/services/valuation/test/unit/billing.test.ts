@@ -6,6 +6,7 @@ import {
   invoicePaidMessage,
   invoiceSections,
   paymentReceivedMessage,
+  quotaAwaitsRenewal,
   receiptSections,
   usageView,
 } from '../../src/domain/billing.js';
@@ -34,6 +35,45 @@ describe('usage / plan limits (feature 7)', () => {
   it('blocks consumption once exhausted', () => {
     expect(canConsume({ valuation_limit: 1, valuations_used: 1 })).toBe(false);
     expect(canConsume({ valuation_limit: 1, valuations_used: 0 })).toBe(true);
+  });
+
+  /**
+   * Which period the counter beside the limit is counting. The two dates agree
+   * on every ordinary subscription and come apart on exactly one transition —
+   * a renewal Stripe has raised and nobody has paid — which is when the used
+   * count and the renewal date on the same card stop being about the same
+   * period.
+   */
+  describe('quotaAwaitsRenewal', () => {
+    const paid = new Date('2027-01-01T00:00:00.000Z');
+    const raised = new Date('2027-02-01T00:00:00.000Z');
+
+    it('is false while the counter is counting the period on the row', () => {
+      expect(quotaAwaitsRenewal({ current_period_start: paid, quota_period_start: paid })).toBe(false);
+    });
+
+    it('is true once the period has moved and the counter has not', () => {
+      expect(quotaAwaitsRenewal({ current_period_start: raised, quota_period_start: paid })).toBe(true);
+    });
+
+    it('reads the two spellings of one instant as one instant', () => {
+      expect(quotaAwaitsRenewal({ current_period_start: paid.toISOString(), quota_period_start: paid })).toBe(
+        false,
+      );
+    });
+
+    it('has nothing to disagree about on a subscription with no period yet', () => {
+      expect(quotaAwaitsRenewal({ current_period_start: null, quota_period_start: null })).toBe(false);
+      // One end known and not the other still is a disagreement: the counter is
+      // not counting the period the row is showing.
+      expect(quotaAwaitsRenewal({ current_period_start: paid, quota_period_start: null })).toBe(true);
+    });
+
+    it('does not report two unreadable dates as a disagreement', () => {
+      expect(
+        quotaAwaitsRenewal({ current_period_start: 'not a date', quota_period_start: 'not a date either' }),
+      ).toBe(false);
+    });
   });
 });
 

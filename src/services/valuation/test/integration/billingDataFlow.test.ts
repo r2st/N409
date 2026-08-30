@@ -395,6 +395,72 @@ describe.skipIf(!dbUp)('billing data flow', () => {
     });
 
     /**
+     * ...and says which period the quota it is showing belongs to.
+     *
+     * Stripe advances `current_period_start` when it *raises* the renewal
+     * invoice, not when the invoice settles, so the declined renewal above
+     * moves the period and R240's gate leaves the counter on the last period
+     * that was paid for. The two are then figures about different periods, and
+     * `/me/subscription` puts them side by side: the used count, and the date
+     * the subscription renews. A subscriber with none left reads a plan spent
+     * inside a period they cannot have spent it in, and nothing on the payload
+     * said that settling the renewal is what brings the allowance back.
+     *
+     * The data export was given `quota_period_start` when the column was added
+     * and this payload was not, so the fact was exportable and unstated on the
+     * screen the customer actually reads.
+     */
+    it('says when the usage it reports is counted against an earlier period', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const stripeSubId = `sub_quota_period_${uniq()}`;
+      const start = Math.floor(Date.now() / 1000) - 2_592_000;
+      const renewal = (periodStart: number, status: string) =>
+        deliver({
+          id: `evt_${uniq()}`,
+          type: 'customer.subscription.updated',
+          data: {
+            object: {
+              id: stripeSubId,
+              status,
+              current_period_start: periodStart,
+              current_period_end: periodStart + 2_592_000,
+              metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+            },
+          },
+        });
+      const view = async () =>
+        (
+          await ctx.app.inject({
+            method: 'GET',
+            url: '/api/v1/me/subscription',
+            headers: { authorization: `Bearer ${user.token}` },
+          })
+        ).json();
+
+      await renewal(start, 'active');
+      // The ordinary case: one period, one counter, nothing to explain.
+      expect((await view()).quota_awaiting_renewal).toBe(false);
+
+      await ctx.pool.query(
+        'UPDATE subscriptions SET valuations_used = 12 WHERE stripe_subscription_id = $1',
+        [stripeSubId],
+      );
+      // The renewal is raised and declined: the period moves, the money does not.
+      await renewal(start + 2_592_000, 'past_due');
+      const lapsed = await view();
+      expect(lapsed.subscription.status).toBe('past_due');
+      expect(lapsed.usage).toMatchObject({ used: 12, remaining: 0, exhausted: true });
+      expect(lapsed.quota_awaiting_renewal).toBe(true);
+
+      // The card is replaced. The same period, now paid for, grants the quota —
+      // and there is nothing left to explain.
+      await renewal(start + 2_592_000, 'active');
+      const recovered = await view();
+      expect(recovered.usage).toMatchObject({ used: 0, remaining: 12 });
+      expect(recovered.quota_awaiting_renewal).toBe(false);
+    });
+
+    /**
      * And the other end of it. Cancellation is terminal on the row, so coming
      * back is a *new* subscription with a new Stripe id — the quota that comes
      * with it has to be the new plan's, counted from zero, and the resubscribe
