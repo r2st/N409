@@ -270,9 +270,15 @@ export function registerEmailDeliveryRoutes(
     scope.post('/api/v1/webhooks/email/:provider', async (req, reply) => {
       const secret = deps.webhookSecret;
       if (!secret) {
-        throw problems.serviceUnavailable(
-          'Delivery webhooks are not configured (EMAIL_WEBHOOK_SECRET unset)',
+        // Unauthenticated, like the two Stripe webhooks beside it: the caller
+        // is the provider or it is a stranger, and the stranger learned the
+        // name of an unset secret by asking. The provider retries on either
+        // body; the operator reads the log.
+        req.log.warn(
+          { provider: req.params },
+          'email delivery webhook refused: EMAIL_WEBHOOK_SECRET is unset',
         );
+        throw problems.serviceUnavailable('Delivery webhooks are not configured.');
       }
       const { provider } = req.params as { provider: string };
       if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(provider)) {

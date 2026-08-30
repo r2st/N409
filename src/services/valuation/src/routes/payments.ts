@@ -82,6 +82,21 @@ export {
 } from '../domain/pricing.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
+/**
+ * The one sentence every "we cannot take your card today" answers with.
+ *
+ * Three routes across two files each had their own wording for the same
+ * situation, and two of them spent the sentence on the reason rather than on
+ * the reader: an environment variable's name, and the deployment's Stripe
+ * mode. Neither is the client's to know or to fix, and neither said what
+ * happens to the work they were trying to pay for — which is the only question
+ * the refusal raises.
+ */
+export const NOT_CONFIGURED_DETAIL =
+  'We cannot take a card payment right now, so nothing has been charged. This is on our side ' +
+  'and does not hold up your engagement — we will invoice you instead, and support can confirm ' +
+  'the arrangement if you would rather not wait.';
+
 const paymentsUnavailable = (detail: string) =>
   new ApiProblem({
     status: 503,
@@ -271,7 +286,25 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       }
 
       if (!deps.stripeSecretKey) {
-        throw paymentsUnavailable('Payments are not configured (STRIPE_SECRET_KEY unset)');
+        /*
+         * The reason is ours and the sentence is theirs.
+         *
+         * This read `Payments are not configured (STRIPE_SECRET_KEY unset)`
+         * and the one below `(Stripe is in test mode)`, and both went to the
+         * client who pressed Pay. The parenthesis is the half of the sentence
+         * that is not their business in either direction: it names an
+         * environment variable and the deployment's Stripe mode to whoever
+         * asked, and it tells the person who wanted to pay us nothing they can
+         * act on — there is no key for them to set. The pay panel already
+         * rewrites this one problem type into the invoice sentence, so the
+         * only readers of the server's own wording were the API and partner
+         * callers, who got the configuration detail and no remedy at all.
+         *
+         * The distinguishing fact stays in the log line, which is where the
+         * person who can fix it is looking.
+         */
+        req.log.warn({ valuation_id: valuation.id }, 'checkout refused: STRIPE_SECRET_KEY is unset');
+        throw paymentsUnavailable(NOT_CONFIGURED_DETAIL);
       }
       if (!checkoutAvailableTo(deps.stripeSecretKey, principal)) {
         // Same problem type and status as an unset key, deliberately: to a
@@ -283,7 +316,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
           { valuation_id: valuation.id },
           'checkout refused: Stripe is in test mode and the caller is not ops',
         );
-        throw paymentsUnavailable('Payments are not configured (Stripe is in test mode)');
+        throw paymentsUnavailable(NOT_CONFIGURED_DETAIL);
       }
       if (valuation.paid_status !== 'unpaid') {
         /*
@@ -1222,7 +1255,10 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
 
     scope.post('/api/v1/stripe/webhook', async (req, reply) => {
       if (!deps.stripeWebhookSecret) {
-        throw paymentsUnavailable('Webhook not configured (STRIPE_WEBHOOK_SECRET unset)');
+        // Unauthenticated endpoint: the caller here is Stripe or it is a
+        // stranger, and the stranger learned the name of an unset variable by
+        // asking. What Stripe does with either body is retry.
+        throw paymentsUnavailable('Payment webhooks are not configured.');
       }
       const raw = req.body as Buffer;
       const header = req.headers['stripe-signature'];

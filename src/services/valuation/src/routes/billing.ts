@@ -80,6 +80,36 @@ export interface BillingDeps {
   settings?: SupportEmailSource;
 }
 
+/**
+ * What a subscriber reads when this deployment cannot take a recurring card.
+ *
+ * Both sites here answered `Payments are not configured` — a statement about
+ * our environment, addressed to somebody trying to buy a plan. The frontend
+ * shows a problem's `detail` verbatim on this button (`ApiError.message`), so
+ * that sentence was the whole of what the customer got: no remedy, and no
+ * indication that a plan can still be arranged.
+ *
+ * Deliberately not the per-valuation flow's wording, which promises an invoice
+ * for the engagement in front of them. A retainer is not a thing we can invoice
+ * out of band on the strength of a button press, and the empty plan grid this
+ * same screen falls back to has said "contact us and we'll set your account up
+ * directly" since it was written. This is that sentence, on the path that gets
+ * as far as pressing Subscribe.
+ */
+const PLANS_UNAVAILABLE_DETAIL =
+  'Subscription plans cannot be started from here at the moment, and you have not been ' +
+  'charged. Contact us and we will set the plan up on your account directly.';
+
+/**
+ * And when there is a plan but the portal behind "Manage subscription" cannot
+ * open. Different situation, different sentence: the subscription is live and
+ * unaffected, which is the fact that stops a customer assuming their plan has
+ * broken along with the button.
+ */
+const PORTAL_UNAVAILABLE_DETAIL =
+  'Subscription management is unavailable at the moment. Your plan and billing are unaffected — ' +
+  'contact us to change a plan, update a card, or cancel, and we will do it for you.';
+
 const billingUnavailable = (detail: string) =>
   new ApiProblem({
     status: 503,
@@ -180,7 +210,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
   app.post('/api/v1/billing/subscribe', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     if (!checkoutAvailableTo(deps.stripeSecretKey, principal)) {
-      throw billingUnavailable('Payments are not configured');
+      throw billingUnavailable(PLANS_UNAVAILABLE_DETAIL);
     }
     const parsed = SubscribeBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid plan', parsed.error);
@@ -323,7 +353,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
    */
   app.post('/api/v1/billing/portal', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!deps.stripeSecretKey) throw billingUnavailable('Payments are not configured');
+    if (!deps.stripeSecretKey) throw billingUnavailable(PORTAL_UNAVAILABLE_DETAIL);
 
     const customerId = await findStripeCustomerId(deps.pool, principal.id);
     if (!customerId) {
@@ -843,7 +873,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     );
 
     scope.post('/api/v1/billing/webhook', async (req, reply) => {
-      if (!deps.stripeWebhookSecret) throw billingUnavailable('Webhook not configured');
+      if (!deps.stripeWebhookSecret) throw billingUnavailable('Billing webhooks are not configured.');
       const raw = req.body as Buffer;
       const header = req.headers['stripe-signature'];
       if (
