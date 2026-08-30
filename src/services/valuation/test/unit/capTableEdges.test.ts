@@ -306,7 +306,18 @@ describe('toWaterfallInputs — the figures it has to supply itself', () => {
     expect(pref!.seniority).toBe(1);
   });
 
-  it('numbers unstated seniorities in cap-table order', () => {
+  /**
+   * The rank a blank seniority column stands in — and it is one rank, not a
+   * numbering.
+   *
+   * This used to assert `['Series B', 1], ['Series A', 2]`: the row order of
+   * the uploaded sheet, read as a strict payment order. Nothing on a blank
+   * column says that, and the same cap table exported newest-first and
+   * oldest-first came out as opposite stacks — which the auditor workbook then
+   * prints as a Seniority column, in a sheet titled "Preference stack in
+   * seniority order".
+   */
+  it('treats unstated seniorities as one pari passu rank, not as row order', () => {
     const { preferred } = toWaterfallInputs([
       entry({ security_class: 'Common', class_type: 'common' }),
       entry({ security_class: 'Series B', class_type: 'preferred', shares: 1 }),
@@ -314,7 +325,23 @@ describe('toWaterfallInputs — the figures it has to supply itself', () => {
     ]);
     expect(preferred.map((p) => [p.security_class, p.seniority])).toEqual([
       ['Series B', 1],
-      ['Series A', 2],
+      ['Series A', 1],
+    ]);
+  });
+
+  it('ranks unstated seniorities behind every rank the sheet did state', () => {
+    const { preferred } = toWaterfallInputs([
+      entry({ security_class: 'Common', class_type: 'common' }),
+      entry({ security_class: 'Series B', class_type: 'preferred', shares: 1, seniority: 2 }),
+      entry({ security_class: 'Series Seed', class_type: 'preferred', shares: 1 }),
+    ]);
+    // The rule `graphIssues` states to the reader in `partial_seniority`: the
+    // classes that stated nothing are pari passu *behind* the ones that did.
+    // Positional numbering put Seed at rank 2 alongside Series B, so the engine
+    // split the senior tranche with a class the diagram drew underneath it.
+    expect(preferred.map((p) => [p.security_class, p.seniority])).toEqual([
+      ['Series B', 2],
+      ['Series Seed', 3],
     ]);
   });
 

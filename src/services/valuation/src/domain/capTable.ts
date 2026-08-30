@@ -1302,16 +1302,49 @@ export interface WaterfallInputs {
  * defaulted preferences.
  */
 export function toWaterfallInputs(entries: CapTableEntry[]): WaterfallInputs {
-  const preferred = entries
-    .filter((e) => e.class_type === 'preferred')
-    .map((e, i) => ({
-      security_class: e.security_class,
-      shares: e.shares,
-      invested_amount: investedAmount(e),
-      liquidation_multiple: e.liquidation_multiple ?? 1,
-      seniority: e.seniority ?? i + 1,
-      conversion_ratio: e.conversion_ratio ?? 1,
-    }));
+  const classes = entries.filter((e) => e.class_type === 'preferred');
+  /*
+   * The rank an unstated seniority stands in: one below every rank the sheet
+   * actually named, shared by all of them.
+   *
+   * This used to be `e.seniority ?? i + 1` — the row's position among the
+   * preferred classes — and that is a strict payment order invented out of the
+   * order somebody's spreadsheet happened to list its rounds in. The Pulley
+   * preset does not even map a seniority column, so the ordinary Pulley export
+   * arrives with the column blank on every row and left here as ranks 1, 2,
+   * 3…: the auditor workbook's "Preference stack in seniority order" sheet then
+   * prints those ranks in an `integer` column beside the classes, which reads
+   * as a stack the file stated. A newest-first sheet and an oldest-first sheet
+   * of the same cap table came out as exactly opposite stacks.
+   *
+   * The platform already has a rule for this and states it to the reader:
+   * `capTableGraph.stackOrder` sorts stated seniorities ascending and puts
+   * every unstated one *after* them as a single pari passu group, and
+   * `graphIssues` raises `partial_seniority` saying so in as many words — "the
+   * rest are treated as pari passu behind them". The projection the engine
+   * consumes disagreed with the picture drawn beside it: on a table where
+   * Series B states rank 2 and Series Seed states nothing, the graph paid B
+   * first and Seed after, while this handed the engine two classes at rank 2
+   * splitting the tranche pro-rata.
+   *
+   * Positionally distinct ranks were never a reading of the data — nothing on
+   * a blank column says the second row is junior to the first. Pari passu is,
+   * and it is the reading the rest of the platform already shows.
+   */
+  const stated = classes.map((e) => e.seniority).filter((s): s is number => s !== null && Number.isFinite(s));
+  // Floored so the rank stays a whole number even off a stored row that
+  // predates `bad_seniority` and carries a fractional one: the engine's schema
+  // is `an integer >= 1`, and a rank the sheet never stated should not be the
+  // reason a table is refused.
+  const unstatedRank = stated.length > 0 ? Math.max(1, Math.floor(Math.max(...stated))) + 1 : 1;
+  const preferred = classes.map((e) => ({
+    security_class: e.security_class,
+    shares: e.shares,
+    invested_amount: investedAmount(e),
+    liquidation_multiple: e.liquidation_multiple ?? 1,
+    seniority: e.seniority ?? unstatedRank,
+    conversion_ratio: e.conversion_ratio ?? 1,
+  }));
   return {
     common_shares: entries
       .filter((e) => e.class_type === 'common' || e.class_type === 'warrant')

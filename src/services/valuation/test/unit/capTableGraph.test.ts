@@ -73,6 +73,50 @@ describe('cap table graph', () => {
     expect(drawn).toEqual(paid);
   });
 
+  /**
+   * The same parity, on the tables the test above cannot reach.
+   *
+   * `drawn` is a strict order and `paid` is a set of ranks, so once any class
+   * leaves its seniority blank the two stop being comparable as lists — a pari
+   * passu group has no order to compare. What must still hold is that the
+   * picture never draws one class ahead of another the projection pays later:
+   * seniority is non-decreasing along the drawn order.
+   *
+   * That is the case a blank Seniority column produces, and it is the ordinary
+   * one — the Pulley preset maps no seniority at all. `toWaterfallInputs` used
+   * to number unstated ranks by row position, so on `[B(2), Seed(blank)]` the
+   * diagram drew B first while the engine feed had Seed at rank 2 alongside it,
+   * and on a table with no stated seniority anywhere the feed invented a strict
+   * stack out of the order the file happened to list its rounds in.
+   */
+  it('never draws a class ahead of one the engine feed pays later', () => {
+    const rankOf = (entries: CapTableEntry[]) => {
+      const paid = new Map(toWaterfallInputs(entries).preferred.map((p) => [p.security_class, p.seniority]));
+      return build(entries)
+        .nodes.filter((n) => n.class_type === 'preferred')
+        .sort((x, y) => x.rank - y.rank)
+        .map((n) => paid.get(n.label)!);
+    };
+    const blank = (name: string, invested: number): CapTableEntry =>
+      entry({
+        security_class: name,
+        class_type: 'preferred',
+        shares: 1_000_000,
+        invested_amount: invested,
+        liquidation_multiple: 1,
+      });
+
+    for (const table of [
+      [COMMON, blank('Series B', 20_000_000), blank('Series Seed', 2_000_000)],
+      [COMMON, blank('Series Seed', 2_000_000), blank('Series B', 20_000_000)],
+      [COMMON, A, blank('Series Seed', 2_000_000)],
+      [COMMON, blank('Series Seed', 2_000_000), B, blank('Series C', 40_000_000)],
+    ]) {
+      const ranks = rankOf(table);
+      expect(ranks).toEqual([...ranks].sort((x, y) => x - y));
+    }
+  });
+
   it('puts common and the derivatives behind the whole stack', () => {
     const { nodes } = build([COMMON, SEED, A, B, POOL]);
     const commonRank = nodes.find((n) => n.label === 'Common')!.rank;
