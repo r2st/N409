@@ -167,6 +167,16 @@ const OUR_SYNC_FAILURE =
   'the sync could not be completed, and the reason was not the provider — it is in the service log';
 
 /**
+ * What the connection says when the pull worked and the bookkeeping did not.
+ *
+ * Deliberately says the import stands: the grants are written and a re-run
+ * skips them, so the thing to act on is the connection, not the roster.
+ */
+const SYNC_UNRECORDED =
+  'the roster was imported, but the result could not be recorded against this connection — the next ' +
+  'scheduled sync will pick up where this one left off';
+
+/**
  * Pull the roster + grants and create any grants not already imported. Shared
  * by the pull route and the scheduler. Records success/error on the connection.
  */
@@ -212,11 +222,6 @@ export async function syncHrisConnection(
     throw err;
   }
 
-  const seen = await existingGrantExternalIds(
-    deps.pool,
-    connection.valuation_id,
-    pull.grants.map((g) => g.external_id),
-  );
   const actor: EventActor = {
     actorType: 'system',
     actorId: `hris-sync:${connection.provider}`,
@@ -225,6 +230,18 @@ export async function syncHrisConnection(
   let created = 0;
   let skipped = 0;
   try {
+    // Inside the guard, not above it (R261, M5). R186 put a catch around the
+    // insert loop for the reason spelled out below, and left the dedupe read
+    // three lines above it — a Postgres query, on a pool that is exactly as
+    // able to time out here as it is one statement later. A throw from it
+    // escaped both bookkeeping writes and left the state R186 exists to
+    // remove: `connected`, a due date in the past, and the provider's whole
+    // roster re-pulled every fifteen minutes behind a card reading healthy.
+    const seen = await existingGrantExternalIds(
+      deps.pool,
+      connection.valuation_id,
+      pull.grants.map((g) => g.external_id),
+    );
     for (const g of pull.grants) {
       if (seen.has(g.external_id)) {
         skipped++;
@@ -305,7 +322,35 @@ export async function syncHrisConnection(
     grants_rejected: pull.rejected,
     external_company_name: pull.external_company_name,
   };
-  await recordSync(deps.pool, connection.id, { ...outcome, provider: connection.provider });
+  try {
+    await recordSync(deps.pool, connection.id, { ...outcome, provider: connection.provider });
+  } catch (err) {
+    /*
+     * The last unguarded statement in the sync (R261, M5).
+     *
+     * `recordSync` is the only thing that moves `next_sync_at`, so a throw
+     * from it leaves precisely the state R186 wrote the two catches above to
+     * remove — `connected`, a due date already in the past — except reached
+     * from a *success*, which is why nothing noticed it. `findDueConnections`
+     * then re-pulls the provider's whole roster every fifteen minutes,
+     * forever, behind a card that reads healthy and a `last_synced_at` from
+     * whenever the last write did land.
+     *
+     * Not hypothetical: this statement writes `last_sync_summary` as `jsonb`,
+     * and the driver *refuses* a jsonb value carrying a NUL or a lone
+     * surrogate (`domain/nulBytes.ts`). R259 stopped provider text reaching it
+     * unchecked; the shape stays open for anything else that can make one
+     * UPDATE fail.
+     *
+     * Recorded rather than swallowed. The import really did happen and the
+     * grants are written — `external_id` makes the re-run skip them — but the
+     * connection's own bookkeeping did not, and an errored row on a backoff is
+     * the honest version of that: it stops the re-pull, and it is in front of
+     * the person who can look. Best-effort, like every write in a catch here.
+     */
+    await recordSyncError(deps.pool, connection.id, SYNC_UNRECORDED).catch(() => undefined);
+    throw err;
+  }
   return outcome;
 }
 

@@ -4,7 +4,14 @@ import { findCapTable } from '../../src/repos/capTables.js';
 import { MAX_CAP_TABLE_ENTRIES } from '../../src/domain/capTable.js';
 import { signCapTableSyncState } from '../../src/auth/jwt.js';
 import { runDueCapTableSyncs } from '../../src/routes/capTableSync.js';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  interceptPoolQueries,
+  isDbAvailable,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 /** A sweep logger that keeps nothing — these cases assert on the row. */
 const silentLog = { warn: () => {}, error: () => {}, info: () => {} };
@@ -308,6 +315,53 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
     );
     expect(rows[0]!.sync_frequency).toBe('daily');
     expect(rows[0]!.next_sync_at).toBeNull();
+  });
+
+  /**
+   * `recordSync` is the only thing that moves `next_sync_at` (R261, M5). A
+   * throw from it leaves the state the catch above it was written to remove —
+   * `connected`, a due date already in the past — except reached from a
+   * *success*, so nothing was watching: the sweep then re-pulls the provider's
+   * whole cap table every fifteen minutes behind a card reading healthy.
+   */
+  it('records the failure when a successful sync cannot be written down', async () => {
+    payload = CARTA_V1;
+    const v = await seedValuation();
+    await connect(v.id);
+    await ctx.pool.query(
+      `UPDATE cap_table_connections
+          SET sync_frequency = 'weekly', next_sync_at = now() - interval '1 hour'
+        WHERE valuation_id = $1`,
+      [v.id],
+    );
+
+    // `recordSync` writes `last_sync_summary` as jsonb, which the driver
+    // refuses outright for a value carrying a NUL or a lone surrogate.
+    const restore = interceptPoolQueries(ctx.pool, (sql, phase) => {
+      if (phase === 'before' && sql.includes('last_sync_summary')) {
+        throw new Error('injected: statement refused');
+      }
+    });
+    try {
+      await runDueCapTableSyncs({
+        pool: ctx.pool,
+        fetchFn: mockFetch(() => CARTA_V1) as unknown as typeof fetch,
+      });
+    } finally {
+      restore();
+    }
+
+    // The pull was applied — it is the connection's record of it that was not.
+    expect((await findCapTable(ctx.pool, v.id))?.entries.length).toBe(3);
+    const { rows } = await ctx.pool.query<{
+      status: string;
+      next_sync_at: Date | null;
+      last_error: string | null;
+    }>('SELECT status, next_sync_at, last_error FROM cap_table_connections WHERE valuation_id = $1', [v.id]);
+    expect(rows[0]!.status).toBe('error');
+    expect(rows[0]!.next_sync_at!.getTime()).toBeGreaterThan(Date.now());
+    expect(rows[0]!.last_error).toContain('could not be recorded against this connection');
+    expect(rows[0]!.last_error).not.toContain('injected');
   });
 
   it('renews an expired access token before a scheduled sync (R252)', async () => {

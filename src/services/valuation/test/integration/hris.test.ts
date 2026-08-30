@@ -915,6 +915,91 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     });
   });
 
+  /**
+   * The two statements the R186 catches did not cover (R261, methodology M5).
+   *
+   * R186 guarded the fetch and the insert loop, on the reasoning that a sync
+   * escaping without bookkeeping leaves `connected` over a due date in the
+   * past — so `findDueConnections` re-pulls the provider's whole roster every
+   * fifteen minutes, forever, behind a card reading healthy. Two statements
+   * were left outside: the dedupe read three lines above the loop, and
+   * `recordSync` itself, which is the only thing that moves `next_sync_at`.
+   */
+  describe('a sync that escaped without bookkeeping (R261)', () => {
+    const connectionRow = async (valuationId: string) => {
+      const { rows } = await ctx.pool.query<{
+        status: string;
+        next_sync_at: Date | null;
+        last_error: string | null;
+      }>('SELECT status, next_sync_at, last_error FROM hris_connections WHERE valuation_id = $1', [
+        valuationId,
+      ]);
+      return rows[0]!;
+    };
+
+    const dueWeekly = (valuationId: string) =>
+      ctx.pool.query(
+        `UPDATE hris_connections
+            SET sync_frequency = 'weekly', next_sync_at = now() - interval '1 hour'
+          WHERE valuation_id = $1`,
+        [valuationId],
+      );
+
+    /** Fails every statement whose text contains `marker`, once armed. */
+    const failStatement = (marker: string) =>
+      interceptPoolQueries(ctx.pool, (sql, phase) => {
+        if (phase === 'before' && sql.includes(marker)) throw new Error('injected: statement refused');
+      });
+
+    it('records the failure when the dedupe read throws', async () => {
+      const v = await connectedValuation();
+      await dueWeekly(v.id);
+      const restore = failStatement('external_id = ANY');
+      try {
+        await runDueHrisSyncs({
+          pool: ctx.pool,
+          fetchFn: mockFetch() as unknown as typeof fetch,
+          log: silentLog,
+        });
+      } finally {
+        restore();
+      }
+
+      const row = await connectionRow(v.id);
+      // Out of the due query, so the re-pull every fifteen minutes stops.
+      expect(row.status).toBe('error');
+      expect(row.next_sync_at!.getTime()).toBeGreaterThan(Date.now());
+      // And not a word of the driver's — `last_error` is served verbatim.
+      expect(row.last_error).toContain('stopped before finishing');
+      expect(row.last_error).not.toContain('injected');
+    });
+
+    it('records the failure when the success itself cannot be written', async () => {
+      const v = await connectedValuation();
+      await dueWeekly(v.id);
+      // `recordSync` writes `last_sync_summary` as jsonb, which the driver
+      // refuses outright for a value carrying a NUL or a lone surrogate.
+      const restore = failStatement('last_sync_summary');
+      try {
+        await runDueHrisSyncs({
+          pool: ctx.pool,
+          fetchFn: mockFetch() as unknown as typeof fetch,
+          log: silentLog,
+        });
+      } finally {
+        restore();
+      }
+
+      // The grants really were imported; it is the connection's record of it
+      // that did not land, and the row says exactly that.
+      expect((await listGrants(ctx.pool, v.id)).grants.length).toBe(2);
+      const row = await connectionRow(v.id);
+      expect(row.status).toBe('error');
+      expect(row.next_sync_at!.getTime()).toBeGreaterThan(Date.now());
+      expect(row.last_error).toContain('could not be recorded against this connection');
+    });
+  });
+
   describe('the connect and disconnect on the audit spine (R256)', () => {
     /**
      * Connecting a payroll system grants this platform standing read access to

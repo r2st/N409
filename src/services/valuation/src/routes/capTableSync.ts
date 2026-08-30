@@ -110,6 +110,15 @@ const CallbackQuery = z.object({
 const OUR_SYNC_FAILURE =
   'the sync could not be completed, and the reason was not the provider — it is in the service log';
 
+/**
+ * What the connection says when the pull worked and the bookkeeping did not.
+ * The cap table on file is whatever this sync decided; what did not happen is
+ * the connection's own record of it.
+ */
+const SYNC_UNRECORDED =
+  'the cap table was pulled, but the result could not be recorded against this connection — the next ' +
+  'scheduled sync will pull it again';
+
 export interface SyncOutcome {
   diff: CapTableDiff;
   applied: boolean;
@@ -301,7 +310,28 @@ export async function syncCapTableConnection(
     external_company_name: pulled.external_company_name,
     as_of: pulled.as_of,
   };
-  await recordSync(deps.pool, connection.id, summary);
+  try {
+    await recordSync(deps.pool, connection.id, summary);
+  } catch (err) {
+    /*
+     * The last unguarded statement in the sync (R261, M5).
+     *
+     * `recordSync` is the only thing that moves `next_sync_at`, so a throw
+     * from it leaves exactly the state the catch above was written to remove —
+     * `connected`, a due date already in the past — except reached from a
+     * *success*, which is why nothing was watching it. `findDueConnections`
+     * then re-pulls the provider's whole cap table every fifteen minutes,
+     * forever, behind a card reading healthy.
+     *
+     * Not hypothetical: this writes `last_sync_summary` as `jsonb`, and the
+     * driver refuses a jsonb value carrying a NUL or a lone surrogate
+     * (`domain/nulBytes.ts`). R259 stopped provider text reaching it
+     * unchecked; the shape stays open for anything else that can fail one
+     * UPDATE.
+     */
+    await recordSyncError(deps.pool, connection.id, SYNC_UNRECORDED).catch(() => undefined);
+    throw err;
+  }
 
   return {
     diff,
