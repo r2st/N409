@@ -7,6 +7,7 @@ import {
   buildXlsx,
   cellRef,
   columnLetter,
+  MAX_CELL_CHARS,
   sanitizeSheetName,
   toExcelSerial,
   type XlsxSheet,
@@ -216,6 +217,56 @@ describe('buildXlsx', () => {
     expect(sheet).toContain('>Acme<');
     expect(sheet).not.toContain('\u0000');
     expect(sheet).not.toContain('\u0001');
+  });
+
+  /*
+   * Excel refuses a workbook holding a cell over its own 32,767-character
+   * limit — the file opens as "unreadable content" and is offered for repair —
+   * and nothing upstream bounds the text that reaches a cell. A cap-table
+   * security class is whatever the imported sheet said, and the import body
+   * carries two megabytes of pasted CSV, so one long holder name took every
+   * sheet of the workbook down with it.
+   */
+  it('cuts a cell to the most characters Excel will open, and marks the cut', () => {
+    const long = 'A'.repeat(MAX_CELL_CHARS + 5000);
+    const sheet = unzipEntry(
+      buildXlsx([{ name: 'S', columns: [{ header: 'h', format: 'text' }], rows: [[long]] }]),
+      'xl/worksheets/sheet1.xml',
+    );
+    const cell = /<is><t xml:space="preserve">([^<]*)<\/t><\/is>/.exec(
+      sheet.slice(sheet.indexOf('r="A2"')),
+    )![1]!;
+    expect(cell.length).toBeLessThanOrEqual(MAX_CELL_CHARS);
+    expect(cell.endsWith('\u2026')).toBe(true);
+  });
+
+  it('leaves a cell at the limit whole', () => {
+    const exact = 'A'.repeat(MAX_CELL_CHARS);
+    const sheet = unzipEntry(
+      buildXlsx([{ name: 'S', columns: [{ header: 'h', format: 'text' }], rows: [[exact]] }]),
+      'xl/worksheets/sheet1.xml',
+    );
+    expect(sheet).toContain(exact);
+  });
+
+  /*
+   * The cut is on a code point. An emoji straddling the boundary would
+   * otherwise leave a lone surrogate, which XML has no production for and
+   * which reaches the file as U+FFFD — see domain/textSlice.ts.
+   */
+  it('does not cut an astral character in half at the boundary', () => {
+    const sheet = unzipEntry(
+      buildXlsx([
+        {
+          name: 'S',
+          columns: [{ header: 'h', format: 'text' }],
+          rows: [['A'.repeat(MAX_CELL_CHARS - 4) + '\u{1F680}'.repeat(10)]],
+        },
+      ]),
+      'xl/worksheets/sheet1.xml',
+    );
+    expect(sheet).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    expect(sheet).not.toContain('\uFFFD');
   });
 
   it('writes a formula with its cached value', () => {

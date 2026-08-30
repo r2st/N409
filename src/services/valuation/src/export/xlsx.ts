@@ -16,7 +16,7 @@
  * rather than a picture of one.
  */
 
-import { sliceChars } from '../domain/textSlice.js';
+import { ellipsize, sliceChars } from '../domain/textSlice.js';
 import { buildZip, type ZipEntry } from './zip.js';
 
 /** Number format applied to a column. Indexes into STYLE_FORMATS. */
@@ -96,8 +96,32 @@ function stripInvalidXmlChars(s: string): string {
   return s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
 }
 
+/**
+ * The most characters one cell may hold — Excel's own limit (ECMA-376 §3.1.1
+ * / Excel specifications: "Total number of characters that a cell can
+ * contain").
+ *
+ * Past it Excel does not truncate the cell, it refuses the workbook: the file
+ * opens as "unreadable content" and is offered for repair, which for a
+ * deliverable an auditor is sent is the same as not producing one. Nothing
+ * upstream bounds the text that reaches here — a cap-table `security_class` is
+ * whatever the imported sheet's cell said, and the import body carries two
+ * megabytes of pasted CSV — so a single long holder name takes the whole
+ * workbook down, every sheet of it, on the export rather than on the import
+ * that accepted the name.
+ *
+ * Truncated rather than refused, and marked where it was cut, on the same
+ * reasoning as `stripInvalidXmlChars` beside it: the alternative is not "keep
+ * the text or lose it" but "lose the text or lose the file". `sanitizeSheetName`
+ * has always made the same trade for the 31 characters a tab name gets.
+ */
+export const MAX_CELL_CHARS = 32_767;
+
 function text(value: string): string {
-  return xmlEscape(stripInvalidXmlChars(value));
+  // Stripped first — a control character removed can only shorten the value —
+  // and cut on a code point, so an emoji at the boundary does not leave the
+  // half of itself that XML has no production for (domain/textSlice.ts).
+  return xmlEscape(ellipsize(stripInvalidXmlChars(value), MAX_CELL_CHARS));
 }
 
 /** 0-based column index → spreadsheet column letters (0 → A, 26 → AA). */
