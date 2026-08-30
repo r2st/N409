@@ -52,8 +52,6 @@ const ANY_SHAPE_CALLERS: Record<string, string> = {
     'The same reading as the publish gate — a review is filed against a calculation id, and the banner must agree with the gate it describes.',
   'src/routes/healthChecks.ts':
     'As above for the health-check gate; `runHealthChecks` is itself kind-aware about what the columns mean.',
-  'src/routes/ai.ts':
-    'Only asks whether anything has been computed before an agent may narrate it; the payload is handed to the agent as-is.',
   'src/routes/monitoring.ts':
     'Snapshots whatever the engagement currently concludes; `assembleSnapshot` decides per kind whether that figure carries a §409A safe harbor (R143).',
   'src/routes/boardApproval.ts':
