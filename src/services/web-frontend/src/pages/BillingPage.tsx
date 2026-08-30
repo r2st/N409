@@ -54,6 +54,15 @@ interface Billing {
     succeeded_count: number;
     refunded_count: number;
     payment_count: number;
+    /**
+     * The currency the three money figures are in. Optional because a response
+     * written before the field existed does not carry it, and the formatter's
+     * own default is what those figures were already printed as.
+     */
+    currency?: string;
+    /** They span more than one currency, so they are a running number rather
+     * than an amount — see `collectedTotals`. */
+    mixed_currency?: boolean;
   };
 }
 
@@ -106,10 +115,17 @@ export function BillingPage() {
           figure is shown beside it rather than left to be inferred from a
           number that no longer matches the sum of the rows below. */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total paid" value={formatChargedCents(billing.totals.paid_cents)} accent />
+        <StatCard
+          label="Total paid"
+          value={formatChargedCents(billing.totals.paid_cents, billing.totals.currency)}
+          accent
+        />
         <StatCard label="Completed payments" value={billing.totals.succeeded_count} />
         {billing.totals.refunded_cents > 0 && (
-          <StatCard label="Refunded" value={formatChargedCents(billing.totals.refunded_cents)} />
+          <StatCard
+            label="Refunded"
+            value={formatChargedCents(billing.totals.refunded_cents, billing.totals.currency)}
+          />
         )}
         <StatCard
           label="Unpaid engagements"
@@ -123,6 +139,20 @@ export function BillingPage() {
           }
         />
       </div>
+      {/* The three figures above are sums of integer minor units, and minor
+          units only mean anything inside one currency — Stripe reports ¥100,000
+          and $1,000.00 as the same 100000. `valuations.currency` is chosen per
+          engagement, so a client holding a dollar engagement and a euro one is
+          an ordinary account; the cards were printed as dollars regardless,
+          while every row in the table below was rendered in its own currency
+          and visibly did not add up to them. */}
+      {billing.totals.mixed_currency && (
+        <p className="mt-3 text-sm text-amber-900" role="status" data-testid="mixed-currency-note">
+          Your engagements are billed in more than one currency, so these totals add each payment’s minor
+          units together rather than converting them. The table below shows what each payment was actually
+          charged in.
+        </p>
+      )}
 
       {billing.unpaid_valuations.length > 0 && (
         <section className="mt-8">

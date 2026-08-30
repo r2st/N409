@@ -115,6 +115,10 @@ describe.skipIf(!dbUp)('billing rollup', () => {
       succeeded_count: 1,
       refunded_count: 0,
       payment_count: 1,
+      // The engagement's own currency, so the figures are an amount rather
+      // than a sum of minor units nobody named. See `collectedTotals`.
+      currency: 'usd',
+      mixed_currency: false,
     });
   });
 
@@ -155,6 +159,10 @@ describe.skipIf(!dbUp)('billing rollup', () => {
       succeeded_count: 0,
       refunded_count: 0,
       payment_count: 0,
+      // Nothing collected is in no currency at all; the platform default is
+      // the only honest label for a zero.
+      currency: 'usd',
+      mixed_currency: false,
     });
   });
 });

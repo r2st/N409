@@ -151,6 +151,13 @@ export interface MoneyRow {
   status: string;
   amount_cents: string | number;
   refunded_cents?: string | number | null;
+  /**
+   * The engagement's own currency (`valuations.currency`, copied onto the
+   * payment at checkout). Optional because a caller that only wants the counts
+   * has nothing to say about it, and a row with none is read as the platform
+   * default — which is what the column defaults to.
+   */
+  currency?: string | null;
 }
 
 export interface CollectedTotals {
@@ -163,6 +170,31 @@ export interface CollectedTotals {
   succeeded_count: number;
   refunded_count: number;
   payment_count: number;
+  /**
+   * The currency the three money figures above are in.
+   *
+   * They are sums of integer minor units, and minor units are only comparable
+   * inside one currency — ¥100,000 and $1,000.00 both arrive as `100000`. The
+   * billing page rendered them through a formatter with no currency at all, so
+   * they were printed as dollars whatever they were made of, while the rows
+   * beneath them were each rendered in their own currency and visibly did not
+   * add up to the card above.
+   *
+   * `valuations.currency` is chosen per engagement and copied onto the payment
+   * at checkout, so a client holding a dollar engagement and a euro one is an
+   * ordinary account rather than an exotic one.
+   *
+   * Falls back to the platform default when there is no single answer — nothing
+   * collected, or more than one currency. {@link CollectedTotals.mixed_currency}
+   * is what says which, and this is only a claim about the denomination when
+   * that flag is false.
+   */
+  currency: string;
+  /** The figures span more than one currency, and are a running number rather
+   * than an amount. Reported, not resolved: the per-row table below them is the
+   * honest breakdown, and refusing to label a mixed sum is the part that has to
+   * be true first. */
+  mixed_currency: boolean;
 }
 
 const cents = (v: string | number | null | undefined): number => {
@@ -184,6 +216,10 @@ export function collectedTotals(payments: readonly MoneyRow[]): CollectedTotals 
   let refunded = 0;
   let succeeded = 0;
   let refundedCount = 0;
+  // Only the rows the figures are actually made of. A pending or expired
+  // checkout in another currency is not inside any of the three sums, so
+  // calling the totals mixed on its account would be a warning about nothing.
+  const currencies = new Set<string>();
   for (const p of payments) {
     const amount = cents(p.amount_cents);
     const back = Math.min(cents(p.refunded_cents), amount);
@@ -197,8 +233,12 @@ export function collectedTotals(payments: readonly MoneyRow[]): CollectedTotals 
       // predating this column, say) still returned the whole charge.
       refunded += back > 0 ? back : amount;
       refundedCount += 1;
+    } else {
+      continue;
     }
+    currencies.add((p.currency ?? DEFAULT_PAYMENT_CURRENCY).trim().toLowerCase());
   }
+  const only = currencies.size === 1 ? [...currencies][0]! : DEFAULT_PAYMENT_CURRENCY;
   return {
     gross_cents: gross,
     refunded_cents: refunded,
@@ -206,5 +246,14 @@ export function collectedTotals(payments: readonly MoneyRow[]): CollectedTotals 
     succeeded_count: succeeded,
     refunded_count: refundedCount,
     payment_count: payments.length,
+    currency: only,
+    mixed_currency: currencies.size > 1,
   };
 }
+
+/**
+ * What a money figure over nothing is denominated in — the same default
+ * `valuations.currency` carries and both money formatters fall back to, so a
+ * zero on the billing page is labelled the way the first payment will be.
+ */
+const DEFAULT_PAYMENT_CURRENCY = 'usd';

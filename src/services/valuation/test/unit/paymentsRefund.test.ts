@@ -168,6 +168,60 @@ describe('collectedTotals', () => {
       succeeded_count: 0,
       refunded_count: 0,
       payment_count: 0,
+      currency: 'usd',
+      mixed_currency: false,
+    });
+  });
+
+  /**
+   * What the three money figures are denominated in.
+   *
+   * Each is a sum of integer minor units, and minor units only mean anything
+   * inside one currency: Stripe reports ¥100,000 and $1,000.00 as the same
+   * `100000`. The billing page rendered all three through a formatter with no
+   * currency argument, so they printed as dollars whatever they were made of —
+   * while every row in the table beneath them was rendered in its own currency
+   * and visibly did not add up to the card above. `valuations.currency` is
+   * chosen per engagement, so a dollar engagement beside a euro one is an
+   * ordinary account rather than an exotic one.
+   */
+  describe('what the totals are denominated in', () => {
+    it('names the currency when the settled rows are all in one', () => {
+      const t = collectedTotals([
+        row({ status: 'succeeded', amount_cents: 119_000, currency: 'EUR' }),
+        row({ status: 'refunded', amount_cents: 99_000, refunded_cents: 99_000, currency: 'eur' }),
+      ]);
+      expect(t.currency).toBe('eur');
+      expect(t.mixed_currency).toBe(false);
+    });
+
+    it('refuses to name one when they are not', () => {
+      const t = collectedTotals([
+        row({ status: 'succeeded', amount_cents: 119_000, currency: 'usd' }),
+        row({ status: 'succeeded', amount_cents: 100_000, currency: 'jpy' }),
+      ]);
+      expect(t.mixed_currency).toBe(true);
+      // Still summed — the page needs something to draw and the per-row table
+      // is the honest breakdown — but nothing calls the result dollars.
+      expect(t.paid_cents).toBe(219_000);
+    });
+
+    it('reads a row with no currency as the platform default', () => {
+      const t = collectedTotals([row({ status: 'succeeded', amount_cents: 119_000 })]);
+      expect(t.currency).toBe('usd');
+      expect(t.mixed_currency).toBe(false);
+    });
+
+    it('ignores the currency of a row no figure is made of', () => {
+      // A euro checkout nobody completed is not inside gross, refunded or paid,
+      // so warning about it would be a warning about nothing.
+      const t = collectedTotals([
+        row({ status: 'succeeded', amount_cents: 119_000, currency: 'usd' }),
+        row({ status: 'pending', amount_cents: 99_000, currency: 'eur' }),
+        row({ status: 'expired', amount_cents: 99_000, currency: 'jpy' }),
+      ]);
+      expect(t.mixed_currency).toBe(false);
+      expect(t.currency).toBe('usd');
     });
   });
 });

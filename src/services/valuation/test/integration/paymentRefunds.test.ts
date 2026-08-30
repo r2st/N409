@@ -446,6 +446,10 @@ describe.skipIf(!dbUp)('refunds and chargebacks', () => {
         succeeded_count: 2,
         refunded_count: 1,
         payment_count: 3,
+        // All three engagements are in the platform default, so the figures
+        // above are an amount and not merely a number. See `collectedTotals`.
+        currency: 'usd',
+        mixed_currency: false,
       });
 
       // The refunded engagement is billable again, so it belongs in the

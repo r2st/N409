@@ -54,6 +54,49 @@ const totals = (over: Partial<Record<string, number>> = {}) => ({
 describe('BillingPage — refunds and chargebacks', () => {
   beforeEach(() => vi.restoreAllMocks());
 
+  /**
+   * What the cards above the table are denominated in.
+   *
+   * `gross_cents`, `refunded_cents` and `paid_cents` are sums of integer minor
+   * units, and minor units only mean anything inside one currency: Stripe
+   * reports ¥100,000 and $1,000.00 as the same `100000`. These cards were
+   * rendered through `formatChargedCents` with no currency argument at all, so
+   * they printed as dollars whatever they were made of — while every row in the
+   * table beneath them was rendered in its own currency and visibly did not add
+   * up to the card above. `valuations.currency` is chosen per engagement, so a
+   * dollar engagement beside a euro one is an ordinary account.
+   */
+  describe('the currency the totals are in', () => {
+    it('renders the cards in the currency the totals name', async () => {
+      mount({
+        payments: [payment({ currency: 'EUR' })],
+        unpaid_valuations: [],
+        totals: { ...totals(), currency: 'eur', mixed_currency: false },
+      });
+      // Not "$1,190.00" — the same minor units, correctly denominated.
+      expect(await screen.findAllByText(/1,190\.00/)).toHaveLength(2);
+      expect(screen.queryByText('$1,190.00')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('mixed-currency-note')).not.toBeInTheDocument();
+    });
+
+    it('says the totals are a mixed sum rather than one amount', async () => {
+      mount({
+        payments: [payment({}), payment({ id: 'p2', currency: 'JPY', amount_cents: 100_000 })],
+        unpaid_valuations: [],
+        totals: { ...totals({ paid_cents: 219_000 }), currency: 'usd', mixed_currency: true },
+      });
+      expect((await screen.findByTestId('mixed-currency-note')).textContent).toContain(
+        'more than one currency',
+      );
+    });
+
+    it('stays silent for a response written before the field existed', async () => {
+      mount({ payments: [payment({})], unpaid_valuations: [], totals: totals() });
+      expect(await screen.findAllByText('$1,190.00')).toHaveLength(2);
+      expect(screen.queryByTestId('mixed-currency-note')).not.toBeInTheDocument();
+    });
+  });
+
   it('shows the net total and no refund card when nothing came back', async () => {
     mount({ payments: [payment({})], unpaid_valuations: [], totals: totals() });
     // Once in the "Total paid" card, once on the payment row.
