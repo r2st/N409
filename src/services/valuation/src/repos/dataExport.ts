@@ -272,7 +272,7 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     ),
     section(
       pool,
-      `SELECT id, valuation_id, type, title, body, read_at, created_at
+      `SELECT id, valuation_id, type, title, body, link, read_at, created_at
          FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [userId],
     ),
@@ -413,22 +413,42 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     section(
       pool,
       `SELECT p.id, p.valuation_id, p.provider, p.amount_cents, p.currency, p.status,
-              p.refunded_cents, p.refunded_at, p.dispute_status, p.receipt_url, p.created_at
+              p.refunded_cents, p.refunded_at, p.dispute_status, p.disputed_at, p.receipt_url,
+              p.express, p.qsbs_letter, p.price_breakdown, p.created_at
          FROM payments p JOIN valuations v ON v.id = p.valuation_id
         WHERE v.user_id = $1 ORDER BY p.created_at DESC LIMIT $2`,
       [userId],
     ),
+    /*
+     * The invoice as it stands, including what came back off it.
+     *
+     * `refunded_cents` and `refunded_at` (migration 0169) were added to both
+     * `payments` and `invoices` and reached only the payments section here, so
+     * the same refund was in the copy when it was taken against a one-off
+     * engagement fee and absent when it was taken against a subscription
+     * invoice — a difference in what a person is told about their own money
+     * that nothing chose. `subscription_id` joins the row to the subscription
+     * section beside it, and `created_at` is when the record was made as
+     * against `issued_at`, which the platform can set later.
+     */
     section(
       pool,
-      `SELECT id, number, amount_cents, currency, status, period_start, period_end,
-              line_items, issued_at, paid_at
+      `SELECT id, number, subscription_id, amount_cents, currency, status, period_start, period_end,
+              line_items, refunded_cents, refunded_at, issued_at, paid_at, created_at
          FROM invoices WHERE user_id = $1 ORDER BY issued_at DESC LIMIT $2`,
       [userId],
     ),
+    /*
+     * `cancel_at_period_end` (migration 0187) is the answer to "is this ending"
+     * for the whole window between asking and the date it happens — the state
+     * R213 added precisely because a cancelled subscription otherwise reads
+     * `active` with no end in sight. `canceled_at` alone answers it only after
+     * the fact.
+     */
     section(
       pool,
       `SELECT id, plan_tier, status, valuations_used, current_period_start, current_period_end,
-              canceled_at, created_at
+              cancel_at_period_end, canceled_at, created_at
          FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [userId],
     ),
