@@ -11,6 +11,7 @@ tests hold the same one for the Python tier.
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 import httpx
@@ -19,6 +20,7 @@ import pytest
 from app.http_client import (
     MAX_RESPONSE_BYTES,
     ResponseTooLarge,
+    ResponseTooSlow,
     max_response_bytes,
     new_client,
 )
@@ -126,3 +128,104 @@ def test_no_outbound_client_is_built_outside_the_factory() -> None:
         "build outbound clients with http_client.new_client so the response-size "
         "ceiling applies:\n" + "\n".join(offenders)
     )
+
+
+# ── The other ceiling: a body that is small and never ends ───────────────────
+#
+# `llm_http.Deadline` says each attempt gets "whatever is left" and hands that
+# to httpx as `timeout=`. An httpx read timeout bounds one socket read, not the
+# exchange, so a far end that drips a byte at a time resets it forever: the
+# thread is held, no cap is crossed, and no client disconnect reclaims the
+# threadpool slot (`limits.py`). These hold the second ceiling.
+
+
+class _DrippingStream(httpx.SyncByteStream):
+    """A body that arrives one small chunk at a time, forever if allowed."""
+
+    def __init__(self, chunks: int, gap_s: float) -> None:
+        self.chunks = chunks
+        self.gap_s = gap_s
+        self.delivered = 0
+        self.closed = False
+
+    def __iter__(self):
+        for _ in range(self.chunks):
+            time.sleep(self.gap_s)
+            self.delivered += 1
+            yield b"x"
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _DripTransport(httpx.BaseTransport):
+    def __init__(self, stream: _DrippingStream, *, headers: dict | None = None) -> None:
+        self.stream = stream
+        self.headers = headers or {}
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers=self.headers, stream=self.stream, request=request)
+
+
+def test_a_slow_drip_is_abandoned_at_the_attempt_budget() -> None:
+    """The failure this closes: 40 bytes, a content-length that is honest, and
+    a thread held until the far end feels like finishing."""
+    stream = _DrippingStream(chunks=200, gap_s=0.01)
+    with new_client(transport=_DripTransport(stream)) as http:
+        with pytest.raises(ResponseTooSlow) as excinfo:
+            http.get("https://example.test/", timeout=0.05)
+    assert excinfo.value.budget_s == 0.05
+    # Abandoned rather than merely reported: the socket is closed and the rest
+    # of the body was never read.
+    assert stream.closed
+    assert stream.delivered < 200
+
+
+def test_the_time_ceiling_is_a_transport_error_so_the_ladder_may_retry() -> None:
+    """Opposite of `ResponseTooLarge`, and for the opposite reason: a slow
+    minute may pass, and `Deadline` is what stops the retrying."""
+    err = ResponseTooSlow(1.0)
+    assert isinstance(err, httpx.TransportError)
+    assert isinstance(err, httpx.TimeoutException)
+
+
+def test_the_budget_covers_waiting_for_the_first_byte_too() -> None:
+    """Both halves of an attempt share one budget rather than each getting it.
+
+    Otherwise a far end that stalls just under the read timeout and *then*
+    drips gets twice the ceiling the caller asked for.
+    """
+
+    class _Stalling(httpx.BaseTransport):
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            time.sleep(0.06)
+            return httpx.Response(200, stream=_DrippingStream(4, 0.01), request=request)
+
+    with new_client(transport=_Stalling()) as http:
+        with pytest.raises(ResponseTooSlow):
+            http.get("https://example.test/", timeout=0.05)
+
+
+def test_a_prompt_answer_is_not_affected() -> None:
+    stream = _DrippingStream(chunks=3, gap_s=0.001)
+    with new_client(transport=_DripTransport(stream)) as http:
+        assert http.get("https://example.test/", timeout=5.0).content == b"xxx"
+
+
+def test_a_caller_that_turned_its_own_budget_off_is_left_alone() -> None:
+    """`timeout=None` is an operator running a deliberately slow local model —
+    the same `0 disables` escape hatch `Deadline` documents."""
+    stream = _DrippingStream(chunks=5, gap_s=0.01)
+    with new_client(transport=_DripTransport(stream), timeout=None) as http:
+        assert len(http.get("https://example.test/").content) == 5
+
+
+def test_turning_the_size_cap_off_does_not_take_the_time_cap_with_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MAX_RESPONSE_BYTES=0 is an opinion about bytes and nothing else."""
+    monkeypatch.setenv("MAX_RESPONSE_BYTES", "0")
+    stream = _DrippingStream(chunks=200, gap_s=0.01)
+    with new_client(transport=_DripTransport(stream)) as http:
+        with pytest.raises(ResponseTooSlow):
+            http.get("https://example.test/", timeout=0.05)

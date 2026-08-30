@@ -14,7 +14,7 @@ import json
 import httpx
 import pytest
 
-from app import bedrock, llm_router
+from app import bedrock, llm_http, llm_router
 from app.bedrock import (
     BedrockAuthenticationFailed,
     BedrockError,
@@ -780,3 +780,43 @@ class TestTheRouteAnswersTheVerdict:
         assert res.status_code == 429
         assert res.headers["retry-after"] == "25"
         assert "Too many requests" in res.json()["detail"]
+
+
+class TestASlowDrip:
+    """A far end that answers, slowly, forever.
+
+    The size ceiling never fires — the body is tiny — and an httpx read timeout
+    is reset by every byte, so before the time ceiling in `http_client` this
+    exchange held one of forty threadpool slots for as long as AWS cared to
+    keep sending. `BEDROCK_CALL_BUDGET_S` exists to bound exactly this and
+    could not, because it was only consulted *between* attempts.
+    """
+
+    def test_the_call_ends_inside_its_own_budget(self, monkeypatch):
+        import time as _time
+
+        configure(monkeypatch)
+        monkeypatch.setenv("BEDROCK_CALL_BUDGET_S", "0.3")
+        monkeypatch.setattr(llm_http, "MIN_ATTEMPT_S", 0.05)
+
+        class _Drip(httpx.SyncByteStream):
+            def __iter__(self):
+                for _ in range(10_000):
+                    _time.sleep(0.005)
+                    yield b"x"
+
+            def close(self):
+                pass
+
+        class _DripTransport(httpx.BaseTransport):
+            def handle_request(self, request: httpx.Request) -> httpx.Response:
+                return httpx.Response(200, stream=_Drip(), request=request)
+
+        from app.http_client import CappedTransport
+
+        client = httpx.Client(transport=CappedTransport(_DripTransport(), 16 * 1024 * 1024))
+        started = _time.monotonic()
+        with pytest.raises(BedrockError):
+            chat("s", "u", model=PREFIXED, client=client)
+        # Bounded by the budget and its retries rather than by the far end.
+        assert _time.monotonic() - started < 5.0
