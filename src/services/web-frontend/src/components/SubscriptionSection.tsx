@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeRequestFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { eventLabel, formatChargedCents, formatDate } from '../lib/format';
@@ -206,8 +206,16 @@ export function SubscriptionSection() {
       ]);
       setPlans(p);
       setMine(m);
-    } catch {
-      setError('Could not load subscription details.');
+    } catch (err) {
+      /*
+       * The failure, not the fact that there was one.
+       *
+       * Every branch of this section reported the same nine words, so a
+       * subscriber whose connection had dropped and one whose request 500ed
+       * read the same sentence and neither was told which — and the retry
+       * control beside it is worth pressing in exactly one of the two cases.
+       */
+      setError(describeRequestFailure(err));
     }
   }, []);
 
@@ -225,7 +233,17 @@ export function SubscriptionSection() {
       });
       window.location.href = checkout_url;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not start checkout.');
+      /*
+       * `err.message` falls back to the problem's *title* when the body has no
+       * `detail`, and this API's 500 handler emits a title and no detail on
+       * purpose — so a subscription checkout that 500ed told the customer
+       * "Internal Server Error", which RFC 9457 asks to be identical on every
+       * occurrence and is therefore the one string in the body guaranteed not
+       * to be about their request. And the other branch was not a fallback for
+       * an unknown failure: `api()` throws `ApiError` whenever the server
+       * answered at all, so reaching it means the request never arrived.
+       */
+      setError(describeRequestFailure(err));
       setBusy(null);
     }
   };
@@ -243,7 +261,7 @@ export function SubscriptionSection() {
       const { portal_url } = await api<{ portal_url: string }>('/billing/portal', { method: 'POST' });
       window.location.href = portal_url;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not open billing management.');
+      setError(describeRequestFailure(err));
       setBusy(null);
     }
   };
@@ -510,7 +528,7 @@ function AdminBillingDashboard() {
          * "one request did not come back".
          */
         if (err instanceof ApiError && err.status === 403) return;
-        setError(err instanceof ApiError ? err.message : 'Could not load the billing dashboard.');
+        setError(describeRequestFailure(err));
       });
   }, []);
   if (error) {

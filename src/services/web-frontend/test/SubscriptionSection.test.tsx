@@ -341,8 +341,25 @@ describe('SubscriptionSection (feature 7)', () => {
   it('reports a failed load instead of spinning forever', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
     render(<SubscriptionSection />);
-    expect(await screen.findByText('Could not load subscription details.')).toBeInTheDocument();
+    // A rejected `fetch` is the request never arriving, which has its own
+    // sentence and its own remedy. Every branch of this section used to report
+    // the same nine words, so this case and a 500 were indistinguishable — and
+    // the retry beside them is worth pressing in only one of the two.
+    expect(await screen.findByText(/could not reach the server/i)).toBeInTheDocument();
     expect(screen.queryByRole('status', { name: /loading/i })).not.toBeInTheDocument();
+  });
+
+  it('does not answer a detail-less 500 with the name of a status code', async () => {
+    // `err.message` falls back to the problem's title, and this API's 500
+    // handler emits a title and no detail on purpose — so the customer read
+    // "Internal Server Error", the one string in an RFC 9457 body guaranteed
+    // to be identical on every occurrence and therefore about nothing.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ type: 'about:blank', title: 'Internal Server Error', status: 500 }, 500),
+    );
+    render(<SubscriptionSection />);
+    expect(await screen.findByText(/no explanation/i)).toBeInTheDocument();
+    expect(screen.queryByText('Internal Server Error')).toBeNull();
   });
 
   describe('subscribing', () => {
