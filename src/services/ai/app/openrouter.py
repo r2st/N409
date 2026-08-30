@@ -20,7 +20,6 @@ from dataclasses import dataclass
 import httpx
 
 from .llm_http import (
-    CHARS_PER_TOKEN,
     MAX_RETRIES,
     MIN_ATTEMPT_S,
     RETRY_BACKOFF_BASE_S,
