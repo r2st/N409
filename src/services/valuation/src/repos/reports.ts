@@ -38,16 +38,58 @@ export async function findReportByValuation(db: Queryable, valuationId: string):
   return rows[0] ?? null;
 }
 
-export async function getVersion(
+/**
+ * A stored version without its bytes — the body, plus whether a render exists.
+ *
+ * The reason this is the default reading and `getVersionPdf` is the exception:
+ * `report_versions.pdf` holds a whole 409A deliverable, three quarters of a
+ * megabyte for an ordinary one and past a megabyte for a large cap table, and
+ * `SELECT *` shipped it to the valuation process on every read of the *body*.
+ * Ten of the twelve readings never wanted it. Two only wanted to know whether
+ * it was there.
+ *
+ * Measured on a stored 723kB render, over a local socket: 3.75ms for the row
+ * with its bytes against 0.25ms without — fifteen times, before counting the
+ * megabyte-and-a-half of hex the driver decodes into a Buffer that is then
+ * dropped. The heaviest of those readings is the report editor's own load,
+ * which happens every time an analyst opens the report tab.
+ */
+export type ReportVersionContent = Omit<ReportVersionRow, 'pdf'> & { has_pdf: boolean };
+
+const VERSION_CONTENT_COLUMNS =
+  'id, report_id, version, content, rendered_at, created_by, created_at, pdf IS NOT NULL AS has_pdf';
+
+export async function getVersionContent(
   pool: pg.Pool,
   reportId: string,
   version: number,
-): Promise<ReportVersionRow | null> {
-  const { rows } = await pool.query<ReportVersionRow>(
-    'SELECT * FROM report_versions WHERE report_id = $1 AND version = $2',
+): Promise<ReportVersionContent | null> {
+  const { rows } = await pool.query<ReportVersionContent>(
+    `SELECT ${VERSION_CONTENT_COLUMNS} FROM report_versions WHERE report_id = $1 AND version = $2`,
     [reportId, version],
   );
   return rows[0] ?? null;
+}
+
+/**
+ * The stored bytes of one version, and nothing else.
+ *
+ * Deliberately the only way to them, and deliberately narrow: `deliverablePdf`
+ * is its one caller, because whether a reader gets the stored deliverable or a
+ * freshly stamped draft is a decision that lives in exactly one place (see the
+ * note there, and `reportPdfDoorCensus`). A route that reaches these bytes any
+ * other way is a route that can hand an auditor an unmarked draft.
+ */
+export async function getVersionPdf(
+  pool: pg.Pool,
+  reportId: string,
+  version: number,
+): Promise<Buffer | null> {
+  const { rows } = await pool.query<{ pdf: Buffer | null }>(
+    'SELECT pdf FROM report_versions WHERE report_id = $1 AND version = $2',
+    [reportId, version],
+  );
+  return rows[0]?.pdf ?? null;
 }
 
 /** Version list for the history panel — content itself is fetched per version. */

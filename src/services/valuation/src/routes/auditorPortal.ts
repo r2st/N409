@@ -6,7 +6,7 @@ import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { isOps, REPORT_VISIBLE_STATES, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
-import { findReportByValuation, getVersion } from '../repos/reports.js';
+import { findReportByValuation, getVersionContent } from '../repos/reports.js';
 import { latestCalculationForKind } from '../repos/calculations.js';
 import { listQaReviews } from '../repos/qaReviews.js';
 import { headlineLabels } from '../domain/specialty.js';
@@ -201,7 +201,7 @@ export function registerAuditorPortalRoutes(
     const reportShared = REPORT_VISIBLE_STATES.has(valuation.state);
     const reportRow = reportShared ? await findReportByValuation(deps.pool, valuation.id) : null;
     if (reportRow) {
-      const version = await getVersion(deps.pool, reportRow.id, reportRow.current_version);
+      const version = await getVersionContent(deps.pool, reportRow.id, reportRow.current_version);
       report = version
         ? { template_version: reportRow.template_version, status: reportRow.status, content: version.content }
         : null;

@@ -47,7 +47,7 @@ import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { findPartnerIdentity } from '../repos/branding.js';
 import { findApiTokenById } from '../repos/apiTokens.js';
 import { latestCalculationForKind } from '../repos/calculations.js';
-import { findReportByValuation, getVersion, listVersions } from '../repos/reports.js';
+import { findReportByValuation, getVersionContent, listVersions } from '../repos/reports.js';
 import { deliverablePdf } from './reports.js';
 import { MAX_DOCUMENT_BYTES, rethrowRejectedUpload, storeDocument } from './documents.js';
 import type { ScanPolicy } from '../documents/virusScan.js';
@@ -1115,8 +1115,8 @@ export function registerPartnerApiRoutes(
       const versions = report ? (await listVersions(deps.pool, report.id)).versions : [];
       const rendered = versions.find((v) => v.has_pdf);
       if (!report || !rendered) throw problems.notFound('No rendered report yet');
-      const full = await getVersion(deps.pool, report.id, rendered.version);
-      if (!full?.pdf) throw problems.notFound('No rendered report yet');
+      const full = await getVersionContent(deps.pool, report.id, rendered.version);
+      if (!full?.has_pdf) throw problems.notFound('No rendered report yet');
       /*
        * Through the same render-or-reuse decision the session API uses, rather
        * than sending `full.pdf` straight out.

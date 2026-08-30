@@ -22,13 +22,14 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import {
   createReport,
   findReportByValuation,
-  getVersion,
+  getVersionContent,
+  getVersionPdf,
   listVersions,
   REPORT_VERSION_PAGE_LIMIT,
   saveVersion,
   storeRenderedPdf,
   type ReportRow,
-  type ReportVersionRow,
+  type ReportVersionContent,
 } from '../repos/reports.js';
 import { buildReportSummary } from '../domain/reportSummary.js';
 import { fillFigures, reportFigures, type ReportFigures } from '../domain/reportFigures.js';
@@ -580,17 +581,22 @@ export async function deliverablePdf(
   pool: pg.Pool,
   valuation: ValuationRow,
   report: ReportRow,
-  version: Pick<ReportVersionRow, 'version' | 'content' | 'pdf'>,
+  version: Pick<ReportVersionContent, 'version' | 'content'>,
   actor: EventActor,
 ): Promise<Buffer> {
   const watermark = reportWatermarkFor(valuation);
   if (watermark) {
+    // A draft renders fresh and the stored bytes are never consulted, so they
+    // are never fetched. This is the whole reason the bytes are loaded here
+    // rather than handed in: every caller had to read a megabyte off the row to
+    // reach this branch, which then discards it.
     return renderVersionPdf(pool, valuation, report, version.version, version.content, actor, {
       watermark,
       store: false,
     });
   }
-  return version.pdf ?? renderVersionPdf(pool, valuation, report, version.version, version.content, actor);
+  const stored = await getVersionPdf(pool, report.id, version.version);
+  return stored ?? renderVersionPdf(pool, valuation, report, version.version, version.content, actor);
 }
 
 const NarrativeBody = z
@@ -617,7 +623,7 @@ export function registerReportRoutes(
     const valuation = await loadValuation(deps.pool, principal, id);
     if (!canReadReport(principal, toRef(valuation))) throw problems.notFound();
     const report = await loadOrCreateReport(deps.pool, principal, valuation);
-    const version = await getVersion(deps.pool, report.id, report.current_version);
+    const version = await getVersionContent(deps.pool, report.id, report.current_version);
     // The validator an editor sends back as If-Match when it saves. The report
     // pointer, not the valuation's `version` — the two move independently and
     // an analyst editing prose is racing other prose, not the engagement's
@@ -684,7 +690,7 @@ export function registerReportRoutes(
       // other missing version — never a 500 from the driver.
       if (!fitsInt4(versionNumber) || versionNumber < 1) throw problems.notFound();
       const report = await findReportByValuation(deps.pool, valuation.id);
-      const version = report ? await getVersion(deps.pool, report.id, versionNumber) : null;
+      const version = report ? await getVersionContent(deps.pool, report.id, versionNumber) : null;
       if (!version) throw problems.notFound();
       return {
         version: {
@@ -709,7 +715,7 @@ export function registerReportRoutes(
     if (!parsed.success) throw invalidBody('Invalid revert request', parsed.error);
 
     const report = await findReportByValuation(deps.pool, valuation.id);
-    const target = report ? await getVersion(deps.pool, report.id, parsed.data.version) : null;
+    const target = report ? await getVersionContent(deps.pool, report.id, parsed.data.version) : null;
     if (!report || !target) throw problems.notFound('Version not found');
     if (parsed.data.version === report.current_version) {
       throw problems.conflict('Already at this version');
@@ -805,7 +811,7 @@ export function registerReportRoutes(
     if (!parsed.success) throw invalidBody('Invalid options', parsed.error);
 
     const report = await loadOrCreateReport(deps.pool, principal, valuation);
-    const version = await getVersion(deps.pool, report.id, report.current_version);
+    const version = await getVersionContent(deps.pool, report.id, report.current_version);
     if (!version) throw problems.notFound('No report content to draft into');
     if (DELIVERED_REPORT_STATES.has(valuation.state)) {
       throw problems.conflict('This engagement is published — save a new version before drafting into it');
@@ -856,7 +862,7 @@ export function registerReportRoutes(
      * saved a minute earlier.
      */
     const current = (await findReportByValuation(deps.pool, valuation.id)) ?? report;
-    const target = (await getVersion(deps.pool, current.id, current.current_version)) ?? version;
+    const target = (await getVersionContent(deps.pool, current.id, current.current_version)) ?? version;
 
     /*
      * Version 1 is the template as instantiated for this engagement, and
@@ -864,7 +870,7 @@ export function registerReportRoutes(
      * skeleton however many edits followed, and a chapter identical to its v1
      * text is one nobody has written. That is the whole overwrite rule.
      */
-    const baseline = target.version === 1 ? target : await getVersion(deps.pool, current.id, 1);
+    const baseline = target.version === 1 ? target : await getVersionContent(deps.pool, current.id, 1);
     // Same reading as the render below it: `applyNarrative` is told the kind,
     // and the figures it falls back on must come from the run that kind is
     // reported in — not from a compute of the other shape run afterwards.
@@ -910,7 +916,7 @@ export function registerReportRoutes(
     // Same as the draft route: refuse before `loadOrCreateReport` writes a row.
     refuseIfRetired(valuation, 'available for rendering');
     const report = await loadOrCreateReport(deps.pool, principal, valuation);
-    const version = await getVersion(deps.pool, report.id, report.current_version);
+    const version = await getVersionContent(deps.pool, report.id, report.current_version);
     if (!version) throw problems.notFound('No report content to render');
     /*
      * A delivered deliverable is not re-rendered in place.
@@ -927,7 +933,7 @@ export function registerReportRoutes(
      * normally — so the way to publish revised figures is the way that leaves
      * both documents in the history.
      */
-    if (DELIVERED_REPORT_STATES.has(valuation.state) && version.pdf) {
+    if (DELIVERED_REPORT_STATES.has(valuation.state) && version.has_pdf) {
       throw problems.conflict(
         `Version ${version.version} has already been delivered — save a new version to publish revised figures`,
       );
@@ -951,7 +957,7 @@ export function registerReportRoutes(
     if (!canReadReport(principal, toRef(valuation))) throw problems.notFound();
 
     const report = await findReportByValuation(deps.pool, valuation.id);
-    const version = report ? await getVersion(deps.pool, report.id, report.current_version) : null;
+    const version = report ? await getVersionContent(deps.pool, report.id, report.current_version) : null;
     if (!report || !version) throw problems.notFound('No report yet');
 
     // `human`, not `system`. A person asked for this file; the mechanism they

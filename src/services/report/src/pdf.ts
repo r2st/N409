@@ -2793,18 +2793,51 @@ function roomLeft(doc: PDFKit.PDFDocument): number {
  * same words set regular, and over-estimating only ever breaks a shade early —
  * whereas under-estimating lets through the very widow this exists to stop.
  */
-function bodyLines(
-  doc: PDFKit.PDFDocument,
-  runs: readonly Run[],
-  width: number,
-): { lines: number; lineHeight: number } {
+interface BodyLines {
+  lines: number;
+  lineHeight: number;
+}
+
+/**
+ * Memoised for the same reason the table geometry is: a paragraph that follows
+ * a heading is measured twice before a word of it is drawn.
+ *
+ * `renderBlock`'s heading branch reserves room for the heading *plus the
+ * opening of whatever comes next*, and asks `openingHeight` — which for a
+ * paragraph is this function, at exactly the width the paragraph will then ask
+ * for itself a moment later. Wrapping a paragraph is the expensive half of
+ * setting one, and in a report most paragraphs follow a heading.
+ *
+ * Keyed on the runs array, which `htmlToBlocks` builds fresh per render, and
+ * carrying the document and width so a hit can only serve the question it
+ * answered.
+ */
+const bodyLinesCache = new WeakMap<
+  readonly Run[],
+  { doc: PDFKit.PDFDocument; width: number; value: BodyLines }
+>();
+
+function bodyLines(doc: PDFKit.PDFDocument, runs: readonly Run[], width: number): BodyLines {
+  // The face selection is a side effect callers may be relying on, so it
+  // happens on the cached path too — it is a field assignment, not a measure.
   const bold = runs.some((run) => run.bold);
   doc.font(bold ? FONTS.bold : FONTS.regular).fontSize(BODY_FONT_SIZE);
+  const cached = bodyLinesCache.get(runs);
+  if (cached && cached.doc === doc && cached.width === width) return cached.value;
   const lineHeight = doc.currentLineHeight(true) + BODY_LINE_GAP;
   const text = runs.map((run) => run.text).join('');
-  if (text.trim() === '') return { lines: 1, lineHeight };
-  const height = doc.heightOfString(text, { width, lineGap: BODY_LINE_GAP });
-  return { lines: Math.max(1, Math.round(height / lineHeight)), lineHeight };
+  const value: BodyLines =
+    text.trim() === ''
+      ? { lines: 1, lineHeight }
+      : {
+          lines: Math.max(
+            1,
+            Math.round(doc.heightOfString(text, { width, lineGap: BODY_LINE_GAP }) / lineHeight),
+          ),
+          lineHeight,
+        };
+  bodyLinesCache.set(runs, { doc, width, value });
+  return value;
 }
 
 /**

@@ -7,7 +7,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
 import { latestSucceededCalculation, listCalculations } from '../repos/calculations.js';
 import { createQaReview, listQaReviews } from '../repos/qaReviews.js';
-import { findReportByValuation, getVersion } from '../repos/reports.js';
+import { findReportByValuation, getVersionContent } from '../repos/reports.js';
 import { reportReadiness } from '../domain/reportReadiness.js';
 import { reviewReport } from '../domain/reportReview.js';
 import { templateForKind } from '../domain/report.js';
@@ -92,7 +92,9 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
      * go out, and a reviewer reads one list.
      */
     const report = await findReportByValuation(deps.pool, valuation.id);
-    const reportVersion = report ? await getVersion(deps.pool, report.id, report.current_version) : null;
+    const reportVersion = report
+      ? await getVersionContent(deps.pool, report.id, report.current_version)
+      : null;
     /*
      * The exhibits this calculation produces, and the body with its index and
      * its exhibit pointers resolved against them — the same two steps, in the

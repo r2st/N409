@@ -24,7 +24,7 @@ import { COMPARABLE_PAGE_LIMIT, listComparableItems } from '../repos/comparableI
 import { impliedMultiples } from '../domain/comparables.js';
 import {
   findReportByValuation,
-  getVersion,
+  getVersionContent,
   listVersions,
   REPORT_VERSION_PAGE_LIMIT,
 } from '../repos/reports.js';
@@ -131,8 +131,8 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     let renderedPdf: { name: string; data: Buffer } | null = null;
     const latestRendered = versions.find((v) => v.has_pdf);
     if (report && latestRendered) {
-      const full = await getVersion(deps.pool, report.id, latestRendered.version);
-      if (full?.pdf) {
+      const full = await getVersionContent(deps.pool, report.id, latestRendered.version);
+      if (full?.has_pdf) {
         /*
          * Through the same decision the two download routes use, rather than
          * shipping the stored bytes.
