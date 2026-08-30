@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, describeActionFailure } from '../../lib/api';
+import { CONNECTOR_HEALTH_LABEL, connectorHealth, retryNote } from '../../lib/connectorState';
 import { Button, ErrorNote, LoadError, Select, Spinner, useRetry } from '../ui';
 
 type Provider = 'carta' | 'pulley';
@@ -11,6 +12,9 @@ interface Connection {
   sync_frequency: Frequency;
   last_synced_at: string | null;
   last_error: string | null;
+  next_sync_at: string | null;
+  /** See `lib/connectorState` — which of the two failures this connection is in. */
+  reconnect_required: boolean;
 }
 
 interface ProviderStatus {
@@ -162,32 +166,34 @@ export function CapTableSyncPanel({
            * A connection whose last sync failed was drawn exactly like one whose
            * last sync worked: the same green Connected pill, the same cadence
            * select still reading Daily, with one line of small red text below
-           * quoting a status code from an hour or a month ago. Since R252 that
-           * cadence may also be suspended entirely — an authorisation the
-           * provider has ended is not retried — so the pill has to be able to
-           * say the thing the card is actually for: this is not syncing, and
-           * reconnecting is what fixes it.
+           * quoting a status code from an hour or a month ago. R252 gave the
+           * failure its own pill and the reconnect its own button — and drew
+           * both for every failure, including the majority that are retried on
+           * a backoff and need nobody. See `lib/connectorState` for the two
+           * states and why only the row can tell them apart.
            */
-          const failing = p.connection?.status === 'error';
+          const health = connectorHealth(p.connection, p.configured);
+          const failing = health === 'retrying' || health === 'stopped';
+          const retrying = p.connection ? retryNote(p.connection, health) : null;
           return (
             <div key={p.provider} className="rounded-md border border-paper-300 p-4">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="font-semibold text-ink-900">{p.label}</span>
                 {!p.configured ? (
-                  <span className="text-xs text-ink-400">Not configured on this deployment</span>
+                  <span className="text-xs text-ink-400">{CONNECTOR_HEALTH_LABEL['not-configured']}</span>
                 ) : failing ? (
                   <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 ring-inset">
-                    Not syncing
+                    {CONNECTOR_HEALTH_LABEL[health]}
                     {p.connection?.external_company_name ? ` · ${p.connection.external_company_name}` : ''}
                   </span>
                 ) : connected ? (
                   <span className="rounded-full bg-bond-50 px-2.5 py-0.5 text-xs font-semibold text-bond-700">
-                    Connected
+                    {CONNECTOR_HEALTH_LABEL.connected}
                     {p.connection?.external_company_name ? ` · ${p.connection.external_company_name}` : ''}
                   </span>
                 ) : (
                   <span className="rounded-full bg-paper-100 px-2.5 py-0.5 text-xs font-semibold text-ink-500">
-                    Not connected
+                    {CONNECTOR_HEALTH_LABEL['not-connected']}
                   </span>
                 )}
               </div>
@@ -195,6 +201,7 @@ export function CapTableSyncPanel({
               {p.connection?.last_error && (
                 <p className="mt-2 text-xs text-red-600">Last error: {p.connection.last_error}</p>
               )}
+              {retrying && <p className="mt-1 text-xs text-ink-500">{retrying}</p>}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {!connected ? (
@@ -236,7 +243,7 @@ export function CapTableSyncPanel({
                       way to redo the OAuth hop from the card that is failing, the only
                       route back was Disconnect and start over.
                     */}
-                    {failing && (
+                    {health === 'stopped' && (
                       <Button
                         variant="secondary"
                         disabled={!p.configured || busy === p.provider}

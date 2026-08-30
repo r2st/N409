@@ -342,6 +342,8 @@ describe('HrisSyncPanel (feature 11)', () => {
               sync_frequency: 'daily',
               last_synced_at: '2026-07-01T00:00:00Z',
               last_error: 'Rippling no longer accepts the stored authorisation — reconnect Rippling.',
+              next_sync_at: null,
+              reconnect_required: true,
             },
           },
         ],
@@ -355,6 +357,76 @@ describe('HrisSyncPanel (feature 11)', () => {
     // Still a live connection: importing by hand and changing the cadence are
     // both things a person may want to do from here.
     expect(screen.getByRole('button', { name: 'Import now' })).toBeInTheDocument();
+  });
+
+  it('says a failure that retries itself is retrying, and does not ask for a reconnect (R256)', async () => {
+    /**
+     * R252 made `error` two states — an authorisation the provider has ended,
+     * which is never retried, and a provider that was briefly unwell, which is
+     * retried on a backoff and needs nobody. The card drew both as "Not
+     * syncing" with a Reconnect button beside it, so a 503 at three in the
+     * morning read as an integration somebody has to go and repair.
+     */
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      jsonResponse({
+        providers: [
+          {
+            provider: 'rippling',
+            label: 'Rippling',
+            configured: true,
+            connection: {
+              status: 'error',
+              external_company_name: 'Acme',
+              sync_frequency: 'daily',
+              last_synced_at: '2026-07-01T00:00:00Z',
+              last_error: 'Rippling roster fetch failed (503)',
+              next_sync_at: '2026-07-02T00:15:00Z',
+              reconnect_required: false,
+            },
+          },
+        ],
+      }),
+    );
+    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+
+    expect(await screen.findByText(/Sync failing · retrying · Acme/)).toBeInTheDocument();
+    expect(screen.queryByText(/Not syncing/)).not.toBeInTheDocument();
+    // The promise the backoff is actually making, in front of the person who
+    // would otherwise go and redo an authorisation that is working.
+    expect(screen.getByText(/Retrying automatically — next attempt/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reconnect Rippling' })).not.toBeInTheDocument();
+    // Nothing about it stops a person syncing by hand in the meantime.
+    expect(screen.getByRole('button', { name: 'Import now' })).toBeInTheDocument();
+  });
+
+  it('asks for a reconnect when the failure is one no retry can clear (R256)', async () => {
+    // A `manual` connection has no `next_sync_at` in either state, which is why
+    // the row carries the answer rather than the panel inferring one.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      jsonResponse({
+        providers: [
+          {
+            provider: 'rippling',
+            label: 'Rippling',
+            configured: true,
+            connection: {
+              status: 'error',
+              external_company_name: 'Acme',
+              sync_frequency: 'manual',
+              last_synced_at: '2026-07-01T00:00:00Z',
+              last_error: 'Rippling no longer accepts the stored authorisation — reconnect Rippling.',
+              next_sync_at: null,
+              reconnect_required: true,
+            },
+          },
+        ],
+      }),
+    );
+    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+
+    expect(await screen.findByText(/Not syncing · Acme/)).toBeInTheDocument();
+    expect(screen.queryByText(/Retrying automatically/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reconnect Rippling' })).toBeInTheDocument();
   });
 
   it('shows a connection with no company name without a dangling separator', async () => {

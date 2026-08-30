@@ -603,9 +603,12 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
         status: string;
         sync_failures: number;
         next_sync_at: Date | null;
-      }>('SELECT id, status, sync_failures, next_sync_at FROM hris_connections WHERE valuation_id = $1', [
-        valuationId,
-      ]);
+        reconnect_required: boolean;
+      }>(
+        `SELECT id, status, sync_failures, next_sync_at, reconnect_required
+           FROM hris_connections WHERE valuation_id = $1`,
+        [valuationId],
+      );
       return rows[0]!;
     };
 
@@ -636,6 +639,10 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       const waitMinutes = (row.next_sync_at!.getTime() - Date.now()) / 60_000;
       expect(waitMinutes).toBeGreaterThan(10);
       expect(waitMinutes).toBeLessThan(20);
+      // Nothing is being asked of anybody, and since R256 the row says so — a
+      // card that asks for a reconnect here sends somebody to redo a working
+      // authorisation to fix a hiccup that clears itself in fifteen minutes.
+      expect(row.reconnect_required).toBe(false);
     });
 
     it('picks the connection up again when the retry falls due, and clears the count', async () => {
@@ -710,6 +717,9 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       // A refresh token the provider has refused will be refused identically
       // every eight hours forever, so this one is deliberately not retried.
       expect(row.next_sync_at).toBeNull();
+      // And `next_sync_at` alone cannot carry that: a `manual` connection has
+      // none in either state. See migration 0196.
+      expect(row.reconnect_required).toBe(true);
     });
 
     it('restores the schedule when the client reconnects', async () => {
@@ -720,7 +730,8 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       await makeDue(v.id);
       await ctx.pool.query(
         `UPDATE hris_connections
-            SET status = 'error', sync_failures = 4, next_sync_at = NULL
+            SET status = 'error', sync_failures = 4, next_sync_at = NULL,
+                reconnect_required = true
           WHERE valuation_id = $1`,
         [v.id],
       );
@@ -738,6 +749,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       expect(row.status).toBe('connected');
       expect(row.sync_failures).toBe(0);
       expect(row.next_sync_at).not.toBeNull();
+      expect(row.reconnect_required).toBe(false);
     });
   });
 

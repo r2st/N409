@@ -28,6 +28,14 @@ export interface CapTableConnectionRow {
    * one at all.
    */
   sync_failures: number;
+  /**
+   * Whether the last failure was one only a person can clear — an
+   * authorisation the provider has ended, which is never retried. The other
+   * kind is on a backoff with a time to try again, and asks nothing of anybody.
+   * `next_sync_at` cannot answer this: a `manual` connection has none in either
+   * case. See migration 0196.
+   */
+  reconnect_required: boolean;
 }
 
 export type PublicCapTableConnection = Omit<CapTableConnectionRow, 'access_token' | 'refresh_token'>;
@@ -94,6 +102,7 @@ export async function upsertConnection(
        -- leave the cadence select reading Daily over a connection that never
        -- syncs again -- the same lie in a new place.
        sync_failures = 0,
+       reconnect_required = false,
        next_sync_at = CASE WHEN cap_table_connections.sync_frequency = 'manual' THEN NULL ELSE now() END
      RETURNING *`,
     [
@@ -160,6 +169,7 @@ export async function recordSync(pool: pg.Pool, id: string, summary: Record<stri
     `UPDATE cap_table_connections
      SET last_synced_at = now(), last_sync_summary = $2, status = 'connected', last_error = NULL,
          sync_failures = 0,
+         reconnect_required = false,
          next_sync_at = CASE sync_frequency
            WHEN 'daily' THEN now() + interval '1 day'
            WHEN 'weekly' THEN now() + interval '7 days'
@@ -201,6 +211,10 @@ export async function recordSyncError(
         SET status = 'error',
             last_error = $2,
             sync_failures = sync_failures + 1,
+            -- Every failure states what it knows. A transient refusal sets this
+            -- false because the request reached the provider and came back with
+            -- something other than a refusal of our authorisation.
+            reconnect_required = $3::boolean,
             next_sync_at = CASE
               WHEN $3::boolean THEN NULL
               WHEN sync_frequency = 'manual' THEN NULL
@@ -258,7 +272,8 @@ export async function revokeConnection(
 ): Promise<boolean> {
   const { rowCount } = await pool.query(
     `UPDATE cap_table_connections
-     SET status = 'revoked', access_token = '', refresh_token = NULL, sync_frequency = 'manual', next_sync_at = NULL
+     SET status = 'revoked', access_token = '', refresh_token = NULL, sync_frequency = 'manual',
+         next_sync_at = NULL, reconnect_required = false
      WHERE valuation_id = $1 AND provider = $2 AND status <> 'revoked'`,
     [valuationId, provider],
   );

@@ -18,6 +18,8 @@ const CARTA = {
     sync_frequency: 'manual',
     last_synced_at: null,
     last_error: null,
+    next_sync_at: null,
+    reconnect_required: false,
   },
 };
 /** No keys on this deployment, so it can only ever be listed. */
@@ -274,6 +276,64 @@ describe('CapTableSyncPanel (feature 4)', () => {
     });
     render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
     expect(await screen.findByText(/Last error: Token expired/)).toBeInTheDocument();
+  });
+
+  it('separates a failure that retries itself from one that needs a person (R256)', async () => {
+    /**
+     * The same two states as the HRIS panel, drawn from the same helper. R252
+     * made `error` mean either "the provider was briefly unwell, retrying on a
+     * backoff" or "the authorisation has ended and nothing will retry it", and
+     * the card said "Not syncing · Reconnect" to both.
+     */
+    mockApi({
+      'GET /valuations/01N409VAL000000000000000AA/cap-table/sync': () =>
+        jsonResponse({
+          providers: [
+            {
+              ...CARTA,
+              connection: {
+                ...CARTA.connection,
+                status: 'error',
+                sync_frequency: 'daily',
+                last_error: 'Carta cap table fetch failed (503)',
+                next_sync_at: '2026-07-02T00:15:00Z',
+                reconnect_required: false,
+              },
+            },
+            PULLEY,
+          ],
+        }),
+    });
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+
+    expect(await screen.findByText(/Sync failing · retrying · Acme Inc/)).toBeInTheDocument();
+    expect(screen.getByText(/Retrying automatically — next attempt/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reconnect Carta' })).not.toBeInTheDocument();
+  });
+
+  it('asks for a reconnect when no retry can clear the failure (R256)', async () => {
+    mockApi({
+      'GET /valuations/01N409VAL000000000000000AA/cap-table/sync': () =>
+        jsonResponse({
+          providers: [
+            {
+              ...CARTA,
+              connection: {
+                ...CARTA.connection,
+                status: 'error',
+                last_error: 'Carta no longer accepts the stored authorisation — reconnect Carta.',
+                reconnect_required: true,
+              },
+            },
+            PULLEY,
+          ],
+        }),
+    });
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+
+    expect(await screen.findByText(/Not syncing · Acme Inc/)).toBeInTheDocument();
+    expect(screen.queryByText(/Retrying automatically/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reconnect Carta' })).toBeInTheDocument();
   });
 
   /**
