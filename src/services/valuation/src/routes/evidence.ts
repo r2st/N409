@@ -22,7 +22,12 @@ import { deliverablePdf } from './reports.js';
 import { listScenarios } from '../repos/scenarios.js';
 import { COMPARABLE_PAGE_LIMIT, listComparableItems } from '../repos/comparableItems.js';
 import { impliedMultiples } from '../domain/comparables.js';
-import { findReportByValuation, getVersion, listVersions } from '../repos/reports.js';
+import {
+  findReportByValuation,
+  getVersion,
+  listVersions,
+  REPORT_VERSION_PAGE_LIMIT,
+} from '../repos/reports.js';
 import { findUserById } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { CommentKind } from '../domain/operations.js';
@@ -119,7 +124,9 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
       [id],
     );
 
-    const versions = report ? await listVersions(deps.pool, report.id) : [];
+    const { versions, truncated: versionsTruncated } = report
+      ? await listVersions(deps.pool, report.id)
+      : { versions: [], truncated: false };
     // The most recent rendered PDF is the deliverable an auditor wants.
     let renderedPdf: { name: string; data: Buffer } | null = null;
     const latestRendered = versions.find((v) => v.has_pdf);
@@ -292,6 +299,11 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         // The file manifest. An auditor reading a bundle for what is *not* in
         // it counts this list, so a short one has to be labelled a short one.
         ...(documentsTruncated ? { documents: DOCUMENT_PAGE_LIMIT } : {}),
+        // The report's own render history, which `counts.report_versions`
+        // above reports as a number. The count is the thing that misleads: a
+        // bundle stating "report_versions: 500" for a report saved a thousand
+        // times is not short, it is wrong about the engagement.
+        ...(versionsTruncated ? { report_versions: REPORT_VERSION_PAGE_LIMIT } : {}),
         // The methodology log, which is append-only and is read here for the
         // reasoning behind a number rather than for its latest state.
         ...(decisionsTruncated ? { decisions: DECISION_PAGE_LIMIT } : {}),

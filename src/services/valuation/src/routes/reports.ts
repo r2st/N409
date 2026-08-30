@@ -24,6 +24,7 @@ import {
   findReportByValuation,
   getVersion,
   listVersions,
+  REPORT_VERSION_PAGE_LIMIT,
   saveVersion,
   storeRenderedPdf,
   type ReportRow,
@@ -664,8 +665,11 @@ export function registerReportRoutes(
     const { id } = req.params as { id: string };
     const valuation = await loadForEdit(deps.pool, principal, id);
     const report = await findReportByValuation(deps.pool, valuation.id);
-    if (!report) return { versions: [] };
-    return { versions: await listVersions(deps.pool, report.id) };
+    if (!report) return { versions: [], truncated: false, page_limit: REPORT_VERSION_PAGE_LIMIT };
+    // `truncated` because a version picker that quietly stops reads as the
+    // whole history of the report — see REPORT_VERSION_PAGE_LIMIT.
+    const { versions, truncated } = await listVersions(deps.pool, report.id);
+    return { versions, truncated, page_limit: REPORT_VERSION_PAGE_LIMIT };
   });
 
   app.get(

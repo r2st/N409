@@ -53,7 +53,10 @@ export function registerPackageRoutes(app: FastifyInstance, deps: { pool: pg.Poo
       listRounds(deps.pool, id),
       listTransactions(deps.pool, id),
     ]);
-    const reportVersions = report ? await listVersions(deps.pool, report.id) : [];
+    const versionPage = report
+      ? await listVersions(deps.pool, report.id)
+      : { versions: [], truncated: false };
+    const reportVersions = versionPage.versions;
     const { jobs: aiJobs, truncated: aiJobsTruncated } = aiJobPage;
     const { documents, truncated: documentsTruncated } = documentPage;
     const { rounds, truncated: roundsTruncated } = roundPage;

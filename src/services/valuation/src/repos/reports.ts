@@ -51,16 +51,44 @@ export async function getVersion(
 }
 
 /** Version list for the history panel — content itself is fetched per version. */
+export type ReportVersionSummary = Omit<ReportVersionRow, 'content' | 'pdf'> & { has_pdf: boolean };
+
+/**
+ * The cap on one report's version history.
+ *
+ * `report_versions` gains a row on every save of the report body — a
+ * self-serve write path with no maximum — so the history of a report that has
+ * been through a long review is as long as the review was, and this read had
+ * no bound of any kind. Four callers take it, and two of them are the evidence
+ * bundle and the partner API, where the answer is assembled alongside every
+ * other artefact of the engagement.
+ *
+ * The cut takes the *newest* end. Every caller either renders the list newest
+ * first or does `versions.find(v => v.has_pdf)` to reach the latest rendered
+ * PDF, and both stay correct under the cap for the same reason: what is
+ * dropped is the oldest end of the history, never the current state of the
+ * report.
+ *
+ * `truncated` rides back with it rather than being inferred from the length,
+ * because an evidence bundle that quietly stops is a record an auditor reads
+ * as complete. It is the same shape and the same reason as
+ * `COMMENT_PAGE_LIMIT`.
+ */
+export const REPORT_VERSION_PAGE_LIMIT = 500;
+
 export async function listVersions(
   pool: pg.Pool,
   reportId: string,
-): Promise<Array<Omit<ReportVersionRow, 'content' | 'pdf'> & { has_pdf: boolean }>> {
+  opts: { limit?: number } = {},
+): Promise<{ versions: ReportVersionSummary[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? REPORT_VERSION_PAGE_LIMIT, 1), REPORT_VERSION_PAGE_LIMIT);
   const { rows } = await pool.query(
     `SELECT id, report_id, version, rendered_at, created_by, created_at, (pdf IS NOT NULL) AS has_pdf
-     FROM report_versions WHERE report_id = $1 ORDER BY version DESC`,
-    [reportId],
+     FROM report_versions WHERE report_id = $1 ORDER BY version DESC LIMIT $2`,
+    [reportId, limit + 1],
   );
-  return rows as Array<Omit<ReportVersionRow, 'content' | 'pdf'> & { has_pdf: boolean }>;
+  const all = rows as ReportVersionSummary[];
+  return { versions: all.slice(0, limit), truncated: all.length > limit };
 }
 
 /**

@@ -1070,7 +1070,7 @@ export function registerPartnerApiRoutes(
         listDocuments(deps.pool, valuation.id),
         reportReadable ? findReportByValuation(deps.pool, valuation.id) : null,
       ]);
-      const versions = report ? await listVersions(deps.pool, report.id) : [];
+      const versions = report ? (await listVersions(deps.pool, report.id)).versions : [];
       const rendered = versions.find((v) => v.has_pdf);
       return {
         valuation: publicValuation(valuation),
@@ -1112,7 +1112,7 @@ export function registerPartnerApiRoutes(
       // not something to disclose before it is shared.
       if (!partnerCanReadReport(principal, valuation)) throw problems.notFound('No rendered report yet');
       const report = await findReportByValuation(deps.pool, valuation.id);
-      const versions = report ? await listVersions(deps.pool, report.id) : [];
+      const versions = report ? (await listVersions(deps.pool, report.id)).versions : [];
       const rendered = versions.find((v) => v.has_pdf);
       if (!report || !rendered) throw problems.notFound('No rendered report yet');
       const full = await getVersion(deps.pool, report.id, rendered.version);

@@ -65,6 +65,28 @@ interface Bound {
   why: string;
 }
 
+/**
+ * The reads a cap would turn into a wrong answer rather than a short list.
+ *
+ * Stated as a list because the pressure on each of these is to "make it
+ * consistent with the others" — they are the odd ones out in a file whose
+ * whole subject is capping lists, and each is one careless edit away from a
+ * duplicate import, a re-sent alert or a resolution approved while somebody
+ * has not signed.
+ */
+const DECISION_SETS = [
+  'hrisConnections.ts:existingGrantExternalIds',
+  'monitors.ts:notifiedSignaturesFor',
+  'boardApprovals.ts:listBoardMembers',
+  'partnerWebhooks.ts:enabledWebhooks',
+  'mfa.ts:listUnusedBackupCodeHashes',
+  'valuationTags.ts:acceptedTagSlugs',
+  // The erasure console's preview of what a purge by company name would
+  // take. A capped answer here is not a short list, it is a purge that
+  // leaves engagements behind and a preview that said it would not.
+  'valuationPurge.ts:findValuationIdsByCompanyName',
+];
+
 const BOUNDED: Record<string, Bound> = {
   // ── Bounded by the caller's own page ────────────────────────────────────
   'boardApprovals.ts:findResolutionsByValuationIds': {
@@ -110,6 +132,10 @@ const BOUNDED: Record<string, Bound> = {
   'monitors.ts:notifiedSignaturesFor': {
     bound: 'caller',
     why: 'A decision set, bounded by the (monitor, signature) candidates this scan actually evaluated. Asked by monitor it read every alert those monitors had ever fired.',
+  },
+  'notificationPreferences.ts:getPreferenceMatrix': {
+    bound: 'schema',
+    why: 'Primary key (user_id, event_type) for one user, and event_type is only ever written from the frozen NOTIFICATION_EVENT_TYPES enum, so the row count per user is the length of that list.',
   },
   'notificationPreferences.ts:preferenceOverrides': {
     bound: 'caller',
@@ -229,9 +255,17 @@ const BOUNDED: Record<string, Bound> = {
     bound: 'curated',
     why: 'Admin-authored report sections — one row per section of the report skeleton, per valuation kind.',
   },
+  'jobs.ts:oldestActiveJobs': {
+    bound: 'schema',
+    why: 'GROUP BY j.source over the union of JOB_SOURCES, so one row per queue the service has — the aggregate collapses the backlog rather than listing it.',
+  },
   'narrativePrompts.ts:listNarrativePromptsForKind': {
     bound: 'curated',
     why: 'A `kind`-filtered slice of the same admin-authored table, so bounded by the same section list.',
+  },
+  'valuations.ts:publishThroughput': {
+    bound: 'caller',
+    why: 'One row per week of the generated series, and the series length is the `weeks` argument — THROUGHPUT_WEEKS at both call sites, never a request parameter.',
   },
   'retention.ts:listPolicies': {
     bound: 'curated',
@@ -274,7 +308,13 @@ function exportedFunctions(src: string): Fn[] {
 
 /** Whether the declared return type can hold more than one row. */
 function returnsMany(ret: string): boolean {
-  return /\[\]/.test(ret) || /\bMap</.test(ret) || /\bSet</.test(ret);
+  // `Array<T>` and `ReadonlyArray<T>` as well as `T[]`. The two spellings mean
+  // the same thing and this only knew one of them, so a repo function returning
+  // `Promise<Array<{ … }>>` was invisible to the whole census —
+  // `getPreferenceMatrix` sat outside it for as long as it was declared that
+  // way, and was found only when an unrelated change renamed its return type to
+  // the bracket form.
+  return /\[\]/.test(ret) || /\b(?:Readonly)?Array</.test(ret) || /\bMap</.test(ret) || /\bSet</.test(ret);
 }
 
 /** Multi-row reads with no `LIMIT` of any kind — literal or parameterised. */
@@ -325,7 +365,9 @@ describe('an uncapped list says why it cannot grow', () => {
   });
 
   it('has every uncapped multi-row read accounted for', () => {
-    expect(reads.filter((r) => !(r in BOUNDED))).toEqual([]);
+    // A decision set is accounted for by being one — see the suite below,
+    // which holds each of them uncapped on purpose.
+    expect(reads.filter((r) => !(r in BOUNDED) && !DECISION_SETS.includes(r))).toEqual([]);
   });
 
   it('accounts for nothing that has stopped being uncapped', () => {
@@ -353,24 +395,6 @@ describe('an uncapped list says why it cannot grow', () => {
 });
 
 describe('the decision sets stay uncapped', () => {
-  /**
-   * The reads a cap would turn into a wrong answer rather than a short list.
-   *
-   * Stated as a list because the pressure on each of these is to "make it
-   * consistent with the others" — they are the odd ones out in a file whose
-   * whole subject is capping lists, and each is one careless edit away from a
-   * duplicate import, a re-sent alert or a resolution approved while somebody
-   * has not signed.
-   */
-  const DECISION_SETS = [
-    'hrisConnections.ts:existingGrantExternalIds',
-    'monitors.ts:notifiedSignaturesFor',
-    'boardApprovals.ts:listBoardMembers',
-    'partnerWebhooks.ts:enabledWebhooks',
-    'mfa.ts:listUnusedBackupCodeHashes',
-    'valuationTags.ts:acceptedTagSlugs',
-  ];
-
   for (const key of DECISION_SETS) {
     const [file, name] = key.split(':') as [string, string];
 
