@@ -181,6 +181,59 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
       expect(text).toContain('$1,690.00');
     });
 
+    it('dates the receipt when the money arrived, not when the row last moved', async () => {
+      /*
+       * `payments` had no settlement timestamp, so this document printed
+       * "Paid" from `updated_at` — the row's mtime, which `recordRefund`,
+       * `recordDispute` and the late receipt-URL resolution all move. A refund
+       * six weeks on therefore redated the one document a client keeps to say
+       * when they paid us, to the day the money went back. Migration 0195 added
+       * `settled_at`; `markPayment` stamps it once.
+       */
+      const { vid, payment } = await settledPayment('Receipt Dated Co', 'cs_test_receipt_dated');
+      // Both columns back-dated together, which is the state a payment settled
+      // in June and refunded today is actually in.
+      await ctx.pool.query(`UPDATE payments SET settled_at = $2, updated_at = $2 WHERE id = $1`, [
+        payment.id,
+        '2026-06-01T09:30:00Z',
+      ]);
+      await recordRefund(ctx.pool, payment.id, { refundedCents: 50_000, fullyRefunded: false });
+
+      const moved = await ctx.pool.query<{ settled: Date; updated: Date }>(
+        'SELECT settled_at AS settled, updated_at AS updated FROM payments WHERE id = $1',
+        [payment.id],
+      );
+      // The premise: the refund moved one of them and not the other.
+      expect(moved.rows[0]!.settled.toISOString().slice(0, 10)).toBe('2026-06-01');
+      expect(moved.rows[0]!.updated.toISOString().slice(0, 10)).not.toBe('2026-06-01');
+
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments/${payment.id}/receipt.pdf`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      const text = readable(res.rawPayload);
+      expect(text).toContain('2026-06-01');
+      expect(text).not.toContain(moved.rows[0]!.updated.toISOString().slice(0, 10));
+    });
+
+    it('stamps the settlement once, so a redelivered webhook cannot re-date it', async () => {
+      const { payment } = await settledPayment('Receipt Replay Co', 'cs_test_receipt_replay');
+      await ctx.pool.query(`UPDATE payments SET settled_at = $2 WHERE id = $1`, [
+        payment.id,
+        '2026-06-01T09:30:00Z',
+      ]);
+      // Stripe retries a settlement for three days, and an operator can resend
+      // one by hand at any point.
+      await markPayment(ctx.pool, payment.id, 'succeeded');
+      const { rows } = await ctx.pool.query<{ settled: Date }>(
+        'SELECT settled_at AS settled FROM payments WHERE id = $1',
+        [payment.id],
+      );
+      expect(rows[0]!.settled.toISOString()).toBe('2026-06-01T09:30:00.000Z');
+    });
+
     it('refuses a receipt for a payment that has not settled', async () => {
       const vid = await createValuation('Receipt Pending Co');
       const payment = await createPayment(ctx.pool, {

@@ -97,6 +97,18 @@ export const NOT_CONFIGURED_DETAIL =
   'and does not hold up your engagement — we will invoice you instead, and support can confirm ' +
   'the arrangement if you would rather not wait.';
 
+/**
+ * When a payment settled, for a document that states it.
+ *
+ * `settled_at` is stamped once, on the transition to 'succeeded'; `updated_at`
+ * is the row's mtime and every later writer moves it. The fallback covers a row
+ * older than migration 0195's backfill could reach, where `updated_at` is the
+ * only instant the row holds — and is exactly what the receipt printed before.
+ */
+function paidAt(payment: { settled_at: Date | null; updated_at: Date }): Date {
+  return new Date(payment.settled_at ?? payment.updated_at);
+}
+
 const paymentsUnavailable = (detail: string) =>
   new ApiProblem({
     status: 503,
@@ -507,14 +519,30 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         meta: [
           { label: 'Receipt', value: valuation.number },
           { label: 'Status', value: payment.dispute_status ? 'disputed' : 'paid' },
-          { label: 'Paid', value: new Date(payment.updated_at).toISOString().slice(0, 10) },
+          /*
+           * `settled_at`, not `updated_at` (migration 0195).
+           *
+           * `updated_at` is the row's mtime, and every writer on this table
+           * moves it — `recordRefund`, `recordDispute`, and the receipt-URL
+           * resolution that lands up to twenty seconds after the charge. So
+           * this line, on the one document a client keeps to prove when they
+           * paid, silently became the date of whatever happened to the money
+           * *afterwards*: a refund six weeks later redated the receipt to the
+           * day of the refund, and an opened chargeback did the same — on
+           * exactly the rows whose receipt somebody goes back and reads.
+           *
+           * The fallback is for rows the backfill could not date, which is
+           * none of them today; it is `updated_at` because that is the only
+           * instant such a row holds, and is what this line already printed.
+           */
+          { label: 'Paid', value: paidAt(payment).toISOString().slice(0, 10) },
         ],
         sections: receiptSections({
           reference: valuation.number,
           company_name: valuation.company_name,
           amount_cents: Number(payment.amount_cents),
           currency: payment.currency,
-          paid_at: new Date(payment.updated_at).toISOString(),
+          paid_at: paidAt(payment).toISOString(),
           lines: (payment.price_breakdown ?? []).map((l) => ({
             description: l.label,
             amount_cents: l.amount_cents,

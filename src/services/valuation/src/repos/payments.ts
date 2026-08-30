@@ -33,6 +33,15 @@ export interface PaymentRow {
   price_breakdown: QuoteLine[] | null;
   created_by: string | null;
   created_at: Date;
+  /**
+   * When this payment settled (migration 0195). Null on a row that never did.
+   *
+   * Distinct from `updated_at`, which is the row's mtime and moves under every
+   * writer here — a refund, a dispute, a late receipt-URL resolution. The
+   * receipt printed "Paid" from that one, so a refund redated the document a
+   * client keeps to say when they paid. Stamped once, by `markPayment`.
+   */
+  settled_at: Date | null;
   updated_at: Date;
 }
 
@@ -328,6 +337,18 @@ export async function recordDispute(
  * valuation — two audit entries for one transition and two "your valuation is
  * paid" emails. A read cannot exclude a writer; only the UPDATE can, so the
  * status test belongs in it.
+ *
+ * `settled_at` (migration 0195) is stamped here and nowhere else, on the move
+ * to 'succeeded' and only the first one — `updated_at` is the row's mtime and
+ * every later writer moves it, which is how a refund came to redate the
+ * receipt. `COALESCE` is what makes a redelivered settlement, or an operator
+ * resending one by hand, leave the original date alone.
+ *
+ * Whether this *is* that move rides in as its own boolean parameter rather than
+ * as `$2 = 'succeeded'` in the statement: `status = $2` deduces `payment_status`
+ * for $2 and a comparison against a bare literal deduces `text`, and Postgres
+ * refuses the whole statement for it ("inconsistent types deduced for parameter
+ * $2") — on every call, not only the settling one.
  */
 export async function markPayment(
   pool: pg.Pool,
@@ -347,6 +368,8 @@ export async function markPayment(
          payment_intent_id = COALESCE($3, payment_intent_id),
          charge_id = COALESCE($4, charge_id),
          receipt_url = COALESCE($5, receipt_url),
+         -- Stamped once, on the move to 'succeeded' — see the note above.
+         settled_at = CASE WHEN $7 THEN COALESCE(settled_at, now()) ELSE settled_at END,
          updated_at = now()
      WHERE id = $1
        AND ($6::text[] IS NULL OR status::text = ANY($6::text[]))
@@ -358,6 +381,7 @@ export async function markPayment(
       extra.chargeId ?? null,
       extra.receiptUrl ?? null,
       extra.from ? [...extra.from] : null,
+      status === 'succeeded',
     ],
   );
   return rows[0] ?? null;
