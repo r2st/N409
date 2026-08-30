@@ -11,6 +11,7 @@ import {
   type FetchFn,
 } from '../../src/clients/capTableSync.js';
 import { diffCapTables } from '../../src/domain/capTableSync.js';
+import { validateCapTable } from '../../src/domain/capTable.js';
 import type { CapTableEntry } from '../../src/domain/capTable.js';
 
 const creds = { clientId: 'client-abc', clientSecret: 'secret-xyz' };
@@ -261,6 +262,176 @@ describe('provider cap-table mapping', () => {
     expect(row!.shares).toBe(0);
     expect(row!.price_per_share).toBeNull();
     expect(row!.seniority).toBeNull();
+  });
+});
+
+/**
+ * The provider payload, shaped to break the mapper.
+ *
+ * `readJson` refuses a body that is not an object, and that is where the shape
+ * checking stopped: `securities`, `shareClasses` and every row and cell inside
+ * them were asserted by a compile-time cast and read unguarded. Three outcomes
+ * were reachable from a body that parses as JSON — a `TypeError` whose message
+ * was then published on the connection's page as the provider's own failure, a
+ * share class named `[object Object]`, and a share count that read as zero and
+ * validated clean.
+ *
+ * The bar is the same as the CSV importer's: it must not crash, and it must not
+ * answer with a number.
+ */
+describe('adversarial provider payloads', () => {
+  it('refuses a collection that is not a list rather than failing to iterate it', () => {
+    expect(() => mapPulley({ securities: { 'series-a': { shareClass: 'Series A' } } })).toThrow(
+      'Pulley returned a "securities" list that is not a list',
+    );
+    expect(() => mapCarta({ shareClasses: 'Common' })).toThrow(
+      'Carta returned a "shareClasses" list that is not a list',
+    );
+    expect(() => mapCarta({ convertibles: 3 })).toThrow('Carta returned a "convertibles" list');
+  });
+
+  it('refuses a row that is not a security rather than reading fields off it', () => {
+    expect(() => mapPulley({ securities: [{ shareClass: 'Common' }, null] })).toThrow(
+      'Pulley returned a "securities" entry that is not a security',
+    );
+    expect(() => mapCarta({ optionPools: [['Option Pool', 1_000_000]] })).toThrow(
+      'Carta returned a "optionPools" entry that is not a security',
+    );
+    expect(() => mapCarta({ warrants: ['Warrants'] })).toThrow('Carta returned a "warrants" entry');
+  });
+
+  it('still reads a collection the provider omitted or sent empty', () => {
+    expect(mapPulley({ securities: null, convertibles: [] })).toEqual([]);
+    expect(mapCarta({})).toEqual([]);
+  });
+
+  /*
+   * The quiet one. `String({})` is `"[object Object]"` — a name, as far as
+   * every reader downstream is concerned, and one that reaches the waterfall,
+   * the exhibits and the PDF. Treating it as *absent* is no better: these
+   * mappers skip an unnamed security on purpose, so that silently takes the
+   * row's shares out of the fully-diluted count.
+   */
+  it('refuses a class name that is an object rather than minting one from it', () => {
+    expect(() => mapPulley({ securities: [{ shareClass: { id: 7 }, sharesOutstanding: 100 }] })).toThrow(
+      'Pulley returned a security whose name is not text',
+    );
+    expect(() => mapCarta({ shareClasses: [{ name: ['Series A', 'Series B'] }] })).toThrow(
+      'Carta returned a share class whose name is not text',
+    );
+    expect(() => mapCarta({ convertibles: [{ name: {} }] })).toThrow(
+      'Carta returned a convertible whose name is not text',
+    );
+  });
+
+  it('accepts a numeric class name, which a provider keyed by round number sends', () => {
+    const [row] = mapPulley({ securities: [{ shareClass: 2021, sharesOutstanding: 5 }] });
+    expect(row!.security_class).toBe('2021');
+  });
+
+  /*
+   * `"2,000,000 sh"` is a real administrator's real formatting, and `toNum`
+   * cannot read it. Every call site ended `?? 0` or `?? 1`, so it imported as
+   * zero shares against a table that `validateCapTable` then called valid —
+   * and a scheduled sync applies a valid pull with no person in the loop.
+   */
+  it('records a figure it could not read rather than importing the default', () => {
+    const [row] = mapPulley({
+      securities: [
+        { shareClass: 'Series A', sharesOutstanding: '2,000,000 sh', liquidationMultiple: 'one times' },
+      ],
+    });
+    expect(row!.shares).toBe(0);
+    expect(row!.unreadable_numbers).toEqual({
+      shares: '2,000,000 sh',
+      liquidation_multiple: 'one times',
+    });
+  });
+
+  it('makes an unreadable figure an error, so the pull is not applied', () => {
+    const entries = mapPulley({
+      securities: [
+        { shareClass: 'Common', securityType: 'common', sharesOutstanding: 8_000_000 },
+        { shareClass: 'Series A', securityType: 'preferred', sharesOutstanding: '2,000,000 sh' },
+      ],
+    });
+    const validation = validateCapTable(entries);
+    expect(validation.valid).toBe(false);
+    expect(validation.issues).toContainEqual(
+      expect.objectContaining({ severity: 'error', code: 'unreadable_number' }),
+    );
+  });
+
+  it('names an unreadable object or list without stringifying it into the message', () => {
+    const [row] = mapPulley({
+      securities: [{ shareClass: 'Common', sharesOutstanding: { value: 5 }, pricePerShare: [1, 2] }],
+    });
+    expect(row!.unreadable_numbers).toEqual({ shares: 'an object', price_per_share: 'a list' });
+  });
+
+  it('caps the text it quotes back, so a long value does not become the issue', () => {
+    const [row] = mapPulley({
+      securities: [{ shareClass: 'Common', sharesOutstanding: 'x'.repeat(5_000) }],
+    });
+    expect(row!.unreadable_numbers!.shares!.length).toBeLessThan(200);
+  });
+
+  /*
+   * A cell that says "no figure" is not a cell that failed to read — the CSV
+   * reader has drawn that line since `unreadable_numbers` was added, and the
+   * two paths must draw it the same way or the same export imports differently
+   * depending on which door it came through.
+   */
+  it('reads the spellings of "no figure" as an absent figure, and tries the next spelling', () => {
+    const [row] = mapCarta({
+      shareClasses: [
+        { name: 'Series A', outstandingShares: 100, issuePrice: 'N/A', amountInvested: '#DIV/0!' },
+      ],
+    });
+    expect(row!.price_per_share).toBeNull();
+    expect(row!.invested_amount).toBeNull();
+    expect(row!.unreadable_numbers).toBeUndefined();
+
+    const [alt] = mapCarta({
+      shareClasses: [{ name: 'Series B', outstandingShares: 1, issuePrice: '-', pricePerShare: 2.5 }],
+    });
+    expect(alt!.price_per_share).toBe(2.5);
+  });
+
+  it('reports no company name or date when the provider sends an object for one', async () => {
+    const { fn } = stubFetch(() =>
+      json({ companyName: { legal: 'Acme' }, asOf: { date: '2026-01-01' }, securities: [] }),
+    );
+    const pulled = await fetchCapTable(
+      'pulley',
+      { accessToken: 't', externalCompanyId: null, externalCompanyName: null },
+      fn,
+    );
+    expect(pulled.external_company_name).toBeNull();
+    expect(pulled.as_of).toBeNull();
+  });
+
+  it('falls back to the connection name when the payload names the company with an object', async () => {
+    const { fn } = stubFetch(() => json({ companyName: 42, securities: [] }));
+    const pulled = await fetchCapTable(
+      'carta',
+      { accessToken: 't', externalCompanyId: 'c1', externalCompanyName: 'Acme, Inc.' },
+      fn,
+    );
+    expect(pulled.external_company_name).toBe('Acme, Inc.');
+  });
+
+  /*
+   * The whole point of using `IntegrationError` rather than letting a
+   * `TypeError` out: the sync route forwards the message of one and answers a
+   * constant for anything else, and `recordSyncError` writes the message of
+   * whatever was thrown to a column served to the analyst verbatim.
+   */
+  it('raises a provider-attributable failure, not a TypeError, out of the pull', async () => {
+    const { fn } = stubFetch(() => json({ securities: [null] }));
+    await expect(
+      fetchCapTable('pulley', { accessToken: 't', externalCompanyId: null, externalCompanyName: null }, fn),
+    ).rejects.toMatchObject({ name: 'IntegrationError' });
   });
 });
 

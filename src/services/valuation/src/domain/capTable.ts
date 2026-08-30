@@ -300,7 +300,7 @@ const NOT_A_FIGURE = new Set([
 ]);
 
 /** Does this cell say "no figure" rather than carrying one this failed to read? */
-function meansNoFigure(text: string): boolean {
+export function meansNoFigure(text: string): boolean {
   return text === '' || NOT_A_FIGURE.has(text.toLowerCase());
 }
 
