@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
-import { formatChargedCents, formatDate } from '../lib/format';
+import { eventLabel, formatChargedCents, formatDate } from '../lib/format';
 import { Button, EmptyState, ErrorNote, ListTruncationNote, LoadError, Spinner, useRetry } from './ui';
 
 interface Plan {
@@ -66,6 +66,62 @@ interface MySub {
 
 /** Statuses where the subscription needs the customer's attention, not ours. */
 const NEEDS_ATTENTION = new Set(['past_due', 'unpaid', 'incomplete']);
+
+/**
+ * The subscription's status, in words rather than in the column's vocabulary.
+ *
+ * The badge beside the plan name rendered `subscription.status` verbatim, so
+ * the customer whose renewal had just been declined read a chip saying
+ * `past_due` — a database identifier, underscore and all, on the one screen
+ * that exists to tell them what is happening to their plan. `trialing` and
+ * `canceled` were shown the same way; only `active` happened to be a word.
+ *
+ * The strings are the four the server's `SUBSCRIPTION_STATUSES` declares
+ * (domain/billing.ts). An unrecognised one is not invented into English — a
+ * status this build has never heard of is a status it cannot describe, and
+ * `eventLabel`'s snake-case-to-sentence is the honest fallback for it.
+ *
+ * Tone is carried here too, because the badge was one colour for all four: a
+ * cancelled plan and a live one were the same calm blue chip.
+ */
+const SUBSCRIPTION_STATUS_LABELS: Record<string, { label: string; tone: 'good' | 'warn' | 'ended' }> = {
+  active: { label: 'Active', tone: 'good' },
+  trialing: { label: 'Trial', tone: 'good' },
+  past_due: { label: 'Payment overdue', tone: 'warn' },
+  canceled: { label: 'Ended', tone: 'ended' },
+};
+
+const STATUS_TONE_CLASS = {
+  good: 'bg-bond-50 text-bond-700',
+  warn: 'bg-amber-100 text-amber-900',
+  ended: 'bg-paper-200 text-ink-600',
+} as const;
+
+export function subscriptionStatusBadge(status: string): { label: string; tone: 'good' | 'warn' | 'ended' } {
+  return SUBSCRIPTION_STATUS_LABELS[status] ?? { label: eventLabel(status), tone: 'warn' };
+}
+
+/**
+ * An invoice's status, in the customer's vocabulary.
+ *
+ * Same defect on the row below: the invoice table printed `open`, which is
+ * Stripe's word for "issued and not yet paid" and reads in English as "in
+ * progress" — the one status on that list where the customer owes something
+ * and the only rendering of it did not say so. `void` fared worse; it is not a
+ * word most readers meet as an adjective at all.
+ *
+ * The four are `INVOICE_STATUSES` (domain/billing.ts).
+ */
+const INVOICE_STATUS_LABELS: Record<string, string> = {
+  draft: 'Not yet issued',
+  open: 'Due',
+  paid: 'Paid',
+  void: 'Cancelled',
+};
+
+export function invoiceStatusLabel(status: string): string {
+  return INVOICE_STATUS_LABELS[status] ?? eventLabel(status);
+}
 
 /**
  * The one line under an invoice that says the money came back.
@@ -213,8 +269,13 @@ export function SubscriptionSection() {
             <span className="font-semibold text-ink-900">
               {mine.plan?.name ?? mine.subscription.plan_tier}
             </span>
-            <span className="rounded-full bg-bond-50 px-2.5 py-0.5 text-xs font-semibold text-bond-700">
-              {mine.subscription.status}
+            <span
+              className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                STATUS_TONE_CLASS[subscriptionStatusBadge(mine.subscription.status).tone]
+              }`}
+              data-testid="subscription-status"
+            >
+              {subscriptionStatusBadge(mine.subscription.status).label}
             </span>
           </div>
           {mine.usage && (
@@ -344,7 +405,7 @@ export function SubscriptionSection() {
                   <tr key={inv.id} className="border-b border-paper-200 last:border-0">
                     <td className="px-4 py-2.5 font-semibold text-ink-800">{inv.number}</td>
                     <td className="px-4 py-2.5 text-ink-500">
-                      {inv.status}
+                      {invoiceStatusLabel(inv.status)}
                       {invoiceRefundNote(inv) && (
                         <div className="mt-1 text-xs text-ink-500" data-testid="invoice-refund-note">
                           {invoiceRefundNote(inv)}

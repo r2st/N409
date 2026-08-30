@@ -8,7 +8,13 @@ vi.mock('../src/lib/auth', () => ({ useAuth: () => ({ user: { roles: ['valuation
 const flags = vi.hoisted(() => ({ ops: false }));
 vi.mock('../src/lib/rbac', () => ({ isOps: () => flags.ops }));
 
-import { monthDelta, monthLabel, SubscriptionSection } from '../src/components/SubscriptionSection';
+import {
+  invoiceStatusLabel,
+  monthDelta,
+  monthLabel,
+  SubscriptionSection,
+  subscriptionStatusBadge,
+} from '../src/components/SubscriptionSection';
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -838,5 +844,76 @@ describe('SubscriptionSection (feature 7)', () => {
       // MRR names the set it covers, so it cannot be read against the wrong one.
       expect(within(panel).getByText('MRR (active + trialing)')).toBeInTheDocument();
     });
+  });
+});
+
+/**
+ * The two columns on this screen that were printing database vocabulary.
+ *
+ * The badge beside the plan name rendered `subscription.status` verbatim, so a
+ * customer in dunning read a chip saying `past_due`; the invoice table printed
+ * `open`, which is Stripe's word for "issued and unpaid" and reads in English
+ * as "in progress" — the one status on that list where money is owed, and the
+ * only rendering of it did not say so.
+ */
+describe('SubscriptionSection — statuses in words', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    flags.ops = false;
+  });
+
+  it('labels every subscription status the server can store', () => {
+    expect(subscriptionStatusBadge('active')).toMatchObject({ label: 'Active', tone: 'good' });
+    expect(subscriptionStatusBadge('trialing')).toMatchObject({ label: 'Trial', tone: 'good' });
+    expect(subscriptionStatusBadge('past_due')).toMatchObject({ label: 'Payment overdue', tone: 'warn' });
+    expect(subscriptionStatusBadge('canceled')).toMatchObject({ label: 'Ended', tone: 'ended' });
+    for (const status of ['active', 'trialing', 'past_due', 'canceled']) {
+      expect(subscriptionStatusBadge(status).label).not.toContain('_');
+    }
+  });
+
+  it('does not invent English for a status this build has never heard of', () => {
+    // A status added server-side and not here is one this build cannot
+    // describe; the snake-case fallback is honest and the warn tone stops it
+    // being presented as fine.
+    expect(subscriptionStatusBadge('paused_by_ops')).toMatchObject({
+      label: 'Paused by ops',
+      tone: 'warn',
+    });
+  });
+
+  it('labels every invoice status the server can store', () => {
+    expect(invoiceStatusLabel('draft')).toBe('Not yet issued');
+    expect(invoiceStatusLabel('open')).toBe('Due');
+    expect(invoiceStatusLabel('paid')).toBe('Paid');
+    expect(invoiceStatusLabel('void')).toBe('Cancelled');
+  });
+
+  it('draws the overdue badge in words on the billing screen', async () => {
+    mockApi(subscribed({ subscription: { status: 'past_due' } }));
+    render(<SubscriptionSection />);
+    const badge = await screen.findByTestId('subscription-status');
+    expect(badge.textContent).toBe('Payment overdue');
+    expect(screen.queryByText('past_due')).toBeNull();
+  });
+
+  it('says an unpaid invoice is due rather than open', async () => {
+    mockApi(
+      subscribed({
+        invoices: [
+          {
+            id: 'i1',
+            number: 'INV-1',
+            amount_cents: 2000000,
+            currency: 'usd',
+            status: 'open',
+            issued_at: '2026-08-01T00:00:00Z',
+          },
+        ],
+      }),
+    );
+    render(<SubscriptionSection />);
+    expect(await screen.findByText('Due')).toBeTruthy();
+    expect(screen.queryByText('open')).toBeNull();
   });
 });
