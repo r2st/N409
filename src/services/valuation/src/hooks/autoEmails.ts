@@ -19,6 +19,7 @@ import {
 import { enqueueEmail, markEmail } from '../repos/emailOutbox.js';
 import { recordSendFailure } from '../repos/emailDelivery.js';
 import { withClientTransaction } from '../db/pool.js';
+import { sendAndRecord } from '../email/sendAttempt.js';
 import type { EmailTransport } from './stateChange.js';
 
 /**
@@ -279,17 +280,23 @@ async function scan(
 
         const transport = campaign.channel === 'sms' ? deps.smsTransport : deps.transport;
         if (!transport) continue;
-        try {
-          await transport.send(email);
-          await markEmail(db, email.id, 'sent');
-        } catch (err) {
-          await markEmail(db, email.id, 'failed', describeTransportFailure(err));
-          // Terminal rejection of the recipient stops the ladder and suppresses
-          // the address (0163). Uses this sweep's own client rather than taking
-          // a second one from the pool.
-          const bounce = await recordSendFailure(db, email, err).catch(() => null);
-          deps.log?.warn({ err, emailId: email.id, bounce }, 'auto email delivery failed; left in outbox');
-        }
+        // Recording a delivery and recording a refusal are separate callbacks,
+        // so a blip on the marking UPDATE cannot be written down as the relay
+        // refusing a message it in fact accepted — which would put the row on
+        // the ladder to be delivered a second time. See email/sendAttempt.ts.
+        await sendAndRecord(transport, email, {
+          log: deps.log,
+          context: { campaign: campaign.name, valuationId: candidate.valuation_id },
+          onSent: () => markEmail(db, email.id, 'sent'),
+          onFailed: async (err) => {
+            await markEmail(db, email.id, 'failed', describeTransportFailure(err));
+            // Terminal rejection of the recipient stops the ladder and suppresses
+            // the address (0163). Uses this sweep's own client rather than taking
+            // a second one from the pool.
+            const bounce = await recordSendFailure(db, email, err).catch(() => null);
+            deps.log?.warn({ err, emailId: email.id, bounce }, 'auto email delivery failed; left in outbox');
+          },
+        });
       }
     }
   }

@@ -23,6 +23,7 @@ import {
   valuationLinkVars,
   valuationTemplateVars,
 } from '../domain/communications.js';
+import { sendAndRecord } from '../email/sendAttempt.js';
 import type { SupportEmailSource } from './autoEmails.js';
 
 export type { SupportEmailSource };
@@ -325,27 +326,33 @@ async function deliverTransitionMessages(
   // loop hands the sweep every remaining recipient of the same transition, each
   // waiting out the claim lease before anyone hears anything.
   if (!deps.transport) return;
+  const transport = deps.transport;
   for (const email of queued) {
-    try {
-      await deps.transport.send(email);
-      await markEmail(deps.pool, email.id, 'sent');
-    } catch (err) {
-      try {
-        await markEmail(deps.pool, email.id, 'failed', describeTransportFailure(err));
-        // Terminal rejection of the recipient stops the ladder and suppresses
-        // the address (0163); anything else stays retryable.
-        const bounce = await recordSendFailure(deps.pool, email, err).catch(() => null);
-        deps.log?.warn({ err, emailId: email.id, bounce }, 'email delivery failed; left in outbox');
-      } catch (settleErr) {
-        // The row stays 'queued' and the sweep re-sends it once the lease
-        // lapses, so this is a delay rather than a loss — but it is a delay
-        // nobody would otherwise see, and it means the database is refusing
-        // writes on a path the send loop above is about to use again.
-        deps.log?.error(
-          { err: settleErr, cause: err, emailId: email.id },
-          'could not record a failed send; outbox row left queued for the retry sweep',
-        );
-      }
-    }
+    // The success and failure halves are recorded by different callbacks, so a
+    // database blip while marking a *delivered* message cannot be written down
+    // as the relay refusing it — see email/sendAttempt.ts.
+    await sendAndRecord(transport, email, {
+      log: deps.log,
+      context: { valuationId: valuation.id },
+      onSent: () => markEmail(deps.pool, email.id, 'sent'),
+      onFailed: async (err) => {
+        try {
+          await markEmail(deps.pool, email.id, 'failed', describeTransportFailure(err));
+          // Terminal rejection of the recipient stops the ladder and suppresses
+          // the address (0163); anything else stays retryable.
+          const bounce = await recordSendFailure(deps.pool, email, err).catch(() => null);
+          deps.log?.warn({ err, emailId: email.id, bounce }, 'email delivery failed; left in outbox');
+        } catch (settleErr) {
+          // The row stays 'queued' and the sweep re-sends it once the lease
+          // lapses, so this is a delay rather than a loss — but it is a delay
+          // nobody would otherwise see, and it means the database is refusing
+          // writes on a path the send loop above is about to use again.
+          deps.log?.error(
+            { err: settleErr, cause: err, emailId: email.id },
+            'could not record a failed send; outbox row left queued for the retry sweep',
+          );
+        }
+      },
+    });
   }
 }

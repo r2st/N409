@@ -5,6 +5,7 @@ import type { EmailTransport } from '../hooks/stateChange.js';
 import { enqueueEmail, markEmail } from '../repos/emailOutbox.js';
 import { recordSendFailure } from '../repos/emailDelivery.js';
 import { alwaysTemplateVars, renderTemplate, type TemplateVars } from '../domain/communications.js';
+import { sendAndRecord } from './sendAttempt.js';
 import { findTemplateByKey } from '../repos/communications.js';
 import type { SupportEmailSource } from '../hooks/autoEmails.js';
 
@@ -80,29 +81,35 @@ export async function sendTransactionalEmail(
   const { vars: _vars, recipientName: _name, platformName: _brand, ...rest } = input;
   const email = await enqueueEmail(deps.pool, { ...rest, subject, body });
   if (!deps.transport) return;
-  try {
-    await deps.transport.send(email);
-    await markEmail(deps.pool, email.id, 'sent');
-  } catch (err) {
-    // The marking is itself a query, so it fails when the reason the send failed
-    // was the database. Losing the 'failed' stamp is a bookkeeping problem; a
-    // rejection escaping this function is not — see below.
-    try {
-      await markEmail(deps.pool, email.id, 'failed', describeTransportFailure(err));
-    } catch (markErr) {
-      deps.log?.warn({ err: markErr, emailId: email.id }, 'could not mark transactional email failed');
-    }
-    // Terminal rejection of the recipient stops the ladder and suppresses the
-    // address (0163). Same containment as the marking above: a bookkeeping
-    // failure must not escape into the caller's request.
-    const bounce = await recordSendFailure(deps.pool, email, err).catch((bookErr: unknown) => {
-      deps.log?.warn({ err: bookErr, emailId: email.id }, 'could not record bounce');
-      return null;
-    });
-    // `emailId` is what the retry sweep will log this row under when it comes
-    // back for it, so this line and every later attempt share one join key.
-    deps.log?.warn({ err, emailId: email.id, bounce }, 'transactional email delivery failed; left in outbox');
-  }
+  // Success and failure are recorded by separate callbacks, so the marking —
+  // itself a query — cannot fail and be written down as the relay refusing the
+  // message. See email/sendAttempt.ts.
+  await sendAndRecord(deps.transport, email, {
+    log: deps.log,
+    onSent: () => markEmail(deps.pool, email.id, 'sent'),
+    onFailed: async (err) => {
+      // Losing the 'failed' stamp is a bookkeeping problem; a rejection
+      // escaping this function is not — see below.
+      try {
+        await markEmail(deps.pool, email.id, 'failed', describeTransportFailure(err));
+      } catch (markErr) {
+        deps.log?.warn({ err: markErr, emailId: email.id }, 'could not mark transactional email failed');
+      }
+      // Terminal rejection of the recipient stops the ladder and suppresses the
+      // address (0163). Same containment as the marking above: a bookkeeping
+      // failure must not escape into the caller's request.
+      const bounce = await recordSendFailure(deps.pool, email, err).catch((bookErr: unknown) => {
+        deps.log?.warn({ err: bookErr, emailId: email.id }, 'could not record bounce');
+        return null;
+      });
+      // `emailId` is what the retry sweep will log this row under when it comes
+      // back for it, so this line and every later attempt share one join key.
+      deps.log?.warn(
+        { err, emailId: email.id, bounce },
+        'transactional email delivery failed; left in outbox',
+      );
+    },
+  });
 }
 
 /**
