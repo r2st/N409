@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeRequestFailure } from '../lib/api';
 import { sanitizeHtml } from '../lib/m2';
 import { Wordmark } from '../components/Logo';
 import { Button, ErrorNote, Field, Modal } from '../components/ui';
@@ -67,7 +67,17 @@ export function BoardSignPage() {
 
   const load = useCallback(async () => {
     if (!token) {
-      setError('This signing link is invalid or incomplete.');
+      // No `#token=` at all, which is overwhelmingly one cause: the link was
+      // cut short between the email and the address bar. The server says so
+      // for every *other* dead-link state on this surface; there is no request
+      // to make here, so the same remedy is written out rather than withheld
+      // because the page never got as far as asking.
+      setError(
+        'This signing link is incomplete — the part that identifies you is missing from it. ' +
+          'Open the original email and use the whole link, including any part that wrapped onto a ' +
+          'second line. If it still will not open, ask whoever circulated the resolution to send ' +
+          'you a new signing link; no decision has been recorded for you.',
+      );
       return;
     }
     try {
@@ -80,10 +90,25 @@ export function BoardSignPage() {
       setView(res);
       if (res.member.status !== 'pending') setDone(res.member.status);
     } catch (err) {
+      /*
+       * The server's own sentence, not a status code translated back into one.
+       *
+       * Both arms of the branch that stood here threw away the only message
+       * written for the person reading it. The 404 arm replaced
+       * `DEAD_LINK_DETAIL.board` — which names the cause a director can
+       * actually fix (a link cut short in the mail), says who reissues it, and
+       * ends with the one fact they came to the page for, that no decision has
+       * been recorded for them — with six words that say none of those. The
+       * other arm was worse, because it is where the 429 lands: the public
+       * throttle computes the wait exactly and phrases it, and "Could not load
+       * the resolution" turned "try again in about 40 seconds" into a dead end.
+       */
       setError(
-        err instanceof ApiError && err.status === 404
-          ? 'This signing link is no longer valid.'
-          : 'Could not load the resolution.',
+        err instanceof ApiError
+          ? describeRequestFailure(err)
+          : 'This page could not reach the server, so the resolution has not loaded. That is a ' +
+              'connection problem rather than anything wrong with your link — check your network ' +
+              'and reload. No decision has been recorded for you.',
       );
     }
   }, [token]);
@@ -103,7 +128,7 @@ export function BoardSignPage() {
       });
       setDone(decision);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not record your decision.');
+      setError(describeRequestFailure(err));
     } finally {
       setBusy(false);
       // Out of the way either way: on success the page becomes the receipt

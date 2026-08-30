@@ -119,14 +119,30 @@ export const OFFLINE_DETAIL =
  *
  * `ApiError`'s own message is preferred and is almost always what shows: the
  * server writes these deliberately, and `detail` is the field it puts the
- * remedy in. The exception is a problem body with no `detail` and no `title` —
- * a bodiless 502 from a proxy that never reached the app — where `ApiError`
- * falls back to `Request failed (502)`. That is a status code wearing a
- * sentence, so it is replaced here rather than shown.
+ * remedy in. The exception is a problem body that carries no `detail` at all,
+ * where the message is a stand-in rather than a sentence somebody wrote.
+ *
+ * The guard used to be narrower than the condition, and missed the one case
+ * that actually happens. It tested `ApiError`'s last-resort message, `Request
+ * failed (502)`, which is only reached when the body has neither `detail` nor
+ * `title` — a proxy that answered with nothing. But this API's own 500 handler
+ * emits `{type, title: 'Internal Server Error', status, instance}` and *no*
+ * `detail`, deliberately, so that an internal failure cannot leak its message.
+ * `ApiError` then falls through to `title`, the regex does not match, and the
+ * words shown to the reader are "Internal Server Error" — the RFC 9457 reason
+ * phrase, which the spec asks to be stable across every occurrence and which is
+ * therefore the one string in the body guaranteed not to be about their
+ * request. Every caller of this helper is a page an outside reader reaches
+ * without an account: an invitation, a password reset, an email verification, a
+ * board resolution. A director who could not open their signing link was told
+ * the name of a status code.
+ *
+ * So the test is the absence of `detail`, which is the property that matters,
+ * rather than the shape of the fallback that absence happens to produce.
  */
 export function describeRequestFailure(err: unknown): string {
   if (err instanceof ApiError) {
-    if (/^Request failed \(\d+\)$/.test(err.message)) {
+    if (!err.problem.detail) {
       return (
         `The server answered with an error (${err.status}) and no explanation, which usually means ` +
         'the request did not reach the application itself. Nothing was saved; wait a moment and try again.'

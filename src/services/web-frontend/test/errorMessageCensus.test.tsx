@@ -185,6 +185,41 @@ describe('describeRequestFailure', () => {
     expect(described).toMatch(/nothing was saved/i);
   });
 
+  it('does not read this API’s 500 reason phrase back to the reader', () => {
+    /*
+     * The body `registerProblemHandler` actually sends for an unhandled 500:
+     * type, title, status, instance — and no `detail`, deliberately, so an
+     * internal message cannot leak. `ApiError` falls through `detail` to
+     * `title`, so the words a director or an invitee was shown were "Internal
+     * Server Error" — the RFC 9457 reason phrase, which the spec asks to be
+     * *stable across occurrences* and is therefore the one string in the body
+     * guaranteed to say nothing about their request.
+     */
+    const err = new ApiError(500, {
+      type: 'urn:n409:problem:internal',
+      title: 'Internal Server Error',
+      status: 500,
+    });
+    expect(err.message).toBe('Internal Server Error');
+    const described = describeRequestFailure(err);
+    expect(described).not.toContain('Internal Server Error');
+    expect(described).toContain('500');
+    expect(described).toMatch(/no explanation/i);
+    expect(described).toMatch(/nothing was saved/i);
+  });
+
+  it('keeps a detail that happens to look like a title', () => {
+    // The test is the absence of `detail`, not the wording of what is there.
+    const err = new ApiError(503, {
+      status: 503,
+      title: 'Service Unavailable',
+      detail: 'The database is temporarily unable to serve this request. Nothing was changed.',
+    });
+    expect(describeRequestFailure(err)).toBe(
+      'The database is temporarily unable to serve this request. Nothing was changed.',
+    );
+  });
+
   it('names the network for anything that is not an ApiError', () => {
     // A rejected `fetch`, which is the only thing that reaches here.
     expect(describeRequestFailure(new TypeError('Failed to fetch'))).toBe(OFFLINE_DETAIL);

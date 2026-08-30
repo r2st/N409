@@ -182,25 +182,70 @@ describe('BoardSignPage', () => {
     expect(screen.getByText('Unanimous Written Consent')).toBeInTheDocument();
   });
 
-  it('rejects a link with no token without calling the API', async () => {
+  it('rejects a link with no token without calling the API, and says how to fix it', async () => {
     setHash('');
     const calls = mockApi({});
     render(<BoardSignPage />);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('This signing link is invalid or incomplete.');
+    const note = await screen.findByRole('alert');
+    // The cause a director can act on, the remedy, and the fact they came for.
+    expect(note).toHaveTextContent(/incomplete/i);
+    expect(note).toHaveTextContent(/wrapped onto a second line/i);
+    expect(note).toHaveTextContent(/no decision has been recorded for you/i);
     expect(calls).toHaveLength(0);
   });
 
-  it('distinguishes an expired link from a server problem', async () => {
-    mockApi({ resolution: () => problem(404, 'not found') });
+  /**
+   * The server writes one sentence per dead-link state on this surface
+   * (`DEAD_LINK_DETAIL.board`) and this page used to translate the *status code*
+   * back into six words of its own, discarding it. The three tests below are
+   * the three statuses that reach the load path, and all of them assert the
+   * server's own words survive to the alert.
+   */
+  it('shows the server’s dead-link sentence rather than restating the status', async () => {
+    mockApi({
+      resolution: () =>
+        problem(
+          404,
+          'This signing link is no longer usable. It may have been cut short when it was copied — ' +
+            'open the original email and use the whole link. Ask whoever circulated the resolution ' +
+            'to send you a new signing link; no decision has been recorded for you.',
+        ),
+    });
     render(<BoardSignPage />);
-    expect(await screen.findByRole('alert')).toHaveTextContent('This signing link is no longer valid.');
+    const note = await screen.findByRole('alert');
+    expect(note).toHaveTextContent(/cut short when it was copied/i);
+    expect(note).toHaveTextContent(/no decision has been recorded for you/i);
   });
 
-  it('reports a load failure that is not a 404 generically', async () => {
-    mockApi({ resolution: () => problem(500, 'boom') });
+  it('keeps the exact wait a throttled load was told to expect', async () => {
+    // The public throttle computes the wait and phrases it; "could not load the
+    // resolution" turned a 40-second wait into a dead end.
+    mockApi({
+      resolution: () =>
+        problem(429, 'Too many requests to this signing link — try again in about 40 seconds.'),
+    });
     render(<BoardSignPage />);
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the resolution.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('try again in about 40 seconds');
+  });
+
+  it('says a bodiless 5xx is the server’s problem, not the link’s', async () => {
+    // A real 500 from this API carries no `detail` — the problem handler strips
+    // it — so the page must not be reading one, and must not blame the link.
+    mockApi({
+      resolution: () =>
+        new Response(
+          JSON.stringify({ type: 'urn:n409:problem:internal', title: 'Internal Server Error', status: 500 }),
+          {
+            status: 500,
+            headers: { 'content-type': 'application/problem+json' },
+          },
+        ),
+    });
+    render(<BoardSignPage />);
+    const note = await screen.findByRole('alert');
+    expect(note).toHaveTextContent(/no explanation/i);
+    expect(note).toHaveTextContent(/nothing was saved/i);
   });
 });
 
