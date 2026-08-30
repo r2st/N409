@@ -62,9 +62,19 @@ export async function retireValuations(pool: pg.Pool, ids: readonly string[]): P
     if (toRetire.length > 0) {
       // The suffix is applied only where it is not already there, so retiring a
       // row twice cannot produce "Name [retired] [retired]".
+      //
+      // `version` moves because `company_name` moved. The rule is
+      // `lockCounterDiscipline.test.ts`': every writer of a column a guarded
+      // form posts advances the counter, including the writers that never send
+      // `If-Match` themselves — `company_name` is in both `OPS_PATCH_FIELDS`
+      // and `OWNER_PATCH_FIELDS`, so an editor holding this row is holding a
+      // name this statement changed. Without it the ETag that editor echoes
+      // still matches, and the guard reports "nobody touched this" about a row
+      // whose most visible field is now different.
       await client.query(
         `UPDATE valuations
             SET archived_at = now(),
+                version = version + 1,
                 company_name = CASE
                   WHEN company_name LIKE ('%' || $2::text) THEN company_name
                   ELSE company_name || $2::text
@@ -150,9 +160,16 @@ export async function restoreValuations(pool: pg.Pool, ids: readonly string[]): 
     );
     const found = present.rows.map((r) => r.id);
 
+    // `version` moves for the same reason it moves in `retireValuations`: this
+    // takes the suffix back off `company_name`, which is a field the ops and
+    // owner forms both post. Restore is the half where it bites — reads stay
+    // open on a retired engagement, so somebody can be sitting on the form
+    // while an admin restores it, and their next save would have gone through
+    // on a matching ETag against a name they never saw change.
     const { rows: taken } = await client.query<{ id: string }>(
       `UPDATE valuations
           SET archived_at = NULL,
+              version = version + 1,
               company_name = CASE
                 WHEN company_name LIKE ('%' || $2::text)
                   THEN left(company_name, length(company_name) - length($2::text))

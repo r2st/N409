@@ -96,16 +96,26 @@ describe.skipIf(!dbUp)('bulk actions against a retired engagement', () => {
 
   it('leaves the retired row where it was', async () => {
     const { live, archived } = await pair('unmoved');
+    const snapshot = async () =>
+      new Map(
+        (
+          await ctx.pool.query<{ id: string; state: string; version: number }>(
+            'SELECT id, state, version FROM valuations WHERE id = ANY($1)',
+            [[live, archived]],
+          )
+        ).rows.map((r) => [r.id, r]),
+      );
+    const before = await snapshot();
+
     await bulk({ action: 'set_state', state: 'started', ids: [live, archived] });
-    const { rows } = await ctx.pool.query<{ id: string; state: string; version: number }>(
-      'SELECT id, state, version FROM valuations WHERE id = ANY($1)',
-      [[live, archived]],
-    );
-    const byId = new Map(rows.map((r) => [r.id, r]));
-    expect(byId.get(live)?.state).toBe('started');
+
+    const after = await snapshot();
+    expect(after.get(live)?.state).toBe('started');
+    expect(after.get(archived)?.state).toBe('pending');
     // Not merely "not started": a refused row must not have been written at
-    // all, which the lock counter is the only witness to.
-    expect(byId.get(archived)?.state).toBe('pending');
-    expect(byId.get(archived)?.version).toBe(byId.get(live)!.version - 1);
+    // all, which the lock counter is the only witness to. Compared against this
+    // row's own version before the batch — retirement moves the counter itself,
+    // so the live twin is not the baseline.
+    expect(after.get(archived)?.version).toBe(before.get(archived)!.version);
   });
 });
