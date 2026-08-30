@@ -93,11 +93,16 @@ describe('path parameters against the router', () => {
   const bounds = scan();
 
   it('finds the bounded path parameters, so the checks below are not a scan of nothing', () => {
-    expect(bounds.length).toBeGreaterThanOrEqual(5);
+    // Four, since R237 removed `/public/partners/:key/branding` — the second,
+    // pre-0091 spelling of the public branding read. Its successor
+    // `/public/branding/:key` caps the same key at the same 100 characters
+    // with a regex, which this scan (a zod field named for the parameter)
+    // cannot see; the population is smaller, not the guarding.
+    expect(bounds.length).toBeGreaterThanOrEqual(4);
     // Named so a rename that quietly stops matching is a failure rather than a
     // smaller number that still clears the floor.
     expect(new Set(bounds.map((b) => `${b.file}:${b.param}`))).toEqual(
-      new Set(['adminUsers.ts:key', 'blog.ts:slug', 'help.ts:slug', 'valuationTags.ts:slug']),
+      new Set(['blog.ts:slug', 'help.ts:slug', 'valuationTags.ts:slug']),
     );
   });
 

@@ -143,11 +143,6 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
   },
   {
     method: 'GET',
-    url: '/api/v1/public/partners/:key/branding',
-    reason: 'white-label chrome on the pre-login pages',
-  },
-  {
-    method: 'GET',
     url: '/api/v1/public/settings',
     reason: 'is registration open, is the platform in maintenance',
   },

@@ -27,7 +27,6 @@ import { createPasswordResetToken } from '../repos/passwordResets.js';
 import {
   adminPatchUser,
   createPartner,
-  findPartnerBrandingByKey,
   findPartnerById,
   getPartnerDetail,
   listPartners,
@@ -712,19 +711,6 @@ export function registerAdminUserRoutes(
   });
 
   // ── Partners (pickers + management console, P1 #7) ─────────────────────────
-
-  /**
-   * White-label login branding (improvement 8) — public by design: the login
-   * page needs it before any session exists. Exposes nothing beyond what the
-   * partner already shows on their own login page.
-   */
-  app.get('/api/v1/public/partners/:key/branding', async (req) => {
-    const { key } = req.params as { key: string };
-    if (!/^[a-z0-9-]{1,100}$/.test(key)) throw problems.notFound();
-    const branding = await findPartnerBrandingByKey(deps.pool, key);
-    if (!branding) throw problems.notFound();
-    return { partner: branding };
-  });
 
   app.get('/api/v1/partners', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);

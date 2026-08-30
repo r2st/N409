@@ -93,7 +93,7 @@ describe.skipIf(!dbUp)('route id parameter validation', () => {
     // must not touch it, or the white-label login page 404s for everyone.
     const res = await ctx.app.inject({
       method: 'GET',
-      url: '/api/v1/public/partners/some-partner-key/branding',
+      url: '/api/v1/public/branding/some-partner-key',
     });
     expect(res.statusCode).toBe(404); // no such partner, but it got that far
     expect(res.json().title).not.toBe(undefined);

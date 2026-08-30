@@ -280,24 +280,6 @@ export async function createPartner(pool: pg.Pool, args: { name: string; key: st
   return rows[0]!;
 }
 
-/** Public branding lookup for the white-label login page (improvement 8). */
-export async function findPartnerBrandingByKey(
-  pool: pg.Pool,
-  key: string,
-): Promise<{ name: string; key: string; brand_color: string | null; logo_url: string | null } | null> {
-  const { rows } = await pool.query<{
-    name: string;
-    key: string;
-    brand_color: string | null;
-    logo_url: string | null;
-  }>(
-    `SELECT name, key, brand_color, logo_url FROM partners
-     WHERE key = $1 AND archived_at IS NULL`,
-    [key],
-  );
-  return rows[0] ?? null;
-}
-
 export interface PartnerPatch {
   name?: string;
   brand_color?: string | null;

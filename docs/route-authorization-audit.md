@@ -228,7 +228,6 @@ is owner-**or**-ops and is counted in both columns.
 | `/api/v1/partners` | 8 | 8 session | 8 ops predicate, 6 caller identity |
 | `/api/v1/partners/mine` | 1 | 1 session | 1 caller identity |
 | `/api/v1/public/branding` | 2 | 2 public | 2 neither |
-| `/api/v1/public/partners` | 1 | 1 public | 1 neither |
 | `/api/v1/public/settings` | 1 | 1 public | 1 neither |
 | `/api/v1/report-templates` | 6 | 6 session | 6 ops predicate, 4 caller identity |
 | `/api/v1/research/topics` | 1 | 1 session | 1 ops predicate |

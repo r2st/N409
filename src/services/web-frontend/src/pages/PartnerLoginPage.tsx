@@ -4,25 +4,28 @@ import { email as emailRule, required, useFormValidation } from '../lib/useFormV
 import { ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+import type { Branding, BrandingResponse } from '../lib/branding';
 
 /**
- * Improvement 8 — white-label partner login at /partner/:slug. Branding
- * (name, logo, accent colour) comes from the public branding endpoint; an
- * unknown or archived slug falls back to the standard login page.
+ * Improvement 8 — white-label partner login at /partner/:slug. Branding comes
+ * from `/api/v1/public/branding/:key`, the resolver every other surface reads;
+ * an unknown or archived slug falls back to the standard login page.
+ *
+ * It used to read `/api/v1/public/partners/:key/branding`, a second public
+ * endpoint that predated migration 0091 and answered from the columns that
+ * existed before it: the internal ops channel label instead of the firm's
+ * `brand_name`, the raw `brand_color` rather than the accent lifted to be
+ * legible, no `accent_fg` to put on top of it, and no `white_label_enabled` —
+ * so the one page white label exists for was the one page resolving a brand a
+ * different way from the application behind it, and it showed a firm's staged
+ * colour and logo to the public before the firm had gone live.
  */
-
-interface PublicBranding {
-  name: string;
-  key: string;
-  brand_color: string | null;
-  logo_url: string | null;
-}
 
 export function PartnerLoginPage() {
   const { slug } = useParams<{ slug: string }>();
   const { status, login } = useAuth();
   const navigate = useNavigate();
-  const [branding, setBranding] = useState<PublicBranding | null>(null);
+  const [branding, setBranding] = useState<Branding | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -31,14 +34,14 @@ export function PartnerLoginPage() {
 
   useEffect(() => {
     if (!slug) return;
-    fetch(`/api/v1/public/partners/${encodeURIComponent(slug)}/branding`, {
+    fetch(`/api/v1/public/branding/${encodeURIComponent(slug)}`, {
       headers: { accept: 'application/json' },
     })
       .then((res) => {
         if (!res.ok) throw new Error(String(res.status));
-        return res.json() as Promise<{ partner: PublicBranding }>;
+        return res.json() as Promise<BrandingResponse>;
       })
-      .then((data) => setBranding(data.partner))
+      .then((data) => setBranding(data.branding))
       .catch(() => setNotFound(true));
   }, [slug]);
 
@@ -52,7 +55,13 @@ export function PartnerLoginPage() {
   if (status === 'authenticated') return <Navigate to="/" replace />;
   if (notFound) return <Navigate to="/login" replace />;
 
-  const accent = branding?.brand_color ?? '#1d4ed8';
+  // The resolved pair, not a bare colour. The sign-in button is filled with
+  // the accent and its label was left at the default ink, so a firm whose brand
+  // is pale had a button nobody could read the words on — `accent_fg` is the
+  // server's answer to exactly that and was being thrown away with the rest of
+  // the resolved brand.
+  const accent = branding?.accent ?? '#1d4ed8';
+  const accentFg = branding?.accent_fg ?? '#ffffff';
 
   const submit = handleSubmit(async () => {
     setError(null);
@@ -127,7 +136,12 @@ export function PartnerLoginPage() {
                   Forgot password?
                 </Link>
               </div>
-              <Button type="submit" disabled={busy} className="w-full" style={{ backgroundColor: accent }}>
+              <Button
+                type="submit"
+                disabled={busy}
+                className="w-full"
+                style={{ backgroundColor: accent, color: accentFg }}
+              >
                 {busy ? 'Signing in…' : 'Sign in'}
               </Button>
             </form>

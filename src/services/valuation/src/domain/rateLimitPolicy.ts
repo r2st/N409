@@ -205,7 +205,6 @@ export const PUBLIC_RATE_LIMITS: Readonly<Record<string, PublicRateLimit>> = {
   // ── Pre-login chrome and marketing reads ─────────────────────────────────
   'GET /api/v1/public/branding/:key': open('the logo and colours on the sign-in page'),
   'GET /api/v1/public/branding': open('the same chrome resolved from the tenant subdomain'),
-  'GET /api/v1/public/partners/:key/branding': open('the same chrome, addressed by partner key'),
   'GET /api/v1/public/settings': open('is registration open, is the platform in maintenance'),
   'GET /api/v1/blog/posts': open('a published article index; a blog a crawler cannot read is not a blog'),
   'GET /api/v1/blog/posts/:slug': open('a published marketing article'),

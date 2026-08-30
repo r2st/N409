@@ -33,36 +33,18 @@ describe.skipIf(!dbUp)('white-label partner portal', () => {
     await ctx?.teardown();
   });
 
-  it('serves login branding publicly by slug', async () => {
-    const res = await app.inject({ method: 'GET', url: '/api/v1/public/partners/bridge-advisors/branding' });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().partner).toEqual({
-      name: 'Bridge Advisors',
-      key: 'bridge-advisors',
-      brand_color: '#1f6f54',
-      logo_url: 'https://cdn.example.com/bridge.png',
-    });
-  });
-
-  it('404s unknown, malformed, and archived slugs', async () => {
-    expect(
-      (await app.inject({ method: 'GET', url: '/api/v1/public/partners/nope/branding' })).statusCode,
-    ).toBe(404);
-    expect(
-      (await app.inject({ method: 'GET', url: '/api/v1/public/partners/UPPER%20case/branding' })).statusCode,
-    ).toBe(404);
-
-    const archivedId = await seedPartner(ctx, 'Gone Partners');
-    await app.inject({
-      method: 'PATCH',
-      url: `/api/v1/partners/${archivedId}`,
-      headers: authHeader(adminToken),
-      payload: { archived: true },
-    });
-    expect(
-      (await app.inject({ method: 'GET', url: '/api/v1/public/partners/gone-partners/branding' })).statusCode,
-    ).toBe(404);
-  });
+  /*
+   * The slug lookup, the 404s and the archived channel used to be asserted here
+   * against `/api/v1/public/partners/:key/branding`, a second public branding
+   * endpoint that predated migration 0091 and served the pre-white-label
+   * columns: the ops channel label rather than `brand_name`, and a firm's
+   * staged colour and logo whether or not `white_label_enabled` was on. The
+   * login page read it, so the one page white label exists for was the one page
+   * resolving the brand a different way from everything else.
+   *
+   * It is gone, and `/api/v1/public/branding/:key` — the resolver every other
+   * surface uses — answers all three cases in `branding.test.ts`.
+   */
 
   it('stores email template overrides and rejects unknown keys', async () => {
     const ok = await app.inject({
