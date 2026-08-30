@@ -19,7 +19,7 @@ import { listSignatures } from '../repos/signatures.js';
 import { assertRunStood, calculationPayload, runAiPipeline, type AiPipelineDeps } from './ai.js';
 import { InternalServiceError, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
 /**
@@ -215,6 +215,12 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
         throw err;
       }
     }
+
+    // The engagement as it stands now. `refuseIfRetired` fired on the request,
+    // and the AI reviewer above is given up to three minutes — see
+    // `refuseIfRetiredNow`. A review filed against withdrawn work is a gate
+    // artifact for a file the firm has closed, and it survives the withdrawal.
+    await refuseIfRetiredNow(deps.pool, valuation.id, 'accepting changes');
 
     const review = await createQaReview(
       deps.pool,

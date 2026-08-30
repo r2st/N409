@@ -1,5 +1,6 @@
+import type pg from 'pg';
 import { problems } from '@n409/shared';
-import type { ValuationRow } from '../repos/valuations.js';
+import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 
 /**
  * A write aimed at a retired engagement.
@@ -68,4 +69,38 @@ import type { ValuationRow } from '../repos/valuations.js';
 export function refuseIfRetired(valuation: Pick<ValuationRow, 'archived_at'>, doing: string): void {
   if (valuation.archived_at === null) return;
   throw problems.conflict(`This engagement has been retired and is no longer ${doing}.`);
+}
+
+/**
+ * The same refusal, asked again immediately before a write that is minutes
+ * younger than the request that started it.
+ *
+ * `refuseIfRetired` above reads the engagement the route loaded, which is the
+ * right reading for a route whose write follows in the same millisecond. It is
+ * the wrong one for the handful that call the AI service in between: that call
+ * has a three-minute budget (`AI_PIPELINE_TIMEOUT_MS`), and a run is exactly
+ * the length of time in which a decision about a file gets made. Somebody
+ * withdrawing the engagement inside that window is the ordinary case, not the
+ * exotic one.
+ *
+ * R232 closed this on the extraction auto-apply and R236 on the queued
+ * auto-pipeline run; both re-read the engagement immediately before the write
+ * rather than trusting the copy the request came in with. The two AI routes
+ * that write something of their own were left on the old reading, so a
+ * retirement landing mid-run still produced a report version drafted into a
+ * withdrawn deliverable and a QA review filed against withdrawn work — under an
+ * `ai` actor, with nothing on either row recording that the file had been
+ * closed before they were written. Retirement is reversible since R90, so
+ * those rows do not go away with the engagement: they come back with it.
+ *
+ * Refused rather than skipped, unlike the auto-apply. There the job was
+ * correctly recorded and the write was incidental to it; here the write *is*
+ * the request, and a 200 over a version nobody saved would be the same
+ * discarded failure this codebase keeps finding. A vanished engagement is a
+ * 404 for the reason it always is — the id no longer names anything.
+ */
+export async function refuseIfRetiredNow(pool: pg.Pool, valuationId: string, doing: string): Promise<void> {
+  const live = await findValuationById(pool, valuationId);
+  if (!live) throw problems.notFound();
+  refuseIfRetired(live, doing);
 }

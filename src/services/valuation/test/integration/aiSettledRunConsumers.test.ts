@@ -6,6 +6,7 @@ import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { createCalculation } from '../../src/repos/calculations.js';
 import { reapStaleAiJobs } from '../../src/repos/aiJobs.js';
+import { retireValuations } from '../../src/repos/valuationPurge.js';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -187,6 +188,43 @@ describe.skipIf(!dbUp)('an agent run closed while it was out', () => {
       headers: authHeader(ops.token),
     });
     expect(report.json().version.version).toBe(1);
+  });
+
+  it('files no QA review when the engagement is retired while the reviewer is out', async () => {
+    const id = await engagement('Retired QA, Inc.');
+    // The production path, so the read cache is invalidated exactly as a real
+    // withdrawal invalidates it.
+    state.duringRun = async () => {
+      await retireValuations(pool, [id]);
+    };
+    const res = await runQa(id);
+    state.duringRun = null;
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().detail).toMatch(/retired/i);
+    // Retirement is reversible, so a row filed here does not go away with the
+    // engagement — it comes back with it, as a gate artifact nobody asked for.
+    expect(await reviewCount(id)).toBe(0);
+  });
+
+  it('writes no report version when the engagement is retired while the agent is out', async () => {
+    const id = await engagement('Retired Narrative, Inc.');
+    state.duringRun = async () => {
+      await retireValuations(pool, [id]);
+    };
+    const res = await draft(id);
+    state.duringRun = null;
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().detail).toMatch(/retired/i);
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM report_versions v
+         JOIN reports r ON r.id = v.report_id
+        WHERE r.valuation_id = $1`,
+      [id],
+    );
+    // The v1 skeleton and nothing else.
+    expect(rows[0]!.n).toBe(1);
   });
 
   it('leaves the uninterrupted runs exactly as they were', async () => {

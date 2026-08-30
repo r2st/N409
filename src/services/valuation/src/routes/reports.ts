@@ -69,7 +69,7 @@ import { recordEvent, type EventActor } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import { contentDisposition } from './documents.js';
 import type { Principal } from '../auth/rbac.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
 
@@ -935,6 +935,10 @@ export function registerReportRoutes(
     // `changed: false, applied: []`: the sentence an analyst reads as "the
     // agent had nothing to add", over a run that never delivered an answer.
     assertRunStood(job);
+    // And the engagement still has to be one this route may write to. The
+    // pre-flight `refuseIfRetired` read the row the request loaded, and the
+    // agent has had up to three minutes since — see `refuseIfRetiredNow`.
+    await refuseIfRetiredNow(deps.pool, valuation.id, 'accepting report edits');
     const drafted = draftedSectionsFrom(job.result);
 
     /*
