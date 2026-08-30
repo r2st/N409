@@ -286,7 +286,26 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         throw paymentsUnavailable('Payments are not configured (Stripe is in test mode)');
       }
       if (valuation.paid_status !== 'unpaid') {
-        throw problems.conflict(`Valuation is already ${valuation.paid_status}`);
+        /*
+         * `paid_status` is a database enum and one of its members is
+         * `paid_by_partner`, which this used to interpolate raw: a client who
+         * pressed Pay on an engagement their firm had already covered was
+         * answered "Valuation is already paid_by_partner".
+         *
+         * The underscore is the visible half of the problem and not the
+         * important one. The two states mean different things to the person
+         * reading — one of them is *their* payment and one is somebody else's —
+         * and both need to say that no further action is required, which the
+         * enum member does not.
+         */
+        throw problems.conflict(
+          valuation.paid_status === 'paid_by_partner'
+            ? 'This valuation has already been paid for by the firm that engaged us, so there is ' +
+                'nothing for you to pay. It is not held up by billing — check the engagement’s ' +
+                'status for where it has got to.'
+            : 'This valuation has already been paid for, so there is nothing further to pay. ' +
+                'If you were expecting a receipt, it is on the engagement’s billing panel.',
+        );
       }
 
       const parsed = CheckoutBody.safeParse(req.body ?? {});

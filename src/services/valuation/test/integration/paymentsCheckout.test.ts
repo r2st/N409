@@ -237,7 +237,12 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
 
     const res = await checkout(client.token, vid);
     expect(res.statusCode).toBe(409);
-    expect(res.json().detail).toContain('already paid');
+    expect(res.json().detail).toMatch(/already been paid for/i);
+    // Not the enum member. `paid_status` has a `paid_by_partner` arm that this
+    // message used to interpolate raw, so a client whose firm had covered the
+    // engagement was told "Valuation is already paid_by_partner".
+    expect(res.json().detail).not.toMatch(/paid_by_partner|paid_status/);
+    expect(res.json().detail).toMatch(/nothing further to pay/i);
     expect(spy).not.toHaveBeenCalled();
   });
 

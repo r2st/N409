@@ -187,10 +187,18 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     const plan = await findPlan(deps.pool, parsed.data.plan_tier);
     if (!plan) throw problems.notFound();
     if (plan.interval === 'one_time') {
-      throw problems.unprocessable('The per-valuation plan is billed per valuation, not by subscription');
+      throw problems.unprocessable(
+        'The per-valuation plan is not a subscription — it is charged when you start each ' +
+          'valuation, so there is nothing to sign up for here. Start a valuation to be quoted ' +
+          'for it, or choose one of the subscription plans instead.',
+      );
     }
     if (await findActiveSubscription(deps.pool, principal.id)) {
-      throw problems.conflict('You already have an active subscription');
+      throw problems.conflict(
+        'You already have an active subscription, so this would be a second one. ' +
+          'To move to a different plan or change how you pay, open the billing portal from ' +
+          'Settings → Billing rather than subscribing again.',
+      );
     }
     const user = await findUserById(deps.pool, principal.id);
     const base = deps.publicBaseUrl.replace(/\/$/, '');

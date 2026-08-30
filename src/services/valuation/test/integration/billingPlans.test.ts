@@ -114,7 +114,11 @@ describe.skipIf(!dbUp)('billing — plans, dashboard and invoices', () => {
       expect(oneTime, 'expected a one_time plan in the catalogue').toBeTruthy();
       const res = await subscribe(ops.token, { plan_tier: oneTime!.tier });
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toMatch(/billed per valuation/i);
+      expect(res.json().detail).toMatch(/not a subscription/i);
+      // And what to do instead. The refusal is correct but it is also a dead
+      // end without this half: the reader picked this plan on purpose and
+      // needs to know it is bought by starting a valuation, not signed up for.
+      expect(res.json().detail).toMatch(/start a valuation/i);
     });
   });
 
