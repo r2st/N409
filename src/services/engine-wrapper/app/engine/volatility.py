@@ -242,8 +242,29 @@ def estimate_volatility(
             override = float(manual_override)
         except (TypeError, ValueError):
             raise EngineInputError("manual_override must be a number") from None
-        if not 0.0 < override < 5.0:
-            raise EngineInputError("manual_override must be a fraction in (0, 5)")
+        # The floor is `_MIN_MEANINGFUL_VOLATILITY`, not zero, and it is the
+        # same floor this module already applies to a *measured* comp: a series
+        # whose annualised volatility is at or below 0.01% is excluded as "no
+        # measurable price movement". A pinned assumption smaller than the
+        # smallest volatility the estimator will believe is not a tighter
+        # assumption, it is the same statement typed by hand — and unlike the
+        # measured one it was accepted.
+        #
+        # What it produced is the reason the two opinions had to be reconciled.
+        # Every figure on this response is rounded to four decimals for the
+        # report, so an override of 3e-5 came back as
+        # `recommended_volatility: 0.0` — sitting, on a request that also
+        # supplied comps, directly beside a `median_volatility` of 0.6701 the
+        # same call had just measured. Fed onward, a zero volatility is refused
+        # by the OPM as "volatility is required", which names a field the caller
+        # did supply and points away from the one they mistyped: exactly the
+        # failure `_check_periods` documents for `periods_per_year: 0`.
+        if not _MIN_MEANINGFUL_VOLATILITY <= override < 5.0:
+            raise EngineInputError(
+                f"manual_override must be a fraction in [{_MIN_MEANINGFUL_VOLATILITY:g}, 5) "
+                f"(got {override:g}) — below that a volatility is indistinguishable from "
+                "zero and rounds to it on the reported figure"
+            )
 
     if not isinstance(comparables, list) or not comparables:
         if manual_override is not None:

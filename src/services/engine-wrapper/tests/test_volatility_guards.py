@@ -211,8 +211,26 @@ def test_a_non_numeric_manual_override_is_refused():
 
 def test_a_manual_override_outside_the_band_is_refused():
     for bad in (0.0, -0.1, 5.0, 12.0):
-        with pytest.raises(EngineInputError, match=r"fraction in \(0, 5\)"):
+        with pytest.raises(EngineInputError, match=r"fraction in \[0\.0001, 5\)"):
             estimate_volatility([{"prices": RISING}], manual_override=bad)
+
+
+def test_a_manual_override_under_the_measurable_floor_is_refused():
+    """The band's floor is the one the estimator applies to a measured comp.
+
+    Everything on this response is reported at four decimals, so an override of
+    3e-5 came back as `recommended_volatility: 0.0` — beside, on this very
+    request, a `median_volatility` the same call had measured off the prices.
+    """
+    for bad in (1e-5, 3e-5, 4.9e-5):
+        with pytest.raises(EngineInputError, match="indistinguishable from zero"):
+            estimate_volatility([{"prices": RISING}], manual_override=bad)
+
+
+def test_the_floor_itself_is_accepted_and_survives_the_reported_quantum():
+    out = estimate_volatility([], manual_override=1e-4)
+    assert out["recommended_volatility"] == 0.0001
+    assert out["manual_override"] == 0.0001
 
 
 def test_a_manual_override_stands_in_for_an_empty_comparable_set():
