@@ -27,6 +27,29 @@ function mockGet(inputs: EngineInputs) {
 describe('FinancialModelPanel', () => {
   beforeEach(() => vi.restoreAllMocks());
 
+  /**
+   * The hint under Common shares, which is the whole defence against a
+   * double-counted option pool.
+   *
+   * It read "Fully diluted common", which is the name of a different figure:
+   * the engine adds this field to Options outstanding beside it
+   * (`compute._opm_allocate`'s `fully_diluted_common = common_shares +
+   * options`). An analyst who followed the hint entered the fully-diluted count
+   * here and the pool again next door, and the denominator every per-share
+   * figure divides by was overstated by the pool — 20% on an ordinary 20% pool.
+   * Nothing downstream catches it: `cap_table_reconciles` only asks that the
+   * cap table's common sit at or *below* this figure, which it still does.
+   */
+  it('tells the analyst this count excludes the option pool', async () => {
+    mockGet(seeded);
+    render(<FinancialModelPanel valuationId="v1" readOnly={false} />);
+
+    const common = await screen.findByLabelText('Common shares');
+    const hint = common.closest('label')?.textContent ?? '';
+    expect(hint).toContain('Options outstanding');
+    expect(hint).not.toContain('Fully diluted');
+  });
+
   it('loads and renders the saved model', async () => {
     mockGet(seeded);
     render(<FinancialModelPanel valuationId="v1" readOnly={false} />);

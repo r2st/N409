@@ -377,7 +377,21 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
       <section className={cardClass}>
         <h3 className={headingClass}>Cap table &amp; OPM allocation</h3>
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          {numField('shares_outstanding_common', 'Common shares', { hint: 'Fully diluted common.' })}
+          {/*
+           * "Fully diluted common" was the hint here, and it is the name of a
+           * different figure. The engine adds this field to Options outstanding
+           * — `compute._opm_allocate`'s `fully_diluted_common = common_shares +
+           * options`, and Exhibit A prints the two as separate rows totalled
+           * "Fully diluted" — so an analyst who followed the hint entered the
+           * fully-diluted count here and the pool again in the field beside it.
+           * The pool is then counted twice in the denominator every per-share
+           * figure divides by, and the concluded FMV is understated by the
+           * pool's share of it: 20% on an ordinary 20% pool, with nothing to
+           * see, since the result is finite, plausible and reconciles.
+           */}
+          {numField('shares_outstanding_common', 'Common shares', {
+            hint: 'Common only — the option pool goes in Options outstanding.',
+          })}
           {numField('shares_outstanding_preferred', 'Preferred shares')}
           {numField('options_outstanding', 'Options outstanding')}
           {numField('liquidation_preference', 'Liquidation preference', { hint: 'Aggregate, in currency.' })}

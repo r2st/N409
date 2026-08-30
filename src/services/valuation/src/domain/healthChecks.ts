@@ -145,8 +145,8 @@ export function runHealthChecks(args: {
    * field they read is absent. Two did not: `common_shares_present` and
    * `weights_present` are unconditional `error`s, so every specialty run — an
    * IFRS 2 expense, a gift & estate appraisal, a QSBS attestation — came back
-   * `blocking: true` reporting that its "fully diluted common share count is
-   * missing" and that it had set no approach weights. Neither is a finding: the
+   * `blocking: true` reporting that its common share count was not set and that
+   * it had set no approach weights. Neither is a finding: the
    * deliverable has no such figures. The gate this report feeds
    * (`routes/healthChecks.ts`) was therefore unsatisfiable for those kinds
    * permanently, and unsatisfiable for a reason the analyst could not act on.
@@ -317,6 +317,20 @@ export function runHealthChecks(args: {
   }
 
   // ── Data completeness ───────────────────────────────────────────────────
+  /*
+   * `shares_outstanding_common` is common *only* — the option pool is a
+   * separate input and the engine adds the two (`compute._opm_allocate`'s
+   * `fully_diluted_common = common_shares + options`; Exhibit A prints them as
+   * two rows and totals them "Fully diluted").
+   *
+   * The checks below called it "the fully diluted common count", which is the
+   * name of a different figure — `results.fully_diluted_common`, the engine's
+   * output. An analyst told this field is the fully-diluted count enters one:
+   * the pool then goes in twice, the denominator every per-share figure divides
+   * by is overstated by the pool, and the concluded FMV is understated by the
+   * pool's share of it — 20% on an ordinary 20% pool, silently, since the
+   * result is finite, plausible and passes every check here.
+   */
   const commonShares = num(engineInputs.shares_outstanding_common);
   // The two unconditional rules, and the only two that a specialty run could
   // not simply skip by having no field to read — see the note on `specialtyKind`.
@@ -328,7 +342,7 @@ export function runHealthChecks(args: {
       commonShares !== null && commonShares > 0 ? 'ok' : 'error',
       commonShares !== null && commonShares > 0
         ? `${INT.format(commonShares)} common shares`
-        : 'Fully diluted common share count is missing — FMV per share cannot be computed',
+        : 'Common shares outstanding is not set — FMV per share cannot be computed',
     );
     const anyWeight = Object.values(weights).some((w) => w !== null);
     add(
@@ -345,7 +359,7 @@ export function runHealthChecks(args: {
       .filter((c) => obj(c).kind === 'common')
       .reduce<number>((sum, c) => sum + (num(obj(c).shares) ?? 0), 0);
     // Options are a separate line in the aggregate inputs, so allow the cap
-    // table's common to sit at or below the fully diluted common figure.
+    // table's common to sit at or below the common share count.
     const reconciles = capCommon > 0 && capCommon <= commonShares * 1.0001;
     add(
       'completeness',
@@ -353,7 +367,7 @@ export function runHealthChecks(args: {
       'Cap table reconciles with common shares',
       reconciles ? 'ok' : 'warning',
       reconciles
-        ? 'Cap-table common shares reconcile with the fully diluted common count'
+        ? 'Cap-table common shares reconcile with the common shares outstanding'
         : // Two ways to fail, and one of them was reported as the other. A cap
           // table carrying no common class at all — preferred and options
           // entered, the founders' rows still to come — has `capCommon` zero,
@@ -361,8 +375,8 @@ export function runHealthChecks(args: {
           // that "exceeds" a figure it is plainly below. The analyst sent to
           // reconcile two numbers found one of them absent.
           capCommon === 0
-          ? `The cap table has no common class to reconcile against the fully diluted common count (${INT.format(commonShares)})`
-          : `Cap-table common (${INT.format(capCommon)}) exceeds the fully diluted common count (${INT.format(commonShares)})`,
+          ? `The cap table has no common class to reconcile against the common shares outstanding (${INT.format(commonShares)})`
+          : `Cap-table common (${INT.format(capCommon)}) exceeds the common shares outstanding (${INT.format(commonShares)}) — that count is common only, with the option pool entered separately`,
     );
   }
 

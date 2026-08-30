@@ -125,13 +125,19 @@ describe('runHealthChecks', () => {
 
   it('warns when the cap table does not reconcile with common shares', () => {
     const h = healthy();
-    // Cap-table common (8M) exceeds a lowered fully diluted common count.
+    // Cap-table common (8M) exceeds a lowered common share count.
     h.calculation.inputs.inputs.shares_outstanding_common = 5_000_000;
     const report = runHealthChecks(h);
     const check = byKey(report, 'cap_table_reconciles');
     expect(check?.severity).toBe('warning');
+    // Named for what the field is. `shares_outstanding_common` is common only —
+    // the engine adds `options_outstanding` to it — and calling it "the fully
+    // diluted common count" here borrowed the name of the engine's *output*,
+    // which is the pairing that invites an analyst to enter a figure with the
+    // pool already in it and then enter the pool again beside it.
     expect(check?.detail).toBe(
-      'Cap-table common (8,000,000) exceeds the fully diluted common count (5,000,000)',
+      'Cap-table common (8,000,000) exceeds the common shares outstanding (5,000,000) — ' +
+        'that count is common only, with the option pool entered separately',
     );
   });
 
@@ -139,11 +145,11 @@ describe('runHealthChecks', () => {
    * The other way the reconciliation fails, which was reported as this one.
    *
    * `reconciles` requires the cap table's common to be both above zero and at
-   * or below the fully diluted count, and a table carrying no common class at
+   * or below the common share count, and a table carrying no common class at
    * all — preferred and options entered, the founders' rows still to come, the
    * state an import sits in for as long as it takes to finish it — fails the
    * first arm. It was then described with the sentence written for the second:
-   * "Cap-table common (0) exceeds the fully diluted common count (8,000,000)",
+   * "Cap-table common (0) exceeds the common shares outstanding (8,000,000)",
    * which is not a near-miss, it is the opposite of the arithmetic it quotes.
    * The analyst it is addressed to went looking for shares to remove from a
    * table whose actual problem was shares missing from it.
@@ -156,7 +162,7 @@ describe('runHealthChecks', () => {
     const check = byKey(runHealthChecks(h), 'cap_table_reconciles');
     expect(check?.severity).toBe('warning');
     expect(check?.detail).toBe(
-      'The cap table has no common class to reconcile against the fully diluted common count (8,000,000)',
+      'The cap table has no common class to reconcile against the common shares outstanding (8,000,000)',
     );
     expect(check?.detail).not.toContain('exceeds');
   });
