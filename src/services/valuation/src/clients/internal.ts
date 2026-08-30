@@ -12,6 +12,7 @@ import {
   requestIdHeaders,
   type FailureClass,
 } from '@n409/shared';
+import { sliceChars } from '../domain/textSlice.js';
 
 /**
  * Thin JSON client for the internal AI / engine services. Failures surface as
@@ -518,7 +519,7 @@ async function postJsonOnce<T>(
   try {
     parsed = JSON.parse(text) as T;
   } catch {
-    emit({ response: text.slice(0, 2_000), status: res.status, error: 'invalid JSON in response body' });
+    emit({ response: sliceChars(text, 2_000), status: res.status, error: 'invalid JSON in response body' });
     throw new InternalServiceError(service, res.status, 'invalid JSON in response body');
   }
   emit({ response: parsed, status: res.status, error: null });
@@ -550,7 +551,10 @@ function safeParse(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    return text.slice(0, 2_000);
+    // `sliceChars`, not `slice`: cutting an upstream body at 2,000 UTF-16 units
+    // can land inside an emoji, and half a character is a string the JSONB
+    // insert behind `emit` cannot hold. See domain/textSlice.ts.
+    return sliceChars(text, 2_000);
   }
 }
 

@@ -100,3 +100,42 @@ describe('boundedJson', () => {
     });
   });
 });
+
+/**
+ * R217, methodology M6: the one thing this function promises about the write.
+ *
+ * The bounds keep the row small and the `null` for a non-finite number keeps
+ * the insert from failing. An unpaired surrogate defeats the second: Postgres
+ * refuses an unpaired `\ud800` escape, and `recordNetworkItem` swallows the
+ * error — so the whole trace is lost, silently, on the failure path.
+ */
+describe('a string the JSONB insert can hold', () => {
+  const GRIN = '\u{1F600}';
+
+  it('does not cut an emoji in half at MAX_STRING', () => {
+    // 1,999 characters then an emoji: the old `slice` landed between its halves.
+    const out = boundedJson('a'.repeat(1_999) + GRIN + 'b'.repeat(100)) as string;
+    expect(JSON.stringify(out).includes('\\ud')).toBe(false);
+    expect(out).toContain('more characters');
+  });
+
+  it('never emits an unpaired surrogate at any offset around the bound', () => {
+    for (let pad = 1_996; pad <= 2_002; pad++) {
+      const out = boundedJson('a'.repeat(pad) + GRIN + 'tail') as string;
+      expect(JSON.stringify(out).includes('\\ud'), `pad ${pad}`).toBe(false);
+    }
+  });
+
+  it('replaces a half-character already in the payload rather than losing the row', () => {
+    // Unlike a request body, where the name is refused rather than edited: this
+    // is a diagnostic copy of something already sent, and U+FFFD beats no log.
+    const out = boundedJson({ body: `Acme\uD800 Ltd` }) as { body: string };
+    expect(out.body).toBe('Acme� Ltd');
+    expect(() => JSON.parse(JSON.stringify(out))).not.toThrow();
+  });
+
+  it('leaves whole astral characters exactly as they were', () => {
+    const value = `${GRIN} 𠮷野家 𝄞 🇬🇧`;
+    expect(boundedJson({ value })).toEqual({ value });
+  });
+});

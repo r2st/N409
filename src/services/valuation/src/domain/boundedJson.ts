@@ -23,6 +23,8 @@
  * processes — so the tests on each side assert the limits independently.
  */
 
+import { sliceChars } from './textSlice.js';
+
 /** How deep an object is walked before it is summarised rather than copied. */
 export const MAX_DEPTH = 6;
 
@@ -35,6 +37,31 @@ export const MAX_ITEMS = 50;
  * what actually threatens this table's size — is cut rather than stored twice.
  */
 export const MAX_STRING = 2_000;
+
+/**
+ * A string this can be certain will insert.
+ *
+ * Both of this function's promises are about the write: the bounds keep the
+ * payload small, and the `null` for a non-finite number keeps a trace of a run
+ * that overflowed rather than failing the insert that records it. An unpaired
+ * surrogate breaks the second one. `JSON.stringify` emits it as the literal
+ * escape `\ud800`, Postgres's JSON parser rejects an unpaired escape, and the
+ * whole `network_items` row is lost — on the failure path, where the trace is
+ * the reason anyone is looking.
+ *
+ * It arrives two ways. `MAX_STRING` used to cut with `String.slice`, which
+ * counts UTF-16 units, so an emoji straddling character 2,000 of an upstream
+ * body was halved by this function itself; `sliceChars` ends that. What is left
+ * is a half-character already in the payload, and here — unlike at the request
+ * boundary, where a name is refused rather than edited — replacing it is right:
+ * this is a diagnostic copy of something already sent, and `U+FFFD` in a log
+ * beats no log.
+ */
+function storable(value: string): string {
+  // Fast path: almost nothing has a surrogate, and most that do are emoji.
+  if (!/[\uD800-\uDFFF]/.test(value)) return value;
+  return value.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+}
 
 /** The marker left wherever something was dropped. Never a bare truncation. */
 interface Truncated {
@@ -63,8 +90,8 @@ export function boundedJson(value: unknown, depth = 0, seen: Set<object> = new S
       return typeof value === 'number' && !Number.isFinite(value) ? null : value;
     case 'string':
       return value.length > MAX_STRING
-        ? `${value.slice(0, MAX_STRING)}… [${value.length - MAX_STRING} more characters]`
-        : value;
+        ? `${storable(sliceChars(value, MAX_STRING))}… [${value.length - MAX_STRING} more characters]`
+        : storable(value);
     case 'bigint':
       return value.toString();
     case 'function':
