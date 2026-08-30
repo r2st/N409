@@ -8,6 +8,10 @@ import { migrate } from '../../src/db/migrate.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
+import { createPipelineRun, latestPipelineRun } from '../../src/repos/pipelineRuns.js';
+import { resumePipelineRun, type AutoPipelineDeps } from '../../src/pipeline/autoPipeline.js';
+import { findValuationById } from '../../src/repos/valuations.js';
+import { markValuationsArchived } from '../../src/repos/retention.js';
 import type pg from 'pg';
 
 const dbUp = await isDbAvailable();
@@ -333,6 +337,66 @@ describe.skipIf(!dbUp)('improvement 2 — auto-pipeline on upload', () => {
     const run = await waitForTerminal(valuationId, ops.token);
     expect(run.status).toBe('ready');
     expect(extractCalls).toBe(before + 2);
+  });
+
+  it('re-reads the engagement before it starts — a retirement during the queue wait stops the run', async () => {
+    /*
+     * A run is decided in one place and executed in another, and the gap
+     * between them is a queue: `startPipelineRun` returns as soon as the row
+     * exists, and the retry sweep — which checks retirement carefully at claim
+     * time — releases a whole backlog into a semaphore of four. Every run
+     * behind the first waits out the ones ahead of it, minutes each.
+     *
+     * Staged exactly as the sweep stages it: a run handed to the worker with a
+     * valuation row read before the engagement was retired.
+     */
+    const valuationId = await createValuation(ops.token, 'RetiredWhileQueuedCo');
+    const stale = (await findValuationById(pool, valuationId))!;
+    const run = await createPipelineRun(
+      pool,
+      { valuationId, trigger: 'upload', triggeredBy: ops.id },
+      { actorType: 'system', actorId: 'test', source: 'auto-pipeline' },
+    );
+    expect(run).not.toBeNull();
+    // Through the retention repo, not a raw UPDATE: `findValuationById` reads
+    // through a five-second cache, and every real writer of `valuations` drops
+    // the row afterwards. A test that wrote the column directly would be
+    // asserting against a cache entry no production path leaves behind.
+    expect(await markValuationsArchived(pool, [valuationId])).toEqual([valuationId]);
+
+    const before = extractCalls;
+    const deps: AutoPipelineDeps = {
+      pool,
+      aiUrl: aiStub.url,
+      engineUrl: engineStub.url,
+      documentsDir: docsDir,
+      enabled: true,
+      log: {
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+        debug: () => {},
+      } as unknown as AutoPipelineDeps['log'],
+    };
+    resumePipelineRun(deps, run!, stale);
+
+    let settled = await latestPipelineRun(pool, valuationId);
+    for (let i = 0; i < 200 && settled?.status !== 'failed'; i += 1) {
+      await sleep(25);
+      settled = await latestPipelineRun(pool, valuationId);
+    }
+    expect(settled?.status).toBe('failed');
+    expect(settled?.error).toMatch(/retired before the run started/i);
+    // Settled rather than abandoned: an active run holds the
+    // one-per-valuation index, and permanent so the ladder lets it lie.
+    expect(settled?.next_attempt_at).toBeNull();
+    // Nothing was spent on the AI service, and no calculation was recorded
+    // against an engagement the firm has withdrawn.
+    expect(extractCalls).toBe(before);
+    const { rows: calcs } = await pool.query('SELECT id FROM calculations WHERE valuation_id = $1', [
+      valuationId,
+    ]);
+    expect(calcs).toHaveLength(0);
   });
 
   it('scopes pipeline status reads to the valuation owner', async () => {

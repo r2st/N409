@@ -13,7 +13,7 @@ import {
   type PipelineRunRow,
   type PipelineRunStatus,
 } from '../repos/pipelineRuns.js';
-import type { ValuationRow } from '../repos/valuations.js';
+import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import type { DocumentRow } from '../repos/documents.js';
 import type { EventActor } from '../events/record.js';
 import { Semaphore } from './semaphore.js';
@@ -191,6 +191,61 @@ async function executeRun(
 ): Promise<void> {
   const actor = actorFor(triggeredBy);
   try {
+    /*
+     * The engagement as it stands now, not as it stood when the run was queued.
+     *
+     * Two waits sit between the decision to run and this line, and neither is
+     * short. `startPipelineRun` returns the moment the row exists and hands
+     * execution to a semaphore of four; the retry sweep releases a whole
+     * recovered backlog into that same semaphore at once. A run can therefore
+     * wait out every run ahead of it — each of which spends up to three minutes
+     * on the AI service and more on the engine — before it does anything.
+     *
+     * `hooks/pipelineRetry.ts` already refuses to resume a run whose engagement
+     * has been retired since it failed, and says why: auto-applying an AI
+     * extraction and recording a calculation against a withdrawn engagement is
+     * a write every button in the product has stopped accepting. But that check
+     * runs at *claim* time and then puts the run in the queue, so the whole
+     * wait is a window in which the thing it guards against can happen. The
+     * upload path is the same shape one step earlier — the route's
+     * `refuseIfRetired` fires before the file lands, and nothing looks again.
+     *
+     * Re-read here, immediately before the first upstream call, so the guard
+     * holds where the write happens rather than where the decision was made.
+     * The run also stops carrying a copy of the engagement that is as old as
+     * the queue: the name, kind and currency that go to the AI service and into
+     * the calculation are the ones on file now.
+     */
+    const live = await findValuationById(deps.pool, run.valuation_id);
+    if (!live) {
+      // Deleted while the run waited; its row went with it (cascade), so there
+      // is nothing left to settle and `advance` would find nothing either.
+      deps.log.info(
+        { runId: run.id, valuationId: run.valuation_id },
+        'auto-pipeline run abandoned — the valuation was deleted while it was queued',
+      );
+      return;
+    }
+    if (live.archived_at !== null) {
+      // Settled rather than abandoned, for `hooks/pipelineRetry.ts`'s reason:
+      // an active run holds the one-per-valuation index, so a run left in place
+      // blocks every later trigger until the stale reaper comes round. And
+      // `permanent`, because retirement is a decision rather than an outage —
+      // a restore hands back an engagement that deserves a fresh run, not this
+      // one.
+      await setPipelineRunStatus(deps.pool, run, 'failed', {
+        error: 'the engagement was retired before the run started',
+        actor,
+        failure: { kind: 'permanent', reason: 'valuation.retired', retryable: false },
+      });
+      deps.log.info(
+        { runId: run.id, valuationId: live.id },
+        'auto-pipeline run skipped — the engagement was retired while it was queued',
+      );
+      return;
+    }
+    valuation = live;
+
     const extracting = await advance(deps, run, 'extracting');
     if (!extracting) return;
     run = extracting;
