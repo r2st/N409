@@ -1429,6 +1429,33 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
                   currency: saved.currency,
                 },
               });
+              /*
+               * And the renewal that went through, so the decline logged below
+               * has a denominator.
+               *
+               * A settled renewal allocates a sequenced invoice number an
+               * auditor reads as a count of what was billed, and it said
+               * nothing here — while `invoice.payment_failed` now says a great
+               * deal. A log carrying only the failures of a recurring charge
+               * cannot answer the question anyone actually asks of it, which is
+               * what share of renewals are failing.
+               *
+               * Behind `created`, which is the write itself saying which of the
+               * two deliveries Stripe sends for one payment stored the row.
+               */
+              log.info(
+                {
+                  actorType: 'system',
+                  source: 'stripe',
+                  userId: saved.user_id,
+                  subscriptionId,
+                  stripeInvoiceId,
+                  invoiceNumber: saved.number,
+                  amountCents: Number(saved.amount_cents),
+                  currency: saved.currency,
+                },
+                'subscription invoice settled',
+              );
               await announceInvoicePaid(log, {
                 userId: saved.user_id,
                 number: saved.number,

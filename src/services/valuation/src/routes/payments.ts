@@ -1745,6 +1745,37 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // charge on an already-paid file does not do; this is about the charge,
         // and `claimed` above has already established there is exactly one of
         // them. An add-on bought after the fact is still money we took.
+        /*
+         * The settlement itself, which was the one outcome on this path with no
+         * line of its own.
+         *
+         * Everything around it says something: the delayed method waiting, the
+         * resumed fulfilment, the delivery that lost the race, the refund that
+         * beat the settlement, and now the debit that bounced. Money actually
+         * arriving and an engagement crossing the payment gate said nothing at
+         * all — so a log-side reading of this integration could see every way a
+         * payment fails and no denominator to read them against, and tracing
+         * one payment from its Checkout session to its receipt broke exactly at
+         * the step where the money moved.
+         *
+         * Behind the compare-and-set like the reversal lines, so one settlement
+         * is one line whatever Stripe delivers.
+         */
+        log.info(
+          {
+            actorType: 'system',
+            source: 'stripe',
+            sessionId,
+            paymentId: settledPayment.id,
+            valuationId: settledPayment.valuation_id,
+            userId: valuation?.user_id ?? null,
+            amountCents: Number(settledPayment.amount_cents),
+            currency: settledPayment.currency,
+            express: settledPayment.express,
+            resumed,
+          },
+          'checkout settled — the engagement has been paid for',
+        );
         if (valuation) await announcePaymentReceived(log, settledPayment, valuation);
       };
 

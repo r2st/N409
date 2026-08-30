@@ -206,6 +206,46 @@ describe.skipIf(!dbUp)('a declined renewal on the billing webhook', () => {
   });
 
   /**
+   * The denominator. A log carrying only the ways a renewal fails cannot answer
+   * what share of them are failing, and a settled renewal — which allocates the
+   * sequenced invoice number an auditor reads as a count of what was billed —
+   * said nothing at all.
+   */
+  it('records a renewal that went through, with the number it allocated', async () => {
+    const userId = await subscriber('renewal-settled@obs.example.com', 'sub_obs_paid', 'cus_obs_paid');
+
+    const mark = lines.length;
+    expect(
+      (
+        await deliver({
+          id: 'evt_obs_invoice_paid',
+          type: 'invoice.paid',
+          created: Math.floor(Date.UTC(2026, 2, 3, 12, 0, 0) / 1000),
+          data: {
+            object: {
+              id: 'in_obs_settled',
+              object: 'invoice',
+              subscription: 'sub_obs_paid',
+              customer: 'cus_obs_paid',
+              amount_paid: 480_000,
+              currency: 'usd',
+            },
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const line = lines.slice(mark).find((l) => String(l.msg).includes('invoice settled'));
+    expect(line).toBeDefined();
+    expect(line!.userId).toBe(userId);
+    expect(line!.stripeInvoiceId).toBe('in_obs_settled');
+    expect(line!.amountCents).toBe(480_000);
+    expect(line!.currency).toBe('usd');
+    expect(line!.invoiceNumber).toEqual(expect.any(String));
+    expect(line!.stripeEventId).toBe('evt_obs_invoice_paid');
+  });
+
+  /**
    * The marker the four above are vacuous without: `setupTestApp` defaults to
    * 'silent', and a `lines` array that never fills reads as every "stayed
    * quiet" assertion passing.
@@ -909,6 +949,61 @@ describe.skipIf(!dbUp)('a reversal on the payments webhook', () => {
     expect(alert!.disputeStatus).toBe('open');
     expect(alert!.chargeId).toBe('ch_obs_dispute');
     expect(alert!.stripeEventId).toBe('evt_obs_dispute_1');
+  });
+
+  /**
+   * The step the trace used to break at. Everything around a settlement said
+   * something — the delayed method waiting, the resumed fulfilment, the
+   * delivery that lost the race, the debit that bounced — and money actually
+   * arriving said nothing.
+   */
+  it('records the settlement that released the engagement', async () => {
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(ops.token),
+      payload: { kind: '409a', company_name: 'Settled Co' },
+    });
+    const valuationId = created.json().valuation.id as string;
+    const payment = await createPayment(ctx.pool, {
+      valuationId,
+      sessionId: 'cs_obs_settled',
+      amountCents: 300_000,
+      currency: 'USD',
+      createdBy: ops.id,
+    });
+
+    const mark = lines.length;
+    const completed = (eventId: string) => ({
+      id: eventId,
+      type: 'checkout.session.completed',
+      created: Math.floor(Date.UTC(2026, 2, 5, 8, 0, 0) / 1000),
+      data: {
+        object: {
+          id: 'cs_obs_settled',
+          object: 'checkout.session',
+          payment_status: 'paid',
+          amount_total: 300_000,
+          currency: 'usd',
+        },
+      },
+    });
+    expect((await deliver(completed('evt_obs_settled_1'))).statusCode).toBe(200);
+
+    const line = lines.slice(mark).find((l) => String(l.msg).includes('checkout settled'));
+    expect(line).toBeDefined();
+    expect(line!.sessionId).toBe('cs_obs_settled');
+    expect(line!.paymentId).toBe(payment.id);
+    expect(line!.valuationId).toBe(valuationId);
+    expect(line!.amountCents).toBe(300_000);
+    expect(line!.resumed).toBe(false);
+    expect(line!.stripeEventId).toBe('evt_obs_settled_1');
+
+    // And once: the compare-and-set that owns the fulfilment is upstream of it,
+    // so a delivery carrying a different event id is still one settlement.
+    const again = lines.length;
+    await deliver(completed('evt_obs_settled_2'));
+    expect(lines.slice(again).filter((l) => String(l.msg).includes('checkout settled'))).toHaveLength(0);
   });
 
   it('does not alert for a chargeback we won', async () => {
