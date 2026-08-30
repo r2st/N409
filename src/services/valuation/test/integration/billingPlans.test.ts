@@ -100,9 +100,28 @@ describe.skipIf(!dbUp)('billing — plans, dashboard and invoices', () => {
       }
     });
 
-    it('404s a plan tier that does not exist', async () => {
+    it('404s a plan tier that does not exist, and says what to do about it', async () => {
       const res = await subscribe(ops.token, { plan_tier: 'platinum-unlimited' });
       expect(res.statusCode).toBe(404);
+      // This was a bare `problems.notFound()`, so the whole of the answer was
+      // the reason phrase — "Not Found", on a button labelled Subscribe. The
+      // case a subscriber actually reaches it by is a tier retired from the
+      // catalogue between the grid being drawn and the card being clicked
+      // (`findPlan` filters `active`), and reloading is the remedy.
+      const detail = res.json().detail as string;
+      expect(detail).toContain('platinum-unlimited');
+      expect(detail).toMatch(/withdrawn/i);
+      expect(detail).toMatch(/reload/i);
+    });
+
+    it('will not echo an unbounded tier back into the body', async () => {
+      // `plan_tier` was `z.string().min(1)` — any length, any bytes — and the
+      // refusal above names it back. A catalogue key is not free text.
+      for (const tier of ['x'.repeat(200), 'has spaces', 'Upper_Case', '\u202een.txt']) {
+        const res = await subscribe(ops.token, { plan_tier: tier });
+        expect(res.statusCode, tier.slice(0, 24)).toBe(422);
+        expect(JSON.stringify(res.json())).not.toContain('x'.repeat(80));
+      }
     });
 
     it('422s the per-valuation plan, which is not a subscription', async () => {
@@ -231,9 +250,19 @@ describe.skipIf(!dbUp)('billing — plans, dashboard and invoices', () => {
       expect(opsRes.statusCode).toBe(200);
     });
 
-    it('404s an invoice id that does not exist', async () => {
+    it("404s an invoice id that does not exist, in the same words as somebody else's", async () => {
       const res = await get('/api/v1/billing/invoices/01ARZ3NDEKTSV4RRFFQ69G5FAV/pdf', ops.token);
       expect(res.statusCode).toBe(404);
+      expect(res.json().detail).toMatch(/not on your account/i);
+      expect(res.json().detail).toMatch(/contact us/i);
+
+      // One sentence for both cases, which is what keeps a stranger's invoice
+      // indistinguishable from an id that was never issued. This link is
+      // reached from the customer's own invoice table, so the reason phrase
+      // alone was the worst possible answer on it.
+      const invoiceId = await seedInvoice(client.id);
+      const stranger = await get(`/api/v1/billing/invoices/${invoiceId}/pdf`, otherClient.token);
+      expect(stranger.json().detail).toBe(res.json().detail);
     });
   });
 });

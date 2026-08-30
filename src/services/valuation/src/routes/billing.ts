@@ -118,7 +118,20 @@ const billingUnavailable = (detail: string) =>
     detail,
   });
 
-const SubscribeBody = z.object({ plan_tier: z.string().min(1) });
+/**
+ * `plan_tier` was `z.string().min(1)` — any length, any bytes — which reached
+ * a lookup and, since the refusal below names the tier back, a response body.
+ * Bounded to what a catalogue key is: the seeded ones are `per_valuation` and
+ * `annual_retainer` (migration 0080), and `plan_limits.tier` is the target of
+ * a foreign key, not free text.
+ */
+const SubscribeBody = z.object({
+  plan_tier: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z0-9][a-z0-9_-]*$/, 'A plan tier is lower-case letters, digits, underscores and hyphens'),
+});
 
 /**
  * Stripe subscription status → local status, with a status nobody has
@@ -216,7 +229,25 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     if (!parsed.success) throw invalidBody('Invalid plan', parsed.error);
 
     const plan = await findPlan(deps.pool, parsed.data.plan_tier);
-    if (!plan) throw problems.notFound();
+    if (!plan) {
+      /*
+       * A tier `findPlan` cannot see is one of two things and the sentence has
+       * to cover both: a name that never existed — an API caller's typo — or,
+       * more often, one that has just been retired from the catalogue, because
+       * this filters `active`. The second is the case a subscriber actually
+       * hits: the plan grid was drawn from `listPlans` and the tier came off a
+       * card they were looking at when it was withdrawn.
+       *
+       * They read the bare 404, which is the reason phrase and nothing else:
+       * "Not Found", on a button labelled Subscribe. Refreshing is the whole of
+       * the remedy and it was the one thing the answer did not say.
+       */
+      throw problems.notFound(
+        `There is no plan called “${parsed.data.plan_tier}” on sale. If it was on the page a moment ` +
+          'ago it has just been withdrawn — reload the billing page for the current plans, or ' +
+          'contact us and we will set the plan you wanted up directly.',
+      );
+    }
     if (plan.interval === 'one_time') {
       throw problems.unprocessable(
         'The per-valuation plan is not a subscription — it is charged when you start each ' +
@@ -428,7 +459,17 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const invoice = await findInvoice(deps.pool, id);
-    if (!invoice || (invoice.user_id !== principal.id && !isOps(principal))) throw problems.notFound();
+    if (!invoice || (invoice.user_id !== principal.id && !isOps(principal))) {
+      // One sentence for the missing invoice and for somebody else's, which is
+      // what keeps the second from being distinguishable from the first — and
+      // it is still a better answer than the reason phrase, on a link the
+      // customer reached from their own invoice table.
+      throw problems.notFound(
+        'That invoice is not on your account. If you reached this from your billing page, reload ' +
+          'it for the current list — and if the invoice is still missing, contact us with the ' +
+          'invoice number and we will send you a copy.',
+      );
+    }
     const user = await findUserById(deps.pool, invoice.user_id);
 
     const pdf = await renderReportPdf({
