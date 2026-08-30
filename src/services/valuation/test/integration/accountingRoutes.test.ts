@@ -66,12 +66,22 @@ const XERO_BALANCE_SHEET = {
  * records what was asked for so a test can prove the exchange actually
  * happened rather than infer it from a stored row.
  */
-function xeroStub(overrides: { tokenStatus?: number; plStatus?: number } = {}) {
+function xeroStub(overrides: { tokenStatus?: number; plStatus?: number; refreshStatus?: number } = {}) {
   const calls: string[] = [];
-  const fetchFn = (async (input: string | URL | Request) => {
+  /** The `grant_type` of each token-endpoint call, in order. */
+  const grants: string[] = [];
+  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     calls.push(url);
     if (url.includes('identity.xero.com/connect/token')) {
+      const grantType = new URLSearchParams(String(init?.body ?? '')).get('grant_type') ?? '';
+      grants.push(grantType);
+      if (grantType === 'refresh_token') {
+        if (overrides.refreshStatus && overrides.refreshStatus !== 200) {
+          return new Response('nope', { status: overrides.refreshStatus });
+        }
+        return json({ access_token: 'xero-renewed-token', expires_in: 1800 });
+      }
       if (overrides.tokenStatus && overrides.tokenStatus !== 200) {
         return new Response('nope', { status: overrides.tokenStatus });
       }
@@ -91,7 +101,7 @@ function xeroStub(overrides: { tokenStatus?: number; plStatus?: number } = {}) {
     }
     return json({});
   }) as unknown as typeof fetch;
-  return { fetchFn, calls };
+  return { fetchFn, calls, grants };
 }
 
 const BASE_URL = 'https://app.test.n409.example';
@@ -260,7 +270,11 @@ describe.skipIf(!dbUp)('accounting routes', () => {
         url: '/api/v1/accounting/callback?state=not-a-jwt&code=x',
       });
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toMatch(/invalid or expired state/i);
+      // The wording is `integrationCallbackRefusal`'s, which R239 rewrote from
+      // "Invalid or expired state" into something a stranded person can act
+      // on. Matched on the sentence that carries the meaning rather than on
+      // the whole paragraph.
+      expect(res.json().detail).toMatch(/could not be matched to the approval/i);
     });
 
     it('rejects an over-long state instead of trying to verify it', async () => {
@@ -421,6 +435,84 @@ describe.skipIf(!dbUp)('accounting routes', () => {
       expect(asset.intangibles).toBe(12_345);
       // ...and the imported one wins over the placeholder.
       expect(asset.total_assets).toBe(900_000);
+    });
+
+    it('renews a spent access token before importing (R252)', async () => {
+      // Xero's access token lasts thirty minutes and QuickBooks' an hour, so
+      // every import but the first after a connect was a 401 — with the
+      // refresh token that would have fixed it stored, unread, in the next
+      // column since the feature shipped.
+      const id = await createValuation('Stale Token Co');
+      await connect(id);
+      await pool.query(
+        `UPDATE accounting_connections SET token_expires_at = now() - interval '1 hour'
+          WHERE valuation_id = $1`,
+        [id],
+      );
+      const before = stub.grants.length;
+
+      const res = await app.inject({
+        method: 'POST',
+        url: importUrl(id),
+        headers: authHeader(client.token),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(stub.grants.slice(before)).toContain('refresh_token');
+      const connection = await findConnection(pool, id, 'xero');
+      expect(connection!.token_expires_at!.getTime()).toBeGreaterThan(Date.now());
+      expect(connection!.access_token).toBe('xero-renewed-token');
+    });
+
+    it('asks for a reconnect when Xero refuses the refresh (R252)', async () => {
+      // `invalid_grant` is not a transient fault: the authorisation is over,
+      // and the only thing that clears it is a person running the OAuth hop
+      // again. The message has to say that.
+      const failing = xeroStub({ refreshStatus: 400 });
+      const other = await setupTestApp(
+        { PUBLIC_BASE_URL: BASE_URL, XERO_CLIENT_ID: 'xero-client', XERO_CLIENT_SECRET: 'xero-secret' },
+        { accountingFetch: failing.fetchFn },
+      );
+      try {
+        const user = await seedUser(other, { roles: ['valuation_user'] });
+        const created = await other.app.inject({
+          method: 'POST',
+          url: '/api/v1/valuations',
+          headers: authHeader(user.token),
+          payload: { kind: '409a', company_name: 'Dead Grant Co' },
+        });
+        const id = created.json().valuation.id as string;
+        const started = await other.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${id}/accounting/xero/connect`,
+          headers: authHeader(user.token),
+        });
+        const state = new URL(started.json().authorize_url).searchParams.get('state')!;
+        await other.app.inject({
+          method: 'GET',
+          url: `/api/v1/accounting/callback?state=${encodeURIComponent(state)}&code=abc`,
+        });
+        await other.pool.query(
+          `UPDATE accounting_connections SET token_expires_at = now() - interval '1 hour'
+            WHERE valuation_id = $1`,
+          [id],
+        );
+
+        const res = await other.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${id}/accounting/xero/import`,
+          headers: authHeader(user.token),
+        });
+
+        expect(res.statusCode).toBe(422);
+        expect(res.json().detail).toMatch(/reconnect Xero/i);
+        // The ledger was never asked for with a credential we knew was spent.
+        expect(failing.calls.some((u) => u.includes('ProfitAndLoss'))).toBe(false);
+        const connection = await findConnection(other.pool, id, 'xero');
+        expect(connection!.last_error).toMatch(/reconnect Xero/i);
+      } finally {
+        await other.teardown();
+      }
     });
 
     it('records the failure against the connection when the provider errors', async () => {

@@ -21,6 +21,7 @@ import {
   readJsonArray,
   withDeadline,
 } from './deadline.js';
+import { refreshOAuthTokens, type RefreshedTokens } from './oauthRefresh.js';
 
 export const ACCOUNTING_PROVIDERS = ['xero', 'quickbooks', 'freshbooks', 'netsuite', 'sage', 'wave'] as const;
 export type AccountingProvider = (typeof ACCOUNTING_PROVIDERS)[number];
@@ -165,6 +166,31 @@ interface TokenResponse {
   access_token?: string;
   refresh_token?: string;
   expires_in?: number;
+}
+
+/**
+ * Spend the stored refresh token for a new access token.
+ *
+ * QuickBooks access tokens last an hour and Xero's thirty minutes, so an
+ * import run any time after the connect flow was answering `401` — the same
+ * unread `refresh_token` column the two scheduled connectors had, on a path
+ * where the analyst at least gets told something failed. See
+ * `clients/oauthRefresh.ts`.
+ */
+export async function refreshTokens(
+  provider: AccountingProvider,
+  creds: ProviderCredentials,
+  refreshToken: string,
+  fetchFn: FetchFn = fetch,
+): Promise<RefreshedTokens> {
+  return refreshOAuthTokens({
+    label: PROVIDER_LABELS[provider],
+    tokenUrl: ENDPOINTS[provider].tokenUrl,
+    clientId: creds.clientId,
+    clientSecret: creds.clientSecret,
+    refreshToken,
+    fetchFn,
+  });
 }
 
 export async function exchangeCode(

@@ -11,6 +11,7 @@ import {
   authorizeUrl,
   exchangeCode,
   fetchFinancials,
+  refreshTokens,
   type AccountingProvider,
   type FetchFn,
   type ProviderCredentials,
@@ -22,13 +23,16 @@ import {
   recordImportError,
   revokeConnection,
   toPublic,
+  updateTokens,
   upsertConnection,
+  type AccountingConnectionRow,
 } from '../repos/accountingConnections.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { applyEngineInputs, findParams, patchParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { IntegrationError } from '../clients/deadline.js';
+import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
 
@@ -80,6 +84,27 @@ const CallbackQuery = z.object({
   error: z.string().max(256).optional(),
   realmId: z.string().max(128).optional(), // QuickBooks appends the company (realm) id
 });
+
+/**
+ * The access token to present to the provider, renewed first if it is spent.
+ * The rule, and why it is proactive on the stored expiry rather than reactive
+ * on a 401, is written out in `routes/hris.ts`.
+ */
+async function accessTokenFor(
+  deps: {
+    pool: pg.Pool;
+    fetchFn: FetchFn;
+    credentials: Partial<Record<AccountingProvider, ProviderCredentials>>;
+  },
+  connection: AccountingConnectionRow,
+): Promise<string> {
+  if (!tokenNeedsRefresh(connection.token_expires_at)) return connection.access_token;
+  const creds = deps.credentials[connection.provider];
+  if (!creds || !connection.refresh_token) return connection.access_token;
+  const refreshed = await refreshTokens(connection.provider, creds, connection.refresh_token, deps.fetchFn);
+  await updateTokens(deps.pool, connection.id, refreshed);
+  return refreshed.accessToken;
+}
 
 export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingDeps): void {
   const fetchFn = deps.fetchFn ?? fetch;
@@ -202,9 +227,21 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
 
       let financials;
       try {
+        // A spent access token is renewed before the import rather than being
+        // presented and refused: QuickBooks' lasts an hour and Xero's thirty
+        // minutes, so all but the first import after a connect was a 401 with
+        // the refresh token that would have fixed it sitting unread in the next
+        // column. Falls through to the stored token when the provider named no
+        // expiry, gave no refresh token, or this deployment holds no client
+        // credentials for it — in each case the provider gets to give the real
+        // answer.
+        const accessToken = await accessTokenFor(
+          { pool: deps.pool, fetchFn, credentials: deps.credentials },
+          connection,
+        );
         financials = await fetchFinancials(
           provider,
-          { accessToken: connection.access_token, externalOrgId: connection.external_org_id },
+          { accessToken, externalOrgId: connection.external_org_id },
           fetchFn,
         );
       } catch (err) {

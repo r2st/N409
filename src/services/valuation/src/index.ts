@@ -20,7 +20,7 @@ const { loadConfig } = await import('./config.js');
 const { createPool, attachPoolErrorHandler, resolvePoolTuning } = await import('./db/pool.js');
 const { migrate } = await import('./db/migrate.js');
 const { instrumentPool, QueryStats } = await import('./db/queryStats.js');
-const { buildApp, buildEmailTransports, hrisCredentials } = await import('./app.js');
+const { buildApp, buildEmailTransports, capTableSyncCredentials, hrisCredentials } = await import('./app.js');
 const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
 const { retryFailedEmails } = await import('./hooks/emailRetry.js');
 const { retryDueDeliveries } = await import('./hooks/partnerWebhooks.js');
@@ -427,7 +427,7 @@ let aiJobReaperTimer: NodeJS.Timeout | undefined;
 let capTableSyncTimer: NodeJS.Timeout | undefined;
 {
   const tick = scheduleSweep('cap-table-sync', async () => {
-    const n = await runDueCapTableSyncs({ pool, log: app.log });
+    const n = await runDueCapTableSyncs({ pool, credentials: capTableSyncCredentials(config), log: app.log });
     if (n > 0) app.log.info({ processed: n }, 'cap-table sync scan');
   });
   capTableSyncTimer = setInterval(() => tick.run(), 15 * 60_000);

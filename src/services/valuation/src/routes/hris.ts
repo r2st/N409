@@ -12,7 +12,6 @@ import {
   exchangeCode,
   fetchRosterAndGrants,
   refreshTokens,
-  TOKEN_REFRESH_SKEW_MS,
   type FetchFn,
   type HrisProvider,
   type ProviderCredentials,
@@ -32,6 +31,7 @@ import {
   type HrisConnectionRow,
 } from '../repos/hrisConnections.js';
 import { IntegrationError } from '../clients/deadline.js';
+import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { createGrant } from '../repos/grants.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -138,8 +138,7 @@ async function accessTokenFor(
   deps: { pool: pg.Pool; fetchFn: FetchFn; credentials?: Partial<Record<HrisProvider, ProviderCredentials>> },
   connection: HrisConnectionRow,
 ): Promise<string> {
-  const expiresAt = connection.token_expires_at;
-  if (!expiresAt || expiresAt.getTime() - Date.now() > TOKEN_REFRESH_SKEW_MS) return connection.access_token;
+  if (!tokenNeedsRefresh(connection.token_expires_at)) return connection.access_token;
   const creds = deps.credentials?.[connection.provider];
   if (!creds || !connection.refresh_token) return connection.access_token;
   const refreshed = await refreshTokens(connection.provider, creds, connection.refresh_token, deps.fetchFn);

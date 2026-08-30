@@ -273,6 +273,100 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
     expect(saved?.entries.length).toBe(3);
   });
 
+  it('renews an expired access token before a scheduled sync (R252)', async () => {
+    // Both providers ask for `offline_access` at the authorize URL, and until
+    // R252 the refresh token that scope exists to obtain was written to the row
+    // and never read. A scheduled sync therefore worked until the first access
+    // token expired and then failed `401` — which moved the connection to
+    // `error`, took it out of `findDueConnections`, and stopped the schedule
+    // permanently while the cap table on file quietly stopped tracking Carta's.
+    payload = CARTA_V1;
+    const v = await seedValuation();
+    await connect(v.id);
+    await ctx.pool.query(`UPDATE cap_table_connections SET next_sync_at = now() + interval '30 days'`);
+    await ctx.pool.query(
+      `UPDATE cap_table_connections
+         SET sync_frequency = 'weekly', next_sync_at = now() - interval '1 hour',
+             token_expires_at = now() - interval '1 hour'
+       WHERE valuation_id = $1`,
+      [v.id],
+    );
+
+    const grants: string[] = [];
+    const capTokens: string[] = [];
+    const refreshingFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/oauth/token')) {
+        const params = new URLSearchParams(String(init?.body ?? ''));
+        grants.push(params.get('grant_type') ?? '');
+        return jsonResponse({ access_token: 'renewed', expires_in: 3600 });
+      }
+      if (u.includes('/capitalization')) {
+        const auth = (init?.headers as Record<string, string> | undefined)?.authorization ?? '';
+        capTokens.push(auth.replace(/^Bearer /, ''));
+        return jsonResponse(CARTA_V1);
+      }
+      throw new Error(`unexpected fetch ${u}`);
+    });
+
+    const processed = await runDueCapTableSyncs({
+      pool: ctx.pool,
+      fetchFn: refreshingFetch as unknown as typeof fetch,
+      credentials: { carta: { clientId: 'cid', clientSecret: 'csecret' } },
+    });
+
+    expect(processed).toBe(1);
+    expect(grants).toEqual(['refresh_token']);
+    expect(capTokens).toEqual(['renewed']);
+    const { rows } = await ctx.pool.query<{ status: string; token_expires_at: Date }>(
+      'SELECT status, token_expires_at FROM cap_table_connections WHERE valuation_id = $1',
+      [v.id],
+    );
+    expect(rows[0]!.status).toBe('connected');
+    expect(rows[0]!.token_expires_at.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('stops and asks for a reconnect when Carta refuses the refresh (R252)', async () => {
+    // `invalid_grant` will be answered identically on every fifteen-minute tick
+    // until somebody reconnects, so the sweep records a sentence saying that
+    // rather than a status code that reads like a transient fault.
+    payload = CARTA_V1;
+    const v = await seedValuation();
+    await connect(v.id);
+    await ctx.pool.query(`UPDATE cap_table_connections SET next_sync_at = now() + interval '30 days'`);
+    await ctx.pool.query(
+      `UPDATE cap_table_connections
+         SET sync_frequency = 'weekly', next_sync_at = now() - interval '1 hour',
+             token_expires_at = now() - interval '1 hour'
+       WHERE valuation_id = $1`,
+      [v.id],
+    );
+
+    let capCalled = false;
+    const refusingFetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('/oauth/token')) return jsonResponse({ error: 'invalid_grant' }, 400);
+      capCalled = true;
+      return jsonResponse(CARTA_V1);
+    });
+
+    const processed = await runDueCapTableSyncs({
+      pool: ctx.pool,
+      fetchFn: refusingFetch as unknown as typeof fetch,
+      credentials: { carta: { clientId: 'cid', clientSecret: 'csecret' } },
+      log: { warn: () => {} },
+    });
+
+    expect(processed).toBe(0);
+    expect(capCalled).toBe(false);
+    const { rows } = await ctx.pool.query<{ status: string; last_error: string }>(
+      'SELECT status, last_error FROM cap_table_connections WHERE valuation_id = $1',
+      [v.id],
+    );
+    expect(rows[0]!.status).toBe('error');
+    expect(rows[0]!.last_error).toMatch(/reconnect Carta/i);
+  });
+
   it('runs due syncs with bounded concurrency and isolates a failing one (P2-7)', async () => {
     payload = CARTA_V1;
     const N = 6;

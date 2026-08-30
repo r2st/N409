@@ -21,6 +21,7 @@ import {
   readJson,
   withDeadline,
 } from './deadline.js';
+import { refreshOAuthTokens, type RefreshedTokens } from './oauthRefresh.js';
 
 export const CAP_TABLE_PROVIDERS = ['carta', 'pulley'] as const;
 export type CapTableProvider = (typeof CAP_TABLE_PROVIDERS)[number];
@@ -130,6 +131,30 @@ export async function exchangeCode(
     externalCompanyId: body.company_id ?? null,
     externalCompanyName: body.company_name ?? null,
   };
+}
+
+/**
+ * Spend the stored refresh token for a new access token.
+ *
+ * Both providers ask for `offline_access` in the scope above — that scope
+ * exists to be given a refresh token, and until R252 nothing here ever spent
+ * one. See `clients/oauthRefresh.ts` for the exchange and for which refusals a
+ * retry can clear.
+ */
+export async function refreshTokens(
+  provider: CapTableProvider,
+  creds: ProviderCredentials,
+  refreshToken: string,
+  fetchFn: FetchFn = fetch,
+): Promise<RefreshedTokens> {
+  return refreshOAuthTokens({
+    label: CAP_TABLE_PROVIDER_LABELS[provider],
+    tokenUrl: ENDPOINTS[provider].tokenUrl,
+    clientId: creds.clientId,
+    clientSecret: creds.clientSecret,
+    refreshToken,
+    fetchFn,
+  });
 }
 
 /**

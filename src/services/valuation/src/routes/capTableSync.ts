@@ -11,6 +11,7 @@ import {
   authorizeUrl,
   exchangeCode,
   fetchCapTable,
+  refreshTokens,
   type CapTableProvider,
   type FetchFn,
   type ProviderCredentials,
@@ -24,6 +25,7 @@ import {
   revokeConnection,
   setSyncFrequency,
   toPublic,
+  updateTokens,
   upsertConnection,
   type CapTableConnectionRow,
 } from '../repos/capTableConnections.js';
@@ -35,6 +37,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { IntegrationError } from '../clients/deadline.js';
+import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
 
@@ -102,17 +105,54 @@ export interface SyncOutcome {
  * the pull route and the periodic scheduler. Records success/error on the
  * connection. Throws on fetch failure after recording the error.
  */
+/**
+ * The access token to present to the provider, renewed first if it is spent.
+ *
+ * Both providers' authorize URLs ask for `offline_access`, and the refresh
+ * token that scope exists to obtain went into the row at connect time and was
+ * never read again — so a scheduled cap-table sync worked until the first
+ * access token expired and then answered `401` on every tick. Because
+ * `recordSyncError` moves the connection to `error` and `findDueConnections`
+ * returns only `connected` rows, the schedule stopped there permanently: the
+ * cap table on file quietly stops tracking the provider's while the card shows
+ * an error nobody reads as "reconnect".
+ *
+ * See `routes/hris.ts` for why this is proactive on the stored expiry rather
+ * than reactive on the 401, and `clients/oauthRefresh.ts` for which refusals a
+ * retry can clear.
+ */
+async function accessTokenFor(
+  deps: {
+    pool: pg.Pool;
+    fetchFn: FetchFn;
+    credentials?: Partial<Record<CapTableProvider, ProviderCredentials>>;
+  },
+  connection: CapTableConnectionRow,
+): Promise<string> {
+  if (!tokenNeedsRefresh(connection.token_expires_at)) return connection.access_token;
+  const creds = deps.credentials?.[connection.provider];
+  if (!creds || !connection.refresh_token) return connection.access_token;
+  const refreshed = await refreshTokens(connection.provider, creds, connection.refresh_token, deps.fetchFn);
+  await updateTokens(deps.pool, connection.id, refreshed);
+  return refreshed.accessToken;
+}
+
 export async function syncCapTableConnection(
-  deps: { pool: pg.Pool; fetchFn: FetchFn },
+  deps: {
+    pool: pg.Pool;
+    fetchFn: FetchFn;
+    credentials?: Partial<Record<CapTableProvider, ProviderCredentials>>;
+  },
   connection: CapTableConnectionRow,
   opts: { apply: boolean; actorId: string },
 ): Promise<SyncOutcome> {
   let pulled;
   try {
+    const accessToken = await accessTokenFor(deps, connection);
     pulled = await fetchCapTable(
       connection.provider,
       {
-        accessToken: connection.access_token,
+        accessToken,
         externalCompanyId: connection.external_company_id,
         externalCompanyName: connection.external_company_name,
       },
@@ -245,6 +285,13 @@ export async function syncCapTableConnection(
 export async function runDueCapTableSyncs(deps: {
   pool: pg.Pool;
   fetchFn?: FetchFn;
+  /**
+   * The same OAuth client credentials the routes hold. Without them the sweep
+   * cannot renew an expired token — which would leave the scheduled sync doing
+   * strictly less than the manual pull beside it, on exactly the connections
+   * nobody is watching.
+   */
+  credentials?: Partial<Record<CapTableProvider, ProviderCredentials>>;
   log?: { warn: (o: unknown, m?: string) => void };
 }): Promise<number> {
   const fetchFn = deps.fetchFn ?? fetch;
@@ -258,10 +305,14 @@ export async function runDueCapTableSyncs(deps: {
     due.map((connection) =>
       limit(async () => {
         try {
-          await syncCapTableConnection({ pool: deps.pool, fetchFn }, connection, {
-            apply: true,
-            actorId: connection.connected_by ?? connection.id,
-          });
+          await syncCapTableConnection(
+            { pool: deps.pool, fetchFn, credentials: deps.credentials },
+            connection,
+            {
+              apply: true,
+              actorId: connection.connected_by ?? connection.id,
+            },
+          );
           return true;
         } catch (err) {
           deps.log?.warn({ err, connectionId: connection.id }, 'scheduled cap-table sync failed');
@@ -388,10 +439,11 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
 
       let outcome;
       try {
-        outcome = await syncCapTableConnection({ pool: deps.pool, fetchFn }, connection, {
-          apply: body.apply,
-          actorId: principal.id,
-        });
+        outcome = await syncCapTableConnection(
+          { pool: deps.pool, fetchFn, credentials: deps.credentials },
+          connection,
+          { apply: body.apply, actorId: principal.id },
+        );
       } catch (err) {
         /**
          * Only wording this codebase vouched for reaches the client.

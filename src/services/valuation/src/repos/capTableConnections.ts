@@ -154,6 +154,33 @@ export async function setSyncFrequency(pool: pg.Pool, id: string, frequency: Syn
   );
 }
 
+/**
+ * Store a refreshed credential.
+ *
+ * Guarded on `status <> 'revoked'` like every other writer on this row: a
+ * revoke landing while a sync is in flight ends the connection, and writing a
+ * live access token back over the blanked one would resurrect a credential the
+ * client just severed.
+ *
+ * `refreshToken` is `undefined` when the provider did not rotate it, which is
+ * the common case, and the column is then left alone — writing `null` there
+ * would make that the last successful refresh this connection ever had.
+ */
+export async function updateTokens(
+  pool: pg.Pool,
+  id: string,
+  tokens: { accessToken: string; refreshToken?: string | undefined; expiresAt: Date | null },
+): Promise<void> {
+  await pool.query(
+    `UPDATE cap_table_connections
+        SET access_token = $2,
+            refresh_token = COALESCE($3, refresh_token),
+            token_expires_at = $4
+      WHERE id = $1 AND status <> 'revoked'`,
+    [id, sealSecret(tokens.accessToken), sealNullable(tokens.refreshToken ?? null), tokens.expiresAt],
+  );
+}
+
 export async function revokeConnection(
   pool: pg.Pool,
   valuationId: string,
