@@ -97,7 +97,16 @@ export function ReportTab() {
 
   const [report, setReport] = useState<Report | null>(null);
   const [content, setContent] = useState<ReportContent | null>(null);
-  const [versions, setVersions] = useState<ReportVersionSummary[]>([]);
+  /*
+   * Nullable, because "not read" and "none saved" are different answers and
+   * the panel has to give the right one. The list is fetched alongside the
+   * report, in the same `try`; when only the *versions* call fails the report
+   * is already on screen, so the tab renders in full with the error note in
+   * the editor column and the sidebar saying "No versions yet." beside a
+   * header reading "v3 · Draft". The history of a signed deliverable is not
+   * something to guess at from an empty array.
+   */
+  const [versions, setVersions] = useState<ReportVersionSummary[] | null>(null);
   /*
    * The version picker is capped at REPORT_VERSION_PAGE_LIMIT server-side, and
    * a picker that quietly stops reads as the whole history of the report — an
@@ -534,14 +543,20 @@ export function ReportTab() {
         {ops && (
           <div>
             <h2 className="overline mb-4 text-ink-400">Version history</h2>
-            {versions.length === 0 && <p className="text-sm text-ink-400">No versions yet.</p>}
+            {versions === null && (
+              <p className="text-sm text-ink-400">
+                The saved versions could not be read, so none are listed — this says nothing about how many
+                this report has.
+              </p>
+            )}
+            {versions?.length === 0 && <p className="text-sm text-ink-400">No versions yet.</p>}
             {versionsTruncated && (
               <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
                 This report has more saved versions than the picker lists — the oldest are not shown.
               </p>
             )}
             <ol className="space-y-3">
-              {versions.map((v) => (
+              {versions?.map((v) => (
                 <li
                   key={v.id}
                   className={`rounded-md border px-3.5 py-2.5 text-sm ${

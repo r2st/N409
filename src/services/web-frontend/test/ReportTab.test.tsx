@@ -739,6 +739,23 @@ describe('ReportTab', () => {
       await ready();
       expect(screen.getByText('No versions yet.')).toBeInTheDocument();
     });
+
+    /**
+     * R226. The version list is fetched in the same `try` as the report, after
+     * it — so when only that call fails, the report is already in state, the
+     * tab renders in full, and the sidebar said "No versions yet." next to a
+     * header reading "v3 · Draft". The history of a signed deliverable is the
+     * one thing on this screen an analyst goes looking for when a draft they
+     * saved cannot be found; an unread list must not answer that question.
+     */
+    it('does not report an unread version list as a report with no history', async () => {
+      mockApi({ versions: problem(503, 'Down') });
+      renderTab();
+      await ready();
+
+      expect(screen.getByText(/saved versions could not be read/i)).toBeInTheDocument();
+      expect(screen.queryByText('No versions yet.')).not.toBeInTheDocument();
+    });
   });
 
   describe('omitting a chapter', () => {
