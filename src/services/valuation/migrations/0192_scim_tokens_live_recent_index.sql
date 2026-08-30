@@ -1,0 +1,41 @@
+-- The third list sorted by an expression, and the one both censuses missed.
+--
+-- 0181 fixed two: `listAllApiTokens` and `listJobAlerts`, whose leading sort
+-- key is `(revoked_at IS NULL)` / `(resolved_at IS NOT NULL)` — a boolean no
+-- btree on the bare column holds, so the planner read the whole table and
+-- top-N sorted it to hand back a screenful. `listScimTokens` is written the
+-- same way, character for character:
+--
+--     listAllApiTokens   ORDER BY (t.revoked_at IS NULL) DESC, t.created_at DESC
+--     listScimTokens     ORDER BY   (revoked_at IS NULL) DESC,   created_at DESC
+--
+-- Neither of the two searches that found the others could see it. 0178's asked
+-- which *columns* a sort key names, and this one names none. R202's guard
+-- (`expressionSortPlans.test.ts`) asks the right question but of a roster
+-- somebody typed — the same failure R250 found in the N+1 population guard,
+-- and the reason the census beside this migration reads the source instead.
+--
+-- The table is a pure ledger. `revokeScimToken` writes `revoked_at` rather than
+-- deleting, precisely so a credential that was once accepted stays auditable,
+-- so it only grows — one row per token ever issued — while the page an
+-- administrator reads stays 200 rows. The sort was therefore getting steadily
+-- more expensive to produce an answer of constant size.
+--
+-- Measured at 20k rows, warm, best of seven (EXPLAIN ANALYZE, shared blocks):
+--
+--     listScimTokens   3.81 ms  223 blk  ->  0.03 ms  5 blk   127x
+--
+-- The ratio at 20k is not the point; the exponent is. Seq Scan + Sort is
+-- O(tokens ever issued), the index scan is O(page size), and the page is 200
+-- however long this platform has been provisioning users over SCIM.
+--
+-- Direction matters and is why this mirrors 0181's spelling exactly: DESC on
+-- both keys is a single backwards walk of the btree, while a mixed ordering
+-- costs a sort node however well the leading key is indexed (0170's rule).
+--
+-- Not CONCURRENTLY: db/migrate.ts wraps each file in BEGIN/COMMIT. A SCIM
+-- token is minted by hand from an admin screen, so the SHARE lock while this
+-- builds is not in front of anybody waiting.
+
+CREATE INDEX IF NOT EXISTS scim_tokens_live_recent_idx
+    ON scim_tokens (((revoked_at IS NULL)) DESC, created_at DESC);

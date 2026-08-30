@@ -76,11 +76,23 @@ describe.skipIf(!dbUp)('expression-ordered lists are index scans (R202)', () => 
          FROM generate_series(1, $1) g`,
       [ROWS],
     );
+    // `listScimTokens` is `listAllApiTokens`' spelling on a second ledger, and
+    // 0192 gives it the same index. Seeded to the same shape — most tokens live,
+    // the revoked ones left behind for the audit trail.
+    await db.pool.query(
+      `INSERT INTO scim_tokens (id, token_hash, label, created_at, last_used_at, revoked_at)
+       SELECT ('04' || lpad(upper(to_hex(g)), 24, '0'))::ulid, 'scim-hash-' || g, 'scim ' || g,
+              now() - (g || ' minutes')::interval,
+              CASE WHEN g % 3 <> 0 THEN now() - (g || ' hours')::interval END,
+              CASE WHEN g % ${REVOKED_EVERY} = 0 THEN now() - (g || ' minutes')::interval END
+         FROM generate_series(1, $1) g`,
+      [ROWS],
+    );
     // Without statistics the planner is costing tables it believes are empty.
     // VACUUM as well as ANALYZE: `api_tokens_stats_idx` is only reachable as an
     // index-only scan, and index-only scans need the visibility map, which
     // VACUUM sets and ANALYZE does not.
-    await db.pool.query('VACUUM ANALYZE api_tokens, job_alerts');
+    await db.pool.query('VACUUM ANALYZE api_tokens, job_alerts, scim_tokens');
   }, 120_000);
 
   afterAll(async () => db?.teardown());
@@ -92,7 +104,18 @@ describe.skipIf(!dbUp)('expression-ordered lists are index scans (R202)', () => 
 
   const seqScans = (nodes: PlanNode[], table: string): boolean =>
     nodes.some((n) => n['Node Type'] === 'Seq Scan' && n['Relation Name'] === table);
-  const sorts = (nodes: PlanNode[]): boolean => nodes.some((n) => n['Node Type'] === 'Sort');
+  /**
+   * Any sort node, `Incremental Sort` included.
+   *
+   * Matching only `Sort` reads as strict and is the weaker test. Where the
+   * leading key *is* indexed and only a later term is spelled wrong, Postgres
+   * scans the index and finishes each presorted group with an `Incremental
+   * Sort` — still a sort of the whole relation, just handed out in batches. On
+   * a bare table that is the plan the mixed-direction discriminator produces,
+   * so a `=== 'Sort'` predicate calls it "no sort" and the discriminator that
+   * exists to prove the assertion above can fail, cannot.
+   */
+  const sorts = (nodes: PlanNode[]): boolean => nodes.some((n) => /Sort$/.test(n['Node Type']));
 
   /** The statement `listAllApiTokens` issues, joins and all. */
   const TOKEN_LIST = `
@@ -199,6 +222,41 @@ describe.skipIf(!dbUp)('expression-ordered lists are index scans (R202)', () => 
     // have served — a different ordering, not a cheaper spelling of this one.
     expect(
       sorts(await plan(`SELECT * FROM job_alerts ORDER BY resolved_at DESC, opened_at DESC LIMIT 100`)),
+    ).toBe(true);
+  });
+
+  /**
+   * The third instance of the shape, found in R251 and fixed by 0192.
+   *
+   * `listScimTokens` is `listAllApiTokens` written on a second ledger, and
+   * neither of the two searches that found the first two could see it: 0178's
+   * asked which *columns* a sort key names, and this one names none, while the
+   * roster above was typed by hand. `expressionSortCoverage` is the answer to
+   * the second half of that — it reads the source and requires every
+   * expression-led sort to be measured here or exempted.
+   *
+   * `scim_tokens` only grows: `revokeScimToken` stamps `revoked_at` rather than
+   * deleting, so the sort was over every token ever issued to produce a page of
+   * 200. 3.81 ms / 223 blocks -> 0.03 ms / 5 blocks at 20k rows.
+   */
+  it('listScimTokens seeks the expression index instead of sorting the ledger', async () => {
+    const SQL = `SELECT * FROM scim_tokens ORDER BY (revoked_at IS NULL) DESC, created_at DESC LIMIT 201`;
+    const nodes = await plan(SQL);
+    expect(seqScans(nodes, 'scim_tokens')).toBe(false);
+    expect(sorts(nodes)).toBe(false);
+    expect(nodes.map((n) => n['Index Name'])).toContain('scim_tokens_live_recent_idx');
+
+    // The discriminator, same as the pair above: the spellings the index cannot
+    // serve still sort, so this cannot pass on some other index existing.
+    expect(
+      sorts(
+        await plan(`SELECT * FROM scim_tokens ORDER BY created_at DESC, (revoked_at IS NULL) DESC LIMIT 201`),
+      ),
+    ).toBe(true);
+    expect(
+      sorts(
+        await plan(`SELECT * FROM scim_tokens ORDER BY (revoked_at IS NULL) DESC, created_at ASC LIMIT 201`),
+      ),
     ).toBe(true);
   });
 
