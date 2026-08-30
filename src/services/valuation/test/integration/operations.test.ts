@@ -255,6 +255,36 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
       expect(res.statusCode).toBe(201);
     });
 
+    it('stores an over-long unmatched subject without cutting a character in half', async () => {
+      /*
+       * The ticket subject is `"Unmatched inbound email: " + subject` cut to
+       * 300. The prefix is 25 characters, so a subject padded to put an emoji
+       * across unit 300 is cut through it — and the orphaned half is stored in
+       * `support_messages.subject` as U+FFFD, which is not the subject the
+       * sender wrote. The boundary hook cannot help: the half-character never
+       * arrived, this service made it. See domain/textSlice.ts.
+       */
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/inbox/email',
+        headers: authHeader(ops.token),
+        payload: {
+          from: 'stranger@nowhere.io',
+          subject: `${'s'.repeat(274)}\u{1F600}${'t'.repeat(100)}`,
+          body: 'no ref',
+        },
+      });
+      expect(res.statusCode).toBe(202);
+      const { rows } = await ctx.pool.query<{ subject: string }>(
+        'SELECT subject FROM support_messages WHERE id = $1',
+        [res.json().support_message_id],
+      );
+      const stored = rows[0]!.subject;
+      expect(stored.length).toBeLessThanOrEqual(300);
+      expect(stored).not.toContain('\uFFFD');
+      expect(JSON.stringify(stored).includes('\\ud')).toBe(false);
+    });
+
     it('routes unmatchable email to a support ticket (gap 3) and rejects non-ops with 403', async () => {
       const unmatched = await ctx.app.inject({
         method: 'POST',

@@ -486,7 +486,7 @@ async function postJsonOnce<T>(
     return failExchange(err);
   }
   if (!res.ok) {
-    let detail = text.slice(0, 500);
+    let detail = sliceChars(text, UPSTREAM_DETAIL_CHARS);
     // Forwarded rather than re-guessed: only the upstream knows when its
     // window reopens, and a number invented here would be advice about a
     // dependency this service cannot see.
@@ -497,11 +497,18 @@ async function postJsonOnce<T>(
     let issues: UpstreamIssue[] = [];
     try {
       const parsed = JSON.parse(text) as { detail?: unknown; title?: unknown; issues?: unknown };
+      // Bounded on this branch too. The raw-text branch above was cut at 500
+      // and this one was not, so the bound stopped applying exactly when the
+      // upstream's answer *parsed* — and a parsed answer is the one that goes
+      // furthest: `opaque` is false, so `toProblem` puts it verbatim into an
+      // HTTP response body, and `emit` puts it in a `text` column no
+      // `boundedJson` pass reaches. A `detail` is a sentence written for a
+      // caller to read; anything past this bound is not that.
       if (typeof parsed.detail === 'string') {
-        detail = parsed.detail;
+        detail = sliceChars(parsed.detail, UPSTREAM_DETAIL_CHARS);
         opaque = false;
       } else if (typeof parsed.title === 'string') {
-        detail = parsed.title;
+        detail = sliceChars(parsed.title, UPSTREAM_DETAIL_CHARS);
         opaque = false;
       }
       issues = parseIssues(parsed.issues);
@@ -535,6 +542,17 @@ async function postJsonOnce<T>(
  * day is a message for an operator rather than a wait for a browser tab, so it
  * is clamped to one.
  */
+/**
+ * How much of an upstream's rejection is kept as the `detail`.
+ *
+ * `sliceChars` rather than `slice` for the reason `safeParse` below already
+ * states: cutting a body at 500 UTF-16 units can land inside an emoji, and the
+ * orphaned half is stored as `U+FFFD` in `network_items.error` — a `text`
+ * column, so no `boundedJson` pass edits it on the way in — and rides out to a
+ * caller in a problem document besides.
+ */
+const UPSTREAM_DETAIL_CHARS = 500;
+
 const MAX_UPSTREAM_RETRY_AFTER_S = 86_400;
 
 export function parseRetryAfter(header: string | null): number | null {

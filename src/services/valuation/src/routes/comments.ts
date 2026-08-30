@@ -23,6 +23,7 @@ import {
 import { createSupportMessage } from '../repos/support.js';
 import { EmailAddress } from '../domain/email.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { sliceChars } from '../domain/textSlice.js';
 import type { EventActor } from '../events/record.js';
 import type { ValuationHub } from '../realtime/hub.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
@@ -208,7 +209,12 @@ export function registerCommentRoutes(
     if (!valuation) {
       const ticket = await createSupportMessage(deps.pool, {
         userId: principal.id,
-        subject: `Unmatched inbound email: ${email.subject}`.slice(0, 300),
+        // `sliceChars`, not `slice`: an inbound subject is remote text that
+        // reached here whole — the boundary hook refuses an unpaired surrogate
+        // in a request body — and a cut at 300 UTF-16 units is this service
+        // creating one of its own, which `support_messages.subject` then
+        // stores as `U+FFFD`. See domain/textSlice.ts.
+        subject: sliceChars(`Unmatched inbound email: ${email.subject}`, 300),
         body:
           `From: ${email.from}\n` +
           (email.message_id ? `Message-Id: ${email.message_id}\n` : '') +

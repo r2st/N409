@@ -144,3 +144,38 @@ describe('upstream error disclosure', () => {
     expect(rendered).not.toContain('secret');
   });
 });
+
+describe('the bound on an upstream detail', () => {
+  it('bounds a problem detail as tightly as it bounds a raw body', async () => {
+    /*
+     * The raw-text branch was cut at 500 and this one was not, so the bound
+     * stopped applying exactly when the upstream's answer *parsed* — and that
+     * is the answer that travels furthest: `opaque` is false, so `toProblem`
+     * puts it verbatim into an HTTP response body, and the network-call record
+     * puts it in a `text` column that no `boundedJson` pass reaches.
+     */
+    const err = await failWith(response(422, JSON.stringify({ detail: 'x'.repeat(5_000) })));
+    expect(err.opaque).toBe(false);
+    expect(err.detail.length).toBe(500);
+    expect(toProblem(err).detail!.length).toBeLessThan(700);
+  });
+
+  it('bounds a `title` the same way', async () => {
+    const err = await failWith(response(500, JSON.stringify({ title: 'y'.repeat(5_000) })));
+    expect(err.detail.length).toBe(500);
+  });
+
+  it('never cuts an upstream body through a character', async () => {
+    // One BMP character in front, so unit 499 is the *high* half of an emoji
+    // and the cut lands inside it. The raw branch: a non-JSON body, so
+    // `detail` is the text itself.
+    const err = await failWith(response(502, `a${'\u{1F600}'.repeat(400)}`, 'text/html'));
+    expect(err.opaque).toBe(true);
+    // 499 units — the orphaned high surrogate dropped rather than kept.
+    expect(err.detail.length).toBe(499);
+    expect(err.detail).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    // And it round-trips through UTF-8, which is what the column and the log
+    // line both need of it.
+    expect(Buffer.from(err.detail, 'utf8').toString('utf8')).toBe(err.detail);
+  });
+});

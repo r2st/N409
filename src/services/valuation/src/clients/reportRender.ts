@@ -13,6 +13,7 @@ import {
 } from '@n409/shared';
 import { Semaphore } from '../pipeline/semaphore.js';
 import { circuits, internalAuthHeaders } from './internal.js';
+import { sliceChars } from '../domain/textSlice.js';
 
 /**
  * PDF rendering, delegated to the report service when there is one.
@@ -590,7 +591,10 @@ async function postForPdf(
     // read the field list to fix. Bounded, because it goes in a log line.
     let detail: string;
     try {
-      detail = (await res.text()).slice(0, 500);
+      // `sliceChars`, not `slice`: a body cut at 500 UTF-16 units can be cut
+      // through an astral character, and the orphaned half is a string this
+      // message cannot be logged or stored with. See domain/textSlice.ts.
+      detail = sliceChars(await res.text(), 500);
     } catch {
       detail = '<unreadable body>';
     }
