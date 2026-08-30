@@ -19,7 +19,7 @@
  * legitimately slow.
  */
 
-import { describeTransportFailure, transportFailureEchoesMessage } from '@n409/shared';
+import { describeTransportFailure, markFailure, transportFailureEchoesMessage } from '@n409/shared';
 import { parseRetryAfter } from '../domain/partnerWebhooks.js';
 
 /** Token exchange / connection identification — small, latency-sensitive calls. */
@@ -68,9 +68,28 @@ export const IMPORT_TIMEOUT_MS = 30_000;
  * on one side, disclosure on the other.
  */
 export class IntegrationError extends Error {
-  constructor(message: string) {
+  /**
+   * The status the provider answered with, when one was involved.
+   *
+   * Carried because throwing it away made every one of these errors
+   * unclassifiable. `classifyFailure` reads `status`/`statusCode` off an error
+   * — it is how the whole estate tells "the provider is having a bad minute"
+   * from "the provider will refuse this forever" — and `providerRefused` built
+   * its message by interpolating the status into a string and dropping the
+   * number. So a 503 and a 404 arrived at `logFailure` identically
+   * unrecognised, both classified `permanent`/`unclassified` by the deliberate
+   * default, and a connector logging through the estate's one alerting
+   * contract would have paged somebody for every transient blip.
+   *
+   * `undefined` where no status was involved: a deadline, an unparseable body.
+   * Those say what they are by other means (see the `markFailure` below).
+   */
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
     super(message);
     this.name = 'IntegrationError';
+    if (status !== undefined) this.status = status;
   }
 }
 
@@ -105,6 +124,12 @@ export class ReconnectRequiredError extends IntegrationError {
   constructor(message: string) {
     super(message);
     this.name = 'ReconnectRequiredError';
+    // The one thing this type exists to say, said in the vocabulary the
+    // classifier reads. Its own name carries it for the two connectors that
+    // check `instanceof`; anything else asking `classifyFailure` would have
+    // seen the 400 the token endpoint answered with — permanent by the status
+    // table, and correct here by accident rather than because this said so.
+    markFailure(this, 'permanent');
   }
 }
 
@@ -140,9 +165,10 @@ export function providerRefused(
       seconds === null
         ? `${label} is rate-limiting us — wait a few minutes and try again.`
         : `${label} is rate-limiting us — try again in about ${Math.max(1, seconds)}s.`,
+      res.status,
     );
   }
-  return new IntegrationError(`${label} ${what} failed (${res.status})`);
+  return new IntegrationError(`${label} ${what} failed (${res.status})`, res.status);
 }
 
 /**
@@ -187,7 +213,15 @@ export async function withDeadline<T>(
     return await run(AbortSignal.timeout(timeoutMs));
   } catch (err) {
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
-      throw new IntegrationError(`${label} did not respond within ${Math.round(timeoutMs / 1000)}s`);
+      // Transient as a *condition*, which is the classifier's own reading of
+      // an `AbortError`: the upstream is slow, and slow passes. The name that
+      // said so is consumed here — `AbortSignal.timeout`'s error does not
+      // survive into the `IntegrationError` this throws — so the fact is
+      // carried explicitly rather than lost with it.
+      throw markFailure(
+        new IntegrationError(`${label} did not respond within ${Math.round(timeoutMs / 1000)}s`),
+        'transient',
+      );
     }
     throw err;
   }

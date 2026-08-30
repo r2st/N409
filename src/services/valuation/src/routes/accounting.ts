@@ -31,6 +31,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { applyEngineInputs, findParams, patchParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { logConnectorSyncFailure } from '../domain/connectorSyncLog.js';
 import { describeConnectorFailure, IntegrationError } from '../clients/deadline.js';
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { invalidQuery } from '../domain/validationProblem.js';
@@ -282,7 +283,17 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
         await recordImportError(deps.pool, connection.id, message).catch((bookErr: unknown) => {
           req.log.warn({ err: bookErr, connectionId: connection.id }, 'could not record import error');
         });
-        req.log.warn({ err, provider, connectionId: connection.id }, 'accounting import failed');
+        logConnectorSyncFailure(
+          req.log,
+          err,
+          {
+            family: 'accounting',
+            provider,
+            connectionId: connection.id,
+            valuationId: valuation.id,
+          },
+          { scheduled: false },
+        );
         throw problems.unprocessable(
           err instanceof IntegrationError
             ? `Import failed: ${err.message}`

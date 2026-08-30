@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import pLimit from 'p-limit';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems, type FailureLogger } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { signCapTableSyncState, verifyCapTableSyncState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -40,6 +40,7 @@ import { describeConnectorFailure, IntegrationError, ReconnectRequiredError } fr
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
+import { logConnectorSyncFailure } from '../domain/connectorSyncLog.js';
 
 /**
  * Live cap-table sync (feature 4). Flow mirrors the accounting integration:
@@ -312,7 +313,7 @@ export async function runDueCapTableSyncs(deps: {
    * nobody is watching.
    */
   credentials?: Partial<Record<CapTableProvider, ProviderCredentials>>;
-  log?: { warn: (o: unknown, m?: string) => void };
+  log?: FailureLogger;
 }): Promise<number> {
   const fetchFn = deps.fetchFn ?? fetch;
   const due = await findDueConnections(deps.pool);
@@ -335,7 +336,20 @@ export async function runDueCapTableSyncs(deps: {
           );
           return true;
         } catch (err) {
-          deps.log?.warn({ err, connectionId: connection.id }, 'scheduled cap-table sync failed');
+          if (deps.log) {
+            logConnectorSyncFailure(
+              deps.log,
+              err,
+              {
+                family: 'cap_table',
+                provider: connection.provider,
+                connectionId: connection.id,
+                valuationId: connection.valuation_id,
+                priorFailures: connection.sync_failures,
+              },
+              { scheduled: true },
+            );
+          }
           return false;
         }
       }),
@@ -490,7 +504,18 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
          * binding the message to a local one statement earlier puts it outside
          * the argument the scan reads.
          */
-        req.log.warn({ err, provider, connectionId: connection.id }, 'cap-table sync failed');
+        logConnectorSyncFailure(
+          req.log,
+          err,
+          {
+            family: 'cap_table',
+            provider,
+            connectionId: connection.id,
+            valuationId: valuation.id,
+            priorFailures: connection.sync_failures,
+          },
+          { scheduled: false },
+        );
         throw problems.unprocessable(
           err instanceof IntegrationError
             ? `Sync failed: ${err.message}`

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import pLimit from 'p-limit';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems, type FailureLogger } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { signHrisState, verifyHrisState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -39,6 +39,7 @@ import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
+import { logConnectorSyncFailure } from '../domain/connectorSyncLog.js';
 
 /**
  * HRIS / payroll integration for ASC 718 (feature 11). OAuth2 connect + pull of
@@ -305,7 +306,7 @@ export async function runDueHrisSyncs(deps: {
    * silently doing less than the manual pull beside it.
    */
   credentials?: Partial<Record<HrisProvider, ProviderCredentials>>;
-  log?: { warn: (o: unknown, m?: string) => void };
+  log?: FailureLogger;
 }): Promise<number> {
   const fetchFn = deps.fetchFn ?? fetch;
   const due = await findDueConnections(deps.pool);
@@ -323,7 +324,20 @@ export async function runDueHrisSyncs(deps: {
           });
           return true;
         } catch (err) {
-          deps.log?.warn({ err, connectionId: connection.id }, 'scheduled HRIS sync failed');
+          if (deps.log) {
+            logConnectorSyncFailure(
+              deps.log,
+              err,
+              {
+                family: 'hris',
+                provider: connection.provider,
+                connectionId: connection.id,
+                valuationId: connection.valuation_id,
+                priorFailures: connection.sync_failures,
+              },
+              { scheduled: true },
+            );
+          }
           return false;
         }
       }),
@@ -455,7 +469,18 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
       // error" — was a promise nothing kept for the insert loop, which threw
       // past every write that would have put anything there. R186 gave the
       // loop the catch that makes this sentence true.
-      req.log.warn({ err, provider, connectionId: connection.id }, 'HRIS sync failed');
+      logConnectorSyncFailure(
+        req.log,
+        err,
+        {
+          family: 'hris',
+          provider,
+          connectionId: connection.id,
+          valuationId: valuation.id,
+          priorFailures: connection.sync_failures,
+        },
+        { scheduled: false },
+      );
       throw problems.unprocessable(
         err instanceof IntegrationError
           ? `Sync failed: ${err.message}`
