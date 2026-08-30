@@ -443,9 +443,36 @@ export async function runAiPipeline(
   // bounds hand-entry enforces. `sanitizeExtractedInputs` drops the figures
   // an analyst could not have typed and reports them rather than the whole
   // extraction being lost to one bad field.
+  //
+  // Only when this worker is the one that ended the run. `completeAiJob`
+  // refuses to write a second ending over the reaper's (round 224) and hands
+  // back the ending that stands — but the *write* this run came to make sat
+  // below that guard and fired regardless. A run reaped at fifteen minutes
+  // whose worker came back at sixteen therefore set the engagement's engine
+  // inputs from a run the audit trail records as failed: `params_updated` with
+  // an `ai` actor, a changed volatility, and no successful job anywhere to
+  // account for it. Whoever went looking would find the run that produced
+  // those figures marked `reaped`.
+  //
+  // Guarding the effect with the same rule as the status keeps the two
+  // together: the ending that stands decides whether the work counts. The
+  // figures go with the run — the row carries the reaper's ending and no
+  // result, so `/ai/extract/apply` cannot reach them either — and the remedy
+  // is the one the trail already implies, which is to run it again.
   let appliedInputs: Record<string, unknown> | null = null;
   let rejectedInputs: RejectedInput[] = [];
-  if (pipeline === 'extract' && args.autoApply) {
+  if (completed.status !== 'succeeded') {
+    deps.log?.warn(
+      {
+        valuationId: valuation.id,
+        jobId: job.id,
+        pipeline,
+        status: completed.status,
+        autoApply: args.autoApply,
+      },
+      'AI run finished after its job had already been settled; nothing applied',
+    );
+  } else if (pipeline === 'extract' && args.autoApply) {
     const { applied, rejected } = sanitizeExtractedInputs(response.result?.engine_inputs);
     rejectedInputs = rejected;
     if (rejected.length > 0) {

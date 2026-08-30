@@ -1,3 +1,4 @@
+import Fastify from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
 import { listGrants } from '../../src/repos/grants.js';
@@ -7,6 +8,9 @@ import { runDueCapTableSyncs } from '../../src/routes/capTableSync.js';
 import { runDueHrisSyncs } from '../../src/routes/hris.js';
 import { oldestActiveJobs } from '../../src/repos/jobs.js';
 import { AI_JOB_STALE_MS, completeAiJob, createAiJob, reapStaleAiJobs } from '../../src/repos/aiJobs.js';
+import { runAiPipeline } from '../../src/routes/ai.js';
+import { findParams } from '../../src/repos/params.js';
+import { findValuationById } from '../../src/repos/valuations.js';
 import {
   authHeader,
   interceptPoolQueries,
@@ -611,6 +615,70 @@ describe.skipIf(!dbUp)('what an operation leaves behind when it dies halfway', (
       );
       expect(rows).toHaveLength(1);
       expect(rows[0]!.payload).toMatchObject({ status: 'failed', reaped: true });
+    });
+
+    /**
+     * The other half of the same race: the worker's *write*, not its status.
+     *
+     * R224 stopped a late worker from reopening a reaped run as `succeeded`.
+     * The auto-apply sat below that guard and fired on the response regardless,
+     * so a run the trail records as reaped still set the engagement's engine
+     * inputs — `params_updated` under an `ai` actor, with no successful job
+     * anywhere to account for the figures.
+     */
+    it('applies nothing when the run it belongs to was settled while it was out', async () => {
+      const v = await seedValuation('Late Extraction Co');
+      // The stub reaps the job mid-call: the worker is out, the fifteen minutes
+      // pass, the reaper closes the row, and only then does the answer arrive.
+      const stub = Fastify({ logger: false });
+      stub.post('/ai/v1/pipelines/extract', async (_req, reply) => {
+        const { rows } = await ctx.pool.query<{ id: string }>(
+          `SELECT id FROM ai_jobs WHERE valuation_id = $1 AND status = 'running'`,
+          [v.id],
+        );
+        expect(rows).toHaveLength(1);
+        await age(rows[0]!.id, AI_JOB_STALE_MS * 2);
+        expect((await reapStaleAiJobs(ctx.pool)).map((r) => r.id)).toContain(rows[0]!.id);
+        return reply.send({
+          model: 'stub-model',
+          result: { engine_inputs: { volatility: 0.61, cash: 4_000_000 } },
+        });
+      });
+      await stub.listen({ port: 0, host: '127.0.0.1' });
+      const address = stub.server.address();
+      const aiUrl = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
+
+      try {
+        const valuation = (await findValuationById(ctx.pool, v.id))!;
+        const { job, appliedInputs } = await runAiPipeline(
+          { pool: ctx.pool, aiUrl, documentsDir: ctx.documentsDir ?? './data/documents' },
+          {
+            valuation,
+            pipeline: 'extract',
+            anonymize: false,
+            autoApply: true,
+            createdBy: ops.id,
+            actor: { actorType: 'ai', actorId: ops.id, source: 'ai-service' },
+          },
+        );
+
+        // The reaper's ending stands, and nothing was applied under it.
+        expect(job.status).toBe('failed');
+        expect(job.error).toContain('reaped');
+        expect(appliedInputs).toBeNull();
+
+        const params = await findParams(ctx.pool, v.id);
+        expect(params?.engine_inputs ?? {}).toEqual({});
+
+        // No `params_updated` attributable to a run that failed.
+        const { rows: events } = await ctx.pool.query<{ type: string }>(
+          `SELECT type FROM valuation_events WHERE valuation_id = $1 AND type = 'params_updated'`,
+          [v.id],
+        );
+        expect(events).toHaveLength(0);
+      } finally {
+        await stub.close();
+      }
     });
 
     it('settles a job whose own failure write could not be recorded', async () => {
