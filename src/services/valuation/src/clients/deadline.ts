@@ -20,6 +20,7 @@
  */
 
 import { describeTransportFailure, markFailure, transportFailureEchoesMessage } from '@n409/shared';
+import { findUnstorableText } from '../domain/nulBytes.js';
 import { parseRetryAfter } from '../domain/partnerWebhooks.js';
 
 /** Token exchange / connection identification — small, latency-sensitive calls. */
@@ -344,4 +345,52 @@ export async function readJsonArray(res: Response): Promise<unknown[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * The longest provider-supplied identity string this platform stores.
+ *
+ * Every column these land in is `text`, so this is not the database's bound —
+ * it is the same 255 the connect forms and the company-profile editor carry,
+ * applied to a value nobody typed.
+ */
+export const MAX_PROVIDER_TEXT = 255;
+
+/**
+ * A provider's identity text — a company name, an org handle, an `asOf` — as
+ * something this platform will store, or null.
+ *
+ * `readJson` guarantees an object and nothing about its fields, and the three
+ * connector clients then read names out of it with a cast. What they got back
+ * went two places, and the second is the one that bites:
+ *
+ *   - a `text` column (`external_company_name`, `external_org_name`), where a
+ *     non-string is whatever the driver makes of it (`[object Object]`) and a
+ *     megabyte of one is stored whole; and
+ *   - a `jsonb` one — `recordEvent`'s payload for the connect event, and
+ *     `last_sync_summary` for the pull — where `U+0000` and a lone surrogate
+ *     are not stored wrong, they are *refused*, by the driver, with an error no
+ *     repo recognises (`domain/nulBytes.ts` has the two codes and why).
+ *
+ * A refused jsonb write is not one bad field. `upsertConnection` writes the row
+ * and its event in one transaction, so a `tenantName` carrying a NUL rolls the
+ * connection back after the OAuth code has been spent — the analyst reconnects,
+ * the provider sends the same name, and the connect fails identically forever.
+ * `recordSync` is worse still: it runs *after* the pull has been applied and
+ * outside every catch in the sync, so the grants or the cap table are written,
+ * the connection's `next_sync_at` is never advanced, no error is recorded, and
+ * the sweep re-pulls and re-applies the same payload every fifteen minutes
+ * against a connection whose page says it is healthy.
+ *
+ * Null rather than a truncation or a strip, per `extractIdentity` and the HRIS
+ * mapper this generalises: half a value presented as whole, or an edited one
+ * stored under a success, is the silent corruption this codebase refuses
+ * elsewhere. What the absence then *means* is the caller's — a missing company
+ * name is cosmetic, a missing external id makes a pull impossible.
+ */
+export function storableProviderText(value: unknown, max: number = MAX_PROVIDER_TEXT): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > max) return null;
+  return findUnstorableText(trimmed) ? null : trimmed;
 }

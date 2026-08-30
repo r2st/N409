@@ -16,6 +16,7 @@ import {
   OAUTH_TIMEOUT_MS,
   providerRefused,
   readJson,
+  storableProviderText,
   withDeadline,
 } from './deadline.js';
 import { refreshOAuthTokens, type RefreshedTokens } from './oauthRefresh.js';
@@ -238,18 +239,14 @@ const MAX_COMPANY_NAME = 255;
 /**
  * A provider string this platform will store, trimmed — or null.
  *
- * Null rather than a truncation, for the reason `extractIdentity` gives about
- * SAML claims: half a value presented as whole is the silent corruption this
- * codebase avoids elsewhere. What null then *means* is the caller's decision —
- * a missing company name is cosmetic, a missing external id makes the grant
- * unimportable — which is why this returns the absence rather than deciding.
+ * The rule now lives in `clients/deadline.ts` beside `readJson`, because it is
+ * the same rule at all three connector families and this one was the only file
+ * that had it. It also gained a case this copy was missing: a *lone surrogate*
+ * is refused by Postgres in a `jsonb` column exactly as a NUL is, and
+ * `external_company_name` reaches one — `recordSync`'s summary — after the
+ * grants have already been imported. See `storableProviderText`.
  */
-function storableText(value: unknown, max: number): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.length > max) return null;
-  return trimmed.includes('\u0000') ? null : trimmed;
-}
+const storableText = storableProviderText;
 
 /**
  * Anything the mapper is handed that should be a list of records.

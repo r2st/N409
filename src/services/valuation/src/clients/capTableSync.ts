@@ -12,6 +12,7 @@
  */
 
 import { cellText, meansNoFigure, parseNumericCell } from '../domain/capTable.js';
+import { findUnstorableText, UNSTORABLE_REASONS } from '../domain/nulBytes.js';
 import type { CapTableEntry, CapTableClassType, NumericCapTableField } from '../domain/capTable.js';
 import {
   IMPORT_TIMEOUT_MS,
@@ -19,6 +20,7 @@ import {
   OAUTH_TIMEOUT_MS,
   providerRefused,
   readJson,
+  storableProviderText,
   withDeadline,
 } from './deadline.js';
 import { refreshOAuthTokens, type RefreshedTokens } from './oauthRefresh.js';
@@ -128,8 +130,14 @@ export async function exchangeCode(
     accessToken: body.access_token,
     refreshToken: body.refresh_token ?? null,
     expiresAt: body.expires_in ? new Date(Date.now() + body.expires_in * 1000) : null,
-    externalCompanyId: body.company_id ?? null,
-    externalCompanyName: body.company_name ?? null,
+    // Held to what this platform can store, like the HRIS exchange beside it.
+    // Both land on `cap_table_connections` as `text` *and* in the connect
+    // event's `jsonb` payload, which `upsertConnection` writes in the same
+    // transaction as the row — so a `company_name` the driver refuses does not
+    // store wrong, it rolls the whole connection back after the one-time OAuth
+    // code has been spent. See `storableProviderText`.
+    externalCompanyId: storableProviderText(body.company_id),
+    externalCompanyName: storableProviderText(body.company_name),
   };
 }
 
@@ -261,7 +269,24 @@ function nameOf(
   for (const key of keys) {
     const raw = row[key];
     if (raw === undefined || raw === null) continue;
-    if (typeof raw === 'string') return raw.trim();
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      // The name is copied into `cap_tables.entries`, a `jsonb` document, so a
+      // NUL byte or a lone surrogate in it is refused by the driver rather than
+      // stored — and the refusal reaches `syncCapTableConnection`'s save
+      // handler as an unrecognised database error, recorded against the
+      // connection as "pulled but could not be saved" with nothing naming the
+      // class it came from. Refused here, beside the sibling checks, so the
+      // message says which provider and which security.
+      const unstorable = trimmed ? findUnstorableText(trimmed) : null;
+      if (unstorable) {
+        throw new IntegrationError(
+          `${label} returned a ${what} whose name cannot be stored as sent — ` +
+            `it contains ${UNSTORABLE_REASONS[unstorable.reason]}`,
+        );
+      }
+      return trimmed;
+    }
     if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
     throw new IntegrationError(`${label} returned a ${what} whose name is not text`);
   }
@@ -320,11 +345,24 @@ function withUnreadable(entry: CapTableEntry, figures: RowFigures): CapTableEntr
   return entry;
 }
 
-/** A provider-supplied string field, or null when it is not one. */
+/**
+ * A provider-supplied string field, or null when it is not one this platform
+ * will store.
+ *
+ * Both callers land in a `jsonb` column — `recordSync`'s `last_sync_summary`
+ * carries `external_company_name` and `as_of` — and `recordSync` runs after the
+ * pulled cap table has already been saved and outside every catch in
+ * `syncCapTableConnection`. A `companyName` carrying a NUL byte or half a
+ * character is therefore not a cosmetic field written wrong: the driver refuses
+ * the summary write, the connection's `next_sync_at` is never advanced, no
+ * error is recorded against it, and the sweep re-pulls and re-applies the same
+ * provider payload every fifteen minutes under a card that reads as healthy.
+ * See `storableProviderText`.
+ */
 function textField(payload: Record<string, unknown>, ...keys: readonly string[]): string | null {
   for (const key of keys) {
-    const raw = payload[key];
-    if (typeof raw === 'string' && raw !== '') return raw;
+    const value = storableProviderText(payload[key]);
+    if (value !== null) return value;
   }
   return null;
 }

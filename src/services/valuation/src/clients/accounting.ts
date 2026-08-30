@@ -19,6 +19,7 @@ import {
   providerRefused,
   readJson,
   readJsonArray,
+  storableProviderText,
   withDeadline,
 } from './deadline.js';
 import { refreshOAuthTokens, type RefreshedTokens } from './oauthRefresh.js';
@@ -241,12 +242,18 @@ export async function exchangeCode(
         }),
       );
       if (conns.ok) {
-        const list = (await readJsonArray(conns)) as Array<{
-          tenantId?: string;
-          tenantName?: string;
-        }>;
-        tokens.externalOrgId = list[0]?.tenantId ?? null;
-        tokens.externalOrgName = list[0]?.tenantName ?? null;
+        const list = await readJsonArray(conns);
+        // `readJsonArray` guarantees a list and nothing about what is in it,
+        // so both of these were whatever Xero's JSON had at those keys. They
+        // land on `accounting_connections` as `text` *and* in the connect
+        // event's `jsonb` payload, written by `upsertConnection` in the same
+        // transaction as the row — so a `tenantName` the driver refuses (a NUL
+        // byte, half a character) is not a cosmetic field stored wrong, it
+        // rolls the connection back after the one-time OAuth code has been
+        // spent, identically on every reconnect. See `storableProviderText`.
+        const org = list[0] as { tenantId?: unknown; tenantName?: unknown } | undefined;
+        tokens.externalOrgId = storableProviderText(org?.tenantId);
+        tokens.externalOrgName = storableProviderText(org?.tenantName);
       }
     } catch {
       // org identification is best-effort; the connection still works
