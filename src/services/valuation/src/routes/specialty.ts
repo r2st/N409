@@ -25,6 +25,7 @@ import {
   type SpecialtyKind,
 } from '../domain/specialty.js';
 import type { ValuationKind } from '../domain/valuation.js';
+import { kindLabel } from '../domain/valuationSelector.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
@@ -120,8 +121,9 @@ export function registerSpecialtyRoutes(
   const requireSpecialty = (kind: ValuationKind) => {
     if (!isSpecialtyKind(kind)) {
       throw problems.unprocessable(
-        `A ${kind} valuation does not run through the specialty pipeline — supported kinds: ` +
-          SPECIALTY_KINDS.join(', '),
+        `“${kindLabel(kind)}” does not run through the specialty pipeline — it runs through the ` +
+          `409A engine, on the Calculations tab. The kinds this pipeline serves are: ` +
+          SPECIALTY_KINDS.map(kindLabel).join(', '),
       );
     }
     return kind;
@@ -276,7 +278,9 @@ export function registerSpecialtyRoutes(
     const form = await loadHmrcForm(deps.pool, valuation);
     if (!form) {
       throw problems.notFound(
-        `No HMRC valuation form applies to a ${valuation.kind} engagement (VAL231 is EMI, VAL230 is CSOP)`,
+        `No HMRC valuation form applies to this engagement — it is a “${kindLabel(valuation.kind)}”. ` +
+          `VAL231 is raised on an “${kindLabel('emi')}” and VAL230 on a “${kindLabel('csop')}”; ` +
+          `start one of those if the company needs a form.`,
       );
     }
     return { form };

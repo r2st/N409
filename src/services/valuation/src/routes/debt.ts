@@ -5,6 +5,7 @@ import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { postJson, toProblem, InternalServiceError } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { kindLabel } from '../domain/valuationSelector.js';
 import { todayLocal } from '../domain/calendarDate.js';
 import { CurrencyCode } from '../domain/currency.js';
 import { DEBT_FAIR_VALUE, requireStorableFigure } from '../domain/numericColumn.js';
@@ -203,7 +204,8 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       if (!valuation) throw problems.notFound();
       if (valuation.kind !== 'debt')
         throw problems.unprocessable(
-          `A debt instrument can only be linked to a 'debt' engagement; ${valuationId} is a '${valuation.kind}'`,
+          `A debt instrument can only be linked to a “${kindLabel('debt')}”; ${valuationId} is a ` +
+            `“${kindLabel(valuation.kind)}”. Link the instrument to a debt engagement, or create one.`,
         );
     }
 

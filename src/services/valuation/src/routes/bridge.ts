@@ -8,6 +8,7 @@ import { BridgeInputError, bridgeableKind, buildBridge } from '../domain/valuati
 import { SPECIALTY_KINDS } from '../domain/specialty.js';
 import { sameCompany, sameCompanyFilter } from '../domain/valuationHistory.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { kindLabel } from '../domain/valuationSelector.js';
 
 /**
  * Cross-period value-bridge (feature 3): GET /valuations/:id/bridge/:compareId
@@ -102,7 +103,9 @@ export function registerBridgeRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     const unbridgeable = [to, from].find((v) => !bridgeableKind(v.kind));
     if (unbridgeable) {
       throw problems.unprocessable(
-        `A ${unbridgeable.kind} valuation is not measured in the terms this bridge explains — it decomposes a 409A per-share value into equity value, allocation, DLOC and DLOM`,
+        `“${kindLabel(unbridgeable.kind)}” is not measured in the terms this bridge explains — it ` +
+          `decomposes a 409A per-share value into equity value, allocation, DLOC and DLOM. Bridge ` +
+          `two 409A valuations of the same company instead.`,
       );
     }
 

@@ -146,7 +146,8 @@ export function registerCompareRoutes(app: FastifyInstance, deps: { pool: pg.Poo
     // column that means "different product", not "the number moved".
     if (!comparableKinds(left.kind, right.kind)) {
       throw problems.unprocessable(
-        `A ${kindLabel(left.kind)} and a ${kindLabel(right.kind)} valuation measure different things and cannot be compared side by side`,
+        `A “${kindLabel(left.kind)}” and a “${kindLabel(right.kind)}” measure different things and ` +
+          `cannot be compared side by side. Compare two engagements of the same kind.`,
       );
     }
 

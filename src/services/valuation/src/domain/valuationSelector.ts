@@ -78,24 +78,58 @@ export interface SelectorResult {
   primary: SelectorRecommendation | null;
 }
 
+/**
+ * What each kind is called in the sentences people read.
+ *
+ * `Record<ValuationKind, string>` rather than the lookup-with-a-fallback this
+ * used to be: `kindLabel` echoes an unknown key on purpose, so a sixteenth kind
+ * added to the enum and not to this map was not a compile error, it was six
+ * refusals quietly reverting to the column value. Round 262 had five of those
+ * already — written raw rather than grown into — and the map is only worth
+ * fixing them against if it cannot go stale behind them.
+ */
+const KIND_LABEL_TEXT: Record<ValuationKind, string> = {
+  '409a': 'IRC 409A valuation',
+  '718': 'ASC 718 stock-based compensation',
+  fmv: 'Small-business fair market value',
+  '820': 'ASC 820 fair value measurement',
+  gifts: 'Gift & estate tax valuation',
+  qsbs: 'QSBS attestation (IRC §1202)',
+  ppa: 'Purchase price allocation (ASC 805)',
+  goodwill: 'Impairment testing (ASC 350/360)',
+  esop: 'ESOP valuation',
+  ip: 'IP / intangible asset valuation',
+  emi: 'EMI scheme valuation (UK)',
+  csop: 'CSOP scheme valuation (UK)',
+  ifrs2: 'IFRS 2 share-based payment',
+  fund: 'Fund portfolio valuation',
+  debt: 'Debt instrument valuation',
+};
+
+/** Tie-break (commercial likelihood) order. */
+const KIND_ORDER = [
+  '409a',
+  '718',
+  'fmv',
+  '820',
+  'gifts',
+  'qsbs',
+  'ppa',
+  'goodwill',
+  'esop',
+  'ip',
+  'emi',
+  'csop',
+  'ifrs2',
+  'fund',
+  'debt',
+] as const satisfies readonly ValuationKind[];
+
 /** Display names, in tie-break (commercial likelihood) order. */
-export const KIND_LABELS: ReadonlyArray<[ValuationKind, string]> = [
-  ['409a', 'IRC 409A valuation'],
-  ['718', 'ASC 718 stock-based compensation'],
-  ['fmv', 'Small-business fair market value'],
-  ['820', 'ASC 820 fair value measurement'],
-  ['gifts', 'Gift & estate tax valuation'],
-  ['qsbs', 'QSBS attestation (IRC §1202)'],
-  ['ppa', 'Purchase price allocation (ASC 805)'],
-  ['goodwill', 'Impairment testing (ASC 350/360)'],
-  ['esop', 'ESOP valuation'],
-  ['ip', 'IP / intangible asset valuation'],
-  ['emi', 'EMI scheme valuation (UK)'],
-  ['csop', 'CSOP scheme valuation (UK)'],
-  ['ifrs2', 'IFRS 2 share-based payment'],
-  ['fund', 'Fund portfolio valuation'],
-  ['debt', 'Debt instrument valuation'],
-];
+export const KIND_LABELS: ReadonlyArray<[ValuationKind, string]> = KIND_ORDER.map((kind) => [
+  kind,
+  KIND_LABEL_TEXT[kind],
+]);
 
 /**
  * The product's own name for a kind, so anything that names one to a reader —
@@ -104,7 +138,7 @@ export const KIND_LABELS: ReadonlyArray<[ValuationKind, string]> = [
  * should look like.
  */
 export function kindLabel(kind: string): string {
-  return KIND_LABELS.find(([k]) => k === kind)?.[1] ?? kind;
+  return KIND_LABEL_TEXT[kind as ValuationKind] ?? kind;
 }
 
 const TIE_ORDER = new Map(KIND_LABELS.map(([kind], i) => [kind, i]));

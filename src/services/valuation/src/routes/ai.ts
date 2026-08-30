@@ -33,6 +33,7 @@ import { listMarketResearch } from '../repos/marketResearch.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { readStoredBlob } from '../storage/blobFile.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { kindLabel } from '../domain/valuationSelector.js';
 import type { EventActor } from '../events/record.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import {
@@ -816,8 +817,9 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
         // Calculations tab that plainly shows one is a refusal nobody can act
         // on.
         throw problems.unprocessable(
-          `Run a ${valuation.kind} calculation before running this agent — this agent describes the ` +
-            'conclusion this engagement is reported on, and there is no run of that kind yet',
+          `This engagement has no “${kindLabel(valuation.kind)}” calculation yet — run one before ` +
+            'running this agent, which describes the conclusion the engagement is reported on. A ' +
+            'run of another kind does not answer for it.',
         );
       }
       extraPayload = { calculation: calculationPayload(calc) };

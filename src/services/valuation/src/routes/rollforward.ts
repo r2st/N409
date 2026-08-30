@@ -272,9 +272,10 @@ export function registerRollforwardRoutes(
     const unrollable = [valuation, prior].find((v) => !rollforwardableKind(v.kind));
     if (unrollable) {
       throw problems.unprocessable(
-        `A ${kindLabel(unrollable.kind)} is not measured in the figure a roll-forward carries — it ` +
+        `A “${kindLabel(unrollable.kind)}” is not measured in the figure a roll-forward carries — it ` +
           'compounds a prior appraisal’s concluded equity value forward to a new date, and a ' +
-          `${kindLabel(unrollable.kind)} calculation concludes no equity value.`,
+          `“${kindLabel(unrollable.kind)}” calculation concludes no equity value. Roll a 409A ` +
+          `forward instead.`,
       );
     }
     if (prior.currency !== valuation.currency) {

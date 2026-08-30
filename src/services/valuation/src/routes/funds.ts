@@ -5,6 +5,7 @@ import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { postJson, toProblem, InternalServiceError } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { kindLabel } from '../domain/valuationSelector.js';
 import { todayLocal } from '../domain/calendarDate.js';
 import { CurrencyCode } from '../domain/currency.js';
 import { FUND_MARK_FAIR_VALUE, requireStorableFigure } from '../domain/numericColumn.js';
@@ -482,7 +483,8 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       // engagement would put a NAV schedule into a common-stock opinion.
       if (valuation.kind !== 'fund')
         throw problems.unprocessable(
-          `A fund portfolio can only be linked to a 'fund' engagement; ${valuationId} is a '${valuation.kind}'`,
+          `A fund portfolio can only be linked to a “${kindLabel('fund')}”; ${valuationId} is a ` +
+            `“${kindLabel(valuation.kind)}”. Link the portfolio to a fund engagement, or create one.`,
         );
     }
 
