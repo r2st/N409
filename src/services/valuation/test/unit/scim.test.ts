@@ -330,6 +330,23 @@ describe('activeFromPatch', () => {
     expect(activeFromPatch({ Operations: 'bad' })).toBeUndefined();
   });
 
+  /*
+   * An element of the list, rather than the list. `[null]` reached `op.path`
+   * and threw, which the scoped handler answers as a 500 — the one status the
+   * PATCH route is explicit about not being able to afford, because an IdP
+   * retries a failed deprovision indefinitely and the account stays live for
+   * the whole of it.
+   */
+  it('skips an operation that is not an object rather than throwing on it', () => {
+    expect(activeFromPatch({ Operations: [null] })).toBeUndefined();
+    expect(activeFromPatch({ Operations: ['replace', 42, ['active', false]] })).toBeUndefined();
+  });
+
+  it('still reads a readable operation beside an unreadable one', () => {
+    const body = { Operations: [null, { op: 'replace', path: 'active', value: false }] };
+    expect(activeFromPatch(body)).toBe(false);
+  });
+
   // Microsoft Entra ID sends `active` as a capitalised *string*, not a JSON
   // boolean. Boolean("False") is true, so a deprovision used to answer 200 and
   // leave the offboarded account fully active.

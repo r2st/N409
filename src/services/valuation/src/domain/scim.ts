@@ -313,6 +313,24 @@ export function activeFromPatch(body: unknown): boolean | undefined {
   const ops = (body as Record<string, unknown>).Operations;
   if (!Array.isArray(ops)) return undefined;
   for (const raw of ops) {
+    /*
+     * The element is asserted to be an object and was not checked to be one.
+     *
+     * `{"Operations": [null]}` — which a connector emits from an empty slot in
+     * its own op list, and which anyone holding a SCIM token can send by hand —
+     * reached `op.path` and threw `Cannot read properties of null`. The scoped
+     * error handler answers that as a 500, on a route whose own comment two
+     * files away spells out the cost: "an IdP sees a 500 on a deprovision it
+     * will then retry forever". The offboarded account stays active for as long
+     * as the loop runs, and the loop does not stop.
+     *
+     * Skipped rather than refused, unlike the create path's bounds: an
+     * operation this cannot read is an operation that does not toggle `active`,
+     * which is the same answer `Operations: 'bad'` and a `displayName` replace
+     * already get. A PATCH carrying one readable deactivation and one null is
+     * still a deactivation, and refusing the whole body would lose it.
+     */
+    if (!raw || typeof raw !== 'object') continue;
     const op = raw as Record<string, unknown>;
     const path = typeof op.path === 'string' ? op.path.toLowerCase() : '';
     // RFC 7644 names the ops in lower case but IdPs capitalise them freely

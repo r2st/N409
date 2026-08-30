@@ -84,6 +84,33 @@ describe.skipIf(!dbUp)('SCIM adversarial payloads', () => {
       expect(res.json().active).toBe(false);
     });
 
+    /*
+     * The one status this route cannot afford. `Operations: [null]` reached
+     * `op.path` in `activeFromPatch` and threw, and a `TypeError` under this
+     * prefix leaves as a 500 — which Okta and Entra retry indefinitely, so the
+     * account the directory is trying to offboard stays live for the whole of
+     * the loop while the loop hammers the pool.
+     */
+    it('answers a PatchOp with an unreadable operation rather than a 500', async () => {
+      const created = await scimSend('POST', '/scim/v2/Users', { userName: 'ct-nullop@example.com' });
+      expect(created.statusCode).toBe(201);
+      const res = await scimSend('PATCH', `/scim/v2/Users/${created.json().id}`, {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+        Operations: [null],
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().active).toBe(true);
+    });
+
+    it('deprovisions from a PatchOp whose list also holds an unreadable operation', async () => {
+      const created = await scimSend('POST', '/scim/v2/Users', { userName: 'ct-mixedop@example.com' });
+      const res = await scimSend('PATCH', `/scim/v2/Users/${created.json().id}`, {
+        Operations: [null, { op: 'replace', path: 'active', value: false }],
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().active).toBe(false);
+    });
+
     it('still accepts application/json, which is what the older connectors send', async () => {
       const res = await scimSend(
         'POST',
