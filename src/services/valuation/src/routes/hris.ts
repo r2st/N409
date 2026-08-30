@@ -11,6 +11,8 @@ import {
   authorizeUrl,
   exchangeCode,
   fetchRosterAndGrants,
+  refreshTokens,
+  TOKEN_REFRESH_SKEW_MS,
   type FetchFn,
   type HrisProvider,
   type ProviderCredentials,
@@ -25,6 +27,7 @@ import {
   revokeConnection,
   setSyncFrequency,
   toPublic,
+  updateTokens,
   upsertConnection,
   type HrisConnectionRow,
 } from '../repos/hrisConnections.js';
@@ -106,20 +109,64 @@ export interface HrisSyncOutcome {
 }
 
 /**
+ * The access token to present to the provider, renewed first if it is spent.
+ *
+ * The connection row has carried a `refresh_token` and a `token_expires_at`
+ * since the feature shipped and nothing read either one, so a connection
+ * worked for exactly as long as its first access token did. What happened next
+ * was not a visible break: the pull came back `401`, `describeTransportFailure`
+ * wrote "Gusto roster fetch failed (401)" to `last_error`, `recordSyncError`
+ * moved the connection to `error` — and `findDueConnections` only returns
+ * `connected` rows, so the schedule stopped there and stayed stopped. The card
+ * shows an error against a `last_synced_at` that quietly recedes, and the ASC
+ * 718 roster behind it goes stale while the credential that would have renewed
+ * it sits unread in the next column.
+ *
+ * Refreshed proactively rather than on the 401, because the 401 is not
+ * self-describing: a provider answers it for an expired token, a revoked app
+ * and a token belonging to a company the connection can no longer read, and
+ * `token_expires_at` is the one of those we were told about at connect time.
+ *
+ * Three ways this declines to refresh, each falling through to the stored
+ * token so the provider gets to give the real answer:
+ *   - the provider never told us an expiry (`token_expires_at IS NULL`);
+ *   - it gave us no refresh token to spend;
+ *   - this deployment has no client credentials for the provider, which is a
+ *     configuration fact rather than something about this connection.
+ */
+async function accessTokenFor(
+  deps: { pool: pg.Pool; fetchFn: FetchFn; credentials?: Partial<Record<HrisProvider, ProviderCredentials>> },
+  connection: HrisConnectionRow,
+): Promise<string> {
+  const expiresAt = connection.token_expires_at;
+  if (!expiresAt || expiresAt.getTime() - Date.now() > TOKEN_REFRESH_SKEW_MS) return connection.access_token;
+  const creds = deps.credentials?.[connection.provider];
+  if (!creds || !connection.refresh_token) return connection.access_token;
+  const refreshed = await refreshTokens(connection.provider, creds, connection.refresh_token, deps.fetchFn);
+  await updateTokens(deps.pool, connection.id, refreshed);
+  return refreshed.accessToken;
+}
+
+/**
  * Pull the roster + grants and create any grants not already imported. Shared
  * by the pull route and the scheduler. Records success/error on the connection.
  */
 export async function syncHrisConnection(
-  deps: { pool: pg.Pool; fetchFn: FetchFn },
+  deps: {
+    pool: pg.Pool;
+    fetchFn: FetchFn;
+    credentials?: Partial<Record<HrisProvider, ProviderCredentials>>;
+  },
   connection: HrisConnectionRow,
   opts: { actorId: string },
 ): Promise<HrisSyncOutcome> {
   let pull;
   try {
+    const accessToken = await accessTokenFor(deps, connection);
     pull = await fetchRosterAndGrants(
       connection.provider,
       {
-        accessToken: connection.access_token,
+        accessToken,
         externalCompanyId: connection.external_company_id,
         externalCompanyName: connection.external_company_name,
       },
@@ -235,6 +282,13 @@ export async function syncHrisConnection(
 export async function runDueHrisSyncs(deps: {
   pool: pg.Pool;
   fetchFn?: FetchFn;
+  /**
+   * The same OAuth client credentials the routes hold. Without them the sweep
+   * cannot renew an expired token, which is the failure this whole path exists
+   * to survive — so the scheduler passes them in rather than the sweep
+   * silently doing less than the manual pull beside it.
+   */
+  credentials?: Partial<Record<HrisProvider, ProviderCredentials>>;
   log?: { warn: (o: unknown, m?: string) => void };
 }): Promise<number> {
   const fetchFn = deps.fetchFn ?? fetch;
@@ -248,7 +302,7 @@ export async function runDueHrisSyncs(deps: {
     due.map((connection) =>
       limit(async () => {
         try {
-          await syncHrisConnection({ pool: deps.pool, fetchFn }, connection, {
+          await syncHrisConnection({ pool: deps.pool, fetchFn, credentials: deps.credentials }, connection, {
             actorId: connection.connected_by ?? connection.id,
           });
           return true;
@@ -363,7 +417,11 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
       throw problems.unprocessable(`${HRIS_PROVIDER_LABELS[provider]} is not connected`);
     }
     try {
-      return await syncHrisConnection({ pool: deps.pool, fetchFn }, connection, { actorId: principal.id });
+      return await syncHrisConnection(
+        { pool: deps.pool, fetchFn, credentials: deps.credentials },
+        connection,
+        { actorId: principal.id },
+      );
     } catch (err) {
       // Only a provider-attributable failure is echoed. This catch used to
       // forward `err.message` whatever it was, and the sync's insert loop had

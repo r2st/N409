@@ -48,14 +48,30 @@ const ROSTER = {
 let rosterBody: unknown = ROSTER;
 /** When set, the roster endpoint answers 503 — a provider-side failure. */
 let rosterFails = false;
+/** Every form body the provider's token endpoint was posted, in order. */
+let tokenCalls: Array<Record<string, string>> = [];
+/** Every bearer token the roster endpoint was presented, in order. */
+let rosterTokens: string[] = [];
+/** Swapped per test to make the token endpoint answer a refresh differently. */
+const defaultTokenResponder = (params: URLSearchParams): Response =>
+  params.get('grant_type') === 'refresh_token'
+    ? jsonResponse({ access_token: 'refreshed', expires_in: 3600 })
+    : jsonResponse({ access_token: 'tok', expires_in: 3600, refresh_token: 'r1', company_id: 'co1' });
+let tokenResponder: (params: URLSearchParams) => Response = defaultTokenResponder;
 
 function mockFetch() {
-  return vi.fn(async (url: string | URL | Request) => {
+  return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const u = String(url);
-    if (u.includes('/token'))
-      return jsonResponse({ access_token: 'tok', expires_in: 3600, company_id: 'co1' });
-    if (u.includes('/employees'))
+    if (u.includes('/token')) {
+      const params = new URLSearchParams(String(init?.body ?? ''));
+      tokenCalls.push(Object.fromEntries(params));
+      return tokenResponder(params);
+    }
+    if (u.includes('/employees')) {
+      const auth = (init?.headers as Record<string, string> | undefined)?.authorization ?? '';
+      rosterTokens.push(auth.replace(/^Bearer /, ''));
       return rosterFails ? jsonResponse({ error: 'upstream' }, 503) : jsonResponse(rosterBody);
+    }
     throw new Error(`unexpected fetch ${u}`);
   });
 }
@@ -74,6 +90,9 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
   beforeEach(() => {
     rosterBody = ROSTER;
     rosterFails = false;
+    tokenCalls = [];
+    rosterTokens = [];
+    tokenResponder = defaultTokenResponder;
   });
   afterAll(async () => ctx?.teardown());
 
@@ -412,6 +431,163 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     // import breaking.
     expect(connection.status).toBe('connected');
     expect(connection.last_error).toBeNull();
+  });
+
+  describe('an access token that has expired (R252)', () => {
+    /**
+     * The connection row has held a refresh token and an expiry since the
+     * feature shipped and nothing read either, so a scheduled sync worked for
+     * as long as the first access token did — two hours at Gusto — and then
+     * failed `401` forever, dropping out of `findDueConnections` on the first
+     * failure and never being tried again.
+     */
+    const expireToken = async (valuationId: string) =>
+      ctx.pool.query(
+        `UPDATE hris_connections SET token_expires_at = now() - interval '1 hour'
+          WHERE valuation_id = $1`,
+        [valuationId],
+      );
+
+    it('spends the refresh token and pulls with the new one', async () => {
+      const v = await connectedValuation();
+      await expireToken(v.id);
+      tokenResponder = (params) =>
+        params.get('grant_type') === 'refresh_token'
+          ? jsonResponse({ access_token: 'fresh', expires_in: 3600 })
+          : jsonResponse({ access_token: 'tok', expires_in: 3600, refresh_token: 'r1' });
+
+      const pull = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+        headers: authHeader(ops.token),
+      });
+
+      expect(pull.statusCode).toBe(200);
+      expect(tokenCalls.at(-1)).toMatchObject({ grant_type: 'refresh_token', client_id: 'cid' });
+      // The pull used the renewed credential, not the expired one it was
+      // holding when the sync started.
+      expect(rosterTokens).toEqual(['fresh']);
+      const { rows } = await ctx.pool.query<{ token_expires_at: Date; status: string }>(
+        'SELECT token_expires_at, status FROM hris_connections WHERE valuation_id = $1',
+        [v.id],
+      );
+      expect(rows[0]!.status).toBe('connected');
+      expect(rows[0]!.token_expires_at.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('keeps the refresh token the provider did not rotate', async () => {
+      // Most providers answer a refresh with an access token alone. Writing the
+      // absent one back as NULL would make this the last refresh the
+      // connection could ever perform.
+      const v = await connectedValuation();
+      await ctx.pool.query(
+        `UPDATE hris_connections SET token_expires_at = now() - interval '1 hour' WHERE valuation_id = $1`,
+        [v.id],
+      );
+      const before = await ctx.pool.query<{ refresh_token: string | null }>(
+        'SELECT refresh_token FROM hris_connections WHERE valuation_id = $1',
+        [v.id],
+      );
+      tokenResponder = (params) =>
+        params.get('grant_type') === 'refresh_token'
+          ? jsonResponse({ access_token: 'fresh', expires_in: 3600 })
+          : jsonResponse({ access_token: 'tok', expires_in: 3600, refresh_token: 'r1' });
+
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+        headers: authHeader(ops.token),
+      });
+
+      const after = await ctx.pool.query<{ refresh_token: string | null }>(
+        'SELECT refresh_token FROM hris_connections WHERE valuation_id = $1',
+        [v.id],
+      );
+      expect(after.rows[0]!.refresh_token).toBe(before.rows[0]!.refresh_token);
+      expect(after.rows[0]!.refresh_token).not.toBeNull();
+    });
+
+    it('says so in words when the provider refuses the refresh', async () => {
+      const v = await connectedValuation();
+      await expireToken(v.id);
+      tokenResponder = (params) =>
+        params.get('grant_type') === 'refresh_token'
+          ? jsonResponse({ error: 'invalid_grant' }, 400)
+          : jsonResponse({ access_token: 'tok', expires_in: 3600, refresh_token: 'r1' });
+
+      const pull = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+        headers: authHeader(ops.token),
+      });
+
+      expect(pull.statusCode).toBe(422);
+      expect(pull.json().detail).toMatch(/reconnect Rippling/i);
+      // The roster was never asked for with a credential we knew was spent.
+      expect(rosterTokens).toEqual([]);
+      const { rows } = await ctx.pool.query<{ status: string; last_error: string }>(
+        'SELECT status, last_error FROM hris_connections WHERE valuation_id = $1',
+        [v.id],
+      );
+      expect(rows[0]!.status).toBe('error');
+      expect(rows[0]!.last_error).toMatch(/reconnect Rippling/i);
+    });
+
+    it('leaves a briefly unwell token endpoint to the next tick', async () => {
+      // A 5xx from the auth server is not an ended authorisation, so the
+      // message must not tell anybody to reconnect.
+      const v = await connectedValuation();
+      await expireToken(v.id);
+      tokenResponder = (params) =>
+        params.get('grant_type') === 'refresh_token'
+          ? jsonResponse({ error: 'upstream' }, 503)
+          : jsonResponse({ access_token: 'tok', expires_in: 3600, refresh_token: 'r1' });
+
+      const pull = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${v.id}/hris/rippling/pull`,
+        headers: authHeader(ops.token),
+      });
+
+      expect(pull.statusCode).toBe(422);
+      expect(pull.json().detail).not.toMatch(/reconnect/i);
+      const { rows } = await ctx.pool.query<{ last_error: string }>(
+        'SELECT last_error FROM hris_connections WHERE valuation_id = $1',
+        [v.id],
+      );
+      expect(rows[0]!.last_error).toMatch(/token refresh failed \(503\)/);
+    });
+
+    it('does not renew a token on a connection that was revoked', async () => {
+      // `updateTokens` is guarded like every other writer on the row: a revoke
+      // landing mid-sync ends the connection, and writing a live token back
+      // over the blanked one would hand it a working credential again.
+      const v = await connectedValuation();
+      await expireToken(v.id);
+      const { updateTokens } = await import('../../src/repos/hrisConnections.js');
+      const { rows: before } = await ctx.pool.query<{ id: string }>(
+        'SELECT id FROM hris_connections WHERE valuation_id = $1',
+        [v.id],
+      );
+      await ctx.pool.query(
+        `UPDATE hris_connections SET status = 'revoked', access_token = '', refresh_token = NULL
+          WHERE id = $1`,
+        [before[0]!.id],
+      );
+
+      await updateTokens(ctx.pool, before[0]!.id, {
+        accessToken: 'fresh',
+        refreshToken: 'r2',
+        expiresAt: new Date(Date.now() + 3_600_000),
+      });
+
+      const { rows } = await ctx.pool.query<{ access_token: string; refresh_token: string | null }>(
+        'SELECT access_token, refresh_token FROM hris_connections WHERE id = $1',
+        [before[0]!.id],
+      );
+      expect(rows[0]!.access_token).toBe('');
+      expect(rows[0]!.refresh_token).toBeNull();
+    });
   });
 
   it('forbids HRIS import for non-ops users', async () => {

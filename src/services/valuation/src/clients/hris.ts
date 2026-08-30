@@ -10,7 +10,15 @@ import { isIsoCalendarDate } from '@n409/shared';
 import { isStorableEmail, MAX_EMAIL_LENGTH } from '../domain/email.js';
 import { INT4_MAX } from '../domain/int4.js';
 import { clampScheduleMonths } from '../domain/vesting.js';
-import { IMPORT_TIMEOUT_MS, IntegrationError, OAUTH_TIMEOUT_MS, readJson, withDeadline } from './deadline.js';
+import {
+  IMPORT_TIMEOUT_MS,
+  IntegrationError,
+  OAUTH_TIMEOUT_MS,
+  ReconnectRequiredError,
+  providerRefused,
+  readJson,
+  withDeadline,
+} from './deadline.js';
 
 export const HRIS_PROVIDERS = ['rippling', 'gusto', 'deel'] as const;
 export type HrisProvider = (typeof HRIS_PROVIDERS)[number];
@@ -123,6 +131,84 @@ export async function exchangeCode(
     // provider's token response had at those keys, cast rather than checked.
     externalCompanyId: storableText(body.company_id, MAX_COMPANY_NAME),
     externalCompanyName: storableText(body.company_name, MAX_COMPANY_NAME),
+  };
+}
+
+/**
+ * How long before a stored access token expires we stop trusting it.
+ *
+ * A roster pull is a 30-second call against a provider doing real work, and a
+ * token that expires while it is in flight fails the whole sync. Ninety
+ * seconds covers the call plus ordinary clock skew between this box and the
+ * provider's auth server, which is the other half of why a token that is
+ * "still valid for four seconds" is not.
+ */
+export const TOKEN_REFRESH_SKEW_MS = 90_000;
+
+/**
+ * Spend the stored refresh token for a new access token.
+ *
+ * The counterpart to `exchangeCode`, and the reason this file has a reason to
+ * read the `refresh_token` column at all — see {@link ReconnectRequiredError}
+ * for what its absence cost.
+ *
+ * TWO THINGS THIS DELIBERATELY DOES NOT DO.
+ *
+ * It does not invent an expiry. A refresh response without `expires_in` leaves
+ * `expiresAt` null, which the caller reads as "unknown" and therefore stops
+ * refreshing proactively; guessing an hour would be a number nobody chose
+ * governing when we hand a provider a credential.
+ *
+ * It does not report the absence of a rotated refresh token as a null. Most
+ * providers answer a refresh with `access_token` alone and expect the caller
+ * to keep using the refresh token it already had; a few rotate it on every
+ * use. Returning `null` for the first group and having the repo write it would
+ * erase the only credential that can renew the connection — turning a
+ * successful refresh into the last one that will ever work. `undefined` here
+ * means "unchanged", and `updateTokens` writes only what it is given.
+ */
+export async function refreshTokens(
+  provider: HrisProvider,
+  creds: ProviderCredentials,
+  refreshToken: string,
+  fetchFn: FetchFn = fetch,
+): Promise<{ accessToken: string; refreshToken: string | undefined; expiresAt: Date | null }> {
+  const label = HRIS_PROVIDER_LABELS[provider];
+  const e = ENDPOINTS[provider];
+  const res = await withDeadline(label, OAUTH_TIMEOUT_MS, (signal) =>
+    fetchFn(e.tokenUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
+      }).toString(),
+      signal,
+    }),
+  );
+  if (!res.ok) {
+    // RFC 6749 §5.2: the token endpoint answers `400 invalid_grant` for a
+    // refresh token that has been revoked or has expired, and `401
+    // invalid_client` for credentials this deployment can no longer use.
+    // Neither improves on the next tick, and retrying either is how a dead
+    // connection becomes a dead connection we call every fifteen minutes
+    // forever. Everything else — a 5xx, a gateway — is the provider being
+    // briefly unwell, and keeps the wording every other refusal here has.
+    if (res.status === 400 || res.status === 401) {
+      throw new ReconnectRequiredError(
+        `${label} no longer accepts the stored authorisation — reconnect ${label} to resume syncing.`,
+      );
+    }
+    throw providerRefused(label, 'token refresh', res);
+  }
+  const body = (await readJson(res, label)) as TokenResponse;
+  if (!body.access_token) throw new IntegrationError(`${label} returned no access token`);
+  return {
+    accessToken: body.access_token,
+    refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : undefined,
+    expiresAt: body.expires_in ? new Date(Date.now() + body.expires_in * 1000) : null,
   };
 }
 

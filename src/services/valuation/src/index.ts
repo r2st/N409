@@ -20,7 +20,7 @@ const { loadConfig } = await import('./config.js');
 const { createPool, attachPoolErrorHandler, resolvePoolTuning } = await import('./db/pool.js');
 const { migrate } = await import('./db/migrate.js');
 const { instrumentPool, QueryStats } = await import('./db/queryStats.js');
-const { buildApp, buildEmailTransports } = await import('./app.js');
+const { buildApp, buildEmailTransports, hrisCredentials } = await import('./app.js');
 const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
 const { retryFailedEmails } = await import('./hooks/emailRetry.js');
 const { retryDueDeliveries } = await import('./hooks/partnerWebhooks.js');
@@ -437,7 +437,7 @@ let capTableSyncTimer: NodeJS.Timeout | undefined;
 let hrisSyncTimer: NodeJS.Timeout | undefined;
 {
   const tick = scheduleSweep('hris-sync', async () => {
-    const n = await runDueHrisSyncs({ pool, log: app.log });
+    const n = await runDueHrisSyncs({ pool, credentials: hrisCredentials(config), log: app.log });
     if (n > 0) app.log.info({ processed: n }, 'HRIS sync scan');
   });
   hrisSyncTimer = setInterval(() => tick.run(), 15 * 60_000);

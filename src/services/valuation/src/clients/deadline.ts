@@ -74,6 +74,40 @@ export class IntegrationError extends Error {
 }
 
 /**
+ * The integration failure a retry cannot clear: the stored authorisation is
+ * gone, and only a person re-running the OAuth round trip will bring it back.
+ *
+ * Every one of these connectors keeps a `refresh_token` and a
+ * `token_expires_at`, and until this round nothing read either. What that
+ * meant is that a connection worked exactly as long as its first access token
+ * did — two hours at Gusto, one at QuickBooks — and then answered every
+ * scheduled pull with `401`, which the sync recorded as an ordinary transport
+ * failure and the card showed as `error` beside a `last_synced_at` that kept
+ * getting older. The credential that would have fixed it without anybody
+ * noticing was sitting in the next column.
+ *
+ * With a refresh in the path, the two failures have to be told apart, because
+ * they call for opposite handling. A provider that is briefly unwell should be
+ * tried again on the next tick. A refresh the provider *refused* —
+ * `invalid_grant`, the shape it answers with once the client has revoked the
+ * app or the refresh token has itself expired — will be refused identically
+ * every fifteen minutes until somebody reconnects, so the useful thing to do
+ * with it is stop, say so in words a person can act on, and leave the
+ * reconnect button as the next move.
+ *
+ * It extends `IntegrationError` because the sentence is still provider-
+ * attributable and still fit to publish: it names the provider and says the
+ * authorisation ended. Routes that already forward an `IntegrationError`'s
+ * message therefore forward this one unchanged.
+ */
+export class ReconnectRequiredError extends IntegrationError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReconnectRequiredError';
+  }
+}
+
+/**
  * The `IntegrationError` for a provider that answered, and refused.
  *
  * Every one of these clients wrote the refusal the same way —
