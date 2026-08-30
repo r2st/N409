@@ -13,11 +13,7 @@ import {
   type AiPipeline,
 } from '../domain/pipeline.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
-import {
-  latestCalculationForKind,
-  latestSucceededCalculation,
-  type CalculationRow,
-} from '../repos/calculations.js';
+import { latestCalculationForKind, type CalculationRow } from '../repos/calculations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
 import { sanitizeExtractedInputs, type RejectedInput } from './engineInputs.js';
 import { findDocumentsByIds, listDocuments, type DocumentRow } from '../repos/documents.js';
@@ -636,12 +632,43 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       throw problems.unprocessable('Upload at least one document before running this agent');
     }
 
-    // Agents that narrate or defend a result need a calculation to exist.
+    // Agents that narrate or defend a result need a calculation to exist — and
+    // it has to be a calculation of the shape this engagement is reported in.
+    //
+    // `latestSucceededCalculation` is the newest run of *any* shape, and a
+    // specialty engagement carries two: the Calculations tab offers the
+    // ordinary 409A compute on every kind, so an EMI or ASC 718 file whose
+    // analyst pressed that button holds a `{ approaches, discounts, ... }` row
+    // interleaved with its `{ kind, specialty }` ones in one `created_at DESC`
+    // ordering. Whichever was pressed last is what these three agents were
+    // handed, and all three write prose about the concluded figure: `explain`
+    // states the equity value and the per-share figure in its opening
+    // paragraph, `report_narrative` drafts the body of the deliverable, and
+    // `audit_defense` argues for the conclusion in front of an auditor. On an
+    // EMI engagement that had also been run through the 409A pipeline, each of
+    // them described a §409A conclusion that is not this engagement's answer,
+    // in an EMI report, with nothing on the page saying where the number came
+    // from.
+    //
+    // `latestCalculationForKind` is the same question the deliverable itself
+    // asks — the kind picks the run, rather than the last button pressed
+    // quietly redefining the kind — and it is what `currentExplanation` was
+    // already comparing the finished `explain` job against. The two disagreeing
+    // is what let the mismatch through as current rather than stale: the job
+    // was newer than the specialty run it was never shown, so the staleness
+    // gate passed it.
     let extraPayload: Record<string, unknown> | undefined;
     if (CALCULATION_DEPENDENT_PIPELINES.has(typedPipeline)) {
-      const calc = await latestSucceededCalculation(deps.pool, id);
+      const calc = await latestCalculationForKind(deps.pool, id, valuation.kind);
       if (!calc) {
-        throw problems.unprocessable('Run a calculation before running this agent');
+        // Named rather than generic: on a specialty engagement a 409A run may
+        // well be sitting there succeeded, and "run a calculation" against a
+        // Calculations tab that plainly shows one is a refusal nobody can act
+        // on.
+        throw problems.unprocessable(
+          `Run a ${valuation.kind} calculation before running this agent — this agent describes the ` +
+            'conclusion this engagement is reported on, and there is no run of that kind yet',
+        );
       }
       extraPayload = { calculation: calculationPayload(calc) };
     }
