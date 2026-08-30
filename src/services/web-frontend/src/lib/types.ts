@@ -551,6 +551,13 @@ export interface ReportTemplate {
 export interface AppNotification {
   id: string;
   valuation_id: string | null;
+  /**
+   * Where "Open →" goes for a notification that is not about an engagement —
+   * the billing page for a failed renewal, the job monitor for a stalled
+   * queue. An app-relative path or null; see NotificationsPage for why the
+   * page re-checks the shape it was handed.
+   */
+  link: string | null;
   type: string;
   title: string;
   body: string | null;

@@ -98,11 +98,29 @@ describe.skipIf(!dbUp)('notifications — batched fan-out', () => {
     const [batched] = await createNotifications(pool, [input]);
 
     expect(batched).toBeTruthy();
-    for (const key of ['user_id', 'valuation_id', 'type', 'title', 'body', 'read_at'] as const) {
+    for (const key of ['user_id', 'valuation_id', 'type', 'title', 'body', 'link', 'read_at'] as const) {
       expect(batched![key]).toEqual(single[key]);
     }
     // Distinct rows with distinct ids, not one row written twice.
     expect(batched!.id).not.toBe(single.id);
+  });
+
+  /**
+   * The link column (migration 0188) goes through the same `unnest`, and it is
+   * the one whose value is a navigation in the reader's browser. Both forms
+   * pass it through `appPath`, so a caller cannot store a destination outside
+   * the application by choosing the batched insert.
+   */
+  it('stores an app path and drops anything that leaves the app', async () => {
+    const [good] = await createNotifications(pool, [
+      { userId: recipients[2]!.id, type: 'subscription_canceled', title: 'Ended', link: '/billing' },
+    ]);
+    expect(good!.link).toBe('/billing');
+
+    const [bad] = await createNotifications(pool, [
+      { userId: recipients[2]!.id, type: 'subscription_canceled', title: 'Ended', link: '//evil.example' },
+    ]);
+    expect(bad!.link).toBeNull();
   });
 
   it('carries a null body and a null valuation through unchanged', async () => {
@@ -113,5 +131,6 @@ describe.skipIf(!dbUp)('notifications — batched fan-out', () => {
     ]);
     expect(row!.body).toBeNull();
     expect(row!.valuation_id).toBeNull();
+    expect(row!.link).toBeNull();
   });
 });

@@ -154,6 +154,9 @@ async function announce(
           recipients.map((userId) => ({
             userId,
             type: 'job_alert',
+            // The monitor is the page this alert is asking somebody to open,
+            // and until migration 0188 the notification could not name it.
+            link: '/admin/jobs',
             title:
               row.kind === 'stalled'
                 ? `${JOB_SOURCE_LABELS[row.source]} queue looks stalled`
@@ -189,6 +192,7 @@ async function announce(
         recipients.map((userId) => ({
           userId,
           type: 'job_alert_resolved',
+          link: '/admin/jobs',
           title: `${JOB_SOURCE_LABELS[row.source]} queue recovered`,
           body: row.detail,
         })),

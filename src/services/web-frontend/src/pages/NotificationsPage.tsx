@@ -39,6 +39,28 @@ import { Button, EmptyState, ErrorNote, LoadingBlock, Skeleton } from '../compon
  * always mounted. `ResultCount`'s note in components/ui explains why a region
  * inserted with its message already in it commonly says nothing at all.
  */
+/**
+ * Where this row's "Open →" goes, or null for a row with nowhere to go.
+ *
+ * `valuation_id` was the only destination the table could name, so the
+ * account-scoped notifications — a declined renewal, a cancelled
+ * subscription, a stalled queue — arrived as a sentence naming an action
+ * ("Update your card from the billing page") with nothing to click, while the
+ * email sent in the same breath carried the link. `link` (migration 0188) is
+ * the general answer and takes precedence; the valuation path stays the
+ * fallback so every existing row keeps working without a backfill.
+ *
+ * The shape is re-checked here even though the server refuses anything else at
+ * the write and a CHECK constraint refuses it at the column. This is the place
+ * the value becomes a navigation: React Router hands `//host` to the browser
+ * as a protocol-relative URL, and a reader who leaves the application from a
+ * link inside their own inbox has no way to tell it was not ours.
+ */
+function destinationOf(n: AppNotification): string | null {
+  if (n.link && /^\/[^/\\]/.test(n.link)) return n.link;
+  return n.valuation_id ? `/valuations/${n.valuation_id}` : null;
+}
+
 export function NotificationsPage() {
   const [notifications, setNotifications] = useState<AppNotification[] | null>(null);
   const [unread, setUnread] = useState(0);
@@ -171,10 +193,10 @@ export function NotificationsPage() {
                   <div className="tnum mt-1.5 text-xs text-ink-400">{formatDateTime(n.created_at)}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-3">
-                  {n.valuation_id && (
+                  {destinationOf(n) && (
                     <Link
-                      to={`/valuations/${n.valuation_id}`}
-                      aria-label={`Open the valuation for “${n.title}”`}
+                      to={destinationOf(n)!}
+                      aria-label={`Open the page for “${n.title}”`}
                       onClick={() => void markRead(n.id)}
                       className="text-xs font-semibold text-bond-600 hover:text-bond-700"
                     >

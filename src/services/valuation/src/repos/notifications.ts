@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { appPath } from '../domain/notificationLink.js';
 
 export interface NotificationRow {
   id: string;
@@ -8,6 +9,12 @@ export interface NotificationRow {
   type: string;
   title: string;
   body: string | null;
+  /**
+   * Where "Open →" goes, as an app-relative path (migration 0188). NULL keeps
+   * the original behaviour: the row falls back to its valuation, and a row with
+   * neither is drawn without a link at all.
+   */
+  link: string | null;
   read_at: Date | null;
   created_at: Date;
 }
@@ -18,6 +25,13 @@ export interface CreateNotificationInput {
   type: string;
   title: string;
   body?: string | null;
+  /**
+   * An app-relative destination for notifications that are not about an
+   * engagement — the billing page for a failed renewal, the job monitor for a
+   * stalled queue. Passed through `appPath`, which drops anything that is not
+   * one rather than storing it.
+   */
+  link?: string | null;
 }
 
 /** Accepts a pool or an in-transaction client so hooks can write atomically. */
@@ -26,10 +40,18 @@ export async function createNotification(
   input: CreateNotificationInput,
 ): Promise<NotificationRow> {
   const { rows } = await db.query<NotificationRow>(
-    `INSERT INTO notifications (id, user_id, valuation_id, type, title, body)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO notifications (id, user_id, valuation_id, type, title, body, link)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
-    [newUlid(), input.userId, input.valuationId ?? null, input.type, input.title, input.body ?? null],
+    [
+      newUlid(),
+      input.userId,
+      input.valuationId ?? null,
+      input.type,
+      input.title,
+      input.body ?? null,
+      appPath(input.link),
+    ],
   );
   return rows[0]!;
 }
@@ -55,9 +77,9 @@ export async function createNotifications(
   if (inputs.length === 0) return [];
   const ids = inputs.map(() => newUlid());
   const { rows } = await db.query<NotificationRow>(
-    `INSERT INTO notifications (id, user_id, valuation_id, type, title, body)
+    `INSERT INTO notifications (id, user_id, valuation_id, type, title, body, link)
      SELECT * FROM unnest(
-       $1::ulid[], $2::ulid[], $3::ulid[], $4::text[], $5::text[], $6::text[]
+       $1::ulid[], $2::ulid[], $3::ulid[], $4::text[], $5::text[], $6::text[], $7::text[]
      )
      RETURNING *`,
     [
@@ -67,6 +89,7 @@ export async function createNotifications(
       inputs.map((i) => i.type),
       inputs.map((i) => i.title),
       inputs.map((i) => i.body ?? null),
+      inputs.map((i) => appPath(i.link)),
     ],
   );
   // RETURNING is in insertion order for a single INSERT, but nothing in the

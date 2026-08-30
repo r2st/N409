@@ -10,6 +10,7 @@ import type { AppNotification } from '../src/lib/types';
 const unread: AppNotification = {
   id: '01N409NOTE00000000000000AA',
   valuation_id: '01N409VAL00000000000000AAA',
+  link: null,
   type: 'review_requested',
   title: 'Acme is ready for review',
   body: 'The engine finished the 409A calculation.',
@@ -20,6 +21,7 @@ const unread: AppNotification = {
 const read: AppNotification = {
   id: '01N409NOTE00000000000000BB',
   valuation_id: null,
+  link: null,
   type: 'welcome',
   title: 'Welcome to N409',
   body: null,
@@ -33,7 +35,7 @@ const read: AppNotification = {
  * choose between.
  */
 const markReadName = `Mark “${unread.title}” as read`;
-const openName = `Open the valuation for “${unread.title}”`;
+const openName = `Open the page for “${unread.title}”`;
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -142,7 +144,7 @@ describe('NotificationsPage', () => {
     mockApi([read]);
     renderPage();
     await screen.findByText(read.title);
-    expect(screen.queryByRole('link', { name: /^Open the valuation/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /^Open the page/ })).not.toBeInTheDocument();
   });
 
   it('clears everything with mark-all-read', async () => {
@@ -219,9 +221,7 @@ describe('NotificationsPage', () => {
     expect(await screen.findByRole('button', { name: markReadName })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: `Mark “${second.title}” as read` })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: openName })).toBeInTheDocument();
-    expect(
-      screen.getByRole('link', { name: `Open the valuation for “${second.title}”` }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: `Open the page for “${second.title}”` })).toBeInTheDocument();
   });
 
   it('keeps the reader in the list when the button they pressed removes itself', async () => {
@@ -276,6 +276,49 @@ describe('NotificationsPage', () => {
         'All notifications marked as read.',
       ),
     );
+  });
+
+  /**
+   * The account-scoped half of the table (R218).
+   *
+   * `valuation_id` was the only destination a row could name, so a declined
+   * renewal arrived as "Update your card from the billing page" with nothing
+   * to click, beside an email that carried the link. `link` is the general
+   * answer and outranks the valuation path.
+   */
+  it('opens a linked notification that belongs to no engagement', async () => {
+    const billing: AppNotification = {
+      ...read,
+      id: '01N409NOTE00000000000000EE',
+      link: '/billing',
+      read_at: null,
+      title: 'Your subscription payment did not go through',
+    };
+    mockApi([billing]);
+    renderPage();
+
+    const link = await screen.findByRole('link', { name: `Open the page for “${billing.title}”` });
+    expect(link).toHaveAttribute('href', '/billing');
+  });
+
+  it('prefers the stored link over the engagement it also names', async () => {
+    mockApi([{ ...unread, link: '/billing' }]);
+    renderPage();
+    expect(await screen.findByRole('link', { name: openName })).toHaveAttribute('href', '/billing');
+  });
+
+  /**
+   * The server refuses a non-path at the write and a CHECK constraint refuses
+   * it at the column, and this is still checked here — because this is the
+   * place the value becomes a navigation. React Router hands `//host` to the
+   * browser as a protocol-relative URL, and a reader who leaves the
+   * application from a link inside their own inbox cannot tell it was not ours.
+   */
+  it('will not follow a stored link that is not an app path', async () => {
+    mockApi([{ ...read, id: '01N409NOTE00000000000000FF', link: '//evil.example/take-over' }]);
+    renderPage();
+    await screen.findByText(read.title);
+    expect(screen.queryByRole('link', { name: /^Open the page/ })).not.toBeInTheDocument();
   });
 
   it('mounts the outcome region before the write, not with the message in it', async () => {

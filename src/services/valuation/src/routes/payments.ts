@@ -943,6 +943,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         {
           userId: invoice.user_id,
           type: 'invoice_refunded',
+          link: '/billing',
           title: `Refund issued — invoice ${invoice.number}`,
           body:
             `${amount} has been refunded against invoice ${invoice.number}. ` +

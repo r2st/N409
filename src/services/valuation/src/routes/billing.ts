@@ -412,6 +412,11 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         {
           userId,
           type: 'subscription_payment_failed',
+          // The sentence below names the page; the notification centre could
+          // not open it. Every engagement-scoped notification has carried a
+          // link since it had a `valuation_id` to point at — an account-scoped
+          // one had nowhere to point until migration 0188.
+          link: '/billing',
           title: 'Your subscription payment did not go through',
           body:
             (amount
@@ -475,6 +480,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         {
           userId: inv.userId,
           type: 'invoice_paid',
+          link: '/billing',
           title: message.subject,
           body: message.body.split('\n\n')[0]!,
         },
@@ -537,6 +543,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         {
           userId: sub.user_id,
           type: 'subscription_canceled',
+          link: '/billing',
           title: message.subject,
           body: message.body.split('\n\n')[0]!,
         },
@@ -605,6 +612,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         {
           userId: sub.user_id,
           type: 'subscription_trial_ending',
+          link: '/billing',
           title: message.subject,
           body: message.body.split('\n\n')[0]!,
         },
