@@ -11,7 +11,7 @@
  * injectable fetch so tests never touch the network.
  */
 
-import { meansNoFigure } from '../domain/capTable.js';
+import { cellText, meansNoFigure } from '../domain/capTable.js';
 import type { CapTableEntry, CapTableClassType, NumericCapTableField } from '../domain/capTable.js';
 import {
   IMPORT_TIMEOUT_MS,
@@ -216,14 +216,6 @@ function nameOf(
     throw new IntegrationError(`${label} returned a ${what} whose name is not text`);
   }
   return '';
-}
-
-/** The most of an unreadable value to quote back in a validation issue. */
-const CELL_TEXT_MAX = 120;
-
-function cellText(raw: unknown): string {
-  const text = Array.isArray(raw) ? 'a list' : typeof raw === 'object' ? 'an object' : String(raw).trim();
-  return text.length > CELL_TEXT_MAX ? `${text.slice(0, CELL_TEXT_MAX)}…` : text;
 }
 
 /**

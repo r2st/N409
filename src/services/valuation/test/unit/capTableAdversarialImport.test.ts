@@ -282,6 +282,51 @@ describe('adversarial imports — wrong types in numeric columns', () => {
    * sniffer for its semicolons, the separator rule for its decimal comma — and
    * the strip set privileged the one symbol those files do not use.
    */
+  /*
+   * `rows` on the import body is `z.record(z.string(), z.unknown())`, so any
+   * JSON value at all reaches the reader — and `String()` reads a figure out of
+   * some shapes. The provider reader one file away has refused exactly this on
+   * exactly these fields since it was written; this reader stringified.
+   */
+  describe('a cell holding a shape rather than a value', () => {
+    const mapping = { security_class: 'class', shares: 'shares', price_per_share: 'price' };
+
+    it('refuses a share count read out of a list rather than importing it', () => {
+      const [entry] = parseCapTable([{ class: 'Common', shares: [1000] }], mapping);
+      expect(entry!.shares).toBe(0);
+      expect(entry!.unreadable_numbers).toEqual({ shares: 'a list' });
+      expect(validateCapTable([entry!]).valid).toBe(false);
+    });
+
+    it('names an object cell as an object rather than quoting [object Object]', () => {
+      const [entry] = parseCapTable([{ class: 'Common', shares: '10', price: { usd: 2 } }], mapping);
+      expect(entry!.unreadable_numbers).toEqual({ price_per_share: 'an object' });
+      const issue = validateCapTable([entry!]).issues.find((i) => i.code === 'unreadable_number')!;
+      expect(issue.message).toContain('"an object"');
+      expect(issue.message).not.toContain('[object Object]');
+    });
+
+    it('does not mint a security class out of an object or a list', () => {
+      const entries = parseCapTable(
+        [
+          { class: { name: 'Series A' }, shares: '1000' },
+          { class: ['Series', 'B'], shares: '2000' },
+        ],
+        mapping,
+      );
+      expect(entries.map((e) => e.security_class)).toEqual(['', '']);
+      const codes = validateCapTable(entries).issues.map((i) => i.code);
+      expect(codes.filter((c) => c === 'missing_class')).toHaveLength(2);
+    });
+
+    it('keeps reading an ordinary numeric cell that arrives as a JSON number', () => {
+      const [entry] = parseCapTable([{ class: 'Common', shares: 1000, price: 1.25 }], mapping);
+      expect(entry!.shares).toBe(1000);
+      expect(entry!.price_per_share).toBe(1.25);
+      expect(entry!.unreadable_numbers).toBeUndefined();
+    });
+  });
+
   it('reads a money cell in the currency the sheet was written in', () => {
     const { rows } = parseCsvSheet(
       'class;shares;price\n' +

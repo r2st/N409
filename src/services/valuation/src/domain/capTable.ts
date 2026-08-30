@@ -268,6 +268,16 @@ const CURRENCY_SYMBOLS = /[\p{Sc}]/gu;
 export function parseNumericCell(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  // A cell that is an object or a list is not a figure written badly, it is a
+  // shape — and `String()` reads a figure out of some of them. `[1000]`
+  // stringifies to `1000` and imported as a share count of one thousand, off a
+  // body field typed `z.record(z.string(), z.unknown())` that accepts any JSON
+  // at all. The provider reader beside this one has refused the same thing on
+  // the same field since it was written ("a name that is an object or a list is
+  // refused rather than stringified"); this half was left reading whatever
+  // `String()` made of it. Null here, so `read` records it as a cell it could
+  // not read and `validateCapTable` raises the error rather than the figure.
+  if (typeof value === 'object') return null;
   let cleaned = String(value).replace(CURRENCY_SYMBOLS, '').replace(/\s/g, '');
   if (cleaned === '') return null;
   let negated = false;
@@ -329,6 +339,28 @@ const NOT_A_FIGURE = new Set([
 /** Does this cell say "no figure" rather than carrying one this failed to read? */
 export function meansNoFigure(text: string): boolean {
   return text === '' || NOT_A_FIGURE.has(text.toLowerCase());
+}
+
+/** The most of an unreadable value to quote back in a validation issue. */
+const CELL_TEXT_MAX = 120;
+
+/**
+ * A cell's contents as they are quoted back at whoever supplied them.
+ *
+ * Shared with the provider reader (`clients/capTableSync.ts`), which authored
+ * it: an object or a list is named as what it is rather than stringified, so
+ * the message says the column "reads an object" instead of quoting
+ * `[object Object]` at somebody as though the sheet had that in it. Bounded
+ * because the value is the thing that could not be read, and a megabyte of it
+ * would become the issue.
+ */
+export function cellText(raw: unknown): string {
+  const text = Array.isArray(raw)
+    ? 'a list'
+    : typeof raw === 'object' && raw !== null
+      ? 'an object'
+      : String(raw).trim();
+  return text.length > CELL_TEXT_MAX ? `${text.slice(0, CELL_TEXT_MAX)}\u2026` : text;
 }
 
 /**
@@ -737,7 +769,23 @@ export function parseCapTableSheet(
   const entries: CapTableEntry[] = [];
   const totals: CapTableTotalsRow[] = [];
   for (const [index, row] of rows.entries()) {
-    const name = String(readCell(row, mapping.security_class) ?? '').trim();
+    /*
+     * The name cell, or nothing when it holds a shape rather than text.
+     *
+     * `String()` of an object mints the class `[object Object]` and of a list
+     * mints `a,b` — a security class the sheet never named, carrying whatever
+     * share count sat beside it into the fully-diluted denominator. The
+     * provider reader states the rule ("a name that is an object or a list is
+     * refused rather than stringified") and this reader, on the same field, did
+     * the thing the rule forbids: `rows` on the import body is
+     * `z.record(z.string(), z.unknown())`, so any JSON value reaches here.
+     *
+     * Empty rather than a special issue, which puts the row through
+     * `missing_class` — there is no name in that cell, which is what that error
+     * says. The row is kept and reported, not dropped.
+     */
+    const nameCell = readCell(row, mapping.security_class);
+    const name = typeof nameCell === 'object' && nameCell !== null ? '' : String(nameCell ?? '').trim();
     /**
      * Read one mapped numeric column, keeping *why* it came back null.
      *
@@ -754,7 +802,7 @@ export function parseCapTableSheet(
       const raw = readCell(row, mapping[field]);
       const value = parse(raw);
       if (value === null) {
-        const text = raw === null || raw === undefined ? '' : String(raw).trim();
+        const text = raw === null || raw === undefined ? '' : cellText(raw);
         if (!meansNoFigure(text)) unreadable[field] = text;
       }
       return value;
