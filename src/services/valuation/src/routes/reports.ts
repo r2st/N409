@@ -59,7 +59,8 @@ import { latestCalculationForKind } from '../repos/calculations.js';
 import { findPartnerById } from '../repos/adminUsers.js';
 import { fetchPartnerLogoCached } from '../clients/partnerLogoCache.js';
 import { requirePrincipal } from '../plugins/auth.js';
-import type { EventActor } from '../events/record.js';
+import { recordEvent, type EventActor } from '../events/record.js';
+import { withTransaction } from '../db/pool.js';
 import { contentDisposition } from './documents.js';
 import type { Principal } from '../auth/rbac.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
@@ -949,11 +950,29 @@ export function registerReportRoutes(
     const version = report ? await getVersion(deps.pool, report.id, report.current_version) : null;
     if (!report || !version) throw problems.notFound('No report yet');
 
-    const pdf = await deliverablePdf(deps.pool, valuation, report, version, {
-      actorType: 'system',
-      actorId: principal.id,
-      source: 'report.pdf',
-    });
+    // `human`, not `system`. A person asked for this file; the mechanism they
+    // asked through is what `source` is for, and the activity log's actor
+    // filter is the reader that cannot tell the difference — a download filed
+    // under `system` is absent from "what did people do" and present in "what
+    // did the platform do on its own", which is the wrong answer twice.
+    const actor: EventActor = { actorType: 'human', actorId: principal.id, source: 'report.pdf' };
+    const pdf = await deliverablePdf(deps.pool, valuation, report, version, actor);
+    // The read itself, which nothing recorded.
+    //
+    // `report_rendered` fires when a version is *produced*. A published report
+    // is served from the stored bytes, so a deliverable pulled fifty times over
+    // a year left one row, dated the day it was made — while an unpublished one
+    // renders a stamped copy per download and so happened to leave a trail. The
+    // silent path was the published document, which is the one auditors and
+    // boards actually read.
+    await withTransaction(deps.pool, (client) =>
+      recordEvent(client, {
+        valuationId: valuation.id,
+        type: 'report_downloaded',
+        actor,
+        payload: { version: version.version, size_bytes: pdf.length, report_status: report.status },
+      }),
+    );
 
     const filename = `${valuation.company_name}_${valuation.kind}_v${version.version}.pdf`;
     return reply

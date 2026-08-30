@@ -54,7 +54,11 @@ export function registerHealthCheckRoutes(app: FastifyInstance, deps: { pool: pg
         counts: report.counts,
         createdBy: principal.id,
       },
-      { actorType: 'system', actorId: principal.id, source: 'health-checks' },
+      // The checks are the platform's work and the run is a person's
+      // decision; `source` is what says which mechanism, and `actor_type` is
+      // what the activity log filters on. A row whose type says machine while
+      // its id names an operator answers both filters wrongly.
+      { actorType: 'human', actorId: principal.id, source: 'health-checks' },
     );
     return reply.status(201).send({ health_check: row });
   });

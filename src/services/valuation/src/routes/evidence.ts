@@ -138,8 +138,12 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
          * place the mark would have gone missing without anyone downstream
          * being able to tell.
          */
+        // The bundle's own export event two hundred lines down already
+        // records this as `human`; the render inside it said `system` with the
+        // same person's id, so one act produced two rows that disagreed about
+        // who did it.
         const data = await deliverablePdf(deps.pool, valuation, report, full, {
-          actorType: 'system',
+          actorType: 'human',
           actorId: principal.id,
           source: 'evidence-bundle',
         });

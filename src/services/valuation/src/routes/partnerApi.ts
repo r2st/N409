@@ -52,7 +52,8 @@ import { deliverablePdf } from './reports.js';
 import { MAX_DOCUMENT_BYTES, rethrowRejectedUpload, storeDocument } from './documents.js';
 import type { ScanPolicy } from '../documents/virusScan.js';
 import { checkUploadType } from '../documents/fileType.js';
-import type { EventActor } from '../events/record.js';
+import { recordEvent, type EventActor } from '../events/record.js';
+import { withTransaction } from '../db/pool.js';
 import { cursorParam, decodeCursor, pageParam } from '../domain/pagination.js';
 import {
   buildOpenApiDocument,
@@ -1127,11 +1128,28 @@ export function registerPartnerApiRoutes(
        * it lands in the partner's own document store where nothing will ever
        * revisit it.
        */
-      const pdf = await deliverablePdf(deps.pool, valuation, report, full, {
-        actorType: 'system',
-        actorId: principal.id,
-        source: 'partner-api-report.pdf',
-      });
+      // `actorFor` with this door's own source, rather than a `system` actor
+      // carrying a principal id — the file's own convention two hundred lines
+      // up is `human`, and the two disagreeing meant one partner's reads were
+      // filed under the platform and the rest under the partner.
+      const actor: EventActor = { ...actorFor(principal), source: 'partner-api-report.pdf' };
+      const pdf = await deliverablePdf(deps.pool, valuation, report, full, actor);
+      // The deliverable leaving by the second of its three doors. This is the
+      // channel that pulls it automatically on `valuation.published`, so it is
+      // also the one whose reads are least likely to be remembered by anybody.
+      await withTransaction(deps.pool, (client) =>
+        recordEvent(client, {
+          valuationId: valuation.id,
+          type: 'report_downloaded',
+          actor,
+          payload: {
+            version: full.version,
+            size_bytes: pdf.length,
+            report_status: report.status,
+            partner_id: token.partnerId,
+          },
+        }),
+      );
       return reply
         .header('content-type', 'application/pdf')
         .header(

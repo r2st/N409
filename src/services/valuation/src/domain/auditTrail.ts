@@ -168,6 +168,23 @@ export const EVENT_CATALOG = {
   report_rendered: D('Report generated', 'output', 'critical', 'client'),
   draft_ready: D('Draft ready for review', 'output', 'notice', 'client'),
   evidence_bundle_exported: D('Evidence bundle exported', 'output', 'notice'),
+  /**
+   * The deliverable leaving by a door somebody opened.
+   *
+   * "The export itself is an auditable act" is what the evidence bundle above
+   * has said since it was written, and the *report* — the signed 409A itself —
+   * left by two other doors that said nothing. Both served the stored bytes
+   * straight out: `report_rendered` is written when a version is produced, not
+   * when it is read, so a delivered report downloaded fifty times over a year
+   * by a client, a partner integration and whoever else held the link produced
+   * exactly one row, dated the day it was made.
+   *
+   * Only the draft path ever recorded a read, and by accident: an unpublished
+   * engagement renders a stamped copy per download, so it wrote a render event
+   * each time. The published version — the one auditors and boards actually
+   * pull — is cached, and the cache hit was the silent path.
+   */
+  report_downloaded: D('Report downloaded', 'output', 'notice'),
 
   // The auditor's half of the review round trip. `notice` rather than `info`:
   // it is an outside reviewer putting something on the record about a
