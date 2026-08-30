@@ -88,11 +88,36 @@ describe.skipIf(!dbUp)('expression-ordered lists are index scans (R202)', () => 
          FROM generate_series(1, $1) g`,
       [ROWS],
     );
+    // The ops task console's default page. Most tasks are settled and stay on
+    // file — that is what the leading sort term is for — so the live end the
+    // console reads is a minority of the table, the same shape as the ledgers
+    // above.
+    // Real parents: `review_tasks.valuation_id` is a foreign key, and the
+    // narrow-filter assertion below needs an id that exists.
+    await db.pool.query(
+      `INSERT INTO valuations (id, user_id, kind, company_name)
+       SELECT ('06' || lpad(upper(to_hex(g)), 24, '0'))::ulid,
+              ('02' || lpad(upper(to_hex(g)), 24, '0'))::ulid,
+              '409a', 'Co ' || g
+         FROM generate_series(1, 900) g`,
+    );
+    await db.pool.query(
+      `INSERT INTO review_tasks (id, valuation_id, kind, status, title, due_at, created_at)
+       SELECT ('05' || lpad(upper(to_hex(g)), 24, '0'))::ulid,
+              ('06' || lpad(upper(to_hex(1 + g % 900)), 24, '0'))::ulid,
+              (enum_range(NULL::review_task_kind))[1 + g % array_length(enum_range(NULL::review_task_kind), 1)],
+              (CASE WHEN g % 8 = 0 THEN 'open' ELSE 'done' END)::review_task_status,
+              'task ' || g,
+              CASE WHEN g % 4 <> 0 THEN now() - (g || ' minutes')::interval END,
+              now() - (g || ' minutes')::interval
+         FROM generate_series(1, $1) g`,
+      [ROWS],
+    );
     // Without statistics the planner is costing tables it believes are empty.
     // VACUUM as well as ANALYZE: `api_tokens_stats_idx` is only reachable as an
     // index-only scan, and index-only scans need the visibility map, which
     // VACUUM sets and ANALYZE does not.
-    await db.pool.query('VACUUM ANALYZE api_tokens, job_alerts, scim_tokens');
+    await db.pool.query('VACUUM ANALYZE api_tokens, job_alerts, scim_tokens, review_tasks');
   }, 120_000);
 
   afterAll(async () => db?.teardown());
@@ -258,6 +283,55 @@ describe.skipIf(!dbUp)('expression-ordered lists are index scans (R202)', () => 
         await plan(`SELECT * FROM scim_tokens ORDER BY (revoked_at IS NULL) DESC, created_at ASC LIMIT 201`),
       ),
     ).toBe(true);
+  });
+
+  /**
+   * The ops task console, fixed by 0193 — both defects at once.
+   *
+   * `listTasks` builds its WHERE from four optional filters and `GET
+   * /api/v1/tasks` supplies none of them, so the page an operator lands on is
+   * an unfiltered read ordered by an expression (this file's shape) whose
+   * remaining three terms run in mixed directions (0170's shape). Neither index
+   * trick alone reaches it; a per-column direction on the expression index does.
+   *
+   * 4.69 ms / 339 blocks -> 0.01 ms / 9 blocks at 20k tasks.
+   */
+  const TASK_ORDER = `ORDER BY (t.status IN ('done','cancelled')), t.due_at ASC NULLS LAST,
+                               t.created_at DESC, t.id DESC`;
+
+  it('the unfiltered task console seeks its index instead of sorting the queue', async () => {
+    const nodes = await plan(`SELECT * FROM review_tasks t ${TASK_ORDER} LIMIT 50 OFFSET 0`);
+    expect(seqScans(nodes, 'review_tasks')).toBe(false);
+    expect(sorts(nodes)).toBe(false);
+    expect(nodes.map((n) => n['Index Name'])).toContain('review_tasks_console_idx');
+  });
+
+  it('the task console index is the whole ordering, not just its first term', async () => {
+    // The discriminator, and the one that matters here: an expression index on
+    // the leading term alone leaves the three mixed-direction terms to a sort,
+    // so this assertion is what distinguishes 0193 from 0181's spelling applied
+    // to a fourth table. Each spelling below moves one term off the index.
+    for (const order of [
+      // `due_at` descending: the index holds it ascending.
+      `ORDER BY (t.status IN ('done','cancelled')), t.due_at DESC, t.created_at DESC, t.id DESC`,
+      // `created_at` ascending against the index's DESC.
+      `ORDER BY (t.status IN ('done','cancelled')), t.due_at ASC NULLS LAST, t.created_at ASC, t.id DESC`,
+      // NULLS FIRST on `due_at`, which is a different order of the same rows.
+      `ORDER BY (t.status IN ('done','cancelled')), t.due_at ASC NULLS FIRST, t.created_at DESC, t.id DESC`,
+    ]) {
+      expect(sorts(await plan(`SELECT * FROM review_tasks t ${order} LIMIT 50`)), order).toBe(true);
+    }
+  });
+
+  it('a task list filtered to one valuation still reaches its own index', async () => {
+    // The console index must not talk the planner out of the narrow one. A
+    // valuation's tasks are a couple of dozen rows and sorting them is free;
+    // walking the console ordering to find them would not be.
+    const nodes = await plan(
+      `SELECT * FROM review_tasks t WHERE t.valuation_id = '06000000000000000000000001' ${TASK_ORDER} LIMIT 50`,
+    );
+    expect(seqScans(nodes, 'review_tasks')).toBe(false);
+    expect(nodes.map((n) => n['Index Name'])).toContain('review_tasks_valuation_idx');
   });
 
   /**
