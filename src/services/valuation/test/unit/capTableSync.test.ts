@@ -253,6 +253,45 @@ describe('provider cap-table mapping', () => {
     expect(row!.invested_amount).toBe(3_500_000);
   });
 
+  /*
+   * The two things this reader's own number rule got wrong, both of which the
+   * CSV reader was taught long ago — a rule about figures is as much a
+   * candidate in both readers as a bug in a file format is.
+   */
+  it('reads a decimal comma as a decimal point, not as a thousands separator', () => {
+    const [row] = mapPulley({
+      securities: [{ shareClass: 'Série A', sharesOutstanding: '2000000', pricePerShare: '1,00' }],
+    });
+    // 100 was the answer, on the path the scheduler applies with nobody
+    // reading a diff.
+    expect(row!.price_per_share).toBe(1);
+  });
+
+  it('reads a figure sent as an empty string as absent, not as zero', () => {
+    const [row] = mapPulley({
+      securities: [
+        {
+          shareClass: 'Series A',
+          type: 'preferred',
+          sharesOutstanding: '1000',
+          totalInvested: '1000000',
+          liquidationPreference: '',
+        },
+      ],
+    });
+    // `Number('')` is 0, so this imported as a 0x preference — the class's
+    // whole preference gone, and nothing checks for a zero multiple.
+    expect(row!.liquidation_multiple).toBeNull();
+    expect(row!.unreadable_numbers).toBeUndefined();
+  });
+
+  it('reads a parenthesised figure as the negative every accounting export means', () => {
+    const [row] = mapPulley({
+      securities: [{ shareClass: 'Treasury', sharesOutstanding: '(500,000)' }],
+    });
+    expect(row!.shares).toBe(-500_000);
+  });
+
   it('nulls a non-numeric value instead of propagating NaN', () => {
     const [row] = mapPulley({
       securities: [

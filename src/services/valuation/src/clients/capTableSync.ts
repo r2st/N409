@@ -11,7 +11,7 @@
  * injectable fetch so tests never touch the network.
  */
 
-import { cellText, meansNoFigure } from '../domain/capTable.js';
+import { cellText, meansNoFigure, parseNumericCell } from '../domain/capTable.js';
 import type { CapTableEntry, CapTableClassType, NumericCapTableField } from '../domain/capTable.js';
 import {
   IMPORT_TIMEOUT_MS,
@@ -132,10 +132,35 @@ export async function exchangeCode(
   };
 }
 
-const toNum = (v: unknown): number | null => {
-  const n = typeof v === 'string' ? Number(v.replace(/[$,\s]/g, '')) : typeof v === 'number' ? v : NaN;
-  return Number.isFinite(n) ? n : null;
-};
+/**
+ * A provider's figure, read by the rule the CSV importer reads a cell by.
+ *
+ * This had its own: strip `[$,\s]` and `Number()` what is left. Two things it
+ * got wrong, both of which `parseNumericCell` had already been taught on the
+ * other reader of the same shapes — and the lesson of the two xlsx readers is
+ * that a bug in a format is a candidate in both, so a *rule* about figures is
+ * too.
+ *
+ *  - **The decimal comma.** Stripping every comma reads `1,00` as **100** and
+ *    `1.234,56` as `1.23456`. That is the exact figure R150 found and fixed in
+ *    `parseNumericCell`; nothing carried it here. The provider path is where it
+ *    costs most: the scheduled sync applies with `apply: true` and no person in
+ *    the loop, so a hundredfold price per share is stored without anyone
+ *    reading a diff.
+ *  - **The empty string as zero.** `Number('')` is `0`, not `NaN`, so a field
+ *    the provider sent as `""` came back as a *figure* of zero rather than as
+ *    an absent one — and `read` below never reached its `meansNoFigure` check,
+ *    because that only runs on a null. A `liquidation_multiple` of `""`
+ *    therefore imported as 0x instead of defaulting to 1x: the class's whole
+ *    preference became zero, `validateCapTable` has no rule against a zero
+ *    multiple (only a negative one), and the waterfall paid common out of money
+ *    that was contractually preferred.
+ *
+ * It also inherits the rest of the rule: a parenthesised figure is negative,
+ * `€`/`£`/`¥` are currency symbols, and an object or a list is not a figure at
+ * all.
+ */
+const toNum = (v: unknown): number | null => parseNumericCell(v);
 
 /**
  * Reading a provider payload two levels below the one `readJson` checked.
