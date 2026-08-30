@@ -259,7 +259,7 @@ async function executeRun(
     run = calculating;
     const paramsRow = await findParams(deps.pool, valuation.id);
     if (!paramsRow) throw new Error('Valuation has no params row');
-    const inputs = await buildCalculationInputs(deps.pool, valuation.id, paramsRow, {});
+    const inputs = await buildCalculationInputs(deps.pool, valuation.id, paramsRow, {}, deps.log);
     await runCalculation(
       { pool: deps.pool, engineUrl: deps.engineUrl },
       { valuation, paramsRow, inputs, createdBy: triggeredBy, actor },

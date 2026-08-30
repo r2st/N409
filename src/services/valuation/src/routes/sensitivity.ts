@@ -129,7 +129,7 @@ export function registerSensitivityRoutes(
     if (!parsed.success) throw invalidBody('Invalid options', parsed.error);
     const b = parsed.data;
 
-    const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, b.inputs);
+    const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, b.inputs, req.log);
     const payload = {
       params: engineParams(paramsRow),
       inputs,

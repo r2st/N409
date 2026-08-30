@@ -84,6 +84,47 @@ describe('buildCalculationInputs holds the extraction to the hand-entry bounds',
     expect(inputs).toEqual({ shares_outstanding_common: 9_000_000, volatility: 0.5 });
   });
 
+  it('says which figures it refused, since the answer cannot', async () => {
+    /*
+     * The two apply paths report their rejections — one logs them, the other
+     * returns them in its response — and this one answers with an input
+     * document, where a refused field is simply a field that is not in it. An
+     * extraction stored before this check existed is refused again on every
+     * recalculation from then on, so without this line the only visible
+     * consequence is a company priced without a figure that is still sitting
+     * on the extraction screen.
+     */
+    const lines: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const log = { warn: (obj: Record<string, unknown>, msg: string) => lines.push({ obj, msg }) };
+
+    await buildCalculationInputs(
+      stubPool({ engine_inputs: { shares_outstanding_common: 8_000_000, volatility: 65 } }),
+      'val-1',
+      PARAMS,
+      {},
+      log as never,
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.msg).toContain('outside the accepted range');
+    expect(lines[0]!.obj).toMatchObject({ valuationId: 'val-1', jobId: 'job-1' });
+    expect(lines[0]!.obj.rejected).toEqual([expect.objectContaining({ field: 'volatility', value: 65 })]);
+  });
+
+  it('says nothing when the extraction is sound', async () => {
+    // A line per calculation on every well-formed engagement is a line nobody
+    // reads, and the one that matters would be in among them.
+    const lines: unknown[] = [];
+    await buildCalculationInputs(
+      stubPool({ engine_inputs: { shares_outstanding_common: 5_000_000, volatility: 0.65 } }),
+      'val-1',
+      PARAMS,
+      {},
+      { warn: (obj: unknown) => lines.push(obj) } as never,
+    );
+    expect(lines).toEqual([]);
+  });
+
   it('tolerates a job whose result carries no engine inputs at all', async () => {
     expect(await buildCalculationInputs(stubPool({}), 'val-1', PARAMS)).toEqual({});
     expect(await buildCalculationInputs(stubPool(null), 'val-1', PARAMS)).toEqual({});

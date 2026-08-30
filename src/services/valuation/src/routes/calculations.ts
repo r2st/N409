@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
@@ -220,6 +220,19 @@ export async function buildCalculationInputs(
   valuationId: string,
   paramsRow: ValuationParamsRow,
   explicit: Record<string, unknown> = {},
+  /**
+   * Where a refused extraction figure is reported.
+   *
+   * Optional in the signature and supplied at every call site, because a
+   * refusal here has no other channel: the two *apply* paths report their
+   * rejections to somebody — the auto-apply logs them, `/ai/extract/apply`
+   * returns them in its response — and this path returns an input document
+   * with the field simply absent from it. A stored extraction that predates
+   * the check is refused on every recalculation from now on, silently, and the
+   * only visible consequence is a valuation priced without a figure the
+   * extraction proposed.
+   */
+  log?: FastifyBaseLogger,
 ): Promise<Record<string, unknown>> {
   let inputs: Record<string, unknown> = {};
   // The extraction job and the screened peer set live in different tables and
@@ -253,7 +266,19 @@ export async function buildCalculationInputs(
    * applies would also have been accepted from a human") true of the path that
    * prices the company, not only of the one that stores the number.
    */
-  const { applied: extracted } = sanitizeExtractedInputs(extractJob?.result?.engine_inputs);
+  const { applied: extracted, rejected } = sanitizeExtractedInputs(extractJob?.result?.engine_inputs);
+  if (rejected.length > 0) {
+    // Said out loud, because nothing else here will. The apply paths report
+    // their rejections and this one cannot: it answers with an input document,
+    // and a refused field is a field that is not in it. An extraction stored
+    // before this check existed is refused again on every run, and without
+    // this line the only trace is a company priced without a figure somebody
+    // can see on the extraction screen.
+    log?.warn(
+      { valuationId, jobId: extractJob?.id ?? null, rejected },
+      'stored extraction proposes engine inputs outside the accepted range; the calculation runs without them',
+    );
+  }
   if (Object.keys(extracted).length > 0) {
     inputs = deepMerge(inputs, extracted as Record<string, unknown>);
   }
@@ -443,7 +468,7 @@ export function registerCalculationRoutes(
     // Inputs = AI-extracted engine inputs, then analyst-applied inputs
     // (extraction auto-apply), then AI comparables multiples, then the
     // analyst's explicit overrides from the request body.
-    const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, parsed.data.inputs);
+    const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, parsed.data.inputs, req.log);
 
     // Per-approach recalc: reuse the other approaches from the latest
     // successful run so the engine only recomputes the selected subsystem.
@@ -507,7 +532,7 @@ export function registerCalculationRoutes(
     const parsed = ComputeBody.safeParse(req.body ?? {});
     if (!parsed.success) throw invalidBody('Invalid inputs', parsed.error);
 
-    const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, parsed.data.inputs);
+    const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, parsed.data.inputs, req.log);
 
     // A per-approach recalculation only needs the approach being recomputed;
     // the rest are reused, so the validator checks the prior run instead.

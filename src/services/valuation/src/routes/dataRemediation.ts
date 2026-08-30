@@ -162,7 +162,7 @@ export function registerDataRemediationRoutes(
           results.push({ valuation_id: id, ok: false, error: 'Valuation or params missing' });
           continue;
         }
-        const inputs = await buildCalculationInputs(deps.pool, id, paramsRow);
+        const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, {}, req.log);
         await runCalculation(deps, {
           valuation,
           paramsRow,
