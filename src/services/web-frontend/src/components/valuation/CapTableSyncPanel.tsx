@@ -158,12 +158,28 @@ export function CapTableSyncPanel({
       <div className="space-y-3">
         {providers.map((p) => {
           const connected = p.connection && p.connection.status !== 'revoked';
+          /**
+           * A connection whose last sync failed was drawn exactly like one whose
+           * last sync worked: the same green Connected pill, the same cadence
+           * select still reading Daily, with one line of small red text below
+           * quoting a status code from an hour or a month ago. Since R252 that
+           * cadence may also be suspended entirely — an authorisation the
+           * provider has ended is not retried — so the pill has to be able to
+           * say the thing the card is actually for: this is not syncing, and
+           * reconnecting is what fixes it.
+           */
+          const failing = p.connection?.status === 'error';
           return (
             <div key={p.provider} className="rounded-md border border-paper-300 p-4">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="font-semibold text-ink-900">{p.label}</span>
                 {!p.configured ? (
                   <span className="text-xs text-ink-400">Not configured on this deployment</span>
+                ) : failing ? (
+                  <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 ring-inset">
+                    Not syncing
+                    {p.connection?.external_company_name ? ` · ${p.connection.external_company_name}` : ''}
+                  </span>
                 ) : connected ? (
                   <span className="rounded-full bg-bond-50 px-2.5 py-0.5 text-xs font-semibold text-bond-700">
                     Connected
@@ -214,6 +230,21 @@ export function CapTableSyncPanel({
                         <option value="weekly">Weekly</option>
                       </Select>
                     </label>
+                    {/*
+                      The action the failure message asks for. An authorisation the
+                      provider has ended is not retried on any schedule, so without a
+                      way to redo the OAuth hop from the card that is failing, the only
+                      route back was Disconnect and start over.
+                    */}
+                    {failing && (
+                      <Button
+                        variant="secondary"
+                        disabled={!p.configured || busy === p.provider}
+                        onClick={() => connect(p.provider)}
+                      >
+                        Reconnect {p.label}
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       disabled={busy === p.provider}

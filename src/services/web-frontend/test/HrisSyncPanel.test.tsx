@@ -323,6 +323,40 @@ describe('HrisSyncPanel (feature 11)', () => {
     expect(screen.getByRole('button', { name: 'Connect Rippling' })).toBeInTheDocument();
   });
 
+  it('draws a failing connection as failing, not as connected (R252)', async () => {
+    // The card used to show the green "Connected" pill and the cadence select
+    // still reading Daily above one line of small red text — for a connection
+    // whose scheduled sync had stopped. R252 stops it on purpose when the
+    // provider has ended the authorisation, so the pill has to be able to say
+    // so and the card has to offer the reconnect the message asks for.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      jsonResponse({
+        providers: [
+          {
+            provider: 'rippling',
+            label: 'Rippling',
+            configured: true,
+            connection: {
+              status: 'error',
+              external_company_name: 'Acme',
+              sync_frequency: 'daily',
+              last_synced_at: '2026-07-01T00:00:00Z',
+              last_error: 'Rippling no longer accepts the stored authorisation — reconnect Rippling.',
+            },
+          },
+        ],
+      }),
+    );
+    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+
+    expect(await screen.findByText(/Not syncing · Acme/)).toBeInTheDocument();
+    expect(screen.queryByText(/Connected · Acme/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reconnect Rippling' })).toBeInTheDocument();
+    // Still a live connection: importing by hand and changing the cadence are
+    // both things a person may want to do from here.
+    expect(screen.getByRole('button', { name: 'Import now' })).toBeInTheDocument();
+  });
+
   it('shows a connection with no company name without a dangling separator', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       jsonResponse({
