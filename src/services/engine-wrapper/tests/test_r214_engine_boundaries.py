@@ -80,3 +80,54 @@ def test_end_to_end_the_engine_no_longer_concludes_a_zero_fair_market_value():
     fmv = out["results"]["fmv_per_share"]
     assert math.isfinite(fmv)
     assert out["results"]["discounts"]["dlom"] == 0.9999
+
+
+# ── a blend leg outside [0, 1) ───────────────────────────────────────────────
+#
+# `_blended_dlom` documents each leg as resolved "through exactly the path a
+# single-method run would take", so that a leg and a single-method run of the
+# same method are the same arithmetic on the same inputs. On the *range* they
+# were not: the concluded blend is clamped to [0, 0.99], and the clamp caught
+# what the single path refuses.
+
+
+@pytest.mark.parametrize("qualitative", [3.0, 1.0, -2.0])
+def test_a_blend_leg_is_held_to_the_range_the_single_method_run_is(qualitative):
+    single = {"dlom_method": "qualitative", "dlom_qualitative": qualitative}
+    with pytest.raises(EngineInputError):
+        _resolve_discounts(single, 0.6, 3.0, 0.04)
+
+    blend = {
+        "dlom_qualitative": qualitative,
+        "dlom_methods": [
+            {"method": "qualitative", "weight": 0.5},
+            {"method": "chaffee", "weight": 0.5},
+        ],
+    }
+    with pytest.raises(EngineInputError) as err:
+        _resolve_discounts(blend, 0.6, 3.0, 0.04)
+    # Named by leg, because the blend has several and only one is wrong.
+    assert "qualitative" in str(err.value)
+
+
+def test_the_blend_table_sums_to_the_discount_printed_beside_it():
+    """The one check a reviewer runs on a weighted average.
+
+    A 300% qualitative leg at 50% weight used to conclude 0.99 — the clamp,
+    not the average — beside components summing to 1.66.
+    """
+    d = _resolve_discounts(
+        {
+            "dlom_qualitative": 0.4,
+            "dlom_methods": [
+                {"method": "qualitative", "weight": 0.5},
+                {"method": "chaffee", "weight": 0.5},
+            ],
+        },
+        0.6,
+        3.0,
+        0.04,
+    )
+    components = d.dlom_detail["components"]
+    assert d.dlom == pytest.approx(sum(c["weighted"] for c in components), abs=5e-5)
+    assert all(0.0 <= c["dlom"] < 1.0 for c in components)

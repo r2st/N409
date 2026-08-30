@@ -754,6 +754,31 @@ def _blended_dlom(
         leg_params = {**params, "dlom_method": component["method"]}
         leg_params.pop("dlom_methods", None)
         leg_dlom, _, leg_detail = _single_dlom(leg_params, volatility, t, r, volatility_basis)
+        # The same range every concluded discount is held to, applied to the
+        # leg — because a blend is documented above as "the same arithmetic on
+        # the same inputs" as the single-method run, and on the range it was
+        # not.
+        #
+        # Only `qualitative` can leave [0, 1): the four option models clamp at
+        # `_MAX_DLOM` and both study blenders clamp at it too. It reads
+        # `dlom_qualitative` straight, so `dlom_qualitative: 3.0` was a 422
+        # under `dlom_method` and a silent 99% under `dlom_methods` — the
+        # concluded figure was the *clamp*, not the weighted average, and the
+        # exhibit printed the legs that produced 1.66 beside a conclusion of
+        # 0.99. A negative leg does the mirror image: −2.0 against a 32%
+        # Chaffee nets to −0.84 and is clamped to 0.0, so a run concludes "no
+        # marketability discount" out of a component that says 32%.
+        #
+        # Either way the blend table no longer sums to the number beside it,
+        # which is the one check a reviewer runs on a weighted average — and it
+        # is the clamp, whose whole job is to be an unreachable backstop, that
+        # ends up choosing the discount.
+        if not 0.0 <= leg_dlom < 1.0:
+            raise EngineInputError(
+                f"dlom_methods leg {component['method']!r} produced a discount of "
+                f"{leg_dlom:g}, which is not a fraction in [0, 1) — a blend weights the "
+                "methods, it does not repair them"
+            )
         component["dlom"] = round(leg_dlom, 6)
         component["weighted"] = round(leg_dlom * component["weight"], 6)
         if leg_detail is not None:
