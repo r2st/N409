@@ -8,6 +8,12 @@ import {
 } from '../../src/domain/communications.js';
 import { PLATFORM_BRANDING } from '../../src/domain/branding.js';
 import {
+  invoicePaidMessage,
+  paymentReceivedMessage,
+  subscriptionCanceledMessage,
+  trialEndingMessage,
+} from '../../src/domain/billing.js';
+import {
   TEMPLATE_VARIABLES,
   collectPlaceholders,
   previewTemplate,
@@ -175,5 +181,136 @@ describe('the catalog samples name routes that exist', () => {
     // an operator copies when they want to see the shape of the value.
     const linkSamples = TEMPLATE_VARIABLES.filter((v) => v.scope === 'link').map((v) => v.sample);
     expect(linkSamples.filter((s) => /\/(pay|payments)$/.test(s))).toEqual([]);
+  });
+});
+
+/**
+ * The other scope a preview promises and no census covered: `payment`.
+ *
+ * Four builders in `domain/billing.ts` produce a billing notice, each with its
+ * own ops-overridable template key, and every one of them is rendered through
+ * `renderTemplate` — so a `payment`-scope name the builder does not answer
+ * reaches the subscriber as literal braces, while `previewTemplate` fills it
+ * from the catalog sample and shows the operator a finished sentence.
+ *
+ * `invoice_period` was found that way once and fixed inside `invoicePaidMessage`
+ * alone. `plan_name` was the same bug on the same notice: the one billing
+ * message that is *about* a plan was the one that could not name it, while the
+ * cancellation and trial-ending notices both looked it up.
+ *
+ * So the matrix below is a declaration rather than a scan. A notice answers a
+ * `payment` variable when it *has* that fact — a one-off engagement receipt has
+ * no invoice number, a trial notice has taken no payment — and blanket-filling
+ * the rest with empty strings would trade literal braces for the silently empty
+ * sentence `domain/templateVariables.ts` opens by calling the worse failure. A
+ * new variable in this scope has to name which notices carry it.
+ */
+describe('payment-scope variables a billing notice can answer', () => {
+  /** Which notices are expected to supply each `payment`-scope variable. */
+  const ANSWERED_BY: Record<string, string[]> = {
+    amount_paid: ['engagement_receipt', 'invoice_paid'],
+    invoice_number: ['invoice_paid'],
+    invoice_period: ['invoice_paid'],
+    plan_name: ['invoice_paid', 'subscription_canceled', 'trial_ending'],
+    trial_ends_on: ['trial_ending'],
+    plan_price: ['trial_ending'],
+    subscription_ended_on: ['subscription_canceled'],
+  };
+
+  const notices: Record<string, () => { vars: Record<string, string> }> = {
+    engagement_receipt: () =>
+      paymentReceivedMessage({
+        reference: '1766',
+        company_name: 'Acme Corp',
+        kind: '409a',
+        amount_cents: 119_000,
+        currency: 'usd',
+        express: false,
+        receipt_link: 'https://app.n409.test/valuations/01JQ',
+      }),
+    invoice_paid: () =>
+      invoicePaidMessage({
+        number: 'INV-202608-0007',
+        amount_cents: 9_900,
+        currency: 'usd',
+        period_start: '2026-08-01T00:00:00.000Z',
+        period_end: '2026-09-01T00:00:00.000Z',
+        invoice_link: 'https://app.n409.test/billing',
+        plan_name: 'Annual retainer',
+      }),
+    subscription_canceled: () =>
+      subscriptionCanceledMessage({
+        plan_name: 'Annual retainer',
+        ended_at: '2026-08-30T00:00:00.000Z',
+        billing_link: 'https://app.n409.test/billing',
+      }),
+    trial_ending: () =>
+      trialEndingMessage({
+        plan_name: 'Annual retainer',
+        trial_ends_at: '2026-09-02T00:00:00.000Z',
+        price_cents: 2_000_000,
+        currency: 'usd',
+        billing_link: 'https://app.n409.test/billing',
+      }),
+  };
+
+  it('declares an answer for every payment-scope variable the catalog offers', () => {
+    const declared = Object.keys(ANSWERED_BY).sort();
+    expect(namesIn('payment').sort()).toEqual(declared);
+    // Every name has at least one notice behind it: a variable the palette
+    // offers and no send can ever fill is a promise nothing keeps.
+    for (const [name, keys] of Object.entries(ANSWERED_BY)) {
+      expect(keys.length, `${name} is offered by the palette and answered by no notice`).toBeGreaterThan(0);
+    }
+  });
+
+  it('supplies each variable on exactly the notices that claim it', () => {
+    for (const [key, build] of Object.entries(notices)) {
+      const vars = build().vars;
+      for (const [name, keys] of Object.entries(ANSWERED_BY)) {
+        const supplied = typeof vars[name] === 'string';
+        expect(supplied, `${key} ${keys.includes(key) ? 'must' : 'must not'} supply ${name}`).toBe(
+          keys.includes(key),
+        );
+      }
+    }
+  });
+
+  it('leaves no payment-scope placeholder unrendered on the notice that claims it', () => {
+    for (const [key, build] of Object.entries(notices)) {
+      const claimed = Object.entries(ANSWERED_BY)
+        .filter(([, keys]) => keys.includes(key))
+        .map(([name]) => `${name}=[{{${name}}}]`)
+        .join(' ');
+      const rendered = renderTemplate(claimed, build().vars);
+      expect(collectPlaceholders(rendered), `${key} previews these and cannot send them`).toEqual([]);
+      // And with a value, not a blank: a notice that claims a fact states it.
+      expect(rendered).not.toMatch(/=\[\]/);
+    }
+  });
+
+  it('renders a plan-named invoice receipt the way the operator previewed it', () => {
+    // The failure this section was written for, end to end: the override an
+    // operator authors, previewed against the samples and then sent.
+    const body = 'Your {{plan_name}} renewed — {{amount_paid}} for {{invoice_period}}.';
+    expect(collectPlaceholders(previewTemplate({ subject: '', body }).body)).toEqual([]);
+    const sent = renderTemplate(body, notices.invoice_paid!().vars);
+    expect(sent).toBe('Your Annual retainer renewed — $99.00 for 2026-08-01 to 2026-09-01.');
+  });
+
+  it('blanks the plan on an invoice against no plan this platform carries', () => {
+    // A webhook endpoint receives every invoice on the Stripe account. Blank
+    // rather than absent, so the override renders a gap and not braces.
+    const vars = invoicePaidMessage({
+      number: 'INV-202608-0008',
+      amount_cents: 9_900,
+      currency: 'usd',
+      period_start: null,
+      period_end: null,
+      invoice_link: 'https://app.n409.test/billing',
+      plan_name: null,
+    }).vars;
+    expect(vars.plan_name).toBe('');
+    expect(collectPlaceholders(renderTemplate('{{plan_name}}', vars))).toEqual([]);
   });
 });

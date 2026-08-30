@@ -679,6 +679,12 @@ export function invoicePaidMessage(r: {
   period_start: string | null;
   period_end: string | null;
   invoice_link: string;
+  /**
+   * The plan this invoice renewed, by its catalogue name. Null for an invoice
+   * raised against a subscription this platform does not carry — see the
+   * `plan_name` var below for why that is a blank rather than an omission.
+   */
+  plan_name: string | null;
 }): SettlementMessage {
   const amount = formatMoneyCents(r.amount_cents, r.currency);
   // A period is stated only when both ends of it are known. Half a period is
@@ -705,6 +711,23 @@ export function invoicePaidMessage(r: {
       // catalog's own wording for this variable is "blank unless both ends of
       // it are known"; this is that.
       invoice_period: period ?? '',
+      /*
+       * The same rule one line up, on the variable this notice is most likely
+       * to be asked for. `plan_name` is declared in the catalog's `payment`
+       * scope — "the subscription plan a billing notice is about" — and
+       * `previewTemplate` fills every declared name from the samples, so an
+       * operator authoring the `invoice_receipt` override watched
+       * "Your {{plan_name}} renewed" resolve to "Annual retainer" and then
+       * delivered it, on every renewal, as literal braces. This is the one
+       * billing notice that is *about* a plan and it was the one that could not
+       * name it: the cancellation and trial-ending notices both look the plan
+       * up and pass it on.
+       *
+       * Blank when the invoice is not against a subscription this platform
+       * carries — a webhook endpoint receives every invoice on the Stripe
+       * account, and there is no plan to name on one of those.
+       */
+      plan_name: r.plan_name ?? '',
     },
   };
 }

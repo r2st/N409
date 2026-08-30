@@ -245,6 +245,7 @@ describe('settlement confirmations', () => {
     period_start: '2026-08-01T00:00:00.000Z',
     period_end: '2026-09-01T00:00:00.000Z',
     invoice_link: 'https://app.n409.local/billing',
+    plan_name: 'Annual retainer',
   };
 
   it('states the invoice number, the amount and the period', () => {

@@ -176,7 +176,9 @@ export const TEMPLATE_VARIABLES: readonly TemplateVariable[] = [
   {
     name: 'plan_name',
     scope: 'payment',
-    description: 'The subscription plan a billing notice is about, by its catalogue name.',
+    description:
+      'The subscription plan a billing notice is about, by its catalogue name — blank on an ' +
+      'invoice raised against no plan this platform carries.',
     sample: 'Annual retainer',
   },
   {

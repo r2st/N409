@@ -573,10 +573,24 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       currency: string;
       periodStart: Date | null;
       periodEnd: Date | null;
+      /**
+       * The tier of the subscription this invoice renewed, when it renewed one
+       * this platform carries. Resolved to a plan name below rather than
+       * passed as one, so this notice names the plan the same way the
+       * cancellation and trial-ending notices do.
+       */
+      planTier: string | null;
     },
   ): Promise<void> {
     try {
-      const user = await findUserById(deps.pool, inv.userId);
+      const [user, plan] = await Promise.all([
+        findUserById(deps.pool, inv.userId),
+        // Not `active`-filtered, for the reason `findPlanForSubscription`
+        // spells out: a tier retired from the catalogue still has subscribers
+        // renewing on it, and their receipt has to name what they are paying
+        // for.
+        inv.planTier ? findPlanForSubscription(deps.pool, inv.planTier) : Promise.resolve(null),
+      ]);
       const base = deps.publicBaseUrl.replace(/\/$/, '');
       const message = invoicePaidMessage({
         number: inv.number,
@@ -585,6 +599,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         period_start: inv.periodStart ? inv.periodStart.toISOString() : null,
         period_end: inv.periodEnd ? inv.periodEnd.toISOString() : null,
         invoice_link: `${base}/billing`,
+        plan_name: plan?.name ?? null,
       });
       await createNotifications(deps.pool, [
         {
@@ -1328,14 +1343,19 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
           const meta = (obj.metadata ?? {}) as Record<string, string>;
           let userId = typeof meta.user_id === 'string' ? meta.user_id : null;
           let subscriptionId: string | null = null;
+          let planTier: string | null = null;
           if (stripeSubId) {
-            const { rows } = await deps.pool.query<{ id: string; user_id: string }>(
-              'SELECT id, user_id FROM subscriptions WHERE stripe_subscription_id = $1',
+            const { rows } = await deps.pool.query<{ id: string; user_id: string; plan_tier: string }>(
+              'SELECT id, user_id, plan_tier FROM subscriptions WHERE stripe_subscription_id = $1',
               [stripeSubId],
             );
             if (rows[0]) {
               subscriptionId = rows[0].id;
               userId = rows[0].user_id;
+              // What the receipt names the plan by. Read here rather than in
+              // the announcement so the notice describes the subscription this
+              // invoice was actually matched to.
+              planTier = rows[0].plan_tier;
             }
           }
           const stripeInvoiceId = typeof obj.id === 'string' ? obj.id : null;
@@ -1497,6 +1517,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
                 currency: saved.currency,
                 periodStart: saved.period_start,
                 periodEnd: saved.period_end,
+                planTier,
               });
             }
           }
