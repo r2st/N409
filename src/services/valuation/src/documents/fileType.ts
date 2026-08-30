@@ -151,16 +151,50 @@ export interface UploadTypeCheck {
 }
 
 /**
+ * What the sniffed content actually looked like, for a reader who did not
+ * choose the word.
+ *
+ * `sniffed` is an internal category and three of the five are jargon at the
+ * point of use: a client told their file "is zip" has to work out that this is
+ * what a modern spreadsheet is made of. The reason strings quote these instead.
+ */
+const SNIFFED_DESCRIPTION: Record<SniffedCategory, string> = {
+  zip: 'a zip archive (which is also what .xlsx and .docx files are made of)',
+  pdf: 'a PDF',
+  png: 'a PNG image',
+  jpeg: 'a JPEG image',
+  gif: 'a GIF image',
+  html: 'a web page',
+  executable: 'a program',
+  text: 'plain text',
+  unknown: 'binary data of no recognised type',
+};
+
+/**
  * Validates that `buffer`'s sniffed type is consistent with the file extension.
  * Always rejects executables and HTML masquerading as a document; for known
  * extensions requires the sniffed category to match; unknown extensions pass
  * unless the content is executable.
+ *
+ * Each `reason` states what to do as well as what was wrong (round 222). They
+ * used to stop at the finding — `.csv must be text but the content is zip` —
+ * which names the mismatch accurately and leaves the reader holding a file they
+ * cannot see inside and a sentence about a format they did not know they had
+ * sent. There is a real, specific remedy behind every one of these, and it is
+ * usually thirty seconds of work: this is nearly always somebody who renamed a
+ * spreadsheet rather than exporting it, or saved a page from a browser.
  */
 export function checkUploadType(filename: string, buffer: Buffer): UploadTypeCheck {
   const sniffed = sniffCategory(buffer);
 
   if (sniffed === 'executable') {
-    return { ok: false, sniffed, reason: 'file content is an executable/script' };
+    return {
+      ok: false,
+      sniffed,
+      reason:
+        'the content is a program or script rather than a document. If this is a spreadsheet or ' +
+        'a report, re-export it from the application it came from and upload that file',
+    };
   }
 
   const ext = extensionOf(filename);
@@ -169,12 +203,27 @@ export function checkUploadType(filename: string, buffer: Buffer): UploadTypeChe
   if (!expected) {
     // Unknown/absent extension: allow anything that isn't executable, but block
     // HTML which is only ever dangerous here.
-    if (sniffed === 'html') return { ok: false, sniffed, reason: 'HTML content is not an accepted upload' };
+    if (sniffed === 'html') {
+      return {
+        ok: false,
+        sniffed,
+        reason:
+          'the content is a web page. Saving a page from a browser stores the page rather than ' +
+          'the document on it — use the site’s own download or print-to-PDF option instead',
+      };
+    }
     return { ok: true, sniffed };
   }
 
   if (sniffed === 'html' && !expected.includes('html')) {
-    return { ok: false, sniffed, reason: `HTML content uploaded as a .${ext} file` };
+    return {
+      ok: false,
+      sniffed,
+      reason:
+        `it is named .${ext} but the content is a web page. Saving a page from a browser stores ` +
+        'the page rather than the document on it — use the site’s own download or print-to-PDF ' +
+        'option instead',
+    };
   }
 
   // Text/extractable formats feed the AI pipeline directly, so their content
@@ -183,7 +232,18 @@ export function checkUploadType(filename: string, buffer: Buffer): UploadTypeChe
   // extension mismatches (e.g. a PNG named .gif) are tolerated: low risk, and
   // over-strict sniffing rejects legitimate but oddly-named files.
   if (expected.includes('text') && sniffed !== 'text') {
-    return { ok: false, sniffed, reason: `.${ext} must be text but the content is ${sniffed}` };
+    // The overwhelmingly common case is a spreadsheet renamed to .csv rather
+    // than exported as one, so that is the remedy given first and by name.
+    const remedy =
+      sniffed === 'zip'
+        ? `Renaming a spreadsheet to .${ext} does not convert it — open it and use ` +
+          '“Save as” or “Export” to write a real CSV, or upload the .xlsx as it is'
+        : `Upload it under its own extension, or export the contents as ${ext.toUpperCase()} first`;
+    return {
+      ok: false,
+      sniffed,
+      reason: `it is named .${ext}, which must contain text, but the content is ${SNIFFED_DESCRIPTION[sniffed]}. ${remedy}`,
+    };
   }
 
   return { ok: true, sniffed };

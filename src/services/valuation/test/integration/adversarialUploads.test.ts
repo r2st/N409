@@ -134,7 +134,13 @@ describe.skipIf(!dbUp)('adversarial document uploads', () => {
       ),
     );
     expect(res.statusCode).toBe(422);
-    expect(res.json().detail).toContain('HTML content is not an accepted upload');
+    // The refusal names the content for what it is and says what to send
+    // instead. An SVG reaches this branch as markup, and the reader — who
+    // picked a file called logo.svg — needs the second half more than the
+    // first: "HTML content is not an accepted upload" left them with nothing
+    // to try.
+    expect(res.json().detail).toMatch(/content is a web page/i);
+    expect(res.json().detail).toMatch(/print-to-PDF/i);
   });
 
   /**

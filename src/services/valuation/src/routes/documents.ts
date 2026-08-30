@@ -399,7 +399,17 @@ export function registerDocumentRoutes(
     const { kind, category } = filing;
 
     const buffer = await bufferUpload(file, MAX_DOCUMENT_BYTES);
-    if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
+    if (buffer.length === 0) {
+      // Zero bytes arrived intact — this is not the truncated-upload case,
+      // which `bufferUpload` answers. A file that is genuinely empty on disk is
+      // usually a failed export or a placeholder somebody has not filled in
+      // yet, and re-uploading it changes nothing, so say that rather than
+      // inviting a retry.
+      throw problems.unprocessable(
+        `“${file.filename}” contains no data — it is zero bytes, so there is nothing to store. ` +
+          'Open it to check it saved correctly, then upload it again.',
+      );
+    }
 
     // Confirm the bytes match the declared type before the file can feed the AI
     // pipeline or be served back (audit B-1 P2).

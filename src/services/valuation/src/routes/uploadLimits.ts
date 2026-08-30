@@ -80,7 +80,17 @@ export async function bufferUpload(
     // got as far as constructing its error.
     const code = (err as { code?: unknown } | null | undefined)?.code;
     if (code === FILE_TOO_LARGE || file.file?.truncated === true) {
-      throw problems.unprocessable(`File exceeds the ${megabytes(maxBytes)} MB limit`);
+      // The size that was *not* accepted cannot be reported: the stream was cut
+      // at the limit, so the only number known here is the limit itself. What
+      // can be given is the way out, and for the files this platform takes it
+      // is nearly always the same one — a scanned PDF that was never
+      // compressed, or a workbook carrying years of tabs that are not the cap
+      // table.
+      throw problems.unprocessable(
+        `This file is larger than the ${megabytes(maxBytes)} MB limit, so none of it was saved. ` +
+          'Split it, or upload the pages or sheets that matter on their own; a scanned document ' +
+          'can usually be made much smaller by re-exporting it as a compressed PDF.',
+      );
     }
     throw problems.badRequest(
       'The upload ended before the whole file arrived — nothing was saved. ' +
