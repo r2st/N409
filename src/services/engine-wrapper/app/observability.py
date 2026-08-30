@@ -72,6 +72,14 @@ _EXTRA_KEYS = (
     "tokens_total",
     "count",
     "limit",
+    # how far out a run that could not be completed was — see
+    # `engine.errors.EngineDegradedError`. Named rather than folded into
+    # `count`/`limit`, which is the overloading the note above exists about:
+    # `limit` already means a configured ceiling on requests, and a tolerance
+    # asked the same question of it would answer both queries wrongly.
+    "relative_error",
+    "tolerance",
+    "paths",
 )
 
 # ── Redaction ────────────────────────────────────────────────────────────────

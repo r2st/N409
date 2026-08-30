@@ -16,6 +16,7 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from app.engine.errors import EngineDegradedError
 from app.errors import INTERNAL_ERROR_DETAIL, install_error_handlers, make_unhandled_error_middleware
 from app.main import app
 from app.observability import make_request_context_middleware
@@ -68,6 +69,25 @@ def boom_client() -> TestClient:
                 {"loc": ["body", "holders", 0, "email"], "input": HOLDER_ADDRESS, "msg": "bad"}
             ],
         )
+
+    @boom_app.get("/degraded")
+    def _degraded() -> dict:
+        # A refusal the caller's inputs did not earn — the Monte Carlo
+        # conservation check, raised the way every route converts it.
+        try:
+            raise EngineDegradedError(
+                "the Monte Carlo allocation did not conserve value",
+                event="monte_carlo_conservation",
+                relative_error=0.42,
+                tolerance=0.10,
+                paths=200,
+            )
+        except EngineDegradedError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @boom_app.get("/ordinary-422")
+    def _ordinary_422() -> dict:
+        raise HTTPException(status_code=422, detail="volatility must be positive")
 
     boom_app.middleware("http")(make_unhandled_error_middleware("engine-wrapper"))
     boom_app.middleware("http")(make_request_context_middleware("engine-wrapper"))
@@ -274,3 +294,69 @@ class TestOutboundScrub:
 
     def test_an_ordinary_detail_is_returned_verbatim(self, boom_client: TestClient) -> None:
         assert boom_client.get("/unavailable").json()["detail"] == "solver backend is not available"
+
+
+class TestADegradedRunIsLoggedThoughItAnswers422:
+    """The one 4xx this tier logs, and why it is the only one.
+
+    The module docstring states the rule: 4xx describes the request, the caller
+    was told, and the rate is set by whoever is making the mistakes. A Monte
+    Carlo run refused for value conservation is the exception — every input was
+    inside the bands this engine publishes, the estimator is what failed, and
+    the only person who hears about it is the analyst reading the 422. How
+    often it happens is an operator's question and it had no answer.
+    """
+
+    def test_logs_the_refusal_with_its_event_and_figures(
+        self, boom_client: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING):
+            res = boom_client.get("/degraded")
+        assert res.status_code == 422
+        lines = [r for r in caplog.records if getattr(r, "event", None) == "monte_carlo_conservation"]
+        assert len(lines) == 1
+        record = lines[0]
+        # `warning`, not `error`: the caller was answered and told what to
+        # change. What an operator wants from these is a rate, not a page.
+        assert record.levelno == logging.WARNING
+        assert record.relative_error == 0.42
+        assert record.tolerance == 0.10
+        assert record.paths == 200
+        assert record.path == "/degraded"
+
+    def test_the_figures_survive_the_formatter_allowlist(
+        self, boom_client: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A key the formatter does not know is dropped, silently.
+
+        `_EXTRA_KEYS` is an allowlist and says so, and a field it discards
+        reads from the call site exactly like a field that is logged — which is
+        the trap its own note is about. So the line is formatted here rather
+        than the record inspected.
+        """
+        from app.observability import JsonLogFormatter
+
+        with caplog.at_level(logging.WARNING):
+            boom_client.get("/degraded")
+        record = next(r for r in caplog.records if getattr(r, "event", None) == "monte_carlo_conservation")
+        line = json.loads(JsonLogFormatter().format(record))
+        assert line["relative_error"] == 0.42
+        assert line["tolerance"] == 0.10
+        assert line["paths"] == 200
+
+    def test_an_ordinary_422_still_says_only_what_the_access_log_says(
+        self, boom_client: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Which is a status and a path, and nothing about what was refused.
+
+        The access log has always counted these — `http_access` at `warning`
+        for any 4xx — so "how many 422s did /engine/v1/compute answer" was
+        answerable all along. What it cannot say is *which* 422, and the two it
+        cannot tell apart are "the caller sent a negative volatility" and "this
+        engine could not complete a run it had accepted". Only the second is
+        anybody here's problem.
+        """
+        with caplog.at_level(logging.WARNING):
+            assert boom_client.get("/ordinary-422").status_code == 422
+        events = {getattr(r, "event", None) for r in caplog.records if r.levelno >= logging.WARNING}
+        assert events == {"http_access"}

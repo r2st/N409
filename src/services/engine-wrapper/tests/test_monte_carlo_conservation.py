@@ -145,3 +145,50 @@ class TestWhatTheResidualIsMadeOf:
         rel = out["value_conservation"]["relative_error"]
         analytic_rse = math.sqrt(math.expm1(0.6 * 0.6 * 4.0)) / math.sqrt(100_000)
         assert abs(rel) < analytic_rse
+
+
+class TestTheRefusalIsObservable:
+    """A refusal nobody but the analyst was told about.
+
+    The conservation check answers a 422, and this tier's rule for those is
+    written down in ``app/errors.py``: "4xx stays unlogged. Those describe the
+    request, the caller was told, and their rate is set by whoever is making
+    the mistakes." That is true of every other ``EngineInputError`` raise site
+    and false of this one — the volatility was inside ``VOLATILITY_BAND``, the
+    horizon is one nothing warns about, and the path count is the one this
+    engine picks when the caller does not. The request was fine; the estimator
+    failed on it.
+
+    So the operator's question — is this happening once a week or forty times a
+    day — had no answer anywhere. ``EngineDegradedError`` is how the refusal
+    tells ``install_error_handlers`` it is not like the other 422s.
+    """
+
+    def test_the_refusal_is_the_degraded_type_and_carries_its_figures(self) -> None:
+        from app.engine.errors import EngineDegradedError
+
+        with pytest.raises(EngineDegradedError) as caught:
+            mc(t=7.0, sigma=5.0, paths=200, seed=7)
+        err = caught.value
+        assert err.event == "monte_carlo_conservation"
+        assert abs(err.facts["relative_error"]) > MAX_CONSERVATION_ERROR
+        assert err.facts["tolerance"] == MAX_CONSERVATION_ERROR
+        assert err.facts["paths"] == 200
+        # Still an EngineInputError, so all eighteen catch sites keep answering
+        # 422 with the sentence they always did.
+        assert isinstance(err, EngineInputError)
+
+    def test_no_client_figure_rides_along_to_the_log(self) -> None:
+        """The dollars stay in the sentence the analyst reads.
+
+        ``facts`` is what goes on the log line, which is kept for a rate; the
+        equity value it was measured against is this client's, and belongs in
+        the answer to the person who asked for the run rather than in the
+        journal on the box.
+        """
+        from app.engine.errors import EngineDegradedError
+
+        with pytest.raises(EngineDegradedError) as caught:
+            mc(t=7.0, sigma=5.0, paths=200, seed=7)
+        assert set(caught.value.facts) == {"relative_error", "tolerance", "paths"}
+        assert f"{EQUITY:,.2f}" in str(caught.value)

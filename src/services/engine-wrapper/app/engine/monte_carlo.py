@@ -96,7 +96,7 @@ from __future__ import annotations
 import math
 import random
 
-from .errors import EngineInputError
+from .errors import EngineDegradedError, EngineInputError
 from .waterfall import _normalize, _segments
 
 #: Simulated paths when the caller does not say — 10,000 antithetic pairs.
@@ -410,13 +410,28 @@ def allocate_monte_carlo(
     allocated_total = sum(totals)
     conservation_error = (allocated_total - equity_value) / equity_value
     if abs(conservation_error) > MAX_CONSERVATION_ERROR:
-        raise EngineInputError(
+        # `EngineDegradedError`, not the plain input error the other seventeen
+        # raise sites use: the caller's inputs were all inside the bands this
+        # engine publishes, and what failed is the estimator. The distinction
+        # exists so the refusal is logged — see the type's own docstring, and
+        # `errors.install_error_handlers`, which is the one place every route's
+        # 422 passes through.
+        raise EngineDegradedError(
             f"the Monte Carlo allocation did not conserve value: the classes were allocated "
             f"{allocated_total:,.2f} against an equity value of {equity_value:,.2f} "
             f"({conservation_error:+.1%}). The terminal distribution's mean sits in a tail this "
             f"draw did not reach — raise monte_carlo.paths (up to {MAX_PATHS}), shorten the "
             "horizon or lower the volatility, or use the 'opm' allocation, which prices the same "
-            "payoff in closed form and is exact at any volatility"
+            "payoff in closed form and is exact at any volatility",
+            event="monte_carlo_conservation",
+            # Dimensionless only. The two dollar figures are in the sentence
+            # above, which goes to the analyst who asked for the run; they are
+            # this client's equity value and they do not belong on a line that
+            # is kept for a rate. What an operator needs is how far out it was
+            # and against how many paths.
+            relative_error=conservation_error,
+            tolerance=MAX_CONSERVATION_ERROR,
+            paths=pairs * 2,
         )
 
     common_value = sum(totals[i] for i in common_at)

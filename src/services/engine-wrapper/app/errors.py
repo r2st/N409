@@ -43,6 +43,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .engine.errors import EngineDegradedError
 from .observability import REQUEST_ID_HEADER, current_request_id, redact
 
 # What the caller is told when an exception escaped. Deliberately says nothing
@@ -162,6 +163,24 @@ def install_error_handlers(app: FastAPI, service: str | None = None) -> None:
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        degraded = _degraded_cause(exc)
+        if degraded is not None:
+            # The exception to "4xx stays unlogged", and the only one. Every
+            # other 422 here describes the request; this one describes a run
+            # this engine could not complete on inputs it had already accepted
+            # as being inside its own bands. `warning` rather than `error`: the
+            # caller was answered and told what to change, and what an operator
+            # wants from these is a rate rather than a page.
+            log.warning(
+                "engine run refused as degraded",
+                extra={
+                    "event": degraded.event,
+                    "http_method": request.method,
+                    "path": request.url.path,
+                    "status": exc.status_code,
+                    **degraded.facts,
+                },
+            )
         if exc.status_code >= 500:
             # `detail` is in the formatter's allowlist and is redacted on the
             # way out like the message is, which matters here: these details
@@ -192,6 +211,30 @@ def install_error_handlers(app: FastAPI, service: str | None = None) -> None:
         # values (a ValueError instance, typically), so stringify defensively.
         return error_response(422, _serialisable_errors(exc))
 
+    return None
+
+
+def _degraded_cause(exc: BaseException) -> EngineDegradedError | None:
+    """The ``EngineDegradedError`` this HTTP failure was raised from, if any.
+
+    Every route converts the engine's refusals with ``raise HTTPException(...)
+    from exc``, which is what puts the original on ``__cause__``. Read here, in
+    the one handler all of them pass through, rather than at each of the
+    eighteen catch sites — a nineteenth route added next year gets the line for
+    free, and none of them has to remember that this particular 422 is not like
+    the others.
+
+    Bounded rather than walked to the end: a cause chain is attacker-influenced
+    nowhere here, but an unbounded walk over ``__cause__`` is a loop somebody
+    else's cycle can hang.
+    """
+    seen = 0
+    cause: BaseException | None = exc.__cause__
+    while cause is not None and seen < 4:
+        if isinstance(cause, EngineDegradedError):
+            return cause
+        cause = cause.__cause__
+        seen += 1
     return None
 
 
