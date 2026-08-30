@@ -85,11 +85,36 @@ describe('report /ready', () => {
   });
 
   it('adopts the caller request id so a render logs under the id that asked for it', async () => {
-    // The other two Fastify services set this and the Python pair read the
+    // The other two Fastify services do this and the Python pair read the
     // header into a contextvar; this unit minted its own, so it was the one hop
     // where a correlated trace broke.
+    //
+    // Asked of a served request rather than of `initialConfig.requestIdHeader`,
+    // which is how it was spelled until R211 replaced the header option with
+    // `genReqId` — so that the *rule* about what may be adopted is one function
+    // all three services share. The assertion went on naming the option and had
+    // been failing ever since; what the trace needs is that the id comes back,
+    // however the framework is told to take it.
     const app = buildApp();
-    expect(app.initialConfig.requestIdHeader).toBe('x-request-id');
+    const seen: string[] = [];
+    app.addHook('onRequest', async (req) => {
+      seen.push(req.id);
+    });
+    await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { 'x-request-id': '01J9REQUESTID0000000000001' },
+    });
+    expect(seen).toEqual(['01J9REQUESTID0000000000001']);
+    // And an id nobody could join on is refused rather than repeated: the hop
+    // mints its own, and the request is still served.
+    const refused = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { 'x-request-id': 'x'.repeat(4096) },
+    });
+    expect(refused.statusCode).toBe(200);
+    expect(seen[1]).not.toBe('x'.repeat(4096));
     await app.close();
   });
 });
