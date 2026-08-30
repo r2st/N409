@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { DEAD_LINK_DETAIL } from '../../src/domain/linkRefusal.js';
 
 const dbUp = await isDbAvailable();
 
@@ -194,7 +195,7 @@ describe.skipIf(!dbUp)('auth — the public surfaces', () => {
       // separate "never existed" from "no longer valid".
       const res = await post('/api/v1/auth/invite-info', { token: 'definitely-not-real' });
       expect(res.statusCode).toBe(400);
-      expect(res.json().detail).toMatch(/invalid, expired, or has been revoked/i);
+      expect(res.json().detail).toBe(DEAD_LINK_DETAIL.invitation);
     });
 
     it('gives accept-invite the same refusal for the same token', async () => {
@@ -203,7 +204,7 @@ describe.skipIf(!dbUp)('auth — the public surfaces', () => {
         password: 'correct-horse-battery-9',
       });
       expect(res.statusCode).toBe(400);
-      expect(res.json().detail).toMatch(/invalid, expired, or has been revoked/i);
+      expect(res.json().detail).toBe(DEAD_LINK_DETAIL.invitation);
     });
 
     it('422s an accept-invite whose password is too short to be one', async () => {
