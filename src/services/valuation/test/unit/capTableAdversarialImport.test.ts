@@ -15,6 +15,9 @@ import {
 } from '../../src/domain/capTable.js';
 import { decodeSheetText, SheetTextError } from '../../src/domain/sheetText.js';
 import { readXlsx } from '../../src/domain/xlsxRead.js';
+import { readZip } from '../../src/domain/zipReader.js';
+import { buildXlsx } from '../../src/export/xlsx.js';
+import { csvEscape } from '../../src/domain/csv.js';
 import { nameColumns, rowByColumn } from '../../src/domain/sheetColumns.js';
 
 /**
@@ -374,6 +377,56 @@ describe('adversarial imports — wrong types in numeric columns', () => {
     expect(entries.map((e) => e.shares)).toEqual([1234567, 100000, 1.234]);
     expect(entries[0]?.invested_amount).toBe(-500);
     expect(entries[2]?.price_per_share).toBe(1);
+  });
+});
+
+/*
+ * A cap table is imported from a spreadsheet and exported back to one, and the
+ * text in between is a holder name somebody else opens in Excel. The import
+ * must not evaluate a formula and the export must not hand one to the reader's
+ * spreadsheet — DDE (`=cmd|…`) is the vector, and `+ - @` and a leading tab or
+ * CR are the other four spellings of it (OWASP CSV injection).
+ */
+describe('adversarial imports — a holder name that is a formula', () => {
+  const VECTORS = [
+    "=cmd|'/c calc'!A1",
+    "+cmd|'/c calc'!A1",
+    "@SUM(1+9)*cmd|'/c calc'!A1",
+    "-2+3+cmd|'/c calc'!A1",
+    "\t=cmd|'/c calc'!A1",
+    '\r=HYPERLINK("http://evil")',
+  ];
+
+  it('imports the name as the text it is, without reading it as an expression', () => {
+    const rows = VECTORS.map((v) => ({ class: v, shares: '100' }));
+    const entries = parseCapTable(rows, { security_class: 'class', shares: 'shares' });
+    // Trimmed on the way in, as every name cell is — the leading control
+    // characters are whitespace, so what is stored is the visible name.
+    expect(entries.map((e) => e.security_class)).toEqual(VECTORS.map((v) => v.trim()));
+    expect(entries.every((e) => e.shares === 100)).toBe(true);
+  });
+
+  it('neutralises every one of them on the way back out to a CSV', () => {
+    for (const v of VECTORS) {
+      const field = csvEscape(v);
+      // The value is quoted with an apostrophe in front of the character the
+      // spreadsheet would have read as the start of a formula.
+      expect(field.replace(/^"/, '').startsWith("'")).toBe(true);
+    }
+  });
+
+  it('writes it into a workbook as text, never as a formula cell', () => {
+    const book = buildXlsx([
+      {
+        name: 'Cap table',
+        columns: [{ header: 'Security', format: 'text' }],
+        rows: VECTORS.map((v) => [v]),
+      },
+    ]);
+    const sheet = readZip(book).get('xl/worksheets/sheet1.xml')!.toString('utf8');
+    expect(sheet).not.toContain('<f>');
+    expect(sheet.match(/t="inlineStr"/g)?.length).toBe(VECTORS.length + 1);
+    expect(sheet).toContain('=cmd|&apos;/c calc&apos;!A1');
   });
 });
 

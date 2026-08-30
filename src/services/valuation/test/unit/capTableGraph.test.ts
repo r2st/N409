@@ -459,6 +459,60 @@ describe('cap table graph', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  /*
+   * The one structural property the drawing has to hold, against a table built
+   * to break it.
+   *
+   * "A owns B owns A" is not representable in this model — a cap-table row
+   * names a security class, not a holder, and nothing on a row points at
+   * another row — so the only way a cycle could appear is one the builder
+   * introduces itself: a preferred class named the same as the common class
+   * it converts into, a class whose name slugs to the same node id as another,
+   * a company whose name matches a class, a round named after the company. Each
+   * of those is a name collision, and `nodeId` resolves collisions with a
+   * suffix rather than by reusing the id — which is exactly the step a cycle
+   * would need. A self-loop would draw a class as senior to and converting into
+   * itself, and would not terminate for a reader following the stack.
+   */
+  it('draws no cycle and no self-loop, whatever the classes are named', () => {
+    const { nodes, edges } = buildCapTableGraph({
+      companyName: 'Common',
+      entries: [
+        entry({ security_class: 'Common', class_type: 'common', shares: 1_000_000 }),
+        entry({ security_class: 'Common', class_type: 'preferred', shares: 500_000, seniority: 1 }),
+        entry({ security_class: 'common ', class_type: 'preferred', shares: 500_000, seniority: 2 }),
+        entry({ security_class: '🚀', class_type: 'preferred', shares: 100, seniority: 2 }),
+        entry({ security_class: '🎉', class_type: 'option', shares: 100 }),
+        entry({ security_class: '', class_type: 'warrant', shares: 100 }),
+      ],
+      rounds: [{ id: 'r1', name: 'Common', closed_on: null, shares_issued: 1 }],
+    });
+    expect(new Set(nodes.map((n) => n.id)).size).toBe(nodes.length);
+    expect(edges.filter((e) => e.from === e.to)).toEqual([]);
+
+    // Every edge points from a node that exists to a node that exists, and the
+    // whole edge set topologically sorts — a cycle is what makes it not.
+    const ids = new Set(nodes.map((n) => n.id));
+    expect(edges.every((e) => ids.has(e.from) && ids.has(e.to))).toBe(true);
+    const outgoing = new Map<string, string[]>(nodes.map((n) => [n.id, []]));
+    const indegree = new Map<string, number>(nodes.map((n) => [n.id, 0]));
+    for (const e of edges) {
+      outgoing.get(e.from)!.push(e.to);
+      indegree.set(e.to, indegree.get(e.to)! + 1);
+    }
+    const queue = [...indegree].filter(([, n]) => n === 0).map(([id]) => id);
+    let visited = 0;
+    while (queue.length > 0) {
+      const id = queue.pop()!;
+      visited += 1;
+      for (const next of outgoing.get(id)!) {
+        indegree.set(next, indegree.get(next)! - 1);
+        if (indegree.get(next) === 0) queue.push(next);
+      }
+    }
+    expect(visited).toBe(nodes.length);
+  });
+
   it('handles an empty cap table without dividing by zero', () => {
     const graph = build([]);
     expect(graph.nodes).toHaveLength(1);
