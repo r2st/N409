@@ -27,6 +27,7 @@ from app.websearch import (
     apply_domain_filter,
     configured_provider,
     is_configured,
+    is_web_url,
     parse_duckduckgo,
     search,
     search_chain,
@@ -943,3 +944,74 @@ def test_no_browser_impersonating_dependency_is_installed():
             f"{banned} is installed — see the module docstring in websearch.py; "
             "the answer to a bot challenge here is the chain, not a disguise"
         )
+
+
+class TestIsWebUrl:
+    """A hit's URL becomes an ``href`` on the research tab, so the scheme is
+    asked once, in one place, for every backend."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://sec.gov/x",
+            "http://sec.gov/x",
+            "HTTPS://SEC.GOV/x",
+            "https://sec.gov/a?b=c#d",
+        ],
+    )
+    def test_admits_a_web_url(self, url):
+        assert is_web_url(url) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "file:///etc/passwd",
+            "//sec.gov/x",
+            "/x",
+            "sec.gov/x",
+            "",
+            " https://sec.gov/x",
+            "httpjavascript:alert(1)",
+            # The prefix check `startswith("http")` admitted this one: not a
+            # scheme, and `https?://` anchored is the difference.
+            "httpx://sec.gov",
+        ],
+    )
+    def test_refuses_everything_else(self, url):
+        assert is_web_url(url) is False
+
+    @pytest.mark.parametrize("gap", ["\t", "\n", "\r"])
+    def test_refuses_a_scheme_split_by_what_the_url_parser_deletes(self, gap):
+        """The browser deletes these before parsing, so `java<TAB>script:` is
+        `javascript:` where it matters and something else to a prefix test."""
+        assert is_web_url(f"java{gap}script:alert(1)") is False
+        assert is_web_url(f"http{gap}s://sec.gov") is True
+
+
+class TestHitsFromScheme:
+    """The JSON backends (Brave, Serper, Tavily, SearXNG, Wikipedia) share one
+    row reader, and it asked nothing about the scheme. SearXNG is the one a
+    deployment points at an instance of its own."""
+
+    def _rows(self, url):
+        return [{"url": url, "title": "t", "description": "s"}]
+
+    def test_drops_a_row_whose_url_is_not_a_url(self):
+        hits = websearch._hits_from(
+            self._rows("javascript:alert(1)"),
+            url_key="url",
+            title_key="title",
+            snippet_key="description",
+            limit=5,
+        )
+        assert hits == []
+
+    def test_keeps_the_rows_beside_it(self):
+        rows = self._rows("javascript:alert(1)") + self._rows("https://sec.gov/x")
+        hits = websearch._hits_from(
+            rows, url_key="url", title_key="title", snippet_key="description", limit=5
+        )
+        assert [h.url for h in hits] == ["https://sec.gov/x"]

@@ -3,6 +3,7 @@ import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { formatDateTime } from '../../lib/format';
+import { externalHref } from '../../lib/m2';
 import { useWorkspace } from './ValuationWorkspace';
 import {
   Button,
@@ -94,19 +95,33 @@ function Citations({ citations }: { citations: Citation[] }) {
     <div className="mt-3">
       <div className="overline mb-1.5 text-ink-400">Sources</div>
       <ul className="space-y-1">
-        {citations.map((c) => (
-          <li key={c.url} className="text-xs">
-            <a
-              href={c.url}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-bond-600 hover:text-bond-700 hover:underline"
-            >
-              {c.title?.trim() || c.url}
-            </a>
-            {c.date && <span className="tnum ml-2 text-ink-400">{c.date}</span>}
-          </li>
-        ))}
+        {citations.map((c) => {
+          // The URL came from a search backend by way of a model, and lands in
+          // an `href`. Anything that is not absolute http(s) is shown as the
+          // text it is rather than made clickable — a source that cannot be
+          // linked is still a source the analyst has to be able to read.
+          const href = externalHref(c.url);
+          const label = c.title?.trim() || c.url;
+          return (
+            <li key={c.url} className="text-xs">
+              {href ? (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="text-bond-600 hover:text-bond-700 hover:underline"
+                >
+                  {label}
+                </a>
+              ) : (
+                <span className="text-ink-500" title="Not a link this source can be followed to">
+                  {label}
+                </span>
+              )}
+              {c.date && <span className="tnum ml-2 text-ink-400">{c.date}</span>}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

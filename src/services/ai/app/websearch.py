@@ -545,7 +545,7 @@ def parse_duckduckgo(body: str, limit: int) -> list[SearchHit]:
             # A new link means the previous one had no snippet row.
             flush()
             url = _unwrap(html.unescape(href.strip()))
-            if url.startswith("http"):
+            if is_web_url(url):
                 pending = url
                 pending_title = _text(match.group("title") or match.group("title2") or "")
             continue
@@ -843,13 +843,41 @@ def _json_object(resp: httpx.Response, provider: str) -> dict:
     return data
 
 
+_WEB_SCHEME_RE = re.compile(r"https?://", re.IGNORECASE)
+"""Anchored by ``match``; a scheme is only a scheme at the start."""
+
+_URL_IGNORED = {0x09: None, 0x0A: None, 0x0D: None}
+"""Tab, LF and CR — what the URL parser removes before it parses. WHATWG URL."""
+
+
+def is_web_url(value: str) -> bool:
+    """Is this a URL a citation can be followed to?
+
+    ``http`` and ``https`` and nothing else. The scheme is the whole question:
+    a hit's URL is rendered as an ``href`` on the research tab, put in front of
+    the synthesis model, and printed in the report's public-sources exhibit, and
+    ``javascript:`` in the first of those is script running in an analyst's
+    session. Tabs, newlines and carriage returns are deleted before the test
+    because the URL parser deletes them before it parses — ``java<TAB>script:``
+    is one scheme to a browser and another to a naive prefix check.
+
+    ``parse_duckduckgo`` asked a version of this (``startswith("http")``) and
+    the JSON backends asked nothing, which is the drift rather than the
+    default: DuckDuckGo is the keyless backend every deployment falls back to,
+    and SearXNG — the one a deployment points at an instance of its own — was
+    the one with no check at all.
+    """
+    return _WEB_SCHEME_RE.match(value.translate(_URL_IGNORED)) is not None
+
+
 def _hits_from(
     rows: object, *, url_key: str, title_key: str, snippet_key: str, limit: int
 ) -> list[SearchHit]:
     """Provider rows to `SearchHit`s, skipping anything malformed.
 
     Every level is provider-controlled, so none of it is assumed. A row without
-    a usable URL is dropped rather than kept as a citation with nothing to cite.
+    a usable URL is dropped rather than kept as a citation with nothing to cite,
+    and so is one whose URL is not a URL — see `is_web_url`.
     """
     out: list[SearchHit] = []
     seen: set[str] = set()
@@ -862,6 +890,8 @@ def _hits_from(
         if not isinstance(url, str) or not url.strip():
             continue
         clean = url.strip()
+        if not is_web_url(clean):
+            continue
         if clean in seen:
             continue
         seen.add(clean)

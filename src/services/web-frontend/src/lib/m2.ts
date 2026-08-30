@@ -262,6 +262,27 @@ function safeHref(raw: string): string | null {
   return SAFE_URL.test(url) ? url : null;
 }
 
+/** Absolute http(s) only — no relative arm, because an off-site citation is off-site. */
+const SAFE_EXTERNAL_URL = /^https?:\/\//i;
+
+/**
+ * A URL this app did not write, as an href it can put in the DOM — or null.
+ *
+ * The research citations are the case this exists for. Their URLs come from
+ * whichever search backend the deployment has configured, by way of a model
+ * that picks which of them to cite, and they are rendered as links an analyst
+ * clicks. `href` is one of the two attributes where a string decides whether
+ * the browser navigates or executes, so a value from outside gets asked the
+ * same question every other link in this app is asked.
+ *
+ * Null rather than a fallback URL: a citation that cannot be linked is still
+ * evidence and must still be *shown*, just not made clickable. See ResearchTab.
+ */
+export function externalHref(raw: string | null | undefined): string | null {
+  const url = (raw ?? '').trim().replace(URL_IGNORED, '');
+  return SAFE_EXTERNAL_URL.test(url) ? url : null;
+}
+
 /**
  * Whitelist tags, drop every attribute — except <a>, which keeps a validated
  * http(s)/mailto href (gap 9). Safe for dangerouslySetInnerHTML.
