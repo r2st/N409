@@ -166,7 +166,9 @@ describe.skipIf(!dbUp)('AI comparable discovery applied to the peer set', () => 
 
     const res = await apply();
     expect(res.statusCode).toBe(200);
-    expect(res.json().applied).toEqual({ selected: 2, excluded: 1, unusable: 0 });
+    // `unverified` joined the summary with R216's verification gate; this
+    // assertion is exact, so it has to carry the whole shape.
+    expect(res.json().applied).toEqual({ selected: 2, excluded: 1, unusable: 0, unverified: 0 });
 
     const alpha = await byTicker('AAA');
     expect(alpha).toMatchObject({
