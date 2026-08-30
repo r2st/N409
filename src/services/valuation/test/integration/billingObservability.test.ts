@@ -452,6 +452,83 @@ describe.skipIf(!dbUp)('a subscription checkout on the billing webhook', () => {
     // value rather than on a timestamp.
     expect(rows[0]!.payload.checkout_session_id).toBe('cs_obs_sub_join');
     expect(rows[0]!.payload.stripe_event_id).toBe('evt_obs_checkout_1');
+    // And on the log line beside it, so the trace holds without reading the
+    // trail: session → subscription → every later delivery about it.
+    const started = lines.find((l) => String(l.msg) === 'subscription started' && l.userId === userId);
+    expect(started).toBeDefined();
+    expect(started!.checkoutSessionId).toBe('cs_obs_sub_join');
+    expect(started!.stripeSubscriptionId).toBe('sub_obs_join');
+  });
+
+  /**
+   * And the state machine itself, which was the last thing on this surface with
+   * no log of its own: a plan starting, a card recovering an account out of
+   * past_due, a downgrade taking effect, a cancellation landing — all audited,
+   * several of them mailed to the subscriber, none of them countable.
+   */
+  it('names every transition the write actually made, and only those', async () => {
+    const userId = (
+      await createUser(ctx.pool, {
+        email: 'sub-transitions@obs.example.com',
+        passwordDigest: 'x',
+        roles: ['valuation_user'],
+      })
+    ).id;
+    const start = Math.floor(Date.UTC(2026, 3, 1) / 1000);
+    const update = (eventId: string, object: Record<string, unknown>) => {
+      const payload = JSON.stringify({
+        id: eventId,
+        type: 'customer.subscription.updated',
+        created: start,
+        data: {
+          object: {
+            id: 'sub_obs_transitions',
+            object: 'subscription',
+            customer: 'cus_obs_transitions',
+            current_period_start: start,
+            current_period_end: start + 31_536_000,
+            metadata: { user_id: userId, plan_tier: 'annual_retainer' },
+            ...object,
+          },
+        },
+      });
+      return ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/billing/webhook',
+        headers: signedHeaders(payload),
+        payload,
+      });
+    };
+
+    const opened = lines.length;
+    expect((await update('evt_obs_tr_1', { status: 'active' })).statusCode).toBe(200);
+    const started = lines.slice(opened).find((l) => String(l.msg) === 'subscription started');
+    expect(started).toBeDefined();
+    expect(started!.userId).toBe(userId);
+    expect(started!.status).toBe('active');
+
+    // The transition dunning is read for, and its recovery, which are one field
+    // apart and were indistinguishable because neither existed.
+    const declined = lines.length;
+    expect((await update('evt_obs_tr_2', { status: 'past_due' })).statusCode).toBe(200);
+    const wentPastDue = lines.slice(declined).find((l) => String(l.msg) === 'subscription changed');
+    expect(wentPastDue).toBeDefined();
+    expect(wentPastDue!.previousStatus).toBe('active');
+    expect(wentPastDue!.status).toBe('past_due');
+    expect(wentPastDue!.changed).toEqual(['status']);
+
+    // A delivery that moves nothing — Stripe re-sends this event for changes
+    // this platform does not carry — writes no row and must write no line.
+    const quiet = lines.length;
+    expect((await update('evt_obs_tr_3', { status: 'past_due' })).statusCode).toBe(200);
+    expect(lines.slice(quiet).find((l) => String(l.msg) === 'subscription changed')).toBeUndefined();
+
+    const ended = lines.length;
+    expect((await update('evt_obs_tr_4', { status: 'canceled' })).statusCode).toBe(200);
+    const canceled = lines.slice(ended).find((l) => String(l.msg) === 'subscription canceled');
+    expect(canceled).toBeDefined();
+    expect(canceled!.userId).toBe(userId);
+    expect(canceled!.canceledAt).toEqual(expect.any(String));
   });
 
   it('alerts when a checkout of ours completes with no plan to attribute it to', async () => {

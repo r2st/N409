@@ -839,6 +839,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
   const SUBSCRIPTION_AUDIT_COLUMNS = ['plan_tier', 'status', 'cancel_at_period_end'] as const;
 
   async function auditSubscriptionWrite(
+    log: FastifyBaseLogger,
     stripeEventId: string | null,
     written: Awaited<ReturnType<typeof upsertSubscription>>,
     before: { plan_tier: string; status: string; cancel_at_period_end: boolean } | null,
@@ -864,6 +865,40 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
      */
     checkoutSessionId?: string | null,
   ): Promise<void> {
+    /**
+     * One line per subscription write that moved something, beside the row.
+     *
+     * The state machine itself was the last thing on this surface with no log
+     * of its own: a plan starting, a card recovering an account out of
+     * past_due, a downgrade taking effect, a cancellation scheduled or landed —
+     * all of them wrote an audit row, several of them mailed the subscriber,
+     * and none of them said anything a log-side view could count or trace. The
+     * row answers "what happened to this account"; what it cannot answer is
+     * "how many accounts went past due this week", and it carries no request id
+     * to join a transition to the delivery that carried it.
+     *
+     * Emitted from here rather than from the three call sites so it is decided
+     * by the same facts the audit row is — `inserted` and `newly_canceled` come
+     * out of the statement that moved the row, and the `changes` diff is what
+     * says a delivery moved anything at all. Stripe describes one new
+     * subscription with two events and one cancellation with two more, and a
+     * line per event would double-count every one of them.
+     */
+    const announce = (msg: string, extra: Record<string, unknown> = {}) =>
+      log.info(
+        {
+          actorType: 'system',
+          source: 'stripe',
+          userId: written.user_id,
+          subscriptionId: written.id,
+          stripeSubscriptionId: written.stripe_subscription_id,
+          planTier: written.plan_tier,
+          status: written.status,
+          ...(checkoutSessionId ? { checkoutSessionId } : {}),
+          ...extra,
+        },
+        msg,
+      );
     const common = {
       stripe_event_id: stripeEventId,
       subscription_id: written.id,
@@ -881,6 +916,9 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
           canceled_at: written.canceled_at?.toISOString() ?? null,
         },
       });
+      announce('subscription canceled', {
+        canceledAt: written.canceled_at?.toISOString() ?? null,
+      });
       return;
     }
     if (written.inserted) {
@@ -895,6 +933,9 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
           period_start: written.current_period_start?.toISOString() ?? null,
           period_end: written.current_period_end?.toISOString() ?? null,
         },
+      });
+      announce('subscription started', {
+        periodEnd: written.current_period_end?.toISOString() ?? null,
       });
       return;
     }
@@ -913,6 +954,15 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       actor: STRIPE_ACTOR,
       userId: written.user_id,
       payload: { ...common, changes },
+    });
+    // The fields that moved, flat and named, so a status transition is
+    // greppable without reading a nested payload: `previousStatus` is what
+    // makes "went past due" and "recovered from past due" different lines.
+    announce('subscription changed', {
+      previousStatus: before.status,
+      previousPlanTier: before.plan_tier,
+      cancelAtPeriodEnd: written.cancel_at_period_end,
+      changed: Object.keys(changes),
     });
   }
 
@@ -1001,23 +1051,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               stripeSubscriptionId: typeof obj.subscription === 'string' ? obj.subscription : null,
               stripeCustomerId: typeof obj.customer === 'string' ? obj.customer : null,
             });
-            if (started) {
-              await auditSubscriptionWrite(key.eventId, started, null, checkoutSessionId);
-              log.info(
-                {
-                  actorType: 'system',
-                  source: 'stripe',
-                  userId: started.user_id,
-                  subscriptionId: started.id,
-                  stripeSubscriptionId: started.stripe_subscription_id,
-                  checkoutSessionId,
-                  planTier: started.plan_tier,
-                  status: started.status,
-                  inserted: started.inserted,
-                },
-                'subscription checkout completed',
-              );
-            }
+            if (started) await auditSubscriptionWrite(log, key.eventId, started, null, checkoutSessionId);
           } else {
             /**
              * A subscription checkout of ours that completed with nothing on it
@@ -1138,7 +1172,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               cancelAtPeriodEnd:
                 typeof obj.cancel_at_period_end === 'boolean' ? obj.cancel_at_period_end : undefined,
             });
-            if (written) await auditSubscriptionWrite(key.eventId, written, before);
+            if (written) await auditSubscriptionWrite(log, key.eventId, written, before);
             /**
              * A renewal that granted the next period's quota, which nothing
              * said either.
