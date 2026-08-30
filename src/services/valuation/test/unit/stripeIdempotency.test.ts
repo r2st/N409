@@ -220,6 +220,11 @@ describe('the answer to a click that arrived twice', () => {
   it('leaves every other rejection where it was', () => {
     const declined = stripeProblem(new StripeApiError('Your card was declined.', 402));
     expect(declined.status).toBe(502);
-    expect(declined.detail).toBe('Stripe: Your card was declined.');
+    // Stripe's sentence still leads, unchanged — it is written for the
+    // cardholder and ours would be worse. What follows it is the pair of facts
+    // it never carries: what happened to the money, and whether pressing Pay
+    // again is worth anything (R247).
+    expect(declined.detail).toContain('Stripe: Your card was declined.');
+    expect(declined.detail).toMatch(/Nothing has been charged/);
   });
 });

@@ -170,7 +170,33 @@ export function stripeProblem(err: StripeApiError): ApiProblem {
         'before trying again — pressing Pay twice does not charge you twice.',
     );
   }
-  return stripeUpstream(`Stripe: ${err.message}`);
+  // A fifth, which is ours wearing Stripe's voice.
+  //
+  // `invalid_request_error` is Stripe saying our *parameters* were wrong — a
+  // price id that does not exist on this account, a currency it will not take,
+  // a customer that was deleted. Its sentence is written for whoever assembled
+  // the request and names the thing it could not find: "No such price:
+  // 'price_1Nx…'". That went to whoever pressed Pay, together with an internal
+  // identifier they have no use for and a fault they cannot clear by trying
+  // again — the same shape as the 401/403 case above, and the same answer,
+  // because from the reader's side it is the same situation: a misconfiguration
+  // on our side, no money moved.
+  //
+  // `card_error` keeps passing through, and the distinction is the point:
+  // Stripe writes those for the cardholder, and ours would be worse.
+  if (err.stripeType === 'invalid_request_error') {
+    return stripeUpstream(
+      'The payment could not be set up because of a problem on our side, so nothing has been ' +
+        'charged. Trying again will not clear it — please contact support, and mention the time ' +
+        'you tried.',
+    );
+  }
+  // Everything else is Stripe's own sentence, which is the useful part, plus
+  // the two facts it never carries: what happened to the money, and whether
+  // pressing the button again is worth anything.
+  return stripeUpstream(
+    `Stripe: ${err.message} Nothing has been charged. If this repeats, contact support and mention the time you tried.`,
+  );
 }
 
 /**
