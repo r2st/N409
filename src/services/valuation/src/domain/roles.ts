@@ -99,3 +99,17 @@ export const JOB_ALERT_ROLES: readonly RoleKey[] = ['admin', 'god', 'supervisor'
  * above give: a note every reviewer gets is a note none of them owns.
  */
 export const AUDITOR_NOTE_ROLES: readonly RoleKey[] = ['admin', 'god', 'supervisor', 'main_reviewer'];
+
+/**
+ * Who hears a client's message on an engagement nobody is assigned to.
+ *
+ * The assigned reviewer is notified regardless — it is their file — and this
+ * covers the case they cannot: a thread on an unassigned engagement, or one
+ * whose reviewer has been deactivated since. Narrower than
+ * `AUDITOR_NOTE_ROLES` by `main_reviewer`, deliberately: an auditor's note
+ * carries somebody else's audit deadline and has to reach a reviewer lead even
+ * when the ops group is asleep, whereas a client asking a question on an
+ * unassigned file is a triage problem, and triage is what the three
+ * administrative roles already do for billing and for the job queue.
+ */
+export const CLIENT_MESSAGE_ROLES: readonly RoleKey[] = ['admin', 'god', 'supervisor'];

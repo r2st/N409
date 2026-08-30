@@ -26,6 +26,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { ValuationHub } from '../realtime/hub.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { notifyCommentPosted } from '../hooks/commentNotifications.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
 
@@ -139,6 +140,9 @@ export function registerCommentRoutes(
     // and kind ride on the wire; each viewer re-fetches through its own
     // RBAC'd comment list, so nothing invisible leaks.
     deps.hub?.broadcast(id, 'comment', { comment_id: comment.id, kind: comment.kind });
+    // The SSE frame reaches whoever already has this page open; the
+    // notification reaches the person who does not.
+    await notifyCommentPosted({ pool: deps.pool, log: req.log }, valuation, comment);
     return reply.status(201).send({ comment: toPublicComment(comment) });
   });
 
@@ -180,7 +184,7 @@ export function registerCommentRoutes(
    * 'auto' service account) posts parsed inbound mail here; the valuation is
    * resolved from an explicit id, a ULID or "#123" in the subject, or the
    * sender's most recent engagement. Replays of the same message_id are
-   * idempotent.
+   * idempotent, and only a first arrival notifies.
    */
   app.post('/api/v1/inbox/email', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
@@ -229,7 +233,13 @@ export function registerCommentRoutes(
       },
       { actorType: 'system', actorId: principal.id, source: 'inbox' },
     );
-    if (created) deps.hub?.broadcast(valuation.id, 'comment', { comment_id: comment.id, kind: comment.kind });
+    // Both guarded on `created`: an ingest replay of the same `message_id`
+    // returns the row it already stored, and re-announcing it would notify the
+    // reviewer once per redelivery of a mail the client sent once.
+    if (created) {
+      deps.hub?.broadcast(valuation.id, 'comment', { comment_id: comment.id, kind: comment.kind });
+      await notifyCommentPosted({ pool: deps.pool, log: req.log }, valuation, comment);
+    }
     return reply.status(created ? 201 : 200).send({
       comment: toPublicComment(comment),
       valuation_id: valuation.id,

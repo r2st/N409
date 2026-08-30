@@ -27,8 +27,10 @@ import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
  *
  * There is no POST. Replying happens on the engagement's own thread
  * (`POST /valuations/:id/comments`), which already owns the kind rules, the
- * mention parsing and the realtime broadcast — a second write path would be a
- * second place for those to drift.
+ * realtime broadcast and the notification fan-out — a second write path would
+ * be a second place for those to drift. (It does not own mention parsing:
+ * nothing in this service parses `@name`, and `comment_mentions` from
+ * migration 0089 has never had a writer.)
  */
 
 /**

@@ -1,5 +1,10 @@
 import type pg from 'pg';
-import { NOTIFICATION_EVENT_TYPES, type NotificationEventType } from '../domain/emailWorkflows.js';
+import {
+  NOTIFICATION_EVENT_CHANNELS,
+  NOTIFICATION_EVENT_TYPES,
+  type EventChannels,
+  type NotificationEventType,
+} from '../domain/emailWorkflows.js';
 
 /**
  * Notification preferences (P2 #11). Sparse and default-on: a missing row
@@ -18,11 +23,21 @@ export interface NotificationPreferenceRow extends ChannelPreference {
 
 const DEFAULT_ON: ChannelPreference = { in_app: true, email: true };
 
-/** The full matrix for one user, defaults filled in for absent rows. */
-export async function getPreferenceMatrix(
-  pool: pg.Pool,
-  userId: string,
-): Promise<Array<{ event_type: NotificationEventType } & ChannelPreference>> {
+/**
+ * The full matrix for one user, defaults filled in for absent rows.
+ *
+ * `supported` says which of the two switches on that row is connected to
+ * anything — see `NOTIFICATION_EVENT_CHANNELS`. Reported rather than used to
+ * suppress the stored value: a preference the reader set stays set, so an
+ * event type that later gains a channel honours what they already asked for
+ * instead of silently defaulting back on.
+ */
+export type PreferenceMatrixRow = {
+  event_type: NotificationEventType;
+  supported: EventChannels;
+} & ChannelPreference;
+
+export async function getPreferenceMatrix(pool: pg.Pool, userId: string): Promise<PreferenceMatrixRow[]> {
   const { rows } = await pool.query<NotificationPreferenceRow>(
     'SELECT * FROM notification_preferences WHERE user_id = $1',
     [userId],
@@ -30,7 +45,12 @@ export async function getPreferenceMatrix(
   const byType = new Map(rows.map((r) => [r.event_type, r]));
   return NOTIFICATION_EVENT_TYPES.map((event_type) => {
     const row = byType.get(event_type);
-    return { event_type, in_app: row?.in_app ?? true, email: row?.email ?? true };
+    return {
+      event_type,
+      in_app: row?.in_app ?? true,
+      email: row?.email ?? true,
+      supported: NOTIFICATION_EVENT_CHANNELS[event_type],
+    };
   });
 }
 

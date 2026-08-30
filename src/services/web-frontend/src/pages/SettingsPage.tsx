@@ -350,6 +350,16 @@ interface NotificationPreference {
   event_type: string;
   in_app: boolean;
   email: boolean;
+  /**
+   * Which of this row's two switches is connected to anything. Four of them
+   * were not: `valuation_started` and `valuation_cancelled` send email and
+   * raise no in-app notification, `changes_requested` is the reverse,
+   * `marketing` is an email-only campaign gate. The server derives this from
+   * the workflow rules themselves (`NOTIFICATION_EVENT_CHANNELS`) so it cannot
+   * drift from what actually sends; the column is rendered as an em dash where
+   * it is false, rather than as a checkbox that saves a setting nothing reads.
+   */
+  supported?: { in_app: boolean; email: boolean };
 }
 
 const EVENT_LABELS: Record<string, string> = {
@@ -359,6 +369,11 @@ const EVENT_LABELS: Record<string, string> = {
   changes_requested: 'Client requested changes',
   valuation_completed: 'Valuation published',
   valuation_cancelled: 'Valuation cancelled',
+  // Both of these reached the screen without a label and rendered as their raw
+  // key — "marketing" when migration 0118 put marketing consent on this matrix,
+  // and "comment_posted" when engagement messages started notifying.
+  marketing: 'Product news and offers',
+  comment_posted: 'New message on an engagement',
 };
 
 /** P2 #11 — per-event-type channel toggles, saved on change. Transactional
@@ -425,14 +440,23 @@ function NotificationPreferencesCard() {
                 <td className="py-2.5 text-ink-700">{EVENT_LABELS[p.event_type] ?? p.event_type}</td>
                 {(['in_app', 'email'] as const).map((channel) => (
                   <td key={channel} className="py-2.5 text-center">
-                    <input
-                      type="checkbox"
-                      aria-label={`${channel === 'in_app' ? 'In-app' : 'Email'} — ${EVENT_LABELS[p.event_type] ?? p.event_type}`}
-                      checked={p[channel]}
-                      disabled={saving}
-                      onChange={() => void toggle(p.event_type, channel)}
-                      className="accent-bond-600"
-                    />
+                    {p.supported && !p.supported[channel] ? (
+                      <span className="text-ink-400">
+                        <span aria-hidden>—</span>
+                        <span className="sr-only">
+                          {`${channel === 'in_app' ? 'In-app' : 'Email'} is not used for this event`}
+                        </span>
+                      </span>
+                    ) : (
+                      <input
+                        type="checkbox"
+                        aria-label={`${channel === 'in_app' ? 'In-app' : 'Email'} — ${EVENT_LABELS[p.event_type] ?? p.event_type}`}
+                        checked={p[channel]}
+                        disabled={saving}
+                        onChange={() => void toggle(p.event_type, channel)}
+                        className="accent-bond-600"
+                      />
+                    )}
                   </td>
                 ))}
               </tr>

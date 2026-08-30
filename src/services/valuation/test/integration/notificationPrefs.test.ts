@@ -12,6 +12,7 @@ interface Pref {
   event_type: string;
   in_app: boolean;
   email: boolean;
+  supported?: { in_app: boolean; email: boolean };
 }
 
 describe.skipIf(!dbUp)('notification preferences', () => {
@@ -110,9 +111,31 @@ describe.skipIf(!dbUp)('notification preferences', () => {
       event_type: 'draft_ready',
       in_app: true,
       email: false,
+      // Which of the two switches is connected to anything. `draft_ready` is
+      // the event type that has both, so it is also the one that proves the
+      // field is reported rather than merely present.
+      supported: { in_app: true, email: true },
     });
     // Everything else stays default-on.
     expect(prefs.filter((p) => p.event_type !== 'draft_ready').every((p) => p.email)).toBe(true);
+  });
+
+  /**
+   * The screen must not offer a switch that controls nothing.
+   *
+   * Four of them did: `valuation_started` and `valuation_cancelled` have an
+   * email rule and no notify rule, `changes_requested` is the reverse, and
+   * `marketing` is an email-only campaign gate. Setting the dead half saved a
+   * row and changed nothing, with nothing anywhere to say so.
+   */
+  it('reports which channels each event type actually uses', async () => {
+    const user = await seedUser(ctx, { roles: ['valuation_user'] });
+    const prefs = await getPrefs(user.token);
+    const supported = Object.fromEntries(prefs.map((p) => [p.event_type, p.supported]));
+    expect(supported.valuation_cancelled).toEqual({ in_app: false, email: true });
+    expect(supported.changes_requested).toEqual({ in_app: true, email: false });
+    expect(supported.marketing).toEqual({ in_app: false, email: true });
+    expect(supported.comment_posted).toEqual({ in_app: true, email: false });
   });
 
   it('rejects unknown event types', async () => {

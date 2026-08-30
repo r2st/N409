@@ -29,10 +29,10 @@ import {
  *
  * Replying happens inline (design §15.2) but the write does not: the box POSTs
  * to `/valuations/:id/comments`, the engagement's own thread endpoint, which
- * owns the kind rules, the mention parsing and the realtime broadcast. There
- * is deliberately no inbox write endpoint — a second write path is how those
- * three drift apart, and the drift shows up as a mention that never notified
- * anyone rather than as an error.
+ * owns the kind rules, the realtime broadcast and the notification fan-out.
+ * There is deliberately no inbox write endpoint — a second write path is how
+ * those three drift apart, and the drift shows up as a reply that never
+ * notified anyone rather than as an error.
  */
 
 interface InboxItem {

@@ -36,6 +36,13 @@ export const NOTIFICATION_EVENT_TYPES = [
    * `domain/communications.isSuppressed`.
    */
   'marketing',
+  /**
+   * A message on the engagement thread (`hooks/commentNotifications.ts`). Like
+   * `marketing` it is not a transition, so no rule in this module emits it —
+   * but it is a thing a reader can reasonably want fewer of, and the switch has
+   * to exist somewhere the client already looks.
+   */
+  'comment_posted',
 ] as const;
 
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
@@ -277,6 +284,63 @@ export function notificationsForTransition(v: ValuationSnapshot, to: ValuationSt
     body: r.body(v),
   }));
 }
+
+/**
+ * Which channels each event type can actually reach a reader on.
+ *
+ * The preference matrix is a grid of two checkboxes per event type, and four
+ * of them controlled nothing. `valuation_started` and `valuation_cancelled`
+ * have an email rule and no notify rule, so their in-app switch was inert;
+ * `changes_requested` has a notify rule and no email rule, so its email switch
+ * was; `marketing` is an email-only campaign gate and offered an in-app switch
+ * too, under a row the settings screen labelled with the raw key `marketing`
+ * because `EVENT_LABELS` had never been extended for it.
+ *
+ * A switch that controls nothing is worse than a missing one. A client who
+ * wants to hear about a cancellation in the app and not by mail could set
+ * exactly that and be told nothing at all, and nothing anywhere would report
+ * the setting had no effect — the dispatch path reads `channelsFor` for a
+ * channel that is never consulted, so the preference is honoured perfectly and
+ * is still a lie.
+ *
+ * Derived from `RULES` rather than written out, so a rule that gains or loses
+ * a channel cannot leave this behind. The two entries that are not transitions
+ * are declared: `marketing` is consulted by the drip scan
+ * (`domain/communications.isSuppressed`, email only) and `comment_posted` by
+ * `hooks/commentNotifications.ts` (in-app only). The census in
+ * `test/unit/emailWorkflows.test.ts` runs both directions over this — no event
+ * type may advertise a channel nothing produces, and none may produce on a
+ * channel it does not advertise.
+ */
+export interface EventChannels {
+  in_app: boolean;
+  email: boolean;
+}
+
+const NON_TRANSITION_CHANNELS: Partial<Record<NotificationEventType, EventChannels>> = {
+  marketing: { in_app: false, email: true },
+  comment_posted: { in_app: true, email: false },
+};
+
+export const NOTIFICATION_EVENT_CHANNELS: Readonly<Record<NotificationEventType, EventChannels>> = (() => {
+  const out = Object.fromEntries(
+    NOTIFICATION_EVENT_TYPES.map((t) => [
+      t,
+      { ...(NON_TRANSITION_CHANNELS[t] ?? { in_app: false, email: false }) },
+    ]),
+  ) as Record<NotificationEventType, EventChannels>;
+  for (const rule of Object.values(RULES)) {
+    for (const e of rule?.email ?? []) {
+      const entry = out[e.templateKey as NotificationEventType];
+      if (entry) entry.email = true;
+    }
+    for (const n of rule?.notify ?? []) {
+      const entry = out[n.type as NotificationEventType];
+      if (entry) entry.in_app = true;
+    }
+  }
+  return out;
+})();
 
 // ── Transactional templates (P0 #3 password reset, feature #9 invitations) ───
 // Account emails, not workflow emails — rendered directly by the auth/admin

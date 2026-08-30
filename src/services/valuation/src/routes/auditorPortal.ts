@@ -21,8 +21,9 @@ import {
 } from '../repos/auditorAccess.js';
 import { createComment } from '../repos/comments.js';
 import { createNotifications } from '../repos/notifications.js';
-import { listUserIdsWithRoles } from '../repos/users.js';
+import { findUsersByIds, listUserIdsWithRoles } from '../repos/users.js';
 import { AUDITOR_NOTE_ROLES } from '../domain/roles.js';
+import { sliceChars } from '../domain/textSlice.js';
 import type { ValuationHub } from '../realtime/hub.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody } from '../domain/validationProblem.js';
@@ -397,15 +398,27 @@ export function registerAuditorPortalRoutes(
         ...(valuation.assigned_reviewer_id ? [valuation.assigned_reviewer_id] : []),
         ...(await listUserIdsWithRoles(deps.pool, AUDITOR_NOTE_ROLES)),
       ]);
+      // `listUserIdsWithRoles` drops deactivated accounts; the reviewer id came
+      // off the engagement row, which records who was assigned and not whether
+      // they still work here. The comment above names "one whose reviewer has
+      // moved on" as the case the role set covers — it only covers it if the
+      // departed reviewer is dropped rather than sent a notification nobody can
+      // sign in to read.
+      const live = await findUsersByIds(deps.pool, [...recipients]);
       await createNotifications(
         deps.pool,
-        [...recipients].map((userId) => ({
-          userId,
-          valuationId: valuation.id,
-          type: 'auditor_note_received',
-          title: `${heading} — ${valuation.company_name}`,
-          body: `${from} on ${valuation.number}: ${body.slice(0, 300)}`,
-        })),
+        [...recipients]
+          .filter((userId) => live.has(userId))
+          .map((userId) => ({
+            userId,
+            valuationId: valuation.id,
+            type: 'auditor_note_received',
+            title: `${heading} — ${valuation.company_name}`,
+            // `sliceChars`, not `slice`: an auditor's note ending in an astral
+            // character cut at 300 leaves an unpaired surrogate, which Postgres
+            // stores as U+FFFD (domain/textSlice.ts).
+            body: `${from} on ${valuation.number}: ${sliceChars(body, 300)}`,
+          })),
       );
     } catch (err) {
       req.log.warn({ err, valuationId: valuation.id }, 'auditor note notification failed');
