@@ -592,6 +592,22 @@ def convertible_note(
 # ── SAFE / convertible instrument ────────────────────────────────────────────
 
 
+def _positive_cap(value, name: str) -> float:
+    """A valuation cap, which is a company valuation and so cannot be zero.
+
+    Split out because `valuation_cap` and `mfn_cap` are the same quantity and
+    have to be refused the same way — `min(cap, mfn_cap)` only means anything
+    when both have been through the same guard. See `safe_conversion`.
+    """
+    cap = _num(value, name, minimum=0.0)
+    if cap <= 0:
+        raise EngineInputError(
+            f"{name} must be positive — a cap of zero converts the instrument at a price of "
+            "zero; omit the field entirely for an uncapped instrument"
+        )
+    return cap
+
+
 def safe_conversion(
     *,
     investment: float,
@@ -643,16 +659,29 @@ def safe_conversion(
             raise EngineInputError("mfn_discount must be < 1")
         eff_discount = max(disc, mfn_disc)
 
-    cap = _num(valuation_cap, "valuation_cap", minimum=0.0) if valuation_cap is not None else None
+    # Positive, not merely non-negative. A cap of zero is not a cap — it puts the
+    # conversion price at zero and the note converts into an unbounded number of
+    # shares — and it is what the debt page sends for a *cleared* cap field,
+    # because `Number('')` is 0. So the ordinary act of emptying an optional
+    # input produced "conversion price resolved to zero", an error naming
+    # neither the field at fault nor what was wrong with it. That is the failure
+    # mode the MFN guards below were written to prevent, on the primary term.
+    cap = _positive_cap(valuation_cap, "valuation_cap") if valuation_cap is not None else None
     if mfn_cap is not None:
-        mfn_c = _num(mfn_cap, "mfn_cap", minimum=0.0)
+        mfn_c = _positive_cap(mfn_cap, "mfn_cap")
         cap = mfn_c if cap is None else min(cap, mfn_c)
 
     discount_price = round_price * (1.0 - eff_discount)
     cap_price = cap / shares if cap is not None else None
     conversion_price = discount_price if cap_price is None else min(discount_price, cap_price)
     if conversion_price <= 0:
-        raise EngineInputError("conversion price resolved to zero")
+        # Both legs, because the conversion price is the lower of them and the
+        # message has to say which one put it on the floor.
+        raise EngineInputError(
+            f"the conversion price resolved to {conversion_price:g} — the discount leg is "
+            f"{discount_price:g} (round price {round_price:g} less {eff_discount:.4g}) and the "
+            f"cap leg is {'none' if cap_price is None else format(cap_price, 'g')}"
+        )
 
     safe_shares = inv / conversion_price
     total_shares_post = shares + safe_shares

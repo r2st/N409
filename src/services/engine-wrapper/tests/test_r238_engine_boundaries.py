@@ -17,6 +17,7 @@ from app.engine.compute import compute
 from app.engine.debt_valuation import (
     convertible_note,
     coupon_schedule,
+    safe_conversion,
     schedule_periods,
     yield_dcf,
 )
@@ -305,3 +306,54 @@ class TestRepurchasePresentValue:
         out = repurchase_obligation(**self.BASE, discount_rate=0.0)
         assert out["pv_of_obligation"] == pytest.approx(out["total_obligation"])
         assert all(r["pv"] == pytest.approx(r["repurchase_cost"]) for r in out["schedule"])
+
+
+# ── a valuation cap of zero is not a cap ─────────────────────────────────────
+
+
+class TestSafeCap:
+    BASE = {
+        "investment": 100_000.0,
+        "discount": 0.2,
+        "next_round_pre_money": 10e6,
+        "next_round_shares": 10e6,
+    }
+
+    def test_a_cleared_cap_field_names_the_field(self):
+        """The debt page sends `Number('') === 0` for a cleared cap.
+
+        So emptying an optional input produced "conversion price resolved to
+        zero" — an error naming neither the field at fault nor what was wrong
+        with it, which is the failure mode the MFN guards beside it were written
+        to prevent.
+        """
+        with pytest.raises(EngineInputError) as exc:
+            safe_conversion(**self.BASE, valuation_cap=0.0)
+        assert "valuation_cap must be positive" in str(exc.value)
+        assert "omit the field entirely" in str(exc.value)
+
+    def test_an_mfn_cap_of_zero_is_refused_the_same_way(self):
+        """`min(cap, mfn_cap)` only means anything when both went through the
+        same guard."""
+        with pytest.raises(EngineInputError) as exc:
+            safe_conversion(**self.BASE, valuation_cap=5e6, mfn_cap=0.0)
+        assert "mfn_cap must be positive" in str(exc.value)
+
+    def test_an_uncapped_safe_converts_on_the_discount(self):
+        out = safe_conversion(**self.BASE, valuation_cap=None)
+        assert out["cap_price"] is None
+        assert out["converted_via"] == "discount"
+        assert out["conversion_price"] == pytest.approx(0.8)
+
+    def test_a_zero_conversion_price_names_both_legs(self):
+        """A discount of 100% is refused upstream, so the floor is reached
+        through the round price — and the message has to say which leg."""
+        with pytest.raises(EngineInputError) as exc:
+            safe_conversion(
+                investment=100_000.0,
+                valuation_cap=5e6,
+                discount=1.0,
+                next_round_pre_money=10e6,
+                next_round_shares=10e6,
+            )
+        assert "discount must be < 1" in str(exc.value)
