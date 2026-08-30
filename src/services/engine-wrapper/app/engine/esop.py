@@ -162,9 +162,20 @@ def repurchase_obligation(
         shares_redeemed = remaining * redemption
         cost = shares_redeemed * year_price
         remaining -= shares_redeemed
-        pv = cost / compound_factor(rate, year, "repurchase.discount_rate") if rate is not None else cost
+        # `None` rather than the undiscounted cost when no rate was supplied,
+        # for the same reason `pv_of_obligation` below is None: a present value
+        # nobody asked for is not a present value of zero years' discounting.
+        #
+        # The row used to carry `pv = cost`, so one result object both declined
+        # to state a present value for the obligation and stated one for every
+        # year of it — and a reader summing the column got `total_obligation`
+        # back under the name the total refuses to use. Exhibit ESOP's own
+        # comment describes the behaviour this now has ("without one the rows
+        # carry no present value"); the `schedule.some(r => r.pv !== null)` half
+        # of its guard was true whatever the engine did.
+        pv = cost / compound_factor(rate, year, "repurchase.discount_rate") if rate is not None else None
         total += cost
-        total_pv += pv
+        total_pv += pv if pv is not None else 0.0
         rows.append(
             {
                 "year": year,

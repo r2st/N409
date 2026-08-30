@@ -21,6 +21,7 @@ from app.engine.debt_valuation import (
     yield_dcf,
 )
 from app.engine.errors import EngineInputError
+from app.engine.esop import repurchase_obligation
 from app.engine.validate import split_issues, validate_payload
 
 # The ordinary shape of a 2023-24 down round: $80M of preference stacked over a
@@ -260,3 +261,47 @@ class TestTerminalFlow:
         )
         payload["income"].pop("terminal_growth")
         assert "terminal_flow_not_positive" not in self._warn_codes(payload)
+
+
+# ── a present value nobody asked for ─────────────────────────────────────────
+
+
+class TestRepurchasePresentValue:
+    BASE = {
+        "esop_share_balance": 1_000_000.0,
+        "fmv_per_share": 10.0,
+        "annual_redemption_rate": 0.05,
+        "years": 5,
+    }
+
+    def test_an_undiscounted_schedule_states_no_per_year_present_value(self):
+        """`pv_of_obligation` is None without a rate; the rows said otherwise.
+
+        Every row carried `pv = repurchase_cost`, so one result object both
+        declined to state a present value for the obligation and stated one for
+        every year of it — and a reader summing the column got
+        `total_obligation` back under the name the total refuses to use.
+        """
+        out = repurchase_obligation(**self.BASE)
+        assert out["pv_of_obligation"] is None
+        assert [r["pv"] for r in out["schedule"]] == [None] * 5
+        # The undiscounted figures are still there, under their own name.
+        assert all(r["repurchase_cost"] > 0 for r in out["schedule"])
+        assert out["total_obligation"] == pytest.approx(
+            sum(r["repurchase_cost"] for r in out["schedule"])
+        )
+
+    def test_a_discounted_schedule_states_one_per_year(self):
+        out = repurchase_obligation(**self.BASE, discount_rate=0.08)
+        pvs = [r["pv"] for r in out["schedule"]]
+        assert all(p is not None for p in pvs)
+        assert out["pv_of_obligation"] == pytest.approx(sum(pvs))
+        # Discounted, so every year is worth less than its nominal cost.
+        assert all(r["pv"] < r["repurchase_cost"] for r in out["schedule"])
+
+    def test_a_zero_discount_rate_is_a_rate_and_still_states_one(self):
+        """The boundary the collapse hid: 0% is a stated rate, not an absent one,
+        and there the present value legitimately equals the cost."""
+        out = repurchase_obligation(**self.BASE, discount_rate=0.0)
+        assert out["pv_of_obligation"] == pytest.approx(out["total_obligation"])
+        assert all(r["pv"] == pytest.approx(r["repurchase_cost"]) for r in out["schedule"])
