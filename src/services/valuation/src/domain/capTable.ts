@@ -225,8 +225,35 @@ function normalizeDecimalSeparator(digits: string): string {
 }
 
 /**
- * Parse a money/number cell: strips $ and whitespace, resolves the decimal
- * separator (see {@link normalizeDecimalSeparator}); '' → null.
+ * Every currency symbol Unicode knows, which is the set a sheet's money columns
+ * are written in.
+ *
+ * `[$\s]` was the strip set, and `$` is the one symbol this module had no
+ * business privileging: everything else here goes out of its way to read the
+ * files a non-US spreadsheet writes. `sniffDelimiter` exists because "Save as
+ * CSV" outside the US writes semicolons; `normalizeDecimalSeparator` exists
+ * because the same locale writes `1,00` for one euro. A euro cap table
+ * therefore got its delimiter read, its decimal comma read — and every money
+ * cell refused, because the figure was spelled `€1,00`.
+ *
+ * Refused loudly rather than quietly, so nothing was mis-valued: an unreadable
+ * cell is an `unreadable_number` error and the import is blocked. But it blocks
+ * on a cell the sheet stated perfectly clearly, and the reader is told their
+ * price per share "is not a number" — for a file the rest of this module was
+ * written to accept.
+ *
+ * `\p{Sc}` rather than a hand-listed set: it is $ € £ ¥ ₹ ₩ ₽ ¢ and the
+ * fullwidth forms an East Asian sheet writes, without this module having to
+ * guess which of them it will meet. A three-letter currency *code* (`USD 1.50`,
+ * `1.50 EUR`) is deliberately not stripped — letters beside a figure are as
+ * often a shifted row as a currency, and `2x` in the multiple column is a
+ * notation this file reads for meaning.
+ */
+const CURRENCY_SYMBOLS = /[\p{Sc}]/gu;
+
+/**
+ * Parse a money/number cell: strips currency symbols and whitespace, resolves
+ * the decimal separator (see {@link normalizeDecimalSeparator}); '' → null.
  *
  * A fully parenthesised figure is negative — that is what `(500,000)` means in
  * every accounting export a cap table arrives from. Discarding the parentheses
@@ -241,7 +268,7 @@ function normalizeDecimalSeparator(digits: string): string {
 export function parseNumericCell(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  let cleaned = String(value).replace(/[$\s]/g, '');
+  let cleaned = String(value).replace(CURRENCY_SYMBOLS, '').replace(/\s/g, '');
   if (cleaned === '') return null;
   let negated = false;
   if (cleaned.startsWith('(') && cleaned.endsWith(')')) {

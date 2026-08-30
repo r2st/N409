@@ -277,6 +277,46 @@ describe('adversarial imports — wrong types in numeric columns', () => {
     expect(validation.valid).toBe(false);
   });
 
+  /*
+   * The rest of this module is built for a non-US sheet — the delimiter
+   * sniffer for its semicolons, the separator rule for its decimal comma — and
+   * the strip set privileged the one symbol those files do not use.
+   */
+  it('reads a money cell in the currency the sheet was written in', () => {
+    const { rows } = parseCsvSheet(
+      'class;shares;price\n' +
+        'Euro;1000;€1,00\n' +
+        'Sterling;1000;£1.50\n' +
+        'Yen;1000;¥100\n' +
+        'Rupee;1000;₹1,00,000\n' +
+        'Trailing;1000;1 234,56 €\n' +
+        'Dollar;1000;$1.50\n',
+    );
+    const entries = parseCapTable(rows, {
+      security_class: 'class',
+      shares: 'shares',
+      price_per_share: 'price',
+    });
+    expect(entries.map((e) => e.price_per_share)).toEqual([1, 1.5, 100, 100_000, 1234.56, 1.5]);
+    expect(entries.some((e) => e.unreadable_numbers)).toBe(false);
+  });
+
+  /*
+   * A currency *code* is letters beside a figure, which is as often a row
+   * shifted by an unquoted comma as it is a price — and `2x` in the multiple
+   * column is a notation this file reads for meaning. It stays reported rather
+   * than guessed at.
+   */
+  it('still refuses a figure written with a currency code rather than a symbol', () => {
+    const entries = parseCapTable([{ class: 'Common', shares: '1000', price: 'USD 1.50' }], {
+      security_class: 'class',
+      shares: 'shares',
+      price_per_share: 'price',
+    });
+    expect(entries[0]!.price_per_share).toBeNull();
+    expect(entries[0]!.unreadable_numbers).toEqual({ price_per_share: 'USD 1.50' });
+  });
+
   it('still reads the number formats a real export writes', () => {
     const { entries } = importCsv(
       [
