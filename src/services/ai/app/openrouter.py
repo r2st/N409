@@ -695,10 +695,18 @@ def chat(
             http.close()
 
 
-def extract_json(content: str) -> dict | list:
-    """Pulls the first JSON object/array out of a completion.
+def extract_json(content: str) -> object:
+    """Pulls the first JSON value out of a completion.
 
     Free models love to wrap JSON in markdown fences or prose; be forgiving.
+
+    Deliberately unopinionated about the *shape*, and typed to say so: this used
+    to be annotated `dict | list`, which was a claim rather than a check —
+    `json.loads` happily returns a string, a number, a bool or `None`, and each
+    of those reached a caller that had been told it could not. Which shapes are
+    acceptable is a question about the prompt that asked, so it belongs to the
+    caller; `pipelines._safe_result` is where every prompt in this service has
+    its answer ("an object") enforced.
     """
     fenced = re.search(r"```(?:json)?\s*(.+?)```", content, re.DOTALL)
     candidate = fenced.group(1).strip() if fenced else content.strip()

@@ -647,8 +647,16 @@ class TruncatedCompletionError(ValueError):
     """
 
 
-def _safe_result(llm: LlmResult) -> dict | list:
-    """The model's JSON, or its prose under `notes` when it wrote prose.
+def _truncated_error() -> TruncatedCompletionError:
+    return TruncatedCompletionError(
+        f"the model stopped at the {max_output_tokens()}-token output cap "
+        "before completing its answer — send fewer documents, or raise "
+        "OPENROUTER_MAX_TOKENS"
+    )
+
+
+def _safe_result(llm: LlmResult) -> dict:
+    """The model's JSON object, or its prose under `notes` when it wrote prose.
 
     The `notes` fallback is a deliberate degradation for a model that ignored
     "respond ONLY with JSON" — the analyst still gets what it said. It is the
@@ -659,17 +667,38 @@ def _safe_result(llm: LlmResult) -> dict | list:
     result. The pipeline reported success, the job row said `succeeded`, and the
     AI tab showed a document summary with no documents in it — an answer, drawn
     from a truncation, that nothing anywhere contradicted.
+
+    A JSON value that is not an object is the *third* way into that same empty
+    success, and it was open. `extract_json` returns whatever `json.loads`
+    produced — its `dict | list` annotation was a claim, not a check — so a
+    model that answered a `{"summaries": [...]}` prompt with the bare array,
+    which is among the most ordinary things a model does with a wrapped-list
+    schema, came back as a list. Every caller below asks `isinstance(parsed,
+    dict)` and takes the empty branch when it is not, so the run produced a
+    complete-looking result with nothing in it and reported success. `null`,
+    a bare number and a quoted string all landed the same way.
+
+    None of those is prose, so none of them is the `notes` case: the model did
+    answer in JSON, of a shape the prompt did not ask for, and a retry can fix
+    that. Raised as a plain `ValueError`, which `main` already answers 502 —
+    "the model said something unusable" — rather than recording a success.
     """
     try:
-        return extract_json(llm.content)
+        parsed = extract_json(llm.content)
     except ValueError as exc:
         if llm.truncated:
-            raise TruncatedCompletionError(
-                f"the model stopped at the {max_output_tokens()}-token output cap "
-                "before completing its answer — send fewer documents, or raise "
-                "OPENROUTER_MAX_TOKENS"
-            ) from exc
+            raise _truncated_error() from exc
         return {"notes": llm.content[:1000]}
+    if not isinstance(parsed, dict):
+        # A cut-off array can still close and parse. When both are true the
+        # truncation is the better explanation and the actionable one.
+        if llm.truncated:
+            raise _truncated_error()
+        raise ValueError(
+            f"the model returned a JSON {type(parsed).__name__} where the prompt "
+            f"asked for an object"
+        )
+    return parsed
 
 
 PIPELINES = {
