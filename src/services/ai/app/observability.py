@@ -109,6 +109,13 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     # second completion provider was added and signed its own requests.
     (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]+=*", re.IGNORECASE), "Bearer [REDACTED]"),
     (re.compile(r"\bsk-[A-Za-z0-9._-]{16,}"), "[API_KEY]"),
+    # The research provider's own prefix. The literal net below strikes this
+    # deployment's *current* key; the shape strikes one that is not it — a key
+    # rotated while a call was in flight, and the case R241 called out on the
+    # 422 path, where pydantic's error list quotes the payload it refused back
+    # to the caller. A credential someone pasted into a request body is exactly
+    # the input that gets refused.
+    (re.compile(r"\bpplx-[A-Za-z0-9._-]{16,}"), "[API_KEY]"),
     # AWS SigV4, which `bedrock.py` builds by hand rather than through botocore.
     # Its authorization header is `AWS4-HMAC-SHA256 Credential=AKIA…/…,
     # SignedHeaders=…, Signature=<64 hex>` and matches none of the rules above.
@@ -149,6 +156,17 @@ _SECRET_ENV_VARS = (
     "OPENROUTER_API_KEY",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
+    # The provider the round above did not count. R241 read "a second
+    # completion provider" as the whole of what had arrived since the list was
+    # written, and there were two: Bedrock, and the research provider restored
+    # three weeks earlier. `PERPLEXITY_API_KEY` was held, sent and verified by
+    # this service the whole time and named in neither half of `redact` —
+    # exactly the omission R241 exists to have closed, one file further down.
+    #
+    # `test_secret_env_census.py` now derives this membership from the source
+    # rather than from anybody noticing, so the next provider's credential
+    # fails the suite on the commit that reads it.
+    "PERPLEXITY_API_KEY",
 )
 
 # Below this, a "secret" is either unset or too short to match without hitting

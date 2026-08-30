@@ -60,6 +60,34 @@ def test_a_rotated_key_of_an_unexpected_shape_is_still_struck(monkeypatch) -> No
     assert "totally-different-shape-9911" not in redact("key totally-different-shape-9911 rejected")
 
 
+def test_a_perplexity_key_never_reaches_the_log(monkeypatch) -> None:
+    """The provider R241 did not count.
+
+    R241 read "a second completion provider" as the whole of what had arrived
+    since this net was written. There were two: Bedrock, and the research
+    provider restored three weeks earlier, whose key this service holds, sends
+    on every `/ai/v1/research` call and verifies at boot — and which was named
+    in neither half of `redact`.
+    """
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-abcdef0123456789abcdef")
+    out = redact("perplexity rejected pplx-abcdef0123456789abcdef")
+    assert "abcdef0123456789abcdef" not in out
+    # The diagnosis survives.
+    assert "perplexity rejected" in out
+
+
+def test_a_perplexity_key_that_is_not_this_process_is_struck_by_shape(monkeypatch) -> None:
+    """The literal net knows *this* deployment's current key and nothing else.
+
+    A key rotated while a call was in flight is not that value, and neither is
+    one a caller pasted into a request body — which R241 named as a live path:
+    a 422 detail is pydantic's error list and its entries quote the payload
+    they refused.
+    """
+    monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
+    assert "pplx-9911abcdef0123456789" not in redact("refused: pplx-9911abcdef0123456789")
+
+
 # What AWS answers a signature it will not accept with: the string-to-sign,
 # quoted back. `_error_message` keeps 200 characters of a body like this and
 # puts them in the exception the give-up raises.
