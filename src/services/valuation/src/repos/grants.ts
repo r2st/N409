@@ -181,18 +181,34 @@ export async function updateGrant(
   });
 }
 
+/**
+ * Cancel a grant, once.
+ *
+ * `DELETE /grants/:grantId` asks nothing about the grant's status before
+ * calling this, and the UPDATE asked nothing either — so a repeated call, which
+ * is a double-clicked button or a retried request, re-stamped `updated_at` and
+ * put a second `grant_cancelled` on the audit spine. A grant is a security
+ * somebody holds and its cancellation is the event an auditor reads to date the
+ * forfeiture; two of them, minutes apart, describe two cancellations of a grant
+ * that was cancelled once.
+ *
+ * The already-cancelled row comes back unchanged rather than as an error: the
+ * caller asked for the grant to be cancelled and it is.
+ */
 export async function cancelGrant(pool: pg.Pool, grant: GrantRow, actor: EventActor): Promise<GrantRow> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<GrantRow>(
-      "UPDATE option_grants SET status = 'cancelled', updated_at = now() WHERE id = $1 RETURNING *",
+      "UPDATE option_grants SET status = 'cancelled', updated_at = now() WHERE id = $1 AND status = 'active' RETURNING *",
       [grant.id],
     );
+    const cancelled = rows[0];
+    if (!cancelled) return hydrated(grant);
     await recordEvent(client, {
       valuationId: grant.valuation_id,
       type: GRANT_EVENT_TYPES.cancelled,
       actor,
       payload: { grant_id: grant.id },
     });
-    return hydrated(rows[0]!);
+    return hydrated(cancelled);
   });
 }

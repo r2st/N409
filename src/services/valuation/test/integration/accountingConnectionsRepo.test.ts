@@ -443,6 +443,41 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
       expect((await findConnection(pool, otherValuationId, 'xero'))!.status).toBe('connected');
     });
 
+    /**
+     * A revoke landing while an import is in flight.
+     *
+     * The scheduler and the import call are minutes apart, and "disconnect" is
+     * what somebody clicks when an import is misbehaving — so the bookkeeping
+     * write that follows arrives *after* the revoke. Unconditional, it put the
+     * row back to `connected`, cleared `last_error` and stamped
+     * `last_import_at`, over a row whose access token the revoke had already
+     * blanked: the card said the integration was healthy and synced a moment
+     * ago, with no credential behind it. Only `upsertConnection` — somebody
+     * reconnecting with a real token — may take a connection out of `revoked`.
+     */
+    it('is not undone by an import that finishes after it', async () => {
+      await reset();
+      const conn = await upsertConnection(pool, {
+        valuationId,
+        provider: 'xero',
+        tokens: tokens(),
+        connectedBy: userId,
+      });
+      await revokeConnection(pool, valuationId, 'xero');
+
+      await recordImport(pool, conn.id, financials());
+      let after = (await findConnection(pool, valuationId, 'xero'))!;
+      expect(after.status, 'a severed connection must not report itself connected').toBe('revoked');
+      expect(after.last_import_at, 'nothing was imported for a connection with no token').toBeNull();
+
+      // …and the same in the other direction: a provider failure belongs to a
+      // connection that still exists.
+      await recordImportError(pool, conn.id, 'xero said no');
+      after = (await findConnection(pool, valuationId, 'xero'))!;
+      expect(after.status).toBe('revoked');
+      expect(after.last_error).toBeNull();
+    });
+
     it('leaves the row listed, so the UI can offer a reconnect', async () => {
       await reset();
       await upsertConnection(pool, {

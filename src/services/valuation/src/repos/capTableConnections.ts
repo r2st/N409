@@ -98,6 +98,26 @@ export async function upsertConnection(
   return openConnectionTokens(rows[0]!);
 }
 
+/**
+ * Revocation is the end of the connection, so every bookkeeping write below is
+ * conditional on it not having happened.
+ *
+ * `revokeConnection` blanks the stored tokens and refuses to run twice
+ * (`status <> 'revoked'`), which says plainly that `revoked` is terminal — and
+ * every other writer of `status` was unconditional. A revoke landing while a
+ * sync or import is in flight is the ordinary case rather than an exotic one:
+ * the scheduler runs on a fifteen-minute tick against provider calls measured
+ * in seconds to minutes, and "disconnect" is exactly what somebody clicks when
+ * a sync is misbehaving.
+ *
+ * What the unguarded write then did was report a connection the client had
+ * just severed as `connected`, with `last_error` cleared and `last_synced_at`
+ * stamped a moment ago — over a row whose access token is now the empty
+ * string. The card in the product says the integration is healthy and synced;
+ * the credential behind it is gone. `error` is the same untruth the other way
+ * round: a provider failure attributed to a connection that no longer exists,
+ * which reads as something to fix rather than something deliberately ended.
+ */
 /** Record a successful sync and schedule the next one per the cadence. */
 export async function recordSync(
   pool: pg.Pool,
@@ -110,16 +130,17 @@ export async function recordSync(
     `UPDATE cap_table_connections
      SET last_synced_at = now(), last_sync_summary = $2, status = 'connected', last_error = NULL,
          next_sync_at = ${interval ? `now() + interval '${interval}'` : 'NULL'}
-     WHERE id = $1`,
+     WHERE id = $1 AND status <> 'revoked'`,
     [id, JSON.stringify(summary)],
   );
 }
 
 export async function recordSyncError(pool: pg.Pool, id: string, error: string): Promise<void> {
-  await pool.query(`UPDATE cap_table_connections SET status = 'error', last_error = $2 WHERE id = $1`, [
-    id,
-    error.slice(0, 500),
-  ]);
+  await pool.query(
+    `UPDATE cap_table_connections SET status = 'error', last_error = $2
+     WHERE id = $1 AND status <> 'revoked'`,
+    [id, error.slice(0, 500)],
+  );
 }
 
 export async function setSyncFrequency(pool: pg.Pool, id: string, frequency: SyncFrequency): Promise<void> {
@@ -128,7 +149,7 @@ export async function setSyncFrequency(pool: pg.Pool, id: string, frequency: Syn
     `UPDATE cap_table_connections
      SET sync_frequency = $2,
          next_sync_at = ${interval ? `now() + interval '${interval}'` : 'NULL'}
-     WHERE id = $1`,
+     WHERE id = $1 AND status <> 'revoked'`,
     [id, frequency],
   );
 }
