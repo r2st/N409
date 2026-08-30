@@ -12,6 +12,7 @@ import math
 from dataclasses import replace
 from typing import Any
 
+from . import bedrock
 from .anonymize import Redactor
 from .documents import DocText, extract_texts, render_corpus
 from .llm_router import chat
@@ -647,11 +648,22 @@ class TruncatedCompletionError(ValueError):
     """
 
 
-def _truncated_error() -> TruncatedCompletionError:
+def _truncated_error(llm: LlmResult) -> TruncatedCompletionError:
+    """The refusal, naming the cap that was actually hit.
+
+    Two providers answer these prompts and each has its own ceiling and its own
+    knob. Naming OpenRouter's unconditionally told an operator whose prompt is
+    bound to a `bedrock/` model to raise an environment variable that does not
+    apply, and quoted a token figure that was not the one the answer stopped
+    at — the whole content of an actionable error, wrong.
+    """
+    if bedrock.handles(llm.model):
+        cap, knob = bedrock.max_output_tokens(), "BEDROCK_MAX_TOKENS"
+    else:
+        cap, knob = max_output_tokens(), "OPENROUTER_MAX_TOKENS"
     return TruncatedCompletionError(
-        f"the model stopped at the {max_output_tokens()}-token output cap "
-        "before completing its answer — send fewer documents, or raise "
-        "OPENROUTER_MAX_TOKENS"
+        f"the model stopped at the {cap}-token output cap "
+        f"before completing its answer — send fewer documents, or raise {knob}"
     )
 
 
@@ -687,13 +699,13 @@ def _safe_result(llm: LlmResult) -> dict:
         parsed = extract_json(llm.content)
     except ValueError as exc:
         if llm.truncated:
-            raise _truncated_error() from exc
+            raise _truncated_error(llm) from exc
         return {"notes": llm.content[:1000]}
     if not isinstance(parsed, dict):
         # A cut-off array can still close and parse. When both are true the
         # truncation is the better explanation and the actionable one.
         if llm.truncated:
-            raise _truncated_error()
+            raise _truncated_error(llm)
         raise ValueError(
             f"the model returned a JSON {type(parsed).__name__} where the prompt "
             f"asked for an object"

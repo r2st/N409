@@ -355,6 +355,51 @@ class TestChat:
         with pytest.raises(BedrockError, match="non-JSON"):
             chat("s", "u", model=PREFIXED, client=transport(handler))
 
+    def test_carries_the_stop_reason_so_a_cut_off_answer_can_be_seen(self, monkeypatch):
+        """Converse spells it `stopReason`; nothing here read it.
+
+        Every guard in this service that asks whether an answer is whole reads
+        `LlmResult.truncated`, which reads `finish_reason`. Left at its default
+        it says "not truncated" for every Bedrock answer that ever existed — so
+        `pipelines._safe_result` filed a half-written JSON object under `notes`
+        and reported success, and `research` stored a write-up that stops
+        mid-sentence as quotable in a report.
+        """
+        configure(monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={**CONVERSE_OK, "stopReason": "max_tokens"})
+
+        result = chat("s", "u", model=PREFIXED, client=transport(handler))
+        assert result.finish_reason == "max_tokens"
+        assert result.truncated
+
+    def test_a_finished_answer_is_not_reported_truncated(self, monkeypatch):
+        configure(monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=CONVERSE_OK)
+
+        result = chat("s", "u", model=PREFIXED, client=transport(handler))
+        assert result.finish_reason == "end_turn"
+        assert not result.truncated
+
+    def test_a_missing_or_junk_stop_reason_is_simply_unknown(self, monkeypatch):
+        # Provider-controlled, like every other level of the body: absent, or
+        # present as a non-string, must not raise and must not read as whole-
+        # or-truncated. None means "it did not say".
+        configure(monkeypatch)
+
+        for body in ({k: v for k, v in CONVERSE_OK.items() if k != "stopReason"},
+                     {**CONVERSE_OK, "stopReason": 7},
+                     {**CONVERSE_OK, "stopReason": ""}):
+            def handler(request: httpx.Request, _body=body) -> httpx.Response:
+                return httpx.Response(200, json=_body)
+
+            result = chat("s", "u", model=PREFIXED, client=transport(handler))
+            assert result.finish_reason is None
+            assert not result.truncated
+
     def test_keeps_a_completion_whose_usage_fields_are_junk(self, monkeypatch):
         configure(monkeypatch)
 

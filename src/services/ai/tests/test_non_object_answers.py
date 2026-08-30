@@ -82,6 +82,37 @@ class TestWhatComesBack:
             _safe_result(said("[1, 2, 3]", finish_reason="length"))
 
 
+class TestWhichCapWasHit:
+    """The refusal names an operator's actual knob, or it names nothing useful.
+
+    `_safe_result` quoted `OPENROUTER_MAX_TOKENS` and OpenRouter's cap for every
+    truncation, including one produced by a prompt bound to a `bedrock/` model —
+    an instruction to raise a variable that provider never reads, and a token
+    figure that is not the one the answer stopped at.
+    """
+
+    def test_an_openrouter_truncation_names_the_openrouter_cap(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "512")
+        with pytest.raises(TruncatedCompletionError) as caught:
+            _safe_result(said("{", finish_reason="length"))
+        assert "OPENROUTER_MAX_TOKENS" in str(caught.value)
+        assert "512" in str(caught.value)
+
+    def test_a_bedrock_truncation_names_the_bedrock_cap(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "512")
+        monkeypatch.setenv("BEDROCK_MAX_TOKENS", "4096")
+        cut = LlmResult(
+            model="bedrock/anthropic.claude-sonnet-4-20250514-v1:0",
+            content="{",
+            finish_reason="max_tokens",
+        )
+        with pytest.raises(TruncatedCompletionError) as caught:
+            _safe_result(cut)
+        assert "BEDROCK_MAX_TOKENS" in str(caught.value)
+        assert "4096" in str(caught.value)
+        assert "OPENROUTER_MAX_TOKENS" not in str(caught.value)
+
+
 class TestThroughTheRoute:
     """What the valuation service is told, which is what decides retry."""
 

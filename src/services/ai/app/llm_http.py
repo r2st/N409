@@ -176,3 +176,17 @@ def finish_reason(data: dict) -> str | None:
 def completion_truncated(data: dict) -> bool:
     """True when the body says the answer was cut off at the output cap."""
     return finish_reason(data) in TRUNCATED_FINISH_REASONS
+
+
+def stop_reason(data: dict) -> str | None:
+    """Why the model stopped, for the Converse shape (Bedrock).
+
+    The same fact under a different spelling: Converse puts it at the top level
+    as `stopReason` rather than on a choice, and calls the cap case
+    `max_tokens`. Kept beside `finish_reason` rather than in the Bedrock client
+    so the two readers of the one concept sit together — a provider added
+    without one of these produces `LlmResult.truncated == False` for every
+    answer it ever gives, which is a guard that reads as passing.
+    """
+    reason = data.get("stopReason")
+    return reason if isinstance(reason, str) and reason else None

@@ -50,11 +50,13 @@ import httpx
 
 from .llm_http import (
     MAX_RETRIES,
+    TRUNCATED_FINISH_REASONS,
     Deadline,
     DeadlineExceeded as _BaseDeadlineExceeded,
     backoff_sleep,
     env_float,
     env_int,
+    stop_reason as _read_stop_reason,
     token_count,
 )
 from .openrouter import LlmResult
@@ -269,6 +271,21 @@ def completion_text(data: dict) -> str:
         if isinstance(block, dict) and isinstance(block.get("text"), str)
     ]
     return "".join(parts)
+
+
+def _stop_reason(data: dict) -> str | None:
+    """Why the model stopped, if it said — Converse's `stopReason`.
+
+    `LlmResult.finish_reason` was left at its default here, and everything that
+    asks whether an answer is whole reads it: `pipelines._safe_result` raises on
+    a truncated JSON reply instead of filing the fragment under `notes` and
+    reporting success, and `research.fallback_research` discards a write-up cut
+    off mid-sentence rather than storing it `grounded` for a report to quote.
+    Both of those guards were written against the chat-completions spelling, so
+    a prompt bound to a `bedrock/` model got every one of them answering False —
+    not because the answer was whole, but because nobody had asked.
+    """
+    return _read_stop_reason(data)
 
 
 def _usage(data: dict) -> tuple[int, int]:
@@ -493,6 +510,20 @@ def chat(
             raise BedrockError(f"{model_id}: empty completion")
 
         prompt_tokens, completion_tokens = _usage(data)
+        finish_reason = _stop_reason(data)
+        if finish_reason in TRUNCATED_FINISH_REASONS:
+            # The operator who has to raise BEDROCK_MAX_TOKENS has no other way
+            # to learn that it is being hit; the caller may still accept the
+            # answer, so this is a line rather than a raise.
+            _log.warning(
+                "llm completion truncated at the output cap",
+                extra={
+                    "event": "llm_truncated",
+                    "model": f"{MODEL_PREFIX}{model_id}",
+                    "tokens": max_output_tokens(),
+                    "detail": finish_reason,
+                },
+            )
         _log.info(
             "llm usage",
             extra={
@@ -509,6 +540,7 @@ def chat(
             content=content,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            finish_reason=finish_reason,
         )
     finally:
         if owns_client:
