@@ -218,6 +218,16 @@ export interface PartnerRow {
   prepaid: boolean;
   /** The firm's shared mailbox, copied on client correspondence (0113). */
   cc_emails: string[];
+  /**
+   * The firm's public-facing name (0091), and whether its brand is live.
+   *
+   * Both belong on this row because the ops console shows a preview of the
+   * branded login page, and without them that preview was of a page that no
+   * longer exists: it drew the ops channel label and the firm's colour on a
+   * page the client sees platform branding on until the switch is on.
+   */
+  brand_name: string | null;
+  white_label_enabled: boolean;
   user_count: number;
   valuation_count: number;
 }
@@ -228,7 +238,7 @@ const PARTNER_COUNTS_SQL = `
   (SELECT count(*)::int FROM valuations v WHERE v.partner_id = p.id) AS valuation_count`;
 
 const PARTNER_COLUMNS_SQL = `p.id, p.name, p.key, p.created_at, p.archived_at, p.brand_color, p.logo_url,
-  p.email_templates, p.subdomain, p.prepaid, p.cc_emails`;
+  p.email_templates, p.subdomain, p.prepaid, p.cc_emails, p.brand_name, p.white_label_enabled`;
 
 /**
  * Archived partners are hidden by default so pickers only offer live channels.
@@ -274,7 +284,8 @@ export async function createPartner(pool: pg.Pool, args: { name: string; key: st
   const { rows } = await pool.query<PartnerRow>(
     `INSERT INTO partners (id, name, key) VALUES ($1, $2, $3)
      RETURNING id, name, key, created_at, archived_at, brand_color, logo_url, email_templates,
-               subdomain, prepaid, cc_emails, 0 AS user_count, 0 AS valuation_count`,
+               subdomain, prepaid, cc_emails, brand_name, white_label_enabled,
+               0 AS user_count, 0 AS valuation_count`,
     [newUlid(), args.name, args.key],
   );
   return rows[0]!;

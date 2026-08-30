@@ -35,6 +35,7 @@ import {
   TextInput,
   useRetry,
 } from '../components/ui';
+import { PLATFORM_BRANDING } from '../lib/branding';
 
 const GROUP_ORDER = ['open', 'in_review', 'drafted', 'published', 'closed'] as const;
 
@@ -176,18 +177,40 @@ const TEMPLATE_LABELS: Record<string, string> = {
  * card at /partner/:key/login, driven by the UNSAVED form values so admins
  * see the effect before committing.
  */
+/**
+ * What `/partner/:key/login` will actually show.
+ *
+ * `live` is the whole of it. The login page resolves its brand the way every
+ * other surface does — platform branding until `white_label_enabled` is on —
+ * so a preview that draws the firm's colour and mark regardless is a preview of
+ * a page nobody will see, shown to the one person about to decide whether the
+ * brand is ready. And the name is the firm's own where it has set one, not the
+ * channel label ops typed.
+ */
 function BrandingPreview({
   name,
   brandColor,
   logoUrl,
+  live,
 }: {
   name: string;
   brandColor: string;
   logoUrl: string;
+  live: boolean;
 }) {
-  const accent = /^#[0-9a-fA-F]{6}$/.test(brandColor) ? brandColor : '#1d4ed8';
+  const accent = live && /^#[0-9a-fA-F]{6}$/.test(brandColor) ? brandColor : PLATFORM_BRANDING.accent;
+  if (!live) {
+    name = PLATFORM_BRANDING.name;
+    logoUrl = '';
+  }
   return (
     <div data-testid="branding-preview" className="w-full max-w-xs">
+      {!live && (
+        <p className="mb-2 text-xs text-ink-400">
+          White label is off — clients see {PLATFORM_BRANDING.name} branding. The firm turns it on in
+          Firm&nbsp;settings → Branding.
+        </p>
+      )}
       <div className="rounded-lg border border-paper-300 bg-paper-50 p-4 shadow-card">
         <div aria-hidden className="-mx-4 -mt-4 mb-4 h-1 rounded-t-lg" style={{ backgroundColor: accent }} />
         <div className="flex flex-col items-center text-center">
@@ -1014,7 +1037,8 @@ export function PartnerDetailPage() {
       <section className="mt-10 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h2 className="overline mb-1 text-ink-400">White-label branding</h2>
         <p className="text-sm text-ink-400">
-          Used on this partner&rsquo;s portal, their branded login page, and the cover of their report PDFs.
+          Used on this partner&rsquo;s portal, their branded login page, and the cover of their report PDFs
+          &mdash; once the firm has turned white label on.
         </p>
         <p className="mt-2 text-sm text-ink-600">
           Branded login page:{' '}
@@ -1053,7 +1077,12 @@ export function PartnerDetailPage() {
               Save branding
             </Button>
           </form>
-          <BrandingPreview name={partner.name} brandColor={brandColor} logoUrl={logoUrl} />
+          <BrandingPreview
+            name={partner.brand_name?.trim() || partner.name}
+            brandColor={brandColor}
+            logoUrl={logoUrl}
+            live={partner.white_label_enabled ?? false}
+          />
         </div>
       </section>
 

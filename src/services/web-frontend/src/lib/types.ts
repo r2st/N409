@@ -271,6 +271,12 @@ export interface Partner {
   prepaid: boolean;
   /** The firm's shared mailbox, copied on client correspondence (0113). */
   cc_emails: string[];
+  /**
+   * The firm's public-facing name (0091), and whether its brand is live.
+   * Optional so an older cached response still renders the page.
+   */
+  brand_name?: string | null;
+  white_label_enabled?: boolean;
   user_count: number;
   valuation_count: number;
 }

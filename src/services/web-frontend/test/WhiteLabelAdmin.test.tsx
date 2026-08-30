@@ -16,6 +16,10 @@ const partner = {
   archived_at: null,
   brand_color: '#1f6f54',
   logo_url: 'https://cdn.example.com/bridge.png',
+  // The firm has gone live and named itself; the preview has to show what the
+  // login page will actually render, which is both of those.
+  brand_name: 'Bridge Valuation Advisors LLP',
+  white_label_enabled: true,
   email_templates: {
     draft_ready: {
       subject: 'Your draft from {{partner_name}}',
@@ -62,12 +66,36 @@ describe('PartnerDetailPage white-label admin', () => {
     renderPage();
 
     const preview = await screen.findByTestId('branding-preview');
-    expect(preview).toHaveTextContent('Bridge Advisors');
+    // The firm's public name, not the ops channel label beside it.
+    expect(preview).toHaveTextContent('Bridge Valuation Advisors LLP');
     expect(screen.getByText('/partner/bridge-advisors/login')).toBeInTheDocument();
 
     // the preview follows the unsaved form colour
     const accent = preview.querySelector('[aria-hidden]');
     expect(accent).toHaveStyle({ backgroundColor: '#1f6f54' });
+  });
+
+  /**
+   * The login page resolves its brand like every other surface: platform
+   * branding until the firm turns white label on. A preview that drew the
+   * staged colour and mark regardless was a preview of a page nobody would see,
+   * shown to the one person deciding whether the brand was ready.
+   */
+  it('previews the platform brand while white label is still off', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ partner: { ...partner, white_label_enabled: false } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    renderPage();
+
+    const preview = await screen.findByTestId('branding-preview');
+    expect(preview).toHaveTextContent('N409');
+    expect(preview).not.toHaveTextContent('Bridge Valuation Advisors LLP');
+    expect(preview.querySelector('img')).toBeNull();
+    expect(screen.getByText(/White label is off/)).toBeInTheDocument();
   });
 
   it('loads existing template overrides and marks them customized', async () => {
