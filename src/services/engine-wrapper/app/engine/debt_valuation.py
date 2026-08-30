@@ -686,17 +686,22 @@ def safe_conversion(
     # `round(conversion_price, 6)`, so the whole band below half a microdollar
     # cleared it and then came back stated as `0.0` — the exact state
     # `_positive_cap` refuses a zero cap for, reached by a cap that is merely
-    # small. A `valuation_cap` of 8 on a ten-million-share round is $8e-07 a
+    # small. A `valuation_cap` of 4 on a ten-million-share round is $4e-07 a
     # share: the response said the instrument converted at a price of zero,
-    # handed the holder 1.25e+11 shares, and put its ownership at 99.99%, as a
-    # 200. And 8 for $8,000,000 is the ordinary units slip — the same one
-    # `anomalies.UNIT_MISMATCH_FACTOR` exists to catch on the other side of the
-    # engine — not an exotic input.
+    # handed the holder 2.5e+11 shares against the round's 10,000,000, and put
+    # its ownership at 99.996%, as a 200. And 4 for $4,000,000 is the ordinary
+    # units slip — the same one `anomalies.UNIT_MISMATCH_FACTOR` exists to catch
+    # on the other side of the engine — not an exotic input.
     #
     # Six decimals is the whole grid this figure is stated on; there is no finer
     # price for the document to fall back to, so a price below it is refused
     # rather than printed. The same rule `compute._concluded_fmv_per_share`
     # applies to the conclusion, for the same reason.
+    #
+    # Struck at the grid and not above it: a cap slipped by six orders of
+    # magnitude rather than seven prices at $0.000001 a share and still prices.
+    # What is refused here is a figure the response contradicts itself about,
+    # not every implausible one.
     if round(conversion_price, 6) <= 0:
         # Both legs, because the conversion price is the lower of them and the
         # message has to say which one put it on the floor.
