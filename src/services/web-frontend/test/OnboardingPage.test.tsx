@@ -46,7 +46,15 @@ describe('OnboardingPage (guided client funnel)', () => {
         });
       }
       if (url.includes('/payments/checkout')) {
-        return jsonResponse({ status: 503, detail: 'Payments are not configured' }, 503);
+        return jsonResponse(
+          {
+            type: 'urn:n409:problem:payments-unconfigured',
+            status: 503,
+            title: 'Service Unavailable',
+            detail: 'Payments are not configured (STRIPE_SECRET_KEY unset)',
+          },
+          503,
+        );
       }
       throw new Error(`unexpected fetch ${url}`);
     });
@@ -75,6 +83,64 @@ describe('OnboardingPage (guided client funnel)', () => {
     await user.click(screen.getByRole('button', { name: /skip uploads for now/i }));
     expect(screen.getByText(/your request is in/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /open my valuation/i })).toBeInTheDocument();
+  });
+
+  /**
+   * A 503 is not one situation, and this branch does more than print a
+   * sentence: it advances the client past payment and writes the note into the
+   * remembered draft. A maintenance window or a busy database was therefore
+   * leaving a signed-up client parked on the uploads step believing an invoice
+   * was coming, with the belief persisted across a reload.
+   */
+  it.each([
+    [
+      'a maintenance window',
+      {
+        type: 'urn:n409:problem:unavailable',
+        status: 503,
+        title: 'Service Unavailable',
+        detail: 'The platform is in maintenance mode — changes are temporarily disabled.',
+      },
+      /maintenance mode/i,
+    ],
+    [
+      'a busy database',
+      {
+        type: 'urn:n409:problem:database-unavailable',
+        status: 503,
+        title: 'Service Unavailable',
+        detail: 'The database is temporarily unable to serve this request. Nothing was changed.',
+      },
+      /nothing was changed/i,
+    ],
+  ])('does not skip payment, or promise an invoice, for %s', async (_name, problem, expected) => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/valuations') && init?.method === 'POST') {
+        return jsonResponse({ valuation: VALUATION }, 201);
+      }
+      if (url.includes('/payments/quote')) {
+        return jsonResponse({
+          quote: { amount_cents: 119_000, currency: 'USD', kind: '409a', configured: true },
+        });
+      }
+      if (url.includes('/payments/checkout')) return jsonResponse(problem, 503);
+      throw new Error(`unexpected fetch ${url}`);
+    });
+
+    renderPage();
+    await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme Robotics, Inc.');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /with card/i })).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /with card/i }));
+
+    // The server's own reason, on the payment step the client is still on.
+    await waitFor(() => expect(screen.getByText(expected)).toBeInTheDocument());
+    expect(screen.queryByText(/we will send an invoice instead/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /with card/i })).toBeInTheDocument();
+    // And nothing about an invoice was written into the resumable draft.
+    expect(JSON.stringify(sessionStorage)).not.toMatch(/invoice/i);
   });
 
   it('lets the client skip payment explicitly', async () => {

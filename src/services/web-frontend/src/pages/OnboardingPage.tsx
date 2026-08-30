@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, apiUpload, ApiError } from '../lib/api';
+import { api, apiUpload, ApiError, describeRequestFailure } from '../lib/api';
 import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { formatChargedCents, KIND_LABELS } from '../lib/format';
 import { DOCUMENT_KIND_LABELS, type DocumentKind } from '../lib/pipeline';
@@ -178,13 +178,25 @@ export function OnboardingPage() {
       remember({ step: 2, valuation });
       window.location.assign(checkout_url);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 503) {
+      /*
+       * The problem type, not the status — and here the status was doing more
+       * damage than anywhere else it was used, because this branch does not
+       * merely print a sentence. It advances the client past payment and
+       * *persists* the note into the remembered draft, so a maintenance window
+       * or a busy database during onboarding leaves a signed-up client parked
+       * on the uploads step believing an invoice is coming. Only
+       * `urn:n409:problem:payments-unconfigured` is the deployment genuinely
+       * being unable to take a card; `urn:n409:problem:unavailable` and
+       * `urn:n409:problem:database-unavailable` both end by themselves and are
+       * fixed by pressing the button again.
+       */
+      if (err instanceof ApiError && err.problem.type === 'urn:n409:problem:payments-unconfigured') {
         const note = 'Online payment is not available yet — we will send an invoice instead.';
         setPaymentNote(note);
         setStep(2);
         remember({ step: 2, valuation, paymentNote: note });
       } else {
-        setError(err instanceof ApiError ? err.message : 'Could not start the checkout.');
+        setError(describeRequestFailure(err));
       }
       setBusy(false);
     }
