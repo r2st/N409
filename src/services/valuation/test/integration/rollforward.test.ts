@@ -324,6 +324,44 @@ describe.skipIf(!dbUp)('roll-forward', () => {
     expect(res.json().detail).toMatch(/cannot cross currencies/i);
   });
 
+  it('refuses a kind that concludes no equity value, in its own words', async () => {
+    /*
+     * A roll-forward compounds a prior appraisal's concluded *equity value*
+     * forward, and the engine reads that figure off the prior run's stored
+     * results. A specialty engine writes `{ kind, specialty }` and states no
+     * equity value, so this used to reach the engine and come back as
+     * `prior_results.equity_value (positive) is required` — the only sentence
+     * the analyst sees, in the wire vocabulary of a service they have never
+     * heard of, about a request the product knew was unanswerable.
+     */
+    const emi = await app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(client.token),
+      payload: { kind: 'emi', company_name: 'Northwind UK Ltd' },
+    });
+    const emiId = emi.json().valuation.id as string;
+    // With an ordinary 409A compute against it, which the Calculations tab
+    // offers on every kind: the refusal is about what the engagement *is*, not
+    // about which button was pressed last against it.
+    await seedCalculation(
+      emiId,
+      { equity_value: 20_000_000 },
+      { params: {}, inputs: { valuation_date: '2025-06-30' } },
+    );
+
+    const asPrior = await run({ prior_valuation_id: emiId });
+    expect(asPrior.statusCode).toBe(422);
+    expect(asPrior.json().detail).toMatch(/concludes no equity value/i);
+    expect(asPrior.json().detail).not.toMatch(/prior_results/);
+
+    // And onto one, because adopting a run writes the rolled value onto this
+    // engagement's backsolve anchor, which an EMI engagement does not have.
+    const onto = await run({ prior_valuation_id: priorId }, ops.token, emiId);
+    expect(onto.statusCode).toBe(422);
+    expect(onto.json().detail).toMatch(/concludes no equity value/i);
+  });
+
   it('refuses to run backwards in time', async () => {
     await setEngineInputs(currentId, { valuation_date: '2024-01-01' });
     const res = await run({ prior_valuation_id: priorId });

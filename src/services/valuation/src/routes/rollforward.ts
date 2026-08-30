@@ -14,10 +14,12 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { finite, finitePositive } from '../domain/finite.js';
 import {
   priorRequiredReturn,
+  rollforwardableKind,
   RollforwardInputError,
   shapeRollforward,
   type RollforwardEngineResponse,
 } from '../domain/rollforward.js';
+import { kindLabel } from '../domain/valuationSelector.js';
 import {
   findRollforwardRun,
   insertRollforwardRun,
@@ -250,6 +252,31 @@ export function registerRollforwardRoutes(
     // the substance of this answer, and a caller who cannot read it must not
     // receive it by way of one they can.
     const prior = await loadReadable(body.prior_valuation_id, principal);
+    /*
+     * Refused rather than attempted, the way the bridge one route over refuses
+     * a pair it cannot factorise.
+     *
+     * A roll-forward carries one *equity value* from one date to another, and
+     * the engine reads that figure off the prior run's stored results. A
+     * specialty engine writes `{ kind, specialty }` and states no equity value,
+     * so this reached the engine and came back as
+     * `prior_results.equity_value (positive) is required` — the only sentence
+     * the analyst sees on a 422, in the vocabulary of a service they have never
+     * heard of, about a request the product knew was unanswerable before it
+     * left the process.
+     *
+     * Both sides, because the run also *writes* the rolled value onto this
+     * engagement's backsolve anchor when it is adopted, and a specialty
+     * engagement has no such anchor to move.
+     */
+    const unrollable = [valuation, prior].find((v) => !rollforwardableKind(v.kind));
+    if (unrollable) {
+      throw problems.unprocessable(
+        `A ${kindLabel(unrollable.kind)} is not measured in the figure a roll-forward carries — it ` +
+          'compounds a prior appraisal’s concluded equity value forward to a new date, and a ' +
+          `${kindLabel(unrollable.kind)} calculation concludes no equity value.`,
+      );
+    }
     if (prior.currency !== valuation.currency) {
       throw problems.unprocessable(
         `The prior valuation is denominated in ${prior.currency} and this one in ${valuation.currency}; ` +

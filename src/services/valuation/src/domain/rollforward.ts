@@ -1,5 +1,7 @@
 import { isIsoCalendarDate } from '@n409/shared';
 import type { CalibrationStep, MaterialChange } from '../repos/rollforwardRuns.js';
+import { isSpecialtyKind } from './specialty.js';
+import type { ValuationKind } from './valuation.js';
 
 /**
  * Roll-forward — the bridge from a prior 409A's concluded equity value to this
@@ -23,6 +25,29 @@ import type { CalibrationStep, MaterialChange } from '../repos/rollforwardRuns.j
 
 /** A request this service will not send, or a response it will not store. */
 export class RollforwardInputError extends Error {}
+
+/**
+ * Whether an engagement is measured in the figure a roll-forward carries.
+ *
+ * The whole calculation is an equity value compounded from one date to
+ * another, and `_prior_equity_value` in the engine reads `results.equity_value`
+ * off the prior run's stored document. A specialty engine writes
+ * `{ kind, specialty }` (routes/specialty.ts) and no `equity_value` at all, so
+ * asking for a roll-forward from — or onto — one of those reached the engine
+ * and came back as `prior_results.equity_value (positive) is required`: a
+ * refusal phrased in the wire format of a service the analyst has never heard
+ * of, for a question the product could have answered without leaving the
+ * process.
+ *
+ * Asked of the engagement's *kind* rather than of the run, which is the same
+ * choice `bridgeableKind` makes one route over and for the same reason: on a
+ * specialty engagement the Calculations tab will still hand you an ordinary
+ * 409A compute, and rolling this year's EMI forward from the equity value of a
+ * §409A run somebody pressed once is not the answer to the question asked.
+ */
+export function rollforwardableKind(kind: string): boolean {
+  return !isSpecialtyKind(kind as ValuationKind);
+}
 
 /** The `engine/v1/rollforward` response, as far as this module reads it. */
 export interface RollforwardEngineResponse {
