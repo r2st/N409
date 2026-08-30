@@ -180,6 +180,18 @@ export const TEMPLATE_VARIABLES: readonly TemplateVariable[] = [
     sample: 'Annual retainer',
   },
   {
+    name: 'trial_ends_on',
+    scope: 'payment',
+    description: 'The day a trial converts to a paid plan, on the notice sent before it does.',
+    sample: '2026-09-02',
+  },
+  {
+    name: 'plan_price',
+    scope: 'payment',
+    description: 'What a subscription plan costs per billing interval, formatted in its own currency.',
+    sample: '$20,000.00',
+  },
+  {
     name: 'subscription_ended_on',
     scope: 'payment',
     description: 'The day a cancelled subscription stopped, and with it the plan’s included valuations.',

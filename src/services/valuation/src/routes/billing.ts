@@ -25,6 +25,7 @@ import {
   findPlanByPrice,
   findPlanForSubscription,
   findStripeCustomerId,
+  findSubscriptionByStripeId,
   INVOICE_PAGE_LIMIT,
   listAllInvoices,
   listAllSubscriptions,
@@ -47,6 +48,7 @@ import {
   invoiceSections,
   subscriptionCanceledMessage,
   subscriptionPrice,
+  trialEndingMessage,
   usageView,
   type InvoiceLineItem,
 } from '../domain/billing.js';
@@ -460,6 +462,74 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     }
   }
 
+  /**
+   * Tell the subscriber their trial is about to convert.
+   *
+   * Stripe fires `customer.subscription.trial_will_end` three days out, and the
+   * transition it warns about is the one a customer is most likely to want to
+   * act before: `trialing` is a served status here, so the trial ends either as
+   * a card charge they were not expecting or — with no card on file — as the
+   * quota silently stopping.
+   *
+   * Only for a subscription this platform actually carries and has not already
+   * ended, and only once: Stripe sends this event once per trial, and a
+   * redelivery of it is collapsed by the event ledger before the handler runs.
+   *
+   * Contained like the other announcements on this path: this writes nothing,
+   * so a failure here must not become a 5xx that has Stripe redeliver an event
+   * with no work left to do.
+   */
+  async function announceTrialEnding(
+    log: FastifyBaseLogger,
+    sub: { user_id: string; plan_tier: string },
+    trialEndsAt: Date,
+  ): Promise<void> {
+    try {
+      const [user, plan] = await Promise.all([
+        findUserById(deps.pool, sub.user_id),
+        findPlanForSubscription(deps.pool, sub.plan_tier),
+      ]);
+      // No plan row means no price to quote, and a trial-ending notice whose
+      // whole job is to say what will be charged is worse than none.
+      if (!plan) {
+        log.warn({ userId: sub.user_id, planTier: sub.plan_tier }, 'trial ending: no plan to quote');
+        return;
+      }
+      const base = deps.publicBaseUrl.replace(/\/$/, '');
+      const message = trialEndingMessage({
+        plan_name: plan.name,
+        trial_ends_at: trialEndsAt.toISOString(),
+        price_cents: plan.price_cents,
+        currency: plan.currency,
+        billing_link: `${base}/billing`,
+      });
+      await createNotifications(deps.pool, [
+        {
+          userId: sub.user_id,
+          type: 'subscription_trial_ending',
+          title: message.subject,
+          body: message.body.split('\n\n')[0]!,
+        },
+      ]);
+      if (user?.email) {
+        await sendTransactionalEmail(
+          { pool: deps.pool, transport: deps.transport, log, settings: deps.settings },
+          {
+            toUserId: sub.user_id,
+            toEmail: user.email,
+            recipientName: user.first_name,
+            templateKey: 'subscription_trial_ending',
+            subject: message.subject,
+            body: message.body,
+            vars: message.vars,
+          },
+        );
+      }
+    } catch (err) {
+      log.warn({ err, userId: sub.user_id }, 'trial ending announcement failed');
+    }
+  }
+
   // ── Webhook (subscription lifecycle + invoices) ──────────────────────────
   void app.register(async (scope) => {
     scope.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) =>
@@ -594,6 +664,14 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             // The other writer of a cancellation, and the one that lands first
             // about as often as not.
             if (written.newly_canceled) await announceSubscriptionCanceled(log, written);
+          }
+        } else if (type === 'customer.subscription.trial_will_end' && typeof obj.id === 'string') {
+          const sub = await findSubscriptionByStripeId(deps.pool, obj.id);
+          const trialEnd = tsToDate(obj.trial_end);
+          // A cancelled subscription's trial is not going to convert, and a
+          // subscription id we do not carry is not our customer to write to.
+          if (sub && sub.status !== 'canceled' && trialEnd) {
+            await announceTrialEnding(log, sub, trialEnd);
           }
         } else if (type === 'customer.subscription.deleted' && typeof obj.id === 'string') {
           const ended = await cancelSubscription(deps.pool, obj.id);

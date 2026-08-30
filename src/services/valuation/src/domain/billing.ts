@@ -690,3 +690,48 @@ export function invoiceLineItems(
   }
   return sum === amountCents ? items : summary;
 }
+
+/**
+ * A trial about to end, in the words the subscriber gets.
+ *
+ * Stripe sends `customer.subscription.trial_will_end` three days before a trial
+ * converts, and nothing handled it. A trial is a `trialing` subscription here —
+ * a served status, with the plan's full quota — and the first thing the
+ * subscriber heard about its ending was a card charge, or, where no card was on
+ * file, the quota simply stopping. Both are the same silence the cancellation
+ * notice was added for, on the transition a customer is most likely to want to
+ * act before.
+ *
+ * States the two facts that decide what they do: the day it converts, and what
+ * they will be charged. The amount comes off the plan catalogue rather than the
+ * event, so it is the figure the Billing screen shows beside it.
+ */
+export function trialEndingMessage(r: {
+  plan_name: string;
+  /** When the trial converts, as an ISO instant. */
+  trial_ends_at: string;
+  price_cents: number;
+  currency: string;
+  billing_link: string;
+}): SettlementMessage {
+  const endsOn = day(r.trial_ends_at);
+  const price = formatMoneyCents(r.price_cents, r.currency);
+  const subject = `Your ${r.plan_name} trial ends on ${endsOn}`;
+  const body =
+    `Your ${r.plan_name} trial ends on ${endsOn}. Unless you cancel before then, ` +
+    `the plan continues and you will be charged ${price}.` +
+    `\n\nYou can change the plan, add or replace a card, or cancel from your billing ` +
+    `page: ${r.billing_link}` +
+    `\n\nIf there is no card on file when the trial ends, the plan will not continue ` +
+    `and the included valuations stop being available.`;
+  return {
+    subject,
+    body,
+    vars: {
+      plan_name: r.plan_name,
+      trial_ends_on: endsOn,
+      plan_price: price,
+      invoice_link: r.billing_link,
+    },
+  };
+}

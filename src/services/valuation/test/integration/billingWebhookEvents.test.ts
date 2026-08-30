@@ -309,6 +309,61 @@ describe.skipIf(!dbUp)('billing webhook events', () => {
     });
   });
 
+  describe('the subscriber is warned before a trial converts', () => {
+    const noticesOf = async (userId: string) => {
+      const { rows } = await ctx.pool.query<{ title: string; body: string }>(
+        "SELECT title, body FROM notifications WHERE user_id = $1 AND type = 'subscription_trial_ending'",
+        [userId],
+      );
+      return rows;
+    };
+
+    it('names the day it converts and what will be charged', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await upsertSubscription(ctx.pool, {
+        userId: user.id,
+        planTier: 'annual_retainer',
+        status: 'trialing',
+        stripeSubscriptionId: 'sub_trial_1',
+      });
+      const res = await deliver({
+        type: 'customer.subscription.trial_will_end',
+        data: { object: { id: 'sub_trial_1', trial_end: Math.floor(Date.UTC(2026, 8, 2) / 1000) } },
+      });
+      expect(res.statusCode).toBe(200);
+      const notes = await noticesOf(user.id);
+      expect(notes).toHaveLength(1);
+      expect(notes[0]!.title).toBe('Your Annual retainer trial ends on 2026-09-02');
+      // The price comes off the catalogue, so it is the figure the Billing
+      // screen shows beside it.
+      expect(notes[0]!.body).toContain('$20,000.00');
+    });
+
+    it('says nothing for a subscription that has already ended', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await upsertSubscription(ctx.pool, {
+        userId: user.id,
+        planTier: 'annual_retainer',
+        status: 'trialing',
+        stripeSubscriptionId: 'sub_trial_gone',
+      });
+      await deliver({ type: 'customer.subscription.deleted', data: { object: { id: 'sub_trial_gone' } } });
+      await deliver({
+        type: 'customer.subscription.trial_will_end',
+        data: { object: { id: 'sub_trial_gone', trial_end: Math.floor(Date.now() / 1000) + 259_200 } },
+      });
+      expect(await noticesOf(user.id)).toEqual([]);
+    });
+
+    it('says nothing for a subscription this platform does not carry', async () => {
+      const res = await deliver({
+        type: 'customer.subscription.trial_will_end',
+        data: { object: { id: 'sub_trial_not_ours', trial_end: Math.floor(Date.now() / 1000) } },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
   describe('the subscriber is told their plan ended', () => {
     const notificationsOf = async (userId: string) => {
       const { rows } = await ctx.pool.query<{ type: string; title: string; body: string }>(
