@@ -46,6 +46,8 @@ describe.skipIf(!dbUp)('improvement 2 — auto-pipeline on upload', () => {
   let otherClient: Awaited<ReturnType<typeof seedUser>>;
 
   let aiDelayMs = 0;
+  /** Runs inside the extraction, so a test can change the world mid-run. */
+  let duringExtract: (() => Promise<void>) | null = null;
   let engineShouldFail = false;
   let extractCalls = 0;
   let lastEnginePayload: Record<string, unknown> | null = null;
@@ -59,6 +61,7 @@ describe.skipIf(!dbUp)('improvement 2 — auto-pipeline on upload', () => {
     aiStub = await startStub({
       '/ai/v1/pipelines/extract': async () => {
         extractCalls += 1;
+        if (duringExtract) await duringExtract();
         if (aiDelayMs > 0) await sleep(aiDelayMs);
         return {
           body: {
@@ -337,6 +340,70 @@ describe.skipIf(!dbUp)('improvement 2 — auto-pipeline on upload', () => {
     const run = await waitForTerminal(valuationId, ops.token);
     expect(run.status).toBe('ready');
     expect(extractCalls).toBe(before + 2);
+  });
+
+  it('re-reads the engagement after extraction — a retirement mid-run stops the calculation (R252)', async () => {
+    /*
+     * The guard was held in two places and the run writes in three. R232 put a
+     * re-read before the extraction and another inside `runAiPipeline`, right
+     * before it applies engine inputs — both because the AI service is given up
+     * to three minutes and a decision about a file is exactly the sort of thing
+     * that gets made inside three minutes.
+     *
+     * The step after it is the heavier write: a calculation is a concluded fair
+     * market value with an audit event behind it. `runCalculation` is the
+     * shared function the interactive route calls *after* its own
+     * `refuseIfRetired`, so it carries none itself — and the auto-pipeline
+     * calls it through no route at all.
+     */
+    const valuationId = await createValuation(ops.token, 'RetiredMidRunCo');
+    const live = (await findValuationById(pool, valuationId))!;
+    const run = await createPipelineRun(
+      pool,
+      { valuationId, trigger: 'upload', triggeredBy: ops.id },
+      { actorType: 'system', actorId: 'test', source: 'auto-pipeline' },
+    );
+    expect(run).not.toBeNull();
+
+    // Retired while the AI service is holding the call — through the retention
+    // repo, so the read-through cache is dropped the way every real writer
+    // drops it.
+    duringExtract = async () => {
+      await markValuationsArchived(pool, [valuationId]);
+    };
+    const deps: AutoPipelineDeps = {
+      pool,
+      aiUrl: aiStub.url,
+      engineUrl: engineStub.url,
+      documentsDir: docsDir,
+      enabled: true,
+      log: {
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+        debug: () => {},
+      } as unknown as AutoPipelineDeps['log'],
+    };
+    try {
+      resumePipelineRun(deps, run!, live);
+
+      let settled = await latestPipelineRun(pool, valuationId);
+      for (let i = 0; i < 200 && settled?.status !== 'failed'; i += 1) {
+        await sleep(25);
+        settled = await latestPipelineRun(pool, valuationId);
+      }
+      expect(settled?.status).toBe('failed');
+      expect(settled?.error).toMatch(/retired while the run was extracting/i);
+      // Permanent: a restore deserves a fresh run, not the tail of this one.
+      expect(settled?.next_attempt_at).toBeNull();
+      // The point of the whole guard.
+      const { rows: calcs } = await pool.query('SELECT id FROM calculations WHERE valuation_id = $1', [
+        valuationId,
+      ]);
+      expect(calcs).toHaveLength(0);
+    } finally {
+      duringExtract = null;
+    }
   });
 
   it('re-reads the engagement before it starts — a retirement during the queue wait stops the run', async () => {

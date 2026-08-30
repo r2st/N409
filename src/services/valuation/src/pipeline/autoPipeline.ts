@@ -257,6 +257,49 @@ async function executeRun(
     const calculating = await advance(deps, run, 'calculating');
     if (!calculating) return;
     run = calculating;
+
+    /*
+     * The same question again, because the answer can have changed since the
+     * last time it was asked.
+     *
+     * The re-read above holds the guard at the extraction, and `runAiPipeline`
+     * asks it a third time immediately before applying engine inputs — because
+     * the AI service is given up to three minutes and a decision about a file
+     * is exactly the kind of thing that gets made inside three minutes. That
+     * left the step after it, which is the heavier write of the two: a
+     * calculation is a concluded fair market value, recorded with an audit
+     * event, on an engagement the firm has withdrawn. `runCalculation` is the
+     * shared function the interactive route calls after its own
+     * `refuseIfRetired`, so it does not carry one itself, and this caller went
+     * through no route at all.
+     *
+     * Settled `permanent` like the pre-start branch, for the same reason: an
+     * active run holds the one-per-valuation index, and a restore deserves a
+     * fresh run rather than the tail of this one. The extraction that already
+     * ran keeps its job row, which is accurate — it happened.
+     */
+    const stillLive = await findValuationById(deps.pool, run.valuation_id);
+    if (!stillLive) {
+      deps.log.info(
+        { runId: run.id, valuationId: run.valuation_id },
+        'auto-pipeline run abandoned — the valuation was deleted while it was extracting',
+      );
+      return;
+    }
+    if (stillLive.archived_at !== null) {
+      await setPipelineRunStatus(deps.pool, run, 'failed', {
+        error: 'the engagement was retired while the run was extracting',
+        actor,
+        failure: { kind: 'permanent', reason: 'valuation.retired', retryable: false },
+      });
+      deps.log.info(
+        { runId: run.id, valuationId: stillLive.id },
+        'auto-pipeline run stopped — the engagement was retired while it was extracting',
+      );
+      return;
+    }
+    valuation = stillLive;
+
     const paramsRow = await findParams(deps.pool, valuation.id);
     if (!paramsRow) throw new Error('Valuation has no params row');
     const inputs = await buildCalculationInputs(deps.pool, valuation.id, paramsRow, {}, deps.log);
