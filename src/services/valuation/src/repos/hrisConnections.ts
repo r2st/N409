@@ -291,6 +291,30 @@ export async function updateTokens(
  * trail should not report as a change, though the write still happens, so
  * pressing it re-bases `next_sync_at` exactly as it always did.
  */
+/**
+ * Whether a cadence change is allowed to restart the schedule.
+ *
+ * A terminal failure is the one state in this row that says "no sweep will
+ * ever pick this up again": `recordSyncError` clears `next_sync_at` and sets
+ * `reconnect_required`, and `logConnectorSyncFailure` writes the one line in
+ * this subsystem that alerts, on the strength of that being final. Setting a
+ * cadence wrote `next_sync_at = now() + interval` unconditionally, which
+ * un-finalises it — from the dropdown, without touching the authorisation the
+ * provider ended.
+ *
+ * What that produced is both halves of the lie at once. The sweep picks the
+ * row up when the new cadence falls due, spends a refresh token the provider
+ * has already refused, and records the same terminal failure again — an
+ * `alert: true, retried: false` line for work no one can action, once per
+ * cadence period, forever. Meanwhile `connectorHealth` reads
+ * `reconnect_required` first, so the card still says "Not syncing" over a
+ * connection that is being synced on a schedule.
+ *
+ * So the cadence is recorded and the schedule stays stopped. Reconnecting is
+ * what starts it: `upsertConnection` clears `reconnect_required` and sets
+ * `next_sync_at` from whatever cadence is on the row by then — including one
+ * chosen while the connection was dead.
+ */
 export async function setSyncFrequency(
   pool: pg.Pool,
   id: string,
@@ -306,7 +330,7 @@ export async function setSyncFrequency(
     }>(
       `UPDATE hris_connections c
        SET sync_frequency = $2,
-           next_sync_at = ${interval ? `now() + interval '${interval}'` : 'NULL'}
+           next_sync_at = ${interval ? `CASE WHEN c.reconnect_required THEN NULL ELSE now() + interval '${interval}' END` : 'NULL'}
       FROM (SELECT id, sync_frequency FROM hris_connections WHERE id = $1 FOR UPDATE) prev
      WHERE c.id = prev.id AND c.status <> 'revoked'
  RETURNING c.valuation_id, c.provider, prev.sync_frequency AS previous_frequency`,

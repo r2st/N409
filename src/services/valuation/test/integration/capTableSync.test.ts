@@ -276,6 +276,40 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
     expect(saved?.entries.length).toBe(3);
   });
 
+  /**
+   * R261 (M5), the cap-table half of the same hole in `setSyncFrequency`. A
+   * terminal failure clears `next_sync_at` because no retry can clear it; the
+   * cadence dropdown wrote the column back unconditionally, restarting a
+   * schedule against an authorisation the provider had ended.
+   */
+  it('does not restart the schedule when a cadence is set on a connection needing a reconnect', async () => {
+    payload = CARTA_V1;
+    const v = await seedValuation();
+    await connect(v.id);
+    await ctx.pool.query(
+      `UPDATE cap_table_connections
+          SET status = 'error', sync_failures = 3, next_sync_at = NULL,
+              reconnect_required = true, sync_frequency = 'manual'
+        WHERE valuation_id = $1`,
+      [v.id],
+    );
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/cap-table/sync/carta/frequency`,
+      headers: authHeader(ops.token),
+      payload: { frequency: 'daily' },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const { rows } = await ctx.pool.query<{ sync_frequency: string; next_sync_at: Date | null }>(
+      'SELECT sync_frequency, next_sync_at FROM cap_table_connections WHERE valuation_id = $1',
+      [v.id],
+    );
+    expect(rows[0]!.sync_frequency).toBe('daily');
+    expect(rows[0]!.next_sync_at).toBeNull();
+  });
+
   it('renews an expired access token before a scheduled sync (R252)', async () => {
     // Both providers ask for `offline_access` at the authorize URL, and until
     // R252 the refresh token that scope exists to obtain was written to the row

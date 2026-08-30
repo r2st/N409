@@ -780,6 +780,83 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       expect(row.next_sync_at).not.toBeNull();
       expect(row.reconnect_required).toBe(false);
     });
+
+    /**
+     * R261 (M5). A terminal failure is the one state that says no sweep will
+     * ever pick this row up again, and the alert `logConnectorSyncFailure`
+     * writes is spent on the strength of that. Setting a cadence wrote
+     * `next_sync_at` unconditionally, so the dropdown un-finalised it without
+     * anybody touching the authorisation the provider had ended: the sweep
+     * came back, spent a refresh token already refused, and re-alerted — while
+     * `connectorHealth`, which reads `reconnect_required` first, went on
+     * drawing "Not syncing" over a connection on a schedule.
+     */
+    it('does not restart the schedule when a cadence is set on a connection needing a reconnect', async () => {
+      const v = await connectedValuation();
+      await ctx.pool.query(
+        `UPDATE hris_connections
+            SET status = 'error', sync_failures = 3, next_sync_at = NULL,
+                reconnect_required = true, sync_frequency = 'manual'
+          WHERE valuation_id = $1`,
+        [v.id],
+      );
+
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${v.id}/hris/rippling/frequency`,
+        headers: authHeader(ops.token),
+        payload: { frequency: 'daily' },
+      });
+      expect(res.statusCode).toBe(200);
+
+      // The choice is recorded — it is what the reconnect will start.
+      const { rows } = await ctx.pool.query<{ sync_frequency: string; next_sync_at: Date | null }>(
+        'SELECT sync_frequency, next_sync_at FROM hris_connections WHERE valuation_id = $1',
+        [v.id],
+      );
+      expect(rows[0]!.sync_frequency).toBe('daily');
+      expect(rows[0]!.next_sync_at).toBeNull();
+
+      // And nothing is due, so no sweep spends the refused credential again.
+      rosterFails = true;
+      const processed = await runDueHrisSyncs({
+        pool: ctx.pool,
+        fetchFn: mockFetch() as unknown as typeof fetch,
+        log: silentLog,
+      });
+      expect(processed).toBe(0);
+      expect((await connectionRow(v.id)).sync_failures).toBe(3);
+    });
+
+    it('starts the cadence chosen while the connection was dead once it reconnects', async () => {
+      const v = await connectedValuation();
+      await ctx.pool.query(
+        `UPDATE hris_connections
+            SET status = 'error', next_sync_at = NULL, reconnect_required = true,
+                sync_frequency = 'manual'
+          WHERE valuation_id = $1`,
+        [v.id],
+      );
+      await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${v.id}/hris/rippling/frequency`,
+        headers: authHeader(ops.token),
+        payload: { frequency: 'weekly' },
+      });
+
+      const state = await signHrisState(
+        { valuationId: v.id, provider: 'rippling', userId: ops.id },
+        { secret: 'integration-test-secret-0123456789abcdef', issuer: 'n409', ttlSeconds: 3600 },
+      );
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/hris/callback?state=${encodeURIComponent(state)}&code=abc&company_id=co1`,
+      });
+
+      const row = await connectionRow(v.id);
+      expect(row.reconnect_required).toBe(false);
+      expect(row.next_sync_at).not.toBeNull();
+    });
   });
 
   describe('the connect and disconnect on the audit spine (R256)', () => {
