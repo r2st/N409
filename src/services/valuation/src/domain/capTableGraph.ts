@@ -2,6 +2,7 @@ import {
   asConvertedShares,
   investedAmount,
   liquidationPreference,
+  MAX_CAP_TABLE_ENTRIES,
   type CapTableEntry,
   type CapTableClassType,
 } from './capTable.js';
@@ -306,15 +307,43 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
     if (members) members.push(e);
     else byColumn.set(col, [e]);
   }
-  for (let col = 1; col + 1 <= rankColumn.size; col++) {
-    for (const senior of byColumn.get(col) ?? []) {
-      for (const junior of byColumn.get(col + 1) ?? []) {
-        edges.push({
-          from: idFor.get(senior)!,
-          to: idFor.get(junior)!,
-          kind: 'senior_to',
-          label: 'senior to',
-        });
+  /*
+   * …counted before it is drawn, because a fan-out is a *product*.
+   *
+   * "A handful of arrows on any real table" is true and is not a bound. A rank
+   * holding m classes in front of one holding n draws m x n arrows, and the
+   * entry cap this file imports lets those be a thousand each: one cap table
+   * of 2000 preferred rows split over two seniorities produced 1,002,000 edges
+   * and a 93 MB response, for a drawing the browser lays out one SVG path at a
+   * time. Every other edge family here is one per entry.
+   *
+   * So the seniority edges may not outnumber the entries they order. Past that
+   * the ordering is left to the layout, which already carries it: ranks are
+   * columns, drawn left to right in payment order, and `rank` on every node
+   * says which column it is in.
+   *
+   * All of them or none of them, per graph. A partial fan-out is the reading
+   * this whole block exists to prevent — an arrow from Series A to one class
+   * and not to the one beside it says the second is not junior to A, which is
+   * a stack that does not exist. Dropping them says less; drawing some of them
+   * would say something false.
+   */
+  const seniorityEdgeCount = [...Array(Math.max(rankColumn.size - 1, 0))].reduce(
+    (sum, _, i) => sum + (byColumn.get(i + 1)?.length ?? 0) * (byColumn.get(i + 2)?.length ?? 0),
+    0,
+  );
+  const seniorityEdgesOmitted = seniorityEdgeCount > MAX_CAP_TABLE_ENTRIES;
+  if (!seniorityEdgesOmitted) {
+    for (let col = 1; col + 1 <= rankColumn.size; col++) {
+      for (const senior of byColumn.get(col) ?? []) {
+        for (const junior of byColumn.get(col + 1) ?? []) {
+          edges.push({
+            from: idFor.get(senior)!,
+            to: idFor.get(junior)!,
+            kind: 'senior_to',
+            label: 'senior to',
+          });
+        }
       }
     }
   }
@@ -392,7 +421,19 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
     edges.push({ from: id, to: companyId, kind: 'funded', label: 'funded' });
   }
 
-  return { nodes, edges, issues: graphIssues(input.entries, commonEntries.length) };
+  const issues = graphIssues(input.entries, commonEntries.length);
+  if (seniorityEdgesOmitted) {
+    issues.push({
+      severity: 'warning',
+      code: 'seniority_edges_omitted',
+      message:
+        `Drawing the payment order between these classes would take ${seniorityEdgeCount.toLocaleString('en-US')} ` +
+        'arrows, which is more picture than screen. The order is still here: the stack runs left to ' +
+        'right, most senior first, and every class is in the column of the rank it is paid at. ' +
+        'Classes sharing a column are pari passu.',
+    });
+  }
+  return { nodes, edges, issues };
 }
 
 /**

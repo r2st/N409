@@ -162,6 +162,59 @@ describe('cap table graph', () => {
       expect(edges.filter((e) => e.kind === 'senior_to')).toHaveLength(0);
     });
 
+    /**
+     * The fan-out is a product, and the entry cap does not bound a product.
+     *
+     * R229 replaced a chain between sorted classes — which drew "senior to"
+     * between two classes that rank pari passu — with a fan-out between
+     * consecutive rank columns, on the premise that a rank holds a handful of
+     * classes. Nothing enforced that premise: `MAX_CAP_TABLE_ENTRIES` lets one
+     * rank hold a thousand rows and the next hold a thousand more, which is
+     * 1,002,000 arrows and a 93 MB response for a drawing the browser lays out
+     * one SVG path at a time.
+     *
+     * The bound is on the arrows, not on the stack: every class keeps its node
+     * and its rank, so the payment order is still readable off the columns.
+     * And it is all-or-nothing — a half-drawn fan-out says a class is not
+     * junior to the one beside its senior, which is the false reading the
+     * fan-out was introduced to remove.
+     */
+    describe('a rank too wide to draw', () => {
+      const wide = (n: number) =>
+        Array.from({ length: n }, (_, i) => pari(`Series ${i}`, i < n / 2 ? 1 : 2, 1_000_000 + i));
+
+      it('keeps every arrow while the fan-out stays smaller than the table', () => {
+        // 20 x 20 = 400 arrows, well inside the bound: an ordinary stack loses
+        // nothing.
+        const { edges, issues } = build([COMMON, ...wide(40)]);
+        expect(edges.filter((e) => e.kind === 'senior_to')).toHaveLength(400);
+        expect(issues.map((i) => i.code)).not.toContain('seniority_edges_omitted');
+      });
+
+      it('draws none of them, and says so, once it would outgrow the table', () => {
+        const entries = [COMMON, ...wide(200)];
+        const { nodes, edges, issues } = build(entries);
+        // 100 x 100 = 10,000 arrows over 201 nodes.
+        expect(edges.filter((e) => e.kind === 'senior_to')).toHaveLength(0);
+        const omitted = issues.find((i) => i.code === 'seniority_edges_omitted');
+        expect(omitted?.severity).toBe('warning');
+        expect(omitted?.message).toContain('10,000');
+        // The order it stopped drawing is still on the nodes.
+        expect(nodes.find((n) => n.label === 'Series 0')!.rank).toBe(1);
+        expect(nodes.find((n) => n.label === 'Series 199')!.rank).toBe(2);
+        expect(nodes.find((n) => n.label === 'Common')!.rank).toBe(3);
+      });
+
+      it('grows the graph with the table rather than with its square', () => {
+        // The property, not a timing: doubling the entries must not quadruple
+        // the drawing. Every other edge family here is one per entry.
+        const size = (n: number) => build([COMMON, ...wide(n)]).edges.length;
+        const small = size(200);
+        const large = size(400);
+        expect(large).toBeLessThan(small * 3);
+      });
+    });
+
     it('still ranks an unstated class behind every stated one', () => {
       const { nodes } = build([COMMON, pari('Series B', 2, 20e6), pari('Series Seed', null, 2e6)]);
       const rank = (label: string) => nodes.find((n) => n.label === label)!.rank;
