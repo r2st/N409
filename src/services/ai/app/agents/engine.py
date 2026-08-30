@@ -20,6 +20,8 @@ import os
 
 import httpx
 
+from ..http_client import new_client
+
 ENGINE_TIMEOUT_S = 20.0
 
 
@@ -44,7 +46,7 @@ def _post(path: str, body: dict, label: str, *, client: httpx.Client | None = No
     model-only multiples, which is the entire reason this converts.
     """
     owns = client is None
-    http = client or httpx.Client(timeout=ENGINE_TIMEOUT_S)
+    http = client or new_client(timeout=ENGINE_TIMEOUT_S)
     try:
         resp = http.post(f"{_engine_url()}{path}", json=body)
     except httpx.HTTPError as exc:

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from .http_client import new_client
 from .llm_http import (
     MAX_RETRIES,
     MIN_ATTEMPT_S,
@@ -280,7 +281,7 @@ def _cache_key_status(key: str, status: KeyStatus) -> None:
 def _probe_key(key: str, client: httpx.Client | None = None) -> KeyStatus:
     """One cheap live call to OpenRouter's key-introspection endpoint."""
     owns_client = client is None
-    http = client or httpx.Client(timeout=KEY_CHECK_TIMEOUT_S)
+    http = client or new_client(timeout=KEY_CHECK_TIMEOUT_S)
     try:
         try:
             resp = http.get(OPENROUTER_KEY_URL, headers={"Authorization": f"Bearer {key}"})
@@ -544,7 +545,7 @@ def chat(
     # Fail fast before spending anything if the budget is already exhausted.
     _check_budget()
     owns_client = client is None
-    http = client or httpx.Client(timeout=TIMEOUT_S)
+    http = client or new_client(timeout=TIMEOUT_S)
     deadline = _Deadline(call_budget_s())
     errors: list[str] = []
     # One entry per candidate the loop reached: its HTTP status, or None when it

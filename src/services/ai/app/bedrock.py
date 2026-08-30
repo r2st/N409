@@ -48,6 +48,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from .http_client import new_client
 from .llm_http import (
     MAX_RETRIES,
     TRUNCATED_FINISH_REASONS,
@@ -411,7 +412,7 @@ def verify_credentials(
             return cached
 
     owns_client = client is None
-    http = client or httpx.Client(timeout=KEY_CHECK_TIMEOUT_S)
+    http = client or new_client(timeout=KEY_CHECK_TIMEOUT_S)
     try:
         path = "/foundation-models"
         host = f"bedrock.{creds.region}.amazonaws.com"
@@ -533,7 +534,7 @@ def chat(
 
     model_id = strip_prefix(model) if model else default_model()
     owns_client = client is None
-    http = client or httpx.Client(timeout=KEY_CHECK_TIMEOUT_S)
+    http = client or new_client(timeout=KEY_CHECK_TIMEOUT_S)
     deadline = Deadline(call_budget_s())
     try:
         try:

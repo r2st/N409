@@ -75,6 +75,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from .http_client import new_client
 from .llm_http import MAX_RETRIES, Deadline, backoff_sleep, env_float, env_int
 from .research_types import RECENCY_FILTERS
 
@@ -1034,7 +1035,7 @@ def search_with_provider(
 
     cap = limit if limit is not None else max_results()
     owns_client = client is None
-    http = client or httpx.Client(timeout=call_budget_s() or None)
+    http = client or new_client(timeout=call_budget_s() or None)
     deadline = Deadline(call_budget_s())
     errors: list[str] = []
     try:

@@ -50,6 +50,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from .http_client import new_client
 from .llm_http import (
     MAX_RETRIES,
     Deadline,
@@ -207,7 +208,7 @@ def _cache_key_status(key: str, status: KeyStatus) -> None:
 
 def _probe_key(key: str, client: httpx.Client | None = None) -> KeyStatus:
     owns_client = client is None
-    http = client or httpx.Client(timeout=KEY_CHECK_TIMEOUT_S)
+    http = client or new_client(timeout=KEY_CHECK_TIMEOUT_S)
     try:
         try:
             resp = http.post(
@@ -384,7 +385,7 @@ def research(
 
     chosen = configured_model(model)
     owns_client = client is None
-    http = client or httpx.Client(timeout=call_budget_s() or None)
+    http = client or new_client(timeout=call_budget_s() or None)
     deadline = Deadline(call_budget_s())
     body = _payload(chosen, system, query, recency, domains)
     last_error = ""
