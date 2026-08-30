@@ -215,6 +215,17 @@ function stripRawText(html: string): string {
 const TAG_HEAD = /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b/y;
 const HREF = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
 /**
+ * The three characters a URL parser removes from a URL before it parses it.
+ *
+ * WHATWG URL, §"URL parsing": tab, LF and CR are stripped from the input and
+ * the parse proceeds as if they were never there. So `/<TAB>/evil.example` is
+ * not a path beginning with one slash — it is `//evil.example`, and every
+ * browser resolves it to another origin. A guard that reads the string as
+ * written is asking a different question from the one the browser answers.
+ */
+const URL_IGNORED = /[\t\n\r]/g;
+
+/**
  * Absolute http(s), mailto, or a site-relative path.
  *
  * The relative arm was added for the blog: an article that cannot link to the
@@ -222,13 +233,34 @@ const HREF = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
  * silently turned every such link into a bare `<a>` — text that looks like a
  * link, does nothing, and gives the author no signal that it was dropped.
  *
- * `\/(?!\/)` is the whole guard. A single leading slash is our own origin,
+ * `\/(?![/\\])` is the whole guard. A single leading slash is our own origin,
  * which is strictly less dangerous than the external https URLs already
  * allowed. Two is protocol-relative — `//evil.example` is an off-site link
  * wearing a relative path's clothes, and it is the one case a naive `^\/`
  * would wave through.
+ *
+ * The backslash is the same case spelled the other way. For a special scheme
+ * the URL parser treats `\` as `/`, so `/\evil.example` resolves to
+ * `https://evil.example/` exactly as `//evil.example` does — the lookahead read
+ * one character and saw something that was not a slash, and the browser read
+ * the same character and saw one. `\/evil.example` never got in (it matches no
+ * arm), which is why only the second position needed widening.
  */
-const SAFE_URL = /^(https?:\/\/|mailto:|\/(?!\/))/i;
+const SAFE_URL = /^(https?:\/\/|mailto:|\/(?![/\\]))/i;
+
+/**
+ * The href to emit for `raw`, or null to drop the attribute.
+ *
+ * Returns the *normalised* string rather than a verdict on the original,
+ * because the two must not differ: testing a stripped copy and emitting the
+ * untouched one would put the whole check on the wrong side of the parser
+ * again. Stripping is what the browser does anyway, so nothing legitimate
+ * changes — no URL this policy admits contains a tab or a newline.
+ */
+function safeHref(raw: string): string | null {
+  const url = raw.trim().replace(URL_IGNORED, '');
+  return SAFE_URL.test(url) ? url : null;
+}
 
 /**
  * Reduces arbitrary editor HTML to the whitelist: script/style bodies are
@@ -302,8 +334,8 @@ function filterTags(source: string): string {
     if (tag === 'a' && !close) {
       // Bounded by this tag's own length, and tags do not overlap.
       const href = HREF.exec(source.slice(attrsFrom, gt));
-      const url = (href?.[1] ?? href?.[2] ?? href?.[3] ?? '').trim();
-      out += SAFE_URL.test(url) ? `<a href="${url.replace(/"/g, '&quot;')}">` : '<a>';
+      const url = safeHref(href?.[1] ?? href?.[2] ?? href?.[3] ?? '');
+      out += url === null ? '<a>' : `<a href="${url.replace(/"/g, '&quot;')}">`;
       continue;
     }
     out += `<${close}${tag}>`;

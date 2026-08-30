@@ -245,13 +245,22 @@ function stripRawText(html: string): string {
 /** Sticky, so the tag head is matched in place rather than searched for. */
 const TAG_HEAD = /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b/y;
 const HREF = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+/** The tab, LF and CR a URL parser deletes before parsing — see the server copy. */
+const URL_IGNORED = /[\t\n\r]/g;
+
 /**
  * Absolute http(s), mailto, or a site-relative path — kept identical to the
  * server copy in `valuation/src/domain/report.ts`, which carries the reasoning.
- * `\/(?!\/)` admits `/pricing` and rejects `//evil.example`, which is an
- * off-site link wearing a relative path's clothes.
+ * `\/(?![/\\])` admits `/pricing` and rejects `//evil.example` and
+ * `/\evil.example`, each an off-site link wearing a relative path's clothes.
  */
-const SAFE_URL = /^(https?:\/\/|mailto:|\/(?!\/))/i;
+const SAFE_URL = /^(https?:\/\/|mailto:|\/(?![/\\]))/i;
+
+/** The href to emit, normalised the way the URL parser would — or null to drop it. */
+function safeHref(raw: string): string | null {
+  const url = raw.trim().replace(URL_IGNORED, '');
+  return SAFE_URL.test(url) ? url : null;
+}
 
 /**
  * Whitelist tags, drop every attribute — except <a>, which keeps a validated
@@ -310,8 +319,8 @@ function filterTags(source: string): string {
     if (tag === 'a' && !close) {
       // Bounded by this tag's own length, and tags do not overlap.
       const href = HREF.exec(source.slice(attrsFrom, gt));
-      const url = (href?.[1] ?? href?.[2] ?? href?.[3] ?? '').trim();
-      out += SAFE_URL.test(url) ? `<a href="${url.replace(/"/g, '&quot;')}">` : '<a>';
+      const url = safeHref(href?.[1] ?? href?.[2] ?? href?.[3] ?? '');
+      out += url === null ? '<a>' : `<a href="${url.replace(/"/g, '&quot;')}">`;
       continue;
     }
     out += `<${close}${tag}>`;

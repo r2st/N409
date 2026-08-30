@@ -120,4 +120,31 @@ describe('sanitizeHtml on input with no closing bracket', () => {
     expect(sanitizeHtml('<a href="//evil.example/x">x</a>')).toBe('<a>x</a>');
     expect(sanitizeHtml('<a href="pricing">x</a>')).toBe('<a>x</a>');
   });
+
+  // The browser is the parser this policy is written against, so the question
+  // is asked of `URL` rather than of the string: `\` is `/` for a special
+  // scheme and tab/LF/CR are deleted before parsing, so each of these is one
+  // slash on the page and another origin in the address bar.
+  it('admits no href that resolves to another origin', () => {
+    const HOSTILE = [
+      '//evil.example',
+      '/\\evil.example',
+      '/\\\\evil.example',
+      '/\tevil.example',
+      '/\t/evil.example',
+      '/\n/evil.example',
+      '/\r/evil.example',
+      '/\t\\evil.example',
+    ];
+    for (const raw of HOSTILE) {
+      const kept = /href="([^"]*)"/.exec(sanitizeHtml(`<a href="${raw}">x</a>`))?.[1];
+      const resolved = new URL(kept ?? '/', 'https://n409.app/a/b');
+      expect({ raw, origin: resolved.origin }).toEqual({ raw, origin: 'https://n409.app' });
+    }
+  });
+
+  // What was checked is what is written — see the server copy.
+  it('emits the href it validated', () => {
+    expect(sanitizeHtml('<a href="/pri\tcing">x</a>')).toBe('<a href="/pricing">x</a>');
+  });
 });

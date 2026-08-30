@@ -35,6 +35,49 @@ describe('sanitizeHtml link support', () => {
     expect(sanitizeHtml('<a href="//evil.example">x</a>')).toBe('<a>x</a>');
   });
 
+  // The same off-site link, spelled the way the URL parser reads rather than
+  // the way the regex did. `\\` is `/` for a special scheme, and tab/LF/CR are
+  // deleted before parsing — so each of these resolves to https://evil.example/
+  // in every browser while starting with exactly one slash on the page.
+  it('rejects a site-relative href the URL parser resolves off-site', () => {
+    expect(sanitizeHtml('<a href="/\\evil.example/x">x</a>')).toBe('<a>x</a>');
+    expect(sanitizeHtml('<a href="/\\\\evil.example">x</a>')).toBe('<a>x</a>');
+    expect(sanitizeHtml('<a href="/\t/evil.example">x</a>')).toBe('<a>x</a>');
+    expect(sanitizeHtml('<a href="/\n/evil.example">x</a>')).toBe('<a>x</a>');
+    expect(sanitizeHtml('<a href="/\r/evil.example">x</a>')).toBe('<a>x</a>');
+  });
+
+  // Every one of the five above, plus the protocol-relative form and two that
+  // normalise back to our own origin, put
+  // through the parser they were written against. This is the assertion that
+  // makes the guard falsifiable: if a spelling stops being caught, this notices
+  // whether or not anyone thought to add it to the list above.
+  it('admits no href that resolves to another origin', () => {
+    const HOSTILE = [
+      '//evil.example',
+      '/\\evil.example',
+      '/\\\\evil.example',
+      '/\tevil.example',
+      '/\t/evil.example',
+      '/\n/evil.example',
+      '/\r/evil.example',
+      '/\t\\evil.example',
+    ];
+    for (const raw of HOSTILE) {
+      const html = sanitizeHtml(`<a href="${raw}">x</a>`);
+      const kept = /href="([^"]*)"/.exec(html)?.[1];
+      const resolved = new URL(kept ?? '/', 'https://n409.app/a/b');
+      expect({ raw, origin: resolved.origin }).toEqual({ raw, origin: 'https://n409.app' });
+    }
+  });
+
+  // The normalisation is emitted, not merely tested against: a kept href that
+  // was checked in one spelling and written in another puts the check back on
+  // the wrong side of the parser.
+  it('emits the href it validated', () => {
+    expect(sanitizeHtml('<a href="/pri\tcing">x</a>')).toBe('<a href="/pricing">x</a>');
+  });
+
   // Not a path at all — a relative href has to start at the site root, so a
   // bare word cannot resolve against whatever page happens to render it.
   it('rejects a document-relative href', () => {
