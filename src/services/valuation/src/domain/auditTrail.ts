@@ -326,6 +326,34 @@ export const ADMIN_EVENT_CATALOG = {
   valuation_retired: D('Engagement withdrawn', 'lifecycle', 'critical'),
   valuation_restored: D('Engagement restored', 'lifecycle', 'critical'),
 
+  // ── Billing & subscriptions ─────────────────────────────────────────────
+  //
+  // The money surface wrote nothing here. A plan starting, a plan swapped in
+  // Stripe's hosted portal, a renewal declining, a subscription ending and an
+  // invoice settling were each announced to somebody by email and counted on
+  // the ops rollup, and none of them left a row an auditor could read: the
+  // trail could describe an administrator editing a help article and not the
+  // day an account's entitlement changed.
+  //
+  // Nearly every one of these arrives from Stripe rather than from a request,
+  // so `actor_type` is `system` and `source` is `stripe` — truthfully, because
+  // no principal of ours took the action. What makes that attribution readable
+  // rather than a dead end is the pair either side of it: `checkout_started`
+  // and `billing_portal_opened` name the human who walked into Stripe, and
+  // every webhook-written row below carries `stripe_event_id` in its payload,
+  // which is the id the Stripe dashboard indexes the same delivery by. Those
+  // two are the join between "a person clicked Manage subscription" and "the
+  // plan changed an hour later", and without them the second row's actor is
+  // the whole answer.
+  checkout_started: D('Checkout started', 'integration', 'notice'),
+  billing_portal_opened: D('Billing portal opened', 'integration', 'notice'),
+  subscription_started: D('Subscription started', 'integration', 'critical'),
+  subscription_changed: D('Subscription changed', 'integration', 'critical'),
+  subscription_canceled: D('Subscription cancelled', 'integration', 'critical'),
+  subscription_payment_failed: D('Subscription payment failed', 'integration', 'critical'),
+  invoice_paid: D('Invoice paid', 'integration', 'notice'),
+  invoice_refunded: D('Invoice refunded', 'integration', 'critical'),
+
   // ── Platform operations ─────────────────────────────────────────────────
   system_settings_updated: D('System settings updated', 'integration', 'critical'),
   job_alert_rule_changed: D('Job alert rule changed', 'integration', 'notice'),

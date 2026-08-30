@@ -146,6 +146,24 @@ export interface SubscriptionRow {
  */
 export interface SubscriptionWrite extends SubscriptionRow {
   newly_canceled: boolean;
+  /**
+   * Whether this statement created the row rather than moving one that was
+   * already there — `xmax = 0`, the same signal `newly_canceled` is derived
+   * from, and authoritative for the same reason: which arm the upsert took is
+   * a fact only the write holds.
+   *
+   * The billing audit spine needs it to tell a subscription *starting* from a
+   * subscription *changing*, and the two Stripe events that describe one new
+   * subscription (`checkout.session.completed` and
+   * `customer.subscription.created`) both arrive here with the row absent on
+   * whichever lands first. Deciding from a read before the call would call the
+   * second one a start too.
+   *
+   * The no-stripe-id insert arm below always creates, so it reports `true`;
+   * the stale-event path that returns an untouched existing row reports
+   * `false`, because it wrote nothing at all.
+   */
+  inserted: boolean;
 }
 
 export async function findActiveSubscription(pool: pg.Pool, userId: string): Promise<SubscriptionRow | null> {
@@ -242,7 +260,7 @@ export async function upsertSubscription(
        -- not an account that just ended, so only the update arm is news. The
        -- WHERE above already guarantees the updated row was not cancelled
        -- before, so an update to 'canceled' is always a transition into it.
-       RETURNING *, (NOT (xmax = 0) AND status = 'canceled') AS newly_canceled`,
+       RETURNING *, (NOT (xmax = 0) AND status = 'canceled') AS newly_canceled, (xmax = 0) AS inserted`,
       [
         newUlid(),
         input.userId,
@@ -262,7 +280,7 @@ export async function upsertSubscription(
     // row, and it exists — returning it unchanged keeps this a no-op rather
     // than an error, which is what a stale event deserves.
     const existing = await findSubscriptionByStripeId(pool, input.stripeSubscriptionId);
-    if (existing) return { ...existing, newly_canceled: false };
+    if (existing) return { ...existing, newly_canceled: false, inserted: false };
 
     // Neither inserted, nor updated, nor found. The only other UNIQUE on the
     // table is the one we conflicted on, so this means the row was deleted
@@ -285,7 +303,7 @@ export async function upsertSubscription(
     ],
   );
   // A fresh row, so nothing transitioned.
-  return { ...rows[0]!, newly_canceled: false };
+  return { ...rows[0]!, newly_canceled: false, inserted: true };
 }
 
 /** The subscription a Stripe subscription id names, whatever state it is in. */
@@ -337,7 +355,7 @@ export async function cancelSubscription(
         SET status = 'canceled', canceled_at = COALESCE(s.canceled_at, now())
        FROM prev
       WHERE s.id = prev.id
-      RETURNING s.*, (prev.status <> 'canceled') AS newly_canceled`,
+      RETURNING s.*, (prev.status <> 'canceled') AS newly_canceled, false AS inserted`,
     [stripeSubscriptionId],
   );
   return rows[0] ?? null;

@@ -40,6 +40,9 @@ import { createNotifications } from '../repos/notifications.js';
 import { listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
 import { parseStripeEvent, stripeEventKey } from '../domain/stripeEvents.js';
+import { diffRecords, type AdminEventType } from '../domain/auditTrail.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
+import type { EventActor } from '../events/record.js';
 import { classifyStripeEvent, recordStripeEvent } from '../repos/stripeEvents.js';
 import {
   formatMoneyCents,
@@ -109,6 +112,60 @@ const tsToDate = (v: unknown): Date | null =>
   typeof v === 'number' && Number.isFinite(v) ? new Date(v * 1000) : null;
 
 export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): void {
+  /**
+   * One row on the billing spine, subjected to the *account* rather than to the
+   * subscription or the invoice.
+   *
+   * The question this feed is asked is "what happened to this customer's
+   * billing", and `admin_events` is filterable by `subject_id`; a subscription
+   * id as the subject would scatter one account's history across as many
+   * subjects as it has ever held subscriptions, and an account that resubscribed
+   * after lapsing has two. The subscription and invoice ids travel in the
+   * payload, where they are still searchable and no longer split the timeline.
+   */
+  const audit = (args: {
+    type: AdminEventType;
+    actor: EventActor;
+    userId: string | null;
+    label?: string | null;
+    payload?: Record<string, unknown>;
+  }) =>
+    recordAdminEvent(deps.pool, {
+      type: args.type,
+      actor: args.actor,
+      subjectType: 'user',
+      subjectId: args.userId,
+      subjectLabel: args.label ?? null,
+      payload: args.payload,
+    });
+
+  /**
+   * {@link audit} for the two request-driven routes, where the outward action
+   * has already happened by the time we get here.
+   *
+   * A Checkout Session or a portal session exists at Stripe before this runs,
+   * and the caller is about to be redirected into it. Turning a failed audit
+   * insert into a 500 would leave them staring at an error for a flow that
+   * succeeded, so these two are contained the way `recordAdminEvent`'s contract
+   * describes: fire-after-success, the mutation not held hostage. The webhook
+   * paths below do the opposite on purpose — see the note there.
+   */
+  const auditRequest = async (log: FastifyBaseLogger, args: Parameters<typeof audit>[0]) => {
+    try {
+      await audit(args);
+    } catch (err) {
+      log.warn({ err, type: args.type }, 'billing audit event not recorded');
+    }
+  };
+
+  /**
+   * Stripe is not one of our principals, so a webhook-written row says so.
+   * What keeps that from being a dead end is `stripe_event_id` on every such
+   * payload plus the `checkout_started` / `billing_portal_opened` rows that
+   * name the human who walked into Stripe in the first place.
+   */
+  const STRIPE_ACTOR: EventActor = { actorType: 'system', actorId: null, source: 'stripe' };
+
   app.get('/api/v1/billing/plans', { preHandler: app.authenticate }, async (req) => ({
     plans: await listPlans(deps.pool),
     // Per-caller for the reason `checkoutAvailableTo` documents: a test key
@@ -167,6 +224,23 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       }
       throw err;
     }
+    // The human half of the pair. Everything Stripe says about this
+    // subscription afterwards arrives as `system`/`stripe`, so this is the
+    // only row that names who asked for the plan; the Checkout Session id is
+    // what joins it to the `subscription_started` the webhook writes.
+    await auditRequest(req.log, {
+      type: 'checkout_started',
+      actor: { actorType: 'human', actorId: principal.id },
+      userId: principal.id,
+      label: user?.email ?? null,
+      payload: {
+        plan_tier: plan.tier,
+        amount_cents: plan.price_cents,
+        currency: plan.currency,
+        interval: plan.interval,
+        checkout_session_id: session.id,
+      },
+    });
     return { checkout_url: session.url };
   });
 
@@ -228,6 +302,17 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       const session = await createBillingPortalSession(deps.stripeSecretKey, {
         customerId,
         returnUrl: `${base}/billing`,
+      });
+      // The portal is where a subscriber cancels, swaps plan or replaces a
+      // card, and every one of those comes back to us as a webhook with no
+      // principal on it. This row is the only place the person is named — the
+      // `subscription_changed` an hour later can say what moved and never who
+      // moved it.
+      await auditRequest(req.log, {
+        type: 'billing_portal_opened',
+        actor: { actorType: 'human', actorId: principal.id },
+        userId: principal.id,
+        payload: { stripe_customer_id: customerId, portal_session_id: session.id },
       });
       return { portal_url: session.url };
     } catch (err) {
@@ -608,6 +693,89 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     }
   }
 
+  /**
+   * The audit row for one subscription write, decided by what the write says
+   * it did rather than by which Stripe event carried it.
+   *
+   * Two events describe one new subscription (`checkout.session.completed` and
+   * `customer.subscription.created`) and two describe one cancellation
+   * (`customer.subscription.updated` with `status: 'canceled'`, and
+   * `.deleted`), in no guaranteed order. Keying the row off the event type
+   * would write "Subscription started" twice for one plan and
+   * "Subscription cancelled" twice for one ending — so `inserted` and
+   * `newly_canceled`, both derived inside the statement that moved the row,
+   * are what choose the type here.
+   *
+   * A delivery that moved nothing writes nothing. Stripe re-sends
+   * `customer.subscription.updated` for changes this platform does not carry —
+   * a default payment method, an invoice setting — and a row per one of those
+   * turns the billing trail into a feed nobody reads.
+   *
+   * Not contained: a failure here leaves the ledger row unwritten too, so the
+   * 5xx this becomes is answered by a Stripe redelivery that runs the whole
+   * handler again. The state writes are idempotent and the announcements are
+   * gated on `newly_canceled` / `created`, so the retry re-attempts the audit
+   * insert and nothing else. Swallowing it would be the one outcome that loses
+   * the row for good.
+   */
+  const SUBSCRIPTION_AUDIT_COLUMNS = ['plan_tier', 'status', 'cancel_at_period_end'] as const;
+
+  async function auditSubscriptionWrite(
+    stripeEventId: string | null,
+    written: Awaited<ReturnType<typeof upsertSubscription>>,
+    before: { plan_tier: string; status: string; cancel_at_period_end: boolean } | null,
+  ): Promise<void> {
+    const common = {
+      stripe_event_id: stripeEventId,
+      subscription_id: written.id,
+      stripe_subscription_id: written.stripe_subscription_id,
+    };
+    if (written.newly_canceled) {
+      await audit({
+        type: 'subscription_canceled',
+        actor: STRIPE_ACTOR,
+        userId: written.user_id,
+        payload: {
+          ...common,
+          plan_tier: written.plan_tier,
+          canceled_at: written.canceled_at?.toISOString() ?? null,
+        },
+      });
+      return;
+    }
+    if (written.inserted) {
+      await audit({
+        type: 'subscription_started',
+        actor: STRIPE_ACTOR,
+        userId: written.user_id,
+        payload: {
+          ...common,
+          plan_tier: written.plan_tier,
+          status: written.status,
+          period_start: written.current_period_start?.toISOString() ?? null,
+          period_end: written.current_period_end?.toISOString() ?? null,
+        },
+      });
+      return;
+    }
+    if (!before) return;
+    // `{ changes }` rather than a flat payload, because that is the shape
+    // `extractChanges` reads: the activity log renders these as field-level
+    // from/to rows without the billing surface needing a renderer of its own.
+    const changes = diffRecords(
+      before as unknown as Record<string, unknown>,
+      written as unknown as Record<string, unknown>,
+      SUBSCRIPTION_AUDIT_COLUMNS,
+    );
+    if (Object.keys(changes).length === 0) return;
+    await audit({
+      type: 'subscription_changed',
+      actor: STRIPE_ACTOR,
+      userId: written.user_id,
+      payload: { ...common, changes },
+    });
+  }
+
   /** {@link upsertSubscription}, with the conflict above reported instead of thrown. */
   async function recordSubscription(
     log: FastifyBaseLogger,
@@ -677,7 +845,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         if (type === 'checkout.session.completed' && obj.mode === 'subscription') {
           const meta = (obj.metadata ?? {}) as Record<string, string>;
           if (meta.user_id && meta.plan_tier) {
-            await recordSubscription(log, {
+            const started = await recordSubscription(log, {
               userId: meta.user_id,
               planTier: meta.plan_tier,
               // Not unconditionally 'active'. A subscription started with a
@@ -692,6 +860,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               stripeSubscriptionId: typeof obj.subscription === 'string' ? obj.subscription : null,
               stripeCustomerId: typeof obj.customer === 'string' ? obj.customer : null,
             });
+            if (started) await auditSubscriptionWrite(key.eventId, started, null);
           }
         } else if (type === 'customer.subscription.updated' || type === 'customer.subscription.created') {
           const meta = (obj.metadata ?? {}) as Record<string, string>;
@@ -744,6 +913,14 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
                 );
               }
             }
+            // Read before the write, so the audit row can say what moved
+            // rather than only where it landed. The `from` side is a read and
+            // the upsert is a separate statement, so two concurrent deliveries
+            // for one subscription can leave it one delivery behind — the
+            // event ledger narrows that window rather than closing it. The
+            // `to` side and `inserted` come from the write itself and are
+            // exact; `stripe_event_id` names which delivery this was.
+            const before = await findSubscriptionByStripeId(deps.pool, obj.id);
             const written = await recordSubscription(log, {
               userId: meta.user_id,
               planTier,
@@ -759,6 +936,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               cancelAtPeriodEnd:
                 typeof obj.cancel_at_period_end === 'boolean' ? obj.cancel_at_period_end : undefined,
             });
+            if (written) await auditSubscriptionWrite(key.eventId, written, before);
             // The other writer of a cancellation, and the one that lands first
             // about as often as not.
             if (written?.newly_canceled) await announceSubscriptionCanceled(log, written);
@@ -773,7 +951,26 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
           }
         } else if (type === 'customer.subscription.deleted' && typeof obj.id === 'string') {
           const ended = await cancelSubscription(deps.pool, obj.id);
-          if (ended?.newly_canceled) await announceSubscriptionCanceled(log, ended);
+          // Only the delivery that ended it, for the reason the announcement
+          // is gated the same way: Stripe sends `customer.subscription.updated`
+          // with `status: 'canceled'` *and* `customer.subscription.deleted` for
+          // one cancellation, and a trail with two "Subscription cancelled"
+          // rows for one cancellation is a trail that cannot be counted.
+          if (ended?.newly_canceled) {
+            await audit({
+              type: 'subscription_canceled',
+              actor: STRIPE_ACTOR,
+              userId: ended.user_id,
+              payload: {
+                stripe_event_id: key.eventId,
+                subscription_id: ended.id,
+                stripe_subscription_id: ended.stripe_subscription_id,
+                plan_tier: ended.plan_tier,
+                canceled_at: ended.canceled_at?.toISOString() ?? null,
+              },
+            });
+            await announceSubscriptionCanceled(log, ended);
+          }
         } else if (type === 'invoice.paid' || type === 'invoice.payment_succeeded') {
           const stripeSubId = typeof obj.subscription === 'string' ? obj.subscription : null;
           const meta = (obj.metadata ?? {}) as Record<string, string>;
@@ -896,6 +1093,24 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             // lock that also stops the loser allocating a number it will not
             // use. See that function for what the loser's allocation cost.
             if (created) {
+              // Same gate as the announcement, and for the same reason: both
+              // `invoice.paid` and `invoice.payment_succeeded` reach here for
+              // one payment, and an audit trail that counts one renewal twice
+              // is not a record of what was billed.
+              await audit({
+                type: 'invoice_paid',
+                actor: STRIPE_ACTOR,
+                userId: saved.user_id,
+                payload: {
+                  stripe_event_id: key.eventId,
+                  invoice_id: saved.id,
+                  invoice_number: saved.number,
+                  stripe_invoice_id: stripeInvoiceId,
+                  subscription_id: subscriptionId,
+                  amount_cents: Number(saved.amount_cents),
+                  currency: saved.currency,
+                },
+              });
               await announceInvoicePaid(log, {
                 userId: saved.user_id,
                 number: saved.number,
@@ -923,6 +1138,25 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             // renewal as "$480.00" in the one message whose whole job is to
             // tell the subscriber which payment to go and fix.
             if (sub) {
+              // Unconditional, unlike the subscription writes above: a second
+              // declined renewal on an account that is already past due is a
+              // second failed payment, not a repeat of the first, and the run
+              // of them is what dunning is read for. The event ledger is what
+              // stops one delivery being counted twice.
+              await audit({
+                type: 'subscription_payment_failed',
+                actor: STRIPE_ACTOR,
+                userId: sub.user_id,
+                payload: {
+                  stripe_event_id: key.eventId,
+                  subscription_id: sub.id,
+                  stripe_subscription_id: stripeSubId,
+                  stripe_invoice_id: typeof obj.id === 'string' ? obj.id : null,
+                  amount_due_cents: Number(obj.amount_due ?? 0),
+                  currency: String(obj.currency ?? 'usd'),
+                  status: sub.status,
+                },
+              });
               await alertPaymentFailed(
                 log,
                 sub.user_id,
