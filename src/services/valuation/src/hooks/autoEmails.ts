@@ -81,6 +81,26 @@ export async function runDueAutoEmails(deps: {
   pageSize?: number;
 }): Promise<{ queued: number; skipped: number; suppressed: number }> {
   const client = await deps.pool.connect();
+  /*
+   * Set when the unlock did not happen, and the reason this connection must not
+   * go back in the pool.
+   *
+   * This is the one session-scoped advisory lock in the service — every other
+   * one is `pg_advisory_xact_lock`, released by COMMIT or ROLLBACK whatever
+   * happens. A session lock is released by the explicit unlock below or by the
+   * backend going away, and nothing else. So a swallowed unlock failure returns
+   * a *healthy* connection to the pool still holding `SCAN_LOCK_KEY`, and the
+   * lock then outlives the pass, the sweep and the deploy: every later tick
+   * takes a different connection from the pool, fails `pg_try_advisory_lock`,
+   * and logs "already in progress" — which is the line for the benign case, so
+   * the drip campaigns simply stop and the log says the healthy thing forever.
+   *
+   * `release(err)` with a truthy argument destroys the connection instead of
+   * pooling it, which ends the backend session and takes the lock with it. That
+   * is the only remedy available here: the unlock is the thing that just
+   * failed, so retrying it on the same connection is not a plan.
+   */
+  let unreleasedLock: unknown = null;
   try {
     const { rows } = await client.query<{ locked: boolean }>('SELECT pg_try_advisory_lock($1) AS locked', [
       SCAN_LOCK_KEY,
@@ -94,10 +114,22 @@ export async function runDueAutoEmails(deps: {
       // moved to another connection would not be covered by it.
       return await scan(client, deps);
     } finally {
-      await client.query('SELECT pg_advisory_unlock($1)', [SCAN_LOCK_KEY]).catch(() => {});
+      try {
+        await client.query('SELECT pg_advisory_unlock($1)', [SCAN_LOCK_KEY]);
+      } catch (err) {
+        // Still swallowed as far as the caller is concerned — a scan that did
+        // its work must not report failure because the unlock did not answer —
+        // but recorded, because the alternative is a sweep that never runs
+        // again with nothing anywhere saying why.
+        unreleasedLock = err;
+        deps.log?.error(
+          { err },
+          'could not release the auto email scan lock; dropping the connection so the lock cannot outlive it',
+        );
+      }
     }
   } finally {
-    client.release();
+    client.release(unreleasedLock ? (unreleasedLock as Error) : undefined);
   }
 }
 
