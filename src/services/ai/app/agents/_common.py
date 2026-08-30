@@ -81,16 +81,37 @@ def clean_str(value: Any, *, limit: int = 4000) -> str:
     return str(value).strip()[:limit]
 
 
+#: The widest reading of a confidence score that is still a confidence score.
+#: A model asked for 0-1 routinely answers on 0-100 instead, and that is a
+#: different scale rather than a different claim — everything up to 100 folds.
+#: Past it there is no scale left to guess at.
+MAX_CONFIDENCE_SCALE = 100.0
+
+
 def clamp_confidence(value: Any) -> float | None:
-    """Normalise a confidence score into [0, 1]; ``None`` when unusable."""
+    """A confidence score as a fraction in [0, 1]; ``None`` when unusable.
+
+    Out-of-range is refused, not clamped. Clamping is the right answer when a
+    value is merely too precise for its field; it is the wrong one when the
+    value says the model was not answering the question, because the clamp
+    turns nonsense into the strongest reading of it. ``confidence: 9999``
+    became ``1.0`` — displayed beside a hallucinated SIC code or an invented
+    share-class citation as *maximum* confidence, which is the one thing the
+    analyst most needs it not to say. ``-1`` became ``0.0``, which is a real
+    score meaning "the model has none", and so was indistinguishable from a
+    model that had said exactly that.
+
+    ``None`` is the honest answer for both, and every surface already renders
+    it: a non-numeric score has always returned it.
+    """
     num = to_number(value)
     if num is None:
         return None
-    if num < 0:
-        return 0.0
+    if num < 0 or num > MAX_CONFIDENCE_SCALE:
+        return None
     if num > 1:
         # Some models answer 0-100; fold that back into a fraction.
-        return 1.0 if num > 100 else round(num / 100, 4)
+        return round(num / MAX_CONFIDENCE_SCALE, 4)
     return round(num, 4)
 
 

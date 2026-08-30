@@ -350,12 +350,16 @@ def test_malformed_catalogue_entries_are_skipped(monkeypatch):
 # ── Model output that is not what was asked for ───────────────────────────────
 
 
-def test_confidence_is_clamped_and_percentages_folded(monkeypatch):
+def test_confidence_percentages_are_folded_and_nonsense_refused(monkeypatch):
+    """A 0-100 answer is a different scale; anything off every scale is not a
+    score at all and comes back null rather than clamped to an endpoint. See
+    tests/test_confidence_scores.py."""
     said = {
         "tags": [
             {"slug": "saas", "confidence": 90},
             {"slug": "seed", "confidence": -3},
             {"slug": "series_a", "confidence": "not a number"},
+            {"slug": "medtech", "confidence": 9999},
         ]
     }
     monkeypatch.setattr(_common, "chat", one_chat(said))
@@ -363,8 +367,9 @@ def test_confidence_is_clamped_and_percentages_folded(monkeypatch):
 
     by_slug = {t["slug"]: t["confidence"] for t in result["tags"]}
     assert by_slug["saas"] == 0.9
-    assert by_slug["seed"] == 0.0
+    assert by_slug["seed"] is None
     assert by_slug["series_a"] is None
+    assert by_slug["medtech"] is None
 
 
 def test_evidence_is_bounded_and_blanks_dropped(monkeypatch):

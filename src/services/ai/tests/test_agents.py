@@ -440,8 +440,11 @@ def test_agent_prompt_override_applies(monkeypatch, client):
 def test_clamp_confidence_folds_percentages():
     assert _common.clamp_confidence(0.9) == 0.9
     assert _common.clamp_confidence(85) == 0.85  # 0-100 scale folded
-    assert _common.clamp_confidence(-1) == 0.0
     assert _common.clamp_confidence("nope") is None
+    # Out of range is refused rather than clamped — see the docstring, and
+    # tests/test_confidence_scores.py for why.
+    assert _common.clamp_confidence(-1) is None
+    assert _common.clamp_confidence(9999) is None
 
 
 def test_str_list_drops_blanks():
