@@ -16,6 +16,10 @@ detail stays generic — an exception message can quote the input that caused it
 and in this tier that input is a client's cap table — so the traceback goes to
 the log and the caller gets the request id to quote in a bug report.
 
+It also scrubs what those bodies carry. The log was already treated as a place
+a credential must not land and the response was not, though both are built from
+the same ``str(exc)`` — see ``_scrubbed``.
+
 ``install_error_handlers`` puts the request id on the deliberate failures too,
 so *every* error response can be traced back to its log line — and logs the 5xx
 ones, which until R225 was the half that had no log line to be traced to. A 503
@@ -39,12 +43,55 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .observability import REQUEST_ID_HEADER, current_request_id
+from .observability import REQUEST_ID_HEADER, current_request_id, redact
 
 # What the caller is told when an exception escaped. Deliberately says nothing
 # about the exception: the request id is the handle for the real story, which
 # lives in the log.
 INTERNAL_ERROR_DETAIL = "Internal Server Error"
+
+
+# How far into a ``detail`` the scrub reaches. A detail is a string, or the list
+# of dicts a request-validation failure produces; three levels covers both with
+# headroom, and bounds the work on a shape nobody anticipated.
+_SCRUB_DEPTH = 3
+
+
+def _scrubbed(value: object, depth: int = 0) -> object:
+    """``detail``, with every string in it put through the log's redactions.
+
+    The same string reaches two sinks and only one of them was treated as a
+    disclosure. ``install_error_handlers`` logs a 5xx ``detail`` through the JSON
+    formatter, which redacts it — the note there says why, in as many words:
+    "these details are built from an upstream's own words (``str(exc)``), and an
+    OpenRouter error quotes the URL it called, key and all". The very next line
+    put that identical string into the response body untouched, and the response
+    is the half that leaves the process.
+
+    Where it goes from there is not a hypothetical. The valuation service reads
+    a string ``detail`` as the upstream's own sentence (``InternalServiceError``
+    is explicit that this is the non-opaque case), writes it to
+    ``network_items.error`` on the engagement, and renders it to the analyst in a
+    problem document. So an address, an ``sk-`` key or a ``Bearer`` header that
+    appeared in a provider's body was struck from the journal on this box and
+    kept in Postgres on the other one.
+
+    Deliberately the log's own ``redact`` rather than a second list: two
+    redaction policies for one string is how the halves drift, and everything it
+    strikes — addresses, national identifiers, phone numbers, credentials — is a
+    thing no caller needs in order to act on the failure. The pass reaches
+    strings wherever they sit, because a 422 ``detail`` is pydantic's error list
+    and its entries carry an ``input`` field echoing the offending payload.
+    """
+    if isinstance(value, str):
+        return redact(value)
+    if depth >= _SCRUB_DEPTH:
+        return value
+    if isinstance(value, list):
+        return [_scrubbed(item, depth + 1) for item in value]
+    if isinstance(value, dict):
+        return {key: _scrubbed(item, depth + 1) for key, item in value.items()}
+    return value
 
 
 def error_response(status_code: int, detail: object, **extra: object) -> JSONResponse:
@@ -53,9 +100,14 @@ def error_response(status_code: int, detail: object, **extra: object) -> JSONRes
     The id goes in the body *and* the header: a caller reading a failed
     response in a browser devtools pane sees one, a caller logging the
     exception object sees the other.
+
+    ``detail`` is scrubbed on the way out — see {@link _scrubbed}. This is the
+    one funnel every error body in this tier passes through: the deliberate
+    ``HTTPException``, the 422 field list, and the generic 500, so nothing has to
+    remember.
     """
     request_id = current_request_id()
-    content: dict[str, object] = {"detail": detail, "request_id": request_id, **extra}
+    content: dict[str, object] = {"detail": _scrubbed(detail), "request_id": request_id, **extra}
     return JSONResponse(
         status_code=status_code,
         content=content,

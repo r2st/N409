@@ -30,6 +30,18 @@ client = TestClient(app)
 # message in this service can quote the document that caused it.
 SECRET_MESSAGE = "acme-holdings founder grant schedule"
 
+# An address the upstream quoted back at us, in the body of its refusal.
+FOUNDER_ADDRESS = "jane.okonkwo@acme-holdings.example"
+
+# A deliberate 5xx `detail` the way one is actually built: an upstream's own
+# words, joined by `_classify`. Two things in it must not travel — the address
+# the provider echoed, and the key it was called with.
+UPSTREAM_QUOTE = (
+    "All models failed: some/model: HTTP 400 "
+    f'{{"error":{{"message":"contact {FOUNDER_ADDRESS} refused"}}}} '
+    "| other/model: Authorization: Bearer sk-or-v1-0123456789abcdef0123456789abcdef"
+)
+
 
 @pytest.fixture
 def boom_client() -> TestClient:
@@ -48,6 +60,22 @@ def boom_client() -> TestClient:
     def _unavailable() -> dict:
         # The shape every OpenRouter give-up reaches the caller in.
         raise HTTPException(status_code=503, detail="openrouter: retries exhausted")
+
+    @boom_app.get("/quoted")
+    def _quoted() -> dict:
+        # The same shape, carrying what an upstream body actually puts in it.
+        # `_classify` joins 200 characters of each candidate's raw response into
+        # one message, and this is a provider quoting the request it refused.
+        raise HTTPException(status_code=503, detail=UPSTREAM_QUOTE)
+
+    @boom_app.get("/field-errors")
+    def _field_errors() -> dict:
+        # A 422 detail is a list, which is the shape a scrub keyed on `str`
+        # would walk straight past.
+        raise HTTPException(
+            status_code=422,
+            detail=[{"loc": ["body", "owner"], "input": FOUNDER_ADDRESS, "msg": "bad"}],
+        )
 
     boom_app.middleware("http")(make_unhandled_error_middleware("ai"))
     boom_app.middleware("http")(make_request_context_middleware("ai"))
@@ -184,3 +212,53 @@ class TestDeliberateFailures:
         access = next(r for r in caplog.records if getattr(r, "event", None) == "http_access")
         assert access.status == 422
         assert access.levelno == logging.WARNING
+
+
+class TestOutboundScrub:
+    """The response body is redacted on the same terms as the log line.
+
+    Both are built from one `str(exc)`. The 5xx handler's own note says an
+    upstream's words can quote the URL it was called with, key and all, and it
+    logs through the redacting formatter for exactly that reason — then handed
+    the identical string to the caller untouched. Downstream that string is not
+    discarded: the valuation service treats a string `detail` as the upstream's
+    own sentence, stores it on the engagement's network log and renders it to an
+    analyst, so what this body carries is what Postgres keeps.
+    """
+
+    def test_an_address_quoted_by_an_upstream_does_not_travel(
+        self, boom_client: TestClient
+    ) -> None:
+        res = boom_client.get("/quoted")
+        assert res.status_code == 503
+        assert FOUNDER_ADDRESS not in res.text
+        assert "[EMAIL]" in res.json()["detail"]
+
+    def test_a_credential_quoted_by_an_upstream_does_not_travel(
+        self, boom_client: TestClient
+    ) -> None:
+        res = boom_client.get("/quoted")
+        assert "sk-or-v1-0123456789abcdef0123456789abcdef" not in res.text
+        assert "Bearer sk-" not in res.text
+
+    def test_the_diagnosis_survives_the_scrub(self, boom_client: TestClient) -> None:
+        """Only the identifiers go. What names the failure is what makes the
+        body worth returning at all."""
+        detail = boom_client.get("/quoted").json()["detail"]
+        assert "All models failed" in detail
+        assert "some/model" in detail and "other/model" in detail
+        assert "HTTP 400" in detail
+
+    def test_reaches_a_string_nested_in_a_field_error_list(
+        self, boom_client: TestClient
+    ) -> None:
+        res = boom_client.get("/field-errors")
+        assert res.status_code == 422
+        assert FOUNDER_ADDRESS not in res.text
+        # The field path is the whole point of the list and is untouched.
+        assert res.json()["detail"][0]["loc"] == ["body", "owner"]
+
+    def test_an_ordinary_detail_is_returned_verbatim(self, boom_client: TestClient) -> None:
+        """A scrub that mangled the ordinary case would be paid for on every
+        error in the tier."""
+        assert boom_client.get("/unavailable").json()["detail"] == "openrouter: retries exhausted"

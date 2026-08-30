@@ -27,6 +27,10 @@ client = TestClient(app)
 # input that caused it, and the input is a client's cap table.
 SECRET_MESSAGE = "acme-holdings preferred stack blew up"
 
+# A holder's address, as it arrives on a cap table and as an upstream or a
+# validator quotes it back.
+HOLDER_ADDRESS = "jane.okonkwo@acme-holdings.example"
+
 
 @pytest.fixture
 def boom_client() -> TestClient:
@@ -52,6 +56,18 @@ def boom_client() -> TestClient:
     @boom_app.get("/unavailable")
     def _unavailable() -> dict:
         raise HTTPException(status_code=503, detail="solver backend is not available")
+
+    @boom_app.get("/field-errors")
+    def _field_errors() -> dict:
+        # The shape a request-validation failure answers in: pydantic's error
+        # list, whose entries carry an `input` echoing the payload that was
+        # refused. In this tier that payload is a client's cap table.
+        raise HTTPException(
+            status_code=422,
+            detail=[
+                {"loc": ["body", "holders", 0, "email"], "input": HOLDER_ADDRESS, "msg": "bad"}
+            ],
+        )
 
     boom_app.middleware("http")(make_unhandled_error_middleware("engine-wrapper"))
     boom_app.middleware("http")(make_request_context_middleware("engine-wrapper"))
@@ -233,3 +249,28 @@ class TestDeliberateFailures:
         access = next(r for r in caplog.records if getattr(r, "event", None) == "http_access")
         assert access.status == 422
         assert access.levelno == logging.WARNING
+
+
+class TestOutboundScrub:
+    """The response body is redacted on the same terms as the log line.
+
+    Both are built from the same string, and only the log was treated as a
+    place an identifier must not land. The response is the half that leaves the
+    process: the valuation service keeps a `detail` on the engagement's network
+    log and puts a string one in front of an analyst, so what this body carries
+    is what Postgres keeps.
+    """
+
+    def test_an_address_in_a_field_error_does_not_travel(self, boom_client: TestClient) -> None:
+        res = boom_client.get("/field-errors")
+        assert res.status_code == 422
+        assert HOLDER_ADDRESS not in res.text
+
+    def test_the_field_path_survives_the_scrub(self, boom_client: TestClient) -> None:
+        """The path is what a caller fixes the request with; only the value goes."""
+        detail = boom_client.get("/field-errors").json()["detail"]
+        assert detail[0]["loc"] == ["body", "holders", 0, "email"]
+        assert detail[0]["msg"] == "bad"
+
+    def test_an_ordinary_detail_is_returned_verbatim(self, boom_client: TestClient) -> None:
+        assert boom_client.get("/unavailable").json()["detail"] == "solver backend is not available"
