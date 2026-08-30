@@ -29,6 +29,8 @@ from app.perplexity import (
     is_configured,
     parse_citations,
     research,
+    tokens_used,
+    TokenBudgetExceeded,
     verify_api_key,
 )
 from app.research_types import ProviderError, ResearchError
@@ -48,11 +50,18 @@ BODY = {
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
     monkeypatch.setenv("PERPLEXITY_API_KEY", GOOD_KEY)
-    for var in ("PERPLEXITY_MODEL", "PERPLEXITY_MAX_TOKENS", "PERPLEXITY_CALL_BUDGET_S"):
+    for var in (
+        "PERPLEXITY_MODEL",
+        "PERPLEXITY_MAX_TOKENS",
+        "PERPLEXITY_CALL_BUDGET_S",
+        "PERPLEXITY_TOKEN_BUDGET",
+    ):
         monkeypatch.delenv(var, raising=False)
     perplexity.reset_key_cache()
+    perplexity.reset_budget()
     yield
     perplexity.reset_key_cache()
+    perplexity.reset_budget()
 
 
 def stub(handler) -> httpx.Client:
@@ -430,3 +439,67 @@ class TestResearch:
         system = seen["messages"][0]["content"]
         assert "cite" in system.lower()
         assert "do not estimate" in system.lower()
+
+
+# ── What a billed provider costs, and what stops it ──────────────────────────
+#
+# The third provider to need a ledger and the second to have been missed. R236
+# found Bedrock outside one on the argument that it is always billed; this
+# module's own docstring makes the same argument about Sonar — "one billed
+# call" is the reason it is the primary — and it had neither a ceiling nor a
+# figure on /ready. A loop through /ai/v1/research spent an account's money
+# with nothing anywhere to stop it and nothing anywhere recording that it had.
+
+
+class TestSpend:
+    def test_a_reported_count_advances_the_ledger(self):
+        research("SaaS multiples", client=stub(lambda _r: httpx.Response(200, json=BODY)))
+        assert tokens_used() == 160
+
+    def test_a_response_that_counted_nothing_still_advances_it(self):
+        """`usage` is optional in this shape too, and a provider omitting it is
+        exactly the call a ceiling most needs to see — otherwise the guard is
+        unenforceable against precisely the traffic least accounted for."""
+        body = {k: v for k, v in BODY.items() if k != "usage"}
+        research("SaaS multiples", client=stub(lambda _r: httpx.Response(200, json=body)))
+        assert tokens_used() > 0
+
+    def test_the_estimate_does_not_masquerade_as_a_measurement(self):
+        body = {k: v for k, v in BODY.items() if k != "usage"}
+        result = research("SaaS multiples", client=stub(lambda _r: httpx.Response(200, json=body)))
+        assert result.prompt_tokens == 0 and result.completion_tokens == 0
+
+    def test_the_ceiling_refuses_before_spending_anything(self, monkeypatch):
+        monkeypatch.setenv("PERPLEXITY_TOKEN_BUDGET", "100")
+        calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            return httpx.Response(200, json=BODY)
+
+        research("SaaS multiples", client=stub(handler))
+        with pytest.raises(TokenBudgetExceeded):
+            research("SaaS multiples", client=stub(handler))
+        assert len(calls) == 1
+
+    def test_an_exhausted_ceiling_is_a_reason_to_ask_the_free_path_instead(self):
+        """A `PerplexityError`, so `research.fallback_research` degrades to the
+        keyless search-and-synthesise chain rather than failing the request —
+        the right answer for a ceiling reached *because* this provider costs."""
+        assert issubclass(TokenBudgetExceeded, PerplexityError)
+        assert issubclass(TokenBudgetExceeded, ProviderError)
+
+    def test_unset_is_unlimited(self):
+        for _ in range(4):
+            research("SaaS multiples", client=stub(lambda _r: httpx.Response(200, json=BODY)))
+        assert tokens_used() == 640
+
+    def test_the_three_ledgers_are_separate(self):
+        """A sum answers none of the three questions an operator asks: what has
+        OpenRouter cost this process, what has AWS, and what has Perplexity."""
+        from app import bedrock, openrouter
+
+        research("SaaS multiples", client=stub(lambda _r: httpx.Response(200, json=BODY)))
+        assert tokens_used() == 160
+        assert openrouter.tokens_used() == 0
+        assert bedrock.tokens_used() == 0

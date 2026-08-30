@@ -1,6 +1,14 @@
-"""Token ceiling / budget accounting for the OpenRouter client (audit B-2 P2)."""
+"""Token ceiling / budget accounting for the OpenRouter client (audit B-2 P2).
+
+Plus the census that makes the ceiling a property of the *service* rather than
+of whoever remembered. Two of the three providers here were added without one:
+Bedrock (R236) and Perplexity (R246), each on the grounds that it was somebody
+else's job, and each billed to a real account the whole time it was outside.
+"""
 
 import json
+import re
+from pathlib import Path
 
 import pytest
 
@@ -87,3 +95,44 @@ def test_unset_budget_is_unlimited(monkeypatch):
     for _ in range(5):
         chat("sys", "user", client=client)
     assert tokens_used() == 75
+
+
+APP = Path(__file__).resolve().parents[1] / "app"
+
+
+def test_every_module_that_reads_a_usage_block_charges_a_ledger():
+    """A module that reads what a call cost is a module that spends money.
+
+    That is the one signal available in the source, and it is a good one: the
+    `usage` block is the provider telling us the bill. Two providers read it
+    and charged nobody — `/ready` reported no spend for either, and no ceiling
+    anywhere would have stopped a loop through them. The next provider's author
+    does not have to know this rule; the census tells them.
+    """
+    offenders = []
+    for path in sorted(APP.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if not re.search(r'\busage\.get\(\s*["\']', text):
+            continue
+        if "TokenLedger(" not in text:
+            offenders.append(str(path.relative_to(APP)))
+    assert offenders == [], (
+        "these read a provider's token usage but charge no ledger, so their spend "
+        "is invisible to /ready and bounded by nothing:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_every_ledger_names_a_variable_the_deployment_contract_documents():
+    """The ceiling only bounds anything if an operator can set it.
+
+    `envExample.test.ts` scans for `TokenLedger("NAME")` for the same reason
+    and from the other side; this end fails first and says which provider.
+    """
+    names = set()
+    for path in sorted(APP.rglob("*.py")):
+        names.update(
+            re.findall(r'TokenLedger\(\s*["\']([A-Z][A-Z0-9_]{2,})["\']', path.read_text(encoding="utf-8"))
+        )
+    documented = (Path(__file__).resolve().parents[4] / ".env.example").read_text(encoding="utf-8")
+    missing = sorted(n for n in names if f"\n{n}=" not in documented)
+    assert missing == [], f"spend ceilings absent from .env.example: {missing}"

@@ -38,6 +38,7 @@ Configuration:
     PERPLEXITY_MODEL          override the default model
     PERPLEXITY_MAX_TOKENS     per-call output ceiling
     PERPLEXITY_CALL_BUDGET_S  whole-call wall clock; 0 disables
+    PERPLEXITY_TOKEN_BUDGET   process-lifetime token ceiling; 0 disables
 """
 
 from __future__ import annotations
@@ -53,12 +54,15 @@ import httpx
 from .http_client import new_client
 from .llm_http import (
     MAX_RETRIES,
+    BudgetExhausted as _BudgetExhausted,
     Deadline,
     DeadlineExceeded as _BaseDeadlineExceeded,
+    TokenLedger,
     backoff_sleep,
     completion_truncated,
     env_float,
     env_int,
+    estimate_tokens,
     token_count,
 )
 from .research_types import (
@@ -106,6 +110,39 @@ class PerplexityError(ProviderError):
 
 class DeadlineExceeded(PerplexityError, _BaseDeadlineExceeded):
     """Raised when the whole-call budget ran out before Sonar answered."""
+
+
+class TokenBudgetExceeded(PerplexityError):
+    """Raised when PERPLEXITY_TOKEN_BUDGET is spent.
+
+    A `PerplexityError` on purpose, so `research.fallback_research` does what it
+    does for any other Sonar failure and asks the same public question through
+    the keyless search-and-synthesise path. That is the right degradation for
+    this one in particular: the ceiling was reached because this provider costs
+    money, and the fallback does not.
+    """
+
+
+#: This provider's share of the process's spend, and its own ceiling.
+#:
+#: The third provider to need one and the second to have been missed. R236
+#: found Bedrock outside the ledger on the argument that it is *always* billed;
+#: every word of that argument applies here — this module's own docstring calls
+#: a Sonar call "one billed call" and that is why it is preferred — and the
+#: ceiling still did not exist. `/ready` reported no Sonar spend however hard
+#: the research route had been working, and nothing anywhere would have stopped
+#: a loop through `/ai/v1/research` from spending an afternoon's budget.
+_budget = TokenLedger("PERPLEXITY_TOKEN_BUDGET")
+
+
+def tokens_used() -> int:
+    """Cumulative Sonar tokens consumed by this process (surfaced on /ready)."""
+    return _budget.used
+
+
+def reset_budget() -> None:
+    """Drop the running token total (tests only)."""
+    _budget.reset()
 
 
 def configured_model(preferred: str | None = None) -> str:
@@ -382,6 +419,11 @@ def research(
     assert_public(query, system)
     if not query.strip():
         raise PerplexityError("research query is empty")
+    # Fail fast before spending anything if the ceiling is already reached.
+    try:
+        _budget.check()
+    except _BudgetExhausted as exc:
+        raise TokenBudgetExceeded(str(exc)) from exc
 
     chosen = configured_model(model)
     owns_client = client is None
@@ -468,20 +510,38 @@ def research(
             served_by = data.get("model")
             served_by = served_by if isinstance(served_by, str) and served_by else chosen
 
+            prompt_tokens = token_count(usage.get("prompt_tokens"))
+            completion_tokens = token_count(usage.get("completion_tokens"))
+            # A response that reported no usage still spent something, and
+            # `usage` is optional in this shape too. The estimate goes to the
+            # ledger only — `ResearchResult` keeps the counters exactly as they
+            # arrived, so nothing downstream can mistake a guess for a
+            # measurement. Same rule, and the same reason, as `openrouter.chat`.
+            self_total = prompt_tokens + completion_tokens
+            estimated = self_total == 0
+            billed = estimate_tokens(system, query, content) if estimated else self_total
+            cumulative = _budget.add(billed)
+
             _log.info(
                 "perplexity research",
                 extra={
                     "event": "pplx_usage",
                     "model": served_by,
                     "count": len(citations),
+                    # Spelled as `llm_usage` spells them, because "what did this
+                    # process spend" is one question and was answerable for two
+                    # of the three providers.
+                    "tokens": billed,
+                    "tokens_total": cumulative,
+                    "detail": "estimated" if estimated else "reported",
                 },
             )
             return ResearchResult(
                 model=served_by,
                 content=content,
                 citations=citations,
-                prompt_tokens=token_count(usage.get("prompt_tokens")),
-                completion_tokens=token_count(usage.get("completion_tokens")),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
             )
         raise PerplexityError(f"perplexity: retries exhausted ({last_error})")
     finally:

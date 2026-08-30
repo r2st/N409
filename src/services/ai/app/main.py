@@ -45,6 +45,7 @@ from .research import (
 from .research import is_configured as research_configured
 from .research import primary_available as perplexity_configured
 from .research import research as run_research
+from .perplexity import tokens_used as perplexity_tokens_used
 from .perplexity import verify_api_key as verify_perplexity_key
 from .websearch import configured_provider as search_provider
 from .websearch import is_configured as search_configured
@@ -395,6 +396,10 @@ def ready(request: Request) -> JSONResponse:
         pplx = verify_perplexity_key()
         checks["research_primary"] = pplx.state
         checks["research_primary_detail"] = pplx.detail
+        # Its own figure, for the reason `bedrock_tokens_used` is its own
+        # below: three providers, three accounts, three ceilings, and a sum
+        # would answer none of the three questions an operator is asking.
+        checks["research_primary_tokens_used"] = perplexity_tokens_used()
     checks["search_provider"] = search_provider()
     if search_configured():
         found = verify_search_provider()

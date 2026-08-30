@@ -190,6 +190,15 @@ SPECS: tuple[EnvSpec, ...] = (
         kind="int",
         minimum=0,
     ),
+    # ── Perplexity: the research primary, billed per call to the key's own
+    # account. Specced for the same reason Bedrock's is — a mistyped ceiling
+    # reads as unlimited, and this is the only ceiling Sonar spend has.
+    EnvSpec(
+        name="PERPLEXITY_TOKEN_BUDGET",
+        effect="is the process-lifetime token ceiling for Sonar, and an unusable value reads as unlimited",
+        kind="int",
+        minimum=0,
+    ),
     # ── Research: which index answers, and how long it may take ──────────────
     EnvSpec(
         name="RESEARCH_PROVIDER",
