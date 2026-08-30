@@ -16,6 +16,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,10 +35,17 @@ const doc = (over: Partial<Doc> & { id: string; storage_path: string }): Doc =>
 
 function recorder() {
   const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+  const errors: Array<{ obj: Record<string, unknown>; msg: string }> = [];
   return {
     warns,
+    errors,
     log: {
       warn: (obj: Record<string, unknown>, msg: string) => void warns.push({ obj, msg }),
+      // `readStoredBlob` reports at error level with `alert: true`; a recorder
+      // that only had `warn` would turn that call into a TypeError, which this
+      // function's own catch would then file as an unreadable document — the
+      // check passing by breaking.
+      error: (obj: Record<string, unknown>, msg: string) => void errors.push({ obj, msg }),
     } as never,
   };
 }
@@ -51,6 +59,10 @@ describe('documents that never reached the AI', () => {
     // An encrypted blob with no key configured — `decodeFromStorage` throws
     // rather than corrupting, which is the realistic shape of this failure.
     await writeFile(join(dir, 'sealed.bin'), Buffer.concat([Buffer.from('N409ENC1'), Buffer.alloc(48)]));
+    // A blob that reads perfectly well and is not what was uploaded. With no
+    // key configured `decodeFromStorage` hands these bytes back unchanged, so
+    // the sha256 recorded at upload is the only thing that can tell.
+    await writeFile(join(dir, 'damaged.bin'), Buffer.from('a real documenX'));
   });
 
   afterAll(async () => {
@@ -116,6 +128,65 @@ describe('documents that never reached the AI', () => {
     const { log, warns } = recorder();
     await encodeDocuments(dir, [doc({ id: 'ok', storage_path: 'readable.bin' })], log);
     expect(warns).toEqual([]);
+  });
+
+  /**
+   * The half of the check that decryption cannot do (round 223).
+   *
+   * `decodeFromStorage` authenticates, but only where there is a key to
+   * authenticate with: on a deployment with `DOCUMENTS_ENCRYPTION_KEY` unset
+   * it returns the file as it found it. So a truncated write or a flipped bit
+   * reached the model as the document — right filename, right content type,
+   * changed content — and whatever the model read out of it was applied to the
+   * engagement's parameters. The download route has refused these since round
+   * 197 by comparing `documents.sha256`; this path is the one that feeds a
+   * valuation, and it was not comparing anything.
+   */
+  describe('a blob that reads cleanly and is not the document', () => {
+    const damaged = () =>
+      doc({
+        id: 'tampered',
+        storage_path: 'damaged.bin',
+        sha256: createHash('sha256').update('a real document').digest('hex'),
+      });
+
+    it('is kept out of the AI input', async () => {
+      const { log } = recorder();
+      const encoded = await encodeDocuments(dir, [damaged()], log);
+      expect(encoded).toEqual([]);
+    });
+
+    it('is reported as the data-loss event it is', async () => {
+      const { log, errors } = recorder();
+      await encodeDocuments(dir, [damaged()], log);
+      const line = errors.find((e) => e.msg === 'stored document failed its integrity check');
+      expect(line, 'the integrity failure was not reported').toBeDefined();
+      expect(line!.obj).toMatchObject({ documentId: 'tampered', alert: true });
+    });
+
+    it('still lets the rest of the run go ahead, counted', async () => {
+      const { log, warns } = recorder();
+      const encoded = await encodeDocuments(
+        dir,
+        [damaged(), doc({ id: 'ok', storage_path: 'readable.bin' })],
+        log,
+      );
+      expect(encoded.map((e) => e.id)).toEqual(['ok']);
+      const tally = warns.find((w) => w.msg === 'AI input is missing documents');
+      expect(tally!.obj).toMatchObject({ unreadable: 1, eligible: 2, sent: 1 });
+    });
+
+    it('serves a row with no recorded hash, which predates the column', async () => {
+      // Refusing these would drop every document uploaded before `sha256`
+      // existed — a migration turned into an outage.
+      const { log } = recorder();
+      const encoded = await encodeDocuments(
+        dir,
+        [doc({ id: 'legacy', storage_path: 'damaged.bin', sha256: null })],
+        log,
+      );
+      expect(encoded.map((e) => e.id)).toEqual(['legacy']);
+    });
   });
 
   it('works without a logger, which is what the many test call sites pass', async () => {

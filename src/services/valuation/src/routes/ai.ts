@@ -31,7 +31,7 @@ import { narrativeSectionsPayload } from '../domain/narrativePrompts.js';
 import { narrativeResearchPayload } from '../domain/research.js';
 import { listMarketResearch } from '../repos/marketResearch.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
-import { decodeFromStorage } from '../storage/documentEncryption.js';
+import { readStoredBlob } from '../storage/blobFile.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
@@ -201,7 +201,17 @@ export async function encodeDocuments(
   for (const doc of eligible) {
     try {
       const stored = await readFile(path.join(documentsDir, doc.storage_path));
-      const buf = decodeFromStorage(stored);
+      // `readStoredBlob`, not a bare `decodeFromStorage` (round 223). The
+      // decryption half only detects damage on a deployment that has a key:
+      // where `DOCUMENTS_ENCRYPTION_KEY` is unset, `decodeFromStorage` returns
+      // whatever is on disk, so a blob that had been truncated or had a bit
+      // flipped went to the model as the document, under its right filename
+      // and content type, and whatever the model then read out of it was
+      // auto-applied to the engagement's parameters. `documents.sha256` is
+      // taken over the plaintext at upload and is the only detector there is.
+      // The download route has refused these since round 197; this path, which
+      // is the one that feeds a valuation, did not.
+      const buf = readStoredBlob(doc, stored, log);
       encoded.push({
         id: doc.id,
         filename: doc.filename,

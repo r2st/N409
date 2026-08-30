@@ -1,5 +1,7 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { open, rename, unlink } from 'node:fs/promises';
+import { ApiProblem } from '@n409/shared';
+import { decodeFromStorage } from './documentEncryption.js';
 
 /**
  * Putting bytes at a path without destroying what is already there.
@@ -90,3 +92,79 @@ export async function writeBlobAtomically(abs: string, bytes: Buffer): Promise<v
     throw err;
   }
 }
+
+/**
+ * A blob that will not read is a failure of the storage, not of the request.
+ *
+ * The missing-file case has always been handled — a 404 saying so. The two
+ * *unreadable* cases were not, and they are the ones that happen without
+ * anybody deleting anything:
+ *
+ *   * `decodeFromStorage` is AES-GCM, so a truncated write (a full disk, a box
+ *     that lost power between `writeFile` and its flush), a flipped bit, or a
+ *     restore from a snapshot taken mid-write all fail the authentication tag;
+ *   * a deployment whose `DOCUMENTS_ENCRYPTION_KEY` was rotated without
+ *     `_PREVIOUS`, or lost, fails every encrypted blob at once.
+ *
+ * Both threw a bare `Error` from outside the `try` above, so both reached the
+ * client as `500 urn:n409:problem:internal` — a body that carries no `detail`
+ * by design and left the analyst with a Download button that does nothing and
+ * says nothing. The second one is the worse of the two, because it is not one
+ * file: it is every file, and the only symptom was a 500.
+ *
+ * The integrity check is the other half. `documents.sha256` is taken over the
+ * plaintext at upload and has never been read since; without it, corruption of
+ * an *unencrypted* deployment's blob has no detector at all — the bytes come
+ * back changed, under the right filename and content type, and are served as
+ * the document. A hash mismatch is the same answer as a decryption failure,
+ * because they are the same event seen through two storage configurations.
+ *
+ * Logged with `alert: true`: a document this platform accepted and can no
+ * longer return is a data-loss event, and the file is not coming back on its
+ * own. The client is told what happened and told to re-upload, which is the
+ * only thing that fixes it.
+ *
+ * It lives here rather than in the download route because the download route
+ * is not the only reader (round 223). `encodeDocuments` reads the same blobs
+ * to send to the model and did its own bare `decodeFromStorage`, which is half
+ * the check: on an unencrypted deployment `decodeFromStorage` passes the bytes
+ * straight through, so there was nothing at all between a damaged file and the
+ * analysis. One reader is a route concern; two are a storage concern.
+ */
+export function readStoredBlob(
+  doc: { id: string; sha256: string | null },
+  stored: Buffer,
+  log?: { error: (obj: Record<string, unknown>, msg: string) => void },
+): Buffer {
+  let plain: Buffer;
+  try {
+    // Decrypt in memory (blobs are ≤25 MB) — GCM can't be streamed off disk.
+    plain = decodeFromStorage(stored);
+  } catch (err) {
+    log?.error({ err, documentId: doc.id, alert: true }, 'stored document could not be decrypted');
+    throw documentUnreadable();
+  }
+  // `sha256` is nullable on rows written before the column existed; a document
+  // with nothing to compare against is served, not refused.
+  if (doc.sha256) {
+    const actual = createHash('sha256').update(plain).digest('hex');
+    if (actual !== doc.sha256) {
+      log?.error(
+        { documentId: doc.id, expected: doc.sha256, actual, alert: true },
+        'stored document failed its integrity check',
+      );
+      throw documentUnreadable();
+    }
+  }
+  return plain;
+}
+
+const documentUnreadable = () =>
+  new ApiProblem({
+    status: 500,
+    title: 'Document Unreadable',
+    type: 'urn:n409:problem:document-unreadable',
+    detail:
+      'This file is stored but cannot be read back — it is damaged or was written under an encryption ' +
+      'key this deployment no longer has. Re-upload it; retrying the download will not help.',
+  });
