@@ -96,7 +96,7 @@ export function registerSampleReportRoutes(
     const { allowed, resetAt } = pdfLimiter.check(req.ip);
     if (!allowed) {
       throw problems.tooManyRequests(
-        'The sample report has been downloaded too many times from this address — please try again shortly',
+        'The sample report has been downloaded too many times from this address',
         Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
       );
     }

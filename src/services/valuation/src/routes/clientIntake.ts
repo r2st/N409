@@ -259,7 +259,7 @@ export function registerClientIntakeRoutes(
     const { allowed, resetAt } = limiter.check(ip);
     if (!allowed) {
       throw problems.tooManyRequests(
-        'Too many requests — please try again later',
+        'Too many requests to this intake form from your connection',
         Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
       );
     }

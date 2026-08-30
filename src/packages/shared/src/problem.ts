@@ -266,6 +266,58 @@ export class ApiProblem extends Error {
   }
 }
 
+/**
+ * How long to wait, in words, for the one field a person actually reads.
+ *
+ * Every 429 on this platform already computes the wait exactly — the limiter
+ * knows when the window resets, and each call site works it out to pass to
+ * `retry-after`. None of that reached anybody. `retry_after_seconds` rides in
+ * the body and `retry-after` in the headers, and the browser's `ApiError` is
+ * `super(problem.detail ?? problem.title)`, so a caller who has just been
+ * refused is shown the `detail` and nothing else. Thirteen of those details
+ * ended in "please try again later".
+ *
+ * "Later" is the one thing the server was in a position not to have to say. The
+ * reader's actual question after a rate limit is whether to wait or to give up
+ * and come back tomorrow, and the difference between those is the number — a
+ * sign-in throttle that clears in 40 seconds and a download quota that clears
+ * in an hour produced the same sentence.
+ *
+ * So the wait is appended here rather than by each caller, for the reason the
+ * validation helpers exist: a message a route composes by hand is one a route
+ * eventually composes without. Callers pass the *what* ('Too many sign-in
+ * attempts') and this supplies the *when*. Three call sites had already written
+ * their own — in three different spellings, one of them `${n}s` — and they now
+ * say the same thing as the other thirteen.
+ *
+ * Rounded up and coarsened deliberately: the limiter's second is precise but
+ * spurious — by the time the reader has read the sentence it is wrong — and
+ * "in about 8 minutes" is what somebody decides against. Under a minute stays
+ * in seconds, because there the exact figure is the difference between waiting
+ * and leaving.
+ */
+export function retryPhrase(seconds: number): string {
+  const s = Math.max(1, Math.ceil(seconds));
+  if (s < 60) return `about ${s} second${s === 1 ? '' : 's'}`;
+  const minutes = Math.ceil(s / 60);
+  if (minutes < 60) return `about ${minutes} minute${minutes === 1 ? '' : 's'}`;
+  const hours = Math.ceil(minutes / 60);
+  return `about ${hours} hour${hours === 1 ? '' : 's'}`;
+}
+
+/**
+ * Append the wait to a 429's detail, unless the caller has no wait to give.
+ *
+ * A 429 with no `retryAfterSeconds` keeps its detail untouched rather than
+ * gaining a vaguer sentence than it started with: the two callers in that
+ * position (an upstream that sent no `retry-after`, the realtime stream cap)
+ * already say what to do instead.
+ */
+function withRetryPhrase(detail: string, retryAfterSeconds?: number): string {
+  if (retryAfterSeconds === undefined) return detail;
+  return `${detail.replace(/[.\s]+$/, '')} — try again in ${retryPhrase(retryAfterSeconds)}.`;
+}
+
 export const problems = {
   badRequest: (detail?: string, extensions?: Record<string, unknown>) =>
     new ApiProblem({
@@ -309,12 +361,12 @@ export const problems = {
       detail,
       extensions,
     }),
-  tooManyRequests: (detail = 'Too many requests — try again later', retryAfterSeconds?: number) =>
+  tooManyRequests: (detail = 'Too many requests', retryAfterSeconds?: number) =>
     new ApiProblem({
       status: 429,
       title: 'Too Many Requests',
       type: 'urn:n409:problem:rate-limited',
-      detail,
+      detail: withRetryPhrase(detail, retryAfterSeconds),
       retryAfterSeconds,
     }),
   serviceUnavailable: (detail = 'Service temporarily unavailable') =>

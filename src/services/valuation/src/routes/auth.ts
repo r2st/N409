@@ -259,7 +259,7 @@ export function registerAuthRoutes(
       !allow(`register:${email.toLowerCase()}`, REGISTER_PER_EMAIL, HOUR_MS)
     ) {
       throw problems.tooManyRequests(
-        'Too many sign-up attempts — try again later',
+        'Too many sign-up attempts from this address',
         retryAfter(
           [`register-ip:${req.ip}`, REGISTER_PER_IP, HOUR_MS],
           [`register:${email.toLowerCase()}`, REGISTER_PER_EMAIL, HOUR_MS],
@@ -318,7 +318,7 @@ export function registerAuthRoutes(
       !allow(ipKey, 100, LOGIN_WINDOW_MS, { peek: true })
     ) {
       throw problems.tooManyRequests(
-        'Too many sign-in attempts — try again later',
+        'Too many sign-in attempts for this account',
         retryAfter([emailKey, 10, LOGIN_WINDOW_MS], [ipKey, 100, LOGIN_WINDOW_MS]),
       );
     }
@@ -433,7 +433,7 @@ export function registerAuthRoutes(
     // Throttle second-factor guessing per user.
     if (!allow(`mfa:${user.id}`, 10, LOGIN_WINDOW_MS)) {
       throw problems.tooManyRequests(
-        'Too many verification attempts — try again later',
+        'Too many verification attempts',
         retryAfter([`mfa:${user.id}`, 10, LOGIN_WINDOW_MS]),
       );
     }
@@ -583,7 +583,7 @@ export function registerAuthRoutes(
 
     if (!allow(`email:${email.toLowerCase()}`, 3, HOUR_MS) || !allow(`ip:${req.ip}`, 30, HOUR_MS)) {
       throw problems.tooManyRequests(
-        'Too many reset requests — try again later',
+        'Too many password-reset requests from this address',
         retryAfter([`email:${email.toLowerCase()}`, 3, HOUR_MS], [`ip:${req.ip}`, 30, HOUR_MS]),
       );
     }
@@ -643,7 +643,7 @@ export function registerAuthRoutes(
     // attacker burn CPU on a scrypt hash per request.
     if (!allow(`reset-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
       throw problems.tooManyRequests(
-        'Too many reset attempts — try again later',
+        'Too many password-reset attempts',
         retryAfter([`reset-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS]),
       );
     }
@@ -675,7 +675,7 @@ export function registerAuthRoutes(
 
     if (!allow(`verify-email-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
       throw problems.tooManyRequests(
-        'Too many verification attempts — try again later',
+        'Too many verification attempts',
         retryAfter([`verify-email-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS]),
       );
     }
@@ -709,7 +709,7 @@ export function registerAuthRoutes(
 
     if (!allow(`verify:${user.id}`, 3, HOUR_MS) || !allow(`verify-ip:${req.ip}`, 30, HOUR_MS)) {
       throw problems.tooManyRequests(
-        'Too many verification requests — try again later',
+        'Too many verification emails requested for this address',
         retryAfter([`verify:${user.id}`, 3, HOUR_MS], [`verify-ip:${req.ip}`, 30, HOUR_MS]),
       );
     }
@@ -765,7 +765,7 @@ export function registerAuthRoutes(
     // enumeration oracle wide open.
     if (!allow(`invite-info-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
       throw problems.tooManyRequests(
-        'Too many invitation lookups — try again later',
+        'Too many invitation lookups from this address',
         retryAfter([`invite-info-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS]),
       );
     }
@@ -784,7 +784,7 @@ export function registerAuthRoutes(
     // token-guessing surface and a scrypt-CPU sink.
     if (!allow(`invite-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
       throw problems.tooManyRequests(
-        'Too many invitation attempts — try again later',
+        'Too many invitation attempts from this address',
         retryAfter([`invite-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS]),
       );
     }

@@ -180,7 +180,7 @@ export function registerBoardApprovalRoutes(
     const { allowed, resetAt } = limiter.check(req.ip);
     if (!allowed) {
       throw problems.tooManyRequests(
-        'Too many requests — please try again later',
+        'Too many requests to this signing link from your connection',
         Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
       );
     }

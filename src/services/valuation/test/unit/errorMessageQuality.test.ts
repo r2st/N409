@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { problems, retryPhrase } from '@n409/shared';
 import { problemCalls } from './errorBodyDisclosure.test.js';
 
 /**
@@ -223,6 +224,141 @@ describe('error messages name what failed, why, and what to do', () => {
     expect(bare, 'bare problems.notFound() calls — this number may fall, never rise').toBeLessThanOrEqual(
       323,
     );
+  });
+});
+
+/**
+ * The argument list of every `problems.tooManyRequests(...)` call in a file.
+ *
+ * Paren-matched rather than regex-bounded because the details are template
+ * literals with `${}` in them, and because a 429's second argument is itself
+ * usually a nested call computing the wait.
+ */
+function tooManyRequestsArguments(text: string): string[] {
+  const flat = text.replace(/\s+/g, ' ');
+  const out: string[] = [];
+  const call = /\bproblems\.tooManyRequests\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = call.exec(flat))) {
+    let depth = 0;
+    let i = m.index + m[0].length - 1;
+    const start = i + 1;
+    for (; i < flat.length; i++) {
+      const ch = flat[i]!;
+      if (ch === '(') depth++;
+      else if (ch === ')' && --depth === 0) break;
+    }
+    out.push(flat.slice(start, i));
+  }
+  return out;
+}
+
+/**
+ * R222 — the 429s, which knew the answer and did not give it.
+ *
+ * Every rate limiter on this platform computes the wait exactly: it knows when
+ * the window resets, and each call site already worked the seconds out to hand
+ * to `retry-after`. The number then went into a header and into
+ * `retry_after_seconds` in the body, and the browser renders neither — the
+ * whole reason this file exists is that `ApiError` is
+ * `super(problem.detail ?? problem.title)`. Thirteen human-facing details ended
+ * in "please try again later" while the real figure sat one field away.
+ *
+ * The asymmetry is what made it worth a round. `plugins/auth.ts` — the API-key
+ * surface, read by machines that also get the header — wrote "retry in 45s"
+ * into its prose. The sign-in throttle, the client intake form, the auditor
+ * link and the board signing link, all read by people with no access to a
+ * header, said "later".
+ *
+ * `tooManyRequests` now appends the wait itself, so the omission is not a thing
+ * a route can do. What is asserted here is that no call site goes back to
+ * writing its own — a hand-written wait is both a duplicate of the appended one
+ * and the thing that drifts from the header.
+ */
+describe('a 429 says when to come back', () => {
+  const RATE_LIMITED = [
+    ...routeSources,
+    ...['plugins', 'auth', 'clients'].flatMap((dir) =>
+      sourceFiles(path.resolve(HERE, '../../src', dir)).map((file) => ({
+        rel: path.relative(path.resolve(HERE, '../..'), file).split(path.sep).join('/'),
+        text: readFileSync(file, 'utf8'),
+      })),
+    ),
+  ].filter(({ text }) => text.includes('tooManyRequests('));
+
+  it('finds the call sites it is auditing', () => {
+    expect(RATE_LIMITED.length).toBeGreaterThanOrEqual(8);
+  });
+
+  /**
+   * The vague half, banned as whole clauses rather than as words.
+   *
+   * "later" and "shortly" are the two ways a message declines to answer the
+   * only question a rate limit raises. They are matched with the dash that
+   * introduces them so that a detail which happens to contain the word — "this
+   * link expires later today" — is not caught.
+   */
+  it('never tells a person to come back "later"', () => {
+    const findings: string[] = [];
+    for (const { rel, text } of RATE_LIMITED) {
+      // Scoped to the 429's own arguments, not the file. `internal.ts` carries
+      // a 503 degraded-service message that ends "retry shortly" a few hundred
+      // lines away, and that one is correct: nothing computed a wait for it.
+      for (const m of tooManyRequestsArguments(text)) {
+        const vague = /(?:try again|retry)\s+(?:later|shortly)/i.exec(m);
+        if (vague) findings.push(`${rel} → "${vague[0]}"`);
+      }
+    }
+    expect(findings, '429 details that decline to say when').toEqual([]);
+  });
+
+  /**
+   * The duplicate half.
+   *
+   * Three call sites had already solved this for themselves, in three
+   * spellings. Now that the helper appends the wait, a hand-written one is a
+   * sentence that says the number twice — and the two are computed separately,
+   * so they will eventually disagree.
+   */
+  it('leaves the wait to the helper rather than writing it again', () => {
+    const findings: string[] = [];
+    for (const { rel, text } of RATE_LIMITED) {
+      // `retry in ${n}s` / `Try again in ${n}s.` — an interpolated duration
+      // inside the 429's own argument. The circuit breaker's "retry in ~Ns" is
+      // a 503 and is out of scope for the same reason as above.
+      for (const m of tooManyRequestsArguments(text)) {
+        const dup = /(?:try again|retry) in \$\{[^}]*(?:retryAfter|retry_after)[^}]*\}/i.exec(m);
+        if (dup) findings.push(`${rel} → "${dup[0]}"`);
+      }
+    }
+    expect(findings, 'call sites hand-writing a wait the helper already appends').toEqual([]);
+  });
+
+  /**
+   * The phrasing, pinned on the helper.
+   *
+   * The reader's decision after a rate limit is wait-or-leave, so the coarsening
+   * has to keep the sub-minute case exact — that is the only band where the
+   * figure changes the decision — and must never round a real wait down to
+   * something that invites an immediate retry.
+   */
+  it('never rounds a wait down', () => {
+    for (const seconds of [1, 30, 59, 60, 61, 599, 3599, 3601]) {
+      const phrase = retryPhrase(seconds);
+      const n = Number(/([\d.]+)/.exec(phrase)![1]);
+      const unit = /second/.test(phrase) ? 1 : /minute/.test(phrase) ? 60 : 3600;
+      expect(n * unit, `${seconds}s became "${phrase}"`).toBeGreaterThanOrEqual(seconds);
+    }
+    expect(retryPhrase(1)).toBe('about 1 second');
+    expect(retryPhrase(42)).toBe('about 42 seconds');
+    expect(retryPhrase(3600)).toBe('about 1 hour');
+  });
+
+  /** A 429 with no seconds keeps the detail it was given, unenriched. */
+  it('adds nothing when the caller has no wait to give', () => {
+    const detail = 'Too many open realtime streams — close a tab and retry';
+    expect(problems.tooManyRequests(detail).detail).toBe(detail);
+    expect(problems.tooManyRequests(detail, 45).detail).toBe(`${detail} — try again in about 45 seconds.`);
   });
 });
 

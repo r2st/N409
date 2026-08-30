@@ -47,7 +47,7 @@ export async function verifyReauthPassword(
 ): Promise<boolean> {
   if (!limiter.allow(key(userId), REAUTH_MAX_FAILURES, REAUTH_WINDOW_MS, { peek: true })) {
     throw problems.tooManyRequests(
-      'Too many incorrect password attempts — try again later',
+      'Too many incorrect password attempts',
       // The window is a quarter hour, so a client left to guess at the wait
       // guesses low and is refused again. `PROBLEM_CATALOG` promises the caller
       // a number; this is where the number for these six prompts comes from.

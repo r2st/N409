@@ -82,7 +82,7 @@ function applyLimiter(
   if (!result.allowed) {
     const retryAfter = Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000));
     throw problems.tooManyRequests(
-      `Rate limit of ${result.limit} requests per minute exceeded for this ${scope === 'user' ? 'account' : 'organization'} — retry in ${retryAfter}s`,
+      `Rate limit of ${result.limit} requests per minute exceeded for this ${scope === 'user' ? 'account' : 'organization'}`,
       retryAfter,
     );
   }
@@ -110,7 +110,7 @@ function applyCostLimiter(
   if (!result.allowed) {
     const retryAfter = Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000));
     throw problems.tooManyRequests(
-      `Budget for expensive operations (${result.limit} cost units per minute) exhausted — retry in ${retryAfter}s`,
+      `Budget for expensive operations (${result.limit} cost units per minute) exhausted`,
       retryAfter,
     );
   }

@@ -668,12 +668,15 @@ function voiceOf(service: string): ServiceVoice {
  * the entire change: it was previously all there was on two of these arms, and
  * on an opaque body there was nothing at all.
  */
-function compose(label: string, said: string | null, remedy: string): string {
+function compose(label: string, said: string | null, remedy?: string): string {
   // The upstream's sentence may or may not be punctuated — the engine's
   // pre-flight messages are not, pydantic's are — and this is one string, so a
   // trailing stop from there and the one added here read as a typo.
   const middle = said?.trim().replace(/[.;:,\s]+$/, '') ?? '';
-  return middle === '' ? `${label}. ${remedy}` : `${label}: ${middle}. ${remedy}`;
+  const head = middle === '' ? label : `${label}: ${middle}`;
+  // The 429 arm passes no remedy when `tooManyRequests` is about to append the
+  // wait itself; every other arm has one and always has.
+  return remedy === undefined ? head : `${head}. ${remedy}`;
 }
 
 /** Converts an InternalServiceError to the client-facing ApiProblem. */
@@ -702,12 +705,15 @@ export function toProblem(err: InternalServiceError): ApiProblem {
   // both wrong and actionable, so people acted on it.
   const voice = voiceOf(err.service);
   if (err.status === 429) {
-    const wait =
-      err.retryAfterSeconds !== null
-        ? `Try again in ${err.retryAfterSeconds}s.`
-        : 'Try again in a few minutes.';
+    // The wait is only ours to state when the upstream told us one. Without a
+    // `retry-after` the honest answer is a shrug, and `tooManyRequests` appends
+    // nothing to a 429 it was given no seconds for.
     return problems.tooManyRequests(
-      compose(`${voice.label} — the service is at its request allowance`, said, wait),
+      compose(
+        `${voice.label} — the service is at its request allowance`,
+        said,
+        err.retryAfterSeconds === null ? 'Try again in a few minutes.' : undefined,
+      ),
       err.retryAfterSeconds ?? undefined,
     );
   }

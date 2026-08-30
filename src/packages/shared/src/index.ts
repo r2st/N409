@@ -52,6 +52,7 @@ export {
   problems,
   registerProblemHandler,
   requestErrorContext,
+  retryPhrase,
   scrubSensitive,
   scrubError,
   scrubUrl,

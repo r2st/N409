@@ -51,7 +51,7 @@ export function registerContactRoutes(
     const { allowed, resetAt } = limiter.check(req.ip);
     if (!allowed) {
       throw problems.tooManyRequests(
-        'Too many messages — please try again later',
+        'Too many messages sent from this address',
         Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
       );
     }
