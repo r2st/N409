@@ -380,7 +380,10 @@ describe.skipIf(!dbUp)('the doors into a valuation state', () => {
       restore();
 
       expect(res.statusCode).toBe(409);
-      expect(res.json().detail).toContain("already 'review'");
+      // The label, not the column value: R255 rewrote these eight refusals to
+      // stop answering an operator with `review`, and this assertion was left
+      // asserting the wording it had removed.
+      expect(res.json().detail).toContain('already \u201CIn review\u201D');
       expect(await transitions(id)).toEqual(['completed → review']);
     });
 
