@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_REVENUE_CENTS,
   parseQuickBooksBalanceSheet,
+  parseQuickBooksProfitAndLoss,
   parseXeroBalanceSheet,
+  parseXeroProfitAndLoss,
   storableRevenueCents,
 } from '../../src/clients/accounting.js';
 
@@ -91,5 +93,37 @@ describe('balance sheet as-of', () => {
     expect(
       parseQuickBooksBalanceSheet({ Header: { EndPeriod: '2026-08-31' }, Rows: { Row: [] } }).as_of,
     ).toBe('2026-08-31');
+  });
+});
+
+describe('profit-and-loss header text', () => {
+  const NUL = '\u0000';
+
+  it('drops a Xero currency and period that cannot be stored', () => {
+    const pl = parseXeroProfitAndLoss({
+      Reports: [
+        {
+          Fields: [
+            { Id: 'Currency', Value: `USD${NUL}` },
+            { Id: 'FromDate', Value: { d: 1 } },
+            { Id: 'ToDate', Value: '2026-08-31' },
+          ],
+          Rows: [],
+        },
+      ],
+    });
+    expect(pl.currency).toBeNull();
+    expect(pl.period_start).toBeNull();
+    expect(pl.period_end).toBe('2026-08-31');
+  });
+
+  it('drops a QuickBooks header that cannot be stored', () => {
+    const pl = parseQuickBooksProfitAndLoss({
+      Header: { Currency: 'USD', StartPeriod: `2026-01-01${NUL}`, EndPeriod: '2026-08-31' },
+      Rows: { Row: [] },
+    });
+    expect(pl.currency).toBe('USD');
+    expect(pl.period_start).toBeNull();
+    expect(pl.period_end).toBe('2026-08-31');
   });
 });

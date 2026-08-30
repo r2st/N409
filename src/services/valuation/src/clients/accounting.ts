@@ -304,9 +304,11 @@ export function parseXeroProfitAndLoss(report: unknown): ProfitAndLossSnapshot {
     asRows<{ Id?: string; Value?: string }>(root?.Fields).map((f) => [f.Id, f.Value]),
   );
   return {
-    currency: (fields.Currency as string | undefined) ?? null,
-    period_start: (fields.FromDate as string | undefined) ?? null,
-    period_end: (fields.ToDate as string | undefined) ?? null,
+    // Three more of the same cast the balance sheet's `as_of` carried, into the
+    // same two jsonb documents. See `storableProviderText`.
+    currency: storableProviderText(fields.Currency),
+    period_start: storableProviderText(fields.FromDate),
+    period_end: storableProviderText(fields.ToDate),
     revenue_cents: revenue,
     prior_year_revenue_cents: priorRevenue,
     net_income_cents: netIncome,
@@ -342,9 +344,9 @@ export function parseQuickBooksProfitAndLoss(report: unknown): ProfitAndLossSnap
   walk(r.Rows?.Row, 0);
 
   return {
-    currency: r.Header?.Currency ?? null,
-    period_start: r.Header?.StartPeriod ?? null,
-    period_end: r.Header?.EndPeriod ?? null,
+    currency: storableProviderText(r.Header?.Currency),
+    period_start: storableProviderText(r.Header?.StartPeriod),
+    period_end: storableProviderText(r.Header?.EndPeriod),
     revenue_cents: revenue,
     prior_year_revenue_cents: null,
     net_income_cents: netIncome,
