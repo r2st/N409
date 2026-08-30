@@ -121,6 +121,24 @@ export interface SubscriptionRow {
   canceled_at: Date | null;
 }
 
+/**
+ * A subscription row, plus whether the statement that returned it is the one
+ * that ended the subscription.
+ *
+ * Cancellation has two writers — {@link cancelSubscription} from
+ * `customer.subscription.deleted`, and {@link upsertSubscription} from a
+ * `customer.subscription.updated` carrying `status: 'canceled'` — and Stripe
+ * sends both for one cancellation without ordering them. Anything that has to
+ * happen *once* when a subscription ends therefore cannot be gated on the
+ * status it reads back, which is 'canceled' on both deliveries. It has to be
+ * gated on which write made it so, and that is a fact only the write itself
+ * holds. Both writers now answer it, by the same rule: true exactly when this
+ * statement moved a row that was not already cancelled.
+ */
+export interface SubscriptionWrite extends SubscriptionRow {
+  newly_canceled: boolean;
+}
+
 export async function findActiveSubscription(pool: pg.Pool, userId: string): Promise<SubscriptionRow | null> {
   const { rows } = await pool.query<SubscriptionRow>(
     `SELECT * FROM subscriptions
@@ -161,11 +179,11 @@ export async function upsertSubscription(
     periodStart?: Date | null;
     periodEnd?: Date | null;
   },
-): Promise<SubscriptionRow> {
+): Promise<SubscriptionWrite> {
   // Stripe subscription id is the natural key when present; otherwise upsert on
   // the user's single active row.
   if (input.stripeSubscriptionId) {
-    const { rows } = await pool.query<SubscriptionRow>(
+    const { rows } = await pool.query<SubscriptionWrite>(
       `INSERT INTO subscriptions
          (id, user_id, plan_tier, status, stripe_subscription_id, stripe_customer_id,
           current_period_start, current_period_end)
@@ -196,7 +214,13 @@ export async function upsertSubscription(
            THEN 0 ELSE subscriptions.valuations_used END,
          canceled_at = CASE WHEN EXCLUDED.status = 'canceled' THEN now() ELSE NULL END
        WHERE subscriptions.status <> 'canceled'
-       RETURNING *`,
+       -- xmax is this statement saying which arm it took: zero on the row it
+       -- inserted, the updating transaction on the row it updated. A row
+       -- *created* cancelled is a subscription this platform never carried,
+       -- not an account that just ended, so only the update arm is news. The
+       -- WHERE above already guarantees the updated row was not cancelled
+       -- before, so an update to 'canceled' is always a transition into it.
+       RETURNING *, (NOT (xmax = 0) AND status = 'canceled') AS newly_canceled`,
       [
         newUlid(),
         input.userId,
@@ -215,7 +239,7 @@ export async function upsertSubscription(
     // row, and it exists — returning it unchanged keeps this a no-op rather
     // than an error, which is what a stale event deserves.
     const existing = await findSubscriptionByStripeId(pool, input.stripeSubscriptionId);
-    if (existing) return existing;
+    if (existing) return { ...existing, newly_canceled: false };
 
     // Neither inserted, nor updated, nor found. The only other UNIQUE on the
     // table is the one we conflicted on, so this means the row was deleted
@@ -237,7 +261,8 @@ export async function upsertSubscription(
       input.periodEnd ?? null,
     ],
   );
-  return rows[0]!;
+  // A fresh row, so nothing transitioned.
+  return { ...rows[0]!, newly_canceled: false };
 }
 
 /** The subscription a Stripe subscription id names, whatever state it is in. */
@@ -275,12 +300,21 @@ export async function findSubscriptionByStripeId(
 export async function cancelSubscription(
   pool: pg.Pool,
   stripeSubscriptionId: string,
-): Promise<SubscriptionRow | null> {
-  const { rows } = await pool.query<SubscriptionRow>(
-    `UPDATE subscriptions
-        SET status = 'canceled', canceled_at = COALESCE(canceled_at, now())
-      WHERE stripe_subscription_id = $1
-      RETURNING *`,
+): Promise<SubscriptionWrite | null> {
+  const { rows } = await pool.query<SubscriptionWrite>(
+    // The prior status is read in the same statement, under the lock the update
+    // is about to take, so `newly_canceled` is decided by the write rather than
+    // by a read a competing delivery can slip past. `FOR UPDATE` makes the
+    // second of two concurrent deliveries wait and then re-read the winner's
+    // row, which is exactly the reading that has to say "already cancelled".
+    `WITH prev AS (
+       SELECT id, status FROM subscriptions WHERE stripe_subscription_id = $1 FOR UPDATE
+     )
+     UPDATE subscriptions s
+        SET status = 'canceled', canceled_at = COALESCE(s.canceled_at, now())
+       FROM prev
+      WHERE s.id = prev.id
+      RETURNING s.*, (prev.status <> 'canceled') AS newly_canceled`,
     [stripeSubscriptionId],
   );
   return rows[0] ?? null;

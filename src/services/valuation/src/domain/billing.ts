@@ -583,3 +583,48 @@ export function subscriptionPrice(obj: Record<string, unknown>): SubscriptionPri
   if (interval !== 'month' && interval !== 'year') return null;
   return { amount_cents: amount, currency: currency.trim().toLowerCase(), interval };
 }
+
+/**
+ * A subscription that has ended, in the words the subscriber gets.
+ *
+ * The one billing transition that told nobody. A failed renewal notifies the
+ * subscriber and the billing group, a settled invoice sends a receipt, and a
+ * cancellation — the transition that takes the plan's quota away, immediately,
+ * because `findActiveSubscription` excludes 'canceled' — produced no
+ * notification and no email at all. A customer who cancelled in Stripe's portal
+ * and a customer whose subscription Stripe cancelled at the end of dunning got
+ * the same silence, and the second of those had not decided anything.
+ *
+ * States what actually happened rather than thanking them: the plan by name,
+ * the date it ended, and the two things that remain true and are the reason
+ * support hears from them — work already delivered stays reachable, and the
+ * billing page still opens the portal their old invoices live behind.
+ *
+ * Ops are not copied. A cancellation is already on the billing dashboard's
+ * count and in the MRR beside it, and a notification per churned account is not
+ * a thing anybody acts on individually.
+ */
+export function subscriptionCanceledMessage(r: {
+  plan_name: string;
+  /** When the subscription ended, as an ISO instant. */
+  ended_at: string;
+  billing_link: string;
+}): SettlementMessage {
+  const endedOn = day(r.ended_at);
+  const subject = `Your ${r.plan_name} subscription has ended`;
+  const body =
+    `Your ${r.plan_name} subscription ended on ${endedOn}, and the plan's included ` +
+    `valuations are no longer available.` +
+    `\n\nValuations already delivered stay available on your account, and your past ` +
+    `invoices are on the billing page: ${r.billing_link}` +
+    `\n\nIf this was not what you intended, you can start a plan again from the same page.`;
+  return {
+    subject,
+    body,
+    vars: {
+      plan_name: r.plan_name,
+      subscription_ended_on: endedOn,
+      invoice_link: r.billing_link,
+    },
+  };
+}

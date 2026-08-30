@@ -44,6 +44,7 @@ import {
   formatMoneyCents,
   invoicePaidMessage,
   invoiceSections,
+  subscriptionCanceledMessage,
   subscriptionPrice,
   usageView,
   type InvoiceLineItem,
@@ -398,6 +399,66 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     }
   }
 
+  /**
+   * Tell the subscriber their plan has ended.
+   *
+   * Contained like every other announcement on this path, and for the same
+   * reason: the cancellation is committed by the time this runs, so letting an
+   * exception out would 5xx the webhook and Stripe's redelivery would find the
+   * row already cancelled, skip the block and never re-attempt the message.
+   *
+   * Called only where the write itself says this delivery is the one that ended
+   * the subscription. Stripe sends `customer.subscription.updated` with
+   * `status: 'canceled'` *and* `customer.subscription.deleted` for one
+   * cancellation, in no guaranteed order, so gating on the status read back
+   * would send two — and gating on only one of the two event types would send
+   * none whenever the other landed first.
+   */
+  async function announceSubscriptionCanceled(
+    log: FastifyBaseLogger,
+    sub: { user_id: string; plan_tier: string; canceled_at: Date | null },
+  ): Promise<void> {
+    try {
+      const [user, plan] = await Promise.all([
+        findUserById(deps.pool, sub.user_id),
+        findPlanForSubscription(deps.pool, sub.plan_tier),
+      ]);
+      const base = deps.publicBaseUrl.replace(/\/$/, '');
+      const message = subscriptionCanceledMessage({
+        // The plan a subscription was *on*, so a tier retired from the
+        // catalogue is still named rather than leaving the sentence to read
+        // "Your subscription has ended" twice over. See findPlanForSubscription.
+        plan_name: plan?.name ?? 'subscription',
+        ended_at: (sub.canceled_at ?? new Date()).toISOString(),
+        billing_link: `${base}/billing`,
+      });
+      await createNotifications(deps.pool, [
+        {
+          userId: sub.user_id,
+          type: 'subscription_canceled',
+          title: message.subject,
+          body: message.body.split('\n\n')[0]!,
+        },
+      ]);
+      if (user?.email) {
+        await sendTransactionalEmail(
+          { pool: deps.pool, transport: deps.transport, log, settings: deps.settings },
+          {
+            toUserId: sub.user_id,
+            toEmail: user.email,
+            recipientName: user.first_name,
+            templateKey: 'subscription_canceled',
+            subject: message.subject,
+            body: message.body,
+            vars: message.vars,
+          },
+        );
+      }
+    } catch (err) {
+      log.warn({ err, userId: sub.user_id }, 'subscription cancellation announcement failed');
+    }
+  }
+
   // ── Webhook (subscription lifecycle + invoices) ──────────────────────────
   void app.register(async (scope) => {
     scope.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) =>
@@ -520,7 +581,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
                 );
               }
             }
-            await upsertSubscription(deps.pool, {
+            const written = await upsertSubscription(deps.pool, {
               userId: meta.user_id,
               planTier,
               status: mapStatus(String(obj.status ?? 'active')),
@@ -529,9 +590,13 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               periodStart: tsToDate(obj.current_period_start),
               periodEnd: tsToDate(obj.current_period_end),
             });
+            // The other writer of a cancellation, and the one that lands first
+            // about as often as not.
+            if (written.newly_canceled) await announceSubscriptionCanceled(log, written);
           }
         } else if (type === 'customer.subscription.deleted' && typeof obj.id === 'string') {
-          await cancelSubscription(deps.pool, obj.id);
+          const ended = await cancelSubscription(deps.pool, obj.id);
+          if (ended?.newly_canceled) await announceSubscriptionCanceled(log, ended);
         } else if (type === 'invoice.paid' || type === 'invoice.payment_succeeded') {
           const stripeSubId = typeof obj.subscription === 'string' ? obj.subscription : null;
           const meta = (obj.metadata ?? {}) as Record<string, string>;

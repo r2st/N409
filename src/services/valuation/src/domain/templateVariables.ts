@@ -26,12 +26,12 @@ export type TemplateVarScope =
   /** Available only where a link is generated — reset, invite, payment. */
   | 'link'
   /**
-   * Available only on a settlement confirmation — the receipt for an
-   * engagement payment, the notice that a subscription invoice was paid.
-   * Its own scope rather than `valuation` because half of it is not about an
-   * engagement at all (a subscription invoice has no valuation), and because
-   * the `valuation` scope is pinned by a census against what
-   * `valuationTemplateVars` supplies.
+   * Available only on a billing notice — the receipt for an engagement
+   * payment, the notice that a subscription invoice was paid, the notice that
+   * a subscription has ended. Its own scope rather than `valuation` because
+   * most of it is not about an engagement at all (a subscription has no
+   * valuation), and because the `valuation` scope is pinned by a census
+   * against what `valuationTemplateVars` supplies.
    */
   | 'payment';
 
@@ -172,6 +172,18 @@ export const TEMPLATE_VARIABLES: readonly TemplateVariable[] = [
     scope: 'payment',
     description: 'The service period an invoice covers, blank unless both ends of it are known.',
     sample: '2026-08-01 to 2026-09-01',
+  },
+  {
+    name: 'plan_name',
+    scope: 'payment',
+    description: 'The subscription plan a billing notice is about, by its catalogue name.',
+    sample: 'Annual retainer',
+  },
+  {
+    name: 'subscription_ended_on',
+    scope: 'payment',
+    description: 'The day a cancelled subscription stopped, and with it the plan’s included valuations.',
+    sample: '2026-08-30',
   },
 ];
 

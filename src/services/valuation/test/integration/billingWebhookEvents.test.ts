@@ -309,6 +309,97 @@ describe.skipIf(!dbUp)('billing webhook events', () => {
     });
   });
 
+  describe('the subscriber is told their plan ended', () => {
+    const notificationsOf = async (userId: string) => {
+      const { rows } = await ctx.pool.query<{ type: string; title: string; body: string }>(
+        'SELECT type, title, body FROM notifications WHERE user_id = $1 ORDER BY created_at ASC',
+        [userId],
+      );
+      return rows;
+    };
+
+    /*
+     * Cancellation takes the plan's quota away the moment it lands — a
+     * 'canceled' row is not a served status — and it was the one billing
+     * transition that produced no notification and no email. A subscription
+     * Stripe cancelled at the end of dunning looked exactly like one the
+     * customer had asked to end: silence.
+     */
+    it('notifies on customer.subscription.deleted, naming the plan and the day', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await upsertSubscription(ctx.pool, {
+        userId: user.id,
+        planTier: 'annual_retainer',
+        stripeSubscriptionId: 'sub_ended_1',
+      });
+      await deliver({
+        type: 'customer.subscription.deleted',
+        data: { object: { id: 'sub_ended_1' } },
+      });
+      const notes = (await notificationsOf(user.id)).filter((n) => n.type === 'subscription_canceled');
+      expect(notes).toHaveLength(1);
+      expect(notes[0]!.title).toContain('Annual retainer');
+      expect(await findActiveSubscription(ctx.pool, user.id)).toBeNull();
+    });
+
+    /*
+     * Stripe sends `updated` with status 'canceled' and `deleted` for one
+     * cancellation and orders neither, so the notice has to be gated on which
+     * write ended the subscription rather than on the event type or on the
+     * status read back. Both orders, one notification each.
+     */
+    it('sends exactly one notice however the pair is ordered', async () => {
+      for (const [first, second] of [
+        ['updated', 'deleted'],
+        ['deleted', 'updated'],
+      ] as const) {
+        const user = await seedUser(ctx, { roles: ['valuation_user'] });
+        const stripeId = `sub_pair_${first}`;
+        await upsertSubscription(ctx.pool, {
+          userId: user.id,
+          planTier: 'annual_retainer',
+          stripeSubscriptionId: stripeId,
+        });
+        const events = {
+          updated: {
+            type: 'customer.subscription.updated',
+            data: {
+              object: {
+                id: stripeId,
+                status: 'canceled',
+                metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+              },
+            },
+          },
+          deleted: { type: 'customer.subscription.deleted', data: { object: { id: stripeId } } },
+        };
+        await deliver(events[first]);
+        await deliver(events[second]);
+        const notes = (await notificationsOf(user.id)).filter((n) => n.type === 'subscription_canceled');
+        expect([first, notes.length]).toEqual([first, 1]);
+      }
+    });
+
+    it('says nothing for a cancellation of a subscription this platform never carried', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await deliver({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_never_seen_1',
+            status: 'canceled',
+            metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+          },
+        },
+      });
+      // The row is still recorded — that behaviour predates this and the
+      // portal reads it for the customer id — but a subscription that was
+      // created cancelled is not an account that just ended.
+      expect((await subscriptionOf(user.id))?.status).toBe('canceled');
+      expect((await notificationsOf(user.id)).filter((n) => n.type === 'subscription_canceled')).toEqual([]);
+    });
+  });
+
   describe('a plan change made in the Stripe portal', () => {
     /*
      * `metadata.plan_tier` is stamped once, by the checkout that started the
