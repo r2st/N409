@@ -19,6 +19,7 @@ import { AI_JOB_PAGE_LIMIT, listAiJobs } from '../repos/aiJobs.js';
 import { DECISION_PAGE_LIMIT, listDecisions } from '../repos/methodologyDecisions.js';
 import { QA_REVIEW_PAGE_LIMIT, listQaReviews } from '../repos/qaReviews.js';
 import { deliverablePdf } from './reports.js';
+import { MAX_TRAIL_EVENTS } from './auditTrail.js';
 import { listScenarios } from '../repos/scenarios.js';
 import { COMPARABLE_PAGE_LIMIT, listComparableItems } from '../repos/comparableItems.js';
 import { impliedMultiples } from '../domain/comparables.js';
@@ -45,6 +46,17 @@ import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 const ALL_COMMENT_KINDS: ReadonlySet<CommentKind> = new Set(['chat', 'note', 'email']);
 
+/**
+ * Ceiling on the two lists this route reads directly.
+ *
+ * Every other list in the bundle takes its page size from the repo that reads
+ * it, and these two have no repo — which is exactly why they had no ceiling.
+ * Five hundred is the shape of the rest of the manifest rather than a measured
+ * number: large enough that no real engagement reaches it, and reported when
+ * it does.
+ */
+const EVIDENCE_ROW_LIMIT = 500;
+
 function toJson(value: unknown): string {
   return JSON.stringify(value, null, 2) + '\n';
 }
@@ -62,9 +74,14 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // guards draw.
     refuseIfRetired(valuation, 'producing evidence bundles');
 
-    const [events, calculationPage, documentPage, commentPage, signatures, aiJobPage, report, generator] =
+    const [eventPage, calculationPage, documentPage, commentPage, signatures, aiJobPage, report, generator] =
       await Promise.all([
-        listEvents(deps.pool, id),
+        // One over the trail's own ceiling, so a bundle that carries a page of
+        // the spine rather than all of it can say which it is. The number is
+        // `loadTrail`'s rather than a second one: `audit-trail.json` beside
+        // `events.json` is these same rows enriched, and two ceilings over one
+        // list would put a different history in each file.
+        listEvents(deps.pool, id, { limit: MAX_TRAIL_EVENTS + 1 }),
         listCalculations(deps.pool, id),
         listDocuments(deps.pool, id),
         listComments(deps.pool, id, ALL_COMMENT_KINDS),
@@ -102,17 +119,36 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         listWorkbookCells(deps.pool, id),
       ]);
 
-    // Review tasks carry the approve / request-changes workflow; decisions
-    // themselves are `review_decision` events (already in events.json).
-    const { rows: reviewTasks } = await deps.pool.query(
-      'SELECT * FROM review_tasks WHERE valuation_id = $1 ORDER BY created_at ASC',
-      [id],
+    /*
+     * The two lists this route reads itself, both capped for the reason every
+     * other list in the bundle is.
+     *
+     * They were the last uncapped reads here, and they were uncapped because
+     * of where they are written rather than because anybody decided they
+     * should be: `unboundedListCensus` and `silentCapCensus` both enumerate
+     * `src/repos`, and SQL issued from a route file is in neither population.
+     * A review cycle adds a task and an administrator's every act on the
+     * engagement adds an admin event, so both grow with the work.
+     *
+     * Newest-first in SQL and re-ordered here, so a bundle that has to stop
+     * short stops at the oldest end — the same choice `loadTrail` makes about
+     * the spine, and the one that keeps the recent history an auditor is
+     * asking about.
+     */
+    const { rows: reviewTaskPage } = await deps.pool.query(
+      `SELECT * FROM review_tasks WHERE valuation_id = $1
+        ORDER BY created_at DESC LIMIT $2`,
+      [id, EVIDENCE_ROW_LIMIT + 1],
     );
-    // Admin events whose subject is this valuation (rare but possible).
-    const { rows: adminEvents } = await deps.pool.query(
-      'SELECT * FROM admin_events WHERE subject_id = $1 ORDER BY occurred_at ASC',
-      [id],
+    const reviewTasksTruncated = reviewTaskPage.length > EVIDENCE_ROW_LIMIT;
+    const reviewTasks = reviewTaskPage.slice(0, EVIDENCE_ROW_LIMIT).reverse();
+    const { rows: adminEventPage } = await deps.pool.query(
+      `SELECT * FROM admin_events WHERE subject_id = $1
+        ORDER BY occurred_at DESC LIMIT $2`,
+      [id, EVIDENCE_ROW_LIMIT + 1],
     );
+    const adminEventsTruncated = adminEventPage.length > EVIDENCE_ROW_LIMIT;
+    const adminEvents = adminEventPage.slice(0, EVIDENCE_ROW_LIMIT).reverse();
     // Provenance: the exact prompt versions the valuation's AI runs used.
     const { rows: promptVersions } = await deps.pool.query(
       `SELECT DISTINCT v.id, p.pipeline, v.version, v.system_prompt, v.model, v.created_at
@@ -157,6 +193,9 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         renderedPdf = { name: `report-v${full.version}.pdf`, data };
       }
     }
+
+    const eventsTruncated = eventPage.length > MAX_TRAIL_EVENTS;
+    const events = eventPage.slice(-MAX_TRAIL_EVENTS);
 
     const generatedAt = new Date();
     // A bundle is read by somebody looking for what is *not* in it, so a list
@@ -311,6 +350,13 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         // reads specifically for what is *not* in the conclusion.
         ...(researchTruncated ? { market_research: RESEARCH_PAGE_LIMIT } : {}),
         ...(comparablesTruncated ? { comparables: COMPARABLE_PAGE_LIMIT } : {}),
+        // The spine, and the two lists this route reads itself. `events` is
+        // the one an auditor counts before anything else — `counts.events`
+        // above is that number — so a bundle carrying the newest five thousand
+        // of a longer history has to say which of the two it is.
+        ...(eventsTruncated ? { events: MAX_TRAIL_EVENTS } : {}),
+        ...(reviewTasksTruncated ? { review_tasks: EVIDENCE_ROW_LIMIT } : {}),
+        ...(adminEventsTruncated ? { admin_events: EVIDENCE_ROW_LIMIT } : {}),
       },
       files: ['manifest.json', ...entries.map((e) => e.name)],
     };

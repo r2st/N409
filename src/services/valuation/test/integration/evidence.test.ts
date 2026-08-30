@@ -352,6 +352,61 @@ describe.skipIf(!dbUp)('evidence bundle export', () => {
     expect(manifest.files).toContain('workbook.json');
   });
 
+  it('says so when a list it reads itself came back short', async () => {
+    /*
+     * The bundle's own two reads — `review_tasks` and `admin_events` — had no
+     * cap at all until R221, and no census could see that they did not: both
+     * the uncapped-read and the silent-cap censuses enumerate `src/repos`, and
+     * these are written in the route. A bundle is read by somebody looking for
+     * what is *not* in it, so the manifest has to say which of the two a short
+     * list is.
+     *
+     * On its own valuation, because the count assertions above are over the
+     * shared one.
+     */
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(ops.token),
+      payload: { kind: '409a', company_name: 'BusyAdminCo' },
+    });
+    const id = created.json().valuation.id;
+    // One past the ceiling, oldest first, so the newest kept row is knowable.
+    await pool.query(
+      `INSERT INTO admin_events (id, type, actor_type, actor_id, subject_type, subject_id, subject_label, occurred_at)
+       SELECT $1 || lpad(g::text, 4, '0'), 'valuation_flagged', 'human', $2, 'valuation', $3,
+              'row ' || g, now() - make_interval(secs => 600 - g)
+         FROM generate_series(1, 501) g`,
+      [newUlid().slice(0, 22), ops.id, id],
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/evidence-bundle`,
+      headers: authHeader(ops.token),
+    });
+    // Not counted in `successfulExports`: that tally is over the shared
+    // valuation's export events, and this bundle is another valuation's.
+    expect(res.statusCode).toBe(200);
+
+    const entries = zipEntries(res.rawPayload);
+    const manifest = JSON.parse(entries.get('manifest.json')!);
+    expect(manifest.truncated.admin_events).toBe(500);
+    expect(manifest.counts.admin_events).toBe(500);
+    // The page kept is the newest end, handed back oldest-first — the same
+    // choice the audit trail makes, so the recent history an auditor asks
+    // about is the half that survives.
+    const adminEvents = JSON.parse(entries.get('admin-events.json')!) as Array<{
+      subject_label: string;
+    }>;
+    expect(adminEvents).toHaveLength(500);
+    expect(adminEvents[0]!.subject_label).toBe('row 2');
+    expect(adminEvents.at(-1)!.subject_label).toBe('row 501');
+    // And a list that did not reach its ceiling says nothing at all.
+    expect(manifest.truncated.review_tasks).toBeUndefined();
+    expect(manifest.truncated.events).toBeUndefined();
+  });
+
   it('client cannot reach another user’s bundle (404, not 403 leak)', async () => {
     const own = await app.inject({
       method: 'POST',
