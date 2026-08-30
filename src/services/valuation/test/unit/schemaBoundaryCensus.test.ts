@@ -110,3 +110,164 @@ describe('patch bodies refuse unknown keys', () => {
     expect(seen).toBeGreaterThanOrEqual(15);
   });
 });
+
+/**
+ * A schema that accepts a list, or a page size, without saying how big.
+ *
+ * The two classes above are about a *value* the schema admits and the database
+ * cannot hold. This is the third, and it is about a *count*: `z.array(X)` with
+ * no `.max()` accepts as many elements as fit in the body, and a page-size
+ * parameter with no ceiling accepts whatever number a caller types. Neither is
+ * a data-loss bug; both are the shape where one request costs the service an
+ * arbitrary amount of work — a thousand share classes handed to the engine, a
+ * `?per_page=1000000` that asks Postgres for the whole table and then
+ * serialises it.
+ *
+ * Both are currently clean — every request-side array and every page-size
+ * parameter in this service already carries a ceiling — which is exactly when
+ * the rule is worth writing down. The bound on these was reached one endpoint
+ * at a time by whoever wrote each schema; nothing said it had to be, so the
+ * fortieth is where it would have stopped being true.
+ *
+ * The exemption is stated as a property rather than a list: a schema whose
+ * declaration is named `…Response` documents what this service *sends*, and is
+ * rendered into the partner OpenAPI document rather than parsed from a
+ * request. A ceiling there would be a claim about a page size the route
+ * already enforces, restated in a second place to go stale.
+ */
+describe('a schema that accepts a list says how long it may be', () => {
+  /**
+   * The `const NAME =` a line belongs to, searching upwards.
+   *
+   * Not `export const` only: most schemas here are locals declared inside the
+   * `register…Routes` function that uses them, and a walk that recognised only
+   * the exported spelling attributed all of those to whatever happened to be
+   * exported further up the file.
+   */
+  function ownerOf(lines: string[], index: number): string {
+    for (let i = index; i >= 0; i--) {
+      const declared = /(?:export\s+)?const (\w+)\s*=/.exec(lines[i]!);
+      if (declared) return declared[1]!;
+    }
+    return '';
+  }
+
+  /** The one file whose schemas describe what is sent rather than what is parsed. */
+  const CONTRACT = `domain${path.sep}partnerApiContract.ts`;
+
+  /**
+   * Whether a hit documents an outgoing payload rather than parsing one.
+   *
+   * Both halves are required. The name alone would exempt any local a route
+   * happened to call `…Response`; the file alone would exempt the request
+   * schemas that live in the contract beside the response ones.
+   */
+  const documentsOutput = (hit: { where: string; owner: string }) =>
+    hit.owner.endsWith('Response') && hit.where.startsWith(CONTRACT);
+
+  interface Hit {
+    where: string;
+    owner: string;
+    text: string;
+  }
+
+  function scan(matches: (line: string) => boolean): Hit[] {
+    const hits: Hit[] = [];
+    for (const file of sourceFiles(SRC)) {
+      const rel = path.relative(SRC, file);
+      const lines = readFileSync(file, 'utf8').split('\n');
+      lines.forEach((text, i) => {
+        const trimmed = text.trim();
+        if (trimmed.startsWith('*') || trimmed.startsWith('//')) return;
+        if (!matches(text)) return;
+        hits.push({ where: `${rel}:${i + 1}`, owner: ownerOf(lines, i), text: trimmed });
+      });
+    }
+    return hits;
+  }
+
+  /**
+   * Whether every `z.array(...)` on a line carries its *own* `.max()`.
+   *
+   * The obvious spelling — "the line contains `z.array(` and `.max(`" — is
+   * wrong, and wrong in the direction that reports a clean census over an
+   * unbounded array. `z.array(z.number().gt(0).max(1000))` bounds each element
+   * at a thousand and says nothing at all about how many elements there may
+   * be, which is the distinction `domain/roles.ts` spells out in prose: the
+   * element bound and the array bound are different claims and only one of
+   * them is this rule. So the argument is skipped by matching parentheses and
+   * the `.max()` is looked for after the closing one, where the array's own
+   * modifiers are.
+   */
+  function arraysBounded(line: string): boolean {
+    for (let at = line.indexOf('z.array('); at >= 0; at = line.indexOf('z.array(', at + 1)) {
+      let depth = 0;
+      let close = -1;
+      for (let i = at + 'z.array'.length; i < line.length; i++) {
+        if (line[i] === '(') depth++;
+        else if (line[i] === ')' && --depth === 0) {
+          close = i;
+          break;
+        }
+      }
+      // An argument that runs off the end of the line: the chain continues on
+      // the next one, so this scan cannot answer and says so by failing.
+      if (close < 0) return false;
+      // Stop at the next `z.array(`, so a second array on the same line does
+      // not lend this one its ceiling.
+      const next = line.indexOf('z.array(', close);
+      if (!/\.max\(/.test(line.slice(close, next < 0 ? undefined : next))) return false;
+    }
+    return true;
+  }
+
+  const arrays = (bounded: boolean) =>
+    scan((line) => /z\.array\(/.test(line) && arraysBounded(line) === bounded);
+
+  /**
+   * A page size the caller chooses: `limit`, `per_page`, `count`, `page_size`.
+   * `page` itself is absent on purpose — its ceiling is `pageParam()`'s, which
+   * `paginationBounds.test.ts` holds, and it is written as a helper call rather
+   * than as a `z.number()` chain.
+   */
+  const pageSizes = (bounded: boolean) =>
+    scan(
+      (line) =>
+        /\b(?:limit|per_page|count|page_size)\s*:\s*z\./.test(line) &&
+        /z\.(?:coerce\.)?number\(/.test(line) &&
+        /\.max\(/.test(line) === bounded,
+    );
+
+  it('bounds every z.array a request is parsed with', () => {
+    const unbounded = arrays(false).filter((hit) => !documentsOutput(hit));
+    expect(unbounded.map((hit) => `${hit.where}  (${hit.owner})  ${hit.text}`)).toEqual([]);
+  });
+
+  it('bounds every page size a caller may name', () => {
+    const unbounded = pageSizes(false).filter((hit) => !documentsOutput(hit));
+    expect(unbounded.map((hit) => `${hit.where}  (${hit.owner})  ${hit.text}`)).toEqual([]);
+  });
+
+  it('is looking at a real population, and at declarations it can name', () => {
+    // The vacuity guard, and this scan needs one: it goes green the moment the
+    // `z.array(` spelling, the `.max(` spelling or the walk to the enclosing
+    // `export const` stops firing, and all three are shapes a reformat moves.
+    expect(arrays(true).length).toBeGreaterThan(30);
+    expect(pageSizes(true).length).toBeGreaterThan(20);
+    // Every bounded hit resolves to a declaration, so a failure would name the
+    // schema rather than an empty string.
+    expect(arrays(true).filter((hit) => hit.owner === '')).toEqual([]);
+  });
+
+  it('exempts output documentation only, and finds some to exempt', () => {
+    // The exemption is load-bearing — without it this fails — so it has to be
+    // asserted rather than assumed, in both directions: the exempted hits are
+    // all in the partner contract, and they are all response schemas.
+    const exempt = [...arrays(false), ...pageSizes(false)];
+    expect(exempt.length).toBeGreaterThan(0);
+    for (const hit of exempt) {
+      expect(hit.owner, `${hit.where} is unbounded and does not document a response`).toMatch(/Response$/);
+      expect(hit.where, `${hit.where} is outside the partner contract`).toContain('partnerApiContract.ts');
+    }
+  });
+});
