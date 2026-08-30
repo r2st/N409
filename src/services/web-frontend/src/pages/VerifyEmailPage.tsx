@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, describeRequestFailure } from '../lib/api';
 import { AuthShell } from '../components/AuthShell';
 import { ErrorNote, Spinner } from '../components/ui';
 
@@ -42,7 +42,7 @@ export function VerifyEmailPage() {
       } catch (err) {
         setState({
           kind: 'error',
-          message: err instanceof ApiError ? err.message : 'Something went wrong — please try again.',
+          message: describeRequestFailure(err),
         });
       }
     })();

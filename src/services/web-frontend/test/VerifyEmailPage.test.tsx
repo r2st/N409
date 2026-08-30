@@ -115,11 +115,23 @@ describe('VerifyEmailPage', () => {
     expect(screen.getByText(/expire after 24 hours and can be used once/i)).toBeInTheDocument();
   });
 
-  it('falls back to a generic message when the network fails', async () => {
+  it('names the network when the request never left the browser', async () => {
+    /*
+     * A rejected `fetch` is the *only* way to reach this branch — `api()`
+     * throws `ApiError` whenever the server answered at all, whatever the
+     * status and even with an empty body — so "Something went wrong" was
+     * describing one specific situation in words that fit any of them.
+     *
+     * Which mattered here more than on most pages. A verification link can be
+     * used once, so a reader told something went wrong has to decide whether
+     * they have just burnt theirs. They have not: the request never arrived.
+     */
     window.history.replaceState(null, '', `/verify-email#token=${TOKEN}`);
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('offline'));
     renderPage();
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong — please try again.');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/could not reach the server/i);
+    expect(alert).toHaveTextContent(/nothing was submitted/i);
   });
 });

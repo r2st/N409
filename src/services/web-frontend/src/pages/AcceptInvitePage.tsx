@@ -8,7 +8,7 @@ import {
   useFormValidation,
 } from '../lib/useFormValidation';
 import { PASSWORD_HINT } from '../lib/passwordPolicy';
-import { api, ApiError } from '../lib/api';
+import { api, describeRequestFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import type { User } from '../lib/types';
 import { AuthShell } from '../components/AuthShell';
@@ -82,7 +82,7 @@ export function AcceptInvitePage() {
       await adoptToken(res.token);
       navigate('/', { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Something went wrong — please try again.');
+      setError(describeRequestFailure(err));
       setBusy(false);
     }
   });

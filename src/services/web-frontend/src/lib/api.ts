@@ -88,6 +88,56 @@ export class ApiError extends Error {
 }
 
 /**
+ * The message to show when a submit did not go through (round 222).
+ *
+ * Five pages wrote this by hand, all of them the same way:
+ *
+ *   setError(err instanceof ApiError ? err.message : 'Something went wrong — please try again.');
+ *
+ * The `else` branch is not a general-purpose fallback, which is what its
+ * wording assumes. `api()` throws `ApiError` whenever the server answered at
+ * all — any status, any body, even an empty one — so the only way to reach the
+ * other side is for `fetch` itself to have rejected, and `fetch` rejects when
+ * the request never arrived: no network, DNS failing, the tab offline, a
+ * captive portal in the way. That is a specific situation with a specific
+ * remedy, and "something went wrong" describes it in a way that points the
+ * reader back at the form. On a sign-up or a password reset that is a person
+ * retyping a password they typed correctly, on a connection that is still
+ * down.
+ *
+ * The second half matters as much. A submit that failed here sent nothing, so
+ * nothing was half-done — no account half-created, no password half-changed —
+ * and saying so is what stops the reader wondering whether pressing the button
+ * again will do the thing twice.
+ */
+export const OFFLINE_DETAIL =
+  'That request could not reach the server, so nothing was submitted — this is usually a dropped ' +
+  'connection rather than anything you entered. Check your network and try again.';
+
+/**
+ * Turn whatever a failed request threw into a sentence for the reader.
+ *
+ * `ApiError`'s own message is preferred and is almost always what shows: the
+ * server writes these deliberately, and `detail` is the field it puts the
+ * remedy in. The exception is a problem body with no `detail` and no `title` —
+ * a bodiless 502 from a proxy that never reached the app — where `ApiError`
+ * falls back to `Request failed (502)`. That is a status code wearing a
+ * sentence, so it is replaced here rather than shown.
+ */
+export function describeRequestFailure(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (/^Request failed \(\d+\)$/.test(err.message)) {
+      return (
+        `The server answered with an error (${err.status}) and no explanation, which usually means ` +
+        'the request did not reach the application itself. Nothing was saved; wait a moment and try again.'
+      );
+    }
+    return err.message;
+  }
+  return OFFLINE_DETAIL;
+}
+
+/**
  * `If-Match` headers for a write guarded by an optimistic-lock version.
  *
  * Returns nothing when the version is absent so the call site can spread this

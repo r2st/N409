@@ -113,7 +113,19 @@ const post = async <T,>(path: string, body: unknown): Promise<T> => {
   });
   if (!res.ok) {
     const problem = (await res.json().catch(() => ({}))) as { detail?: string; title?: string };
-    throw new Error(problem.detail ?? problem.title ?? 'Something went wrong.');
+    // The fallback is reached only when the response carried no problem body at
+    // all — a proxy's own error page, or a gateway that never reached the
+    // service. "Something went wrong" is true of that and of everything else,
+    // and the reader of this page is a prospective client filling in a
+    // questionnaire for a firm they have just engaged: the question they need
+    // answered is whether their answers survived, and whether the thing to fix
+    // is theirs. Both are knowable here and neither was said.
+    throw new Error(
+      problem.detail ??
+        problem.title ??
+        `The questionnaire service could not be reached (error ${res.status}). Your answers are ` +
+          'still on this page and nothing has been lost — wait a moment and try again.',
+    );
   }
   return (await res.json()) as T;
 };

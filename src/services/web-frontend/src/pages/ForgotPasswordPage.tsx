@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { email as emailRule, useFormValidation } from '../lib/useFormValidation';
-import { api, ApiError } from '../lib/api';
+import { api, describeRequestFailure } from '../lib/api';
 import { AuthShell } from '../components/AuthShell';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
 
@@ -21,7 +21,7 @@ export function ForgotPasswordPage() {
       await api('/auth/forgot-password', { method: 'POST', body: { email } });
       setSent(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Something went wrong — please try again.');
+      setError(describeRequestFailure(err));
     } finally {
       setBusy(false);
     }
