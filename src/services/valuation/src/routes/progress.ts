@@ -6,6 +6,7 @@ import {
   CLIENT_TIMELINE_EVENTS,
   HALTED_STATES,
   PROGRESS_STAGES,
+  PROGRESS_TIMELINE_LIMIT,
   REQUIRED_DOCUMENT_KINDS,
   TYPICAL_STAGE_DAYS,
   daysBetween,
@@ -20,7 +21,7 @@ import { findValuationById } from '../repos/valuations.js';
 import { documentCoverage } from '../repos/documents.js';
 import { latestSucceededJob } from '../repos/aiJobs.js';
 import { findReportByValuation } from '../repos/reports.js';
-import { latestEventAt, listEvents } from '../events/record.js';
+import { firstEntryPerState, latestEventAt, listEvents } from '../events/record.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -41,33 +42,54 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
       : null;
     if (!valuation || !ref || !canReadValuation(principal, ref)) throw problems.notFound();
 
-    // Only the event types this view actually renders — the stage stepper reads
-    // state_changed, the timeline reads the client-safe catalog. A long-running
-    // valuation's full spine is thousands of rows we would immediately discard.
-    const relevantTypes = [...new Set(['state_changed', ...Object.keys(CLIENT_TIMELINE_EVENTS)])];
+    /*
+     * Two reads of the spine rather than one, because the stepper and the
+     * timeline want opposite ends of it.
+     *
+     * They used to share a single type-filtered read with no `LIMIT` at all —
+     * "thousands of rows we would immediately discard", as the comment here
+     * said, which was an accurate description of an unbounded read rather than
+     * a bound. Capping that shared read would not have produced a short
+     * answer: the stepper needs the *first* entry into each stage and
+     * `listEvents` keeps the *newest* rows, so a cap would have moved
+     * `entered_at` rather than shortened anything.
+     *
+     * So the stepper asks a question whose answer the enum bounds
+     * (`firstEntryPerState`), and the timeline takes an ordinary page.
+     */
+    const timelineTypes = Object.keys(CLIENT_TIMELINE_EVENTS);
     // Counts, not rows: the checklist and `documents_uploaded` below are
     // arithmetic over every live file, and `listDocuments` is a capped page.
     // See `documentCoverage` — a checklist built from a page under-reports the
     // buckets past the cap and asks the client to upload them again.
-    const [coverage, events, lastActivityAt, report, explainJob] = await Promise.all([
+    const [coverage, stateEntries, timelinePage, lastActivityAt, report, explainJob] = await Promise.all([
       documentCoverage(deps.pool, valuation.id),
-      listEvents(deps.pool, valuation.id, { types: relevantTypes }),
+      firstEntryPerState(deps.pool, valuation.id),
+      // One over the cap, so a full page can be told from a short one.
+      listEvents(deps.pool, valuation.id, {
+        types: timelineTypes,
+        limit: PROGRESS_TIMELINE_LIMIT + 1,
+      }),
       latestEventAt(deps.pool, valuation.id),
       findReportByValuation(deps.pool, valuation.id),
       latestSucceededJob(deps.pool, valuation.id, 'explain'),
     ]);
+    const timelineTruncated = timelinePage.length > PROGRESS_TIMELINE_LIMIT;
+    const events = timelinePage.slice(-PROGRESS_TIMELINE_LIMIT);
 
     // ── Stage stepper ───────────────────────────────────────────────────────
     const halted = HALTED_STATES.has(valuation.state);
     const currentIndex = stageIndexOf(valuation.state);
-    // First time the valuation entered any of a stage's states.
+    // First time the valuation entered any of a stage's states. One row per
+    // state, so the earliest transition into a stage is the earliest of the
+    // states that make it up.
     const enteredAt = new Map<number, Date>();
     enteredAt.set(0, valuation.created_at);
-    for (const event of events) {
-      if (event.type !== 'state_changed') continue;
-      const to = (event.payload as { to?: string }).to;
-      const idx = to ? stageIndexOf(to as ValuationState) : -1;
-      if (idx >= 0 && !enteredAt.has(idx)) enteredAt.set(idx, event.occurred_at);
+    for (const [state, occurredAt] of stateEntries) {
+      const idx = stageIndexOf(state as ValuationState);
+      if (idx < 0) continue;
+      const known = enteredAt.get(idx);
+      if (!known || occurredAt < known) enteredAt.set(idx, occurredAt);
     }
     const now = new Date();
     const durations = stageDurations(enteredAt, now);
@@ -151,6 +173,9 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
       report: { available: reportAvailable },
       explanation: { available: reportVisible && explainJob !== null },
       timeline,
+      /** True when older entries exist beyond the page this response carries. */
+      timeline_truncated: timelineTruncated,
+      timeline_limit: PROGRESS_TIMELINE_LIMIT,
     };
   });
 }

@@ -61,6 +61,8 @@ interface ProgressResponse {
   report: { available: boolean };
   explanation: { available: boolean };
   timeline: TimelineEntry[];
+  timeline_truncated: boolean;
+  timeline_limit: number;
 }
 
 /** Headline bar: one number for "how far along am I?". */
@@ -308,8 +310,14 @@ export function ProgressTab() {
         <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="overline mb-4 text-ink-400">Timeline</h2>
           {progress.timeline.length === 0 && <p className="text-sm text-ink-400">Nothing yet.</p>}
+          {progress.timeline_truncated && (
+            <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+              Showing the {progress.timeline_limit} most recent updates. Older activity on this valuation is
+              not listed here.
+            </p>
+          )}
           <ol className="space-y-3">
-            {progress.timeline.slice(0, 30).map((entry, i) => (
+            {progress.timeline.map((entry, i) => (
               <li key={`${entry.type}-${entry.occurred_at}-${i}`} className="flex gap-3 text-sm">
                 <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-bond-400" aria-hidden />
                 <div>

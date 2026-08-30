@@ -180,6 +180,20 @@ const CONSUMERS: Record<string, { renders?: string[]; why?: string }> = {
   '/api/v1/valuations/:id/volatility/estimate': {
     why: 'The POST behind the button on VolatilityPanel, which renders the peer-set notice beside it — the estimate is struck on the tickers that panel lists, and the notice is on the list rather than on the result.',
   },
+  // ── R221: the flag R218 added and nothing was told to render ────────────
+  // The version picker was uncapped, then capped-and-flagged, and this map was
+  // not extended on the same commit — so the census that exists to catch a
+  // dropped flag was itself the thing left un-updated. Both of ReportTab's
+  // reads of the endpoint destructured `versions` and discarded `truncated`.
+  '/api/v1/valuations/:id/report/versions': { renders: ['src/pages/valuation/ReportTab.tsx'] },
+
+  // ── R221: the spine read the repo-side censuses could not see ───────────
+  // Both of those censuses scan `src/repos`. This endpoint's list came out of
+  // `events/record.ts` by way of the route itself, so the uncapped read sat
+  // outside the population either one enumerates — and the page then drew the
+  // first thirty of whatever arrived, which is a second silent cut on top of
+  // the first.
+  '/api/v1/valuations/:id/progress': { renders: ['src/pages/valuation/ProgressTab.tsx'] },
   '/api/v1/valuations/:id/evidence-bundle': {
     why: 'Not a screen. The bundle carries its caps as a `truncated` object inside the manifest written into the archive, which is the artefact an auditor reads; there is no rendered list to annotate.',
   },

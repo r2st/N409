@@ -74,6 +74,24 @@ export const CLIENT_TIMELINE_EVENTS: Readonly<Record<string, string>> = {
   scenario_saved: 'Scenario saved',
 };
 
+/**
+ * How much of the client-safe timeline one `/progress` response carries.
+ *
+ * The timeline is a newest-first activity feed over the whole spine, and three
+ * of the five types it draws grow with the work rather than with the schema:
+ * a document per upload, a `state_changed` per transition, a `report_rendered`
+ * per render. It was read and returned unbounded, so a long engagement's
+ * portal call carried every one of them — and the page then drew the first
+ * thirty and dropped the rest without saying so, which is the same silent cut
+ * one layer further in.
+ *
+ * Fifty rather than thirty so the cap is the server's statement about the feed
+ * and not the page's layout, and `timeline_truncated` beside it so a client
+ * looking for an upload they made last quarter is told the feed is short
+ * rather than concluding it never happened.
+ */
+export const PROGRESS_TIMELINE_LIMIT = 50;
+
 export type ProgressStageKey = ProgressStage['key'];
 
 /**

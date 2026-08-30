@@ -98,6 +98,13 @@ export function ReportTab() {
   const [report, setReport] = useState<Report | null>(null);
   const [content, setContent] = useState<ReportContent | null>(null);
   const [versions, setVersions] = useState<ReportVersionSummary[]>([]);
+  /*
+   * The version picker is capped at REPORT_VERSION_PAGE_LIMIT server-side, and
+   * a picker that quietly stops reads as the whole history of the report — an
+   * analyst looking for the draft they saved last month concludes it was never
+   * saved. R218 gave the endpoint the flag; both reads here dropped it.
+   */
+  const [versionsTruncated, setVersionsTruncated] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,10 +134,12 @@ export function ReportTab() {
       setDirty(false);
       setConflictedWith(null);
       if (ops) {
-        const { versions: v } = await api<{ versions: ReportVersionSummary[] }>(
-          `/valuations/${valuation.id}/report/versions`,
-        );
+        const { versions: v, truncated } = await api<{
+          versions: ReportVersionSummary[];
+          truncated: boolean;
+        }>(`/valuations/${valuation.id}/report/versions`);
         setVersions(v);
+        setVersionsTruncated(truncated);
       }
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
@@ -214,8 +223,13 @@ export function ReportTab() {
         if (ops) {
           // Cosmetic, and in the failure path — a panel that would not refresh
           // must not replace the error explaining why the save was refused.
-          await api<{ versions: ReportVersionSummary[] }>(`/valuations/${valuation.id}/report/versions`)
-            .then(({ versions: v }) => setVersions(v))
+          await api<{ versions: ReportVersionSummary[]; truncated: boolean }>(
+            `/valuations/${valuation.id}/report/versions`,
+          )
+            .then(({ versions: v, truncated }) => {
+              setVersions(v);
+              setVersionsTruncated(truncated);
+            })
             .catch(() => {});
         }
       }
@@ -521,6 +535,11 @@ export function ReportTab() {
           <div>
             <h2 className="overline mb-4 text-ink-400">Version history</h2>
             {versions.length === 0 && <p className="text-sm text-ink-400">No versions yet.</p>}
+            {versionsTruncated && (
+              <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
+                This report has more saved versions than the picker lists — the oldest are not shown.
+              </p>
+            )}
             <ol className="space-y-3">
               {versions.map((v) => (
                 <li

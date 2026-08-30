@@ -134,3 +134,31 @@ export async function latestEventAt(pool: pg.Pool, valuationId: string): Promise
   );
   return rows[0]?.occurred_at ?? null;
 }
+
+/**
+ * When the valuation first entered each state it has ever been in.
+ *
+ * The progress stepper needs the *earliest* `state_changed` into each stage,
+ * and every other read of this spine keeps the *newest* rows — which is why
+ * this was the one caller that could not take a page and so took the whole
+ * history instead. `listEvents(pool, id, { types: ['state_changed'] })` is
+ * unbounded by construction: a valuation that bounces between review and
+ * revision accumulates a `state_changed` per bounce, for as long as the
+ * engagement runs, and the route dragged all of them into memory to keep at
+ * most one per stage.
+ *
+ * So the bound is the question rather than a cap: `DISTINCT ON` over the target
+ * state returns one row per state the valuation has been in, and the states are
+ * an enum — `ValuationState`, a dozen of them. That is a bound the schema
+ * states, not a page size, so the answer is the same one the full read gave.
+ */
+export async function firstEntryPerState(pool: pg.Pool, valuationId: string): Promise<Map<string, Date>> {
+  const { rows } = await pool.query<{ to_state: string; occurred_at: Date }>(
+    `SELECT DISTINCT ON (payload->>'to') payload->>'to' AS to_state, occurred_at
+       FROM valuation_events
+      WHERE valuation_id = $1 AND type = 'state_changed' AND payload->>'to' IS NOT NULL
+      ORDER BY payload->>'to', seq ASC`,
+    [valuationId],
+  );
+  return new Map(rows.map((r) => [r.to_state, r.occurred_at]));
+}
