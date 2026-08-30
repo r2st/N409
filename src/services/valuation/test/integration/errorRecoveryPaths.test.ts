@@ -651,7 +651,7 @@ describe.skipIf(!dbUp)('what an operation leaves behind when it dies halfway', (
       try {
         const valuation = (await findValuationById(ctx.pool, v.id))!;
         const { job, appliedInputs } = await runAiPipeline(
-          { pool: ctx.pool, aiUrl, documentsDir: ctx.documentsDir ?? './data/documents' },
+          { pool: ctx.pool, aiUrl, documentsDir: ctx.documentsDir ?? './data/documents', log: ctx.app.log },
           {
             valuation,
             pipeline: 'extract',

@@ -604,7 +604,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerAiRoutes(app, { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR, log: app.log });
   // IMPROVEMENTS_RESEARCH Phase 1 — QA gate before publish, audit-defense
   // decision log, client-portal progress tracker
-  registerQaRoutes(app, { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR });
+  registerQaRoutes(app, { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR, log: app.log });
   registerHealthCheckRoutes(app, { pool });
   registerDataCompletenessRoutes(app, { pool });
   registerDecisionRoutes(app, { pool });

@@ -242,11 +242,26 @@ export interface AiPipelineDeps {
   aiUrl: string;
   documentsDir: string;
   /**
-   * Optional so the many test call sites need not supply one. Used to report
-   * extracted figures that failed validation — an auto-pipeline run has no
-   * response for them to appear in.
+   * Required, and required for a reason this interface once got wrong.
+   *
+   * It was optional — "so the many test call sites need not supply one" — and
+   * the many test call sites turned out to be one. What the option bought
+   * instead was a *production* wiring that omitted it: `registerQaRoutes` was
+   * handed `{ pool, aiUrl, documentsDir }` and nothing else, so every line
+   * below written through `deps.log?.` vanished on the QA pipeline. Not the
+   * chatty ones: the run whose failure could not be recorded and was left for
+   * the reaper, the run that came back after its job had already been settled,
+   * and — since round 233 — the lookup that decides whether the engagement
+   * owner's name is struck from the prompt. That last one is the only evidence
+   * a prompt went to an external model naming a person, and on this route there
+   * was none.
+   *
+   * A logger that a caller may leave out is a log line that a caller may leave
+   * out, and nothing fails when they do. Making it required moves the question
+   * to the compiler, which is where the one wiring that got it wrong would have
+   * been told.
    */
-  log?: FastifyBaseLogger;
+  log: FastifyBaseLogger;
 }
 
 /**
@@ -354,7 +369,7 @@ export async function runAiPipeline(
    * different claims, and this is the one place they can come apart.
    */
   const client = await findRedactionIdentity(deps.pool, valuation.user_id).catch((err: unknown) => {
-    deps.log?.warn(
+    deps.log.warn(
       { err, valuationId: valuation.id, pipeline },
       'could not read the engagement owner for prompt redaction; their name is not being struck',
     );
@@ -456,7 +471,7 @@ export async function runAiPipeline(
       },
       args.actor,
     ).catch((settleErr: unknown) => {
-      deps.log?.error(
+      deps.log.error(
         { err: settleErr, cause: err, jobId: job.id, valuationId: valuation.id },
         'could not record a failed AI job; left running for the reaper',
       );
@@ -502,7 +517,7 @@ export async function runAiPipeline(
   let appliedInputs: Record<string, unknown> | null = null;
   let rejectedInputs: RejectedInput[] = [];
   if (completed.status !== 'succeeded') {
-    deps.log?.warn(
+    deps.log.warn(
       {
         valuationId: valuation.id,
         jobId: job.id,
@@ -516,7 +531,7 @@ export async function runAiPipeline(
     const { applied, rejected } = sanitizeExtractedInputs(response.result?.engine_inputs);
     rejectedInputs = rejected;
     if (rejected.length > 0) {
-      deps.log?.warn(
+      deps.log.warn(
         { valuationId: valuation.id, jobId: job.id, rejected },
         'ai extraction proposed engine inputs outside the accepted range; dropping them',
       );
