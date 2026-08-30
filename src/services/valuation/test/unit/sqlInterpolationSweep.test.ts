@@ -236,16 +236,33 @@ const REVIEWED: Record<string, string[]> = {
   // already did. The builder's own text interpolates nothing but those and two
   // module-scope numbers (EMAIL_JITTER_FLOOR). No caller passes anything else,
   // and none of it is reachable from a request.
+  //
+  // `emailWithheldSql` is the same shape one level up (R228): the four
+  // conditions that hold a row back without scheduling it, built once so the
+  // retry claim and the queue monitor cannot disagree about what claimable
+  // means. `alias` is the table name the predicate is written against and
+  // `exemptTemplates` is the suppression exemption list — bound as `$5` by the
+  // claim, and inlined by the monitor, which has no parameters, through
+  // `suppressionExemptSql`. That builder refuses any key that is not a bare
+  // identifier, and both arguments are string literals at their two call sites;
+  // nothing here is reachable from a request.
   'src/services/valuation/src/repos/emailOutbox.ts': [
     "retryScheduleSql('$2', 'email_outbox.attempts + 1', '$4', '$5')",
     "retryScheduleSql('$2', 'email_outbox.attempts', '$4', '$5')",
+    'alias',
+    'exemptTemplates',
+    "emailWithheldSql('email_outbox', '$5::text[]')",
   ],
 
   // `column` indexes NOTIFIED_COLUMN with a two-member union type.
   'src/services/valuation/src/repos/jobAlerts.ts': ['column'],
 
-  // `from` is a JOB_SOURCES entry; the helpers take literal arguments.
+  // `from` is a JOB_SOURCES entry; the helpers take literal arguments —
+  // including `emailWithheldSql`, the monitor's half of the shared claim
+  // predicate (R228), whose exemption list is built by `suppressionExemptSql`
+  // and refuses any key that is not a bare identifier.
   'src/services/valuation/src/repos/jobs.ts': [
+    "emailWithheldSql('e', suppressionExemptSql())",
     'from',
     "statusCase('ai_job', 'j.status')",
     "statusCase('calculation', 'c.status')",

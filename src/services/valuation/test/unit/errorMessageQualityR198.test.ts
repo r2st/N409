@@ -64,7 +64,11 @@ describe('an upstream failure names the work, not the component', () => {
     const problem = toProblem(err);
     expect(problem.status).toBe(429);
     expect(problem.retryAfterSeconds).toBe(45);
-    expect(problem.detail).toContain('45s');
+    // The figure, in the wording `retryPhrase` settled on afterwards — it
+    // coarsens the limiter's spurious precision, and R198's own `45s` spelling
+    // was one of the three it replaced. What is pinned is that the wait reaches
+    // the reader at all.
+    expect(problem.detail).toContain('45 seconds');
     expect(problem.detail).toContain('request allowance');
   });
 

@@ -487,7 +487,11 @@ describe('an upstream that is rate limited, not broken', () => {
     // `retry-after` is a header a browser does not show anybody.
     expect(problem.detail).toContain('The AI analysis could not be completed');
     expect(problem.detail).toContain('request allowance');
-    expect(problem.detail).toContain('90s');
+    // `retryPhrase` rounds a minute-and-a-half up to "about 2 minutes" on
+    // purpose: under a minute stays in seconds, above it the exact figure is
+    // spurious by the time it is read. The pin is that the wait is in the
+    // prose, not only in the header.
+    expect(problem.detail).toContain('2 minutes');
   });
 
   it('still answers 429 when the upstream stated no wait', async () => {
