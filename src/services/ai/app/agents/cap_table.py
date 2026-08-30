@@ -59,6 +59,21 @@ _STRUCTURE_SYSTEM = (
 )
 
 
+def _shares(count: float) -> str:
+    """A share count as an analyst reads it.
+
+    `f"{n:g}"` was the spelling here and it switches to exponent notation above
+    a million — which every share count on a cap table is. "parsed share total
+    8e+06 does not reconcile with the stated total 5.0001e+06" is a validation
+    issue that tells its reader neither figure, in the one place they are being
+    asked to compare two numbers.
+    """
+    rounded = round(count, 4)
+    if rounded == int(rounded):
+        return f"{int(rounded):,}"
+    return f"{rounded:,.4f}".rstrip("0").rstrip(".")
+
+
 def _canon_kind(raw: Any) -> str | None:
     text = str(raw or "").strip().lower()
     if text in _KINDS:
@@ -142,20 +157,50 @@ def _normalize_class(raw: Any) -> tuple[dict | None, list[str]]:
     return cls, issues
 
 
-def _validate(share_classes: list[dict], total_stated: float | None) -> dict:
+def _validate(
+    share_classes: list[dict],
+    total_stated: float | None,
+    *,
+    identified_count: int = 0,
+    returned_count: int = 0,
+) -> dict:
+    """The deterministic third pass. See the module docstring.
+
+    `identified_count` and `returned_count` are how many classes the reading
+    step named and how many the structuring step returned. They are compared
+    rather than merely recorded because the structuring prompt makes a promise
+    — "do not add classes", "keep every number identical" — that nothing
+    checked in either direction. A second model call that invents a class
+    inflates the fully-diluted denominator every per-share figure is struck
+    against; one that quietly omits a class deflates it. Neither leaves a trace
+    otherwise: the reconciliation below only fires when the documents happened
+    to state a fully-diluted total, and `total_shares_stated` is null on most
+    charters.
+
+    Counts, not names, because the two steps legitimately re-spell a class
+    ("Series A Preferred Stock" → "Series A Preferred") and an issue an analyst
+    cannot act on is worse than none. A count is exact.
+    """
     computed = round(sum(cl["shares"] for cl in share_classes), 4)
     issues: list[str] = []
     has_common = any(cl["kind"] == "common" for cl in share_classes)
     if not has_common:
         issues.append("no common class parsed — the engine requires at least one")
+    if identified_count and returned_count and returned_count != identified_count:
+        issues.append(
+            f"the structuring step returned {returned_count} classes from the "
+            f"{identified_count} the reading step identified — a class was "
+            f"{'added' if returned_count > identified_count else 'lost'} between the "
+            f"two passes; check the list against the documents before using it"
+        )
     matches: bool | None = None
     if total_stated is not None and total_stated > 0:
         # Preferred convert as-converted, so a tolerance beats an exact match.
         matches = abs(computed - total_stated) <= max(1.0, 0.01 * total_stated)
         if not matches:
             issues.append(
-                f"parsed share total {computed:g} does not reconcile with the "
-                f"stated total {total_stated:g}"
+                f"parsed share total {_shares(computed)} does not reconcile with "
+                f"the stated total {_shares(total_stated)}"
             )
     return {
         "share_total_computed": computed,
@@ -232,9 +277,11 @@ Only include values the documents actually contain."""
 
     first = c.ask(red, identify_system, identify_user, model)
     identified_doc = c.safe_result(first)
-    identified = (
-        identified_doc.get("classes") if isinstance(identified_doc, dict) else None
-    ) or []
+    identified_raw = identified_doc.get("classes") if isinstance(identified_doc, dict) else None
+    # A non-list here is a model answering off-contract, and `len(identified)` is
+    # now load-bearing — a dict of classes would count its keys and reconcile
+    # against nothing meaningful.
+    identified = identified_raw if isinstance(identified_raw, list) else []
     total_stated = (
         c.to_number(identified_doc.get("total_shares_stated"))
         if isinstance(identified_doc, dict)
@@ -263,13 +310,44 @@ in dollars. Lower seniority number = paid first. Do not add classes."""
 
     share_classes: list[dict] = []
     all_issues: list[str] = []
+    # Two entries for one class is the failure this loop has to catch, because
+    # nothing downstream can. The engine takes the list as given, so a "Series A
+    # Preferred" returned twice is 2,000,000 shares counted as 4,000,000: the
+    # fully-diluted denominator every per-share figure divides by, doubled by a
+    # model repeating itself. It is also invisible — the reconciliation against
+    # `total_shares_stated` is the only thing that would notice, and most
+    # charters state no fully-diluted total, so `reconciles` comes back null and
+    # the run reads as clean.
+    #
+    # Kind travels in the key: an option pool named after the class it sits under
+    # is a real cap table, and refusing that would drop a class the documents do
+    # contain. A repeat of the same name *and* kind is not.
+    seen: set[tuple[str, str]] = set()
     for raw in raw_classes[:40]:
         cls, issues = _normalize_class(raw)
         all_issues.extend(issues)
-        if cls is not None:
-            share_classes.append(cls)
+        if cls is None:
+            continue
+        key = (cls["name"].strip().lower(), cls["kind"])
+        if key in seen:
+            # Dropped rather than merged: two rows for one class disagreeing on
+            # a share count is a reading the analyst has to settle, and silently
+            # keeping either one would be this code making that call.
+            all_issues.append(
+                f"'{cls['name']}': returned twice as a {cls['kind']} class — the "
+                f"second entry ({_shares(cls['shares'])} shares) was dropped; check "
+                f"the share count against the documents"
+            )
+            continue
+        seen.add(key)
+        share_classes.append(cls)
 
-    validation = _validate(share_classes, total_stated)
+    validation = _validate(
+        share_classes,
+        total_stated,
+        identified_count=len(identified),
+        returned_count=len(raw_classes),
+    )
     validation["issues"] = [*all_issues, *validation["issues"]][:20]
 
     result = {
