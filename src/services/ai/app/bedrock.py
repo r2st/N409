@@ -51,11 +51,14 @@ import httpx
 from .llm_http import (
     MAX_RETRIES,
     TRUNCATED_FINISH_REASONS,
+    BudgetExhausted as _BudgetExhausted,
     Deadline,
     DeadlineExceeded as _BaseDeadlineExceeded,
+    TokenLedger,
     backoff_sleep,
     env_float,
     env_int,
+    estimate_tokens,
     stop_reason as _read_stop_reason,
     token_count,
 )
@@ -91,6 +94,26 @@ class BedrockNotConfigured(BedrockError):
 
 class DeadlineExceeded(BedrockError, _BaseDeadlineExceeded):
     """Raised when the whole-call budget ran out before Bedrock answered."""
+
+
+class TokenBudgetExceeded(BedrockError):
+    """Raised when BEDROCK_TOKEN_BUDGET is spent."""
+
+
+#: This provider's share of the process's spend, and its own ceiling.
+#:
+#: Bedrock had neither. `OPENROUTER_TOKEN_BUDGET` is documented as the guard
+#: against a runaway loop "once a paid key is configured", and every Bedrock
+#: invocation is billed to the operator's own AWS account — so the one provider
+#: whose spend is certain was the one outside the ledger. `/ready`'s
+#: `tokens_used` reported zero for an installation routing every prompt here,
+#: and no ceiling anywhere would have stopped a loop doing it.
+_budget = TokenLedger("BEDROCK_TOKEN_BUDGET")
+
+
+def tokens_used() -> int:
+    """Cumulative Bedrock tokens consumed by this process (surfaced on /ready)."""
+    return _budget.used
 
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -330,6 +353,11 @@ class KeyStatus:
         return self.state == "valid"
 
 
+def reset_budget() -> None:
+    """Drop the running token total (tests only)."""
+    _budget.reset()
+
+
 def reset_key_cache() -> None:
     global _key_cache
     with _key_lock:
@@ -483,6 +511,11 @@ def chat(
         raise BedrockNotConfigured(
             "Bedrock is not configured (BEDROCK_REGION and AWS credentials required)"
         )
+    # Fail fast before spending anything if the ceiling is already reached.
+    try:
+        _budget.check()
+    except _BudgetExhausted as exc:
+        raise TokenBudgetExceeded(str(exc)) from exc
 
     model_id = strip_prefix(model) if model else default_model()
     owns_client = client is None
@@ -510,6 +543,14 @@ def chat(
             raise BedrockError(f"{model_id}: empty completion")
 
         prompt_tokens, completion_tokens = _usage(data)
+        # A response that reported no usage still spent something. The estimate
+        # goes to the ledger only — `LlmResult` keeps the counters exactly as
+        # they arrived, so nothing downstream can mistake a guess for a
+        # measurement. Same rule, and the same reason, as `openrouter.chat`.
+        self_total = prompt_tokens + completion_tokens
+        estimated = self_total == 0
+        billed = estimate_tokens(system, user, content) if estimated else self_total
+        cumulative = _budget.add(billed)
         finish_reason = _stop_reason(data)
         if finish_reason in TRUNCATED_FINISH_REASONS:
             # The operator who has to raise BEDROCK_MAX_TOKENS has no other way
@@ -529,7 +570,9 @@ def chat(
             extra={
                 "event": "llm_usage",
                 "model": f"{MODEL_PREFIX}{model_id}",
-                "tokens": prompt_tokens + completion_tokens,
+                "tokens": billed,
+                "tokens_total": cumulative,
+                "detail": "estimated" if estimated else "reported",
             },
         )
         return LlmResult(

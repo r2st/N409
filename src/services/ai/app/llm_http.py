@@ -14,6 +14,9 @@ itself. One `Deadline`, imported.
 
 from __future__ import annotations
 
+import math
+import os
+import threading
 import time
 
 # One HTTP attempt's ceiling. `Deadline.attempt_timeout` never exceeds it.
@@ -190,3 +193,82 @@ def stop_reason(data: dict) -> str | None:
     """
     reason = data.get("stopReason")
     return reason if isinstance(reason, str) and reason else None
+
+
+# ── Spend accounting ─────────────────────────────────────────────────────────
+#
+# Two providers answer prompts here, and both cost money on somebody's account.
+# The ledger lived inside `openrouter` with an OpenRouter-shaped name, so
+# Bedrock — the provider that is *always* billed, against the operator's own AWS
+# account — spent outside it entirely: `/ready` reported a lifetime spend of
+# zero however hard the service had been working, and the ceiling documented as
+# "the one guard against a runaway loop once a paid key is configured" did not
+# apply to the only key that is certainly paid.
+#
+# One ledger class, one instance per provider, each with its own env-named cap:
+# the counts stay separable (an operator asking what OpenRouter cost this
+# process gets that answer, not a sum), and neither provider's ceiling is
+# spent by the other's traffic.
+
+#: Characters per token, for the estimate below. Deliberately crude: this feeds a
+#: safety cap, not an invoice.
+CHARS_PER_TOKEN = 4
+
+
+def estimate_tokens(*texts: str) -> int:
+    """A rough token count for text nobody counted for us.
+
+    `usage` is optional in every completion shape here and providers omit it —
+    free tiers routinely, and a billed provider on a bad response. Coerced to 0,
+    those calls leave the ledger exactly where they found it, so the token
+    ceiling is unenforceable against precisely the calls least accounted for.
+    """
+    return max(1, math.ceil(sum(len(t) for t in texts) / CHARS_PER_TOKEN))
+
+
+class BudgetExhausted(Exception):
+    """Raised when a provider's process-lifetime token ceiling is spent.
+
+    Each provider re-raises this as its own error type, so callers keep
+    catching one exception per provider.
+    """
+
+
+class TokenLedger:
+    """Best-effort, process-lifetime token accounting + optional hard cap.
+
+    `cap_env` (total tokens) guards against a runaway/abusive loop; 0/unset
+    means unlimited. In-process, not cluster-wide — a coarse safety net, not
+    billing.
+    """
+
+    def __init__(self, cap_env: str) -> None:
+        self.cap_env = cap_env
+        self._lock = threading.Lock()
+        self._used = 0
+
+    def cap(self) -> int:
+        raw = os.environ.get(self.cap_env)
+        try:
+            return max(0, int(raw)) if raw else 0
+        except ValueError:
+            return 0
+
+    def check(self) -> None:
+        cap = self.cap()
+        if cap and self._used >= cap:
+            raise BudgetExhausted(f"{self.cap_env} exhausted ({self._used}/{cap})")
+
+    def add(self, tokens: int) -> int:
+        with self._lock:
+            self._used += max(0, tokens)
+            return self._used
+
+    def reset(self) -> None:
+        """Drop the running total (tests only)."""
+        with self._lock:
+            self._used = 0
+
+    @property
+    def used(self) -> int:
+        return self._used

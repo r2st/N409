@@ -20,14 +20,18 @@ from dataclasses import dataclass
 import httpx
 
 from .llm_http import (
+    CHARS_PER_TOKEN,
     MAX_RETRIES,
     MIN_ATTEMPT_S,
     RETRY_BACKOFF_BASE_S,
     TIMEOUT_S,
     TRUNCATED_FINISH_REASONS,
+    BudgetExhausted as _BudgetExhausted,
     Deadline as _Deadline,
     DeadlineExceeded as _BaseDeadlineExceeded,
+    TokenLedger,
     backoff_sleep as _backoff_sleep,
+    estimate_tokens as _estimate_tokens,
     finish_reason as _read_finish_reason,
     token_count as _token_count,
 )
@@ -170,48 +174,22 @@ def max_output_tokens() -> int:
     return DEFAULT_MAX_TOKENS
 
 
-class _TokenBudget:
-    """Best-effort, process-lifetime token accounting + optional hard cap.
-
-    OPENROUTER_TOKEN_BUDGET (total tokens) guards against a runaway/abusive loop
-    once a paid key is configured; 0/unset means unlimited. This is in-process
-    (not cluster-wide) — a coarse safety net, not billing.
-    """
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._used = 0
-
-    @staticmethod
-    def _cap() -> int:
-        raw = os.environ.get("OPENROUTER_TOKEN_BUDGET")
-        try:
-            return max(0, int(raw)) if raw else 0
-        except ValueError:
-            return 0
-
-    def check(self) -> None:
-        cap = self._cap()
-        if cap and self._used >= cap:
-            raise TokenBudgetExceeded(
-                f"OpenRouter token budget exhausted ({self._used}/{cap})"
-            )
-
-    def add(self, tokens: int) -> int:
-        with self._lock:
-            self._used += max(0, tokens)
-            return self._used
-
-    @property
-    def used(self) -> int:
-        return self._used
+#: This provider's share of the process's spend, and its own ceiling.
+#: `TokenLedger` lives in `llm_http` because Bedrock needs one too and had none —
+#: see the note there.
+_budget = TokenLedger("OPENROUTER_TOKEN_BUDGET")
 
 
-_budget = _TokenBudget()
+def _check_budget() -> None:
+    """Refuse before spending anything when the ceiling is already reached."""
+    try:
+        _budget.check()
+    except _BudgetExhausted as exc:
+        raise TokenBudgetExceeded(str(exc)) from exc
 
 
 def tokens_used() -> int:
-    """Cumulative tokens consumed by this process (surfaced on /ready)."""
+    """Cumulative OpenRouter tokens consumed by this process (on /ready)."""
     return _budget.used
 
 
@@ -453,9 +431,7 @@ MAX_RETRY_AFTER_S = 3600.0
 # a day and its headers are inconsistent about saying so, so this is not a
 # prediction — it is the shortest interval at which asking again is polite.
 DEFAULT_RETRY_AFTER_S = 60.0
-# Characters per token, for the estimate below. Deliberately crude: this feeds a
-# safety cap, not an invoice.
-CHARS_PER_TOKEN = 4
+# CHARS_PER_TOKEN and the estimate that uses it are shared — see `llm_http`.
 
 
 def _retry_after_seconds(resp: httpx.Response) -> float | None:
@@ -498,19 +474,6 @@ def _clamp_wait(seconds: float) -> float | None:
     if not math.isfinite(seconds) or seconds <= 0:
         return None
     return min(seconds, MAX_RETRY_AFTER_S)
-
-
-def _estimate_tokens(*texts: str) -> int:
-    """A rough token count for text nobody counted for us.
-
-    `usage` is optional in the chat-completions shape and several free-tier
-    models omit it entirely. Coerced to 0, those calls left `_budget` exactly
-    where they found it — so OPENROUTER_TOKEN_BUDGET, the one guard against a
-    runaway loop on a paid key, was unenforceable against precisely the models
-    most likely to be looping, and `/ready` reported a lifetime spend of zero
-    however hard the service had been working.
-    """
-    return max(1, math.ceil(sum(len(t) for t in texts) / CHARS_PER_TOKEN))
 
 
 def _finish_reason(data: dict) -> str | None:
@@ -580,7 +543,7 @@ def chat(
     (from the prompt registry) at the head of the fallback chain.
     """
     # Fail fast before spending anything if the budget is already exhausted.
-    _budget.check()
+    _check_budget()
     owns_client = client is None
     http = client or httpx.Client(timeout=TIMEOUT_S)
     deadline = _Deadline(call_budget_s())

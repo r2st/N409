@@ -34,6 +34,7 @@ from .openrouter import (
     verify_api_key,
 )
 from .bedrock import is_configured as bedrock_configured
+from .bedrock import tokens_used as bedrock_tokens_used
 from .bedrock import verify_credentials as verify_bedrock_credentials
 from .output_schema import validate_result
 from .research import (
@@ -409,6 +410,11 @@ def ready(request: Request) -> JSONResponse:
         aws = verify_bedrock_credentials()
         checks["bedrock_credentials"] = aws.state
         checks["bedrock_credentials_detail"] = aws.detail
+        # Reported separately rather than folded into `tokens_used`, which has
+        # always been OpenRouter's figure and is read as such. Two providers,
+        # two accounts, two ceilings — a sum would answer neither "what has
+        # OpenRouter cost this process" nor "what has AWS".
+        checks["bedrock_tokens_used"] = bedrock_tokens_used()
     if not key.ok:
         # Logged here rather than left only in the response, because the reason
         # has just stopped being public: an operator who can no longer read it

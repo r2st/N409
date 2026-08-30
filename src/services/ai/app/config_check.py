@@ -180,6 +180,16 @@ SPECS: tuple[EnvSpec, ...] = (
         true_tokens=frozenset({"1", "true", "yes"}),
         false_tokens=frozenset({"0", "false", "no"}),
     ),
+    # ── Bedrock: the other completion provider, billed to the operator's own
+    # AWS account. Only the ceiling is specced here, for the reason this module
+    # exists: an unparseable value reads as unlimited, so the one variable whose
+    # whole purpose is to bound spend removes the bound when it is mistyped.
+    EnvSpec(
+        name="BEDROCK_TOKEN_BUDGET",
+        effect="is the process-lifetime token ceiling for Bedrock, and an unusable value reads as unlimited",
+        kind="int",
+        minimum=0,
+    ),
     # ── Research: which index answers, and how long it may take ──────────────
     EnvSpec(
         name="RESEARCH_PROVIDER",

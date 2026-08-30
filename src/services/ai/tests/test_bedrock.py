@@ -53,11 +53,15 @@ def _clean_env(monkeypatch):
         "BEDROCK_MODEL",
         "BEDROCK_MAX_TOKENS",
         "BEDROCK_CALL_BUDGET_S",
+        "BEDROCK_TOKEN_BUDGET",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("BEDROCK_TOKEN_BUDGET", raising=False)
     bedrock.reset_key_cache()
+    bedrock.reset_budget()
     yield
     bedrock.reset_key_cache()
+    bedrock.reset_budget()
 
 
 def configure(monkeypatch, *, token: str | None = None) -> None:
@@ -412,6 +416,82 @@ class TestChat:
         result = chat("s", "u", model=PREFIXED, client=transport(handler))
         assert result.content == '{"ok": true}'
         assert result.total_tokens == 0
+
+
+class TestSpendAccounting:
+    """Bedrock's tokens were counted nowhere.
+
+    `OPENROUTER_TOKEN_BUDGET` is documented as the guard against a runaway loop
+    "once a paid key is configured", and every Bedrock call is billed to the
+    operator's own AWS account — so the one provider whose spend is certain sat
+    outside the ledger entirely. `/ready` reported a lifetime spend of zero for
+    an installation routing every prompt here, and no ceiling would have stopped
+    a loop doing it.
+    """
+
+    def test_counts_the_tokens_a_response_reported(self, monkeypatch):
+        configure(monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=CONVERSE_OK)
+
+        chat("s", "u", model=PREFIXED, client=transport(handler))
+        assert bedrock.tokens_used() == 160
+
+    def test_estimates_when_the_response_counted_nothing(self, monkeypatch):
+        # A guess, and only the ledger sees it: `LlmResult` keeps the counters
+        # exactly as they arrived so nothing downstream mistakes one for a
+        # measurement. Same rule as the OpenRouter client.
+        configure(monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={**CONVERSE_OK, "usage": {}})
+
+        result = chat("s", "u", model=PREFIXED, client=transport(handler))
+        assert result.total_tokens == 0
+        assert bedrock.tokens_used() > 0
+
+    def test_refuses_once_the_ceiling_is_reached(self, monkeypatch):
+        configure(monkeypatch)
+        monkeypatch.setenv("BEDROCK_TOKEN_BUDGET", "100")
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(200, json=CONVERSE_OK)
+
+        client = transport(handler)
+        chat("s", "u", model=PREFIXED, client=client)  # spends 160 of 100
+        with pytest.raises(bedrock.TokenBudgetExceeded, match="BEDROCK_TOKEN_BUDGET"):
+            chat("s", "u", model=PREFIXED, client=client)
+        # Refused before the request was sent, which is the whole point.
+        assert calls == 1
+
+    def test_an_exhausted_ceiling_reaches_callers_as_the_error_they_catch(self, monkeypatch):
+        # Every caller in this service catches OpenRouterError as "the LLM could
+        # not answer"; a budget refusal escaping as its own type would be a 500.
+        configure(monkeypatch)
+        monkeypatch.setenv("BEDROCK_TOKEN_BUDGET", "1")
+        bedrock._budget.add(10)
+        with pytest.raises(OpenRouterError, match="BEDROCK_TOKEN_BUDGET"):
+            llm_router.chat("s", "u", model=PREFIXED)
+
+    def test_the_two_providers_ledgers_are_separate(self, monkeypatch):
+        # A sum answers neither "what has OpenRouter cost this process" nor
+        # "what has AWS", and one provider's traffic must not spend the other's
+        # ceiling.
+        from app import openrouter
+
+        configure(monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=CONVERSE_OK)
+
+        before = openrouter.tokens_used()
+        chat("s", "u", model=PREFIXED, client=transport(handler))
+        assert openrouter.tokens_used() == before
+        assert bedrock.tokens_used() == 160
 
 
 # ── Credential verification ──────────────────────────────────────────────────
