@@ -543,13 +543,35 @@ def _resolve_discounts(
                 "not both — the two would disagree about which discount was concluded"
             )
         detail = _blended_dlom(blend_in, params, volatility, t, r, volatility_basis)
-        dlom = float(detail["dlom"])
+        dlom = _concluded_dlom(detail["dlom"])
         _check_discount_range(dloc, dlom)
-        return Discounts(dloc, round(dlom, 4), dloc_method, dloc_detail, "weighted", detail)
+        return Discounts(dloc, dlom, dloc_method, dloc_detail, "weighted", detail)
 
     dlom, method, detail = _single_dlom(params, volatility, t, r, volatility_basis)
+    dlom = _concluded_dlom(dlom)
     _check_discount_range(dloc, dlom)
-    return Discounts(dloc, round(dlom, 4), dloc_method, dloc_detail, method, detail)
+    return Discounts(dloc, dlom, dloc_method, dloc_detail, method, detail)
+
+
+def _concluded_dlom(dlom: float) -> float:
+    """The DLOM as it is applied and reported: four decimals.
+
+    Rounded *before* `_check_discount_range` rather than after, because the
+    check is about the figure the conclusion is struck with and the figure the
+    exhibit prints, and until this ran in that order those were not the number
+    that had been checked.
+
+    A stated DLOM of 0.99996 is a fraction in [0, 1) and cleared the guard; four
+    decimals later it is 1.0, and `1.0 - dlom` is exactly zero. So the run
+    concluded a fair market value of $0.0000 per share, reported "DLOM 100.0%"
+    on the discount exhibit, and made the DLOC beside it unfalsifiable — the
+    three things `_check_discount_range`'s docstring says the engine refuses.
+    Reachable through `params.dlom` and through `dlom_method: qualitative`,
+    which are the two paths that take an analyst's figure without a model to
+    cap it; the model and study paths all clamp at `_MAX_DLOM` (0.99) and never
+    reach the quantum.
+    """
+    return round(dlom, 4)
 
 
 def _check_discount_range(dloc: float, dlom: float) -> None:
@@ -561,7 +583,13 @@ def _check_discount_range(dloc: float, dlom: float) -> None:
     make the other one unfalsifiable.
     """
     if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
-        raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
+        # The figures, because the DLOM arrives here rounded to the four
+        # decimals it is applied and reported at (`_concluded_dlom`): a stated
+        # 0.99996 is refused as 1.0, and a message that named neither left the
+        # analyst comparing their input against a bound it satisfies.
+        raise EngineInputError(
+            f"dloc/dlom must be fractions in [0, 1) (dloc {dloc:g}, dlom {dlom:g})"
+        )
 
 
 def _single_dlom(
