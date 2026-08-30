@@ -13,8 +13,11 @@ import { clampScheduleMonths } from '../domain/vesting.js';
 import {
   IMPORT_TIMEOUT_MS,
   IntegrationError,
+  MAX_PROVIDER_PAGES,
+  nextPageUrl,
   OAUTH_TIMEOUT_MS,
   providerRefused,
+  providerSaysMore,
   readJson,
   storableProviderText,
   withDeadline,
@@ -403,29 +406,99 @@ export function mapEmployees(payload: unknown): {
   return { roster, grants, rejected };
 }
 
+/**
+ * Every page of the provider's employee list, or a refusal saying it did not
+ * fit.
+ *
+ * This asked once and mapped the answer. Nothing in these three APIs promises
+ * that one request is the whole roster — all of them page, at defaults in the
+ * tens — so a company past that default imported a *prefix* of its employees
+ * and every figure downstream said so with the wording it uses for a complete
+ * pull: `roster_count`, `grants_found`, and an ASC 718 expense struck over the
+ * options it had seen.
+ *
+ * Silent is the part that makes it worth a round. A truncated import looks
+ * exactly like a small company. Nothing on the connection card, in the sync
+ * summary or in the audit trail distinguishes "40 employees" from "the first 40
+ * of 180", and the analyst's next act is to sign an expense figure that is
+ * missing the rest.
+ *
+ * So the pages are followed where the provider hands over something followable
+ * — an absolute URL on its own API host, bounded by {@link MAX_PROVIDER_PAGES}
+ * — and refused where it says there is more in a spelling this platform cannot
+ * act on. Refused rather than reported: `HrisSyncOutcome` is counts, and a
+ * count that quietly means "so far" is the silent cap this estate answers with
+ * `truncated` everywhere it is a display list. This is not a display list; it
+ * is the population an accounting figure is struck over.
+ */
+async function fetchEmployeePages(
+  provider: HrisProvider,
+  accessToken: string,
+  fetchFn: FetchFn,
+): Promise<Record<string, unknown>[]> {
+  const label = HRIS_PROVIDER_LABELS[provider];
+  const e = ENDPOINTS[provider];
+  const pages: Record<string, unknown>[] = [];
+  let url = `${e.apiBase}/v1/employees?include=equity`;
+  for (let page = 0; page < MAX_PROVIDER_PAGES; page++) {
+    const res = await withDeadline(label, IMPORT_TIMEOUT_MS, (signal) =>
+      fetchFn(url, {
+        headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' },
+        signal,
+      }),
+    );
+    // Through the shared refusal, like every other outbound call in this
+    // estate. These two sites — this and the token exchange above — were the
+    // last that wrote the status into a sentence themselves, which meant a
+    // rate-limited provider was reported as "Gusto roster fetch failed (429)".
+    // That reads like a broken integration and prompts exactly the wrong
+    // response: pressing Import now again, immediately, which is how a rate
+    // limit becomes a longer one. `providerRefused` answers a 429 with the
+    // provider's own Retry-After instead, and leaves every other status with
+    // the wording it had.
+    if (!res.ok) throw providerRefused(label, 'roster fetch', res);
+    const payload = await readJson(res, label);
+    pages.push(payload);
+    const next = nextPageUrl(payload, e.apiBase);
+    if (!next) {
+      const said = providerSaysMore(payload);
+      if (said) {
+        throw new IntegrationError(
+          `${label} says its employee list continues past this page ("${said}"), and does not give a ` +
+            'link this platform can follow — so the roster and the grants pulled from it would be a ' +
+            'prefix of the company reported as all of it. Import the remaining grants from a CSV, or ' +
+            'ask support to add paging for this provider.',
+        );
+      }
+      return pages;
+    }
+    url = next;
+  }
+  throw new IntegrationError(
+    `${label} is still returning more employees after ${MAX_PROVIDER_PAGES} pages — the roster would ` +
+      'be a prefix of the company reported as all of it. Import the grants from a CSV instead.',
+  );
+}
+
 export async function fetchRosterAndGrants(
   provider: HrisProvider,
   tokens: { accessToken: string; externalCompanyId: string | null; externalCompanyName: string | null },
   fetchFn: FetchFn = fetch,
 ): Promise<HrisPull> {
-  const e = ENDPOINTS[provider];
-  const res = await withDeadline(HRIS_PROVIDER_LABELS[provider], IMPORT_TIMEOUT_MS, (signal) =>
-    fetchFn(`${e.apiBase}/v1/employees?include=equity`, {
-      headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
-      signal,
-    }),
-  );
-  // Through the shared refusal, like every other outbound call in this estate.
-  // These two sites — this and the token exchange above — were the last that
-  // wrote the status into a sentence themselves, which meant a rate-limited
-  // provider was reported as "Gusto roster fetch failed (429)". That reads like
-  // a broken integration and prompts exactly the wrong response: pressing
-  // Import now again, immediately, which is how a rate limit becomes a longer
-  // one. `providerRefused` answers a 429 with the provider's own Retry-After
-  // instead, and leaves every other status with the wording it had.
-  if (!res.ok) throw providerRefused(HRIS_PROVIDER_LABELS[provider], 'roster fetch', res);
-  const payload = await readJson(res, HRIS_PROVIDER_LABELS[provider]);
-  const { roster, grants, rejected } = mapEmployees(payload);
+  const pages = await fetchEmployeePages(provider, tokens.accessToken, fetchFn);
+  const roster: RosterEmployee[] = [];
+  const grants: MappedGrant[] = [];
+  let rejected = 0;
+  for (const page of pages) {
+    const mapped = mapEmployees(page);
+    roster.push(...mapped.roster);
+    grants.push(...mapped.grants);
+    rejected += mapped.rejected;
+  }
+  // The company name is a property of the connection, not of a page, so the
+  // first page that names one wins — the later pages of a cursor walk routinely
+  // carry only the records.
+  const payload = pages.find((p) => storableText(p.companyName, MAX_COMPANY_NAME) !== null) ?? {};
   return {
     provider,
     // The cast said this was a string; `readJson` guarantees an object and

@@ -394,3 +394,92 @@ export function storableProviderText(value: unknown, max: number = MAX_PROVIDER_
   if (!trimmed || trimmed.length > max) return null;
   return findUnstorableText(trimmed) ? null : trimmed;
 }
+
+/**
+ * How many pages of one provider collection this platform will pull.
+ *
+ * A bound rather than a loop, for the reason every sweep in this estate carries
+ * one: the page after this one is described by the page before it, so a
+ * provider that answers every request with a `next` pointing at itself is an
+ * unbounded fetch loop inside a request handler. Twenty pages is four thousand
+ * employees at the smallest page size any of these providers uses, which is
+ * past the largest roster this platform has an engagement for.
+ */
+export const MAX_PROVIDER_PAGES = 20;
+
+/** Keys that carry "there is another page" as a link, and as a flag. */
+const NEXT_LINK_KEYS = ['next', 'next_url', 'nextUrl', 'next_page', 'nextPage'] as const;
+const MORE_FLAG_KEYS = ['has_more', 'hasMore', 'next_cursor', 'nextCursor', 'next_page_token'] as const;
+/** Where a provider nests its paging block when it does not put it at the top. */
+const PAGING_CONTAINERS = ['meta', 'paging', 'pagination', 'links', 'page_info', 'pageInfo'] as const;
+
+function pagingBlocks(payload: Record<string, unknown>): Record<string, unknown>[] {
+  const blocks = [payload];
+  for (const key of PAGING_CONTAINERS) {
+    const value = payload[key];
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      blocks.push(value as Record<string, unknown>);
+    }
+  }
+  return blocks;
+}
+
+/**
+ * The next page's URL, when the provider gave one this client can follow.
+ *
+ * Only an absolute URL under the provider's own API base is returned. A `next`
+ * is a string that came out of a third party's JSON and is about to become a
+ * request carrying this engagement's bearer token: pointed at another host it
+ * is a credential handed to whoever wrote the payload, which is the shape
+ * `domain/externalUrl.ts` exists to refuse everywhere else. A relative one is
+ * left unfollowed rather than resolved, because resolving it is a guess about a
+ * convention this platform cannot check.
+ */
+export function nextPageUrl(payload: Record<string, unknown>, apiBase: string): string | null {
+  for (const block of pagingBlocks(payload)) {
+    for (const key of NEXT_LINK_KEYS) {
+      const raw = block[key];
+      if (typeof raw !== 'string' || !raw.trim()) continue;
+      let url: URL;
+      try {
+        url = new URL(raw);
+      } catch {
+        continue;
+      }
+      if (url.origin === new URL(apiBase).origin) return url.toString();
+    }
+  }
+  return null;
+}
+
+/**
+ * The key by which the provider said there is more, or null.
+ *
+ * Read after {@link nextPageUrl} has already failed to find something
+ * followable: what is left is a provider that has told us its answer is partial
+ * in a spelling this platform cannot act on — a bare cursor, a `has_more` with
+ * no link, a `next` pointing somewhere else.
+ *
+ * That is worth refusing over rather than reporting, and the reason is what
+ * sits downstream. An HRIS pull's `roster_count` and `grants_found` are read as
+ * the company's roster; the grants become an ASC 718 expense, which is a
+ * disclosed accounting figure struck over the population of options
+ * outstanding. A page of it, reported with the same wording as all of it, is a
+ * clean-looking wrong number — the failure mode these import paths exist to
+ * refuse.
+ */
+export function providerSaysMore(payload: Record<string, unknown>): string | null {
+  for (const block of pagingBlocks(payload)) {
+    for (const key of MORE_FLAG_KEYS) {
+      const raw = block[key];
+      if (typeof raw === 'boolean' && raw) return key;
+      if (typeof raw === 'string' && raw.trim()) return key;
+      if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return key;
+    }
+    for (const key of NEXT_LINK_KEYS) {
+      const raw = block[key];
+      if (typeof raw === 'string' && raw.trim()) return key;
+    }
+  }
+  return null;
+}
