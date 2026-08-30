@@ -171,13 +171,28 @@ describe.skipIf(!dbUp)('a cap-table sync failure carries only wording we authore
     expect(res.json().detail).toBe("Carta sync failed — the details are in the connection's last error");
   });
 
-  it('still records the real error against the connection', async () => {
-    // The wording withheld from the client has to be somewhere, or the fix
-    // trades a disclosure for a blind spot.
+  it('withholds it from the connection column too, and says where it went', async () => {
+    /**
+     * This asserted `last_error` contained "duplicate key" — the fix's own
+     * promise that the withheld wording was still *somewhere*, made when the
+     * column was the somewhere. R257 took it out of there as well, and for the
+     * same reason the body lost it: `toPublic` returns `last_error` verbatim
+     * and the card draws it, so the column is a second door to the same
+     * screen, not a private note. The assertion was left pointing at the old
+     * behaviour.
+     *
+     * The promise still has to hold, and where R257 moved it is the log line,
+     * which carries `err` intact — at the level the failure earned since R258.
+     * That half is asserted in `test/unit/connectorSyncLog.test.ts`, where the
+     * logger can be seen: the one here is a Fastify child, and a spy on
+     * `app.log` never sees a child's writes.
+     */
     const { rows } = await ctx.pool.query<{ last_error: string | null }>(
       'SELECT last_error FROM cap_table_connections WHERE valuation_id = $1',
       [valuationId],
     );
-    expect(rows[0]?.last_error).toContain('duplicate key');
+    expect(rows[0]?.last_error).not.toContain('duplicate key');
+    expect(rows[0]?.last_error).not.toContain('cap_table_entries_valuation_class_idx');
+    expect(rows[0]?.last_error).toContain('service log');
   });
 });

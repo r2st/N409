@@ -91,6 +91,22 @@ describe('a connector sync failure is logged at the level it earned', () => {
     expect(log.lines[0]!.fields).toMatchObject({ alert: true, failure_reason: 'http.404', scheduled: false });
   });
 
+  it('alerts on the driver error the analyst is deliberately not shown', () => {
+    // R257 stopped publishing this wording in the body *and* in `last_error`,
+    // both of which a client reads. The promise that came with it — the real
+    // error is still somewhere — is this line, and a driver error is nobody's
+    // transient blip: `logFailure` classifies it permanent and stamps the flag
+    // an alert rule reads.
+    const log = recorder();
+    const driver = Object.assign(new Error('duplicate key value violates unique constraint "x_idx"'), {
+      code: '23505',
+      severity: 'ERROR',
+    });
+    logConnectorSyncFailure(log, driver, subject, { scheduled: true });
+    expect(log.lines[0]!.level).toBe('error');
+    expect(log.lines[0]!.fields).toMatchObject({ alert: true, failure_reason: 'pg.23505', err: driver });
+  });
+
   it('carries how long this has been going on, which neither level can show', () => {
     const log = recorder();
     logConnectorSyncFailure(log, new Error('boom'), subject, { scheduled: true });
