@@ -15,7 +15,12 @@ import logging
 
 import pytest
 
-from app.observability import JsonLogFormatter, redact
+from app.observability import (
+    MAX_REQUEST_ID_CHARS,
+    JsonLogFormatter,
+    acceptable_request_id,
+    redact,
+)
 
 
 def line(record: logging.LogRecord, service: str | None = "engine-wrapper") -> dict:
@@ -149,3 +154,37 @@ class TestRedaction:
         assert "founder@acme.com" not in out["exc"]
         assert "[EMAIL]" in out["exc"]
         assert "ValueError" in out["exc"]  # still diagnosable
+
+
+class TestInboundRequestId:
+    """An `x-request-id` is adopted only if it is one.
+
+    The rule `packages/shared/src/requestContext.ts` states for the three
+    Fastify services, whose doc counts *five*: the valuation service forwards
+    its id here and to the AI gateway, and every line of all five carries it.
+    These two took the header verbatim, which is exactly what that rule exists
+    to replace — an 8 KB header becomes 8 KB on every line of the trace, and a
+    whitespace- or control-bearing id does not survive the journal query a join
+    is made of.
+    """
+
+    def test_refuses_one_past_the_ceiling(self) -> None:
+        assert acceptable_request_id("x" * (MAX_REQUEST_ID_CHARS + 1)) is None
+
+    def test_refuses_one_that_would_not_survive_a_grep(self) -> None:
+        for hostile in ["has space", "new\nline", "semi;colon", "quote\"mark", "brace{}"]:
+            assert acceptable_request_id(hostile) is None, hostile
+
+    def test_refuses_an_absent_or_empty_header(self) -> None:
+        assert acceptable_request_id(None) is None
+        assert acceptable_request_id("") is None
+
+    def test_adopts_the_shapes_tracing_actually_emits(self) -> None:
+        for ok in [
+            "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "4bf92f3577b34da6a3ce929d0e0e4736",
+            "req-abc-123",
+            "x" * MAX_REQUEST_ID_CHARS,
+        ]:
+            assert acceptable_request_id(ok) == ok, ok

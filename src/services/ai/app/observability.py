@@ -136,6 +136,48 @@ def redact(text: str) -> str:
     return text
 
 
+# The most of an inbound ``x-request-id`` this hop will repeat.
+#
+# Matches ``MAX_REQUEST_ID_CHARS`` in packages/shared: a UUID is 36 characters, a
+# ULID 26, a W3C trace id 32, so this is far above any real id and is a ceiling
+# on what one request can cost.
+MAX_REQUEST_ID_CHARS = 128
+
+# What an id is made of: the unreserved URL characters plus the separators
+# tracing formats already use.
+_ACCEPTABLE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._~:@=+-]+$")
+
+
+def acceptable_request_id(raw: str | None) -> str | None:
+    """An inbound ``x-request-id``, if it is one, and ``None`` if it is anything else.
+
+    The Python half of the rule `packages/shared/src/requestContext.ts` states
+    for the three Fastify services. Those adopt the header through
+    ``requestIdFromHeaders``; these two took it verbatim, which is the behaviour
+    that rule exists to replace — and the doc there counts *five* services,
+    because the valuation service forwards its id to the engine and the AI
+    gateway and every line of all five carries it.
+
+    Two halves. The length, because an 8 KB header — the most Node's limit
+    allows — becomes 8 KB on every line of a five-service trace, in a journal on
+    a box with 3.8 GB of memory; nothing about it is malformed, it is simply a
+    string the estate agreed to repeat without bound. And the charset, because
+    an id is a value things are *joined* on: the JSON formatter escapes a
+    newline rather than letting it forge a second line, but a control character
+    in an id does not survive the grep or the journal query that a join is made
+    of.
+
+    A refusal is not an error. The caller sent something this hop will not
+    adopt, and the answer is the id it would have minted anyway — the request is
+    served and it is correlatable, just not under a name a client chose.
+    """
+    if not raw:
+        return None
+    if len(raw) > MAX_REQUEST_ID_CHARS:
+        return None
+    return raw if _ACCEPTABLE_REQUEST_ID.match(raw) else None
+
+
 def current_request_id() -> str:
     return _request_id.get()
 
@@ -199,8 +241,7 @@ def make_request_context_middleware(service: str):
     access_log = logging.getLogger(service)
 
     async def request_context_middleware(request: Request, call_next):
-        incoming = request.headers.get(REQUEST_ID_HEADER)
-        request_id = incoming if incoming else uuid.uuid4().hex
+        request_id = acceptable_request_id(request.headers.get(REQUEST_ID_HEADER)) or uuid.uuid4().hex
         token = _request_id.set(request_id)
         started = time.perf_counter()
         status = 500

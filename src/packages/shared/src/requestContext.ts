@@ -203,6 +203,12 @@ export const MAX_REQUEST_ID_CHARS = 128;
  * A refusal is not an error. The caller sent something this hop will not adopt,
  * and the answer is the id it would have minted anyway — the request is served,
  * and it is correlatable, just not under a name a client chose.
+ *
+ * The count of five is deliberate, and this file can only enforce three of
+ * them. The Python pair holds the same rule in its own vocabulary —
+ * `acceptable_request_id` in each service's `app/observability.py`, same
+ * ceiling and same charset — because a rule the TS side states about five
+ * services and applies to three is a rule with two doors left open.
  */
 export function acceptableRequestId(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;

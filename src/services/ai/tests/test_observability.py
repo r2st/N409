@@ -117,3 +117,40 @@ def test_a_string_dimension_is_redacted_like_the_message():
     record.detail = "contact analyst@example.com"
     parsed = json.loads(JsonLogFormatter().format(record))
     assert parsed["detail"] == "contact [EMAIL]"
+
+
+def test_an_absurd_inbound_request_id_is_not_adopted():
+    """The rule `packages/shared` states for the three Fastify services.
+
+    Those validate the header before adopting it; these two took it verbatim,
+    so a caller could name itself with 8 KB that then rode every line of a
+    five-service trace. The request is still served and still correlated —
+    under the id this hop would have minted anyway.
+    """
+    res = client.get("/health", headers={"x-request-id": "x" * 200})
+    assert res.status_code == 200
+    assert res.headers["x-request-id"] != "x" * 200
+    assert len(res.headers["x-request-id"]) <= 128
+
+
+def test_an_inbound_request_id_that_would_not_survive_a_grep_is_not_adopted():
+    # An id is a value things are joined on. The formatter escapes a newline
+    # rather than letting it forge a second log line, but neither a space nor a
+    # control character survives the journal query a join is made of.
+    for hostile in ["has space", "semi;colon", "quote\"mark"]:
+        res = client.get("/health", headers={"x-request-id": hostile})
+        assert res.status_code == 200
+        assert res.headers["x-request-id"] != hostile
+
+
+def test_an_ordinary_traced_id_is_still_adopted():
+    # The whole point of adopting one at all: the caller's id, not a fresh one
+    # per hop. A UUID, a ULID and a W3C trace id all pass.
+    for ok in [
+        "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "4bf92f3577b34da6a3ce929d0e0e4736",
+        "req-abc-123",
+    ]:
+        res = client.get("/health", headers={"x-request-id": ok})
+        assert res.headers["x-request-id"] == ok
