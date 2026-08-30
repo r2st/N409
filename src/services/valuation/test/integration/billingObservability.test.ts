@@ -25,7 +25,8 @@ import { pino } from 'pino';
 import { Writable } from 'node:stream';
 import { newUlid } from '@n409/shared';
 import { createUser } from '../../src/repos/users.js';
-import { isDbAvailable, setupTestApp, type TestApp } from './helpers.js';
+import { createPayment } from '../../src/repos/payments.js';
+import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const WEBHOOK_SECRET = 'whsec_billing_observability';
 const dbUp = await isDbAvailable();
@@ -211,5 +212,125 @@ describe.skipIf(!dbUp)('a declined renewal on the billing webhook', () => {
    */
   it('is reading a log stream at all', () => {
     expect(lines.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * And the one-time flow's version of the same silence.
+ *
+ * A delayed-notification debit (ACH, SEPA, Bacs) bouncing days after the client
+ * clicked through Checkout is the one payment outcome with a gap between what
+ * the client believes and what the row says. It marked the payment failed and
+ * notified the client and the billing group, and — like the dunning path above
+ * — `alertBilling` writes a line only when its own notification insert fails,
+ * so the settlement failing left nothing in this service's log.
+ */
+describe.skipIf(!dbUp)('a delayed payment method that fails to settle', () => {
+  let ctx: TestApp;
+  let ops: { id: string; email: string; token: string };
+  let lines: Array<Record<string, unknown>>;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, LOG_LEVEL: 'info' });
+    ops = await seedUser(ctx, { roles: ['admin'] });
+    lines = [];
+    (ctx.app.log as unknown as Record<symbol, unknown>)[pino.symbols.streamSym] = new Writable({
+      write(chunk, _enc, cb) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        cb();
+      },
+    });
+  });
+  afterAll(async () => ctx?.teardown());
+
+  it('names the session, the payment and the engagement it left unpaid', async () => {
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(ops.token),
+      payload: { kind: '409a', company_name: 'Bounced Debit Co' },
+    });
+    expect(created.statusCode).toBe(201);
+    const valuationId = created.json().valuation.id as string;
+    const payment = await createPayment(ctx.pool, {
+      valuationId,
+      sessionId: 'cs_obs_ach_failed',
+      amountCents: 250_000,
+      currency: 'USD',
+      createdBy: ops.id,
+    });
+
+    const event = {
+      id: 'evt_obs_ach_failed',
+      type: 'checkout.session.async_payment_failed',
+      created: Math.floor(Date.UTC(2026, 2, 3, 10, 0, 0) / 1000),
+      data: { object: { id: 'cs_obs_ach_failed', object: 'checkout.session' } },
+    };
+    const payload = JSON.stringify(event);
+    const mark = lines.length;
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/stripe/webhook',
+      headers: signedHeaders(payload),
+      payload,
+    });
+    expect(res.statusCode).toBe(200);
+
+    const line = lines.slice(mark).find((l) => String(l.msg).includes('failed to settle'));
+    expect(line).toBeDefined();
+    expect(line!.sessionId).toBe('cs_obs_ach_failed');
+    expect(line!.paymentId).toBe(payment.id);
+    expect(line!.valuationId).toBe(valuationId);
+    expect(line!.amountCents).toBe(250_000);
+    expect(line!.currency).toBe('USD');
+    // The delivery, from the child logger the handler binds.
+    expect(line!.stripeEventId).toBe('evt_obs_ach_failed');
+    // The engagement is correctly unpaid and both the client and the billing
+    // group have been told, so nothing is waiting on a person of ours.
+    expect(line!.level).toBe('warn');
+    expect(line!.alert).toBeUndefined();
+  });
+
+  /**
+   * And not a second time. The compare-and-set that stops the notification
+   * going out twice is upstream of the line, so a redelivery must be as quiet
+   * as it is harmless.
+   */
+  it('says it once, however many times Stripe delivers it', async () => {
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(ops.token),
+      payload: { kind: '409a', company_name: 'Bounced Twice Co' },
+    });
+    const valuationId = created.json().valuation.id as string;
+    await createPayment(ctx.pool, {
+      valuationId,
+      sessionId: 'cs_obs_ach_replay',
+      amountCents: 100_000,
+      currency: 'USD',
+      createdBy: ops.id,
+    });
+    const deliver = (eventId: string) => {
+      const payload = JSON.stringify({
+        id: eventId,
+        type: 'checkout.session.async_payment_failed',
+        created: Math.floor(Date.UTC(2026, 2, 3, 11, 0, 0) / 1000),
+        data: { object: { id: 'cs_obs_ach_replay', object: 'checkout.session' } },
+      });
+      return ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/stripe/webhook',
+        headers: signedHeaders(payload),
+        payload,
+      });
+    };
+    await deliver('evt_obs_ach_replay_1');
+
+    const mark = lines.length;
+    // A different event id, so the ledger cannot collapse it — the same way
+    // `invoice.paid` and `invoice.payment_succeeded` arrive for one payment.
+    await deliver('evt_obs_ach_replay_2');
+    expect(lines.slice(mark).filter((l) => String(l.msg).includes('failed to settle'))).toHaveLength(0);
   });
 });

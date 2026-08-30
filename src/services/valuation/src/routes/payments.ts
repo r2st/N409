@@ -1725,6 +1725,36 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // reasons: the alert below is one a redelivery must not send twice.
         if (await markPayment(deps.pool, payment.id, 'failed', { from: ['pending'] })) {
           const valuation = await findValuationById(deps.pool, payment.valuation_id);
+          /*
+           * Said out loud as well as notified, which it was not.
+           *
+           * The alert below reaches the client and the billing group and stops
+           * there: `alertBilling` writes a log line only when its own
+           * notification insert fails, so a debit bouncing days after a client
+           * believed they had paid left no trace in this service's log. That is
+           * the one payment outcome with a gap between what the client thinks
+           * and what the row says, and it was the outcome with nothing to read
+           * — a failure rate over a window, a run of them against one payment
+           * method, or the delivery itself could not be got at from here.
+           *
+           * `warn` rather than an alert: the engagement is correctly unpaid,
+           * both the client and the billing group have been told, and the
+           * remedy is the client starting the payment again. Nothing here is
+           * waiting on a person of ours.
+           */
+          log.warn(
+            {
+              actorType: 'system',
+              source: 'stripe',
+              sessionId,
+              paymentId: payment.id,
+              valuationId: payment.valuation_id,
+              userId: valuation?.user_id ?? null,
+              amountCents: Number(payment.amount_cents),
+              currency: payment.currency,
+            },
+            'delayed payment method failed to settle — the engagement is still unpaid',
+          );
           await alertBilling(log, {
             valuationId: payment.valuation_id,
             ownerId: valuation?.user_id ?? null,
