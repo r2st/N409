@@ -428,6 +428,27 @@ export async function runAiPipeline(
   );
   const knownPeople = clientName ? [clientName] : [];
 
+  /*
+   * What actually goes to the model, and — below — what the job row says went.
+   *
+   * These were two different sets. `createAiJob` recorded `document_ids` off
+   * `documents`, the engagement's whole corpus, while the payload carried
+   * `encodeDocuments`'s output: the extractable formats, under the per-file
+   * ceiling, up to ten of them, within the request byte budget, minus anything
+   * that would not read. And on the QA and narrative runs, which pass
+   * `includeDocuments: false` because those agents judge outputs rather than
+   * sources, the payload carried *nothing* while the row still listed every
+   * file on the engagement.
+   *
+   * The field's own comment is "which docs went in". A defensibility record
+   * naming documents a run never saw is worse than one naming none: it is the
+   * evidence somebody would reach for to say what an extraction was drawn
+   * from. `encodeDocuments` already logs each drop; this is the same fact
+   * written where it is read back.
+   */
+  const encoded =
+    args.includeDocuments === false ? [] : await encodeDocuments(deps.documentsDir, documents, deps.log);
+
   const payload = {
     valuation: {
       id: valuation.id,
@@ -437,8 +458,7 @@ export async function runAiPipeline(
       service_countries: valuation.service_countries,
     },
     params,
-    documents:
-      args.includeDocuments === false ? [] : await encodeDocuments(deps.documentsDir, documents, deps.log),
+    documents: encoded,
     prompt: promptRow ? { system: promptRow.system_prompt, model: promptRow.model } : null,
     ...(narrativeSections ? { narrative_sections: narrativeSections } : {}),
     ...(researchPayload ? { market_research: researchPayload } : {}),
@@ -457,7 +477,11 @@ export async function runAiPipeline(
     pipeline,
     // Persist provenance, not payloads: which docs went in, not their bytes.
     input: {
-      document_ids: documents.map((d) => d.id),
+      document_ids: encoded.map((d) => String(d.id)),
+      // How much of the corpus that was, so a reader can tell "the engagement
+      // had nothing on it" from "the run was sent a subset" without going to
+      // the log line that says which.
+      documents_on_file: documents.length,
       company_name: valuation.company_name,
     },
     createdBy: args.createdBy,
