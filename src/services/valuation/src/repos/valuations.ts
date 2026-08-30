@@ -15,6 +15,7 @@ import { OPERATIONS_EVENT_TYPES, STATE_GROUPS, stateGroupOf, type StateGroup } f
 import { namedBucket, namedBucketsFor, NAMED_BUCKET_KEYS, type NamedBucketKey } from '../domain/workflow.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import type { ValuationScope } from '../auth/rbac.js';
+import { publicPartnerNameSql } from './branding.js';
 
 export interface ValuationRow {
   id: string;
@@ -1145,6 +1146,21 @@ export async function dashboardActivity(
 /**
  * The CSV/XLSX export projection.
  *
+ * The firm is named by `publicPartnerNameSql` rather than by `partners.name`.
+ * This read was declared an internal one by `partnerNameCensus` on the grounds
+ * that the engagement export is "an ops/firm-internal roster rather than a
+ * document a client receives", and that premise is contradicted by the export
+ * itself: `exportColumnsVisibleTo` exists precisely because a client and a
+ * partner member download this file too, and its own note reasons about what
+ * they see — "`owner_email` and `partner_name` stay for everyone". So the one
+ * column a white-labelled firm's client read was the ops channel label, in the
+ * same file as the brand name they see everywhere else in the product.
+ *
+ * Resolved for every reader rather than per-projection, because the column has
+ * one meaning and the rule already degrades correctly for ops: a firm with the
+ * switch off still reads as its channel label, and a firm with it on is named
+ * by the name it goes by.
+ *
  * `sort` is honoured here for the same reason the route parses it: an export is
  * the list the caller is looking at, in a file. It used to be dropped — the
  * route validated the caller's sort, rejected a bad one with a 400, and then
@@ -1163,7 +1179,7 @@ export async function exportValuations(
   params.push(limit);
   const { rows } = await pool.query(
     `SELECT v.id, v.number, v.workflow_id, v.kind, v.state, v.company_name, v.service_name,
-            u.email AS owner_email, p.name AS partner_name, v.source, v.currency,
+            u.email AS owner_email, ${publicPartnerNameSql('p')} AS partner_name, v.source, v.currency,
             v.paid_status, v.waiting_on_client, r.email AS reviewer_email,
             v.created_at, v.due_date, v.published_at
      FROM valuations v

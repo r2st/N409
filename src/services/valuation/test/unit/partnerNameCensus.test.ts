@@ -27,6 +27,23 @@ import { publicPartnerNameSql } from '../../src/repos/branding.js';
  * be named here as an internal one. An admin console showing ops which channel
  * a row belongs to genuinely wants the ops label; a message leaving the
  * building does not.
+ *
+ * ## An exemption is a claim about the reader, and one of them was wrong
+ *
+ * `repos/valuations.ts` was on this list as "an ops/firm-internal roster rather
+ * than a document a client receives". The engagement export is not that:
+ * `/api/v1/valuations/export` is behind `app.authenticate` and nothing more,
+ * and `routes/exports.ts` has a whole per-reader projection
+ * (`OPS_ONLY_EXPORT_COLUMNS`) that exists *because* clients and partner members
+ * download it — its own note settles `partner_name` with "stay for everyone".
+ * So the file every client of a white-labelled firm could download was the one
+ * place in the product still calling that firm by its ops channel label.
+ *
+ * Which is the failure mode of a list like this one: the offending line is
+ * matched precisely, and then waved through by a sentence about who reads it
+ * that nobody re-checks when the surface grows a new reader. The remaining
+ * entries each name a console or a subject-access record, not a file a client
+ * can ask for.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -51,8 +68,6 @@ const INTERNAL: Record<string, string> = {
     'The ops user console: which channel a person belongs to, for the people who named the channel.',
   'repos/invitations.ts': 'The ops invitation console, same reader as above.',
   'repos/apiTokens.ts': 'The ops token console — a key is administered against the channel, not the brand.',
-  'repos/valuations.ts':
-    'The engagement export, an ops/firm-internal roster rather than a document a client receives.',
   'repos/dataExport.ts':
     'The Art. 15 export: a record of which channel holds the subject’s data, not a message addressed to them.',
 };
@@ -80,6 +95,31 @@ describe('partner name census', () => {
     for (const [rel, why] of Object.entries(INTERNAL)) {
       const text = readFileSync(join(SRC, rel), 'utf8');
       expect(/AS partner_name/.test(text), `${rel} no longer reads a partner name (${why})`).toBe(true);
+    }
+  });
+
+  /**
+   * Surfaces a reader outside the firm can obtain the file from, named
+   * positively.
+   *
+   * The census above goes green two ways — by fixing a read, or by adding a
+   * line to `INTERNAL` — and the second is how the engagement export stayed
+   * wrong. So the files whose reader is *not* ops are asserted here as well,
+   * where an exemption is not one of the available answers.
+   */
+  const CLIENT_READABLE: Record<string, string> = {
+    'repos/valuations.ts':
+      'GET /api/v1/valuations/export — any authenticated caller, within their own scope.',
+  };
+
+  it('a read a client can download resolves the brand name, exemption or not', () => {
+    for (const [rel, why] of Object.entries(CLIENT_READABLE)) {
+      expect(INTERNAL[rel], `${rel} may not be exempted (${why})`).toBeUndefined();
+      const lines = readFileSync(join(SRC, rel), 'utf8')
+        .split('\n')
+        .filter((line) => /AS partner_name/.test(line));
+      expect(lines.length, `${rel} no longer names a partner (${why})`).toBeGreaterThan(0);
+      for (const line of lines) expect(line, why).toContain('publicPartnerNameSql');
     }
   });
 
