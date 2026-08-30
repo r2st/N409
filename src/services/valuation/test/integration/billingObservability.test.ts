@@ -25,7 +25,7 @@ import { pino } from 'pino';
 import { Writable } from 'node:stream';
 import { newUlid } from '@n409/shared';
 import { createUser } from '../../src/repos/users.js';
-import { createPayment } from '../../src/repos/payments.js';
+import { createPayment, markPayment } from '../../src/repos/payments.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const WEBHOOK_SECRET = 'whsec_billing_observability';
@@ -741,6 +741,201 @@ describe.skipIf(!dbUp)('plan quota', () => {
     // Same period, a different fact about it — the shape Stripe sends most of.
     expect((await deliver('evt_obs_nogrant_2', { cancel_at_period_end: true })).statusCode).toBe(200);
     expect(lines.slice(mark).find((l) => String(l.msg).includes('quota granted'))).toBeUndefined();
+  });
+
+  it('is reading a log stream at all', () => {
+    expect(lines.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Money going back out, which reached the audit trail in R215 and the
+ * notification centre before that and the log never.
+ *
+ * `auditPayment` writes a line only when its own insert fails and
+ * `alertBilling` only when its notification insert does, so a refund that
+ * worked and a chargeback that opened were both invisible here. The trail
+ * answers "what happened to this engagement" a row at a time; what nothing
+ * could answer was how much went back out over a window, or which delivery a
+ * reversal arrived on — `evt_…` is not a column on the trail.
+ */
+describe.skipIf(!dbUp)('a reversal on the payments webhook', () => {
+  let ctx: TestApp;
+  let ops: { id: string; email: string; token: string };
+  let lines: Array<Record<string, unknown>>;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, LOG_LEVEL: 'info' });
+    ops = await seedUser(ctx, { roles: ['admin'] });
+    lines = [];
+    (ctx.app.log as unknown as Record<symbol, unknown>)[pino.symbols.streamSym] = new Writable({
+      write(chunk, _enc, cb) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        cb();
+      },
+    });
+  });
+  afterAll(async () => ctx?.teardown());
+
+  /** A settled engagement payment, which is what a reversal needs to arrive at. */
+  const settledPayment = async (
+    companyName: string,
+    sessionId: string,
+    chargeId: string,
+  ): Promise<{ valuationId: string; paymentId: string }> => {
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(ops.token),
+      payload: { kind: '409a', company_name: companyName },
+    });
+    expect(created.statusCode).toBe(201);
+    const valuationId = created.json().valuation.id as string;
+    const payment = await createPayment(ctx.pool, {
+      valuationId,
+      sessionId,
+      amountCents: 200_000,
+      currency: 'USD',
+      createdBy: ops.id,
+    });
+    await markPayment(ctx.pool, payment.id, 'succeeded', { from: ['pending'] });
+    await ctx.pool.query(`UPDATE payments SET charge_id = $1 WHERE id = $2`, [chargeId, payment.id]);
+    return { valuationId, paymentId: payment.id };
+  };
+
+  const deliver = (event: unknown) => {
+    const payload = JSON.stringify(event);
+    return ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/stripe/webhook',
+      headers: signedHeaders(payload),
+      payload,
+    });
+  };
+
+  it('says how much came back and whether the engagement kept its payment', async () => {
+    const { valuationId, paymentId } = await settledPayment(
+      'Partly Refunded Co',
+      'cs_obs_refund',
+      'ch_obs_refund',
+    );
+
+    const mark = lines.length;
+    expect(
+      (
+        await deliver({
+          id: 'evt_obs_refund_1',
+          type: 'charge.refunded',
+          created: Math.floor(Date.UTC(2026, 2, 5, 9, 0, 0) / 1000),
+          data: {
+            object: {
+              id: 'ch_obs_refund',
+              object: 'charge',
+              currency: 'usd',
+              amount_refunded: 50_000,
+            },
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const line = lines.slice(mark).find((l) => String(l.msg).includes('partially refunded'));
+    expect(line).toBeDefined();
+    expect(line!.paymentId).toBe(paymentId);
+    expect(line!.valuationId).toBe(valuationId);
+    expect(line!.refundedCents).toBe(50_000);
+    expect(line!.amountCents).toBe(200_000);
+    expect(line!.fullyRefunded).toBe(false);
+    // The delivery, so the line joins to the Stripe dashboard the way the
+    // audit row's `stripe_event_id` does.
+    expect(line!.stripeEventId).toBe('evt_obs_refund_1');
+  });
+
+  it('says it once however many times the refund is delivered', async () => {
+    await settledPayment('Refunded Twice Co', 'cs_obs_refund_replay', 'ch_obs_refund_replay');
+    const refund = (eventId: string) => ({
+      id: eventId,
+      type: 'charge.refunded',
+      created: Math.floor(Date.UTC(2026, 2, 5, 10, 0, 0) / 1000),
+      data: {
+        object: {
+          id: 'ch_obs_refund_replay',
+          object: 'charge',
+          currency: 'usd',
+          amount_refunded: 200_000,
+        },
+      },
+    });
+    await deliver(refund('evt_obs_refund_replay_1'));
+
+    const mark = lines.length;
+    await deliver(refund('evt_obs_refund_replay_2'));
+    // The compare-and-set that stops a second audit row and a second
+    // notification is upstream of the line, so the redelivery is as quiet as it
+    // is harmless.
+    expect(lines.slice(mark).filter((l) => String(l.msg).includes('refunded'))).toHaveLength(0);
+  });
+
+  it('alerts when a chargeback opens, because the deadline is the point', async () => {
+    const { valuationId, paymentId } = await settledPayment(
+      'Disputed Co',
+      'cs_obs_dispute',
+      'ch_obs_dispute',
+    );
+
+    const mark = lines.length;
+    expect(
+      (
+        await deliver({
+          id: 'evt_obs_dispute_1',
+          type: 'charge.dispute.created',
+          created: Math.floor(Date.UTC(2026, 2, 5, 11, 0, 0) / 1000),
+          data: {
+            object: {
+              id: 'dp_obs_dispute',
+              object: 'dispute',
+              charge: 'ch_obs_dispute',
+              status: 'needs_response',
+            },
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const alert = lines.slice(mark).find((l) => l.alert === true);
+    expect(alert).toBeDefined();
+    expect(alert!.paymentId).toBe(paymentId);
+    expect(alert!.valuationId).toBe(valuationId);
+    expect(alert!.disputeStatus).toBe('open');
+    expect(alert!.chargeId).toBe('ch_obs_dispute');
+    expect(alert!.stripeEventId).toBe('evt_obs_dispute_1');
+  });
+
+  it('does not alert for a chargeback we won', async () => {
+    await settledPayment('Won Dispute Co', 'cs_obs_dispute_won', 'ch_obs_dispute_won');
+
+    const mark = lines.length;
+    expect(
+      (
+        await deliver({
+          id: 'evt_obs_dispute_won',
+          type: 'charge.dispute.closed',
+          created: Math.floor(Date.UTC(2026, 2, 5, 12, 0, 0) / 1000),
+          data: {
+            object: {
+              id: 'dp_obs_dispute_won',
+              object: 'dispute',
+              charge: 'ch_obs_dispute_won',
+              status: 'won',
+            },
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    expect(lines.slice(mark).find((l) => l.alert === true)).toBeUndefined();
+    // Still recorded: a dispute won is the record that the money stayed.
+    expect(lines.slice(mark).find((l) => String(l.msg).includes('in our favour'))).toBeDefined();
   });
 
   it('is reading a log stream at all', () => {

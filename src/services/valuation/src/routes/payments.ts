@@ -1103,6 +1103,38 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       currency: payment.currency,
       fully_refunded: state.fullyRefunded,
     });
+    /*
+     * The same fact on the log side, which had none.
+     *
+     * Money going back out reached the audit trail in R215 and the notification
+     * centre before that, and produced no log line at any point: `auditPayment`
+     * logs only when its own insert fails and `alertBilling` only when its
+     * notification insert does, so a refund that worked was invisible here.
+     * The trail answers "what happened to this engagement" one row at a time;
+     * what nothing could answer was "how much went back out this week", or
+     * which delivery a reversal arrived on, since `evt_…` is not a column on
+     * the trail's payload index.
+     *
+     * `recorded` above is the compare-and-set saying this delivery is the one
+     * that moved the figure, so a redelivery adds no line — the same gate the
+     * audit row and the notification are behind.
+     */
+    log.info(
+      {
+        actorType: 'system',
+        source: 'stripe',
+        paymentId: payment.id,
+        valuationId: payment.valuation_id,
+        chargeId: typeof charge.id === 'string' ? charge.id : null,
+        refundedCents: state.refundedCents,
+        amountCents: Number(payment.amount_cents),
+        currency: payment.currency,
+        fullyRefunded: state.fullyRefunded,
+      },
+      state.fullyRefunded
+        ? 'payment refunded in full — the engagement is being taken off paid'
+        : 'payment partially refunded — the engagement remains paid',
+    );
     if (state.fullyRefunded) {
       await revokePaidStatus(log, recorded, 'The payment was refunded in full.');
     } else {
@@ -1222,6 +1254,42 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       amount_cents: Number(payment.amount_cents),
       currency: payment.currency,
     });
+    /*
+     * And the chargeback, which is the one billing event with a clock on it.
+     *
+     * Like the refund above it wrote a row and two notifications and no log
+     * line. Unlike the refund, an open dispute has an evidence deadline of days
+     * that nobody can extend, no automatic remedy, and a cost — the fee stands
+     * whichever way it goes — so it is the money event that most needs to reach
+     * whoever is not reading the notification centre this week. `alert: true`
+     * for `open` and `lost` on that reasoning and on the contract's: no retry
+     * of ours is coming and only a person changes the outcome. A dispute won is
+     * the record that the money stayed, which is worth counting and not worth
+     * waking anybody for.
+     *
+     * Behind `recorded`, so the deliveries Stripe fans out for one verdict
+     * produce one line.
+     */
+    const disputeFields = {
+      actorType: 'system' as const,
+      source: 'stripe' as const,
+      paymentId: payment.id,
+      valuationId: payment.valuation_id,
+      chargeId: typeof dispute.charge === 'string' ? dispute.charge : null,
+      disputeStatus: status,
+      amountCents: Number(payment.amount_cents),
+      currency: payment.currency,
+    };
+    if (status === 'won') {
+      log.info(disputeFields, 'chargeback decided in our favour — the engagement stands');
+    } else {
+      log.error(
+        { ...disputeFields, alert: true },
+        status === 'open'
+          ? 'chargeback opened — evidence is due in Stripe before the response deadline'
+          : 'chargeback decided against us — the engagement is being taken off paid',
+      );
+    }
     if (status === 'lost') {
       await revokePaidStatus(log, recorded, 'A chargeback was decided against us.');
     } else if (status === 'open') {
