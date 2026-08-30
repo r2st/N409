@@ -138,6 +138,28 @@ export const FORMAT_PRESETS: readonly FormatPreset[] = [
   },
 ] as const;
 
+/**
+ * The most entries one `cap_tables` row may hold, on every path into it.
+ *
+ * The import routes have enforced this since a pasted CSV was found to be
+ * bounded only by its two megabytes of text: a table refused as `rows` was
+ * accepted as `csv` and persisted, and hundreds of thousands of entries in one
+ * JSON document is then loaded whole by every reader of that valuation — the
+ * workbook export, the waterfall projection, the graph, the report exhibits,
+ * the monitoring scan's batch fetch.
+ *
+ * Stated here rather than in `routes/capTable.ts` because the routes are not
+ * the only writer. The provider sync maps whatever the provider's JSON holds
+ * and hands it to `saveCapTable` unbounded — and its body cap is 16 MB of JSON,
+ * which is tens of thousands of securities. Pulley's payload is a flat
+ * `securities` list rather than a list of classes, so that is not a hostile
+ * shape, it is a large company's ordinary one.
+ *
+ * "A bound two of three callers enforce is not a bound" was the note when the
+ * pasted-CSV hole was closed; the sync was the fourth caller.
+ */
+export const MAX_CAP_TABLE_ENTRIES = 2000;
+
 export function presetByKey(key: string): FormatPreset | undefined {
   return FORMAT_PRESETS.find((p) => p.key === key);
 }

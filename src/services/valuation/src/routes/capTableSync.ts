@@ -28,7 +28,7 @@ import {
   type CapTableConnectionRow,
 } from '../repos/capTableConnections.js';
 import { findCapTable, saveCapTable } from '../repos/capTables.js';
-import { validateCapTable } from '../domain/capTable.js';
+import { MAX_CAP_TABLE_ENTRIES, validateCapTable } from '../domain/capTable.js';
 import { diffCapTables, type CapTableDiff } from '../domain/capTableSync.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -126,6 +126,36 @@ export async function syncCapTableConnection(
     const message = describeTransportFailure(err);
     await recordSyncError(deps.pool, connection.id, message).catch(() => undefined);
     throw err;
+  }
+
+  /*
+   * The row cap the import routes enforce, on the writer that had none.
+   *
+   * `saveCapTable` has four callers. Three of them are the import endpoints and
+   * all three refuse a table over `MAX_CAP_TABLE_ENTRIES` — the pasted-CSV path
+   * was the last to get it, on the reasoning that silently storing the first
+   * 2,000 rows of somebody's cap table is worse than refusing it. This one
+   * stored whatever the provider sent: the body cap is 16 MB of JSON, and
+   * Pulley's payload is a flat `securities` list rather than a list of classes,
+   * so tens of thousands of entries is a large company's ordinary shape rather
+   * than a hostile one.
+   *
+   * All of them land in a single `cap_tables.entries` document that every
+   * reader of the valuation loads whole — the workbook, the waterfall
+   * projection, the graph's node-and-edge build, the report exhibits, and the
+   * monitoring scan, which fetches every monitored valuation's table at once.
+   *
+   * Refused rather than truncated, and refused *before* the diff: a diff
+   * against a table this size is the same read. Recorded on the connection so
+   * a scheduled sync stops re-pulling it every fifteen minutes, which is what
+   * an unhandled throw here would leave it doing.
+   */
+  if (pulled.entries.length > MAX_CAP_TABLE_ENTRIES) {
+    const message =
+      `the provider returned ${pulled.entries.length} securities; at most ` +
+      `${MAX_CAP_TABLE_ENTRIES} can be stored as one cap table`;
+    await recordSyncError(deps.pool, connection.id, message).catch(() => undefined);
+    throw new IntegrationError(`${CAP_TABLE_PROVIDER_LABELS[connection.provider]}: ${message}`);
   }
 
   let diff, validation, applied;

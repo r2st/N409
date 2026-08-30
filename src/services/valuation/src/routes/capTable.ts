@@ -8,6 +8,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import {
   CAP_TABLE_FIELDS,
   CsvReadError,
+  MAX_CAP_TABLE_ENTRIES,
   FORMAT_PRESETS,
   parseCapTableSheet,
   parseCsvSheet,
@@ -54,13 +55,13 @@ export const MAX_CAP_TABLE_UPLOAD_BYTES = 10 * 1024 * 1024;
  * workbook export, the waterfall projection, the graph, the report exhibits.
  * A bound two of three callers enforce is not a bound.
  */
-const MAX_UPLOAD_ROWS = 2000;
+const MAX_UPLOAD_ROWS = MAX_CAP_TABLE_ENTRIES;
 
 const ImportBody = z.object({
   format: z.string().max(40).default('generic'),
   /** Raw CSV text, OR pre-parsed rows from a client-side parser. */
   csv: z.string().max(2_000_000).optional(),
-  rows: z.array(z.record(z.string(), z.unknown())).max(2000).optional(),
+  rows: z.array(z.record(z.string(), z.unknown())).max(MAX_CAP_TABLE_ENTRIES).optional(),
   /**
    * Source line of each entry of `rows`, as the upload endpoint reported it.
    *
@@ -73,7 +74,7 @@ const ImportBody = z.object({
    * Untrusted like any other body field, and only ever used to label a message,
    * so a client that sends nonsense mislabels its own errors and nothing else.
    */
-  source_lines: z.array(z.number().int().min(1)).max(2000).optional(),
+  source_lines: z.array(z.number().int().min(1)).max(MAX_CAP_TABLE_ENTRIES).optional(),
   /** field → source column overrides on top of the format preset. */
   mapping: z.record(z.string(), z.string()).optional(),
 });

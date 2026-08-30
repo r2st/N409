@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
 import { findCapTable } from '../../src/repos/capTables.js';
+import { MAX_CAP_TABLE_ENTRIES } from '../../src/domain/capTable.js';
 import { signCapTableSyncState } from '../../src/auth/jwt.js';
 import { runDueCapTableSyncs } from '../../src/routes/capTableSync.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
@@ -124,6 +125,50 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
     const saved = await findCapTable(ctx.pool, v.id);
     expect(saved?.source_format).toBe('carta');
     expect(saved?.entries.length).toBe(3);
+  });
+
+  /**
+   * R229, methodology M2 — the row cap the other three writers of
+   * `cap_tables.entries` enforce.
+   *
+   * The import endpoints refuse a table over `MAX_CAP_TABLE_ENTRIES`, on the
+   * reasoning that silently storing the first 2,000 rows of somebody's cap
+   * table is worse than refusing it. The sync stored whatever the provider
+   * sent: its body cap is 16 MB of JSON, and Pulley's payload is a flat
+   * `securities` list rather than a list of classes, so tens of thousands of
+   * entries is a large company's ordinary shape. All of them land in one JSONB
+   * document that every reader of the valuation loads whole.
+   */
+  it('refuses a provider pull larger than one cap table may hold', async () => {
+    const v = await seedValuation();
+    await connect(v.id);
+    payload = {
+      companyName: 'Acme Inc',
+      shareClasses: Array.from({ length: MAX_CAP_TABLE_ENTRIES + 1 }, (_, i) => ({
+        name: `Holding ${i}`,
+        type: 'common',
+        outstandingShares: 100,
+      })),
+    };
+
+    const pull = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/cap-table/sync/carta/pull`,
+      headers: authHeader(ops.token),
+      payload: { apply: true },
+    });
+    payload = CARTA_V1;
+
+    expect(pull.statusCode).toBeGreaterThanOrEqual(400);
+    expect(pull.json().detail).toContain(String(MAX_CAP_TABLE_ENTRIES));
+    // Refused, not truncated: nothing is on file for this valuation.
+    expect(await findCapTable(ctx.pool, v.id)).toBeNull();
+    // Recorded on the connection, so the scheduler stops re-pulling it.
+    const { rows } = await ctx.pool.query<{ last_error: string | null; status: string }>(
+      'SELECT last_error, status FROM cap_table_connections WHERE valuation_id = $1',
+      [v.id],
+    );
+    expect(rows[0]?.last_error).toContain('at most');
   });
 
   it('previews conflicts without applying, then applies when asked', async () => {
