@@ -100,6 +100,95 @@ describe('registerProblemHandler', () => {
     await app.close();
   });
 
+  /**
+   * The gap this closes: an `ApiProblem` was returned without a log line at
+   * any status, so every 5xx the estate raises *on purpose* — an unreachable
+   * engine turned into a 502 by `toProblem`, a 503 from a provider nobody
+   * configured — left the process with nothing but a status code behind it.
+   */
+  it('logs a 5xx ApiProblem at error, with the problem type and request context', async () => {
+    const lines: Array<{ level: string; fields: Record<string, unknown>; msg: string }> = [];
+    const app = Fastify({ logger: false });
+    app.addHook('onRequest', (req, _reply, done) => {
+      for (const level of ['warn', 'error'] as const) {
+        (req.log as unknown as Record<string, unknown>)[level] = (
+          fields: Record<string, unknown>,
+          msg: string,
+        ) => {
+          lines.push({ level, fields, msg });
+        };
+      }
+      done();
+    });
+    registerProblemHandler(app);
+    app.get('/boom', () => {
+      throw new ApiProblem({ status: 502, title: 'Bad Gateway', type: 'urn:n409:problem:upstream' });
+    });
+    const res = await app.inject({ method: 'GET', url: '/boom' });
+    expect(res.statusCode).toBe(502);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].level).toBe('error');
+    expect(lines[0].fields.problem_type).toBe('urn:n409:problem:upstream');
+    expect(lines[0].fields.status).toBe(502);
+    expect(lines[0].fields.method).toBe('GET');
+    await app.close();
+  });
+
+  /**
+   * A 4xx describes the request, not the server. Logging one is logging other
+   * people's mistakes at whatever rate they care to make them.
+   */
+  it('logs nothing for a 4xx ApiProblem', async () => {
+    const lines: string[] = [];
+    const app = Fastify({ logger: false });
+    app.addHook('onRequest', (req, _reply, done) => {
+      for (const level of ['warn', 'error'] as const) {
+        (req.log as unknown as Record<string, unknown>)[level] = (_f: unknown, msg: string) => {
+          lines.push(msg);
+        };
+      }
+      done();
+    });
+    registerProblemHandler(app);
+    app.get('/boom', () => {
+      throw problems.notFound('gone');
+    });
+    expect((await app.inject({ method: 'GET', url: '/boom' })).statusCode).toBe(404);
+    expect(lines).toEqual([]);
+    await app.close();
+  });
+
+  /**
+   * Maintenance mode is the one 5xx that is a planned state. It is refused once
+   * per mutating request for the length of the window, so it logs at `warn` —
+   * a planned window must not read as an incident, and must not be the reason
+   * an operator stops reading `error`.
+   */
+  it('logs an expected 5xx at warn rather than error', async () => {
+    const lines: Array<{ level: string; msg: string }> = [];
+    const app = Fastify({ logger: false });
+    app.addHook('onRequest', (req, _reply, done) => {
+      for (const level of ['warn', 'error'] as const) {
+        (req.log as unknown as Record<string, unknown>)[level] = (_f: unknown, msg: string) => {
+          lines.push({ level, msg });
+        };
+      }
+      done();
+    });
+    registerProblemHandler(app);
+    app.get('/boom', () => {
+      throw new ApiProblem({
+        status: 503,
+        title: 'Service Unavailable',
+        detail: 'maintenance',
+        expected: true,
+      });
+    });
+    expect((await app.inject({ method: 'GET', url: '/boom' })).statusCode).toBe(503);
+    expect(lines).toEqual([{ level: 'warn', msg: 'request refused' }]);
+    await app.close();
+  });
+
   it('renders a generic ApiProblem as application/problem+json', async () => {
     const app = Fastify();
     registerProblemHandler(app);

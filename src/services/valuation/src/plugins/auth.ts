@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type pg from 'pg';
-import { bindActor, problems, type RequestApiToken } from '@n409/shared';
+import { ApiProblem, bindActor, problems, type RequestApiToken } from '@n409/shared';
 import { verifySession, type JwtConfig } from '../auth/jwt.js';
 import { SESSION_COOKIE } from '../auth/cookies.js';
 import { isOps, type Principal } from '../auth/rbac.js';
@@ -226,11 +226,31 @@ export function registerAuth(
     // stay up regardless.
     if (deps.settings && !READ_ONLY_METHODS.has(req.method) && !isOps(req.principal)) {
       if (await deps.settings.get('maintenance_mode')) {
-        throw problems.serviceUnavailable(
-          'The platform is in maintenance mode — changes are temporarily disabled.',
-        );
+        // `expected`: an operator turned this on, so the 503 is policy rather
+        // than breakage and the error handler logs it at `warn`. Without that
+        // a maintenance window files one `error` per refused write, for as
+        // long as the window lasts.
+        throw maintenanceMode();
       }
     }
+  });
+}
+
+/**
+ * The maintenance-mode refusal.
+ *
+ * Same body `problems.serviceUnavailable` produced, plus `expected` — the one
+ * 5xx on this platform that is a planned state rather than a failure, and the
+ * only one whose rate is set by how often clients poll rather than by how badly
+ * something is broken.
+ */
+function maintenanceMode(): ApiProblem {
+  return new ApiProblem({
+    status: 503,
+    title: 'Service Unavailable',
+    type: 'urn:n409:problem:unavailable',
+    detail: 'The platform is in maintenance mode — changes are temporarily disabled.',
+    expected: true,
   });
 }
 

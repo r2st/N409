@@ -235,6 +235,17 @@ export class ApiProblem extends Error {
    *  can emit a `retry-after` header without every rate-limited route
    *  repeating that plumbing. */
   readonly retryAfterSeconds?: number;
+  /**
+   * A 5xx this service raises as *policy* rather than as a failure.
+   *
+   * Only consulted for 5xx, and only to pick the level the error handler logs
+   * at — `warn` instead of `error`. There is one of these: the maintenance-mode
+   * 503, which is an operator-initiated window during which every mutating
+   * request is refused on purpose. Logging those at `error` would file a
+   * planned window as an incident, and file it once per polling request, which
+   * is the shape that trains people to ignore the level.
+   */
+  readonly expected?: boolean;
 
   constructor(args: {
     status: number;
@@ -243,6 +254,7 @@ export class ApiProblem extends Error {
     detail?: string;
     extensions?: Record<string, unknown>;
     retryAfterSeconds?: number;
+    expected?: boolean;
   }) {
     super(args.detail ?? args.title);
     this.status = args.status;
@@ -251,6 +263,7 @@ export class ApiProblem extends Error {
     this.detail = args.detail;
     this.extensions = args.extensions;
     this.retryAfterSeconds = args.retryAfterSeconds;
+    this.expected = args.expected;
   }
 
   toBody(instance?: string): Record<string, unknown> {
@@ -447,6 +460,35 @@ export function registerProblemHandler(app: FastifyInstance): void {
     if (err instanceof ApiProblem) {
       if (err.retryAfterSeconds !== undefined) {
         void reply.header('retry-after', String(err.retryAfterSeconds));
+      }
+      /*
+       * A 5xx this service raised on purpose is still a 5xx, and until now it
+       * was the only kind that left no trace.
+       *
+       * The branch below logs `unhandled error` for anything that reached the
+       * handler as a bare throw, so an *unforeseen* failure is recorded — but
+       * every failure the estate has actually thought about arrives here as an
+       * `ApiProblem`, and this arm returned it in silence. That is the wrong
+       * way round. `toProblem` alone turns an unreachable AI or engine service
+       * into a 502 at twenty call sites, none of which log; a deployment with
+       * no Stripe key answers 503 to every checkout; an integration nobody
+       * configured answers 503 per provider. All of those are conditions
+       * somebody has to act on, and the only evidence any of them happened was
+       * a status code in the metrics histogram with no reason attached.
+       *
+       * 4xx stays silent, as it always has: those describe the request, the
+       * caller was told, and logging them is logging other people's mistakes at
+       * whatever rate they care to make them.
+       */
+      if (err.status >= 500) {
+        const fields = {
+          err: scrubError(err),
+          ...requestErrorContext(req),
+          problem_type: err.type,
+          status: err.status,
+        };
+        if (err.expected) req.log.warn(fields, 'request refused');
+        else req.log.error(fields, 'request failed');
       }
       return reply.status(err.status).type('application/problem+json').send(err.toBody(req.url));
     }
