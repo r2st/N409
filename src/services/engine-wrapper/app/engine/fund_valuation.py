@@ -26,7 +26,7 @@ import math
 from .bs import bs_call, discount_factor
 from .compounding import compound_factor
 from .errors import EngineInputError
-from .newton import implied_volatility
+from .newton import IMPLIED_VOL_MAX, IMPLIED_VOL_MIN, implied_volatility
 
 # ASC 820 fair-value hierarchy levels.
 LEVEL_1 = 1  # quoted prices in active markets for identical assets
@@ -106,7 +106,8 @@ def calibrate_implied_volatility(
     # Per-share option value the OPM must reproduce, scaled to the whole equity
     # call (single breakpoint) → back out via the class's fully-diluted share.
     # Solve bs_call(S, K, t, r, sigma) * (preferred/fd) == target_class_value.
-    frac = _num(preferred_shares, "preferred_shares", minimum=0.0) / fd
+    pf_shares = _num(preferred_shares, "preferred_shares", minimum=0.0)
+    frac = pf_shares / fd
     if frac <= 0:
         raise EngineInputError("preferred_shares must be positive for calibration")
     # The class owns fraction ``frac`` of the residual equity above the senior
@@ -119,9 +120,47 @@ def calibrate_implied_volatility(
             f"range; per-share price must sit between {intrinsic * frac / max(preferred_shares, 1):.4f} "
             f"and the pro-rata share {s / fd:.4f}"
         )
+    # The no-arbitrage range is not the range this calibration can answer over.
+    # `implied_volatility` bisects a fixed volatility window, so the prices it
+    # can reproduce are `[bs_call(MIN), bs_call(MAX)]` — a strictly narrower set,
+    # and on a preferred stack a much narrower one. A round priced in the gap
+    # cleared the check above and came back as `root is not bracketed by the
+    # given bounds`: the bisector's words about a bracket that is not an input
+    # to this endpoint and has no field on the form.
+    #
+    # Restated here in the unit the caller typed. `implied_volatility` refuses
+    # the same band in call-value terms — this is not a second rule, it is the
+    # same one said in dollars per share so the message names the figure that
+    # has to change.
+    floor_price = bs_call(s, k, t, r, IMPLIED_VOL_MIN) * frac / pf_shares
+    ceiling_price = bs_call(s, k, t, r, IMPLIED_VOL_MAX) * frac / pf_shares
+    if not floor_price <= price <= ceiling_price:
+        side = "below" if price < floor_price else "above"
+        raise EngineInputError(
+            f"a round price of {price:.4f} is {side} what this calibration can solve: the "
+            f"implied volatility is searched over {IMPLIED_VOL_MIN:.0%}-{IMPLIED_VOL_MAX:.0%}, "
+            f"which reproduces a per-share price between {floor_price:.4f} and "
+            f"{ceiling_price:.4f}. The price is inside the no-arbitrage range, so it is the "
+            "volatility it implies that is out of range — check the term, the strike and the "
+            "share counts before the price"
+        )
     sigma = implied_volatility(target_call, s, k, t, r)
     return {
         "implied_volatility": round(sigma, 6),
+        # Whether the answer is a solved figure or the end of the window.
+        #
+        # Below about 1% the call is flat in sigma to double precision on any
+        # in-the-money strike — which is the ordinary shape here, since the
+        # strike is a preference stack the round sits well above — so the
+        # bisection returns its floor and the response reported `0.010000` with
+        # nothing to say it had been pinned there rather than found. A
+        # calibrated volatility that is really "at or below 1%, this method
+        # cannot say" is a different assumption from a 1% anyone measured, and
+        # it is carried downstream into the mark.
+        "at_search_bound": (
+            "floor" if sigma <= IMPLIED_VOL_MIN else "ceiling" if sigma >= IMPLIED_VOL_MAX else None
+        ),
+        "search_range": [IMPLIED_VOL_MIN, IMPLIED_VOL_MAX],
         "calibrated_equity_call": round(bs_call(s, k, t, r, sigma), 4),
         "target_class_value": round(target_class_value, 4),
     }

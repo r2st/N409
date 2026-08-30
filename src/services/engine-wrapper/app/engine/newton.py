@@ -102,6 +102,13 @@ def newton_raphson(
     raise EngineInputError("newton_raphson did not converge")
 
 
+#: The volatility window this module searches, and the whole of it: a solve is
+#: a bisection over [`IMPLIED_VOL_MIN`, `IMPLIED_VOL_MAX`], so nothing outside
+#: it is reachable however well posed the price is.
+IMPLIED_VOL_MIN = 0.01
+IMPLIED_VOL_MAX = 5.0
+
+
 def implied_volatility(
     price: float,
     s: float,
@@ -109,10 +116,28 @@ def implied_volatility(
     t: float,
     r: float,
     *,
-    lo: float = 0.01,
-    hi: float = 5.0,
+    lo: float = IMPLIED_VOL_MIN,
+    hi: float = IMPLIED_VOL_MAX,
 ) -> float:
-    """Volatility for which bs_call(s, k, t, r, sigma) == price."""
+    """Volatility for which bs_call(s, k, t, r, sigma) == price.
+
+    Two ranges bound this, and only one of them used to be checked. The
+    no-arbitrage range `[intrinsic, s]` is the set of prices a call *can* have;
+    `[bs_call(lo), bs_call(hi)]` is the much narrower set this solver can
+    actually produce, because it bisects over `[lo, hi]` and nothing outside
+    that window is reachable.
+
+    A price in the gap cleared the no-arbitrage check and then came back as
+    `root is not bracketed by the given bounds` — `_bisect`'s words about a
+    bracket the caller never set, cannot see and has no field for. On a fund
+    calibration that is a round price implying a volatility under 1% or over
+    500%: an ordinary enough slip on the term or the preference, answered with
+    an error naming neither.
+
+    So the reachable range is checked here, where the window lives, and named
+    together with the volatilities that bound it — which is the pair the caller
+    has to argue with.
+    """
     if s <= 0 or t <= 0:
         raise EngineInputError("implied_volatility needs positive spot and term")
     import math
@@ -121,6 +146,16 @@ def implied_volatility(
     if not intrinsic <= price <= s:
         raise EngineInputError(
             f"price {price:.4f} outside the no-arbitrage range [{intrinsic:.4f}, {s:.4f}]"
+        )
+    floor_price = bs_call(s, k, t, r, lo)
+    ceiling_price = bs_call(s, k, t, r, hi)
+    if not floor_price <= price <= ceiling_price:
+        side = "below" if price < floor_price else "above"
+        raise EngineInputError(
+            f"price {price:.4f} is {side} anything this solver can reach: volatility is searched "
+            f"over [{lo:g}, {hi:g}], which prices the call between {floor_price:.4f} and "
+            f"{ceiling_price:.4f}. The price is inside the no-arbitrage range, so it is the "
+            f"implied volatility that is out of range, not the price"
         )
     sigma, _ = newton_raphson(
         lambda sig: bs_call(s, k, t, r, sig) - price,
