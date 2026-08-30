@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { emailWithheldSql, suppressionExemptSql } from './emailOutbox.js';
 import {
   JOB_SOURCES,
   JOB_STATUS_MAP,
@@ -253,6 +254,27 @@ export async function oldestActiveJobs(
      FROM (${unionSql(JOB_SOURCES)}) j
      WHERE j.status IN ('queued', 'running')
        AND j.due_at <= now()
+       -- …and the outbox's other half of the claim predicate: the four facts
+       -- that hold a row back without scheduling it (emailWithheldSql). A row
+       -- the sweep will never take is not a queue running late — it is work
+       -- nobody is waiting on, and it sits at due_at = created_at getting older
+       -- every minute. So one message for a closed account made this queue read
+       -- as an ever-worsening stall, which is the alert that exists to say a
+       -- dead SMTP host has left one email queued since Thursday. And because
+       -- an alert is keyed (source, kind) and announced once, that row held
+       -- email/stalled open and the real outage after it announced nothing.
+       --
+       -- A semi-join over the queued rows rather than a fourth subquery inside
+       -- the union: this predicate belongs to one of the five sources, the
+       -- union is what every other reader of these branches pays for, and only
+       -- rows the outer filter would have counted need testing at all.
+       AND NOT (
+         j.source = 'email'
+         AND j.id IN (
+           SELECT e.id FROM email_outbox e
+            WHERE e.status = 'queued' AND ${emailWithheldSql('e', suppressionExemptSql())}
+         )
+       )
      GROUP BY j.source
      ORDER BY oldest_due_at ASC`,
   );

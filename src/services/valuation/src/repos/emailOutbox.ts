@@ -184,6 +184,153 @@ export async function markEmail(
 export const CLAIM_LEASE_MS = 15 * 60_000;
 
 /**
+ * The suppression exemption list as a SQL literal, for the one reader that has
+ * no parameters to bind it to.
+ *
+ * Guarded rather than trusted: the keys are code constants today, and a literal
+ * built by string concatenation is only safe for as long as that stays true.
+ * The assertion is what keeps the shortcut honest if somebody ever makes the
+ * list configurable.
+ */
+export function suppressionExemptSql(): string {
+  const keys = [...SUPPRESSION_EXEMPT_TEMPLATES];
+  for (const key of keys) {
+    if (!/^[a-z0-9_]+$/.test(key)) {
+      throw new Error(`suppression-exempt template key is not a bare identifier: ${key}`);
+    }
+  }
+  return `ARRAY[${keys.map((k) => `'${k}'`).join(', ')}]::text[]`;
+}
+
+/**
+ * The reasons a row that is otherwise retryable must not be sent *now*.
+ *
+ * These four are not the ladder. The ladder is a schedule — "not yet, come back
+ * at half past" — and it lives in `next_attempt_at`. These are facts that
+ * changed after the row was written and that the row itself knows nothing
+ * about: the work was withdrawn, the account was closed, the address was
+ * suppressed, the recipient switched this kind of mail off. Each of them can
+ * change back, which is why a row they hold is skipped rather than settled —
+ * a restore, an un-archive, a released suppression and a re-ticked preference
+ * all have to be able to make it claimable again, and a 'failed' stamp could
+ * not be undone by any of them.
+ *
+ * Written once and shared, because {@link claimRetryableEmails} is not the only
+ * reader that needs it. `oldestActiveJobs` measures how far behind each queue
+ * is "from `due_at` — the row's own claim predicate", in its own words, and it
+ * carried the ladder half of that predicate and none of this half. A withheld
+ * row sits at `due_at = created_at` and grows older every minute, so it reads
+ * as an ever-worsening stall on the one queue whose alert exists to say that
+ * one email queued since Thursday is a dead SMTP host. And the noise is not the
+ * worst of it: an open alert is keyed `(source, kind)` and announced once, so a
+ * single withheld row holds `email/stalled` open forever and the real outage
+ * that follows announces nothing at all.
+ *
+ * `exemptTemplates` is the suppression exemption list as SQL, spelled by the
+ * caller so a statement with parameters can bind it and one without can inline
+ * it.
+ */
+export function emailWithheldSql(alias: string, exemptTemplates: string): string {
+  return `(
+       -- The engagement the message is about must still exist. R89 stopped
+       -- POST /remind-documents from sending "we still need your cap table"
+       -- about withdrawn work, and this is the same message arriving by the
+       -- other door: a reminder queued the day before the firm withdrew, whose
+       -- first send failed, would be delivered by the ladder afterwards. Mail
+       -- cannot be un-sent, which is what made this class the worst of R56.
+       --
+       -- Rows with no valuation (password resets, verification) are untouched,
+       -- because they are about a person and not about a piece of work.
+       EXISTS (
+         SELECT 1 FROM valuations v
+          WHERE v.id = ${alias}.valuation_id AND v.archived_at IS NOT NULL
+       )
+       -- …and the person it is addressed to must still have an account.
+       --
+       -- The clause above is the same rule for work; this is the rule for
+       -- people, and it was the half that was missing until R89. Closing an
+       -- account (DELETE /api/v1/me, or an admin deactivation) soft-deletes the
+       -- users row, revokes the tokens and bumps the session epoch — and did
+       -- nothing about mail already sitting in the outbox for them. A
+       -- notification queued the hour before, whose first transport attempt
+       -- failed, was delivered by the ladder afterwards: mail to somebody who
+       -- has asked us to stop holding their account, sent after we agreed to.
+       --
+       -- The auto-email scanner has always had this guard on the other side of
+       -- the queue (dueCandidates: u.deleted_at IS NULL), which is exactly what
+       -- made the absence here hard to see. Rows with no to_user_id — an
+       -- invitation, a client contact addressed by address alone — are
+       -- untouched: there is no account to have closed.
+    OR EXISTS (
+         SELECT 1 FROM users u
+          WHERE u.id = ${alias}.to_user_id AND u.deleted_at IS NOT NULL
+       )
+       -- …and the address must not have been suppressed since the row was
+       -- written.
+       --
+       -- enqueueEmail asks this question, and the claim did not — it read only
+       -- the row's own bounce_kind, which is what that row's own attempt
+       -- learned. A suppression is a fact about the address, and it arrives
+       -- from three places this row knows nothing about: another message to the
+       -- same person hard-bouncing, a provider webhook reporting a complaint,
+       -- and an operator adding the address by hand. All three left every
+       -- message already queued or failed for that address claimable, so the
+       -- ladder went on delivering to an address the platform had decided to
+       -- stop mailing — including one an administrator had just suppressed on
+       -- purpose.
+       --
+       -- Same two exemptions the enqueue makes, so the two cannot disagree
+       -- about what a suppression covers: SMS does not ride this list (the
+       -- destination is a phone number), and the verification mail is how a
+       -- wrongly-suppressed address is proven good again.
+    OR (
+         ${alias}.channel = 'email'
+         AND ${alias}.template_key <> ALL(${exemptTemplates})
+         AND EXISTS (
+           SELECT 1 FROM email_suppressions s
+            WHERE s.to_email = lower(btrim(${alias}.to_email)) AND s.released_at IS NULL
+         )
+       )
+       -- …and the recipient must not have switched this kind of mail off since
+       -- the row was written.
+       --
+       -- The three above are facts about the work, the account and the address.
+       -- This is the only one the recipient sets themselves, and both enqueue
+       -- paths ask it: onStateChanged gates a workflow email on the matrix row
+       -- for that template key, and the drip scan gates a promotional one on
+       -- the same matrix's marketing row. The claim asked neither, so the
+       -- ladder was the one door into this mailbox a preference did not cover.
+       --
+       -- The marketing half is a promise rather than a courtesy.
+       -- List-Unsubscribe (RFC 8058) says the sender stops, and the one-click
+       -- endpoint honours it by writing this row — not by suppressing the
+       -- address, which is what bounces do. So the ordinary sequence delivered
+       -- mail after an unsubscribe: a campaign message arrives, the recipient
+       -- clicks the button in it, and the previous message — the one whose send
+       -- had failed — goes out afterwards on the ladder.
+       --
+       -- Which key a row answers to is the rule the enqueues use: the marketing
+       -- row for a promotional send, the row named by the template key
+       -- otherwise (the workflow templateKey is its preference event type —
+       -- see NOTIFICATION_EVENT_TYPES). A transactional must-send is untouched
+       -- by construction: nothing ever writes a password_reset preference row,
+       -- so the EXISTS cannot find one.
+    OR (
+         ${alias}.channel = 'email'
+         AND EXISTS (
+           SELECT 1 FROM notification_preferences p
+            WHERE p.user_id = ${alias}.to_user_id
+              AND p.event_type = CASE
+                    WHEN ${alias}.promotional THEN 'marketing'
+                    ELSE ${alias}.template_key
+                  END
+              AND p.email = false
+         )
+       )
+  )`;
+}
+
+/**
  * Atomically takes a batch of retryable rows for one sweeper.
  *
  * Selecting candidates and then sending them are two steps, so without a claim
@@ -256,126 +403,13 @@ export async function claimRetryableEmails(
           -- case the ladder exists for.
           AND (bounce_kind IS NULL OR bounce_kind = 'soft')
           AND channel = ANY($2::comm_channel[])
-          -- The engagement the message is about must still exist. R89 stopped
-          -- POST /remind-documents from sending "we still need your cap
-          -- table" about withdrawn work, and this is the same message arriving
-          -- by the other door: a reminder queued the day before the firm
-          -- withdrew, whose first send failed, is delivered by the ladder
-          -- afterwards. Mail cannot be un-sent, which is what made this class
-          -- the worst of R56.
-          --
-          -- Skipped, not settled: retirement is reversible (R90), and a row
-          -- marked failed here could not be un-failed by a restore. It simply
-          -- stops being claimable until the engagement comes back — and rows
-          -- with no valuation (password resets, verification) are untouched,
-          -- because they are about a person and not about a piece of work.
-          AND NOT EXISTS (
-            SELECT 1 FROM valuations v
-             WHERE v.id = email_outbox.valuation_id AND v.archived_at IS NOT NULL
-          )
-          -- …and the person it is addressed to must still have an account.
-          --
-          -- The clause above is the same rule for work; this is the rule for
-          -- people, and it was the half that was missing. Closing an account
-          -- (DELETE /api/v1/me, or an admin deactivation) soft-deletes the
-          -- users row, revokes the tokens and bumps the session epoch — and
-          -- did nothing about mail already sitting in the outbox for them. A
-          -- notification queued the hour before, whose first transport attempt
-          -- failed, was delivered by this ladder afterwards: mail to somebody
-          -- who has asked us to stop holding their account, sent after we
-          -- agreed to.
-          --
-          -- The auto-email scanner has always had this guard on the other side
-          -- of the queue (dueCandidates: u.deleted_at IS NULL), so a campaign
-          -- never picked a closed account up — which is exactly what made the
-          -- absence here hard to see. Nothing is enqueued for a closed
-          -- account; a row already enqueued was still sent.
-          --
-          -- Skipped rather than settled, for the reason the archival clause
-          -- gives: restoreUser puts the account back, and a row marked failed
-          -- here could not be un-failed by that. Rows with no to_user_id — an
-          -- invitation, a client contact addressed by address alone — are
-          -- untouched: there is no account to have closed.
-          AND NOT EXISTS (
-            SELECT 1 FROM users u
-             WHERE u.id = email_outbox.to_user_id AND u.deleted_at IS NOT NULL
-          )
-          -- …and the address must not have been suppressed since the row was
-          -- written.
-          --
-          -- enqueueEmail asks this question, and the claim did not — it read
-          -- only the row's own bounce_kind, which is what that row's own
-          -- attempt learned. A suppression is a fact about the address, and it
-          -- arrives from three places this row knows nothing about: another
-          -- message to the same person hard-bouncing, a provider webhook
-          -- reporting a complaint, and an operator adding the address by hand.
-          -- All three left every message already queued or failed for that
-          -- address claimable, so the ladder went on delivering to an address
-          -- the platform had decided to stop mailing — including one an
-          -- administrator had just suppressed on purpose.
-          --
-          -- Same two exemptions the enqueue makes, so the two cannot disagree
-          -- about what a suppression covers: SMS does not ride this list (the
-          -- destination is a phone number), and the verification mail is how a
-          -- wrongly-suppressed address is proven good again.
-          --
-          -- Skipped rather than settled, for the reason the two clauses above
-          -- give: a release is a thing an operator does, and a row marked
-          -- failed here could not be un-failed by one.
-          AND (
-            channel <> 'email'
-            OR template_key = ANY($5::text[])
-            OR NOT EXISTS (
-              SELECT 1 FROM email_suppressions s
-               WHERE s.to_email = lower(btrim(email_outbox.to_email)) AND s.released_at IS NULL
-            )
-          )
-          -- …and the recipient must not have switched this kind of mail off
-          -- since the row was written.
-          --
-          -- The three clauses above are facts that changed after the enqueue —
-          -- the work was withdrawn, the account was closed, the address was
-          -- suppressed — and this is the fourth and the only one the recipient
-          -- sets themselves. Both enqueue paths ask it: onStateChanged gates
-          -- a workflow email on channelsFor(...).email, and the drip scan
-          -- gates a promotional one on the same matrix's marketing row. The
-          -- claim asked neither, so the ladder was the one door into this
-          -- mailbox that a preference did not cover.
-          --
-          -- The marketing half is the one that matters most, and it is not a
-          -- courtesy. List-Unsubscribe is a promise to stop sending
-          -- (RFC 8058), and the one-click endpoint honours it by writing this
-          -- row — not by suppressing the address, which is for bounces. So a
-          -- promotional message whose first attempt failed was delivered by
-          -- the ladder hours later, after the recipient had clicked the
-          -- unsubscribe button in the message before it.
-          --
-          -- Which key a row answers to is the same rule the enqueues use: the
-          -- marketing row for a promotional send, the row named by the
-          -- template key otherwise — the workflow templateKey *is* its
-          -- preference event type (see NOTIFICATION_EVENT_TYPES). A
-          -- transactional must-send is untouched by construction: nothing ever
-          -- writes a password_reset or user_invitation preference row, so
-          -- the NOT EXISTS cannot find one. Same for a row addressed by
-          -- address alone, which has no account whose preferences to read.
-          --
-          -- Skipped rather than settled, for the reason the three clauses above
-          -- give: a preference is reversible from the settings screen, and a
-          -- row marked failed here could not be un-failed by switching it back
-          -- on.
-          AND (
-            channel <> 'email'
-            OR to_user_id IS NULL
-            OR NOT EXISTS (
-              SELECT 1 FROM notification_preferences p
-               WHERE p.user_id = email_outbox.to_user_id
-                 AND p.event_type = CASE
-                       WHEN email_outbox.promotional THEN 'marketing'
-                       ELSE email_outbox.template_key
-                     END
-                 AND p.email = false
-            )
-          )
+          -- Facts that changed after the enqueue and can change back: the
+          -- work was withdrawn, the account was closed, the address was
+          -- suppressed, the recipient switched this kind of mail off. Skipped
+          -- rather than settled, and shared with the queue monitor so the two
+          -- cannot disagree about what "claimable" means — see
+          -- emailWithheldSql.
+          AND NOT ${emailWithheldSql('email_outbox', '$5::text[]')}
           AND (status = 'queued' OR next_attempt_at IS NULL OR next_attempt_at <= now())
           AND (claimed_at IS NULL OR claimed_at < now() - ($3 || ' seconds')::interval)
         -- Oldest first: a backlog larger than the batch must not leave the
