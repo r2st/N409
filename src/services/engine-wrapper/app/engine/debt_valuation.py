@@ -125,6 +125,58 @@ def rating_implied_spread(rating: str) -> float:
 # ── Cash-flow schedules ──────────────────────────────────────────────────────
 
 
+#: Slack on the period count so a maturity that *is* grid-aligned is not pushed
+#: onto an extra period by the last bit of `yrs * m`. Well below any real
+#: coupon interval and well above float noise at these magnitudes.
+_PERIOD_EPS = 1e-9
+
+
+def schedule_periods(maturity_years: float, frequency: int) -> tuple[int, float]:
+    """How many coupon periods remain, and how far the grid is shifted.
+
+    A coupon schedule is dated backwards from maturity — the final flow lands on
+    the maturity date and the others step back one period at a time, so a note
+    with a non-whole number of periods left carries a *short first period* and
+    every later date is exact. That is how the instrument is written and it is
+    the convention the rest of this module already assumes: ``settlement_fraction``
+    and ``accrued_interest`` exist precisely because settlement sits inside a
+    period, and the full coupon is still paid on the date.
+
+    It used to be dated forwards from today onto a whole-period grid —
+    ``n = max(1, round(yrs * m))`` and ``t = i / m`` — which is only the same
+    schedule when the maturity happens to land on that grid. Off it, three
+    things went wrong at once and all silently:
+
+      * ``round`` is half-to-even, so ``4.25`` years semiannual took
+        ``round(8.5) = 8`` periods and ``4.75`` took ``round(9.5) = 10``. Two
+        notes a quarter-year either side of the same midpoint were priced a
+        whole year apart — 868.08 against 841.75 on a 5% note at a 9% yield,
+        a 3.0% gap standing in for six months of maturity.
+      * the redemption moved off the maturity date. A note maturing 2027-06-30
+        valued at 2026-08-30 is 1.83 years; its flows were dated 0.5, 1.0, 1.5
+        and 2.0, redeeming two months after the note is actually repaid.
+      * a maturity inside the first period was floored to a whole one by the
+        ``max(1, ...)``. An instrument at or past maturity was priced as a
+        half-year note paying a full coupon: 980.86 for a bond that is worth its
+        redemption today.
+
+    Returns the period count and the shift to add to each grid date. The shift is
+    exactly ``0.0`` — and every date bit-identical to the old ones — whenever the
+    maturity is a whole number of periods, which is what a schedule built from a
+    tenor rather than from two dates always is.
+    """
+    m = _frequency(frequency)
+    yrs = _num(maturity_years, "maturity_years", minimum=0.0, maximum=MAX_MATURITY_YEARS)
+    # Ceil, not round: a note with 8.5 periods left has nine payments due, and
+    # the ninth is the redemption. Rounding chose between eight and ten.
+    n_periods = max(1, math.ceil(yrs * m - _PERIOD_EPS))
+    # `i / m + offset` rather than `yrs - (n - i) / m`: the two are equal in
+    # exact arithmetic, and only the first is bit-identical to `i / m` on the
+    # aligned case, because `offset` is then exactly zero rather than a
+    # difference of two nearby doubles.
+    return n_periods, yrs - n_periods / m
+
+
 def coupon_schedule(
     *,
     face: float,
@@ -138,18 +190,22 @@ def coupon_schedule(
     ``bullet`` (default): coupons each period + full face at maturity.
     ``amortizing``: equal principal amortisation each period, coupon on the
     declining balance (a term-loan style schedule).
+
+    Dated backwards from maturity — see `schedule_periods`.
     """
     f = _num(face, "face", minimum=0.0)
     rate = _num(coupon_rate, "coupon_rate", minimum=0.0)
     m = _frequency(frequency)
-    yrs = _num(maturity_years, "maturity_years", minimum=0.0, maximum=MAX_MATURITY_YEARS)
-    n_periods = max(1, round(yrs * m))
+    n_periods, offset = schedule_periods(maturity_years, m)
     period_rate = rate / m
     rows: list[dict] = []
     balance = f
     principal_per = f / n_periods if amortizing else 0.0
     for i in range(1, n_periods + 1):
-        t = i / m
+        # Never negative: `n_periods` is at most one period past `yrs * m`, so
+        # the first date is in (0, 1/m] — and exactly 0 only for a matured
+        # instrument, whose single flow is its redemption today.
+        t = max(i / m + offset, 0.0)
         interest = balance * period_rate
         principal = principal_per if amortizing else (f if i == n_periods else 0.0)
         balance = max(balance - principal, 0.0)
@@ -470,14 +526,21 @@ def convertible_note(
     coupon_per_period = f * _num(coupon_rate, "coupon_rate", minimum=0.0) / m
 
     # Coupon dates come from the same schedule `yield_dcf` discounts, so the
-    # tree and the DCF price the same instrument's cash flows. `coupons_at[k]`
-    # is how many coupons the holder receives at step k; two can share a step
-    # only when the tree is coarser than the coupon frequency, and dropping one
-    # there would silently underprice the note.
-    n_coupons = max(1, round(t * m))
+    # tree and the DCF price the same instrument's cash flows — which means the
+    # same count *and* the same dates, and `schedule_periods` is the one place
+    # both are decided. It used to keep its own copy of the old forward-dated
+    # grid, so on any maturity that is not a whole number of periods the tree
+    # priced a different instrument than the DCF beside it: a 1.83-year note
+    # paid the tree four coupons at 0.5/1.0/1.5/2.0, the last of them after the
+    # note had been redeemed.
+    #
+    # `coupons_at[k]` is how many coupons the holder receives at step k; two can
+    # share a step only when the tree is coarser than the coupon frequency, and
+    # dropping one there would silently underprice the note.
+    n_coupons, coupon_offset = schedule_periods(t, m)
     coupons_at = [0] * (n + 1)
     for k in range(1, n_coupons + 1):
-        coupons_at[min(n, max(1, round((k / m) / dt)))] += 1
+        coupons_at[min(n, max(1, round((k / m + coupon_offset) / dt)))] += 1
 
     prices = [s0 * u**j * d ** (n - j) for j in range(n + 1)]
     # Redemption at maturity is face plus the coupon due that day, if one is.
