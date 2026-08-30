@@ -574,6 +574,55 @@ def _concluded_dlom(dlom: float) -> float:
     return round(dlom, 4)
 
 
+#: The quantum every surface prints and stores the concluded FMV at. Four
+#: decimals is a dollars-and-hundredths-of-a-cent grid, and it is the *whole*
+#: grid: there is no finer conclusion for a run to fall back to.
+FMV_QUANTUM = 1e-4
+
+
+def _concluded_fmv_per_share(fmv_per_share: float) -> float:
+    """The FMV per common share as it is concluded: four decimals, never a
+    rounded-away zero.
+
+    The quantum is not a display choice — it is the whole grid the conclusion
+    lives on, so a positive allocation smaller than half of it has nowhere to be
+    stated. It used to be stated as `0.0` anyway, and the rest of the same
+    `results` object went on describing the value it had just erased: on a
+    company that raised $80M and priced its last round at a $5M post — the
+    ordinary shape of a 2023-24 down round, not an exotic cap table — 8M common
+    at 40% volatility returned `fmv_per_share: 0.0` beside a
+    `common_equity_value` of $128.92, which is $1.4e-05 a share. The document
+    asserts both, and a reader dividing the second by the disclosed share count
+    does not get the first.
+
+    `_check_discount_range` already refuses a 100% discount because it "says the
+    interest is worthless", and `_weighted_equity` refuses a non-positive
+    weighted equity value. Both are the same rule about the same output; neither
+    was watching the last multiplication. So the rounding is refused here, naming
+    the unrounded figure — which is the number the analyst has to argue with,
+    the rounded one being the zero at issue.
+
+    An allocation of *exactly* zero is deliberately not refused. That is what the
+    current-value method means on an underwater cap table — liquidate today and
+    common receives nothing — and every figure in the result agrees with it,
+    `common_equity_value` included. It is a conclusion about the security, which
+    is the engine's to report; a quantum is not.
+
+    `fmv_per_share_unrounded` is untouched: it is not a conclusion (see its
+    comment) and a run that raises here publishes nothing at all.
+    """
+    concluded = round(fmv_per_share, 4)
+    if concluded > 0 or fmv_per_share <= 0:
+        return concluded
+    raise EngineInputError(
+        f"the concluded FMV per common share rounds to $0.0000 — the allocation leaves "
+        f"common {fmv_per_share:.3g} a share, which is positive but below the "
+        f"{FMV_QUANTUM:g} the conclusion is stated at, so there is no figure to conclude; "
+        "review the equity value, the preference stack and the discounts, or state a "
+        "nominal floor"
+    )
+
+
 def _check_discount_range(dloc: float, dlom: float) -> None:
     """Both discounts are fractions of the value they are struck on.
 
@@ -1010,7 +1059,7 @@ def _compute_pwerm(params: dict, inputs: dict, trace: Trace | None = None) -> di
         "discounts": _discounts_block(d),
         "fully_diluted_common": fully_diluted_common,
         "fully_diluted_basis": "cap_table_common",
-        "fmv_per_share": round(fmv_per_share, 4),
+        "fmv_per_share": _concluded_fmv_per_share(fmv_per_share),
     }
     # Outside `results`, for the reason `trace` is: `results` is the persisted
     # answer and `results.fmv_per_share` is the conclusion, rounded to the four
@@ -1621,7 +1670,7 @@ def _compute_opm(
         "discounts": _discounts_block(d),
         "fully_diluted_common": alloc["fully_diluted_common"],
         "fully_diluted_basis": alloc["fully_diluted_basis"],
-        "fmv_per_share": round(fmv_per_share, 4),
+        "fmv_per_share": _concluded_fmv_per_share(fmv_per_share),
     }
     _attach_market_movement(results, we)
     _attach_class_volatility(results, alloc)
@@ -1679,7 +1728,7 @@ def _compute_cvm(
         "fully_diluted_basis": (
             "cap_table_common" if allocation["method"] == "cvm_waterfall" else "common_plus_options"
         ),
-        "fmv_per_share": round(fmv_per_share, 4),
+        "fmv_per_share": _concluded_fmv_per_share(fmv_per_share),
     }
     _attach_market_movement(results, we)
     if recompute is not None:
@@ -1754,7 +1803,7 @@ def _compute_monte_carlo(
         # under the breakpoint waterfall. See the note in `_opm_allocate`.
         "fully_diluted_common": allocation["common_shares"],
         "fully_diluted_basis": "cap_table_common",
-        "fmv_per_share": round(fmv_per_share, 4),
+        "fmv_per_share": _concluded_fmv_per_share(fmv_per_share),
     }
     _attach_market_movement(results, we)
     if recompute is not None:
@@ -1846,7 +1895,7 @@ def _compute_hybrid(
         "discounts": _discounts_block(d),
         "fully_diluted_common": fully_diluted_common,
         "fully_diluted_basis": opm_alloc["fully_diluted_basis"],
-        "fmv_per_share": round(fmv_per_share, 4),
+        "fmv_per_share": _concluded_fmv_per_share(fmv_per_share),
     }
     _attach_market_movement(results, we)
     _attach_class_volatility(results, opm_alloc)
