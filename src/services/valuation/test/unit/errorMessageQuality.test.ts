@@ -380,7 +380,17 @@ describe('a 429 says when to come back', () => {
  * which the CONTENTLESS list has nothing to say about.
  */
 describe('the layers below the routes', () => {
-  const SUPPORTING = ['clients', 'plugins', 'hooks', 'pipeline'].flatMap((dir) =>
+  /*
+   * `repos` joined this list in round 255, and its absence was the same mistake
+   * one layer along. Round 198 widened the census off `routes` because messages
+   * are written wherever they are written; it reached for the directories that
+   * round's bugs had been in, and a repo raises a problem for exactly the same
+   * reason a route does — thirteen of them do. Three were bare
+   * `problems.notFound()`, on paths where the caller had already loaded the row
+   * that then vanished under them, so a stage advance answered "Resource not
+   * found" for an engagement whose valuation had been deleted mid-request.
+   */
+  const SUPPORTING = ['clients', 'plugins', 'hooks', 'pipeline', 'repos'].flatMap((dir) =>
     sourceFiles(path.resolve(HERE, '../../src', dir)).map((file) => ({
       rel: path.relative(path.resolve(HERE, '../..'), file).split(path.sep).join('/'),
       text: readFileSync(file, 'utf8'),
@@ -389,6 +399,31 @@ describe('the layers below the routes', () => {
 
   it('finds the files it is auditing', () => {
     expect(SUPPORTING.length).toBeGreaterThan(15);
+    // Named, because the population is the whole assertion: `repos` was outside
+    // it for two rounds and nothing said so.
+    expect(SUPPORTING.some(({ rel }) => rel.startsWith('src/repos/'))).toBe(true);
+  });
+
+  /**
+   * No bare 404 below the routes.
+   *
+   * The routes carry a *ratchet* rather than a ban, because there the bare 404
+   * is usually load-bearing: this API answers the same wordless 404 to a row
+   * that does not exist and to one the caller may not see, and telling those
+   * apart would be an existence oracle over another tenant's data. None of that
+   * holds down here. A repo is reached with the row already loaded and the
+   * caller's right to see it already settled, so a 404 raised in one is always
+   * "the thing you are holding has gone" — which is a sentence, and a different
+   * one from what the caller would otherwise conclude, that they asked wrong.
+   */
+  it('raises no 404 below the routes without saying what went missing', () => {
+    const findings = SUPPORTING.filter(
+      ({ rel, text }) =>
+        // `registerParamValidation`'s malformed-id 404 is the deliberate
+        // exception, argued at length in `plugins/params.ts`.
+        rel !== 'src/plugins/params.ts' && /problems\.notFound\(\s*\)/.test(text),
+    ).map(({ rel }) => rel);
+    expect(findings, 'bare problems.notFound() below the routes').toEqual([]);
   });
 
   it('sends no message from a client or plugin whose whole content is a category', () => {

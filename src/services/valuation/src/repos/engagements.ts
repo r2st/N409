@@ -134,7 +134,18 @@ async function staleAdvance(client: pg.PoolClient, engagement: EngagementRow): P
     [engagement.id],
   );
   const actual = rows[0]?.current_stage;
-  if (actual === undefined) return problems.notFound();
+  /*
+   * Not a bare 404. The existence-oracle argument that keeps most of this
+   * estate's 404s wordless does not apply here: the caller loaded this
+   * engagement to attempt the advance, so naming what happened to it discloses
+   * nothing they did not already have. "Resource not found" in reply to a stage
+   * advance reads as a bad request rather than as the row having gone.
+   */
+  if (actual === undefined)
+    return problems.notFound(
+      'This engagement no longer exists — the valuation it belongs to was deleted while this ' +
+        'change was being made. Nothing was recorded.',
+    );
   const label = stageByKey(actual)?.label ?? actual;
   return problems.conflict(
     `The engagement moved to "${label}" while this change was being made. Reload the engagement and try again.`,

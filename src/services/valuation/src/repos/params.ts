@@ -276,7 +276,10 @@ export async function applyEngineInputs(
         [valuationId],
       );
       if (expectedVersion !== undefined) staleParamsWrite(live[0]?.version, expectedVersion);
-      throw problems.notFound();
+      throw problems.notFound(
+        'This valuation’s parameters no longer exist — the valuation was deleted while this save ' +
+          'was in flight. Nothing was saved.',
+      );
     }
     await recordEvent(client, {
       valuationId,
@@ -370,7 +373,11 @@ export async function patchParams(
     // The row is created with the valuation and deleted only with it, so this
     // is reachable only by a purge landing mid-request.
     const raw = locked[0];
-    if (!raw) throw problems.notFound();
+    if (!raw)
+      throw problems.notFound(
+        'This valuation’s parameters no longer exist — the valuation was deleted while this save ' +
+          'was in flight. Nothing was saved.',
+      );
     // Normalised *before* the diff, not after: the comparison below is `===`,
     // and a `date` column off the driver is a Date that equals no string.
     const fresh = hydrated(raw);
