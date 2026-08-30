@@ -275,7 +275,7 @@ export async function syncCapTableConnection(
     external_company_name: pulled.external_company_name,
     as_of: pulled.as_of,
   };
-  await recordSync(deps.pool, connection.id, summary, connection.sync_frequency);
+  await recordSync(deps.pool, connection.id, summary);
 
   return {
     diff,

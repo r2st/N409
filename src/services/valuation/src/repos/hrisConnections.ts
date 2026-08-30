@@ -131,18 +131,40 @@ export async function upsertConnection(
  * round: a provider failure attributed to a connection that no longer exists,
  * which reads as something to fix rather than something deliberately ended.
  */
-export async function recordSync(
-  pool: pg.Pool,
-  id: string,
-  summary: Record<string, unknown>,
-  frequency: SyncFrequency,
-): Promise<void> {
-  const interval = FREQ_INTERVAL[frequency];
+/**
+ * Record a successful sync and schedule the next one.
+ *
+ * WHY THE CADENCE IS READ HERE. This used to take the frequency as an argument,
+ * and both callers passed `connection.sync_frequency` — the value read off the
+ * row before the provider was called. Between that read and this write sits the
+ * whole sync: a provider round trip plus, for the roster import, one INSERT and
+ * one audit event per grant on a roster that can be hundreds. Changing the
+ * cadence is exactly what somebody does during that window, for the same reason
+ * they press Disconnect during it — the sync is behaving in a way they want to
+ * change.
+ *
+ * So the success wrote back a schedule from before their change. Set Weekly
+ * during a running daily sync and the row keeps `sync_frequency = 'weekly'`
+ * while `next_sync_at` says tomorrow; set Daily during a running weekly one and
+ * the card reads Daily over a connection that will not run for a week. Neither
+ * says anything, because the select shows the cadence that was saved and the
+ * time disagreeing with it is not on screen at all.
+ *
+ * Reading `sync_frequency` off the row inside the statement closes the window:
+ * the value used is the one committed at this instant rather than one carried
+ * in from a caller who read it minutes ago. `setSyncFrequency` writes both
+ * columns together, so whichever of the two lands last leaves them agreeing.
+ */
+export async function recordSync(pool: pg.Pool, id: string, summary: Record<string, unknown>): Promise<void> {
   await pool.query(
     `UPDATE hris_connections
      SET last_synced_at = now(), last_sync_summary = $2, status = 'connected', last_error = NULL,
          sync_failures = 0,
-         next_sync_at = ${interval ? `now() + interval '${interval}'` : 'NULL'}
+         next_sync_at = CASE sync_frequency
+           WHEN 'daily' THEN now() + interval '1 day'
+           WHEN 'weekly' THEN now() + interval '7 days'
+           ELSE NULL
+         END
      WHERE id = $1 AND status <> 'revoked'`,
     [id, JSON.stringify(summary)],
   );

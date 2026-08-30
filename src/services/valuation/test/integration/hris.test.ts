@@ -741,6 +741,93 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     });
   });
 
+  describe('a cadence changed while the sync was running (R256)', () => {
+    /**
+     * `recordSync` used to be handed `connection.sync_frequency` — the value
+     * read off the row before the provider was called. The window between that
+     * read and the write is the whole sync: a provider round trip plus one
+     * INSERT and one audit event per grant, on a roster that can be hundreds.
+     * Changing the cadence during it is ordinary, for the same reason pressing
+     * Disconnect during it is: the sync is doing something somebody wants
+     * changed.
+     *
+     * The success then wrote back the schedule from before the change, and
+     * nothing on the card could say so — the select shows the cadence that was
+     * saved, and the next-sync time that disagrees with it is not drawn at all.
+     */
+    const rowFor = async (valuationId: string) => {
+      const { rows } = await ctx.pool.query<{
+        sync_frequency: string;
+        next_sync_at: Date | null;
+      }>('SELECT sync_frequency, next_sync_at FROM hris_connections WHERE valuation_id = $1', [valuationId]);
+      return rows[0]!;
+    };
+
+    /** A roster fetch that applies `change` to the connection while it is in flight. */
+    const fetchThatChangesCadence = (valuationId: string, frequency: string) =>
+      vi.fn(async (url: string | URL | Request) => {
+        const u = String(url);
+        if (u.includes('/token'))
+          return jsonResponse({ access_token: 'tok', expires_in: 3600, company_id: 'co1' });
+        if (u.includes('/employees')) {
+          const res = await ctx.app.inject({
+            method: 'POST',
+            url: `/api/v1/valuations/${valuationId}/hris/rippling/frequency`,
+            headers: authHeader(ops.token),
+            payload: { frequency },
+          });
+          expect(res.statusCode).toBe(200);
+          return jsonResponse(ROSTER);
+        }
+        throw new Error(`unexpected fetch ${u}`);
+      });
+
+    const makeWeeklyAndDue = (valuationId: string) =>
+      ctx.pool.query(
+        `UPDATE hris_connections
+            SET sync_frequency = 'weekly', next_sync_at = now() - interval '1 hour'
+          WHERE valuation_id = $1`,
+        [valuationId],
+      );
+
+    it('schedules from the cadence on the row rather than the one the pull started under', async () => {
+      const v = await connectedValuation();
+      await makeWeeklyAndDue(v.id);
+
+      await runDueHrisSyncs({
+        pool: ctx.pool,
+        fetchFn: fetchThatChangesCadence(v.id, 'daily') as unknown as typeof fetch,
+        log: { warn: () => {} },
+      });
+
+      const row = await rowFor(v.id);
+      expect(row.sync_frequency).toBe('daily');
+      // A day, not the week the pull began under. The old spelling left the
+      // card reading Daily over a connection that would not run for seven.
+      const hours = (row.next_sync_at!.getTime() - Date.now()) / 3_600_000;
+      expect(hours).toBeGreaterThan(20);
+      expect(hours).toBeLessThan(28);
+    });
+
+    it('leaves a cadence switched to Manual mid-sync with no next sync at all', async () => {
+      const v = await connectedValuation();
+      await makeWeeklyAndDue(v.id);
+
+      await runDueHrisSyncs({
+        pool: ctx.pool,
+        fetchFn: fetchThatChangesCadence(v.id, 'manual') as unknown as typeof fetch,
+        log: { warn: () => {} },
+      });
+
+      const row = await rowFor(v.id);
+      expect(row.sync_frequency).toBe('manual');
+      // `findDueConnections` skips a manual connection whatever its time says,
+      // so the old row was not re-synced — it just carried a next-sync date for
+      // a schedule that had been turned off.
+      expect(row.next_sync_at).toBeNull();
+    });
+  });
+
   it('forbids HRIS import for non-ops users', async () => {
     const client = await seedUser(ctx, { roles: ['valuation_user'] });
     const v = await createValuation(

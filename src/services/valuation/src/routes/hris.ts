@@ -275,12 +275,7 @@ export async function syncHrisConnection(
     grants_rejected: pull.rejected,
     external_company_name: pull.external_company_name,
   };
-  await recordSync(
-    deps.pool,
-    connection.id,
-    { ...outcome, provider: connection.provider },
-    connection.sync_frequency,
-  );
+  await recordSync(deps.pool, connection.id, { ...outcome, provider: connection.provider });
   return outcome;
 }
 
