@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { newUlid } from '@n409/shared';
 import { ADMIN_EVENT_CATALOG } from '../../src/domain/auditTrail.js';
 import { createPayment } from '../../src/repos/payments.js';
@@ -72,6 +72,7 @@ describe.skipIf(!dbUp)('the billing audit spine', () => {
   beforeAll(async () => {
     ctx = await setupTestApp({ STRIPE_SECRET_KEY: 'sk_test', STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET });
   });
+  afterEach(() => vi.restoreAllMocks());
   afterAll(async () => ctx?.teardown());
 
   const webhook = (event: unknown) => {
@@ -280,6 +281,34 @@ describe.skipIf(!dbUp)('the billing audit spine', () => {
     expect(paid[0]!.payload.stripe_invoice_id).toBe(stripeInvoiceId);
     expect(paid[0]!.payload.amount_cents).toBe(2_000_000);
     expect(String(paid[0]!.payload.invoice_number)).not.toBe('');
+  });
+
+  it('names the human who started a checkout, which nothing downstream can', async () => {
+    // The other half of the pair. Everything Stripe says about the resulting
+    // subscription arrives as `system`/`stripe`, so this row is the only record
+    // of who asked for the plan, and the Checkout Session id is what joins it
+    // to the `subscription_started` the webhook writes minutes later.
+    const buyer = await seedUser(ctx, { roles: ['admin'] });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ id: 'cs_audit_1', url: 'https://checkout.stripe.com/c/audit' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/billing/subscribe',
+      headers: authHeader(buyer.token),
+      payload: { plan_tier: 'annual_retainer' },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const rows = await billingEvents(buyer.id);
+    expect(rows.map((r) => r.type)).toEqual(['checkout_started']);
+    expect(rows[0]!.actor_type).toBe('human');
+    expect(rows[0]!.actor_id).toBe(buyer.id);
+    expect(rows[0]!.payload.checkout_session_id).toBe('cs_audit_1');
+    expect(rows[0]!.payload.plan_tier).toBe('annual_retainer');
   });
 
   it('refuses to rewrite or erase a billing audit row', async () => {

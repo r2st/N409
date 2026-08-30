@@ -83,6 +83,29 @@ describe.skipIf(!dbUp)('billing portal + dunning', () => {
       // never anything the request could have supplied.
       const [, init] = fetchSpy.mock.calls[0]!;
       expect(String(init?.body)).toContain('customer=cus_portal_1');
+
+      // The human half of the billing trail.
+      //
+      // The portal is where a subscriber cancels, swaps plan or replaces a
+      // card, and every one of those comes back as a webhook with no principal
+      // on it — recorded truthfully as `system`/`stripe`, because no principal
+      // of ours took the action. This row is the only place the person is
+      // named: the `subscription_changed` an hour later can say what moved and
+      // never who moved it.
+      const { rows } = await ctx.pool.query<{
+        actor_type: string;
+        actor_id: string;
+        payload: { stripe_customer_id?: string; portal_session_id?: string };
+      }>(
+        `SELECT actor_type, actor_id, payload FROM admin_events
+          WHERE subject_id = $1 AND type = 'billing_portal_opened'`,
+        [subscriber.id],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.actor_type).toBe('human');
+      expect(rows[0]!.actor_id).toBe(subscriber.id);
+      expect(rows[0]!.payload.stripe_customer_id).toBe('cus_portal_1');
+      expect(rows[0]!.payload.portal_session_id).toBe('bps_1');
     });
 
     it('will not open a portal for a user with no billing account', async () => {
