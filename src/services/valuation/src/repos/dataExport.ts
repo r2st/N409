@@ -444,10 +444,17 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
      * R213 added precisely because a cancelled subscription otherwise reads
      * `active` with no end in sight. `canceled_at` alone answers it only after
      * the fact.
+     *
+     * `quota_period_start` (migration 0190) is which period `valuations_used`
+     * is counting, which is not always `current_period_start` — a renewal that
+     * has not been paid for moves the period and leaves the counter where it
+     * was. Without it the two figures beside each other say a customer has used
+     * n valuations of a period they cannot have used them in.
      */
     section(
       pool,
-      `SELECT id, plan_tier, status, valuations_used, current_period_start, current_period_end,
+      `SELECT id, plan_tier, status, valuations_used, quota_period_start,
+              current_period_start, current_period_end,
               cancel_at_period_end, canceled_at, created_at
          FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [userId],

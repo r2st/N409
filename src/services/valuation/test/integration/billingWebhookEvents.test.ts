@@ -230,6 +230,87 @@ describe.skipIf(!dbUp)('billing webhook events', () => {
       expect((await subscriptionOf(user.id))?.valuations_used).toBe(0);
     });
 
+    /**
+     * A period the customer has not paid for is not a period they get a quota
+     * for.
+     *
+     * Stripe advances `current_period_start` when it *raises* the renewal
+     * invoice, not when the invoice settles. A declined renewal therefore
+     * arrives as one `customer.subscription.updated` carrying both the next
+     * period and `status: 'past_due'` — and the reset, keyed on the period
+     * alone, handed an annual retainer that had spent all twelve of its
+     * valuations twelve more against a payment that had failed. `past_due` is a
+     * served status with no end (see SERVED_SUBSCRIPTION_STATUSES), so nothing
+     * downstream took them back: the grace period, which exists so a lapsed
+     * card can be replaced, was issuing a fresh year of entitlement instead.
+     */
+    it('grants no fresh quota for a renewal that was not paid', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const start = Math.floor(Date.now() / 1000) - 2_592_000;
+      const send = (periodStart: number, status: string) =>
+        deliver({
+          type: 'customer.subscription.updated',
+          data: {
+            object: {
+              id: 'sub_unpaid_renewal_1',
+              status,
+              current_period_start: periodStart,
+              current_period_end: periodStart + 2_592_000,
+              metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+            },
+          },
+        });
+
+      await send(start, 'active');
+      await ctx.pool.query(
+        "UPDATE subscriptions SET valuations_used = 12 WHERE stripe_subscription_id = 'sub_unpaid_renewal_1'",
+      );
+      expect(await consumeValuation(ctx.pool, user.id)).toBe(false);
+
+      // The renewal is raised and declined: the period moves, the money does not.
+      await send(start + 2_592_000, 'past_due');
+      const lapsed = await subscriptionOf(user.id);
+      expect(lapsed?.status).toBe('past_due');
+      expect(lapsed?.valuations_used).toBe(12);
+      expect(await consumeValuation(ctx.pool, user.id)).toBe(false);
+
+      // ...and the card is replaced. The same period, now paid for, is the one
+      // that grants the quota — the recovery the gate must not cost.
+      await send(start + 2_592_000, 'active');
+      expect((await subscriptionOf(user.id))?.valuations_used).toBe(0);
+      expect(await consumeValuation(ctx.pool, user.id)).toBe(true);
+    });
+
+    /**
+     * The other half of the same rule: a subscription that lapses and recovers
+     * *within* one period is not a renewal, and must not be read as one.
+     */
+    it('grants no fresh quota when a payment is fixed inside the same period', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const start = Math.floor(Date.now() / 1000);
+      const send = (status: string) =>
+        deliver({
+          type: 'customer.subscription.updated',
+          data: {
+            object: {
+              id: 'sub_same_period_recovery_1',
+              status,
+              current_period_start: start,
+              current_period_end: start + 2_592_000,
+              metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+            },
+          },
+        });
+
+      await send('active');
+      await ctx.pool.query(
+        "UPDATE subscriptions SET valuations_used = 5 WHERE stripe_subscription_id = 'sub_same_period_recovery_1'",
+      );
+      await send('past_due');
+      await send('active');
+      expect((await subscriptionOf(user.id))?.valuations_used).toBe(5);
+    });
+
     it('ignores an event whose subscription carries no id', async () => {
       const user = await seedUser(ctx, { roles: ['valuation_user'] });
       const res = await deliver({

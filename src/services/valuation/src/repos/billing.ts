@@ -120,6 +120,15 @@ export interface SubscriptionRow {
   current_period_start: Date | null;
   current_period_end: Date | null;
   valuations_used: number;
+  /**
+   * The period {@link SubscriptionRow.valuations_used} is counting (migration
+   * 0190) — which is not always `current_period_start`, and the difference is
+   * the whole point of the column. Stripe advances the period when it *raises*
+   * the renewal invoice, so a declined renewal moves `current_period_start`
+   * forward while no money has arrived; the counter stays where the last paid
+   * period left it until a paying status says otherwise.
+   */
+  quota_period_start: Date | null;
   created_at: Date;
   canceled_at: Date | null;
   /**
@@ -221,8 +230,8 @@ export async function upsertSubscription(
     const { rows } = await pool.query<SubscriptionWrite>(
       `INSERT INTO subscriptions
          (id, user_id, plan_tier, status, stripe_subscription_id, stripe_customer_id,
-          current_period_start, current_period_end, cancel_at_period_end)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, false))
+          current_period_start, current_period_end, cancel_at_period_end, quota_period_start)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, false), $7)
        ON CONFLICT (stripe_subscription_id) DO UPDATE SET
          plan_tier = EXCLUDED.plan_tier,
          status = EXCLUDED.status,
@@ -246,12 +255,37 @@ export async function upsertSubscription(
          -- unconditionally would have that event clear a scheduled cancellation
          -- the subscription event had just recorded.
          cancel_at_period_end = COALESCE($9, subscriptions.cancel_at_period_end),
-         -- New billing period resets usage — compared against the value that
-         -- is actually being written, not the one that was passed in.
+         -- A new billing period resets usage — but only one that has been paid
+         -- for, and compared against the period the counter is actually
+         -- counting rather than the one the row happens to be showing.
+         --
+         -- Stripe advances current_period_start when it *raises* the renewal
+         -- invoice, not when the invoice settles, so a declined renewal arrives
+         -- as a single event carrying both the next period and 'past_due'.
+         -- Keyed on the period alone, that event handed an exhausted annual
+         -- retainer twelve more valuations for a period nobody had paid for,
+         -- and 'past_due' is a served status with no end (see
+         -- SERVED_SUBSCRIPTION_STATUSES), so it kept them. So the reset is
+         -- gated on the money as well as the date: BILLING_SUBSCRIPTION_STATUSES
+         -- is the set that means a renewal cleared.
+         --
+         -- quota_period_start (migration 0190) is what makes the recovery work.
+         -- The past_due event moves current_period_start and leaves the counter
+         -- and its period alone; the 'active' that follows when the customer
+         -- replaces their card carries that same new period, which still differs
+         -- from quota_period_start, so the grant happens then — on the event
+         -- that says the money arrived — rather than never.
          valuations_used = CASE
-           WHEN COALESCE(EXCLUDED.current_period_start, subscriptions.current_period_start)
-                IS DISTINCT FROM subscriptions.current_period_start
+           WHEN EXCLUDED.status IN (${BILLING_SQL})
+            AND COALESCE(EXCLUDED.current_period_start, subscriptions.current_period_start)
+                IS DISTINCT FROM subscriptions.quota_period_start
            THEN 0 ELSE subscriptions.valuations_used END,
+         quota_period_start = CASE
+           WHEN EXCLUDED.status IN (${BILLING_SQL})
+            AND COALESCE(EXCLUDED.current_period_start, subscriptions.current_period_start)
+                IS DISTINCT FROM subscriptions.quota_period_start
+           THEN COALESCE(EXCLUDED.current_period_start, subscriptions.current_period_start)
+           ELSE subscriptions.quota_period_start END,
          canceled_at = CASE WHEN EXCLUDED.status = 'canceled' THEN now() ELSE NULL END
        WHERE subscriptions.status <> 'canceled'
        -- xmax is this statement saying which arm it took: zero on the row it
@@ -291,8 +325,9 @@ export async function upsertSubscription(
     );
   }
   const { rows } = await pool.query<SubscriptionRow>(
-    `INSERT INTO subscriptions (id, user_id, plan_tier, status, current_period_start, current_period_end)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    `INSERT INTO subscriptions
+       (id, user_id, plan_tier, status, current_period_start, current_period_end, quota_period_start)
+     VALUES ($1, $2, $3, $4, $5, $6, $5) RETURNING *`,
     [
       newUlid(),
       input.userId,
