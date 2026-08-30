@@ -254,8 +254,8 @@ export function parseXeroProfitAndLoss(report: unknown): ProfitAndLossSnapshot {
   let priorRevenue: number | null = null;
   let netIncome: number | null = null;
 
-  for (const section of root?.Rows ?? []) {
-    for (const row of section.Rows ?? []) {
+  for (const section of asRows<{ Rows?: unknown }>(root?.Rows)) {
+    for (const row of asRows<{ Cells?: Array<{ Value?: string }> }>(section.Rows)) {
       const label = row.Cells?.[0]?.Value ?? '';
       const current = row.Cells?.[1]?.Value;
       const prior = row.Cells?.[2]?.Value;
@@ -267,7 +267,9 @@ export function parseXeroProfitAndLoss(report: unknown): ProfitAndLossSnapshot {
       }
     }
   }
-  const fields = Object.fromEntries((root?.Fields ?? []).map((f) => [f.Id, f.Value]));
+  const fields = Object.fromEntries(
+    asRows<{ Id?: string; Value?: string }>(root?.Fields).map((f) => [f.Id, f.Value]),
+  );
   return {
     currency: (fields.Currency as string | undefined) ?? null,
     period_start: (fields.FromDate as string | undefined) ?? null,
@@ -295,15 +297,16 @@ export function parseQuickBooksProfitAndLoss(report: unknown): ProfitAndLossSnap
   let revenue: number | null = null;
   let netIncome: number | null = null;
 
-  const walk = (rows: QboRow[] | undefined) => {
-    for (const row of rows ?? []) {
+  const walk = (rows: unknown, depth: number) => {
+    if (depth > MAX_REPORT_DEPTH) return;
+    for (const row of asRows<QboRow>(rows)) {
       const total = row.Summary?.ColData?.at(-1)?.value;
       if (row.group === 'Income') revenue = toCents(total);
       if (row.group === 'NetIncome') netIncome = toCents(total);
-      walk(row.Rows?.Row);
+      walk(row.Rows?.Row, depth + 1);
     }
   };
-  walk(r.Rows?.Row);
+  walk(r.Rows?.Row, 0);
 
   return {
     currency: r.Header?.Currency ?? null,
@@ -377,6 +380,45 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
 
+/**
+ * The same lie, one level down: a list of rows that is not a list, or holds
+ * something that is not a row.
+ *
+ * `asRecord` guards the body. Every `for (… of x.Rows ?? [])` below asserted
+ * the collection *inside* it and checked nothing, and the two shapes a report
+ * can arrive in are one line apart:
+ *
+ *   {"Reports":[{"Rows":{…}}]}     TypeError: object is not iterable
+ *   {"Reports":[{"Rows":[null]}]}  TypeError: Cannot read properties of null
+ *
+ * Both leave these parsers as a bare `TypeError`, and the import route catches
+ * it, runs it through `describeTransportFailure`, and writes V8's wording to
+ * `accounting_connections.last_error` — the column it then tells the analyst
+ * to go and read, in a sentence about the *provider* having failed.
+ *
+ * Read as absent rather than refused, unlike the cap-table sync's equivalent.
+ * These are scrapers: a section whose shape they do not recognise already
+ * contributes nothing and the parse already answers `null` for a figure it did
+ * not find, which is a value the import route checks for before it applies
+ * anything. A crash is the bug here; the tolerance is the design.
+ */
+function asRows<T>(value: unknown): T[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((row) => row !== null && typeof row === 'object' && !Array.isArray(row)) as T[];
+}
+
+/**
+ * How deep a QuickBooks report may nest before this stops walking it.
+ *
+ * `walk` recurses on `row.Rows.Row` with no bound. V8's JSON parser is
+ * iterative, so a body of twenty thousand nested `{"Rows":{"Row":[` — about
+ * 340 KB, three orders of magnitude inside the 16 MB body cap — parses
+ * cleanly and then exhausts the stack, and `RangeError: Maximum call stack
+ * size exceeded` becomes the provider's recorded failure. A real balance sheet
+ * or P&L nests half a dozen groups deep.
+ */
+const MAX_REPORT_DEPTH = 64;
+
 /** Xero Reports/BalanceSheet — same row-of-sections shape as the P&L. */
 export function parseXeroBalanceSheet(report: unknown): ImportedBalanceSheet {
   const r = asRecord(report) as {
@@ -387,12 +429,14 @@ export function parseXeroBalanceSheet(report: unknown): ImportedBalanceSheet {
   };
   const root = r.Reports?.[0];
   const out: ImportedBalanceSheet = { ...EMPTY_BALANCE_SHEET };
-  for (const section of root?.Rows ?? []) {
-    for (const row of section.Rows ?? []) {
+  for (const section of asRows<{ Rows?: unknown }>(root?.Rows)) {
+    for (const row of asRows<{ Cells?: Array<{ Value?: string }> }>(section.Rows)) {
       assignBalanceLine(out, row.Cells?.[0]?.Value ?? '', row.Cells?.[1]?.Value);
     }
   }
-  const fields = Object.fromEntries((root?.Fields ?? []).map((f) => [f.Id, f.Value]));
+  const fields = Object.fromEntries(
+    asRows<{ Id?: string; Value?: string }>(root?.Fields).map((f) => [f.Id, f.Value]),
+  );
   // A balance sheet is a point in time, so the report's ToDate is its date.
   out.as_of = (fields.ToDate as string | undefined) ?? (fields.FromDate as string | undefined) ?? null;
   return out;
@@ -408,16 +452,17 @@ export function parseQuickBooksBalanceSheet(report: unknown): ImportedBalanceShe
   const r = asRecord(report) as { Header?: { EndPeriod?: string }; Rows?: { Row?: QboRow[] } };
   const out: ImportedBalanceSheet = { ...EMPTY_BALANCE_SHEET };
 
-  const walk = (rows: QboRow[] | undefined) => {
-    for (const row of rows ?? []) {
+  const walk = (rows: unknown, depth: number) => {
+    if (depth > MAX_REPORT_DEPTH) return;
+    for (const row of asRows<QboRow>(rows)) {
       const cols = row.Summary?.ColData;
       if (cols && cols.length > 0) {
         assignBalanceLine(out, cols[0]?.value ?? '', cols.at(-1)?.value);
       }
-      walk(row.Rows?.Row);
+      walk(row.Rows?.Row, depth + 1);
     }
   };
-  walk(r.Rows?.Row);
+  walk(r.Rows?.Row, 0);
   out.as_of = r.Header?.EndPeriod ?? null;
   return out;
 }

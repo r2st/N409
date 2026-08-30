@@ -3,7 +3,9 @@ import {
   fetchBalanceSheet,
   fetchFinancials,
   parseQuickBooksBalanceSheet,
+  parseQuickBooksProfitAndLoss,
   parseXeroBalanceSheet,
+  parseXeroProfitAndLoss,
 } from '../../src/clients/accounting.js';
 
 const json = (body: unknown) =>
@@ -149,6 +151,95 @@ describe('QuickBooks balance sheet', () => {
     for (const junk of [null, undefined, {}, { Rows: {} }, []]) {
       expect(() => parseQuickBooksBalanceSheet(junk)).not.toThrow();
     }
+  });
+});
+
+/**
+ * The report shaped to break the parser, rather than the report an accountant
+ * exported.
+ *
+ * `asRecord` guards the body; every collection inside it was asserted by a cast
+ * and read unguarded. A `TypeError` out of one of these parsers is caught by
+ * the import route, run through `describeTransportFailure`, and written to
+ * `accounting_connections.last_error` — which is the column the analyst is then
+ * told to go and read, in a sentence about the provider having failed.
+ */
+describe('adversarial accounting reports', () => {
+  it('reads a section list that is not a list as no sections', () => {
+    expect(parseXeroBalanceSheet({ Reports: [{ Rows: { Assets: {} } }] })).toMatchObject({
+      total_assets_cents: null,
+    });
+    expect(parseXeroProfitAndLoss({ Reports: [{ Rows: 'Income' }] })).toMatchObject({
+      revenue_cents: null,
+    });
+    expect(parseQuickBooksProfitAndLoss({ Rows: { Row: { group: 'Income' } } })).toMatchObject({
+      revenue_cents: null,
+    });
+  });
+
+  it('skips a row that is not a row and keeps the ones beside it', () => {
+    const report = {
+      Reports: [
+        {
+          Fields: [{ Id: 'ToDate', Value: '2026-06-30' }],
+          Rows: [null, { Rows: [null, xeroRow('Total Assets', '1000.00')] }],
+        },
+      ],
+    };
+    const sheet = parseXeroBalanceSheet(report);
+    expect(sheet.total_assets_cents).toBe(100_000);
+    expect(sheet.as_of).toBe('2026-06-30');
+  });
+
+  it('reads a Fields block that is not a list without losing the rest of the parse', () => {
+    const sheet = parseXeroBalanceSheet({
+      Reports: [{ Fields: { ToDate: '2026-06-30' }, Rows: [{ Rows: [xeroRow('Total Assets', '5.00')] }] }],
+    });
+    expect(sheet.total_assets_cents).toBe(500);
+    expect(sheet.as_of).toBeNull();
+  });
+
+  it('keeps a QuickBooks summary beside a null row', () => {
+    const report = {
+      Header: { EndPeriod: '2026-06-30' },
+      Rows: {
+        Row: [
+          null,
+          { group: 'TotalAssets', Summary: { ColData: [{ value: 'Total Assets' }, { value: '250' }] } },
+        ],
+      },
+    };
+    expect(parseQuickBooksBalanceSheet(report).total_assets_cents).toBe(25_000);
+  });
+
+  /*
+   * V8's JSON parser is iterative, so nesting this deep parses cleanly at about
+   * 340 KB — three orders of magnitude inside the 16 MB body cap — and the
+   * unbounded `walk` below it then exhausted the stack. `RangeError: Maximum
+   * call stack size exceeded` became the provider's recorded failure.
+   */
+  it('stops walking a report nested deeper than any real one', () => {
+    const depth = 20_000;
+    const leaf = '{"group":"Income","Summary":{"ColData":[{"value":"1"}]}}';
+    const text = '{"Rows":{"Row":['.repeat(depth) + leaf + ']}}'.repeat(depth);
+    const report = JSON.parse(`{"Rows":{"Row":[${text}]}}`) as unknown;
+    expect(() => parseQuickBooksProfitAndLoss(report)).not.toThrow();
+    expect(() => parseQuickBooksBalanceSheet(report)).not.toThrow();
+  });
+
+  it('still reads a report nested as deep as a real one', () => {
+    const report = {
+      Rows: {
+        Row: [
+          {
+            Rows: {
+              Row: [{ group: 'Income', Summary: { ColData: [{ value: 'Income' }, { value: '900' }] } }],
+            },
+          },
+        ],
+      },
+    };
+    expect(parseQuickBooksProfitAndLoss(report).revenue_cents).toBe(90_000);
   });
 });
 
