@@ -16,6 +16,7 @@
  * rather than a picture of one.
  */
 
+import { sliceChars } from '../domain/textSlice.js';
 import { buildZip, type ZipEntry } from './zip.js';
 
 /** Number format applied to a column. Indexes into STYLE_FORMATS. */
@@ -120,6 +121,11 @@ export function cellRef(colIndex: number, rowNumber: number): string {
  * []:*?/\ and no leading/trailing apostrophe. Excel refuses to open a file
  * that breaks any of these, and silently truncating to a duplicate name is
  * just as fatal, so names are also de-duplicated with a numeric suffix.
+ *
+ * The 31 is counted in characters rather than UTF-16 units: a tab name of
+ * thirty characters and an emoji would otherwise be cut through the emoji, and
+ * XML has no production for the half that is left — it reaches the file as
+ * `U+FFFD`. See domain/textSlice.ts.
  */
 export function sanitizeSheetName(name: string, taken: Set<string>): string {
   let base = stripInvalidXmlChars(name)
@@ -127,13 +133,13 @@ export function sanitizeSheetName(name: string, taken: Set<string>): string {
     .trim();
   base = base.replace(/^'+/, '').replace(/'+$/, '').trim();
   if (base === '') base = 'Sheet';
-  base = base.slice(0, 31);
+  base = sliceChars(base, 31);
 
   let candidate = base;
   let n = 2;
   while (taken.has(candidate.toLowerCase())) {
     const suffix = ` (${n})`;
-    candidate = base.slice(0, 31 - suffix.length) + suffix;
+    candidate = sliceChars(base, 31 - suffix.length) + suffix;
     n += 1;
   }
   taken.add(candidate.toLowerCase());

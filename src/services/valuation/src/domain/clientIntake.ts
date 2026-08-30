@@ -1,5 +1,6 @@
 import { isIsoCalendarDate } from '@n409/shared';
 import { computeCompletion, narrowIntakeAnswers, type IntakeCompletion } from './intake.js';
+import { sliceChars } from './textSlice.js';
 
 /**
  * Status of a firm's client intake link.
@@ -105,9 +106,9 @@ export function summarizeIntakeLink(
  */
 export function intakeCompanyName(answers: Record<string, unknown>, clientName: string | null): string {
   const legal = typeof answers.legal_name === 'string' ? answers.legal_name.trim() : '';
-  if (legal) return legal.slice(0, 300);
+  if (legal) return sliceChars(legal, 300);
   const addressed = clientName?.trim() ?? '';
-  return addressed ? addressed.slice(0, 300) : 'Unnamed company';
+  return addressed ? sliceChars(addressed, 300) : 'Unnamed company';
 }
 
 /** A money answer as integer cents, or null when it cannot be one. */

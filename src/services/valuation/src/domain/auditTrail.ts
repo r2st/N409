@@ -1,4 +1,5 @@
 import { toCsv } from '../export/csv.js';
+import { ellipsize } from './textSlice.js';
 
 /**
  * Audit-trail enrichment over the raw `valuation_events` spine.
@@ -575,7 +576,7 @@ export function formatAuditValue(value: unknown): string {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'yes' : 'no';
   if (typeof value === 'number' || typeof value === 'bigint') return String(value);
-  if (typeof value === 'string') return value.length > 80 ? `${value.slice(0, 77)}…` : value;
+  if (typeof value === 'string') return ellipsize(value, 80);
   if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? '' : 's'}`;
   return 'updated';
 }

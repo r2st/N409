@@ -36,6 +36,7 @@ import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
+import { sliceChars } from '../domain/textSlice.js';
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 
@@ -85,15 +86,23 @@ function scrubFilename(name: string): string {
   return cleaned.trim();
 }
 
+/** How much of a filename is kept. Well inside `documents.filename`'s column. */
+const MAX_FILENAME_CHARS = 200;
+
 /**
  * Strip directories and control characters; keep the name recognizable.
  *
  * `basename` first, because the name arrives from a browser that may send a
  * whole path — `C:\Users\me\cap table.xlsx` from an old Windows client — and
  * `cap table.xlsx` is a better answer than `C__Users_me_cap table.xlsx`.
+ *
+ * The length bound is `sliceChars` rather than `slice`, because this name is
+ * written into a `jsonb` event payload and a cut that lands inside an emoji
+ * leaves half a character there — which Postgres refuses, taking the upload to
+ * a 500. See domain/textSlice.ts.
  */
 export function safeFilename(name: string): string {
-  return (scrubFilename(path.basename(name)) || 'upload').slice(0, 200);
+  return sliceChars(scrubFilename(path.basename(name)) || 'upload', MAX_FILENAME_CHARS);
 }
 
 /**

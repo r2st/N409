@@ -1,4 +1,5 @@
 import { RENDER_RESOLVED_MARKERS, type ReportContent } from './report.js';
+import { ellipsize } from './textSlice.js';
 
 /**
  * Does the drafted report still contain the template's fill-me markers?
@@ -100,7 +101,7 @@ function excerptAround(text: string, at: number): string {
   const dot = text.indexOf('.', at);
   const end = dot === -1 ? text.length : dot + 1;
   const clause = text.slice(start, end).trim();
-  return clause.length > 200 ? `${clause.slice(0, 197)}…` : clause;
+  return ellipsize(clause, 200);
 }
 
 /**
