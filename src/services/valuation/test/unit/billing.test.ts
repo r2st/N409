@@ -6,6 +6,7 @@ import {
   invoicePaidMessage,
   invoiceSections,
   paymentReceivedMessage,
+  planLimitDetail,
   quotaAwaitsRenewal,
   receiptSections,
   usageView,
@@ -386,5 +387,74 @@ describe('invoiceLineItems — what an invoice was made of', () => {
     expect(invoiceLineItems(seats, 240_000, 'Subscription')).toEqual([
       { description: 'Seats', amount_cents: 240_000, quantity: 4 },
     ]);
+  });
+});
+
+/**
+ * The refusal a subscriber reads when the plan's valuations are gone.
+ *
+ * Pinned as prose because prose is the whole of what this problem carries: the
+ * type and status say "plan limit" and nothing about what to do, and the three
+ * things asserted here are the three the old sentence got wrong — a remedy this
+ * product sells, the figures the row already had, and the one account for which
+ * upgrading is the wrong instruction.
+ */
+describe('planLimitDetail', () => {
+  const base = {
+    plan_name: 'Retainer',
+    valuation_limit: 12,
+    valuations_used: 12,
+    current_period_end: new Date('2026-09-30T00:00:00Z'),
+    awaiting_renewal: false,
+  };
+
+  it('states the plan, the limit and when the allowance returns', () => {
+    const detail = planLimitDetail(base);
+    expect(detail).toContain('all 12 valuations included in Retainer');
+    expect(detail).toContain('2026-09-30');
+    expect(detail).toContain('/billing');
+  });
+
+  it('never offers the add-on purchase this product does not sell', () => {
+    for (const awaiting of [false, true]) {
+      const detail = planLimitDetail({ ...base, awaiting_renewal: awaiting });
+      expect(detail).not.toMatch(/purchase additional|buy more|top-?up to buy more/i);
+    }
+    // The one mention of a top-up is the sentence saying there is not one.
+    expect(planLimitDetail(base)).toContain('no separate top-up to buy');
+  });
+
+  it('sends a subscriber in dunning to their card, not to a larger plan', () => {
+    const detail = planLimitDetail({ ...base, awaiting_renewal: true });
+    expect(detail).toContain('renewal payment');
+    expect(detail).toContain('Update your card');
+    expect(detail).not.toMatch(/higher limit/i);
+    // The advanced period is the one figure this branch must not promise: it
+    // arrives only if the payment does.
+    expect(detail).not.toContain('2026-09-30');
+  });
+
+  it('drops the figures it does not have and keeps the remedy', () => {
+    const detail = planLimitDetail({
+      ...base,
+      plan_name: 'your plan',
+      valuation_limit: null,
+      current_period_end: null,
+    });
+    expect(detail).toContain('the valuations included in your plan');
+    expect(detail).not.toContain('undefined');
+    expect(detail).not.toContain('null');
+    expect(detail).not.toContain('NaN');
+    expect(detail).toContain('/billing');
+  });
+
+  it('names no page the app does not route', () => {
+    // "Settings → Billing" was the standing instruction in this area and there
+    // is no billing panel on /settings; billing is its own route.
+    for (const awaiting of [false, true]) {
+      expect(planLimitDetail({ ...base, awaiting_renewal: awaiting })).not.toMatch(
+        /Settings ?(→|->) ?Billing/,
+      );
+    }
   });
 });

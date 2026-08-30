@@ -2,7 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { ApiProblem, isIsoCalendarDate, isUlid, problems } from '@n409/shared';
-import { consumeValuation, findActiveSubscription, releaseValuation } from '../repos/billing.js';
+import {
+  consumeValuation,
+  findActiveSubscription,
+  findPlanForSubscription,
+  releaseValuation,
+} from '../repos/billing.js';
+import { planLimitDetail, quotaAwaitsRenewal } from '../domain/billing.js';
 import {
   canCreateValuation,
   canReadValuation,
@@ -252,12 +258,27 @@ export function registerValuationRoutes(
     // active subscription is on the one-time per-valuation flow and unaffected.
     const subscription = await findActiveSubscription(deps.pool, userId);
     if (subscription && !(await consumeValuation(deps.pool, userId))) {
+      /*
+       * The plan is read only on the refusal, never on the way through. The
+       * limit itself is enforced inside `consumeValuation`'s own UPDATE, so
+       * this lookup buys nothing but the sentence — and the sentence is the
+       * whole of what the caller gets. A tier retired from the catalogue is
+       * still the tier this subscriber is on, so it is `findPlanForSubscription`
+       * (which does not filter `active`) rather than `findPlan`; a missing row
+       * leaves the figures out and the remedy in.
+       */
+      const plan = await findPlanForSubscription(deps.pool, subscription.plan_tier);
       throw new ApiProblem({
         status: 402,
         title: 'Plan limit reached',
         type: 'urn:n409:problem:plan-limit',
-        detail:
-          "Your plan's included valuations are used up for this period — upgrade or purchase additional valuations to continue.",
+        detail: planLimitDetail({
+          plan_name: plan?.name ?? 'your plan',
+          valuation_limit: plan?.valuation_limit ?? null,
+          valuations_used: subscription.valuations_used,
+          current_period_end: subscription.current_period_end,
+          awaiting_renewal: quotaAwaitsRenewal(subscription),
+        }),
       });
     }
 

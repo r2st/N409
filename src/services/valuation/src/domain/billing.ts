@@ -195,6 +195,78 @@ function periodInstant(value: Date | string | null | undefined): number | null {
 }
 
 /**
+ * The 402 a subscriber reads when the plan's valuations are gone.
+ *
+ * It said: "Your plan's included valuations are used up for this period —
+ * upgrade or purchase additional valuations to continue." Three things wrong
+ * with that sentence, and the third is the one R240 created.
+ *
+ * It offers a remedy this product does not sell. There is no additional-
+ * valuation purchase: `ADDON_KEYS` is express delivery and the QSBS letter,
+ * both per-engagement extras on a checkout, and neither returns quota. A
+ * subscriber told to buy more went looking for a control that has never
+ * existed, and support had nothing to point at either.
+ *
+ * It states no figures. "Used up" is the one fact the caller already knows;
+ * what decides whether they wait or pay is how many the plan includes and when
+ * the next allowance starts, and both were on the row this was raised from.
+ *
+ * And on one account it is simply the wrong instruction. A declined renewal
+ * advances `current_period_start` and leaves the counter on the last period
+ * paid for ({@link quotaAwaitsRenewal}), so a subscriber in dunning hits this
+ * refusal with nothing to upgrade *to* — the plan they hold is the plan they
+ * want, and the allowance comes back when the renewal settles. Telling them to
+ * upgrade sells a larger plan to fix a card that expired, and the Billing
+ * screen has said the true thing beside the counter since R240 while the
+ * refusal that actually blocks the work said this.
+ *
+ * `/billing` and not "Settings → Billing": billing is its own route, and the
+ * remedy has to name a page that exists.
+ */
+export function planLimitDetail(r: {
+  plan_name: string;
+  valuation_limit: number | null;
+  valuations_used: number;
+  /** When the current period ends, from the subscription row. */
+  current_period_end: Date | string | null;
+  /** {@link quotaAwaitsRenewal} for this subscription. */
+  awaiting_renewal: boolean;
+}): string {
+  const included =
+    typeof r.valuation_limit === 'number' && Number.isFinite(r.valuation_limit)
+      ? `all ${r.valuation_limit} valuations included in ${r.plan_name}`
+      : `the valuations included in ${r.plan_name}`;
+
+  if (r.awaiting_renewal) {
+    // No period date here on purpose. The one this row carries is the *new*
+    // period Stripe opened when it raised the renewal invoice, and naming it
+    // would promise an allowance on a date that arrives only if the payment
+    // does — which is the pair of figures R240 found unreadable in the first
+    // place.
+    return (
+      `You have used ${included}, and the next allowance starts when your renewal payment goes ` +
+      `through — it was declined, so the period has moved and the count has not. Update your ` +
+      `card on the billing page (/billing) and the included valuations come back with it.`
+    );
+  }
+
+  const renews = periodDay(r.current_period_end);
+  return (
+    `You have used ${included} for this billing period` +
+    (renews ? `, and the next allowance starts on ${renews}` : '') +
+    `. To start one before then, move to a plan with a higher limit from the billing page ` +
+    `(/billing) — there is no separate top-up to buy.`
+  );
+}
+
+/** A period boundary as a plain day, or null when the row does not carry one. */
+function periodDay(value: Date | string | null | undefined): string | null {
+  const instant = periodInstant(value);
+  if (instant === null || !Number.isFinite(instant)) return null;
+  return new Date(instant).toISOString().slice(0, 10);
+}
+
+/**
  * Is this plan's `price_cents` an entry price rather than the price?
  *
  * A recurring tier bills one amount, so its figure is exact. The `one_time`
