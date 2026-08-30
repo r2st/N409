@@ -51,8 +51,12 @@ const HOOK_SECRET = 'whsec-live-signing-key-5c1f';
  * deliveries with.
  */
 describe.skipIf(!dbUp)('third-party credentials at rest', () => {
+  /** Attribution for the connect/disconnect events both writes record (R256). */
+  const evActor = () => ({ actorType: 'human' as const, actorId: userId, source: 'test' });
+
   let db: TestDb;
   let pool: pg.Pool;
+  let userId: string;
   let valuationId: string;
   let partnerId: string;
   const savedKey = process.env.CONNECTION_ENCRYPTION_KEY;
@@ -67,6 +71,7 @@ describe.skipIf(!dbUp)('third-party credentials at rest', () => {
       roles: ['valuation_user'],
       partnerId: null,
     });
+    userId = user.id;
     valuationId = (
       await createValuation(
         pool,
@@ -108,12 +113,16 @@ describe.skipIf(!dbUp)('third-party credentials at rest', () => {
 
   describe('accounting connections', () => {
     it('writes neither token to the column in a form containing the plaintext', async () => {
-      await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens,
-        connectedBy: null,
-      });
+      await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens,
+          connectedBy: null,
+        },
+        evActor(),
+      );
       const stored = await rawColumns('accounting_connections', 'valuation_id = $1 AND provider = $2', [
         valuationId,
         'xero',
@@ -129,12 +138,16 @@ describe.skipIf(!dbUp)('third-party credentials at rest', () => {
     it('hands the plaintext back to the caller that has to replay it', async () => {
       // The upsert's own RETURNING row, a targeted read, and a list read: all
       // three feed a provider call, so all three must be plaintext.
-      const upserted = await upsertConnection(pool, {
-        valuationId,
-        provider: 'quickbooks',
-        tokens,
-        connectedBy: null,
-      });
+      const upserted = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'quickbooks',
+          tokens,
+          connectedBy: null,
+        },
+        evActor(),
+      );
       expect(upserted.access_token).toBe(ACCESS);
       expect(upserted.refresh_token).toBe(REFRESH);
 
@@ -164,8 +177,8 @@ describe.skipIf(!dbUp)('third-party credentials at rest', () => {
     it('leaves a revoked row visibly empty rather than sealed-empty', async () => {
       // '' means "no credential here" and has to stay legible as that in SQL;
       // a sealed empty string is a 36-byte blob that reads like a live one.
-      await upsertConnection(pool, { valuationId, provider: 'wave', tokens, connectedBy: null });
-      expect(await revokeConnection(pool, valuationId, 'wave')).toBe(true);
+      await upsertConnection(pool, { valuationId, provider: 'wave', tokens, connectedBy: null }, evActor());
+      expect(await revokeConnection(pool, valuationId, 'wave', evActor())).toBe(true);
       const { rows } = await pool.query<{ access_token: string; refresh_token: string | null }>(
         'SELECT access_token, refresh_token FROM accounting_connections WHERE valuation_id = $1 AND provider = $2',
         [valuationId, 'wave'],
@@ -179,12 +192,16 @@ describe.skipIf(!dbUp)('third-party credentials at rest', () => {
 
   describe('HRIS and cap-table connections', () => {
     it('seals the payroll provider’s tokens too', async () => {
-      await upsertHrisConnection(pool, {
-        valuationId,
-        provider: 'gusto',
-        tokens: { accessToken: ACCESS, refreshToken: REFRESH, expiresAt: null },
-        connectedBy: null,
-      });
+      await upsertHrisConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'gusto',
+          tokens: { accessToken: ACCESS, refreshToken: REFRESH, expiresAt: null },
+          connectedBy: null,
+        },
+        evActor(),
+      );
       for (const value of await rawColumns('hris_connections', 'valuation_id = $1 AND provider = $2', [
         valuationId,
         'gusto',
@@ -198,12 +215,16 @@ describe.skipIf(!dbUp)('third-party credentials at rest', () => {
     });
 
     it('seals the cap-table provider’s tokens too', async () => {
-      await upsertCapTableConnection(pool, {
-        valuationId,
-        provider: 'carta',
-        tokens: { accessToken: ACCESS, refreshToken: REFRESH, expiresAt: null },
-        connectedBy: null,
-      });
+      await upsertCapTableConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'carta',
+          tokens: { accessToken: ACCESS, refreshToken: REFRESH, expiresAt: null },
+          connectedBy: null,
+        },
+        evActor(),
+      );
       for (const value of await rawColumns('cap_table_connections', 'valuation_id = $1 AND provider = $2', [
         valuationId,
         'carta',

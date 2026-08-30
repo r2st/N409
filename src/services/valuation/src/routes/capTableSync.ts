@@ -404,13 +404,19 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
     if (!creds) throw providerUnavailable(provider);
     try {
       const tokens = await exchangeCode(provider, creds, redirectUri, q.code, fetchFn);
-      await upsertConnection(deps.pool, {
-        valuationId: state.valuationId,
-        provider,
-        tokens,
-        connectedBy: state.userId,
-        externalCompanyId: q.company_id ?? null,
-      });
+      await upsertConnection(
+        deps.pool,
+        {
+          valuationId: state.valuationId,
+          provider,
+          tokens,
+          connectedBy: state.userId,
+          externalCompanyId: q.company_id ?? null,
+        },
+        // The person who completed the OAuth hop, from the signed state — this
+        // callback carries no session of its own.
+        { actorType: 'human', actorId: state.userId, source: 'captable_sync' },
+      );
       return back('connected');
     } catch (err) {
       req.log.warn({ err, provider }, 'cap-table sync token exchange failed');
@@ -509,7 +515,8 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       const { id, provider: rawProvider } = req.params as { id: string; provider: string };
       const provider = parseProvider(rawProvider);
       const valuation = await loadAuthorized(principal, id);
-      if (!(await revokeConnection(deps.pool, valuation.id, provider))) throw problems.notFound();
+      const actor = { actorType: 'human' as const, actorId: principal.id, source: 'captable_sync' };
+      if (!(await revokeConnection(deps.pool, valuation.id, provider, actor))) throw problems.notFound();
       return reply.status(204).send();
     },
   );

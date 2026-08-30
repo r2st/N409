@@ -191,13 +191,19 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
 
     try {
       const tokens = await exchangeCode(provider, creds, redirectUri, q.code, fetchFn);
-      await upsertConnection(deps.pool, {
-        valuationId: state.valuationId,
-        provider,
-        tokens,
-        connectedBy: state.userId,
-        externalOrgId: q.realmId ?? null,
-      });
+      await upsertConnection(
+        deps.pool,
+        {
+          valuationId: state.valuationId,
+          provider,
+          tokens,
+          connectedBy: state.userId,
+          externalOrgId: q.realmId ?? null,
+        },
+        // The person who completed the OAuth hop, from the signed state — this
+        // callback carries no session of its own.
+        { actorType: 'human', actorId: state.userId, source: 'accounting' },
+      );
       return back('connected');
     } catch (err) {
       req.log.warn({ err, provider }, 'accounting token exchange failed');
@@ -369,7 +375,8 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
       const { id, provider: rawProvider } = req.params as { id: string; provider: string };
       const provider = parseProvider(rawProvider);
       const valuation = await loadAuthorizedValuation(principal, id);
-      if (!(await revokeConnection(deps.pool, valuation.id, provider))) throw problems.notFound();
+      const actor = { actorType: 'human' as const, actorId: principal.id, source: 'accounting_import' };
+      if (!(await revokeConnection(deps.pool, valuation.id, provider, actor))) throw problems.notFound();
       return reply.status(204).send();
     },
   );

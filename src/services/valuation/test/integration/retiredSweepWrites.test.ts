@@ -39,6 +39,9 @@ const SYSTEM = { actorType: 'system', actorId: 'test', source: 'auto-pipeline' }
  * looks like too.
  */
 describe.skipIf(!dbUp)('the scheduled sweeps and a retired engagement', () => {
+  /** Attribution for the connect/disconnect events both writes record (R256). */
+  const evActor = () => ({ actorType: 'human' as const, actorId: ops.id, source: 'test' });
+
   let ctx: TestApp;
   let ops: Awaited<ReturnType<typeof seedUser>>;
 
@@ -75,12 +78,16 @@ describe.skipIf(!dbUp)('the scheduled sweeps and a retired engagement', () => {
       const live = await newValuation('SweepGuard CapTable Live');
       const dead = await newValuation('SweepGuard CapTable Dead');
       for (const id of [live, dead]) {
-        await upsertCapTableConnection(ctx.pool, {
-          valuationId: id,
-          provider: 'carta',
-          tokens,
-          connectedBy: ops.id,
-        });
+        await upsertCapTableConnection(
+          ctx.pool,
+          {
+            valuationId: id,
+            provider: 'carta',
+            tokens,
+            connectedBy: ops.id,
+          },
+          evActor(),
+        );
         await due(id, 'cap_table_connections');
       }
 
@@ -102,12 +109,16 @@ describe.skipIf(!dbUp)('the scheduled sweeps and a retired engagement', () => {
       // the sweep had settled the connection instead, a restore would give
       // back an engagement whose integration had quietly been turned off.
       const id = await newValuation('SweepGuard CapTable Restored');
-      await upsertCapTableConnection(ctx.pool, {
-        valuationId: id,
-        provider: 'pulley',
-        tokens,
-        connectedBy: ops.id,
-      });
+      await upsertCapTableConnection(
+        ctx.pool,
+        {
+          valuationId: id,
+          provider: 'pulley',
+          tokens,
+          connectedBy: ops.id,
+        },
+        evActor(),
+      );
       await due(id, 'cap_table_connections');
 
       await retireValuations(ctx.pool, [id]);
@@ -123,12 +134,16 @@ describe.skipIf(!dbUp)('the scheduled sweeps and a retired engagement', () => {
       const live = await newValuation('SweepGuard Hris Live');
       const dead = await newValuation('SweepGuard Hris Dead');
       for (const id of [live, dead]) {
-        await upsertHrisConnection(ctx.pool, {
-          valuationId: id,
-          provider: 'gusto',
-          tokens,
-          connectedBy: ops.id,
-        });
+        await upsertHrisConnection(
+          ctx.pool,
+          {
+            valuationId: id,
+            provider: 'gusto',
+            tokens,
+            connectedBy: ops.id,
+          },
+          evActor(),
+        );
         await due(id, 'hris_connections');
       }
       await retireValuations(ctx.pool, [dead]);

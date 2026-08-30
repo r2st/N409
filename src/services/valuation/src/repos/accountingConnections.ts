@@ -1,5 +1,8 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { withTransaction } from '../db/pool.js';
+import type { EventActor } from '../events/record.js';
+import { recordIntegrationConnected, recordIntegrationDisconnected } from '../events/integrationEvents.js';
 import { openConnectionTokens, sealNullable, sealSecret } from '../crypto/connectionSecrets.js';
 import type { AccountingProvider, ImportedFinancials, TokenSet } from '../clients/accounting.js';
 
@@ -61,9 +64,11 @@ export async function upsertConnection(
     connectedBy: string | null;
     externalOrgId?: string | null;
   },
+  actor: EventActor,
 ): Promise<AccountingConnectionRow> {
-  const { rows } = await pool.query<AccountingConnectionRow>(
-    `INSERT INTO accounting_connections
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<AccountingConnectionRow>(
+      `INSERT INTO accounting_connections
        (id, valuation_id, provider, access_token, refresh_token, token_expires_at,
         external_org_id, external_org_name, connected_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -78,19 +83,28 @@ export async function upsertConnection(
        connected_at = now(),
        last_error = NULL
      RETURNING *`,
-    [
-      newUlid(),
-      input.valuationId,
-      input.provider,
-      sealSecret(input.tokens.accessToken),
-      sealNullable(input.tokens.refreshToken),
-      input.tokens.expiresAt,
-      input.externalOrgId ?? input.tokens.externalOrgId ?? null,
-      input.tokens.externalOrgName ?? null,
-      input.connectedBy,
-    ],
-  );
-  return openConnectionTokens(rows[0]!);
+      [
+        newUlid(),
+        input.valuationId,
+        input.provider,
+        sealSecret(input.tokens.accessToken),
+        sealNullable(input.tokens.refreshToken),
+        input.tokens.expiresAt,
+        input.externalOrgId ?? input.tokens.externalOrgId ?? null,
+        input.tokens.externalOrgName ?? null,
+        input.connectedBy,
+      ],
+    );
+    const row = openConnectionTokens(rows[0]!);
+    await recordIntegrationConnected(client, {
+      valuationId: row.valuation_id,
+      family: 'accounting',
+      provider: row.provider,
+      externalName: row.external_org_name,
+      actor,
+    });
+    return row;
+  });
 }
 
 /**
@@ -157,16 +171,37 @@ export async function updateTokens(
   );
 }
 
+/**
+ * End the connection, and record that somebody did.
+ *
+ * Idempotent by the same `status <> 'revoked'` guard that makes `revoked`
+ * terminal: a second disconnect updates nothing and, because the event is
+ * written from the returned row rather than beside the statement, records
+ * nothing either. The route turns the `false` into a 404.
+ */
 export async function revokeConnection(
   pool: pg.Pool,
   valuationId: string,
   provider: AccountingProvider,
+  actor: EventActor,
 ): Promise<boolean> {
-  const { rowCount } = await pool.query(
-    `UPDATE accounting_connections
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<{ external_org_name: string | null }>(
+      `UPDATE accounting_connections
      SET status = 'revoked', access_token = '', refresh_token = NULL
-     WHERE valuation_id = $1 AND provider = $2 AND status <> 'revoked'`,
-    [valuationId, provider],
-  );
-  return (rowCount ?? 0) > 0;
+       WHERE valuation_id = $1 AND provider = $2 AND status <> 'revoked'
+   RETURNING external_org_name`,
+      [valuationId, provider],
+    );
+    const row = rows[0];
+    if (!row) return false;
+    await recordIntegrationDisconnected(client, {
+      valuationId,
+      family: 'accounting',
+      provider,
+      externalName: row.external_org_name,
+      actor,
+    });
+    return true;
+  });
 }

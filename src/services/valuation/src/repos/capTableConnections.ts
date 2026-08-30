@@ -1,5 +1,8 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { withTransaction } from '../db/pool.js';
+import type { EventActor } from '../events/record.js';
+import { recordIntegrationConnected, recordIntegrationDisconnected } from '../events/integrationEvents.js';
 import { openConnectionTokens, sealNullable, sealSecret } from '../crypto/connectionSecrets.js';
 import type { CapTableProvider, TokenSet } from '../clients/capTableSync.js';
 
@@ -80,9 +83,11 @@ export async function upsertConnection(
     connectedBy: string | null;
     externalCompanyId?: string | null;
   },
+  actor: EventActor,
 ): Promise<CapTableConnectionRow> {
-  const { rows } = await pool.query<CapTableConnectionRow>(
-    `INSERT INTO cap_table_connections
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<CapTableConnectionRow>(
+      `INSERT INTO cap_table_connections
        (id, valuation_id, provider, access_token, refresh_token, token_expires_at,
         external_company_id, external_company_name, connected_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -105,19 +110,28 @@ export async function upsertConnection(
        reconnect_required = false,
        next_sync_at = CASE WHEN cap_table_connections.sync_frequency = 'manual' THEN NULL ELSE now() END
      RETURNING *`,
-    [
-      newUlid(),
-      input.valuationId,
-      input.provider,
-      sealSecret(input.tokens.accessToken),
-      sealNullable(input.tokens.refreshToken),
-      input.tokens.expiresAt,
-      input.externalCompanyId ?? input.tokens.externalCompanyId ?? null,
-      input.tokens.externalCompanyName ?? null,
-      input.connectedBy,
-    ],
-  );
-  return openConnectionTokens(rows[0]!);
+      [
+        newUlid(),
+        input.valuationId,
+        input.provider,
+        sealSecret(input.tokens.accessToken),
+        sealNullable(input.tokens.refreshToken),
+        input.tokens.expiresAt,
+        input.externalCompanyId ?? input.tokens.externalCompanyId ?? null,
+        input.tokens.externalCompanyName ?? null,
+        input.connectedBy,
+      ],
+    );
+    const row = openConnectionTokens(rows[0]!);
+    await recordIntegrationConnected(client, {
+      valuationId: row.valuation_id,
+      family: 'cap_table',
+      provider: row.provider,
+      externalName: row.external_company_name,
+      actor,
+    });
+    return row;
+  });
 }
 
 /**
@@ -265,19 +279,40 @@ export async function updateTokens(
   );
 }
 
+/**
+ * End the connection, and record that somebody did.
+ *
+ * Idempotent by the same `status <> 'revoked'` guard that makes `revoked`
+ * terminal: a second disconnect updates nothing and, because the event is
+ * written from the returned row rather than beside the statement, records
+ * nothing either. The route turns the `false` into a 404.
+ */
 export async function revokeConnection(
   pool: pg.Pool,
   valuationId: string,
   provider: CapTableProvider,
+  actor: EventActor,
 ): Promise<boolean> {
-  const { rowCount } = await pool.query(
-    `UPDATE cap_table_connections
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<{ external_company_name: string | null }>(
+      `UPDATE cap_table_connections
      SET status = 'revoked', access_token = '', refresh_token = NULL, sync_frequency = 'manual',
          next_sync_at = NULL, reconnect_required = false
-     WHERE valuation_id = $1 AND provider = $2 AND status <> 'revoked'`,
-    [valuationId, provider],
-  );
-  return (rowCount ?? 0) > 0;
+       WHERE valuation_id = $1 AND provider = $2 AND status <> 'revoked'
+   RETURNING external_company_name`,
+      [valuationId, provider],
+    );
+    const row = rows[0];
+    if (!row) return false;
+    await recordIntegrationDisconnected(client, {
+      valuationId,
+      family: 'cap_table',
+      provider,
+      externalName: row.external_company_name,
+      actor,
+    });
+    return true;
+  });
 }
 
 /**

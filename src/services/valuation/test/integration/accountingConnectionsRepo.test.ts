@@ -57,6 +57,14 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
     await db?.teardown();
   });
 
+  /**
+   * Who the connect/disconnect events are attributed to. Both writes take an
+   * actor since R256: granting and ending a third party's standing access to
+   * an engagement is now on the audit spine, and an event has no writer it can
+   * infer.
+   */
+  const evActor = () => ({ actorType: 'human' as const, actorId: userId, source: 'test' });
+
   const tokens = (over: Partial<TokenSet> = {}): TokenSet => ({
     accessToken: 'access-token-1',
     refreshToken: 'refresh-token-1',
@@ -83,12 +91,16 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
   describe('upsertConnection', () => {
     it('stores a new connection as connected, with the org handle from the token set', async () => {
       await reset();
-      const row = await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens({ externalOrgId: 'tenant-1', externalOrgName: 'Ledger Co Books' }),
-        connectedBy: userId,
-      });
+      const row = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens({ externalOrgId: 'tenant-1', externalOrgName: 'Ledger Co Books' }),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
 
       expect(row).toMatchObject({
         valuation_id: valuationId,
@@ -109,30 +121,42 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
       await reset();
       // QuickBooks appends `realmId` to the callback; the route passes it in
       // explicitly and it must win over anything the exchange reported.
-      const row = await upsertConnection(pool, {
-        valuationId,
-        provider: 'quickbooks',
-        tokens: tokens({ externalOrgId: 'from-token' }),
-        connectedBy: userId,
-        externalOrgId: 'realm-9',
-      });
+      const row = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'quickbooks',
+          tokens: tokens({ externalOrgId: 'from-token' }),
+          connectedBy: userId,
+          externalOrgId: 'realm-9',
+        },
+        evActor(),
+      );
       expect(row.external_org_id).toBe('realm-9');
     });
 
     it('reconnects onto the same row rather than creating a second one', async () => {
       await reset();
-      const first = await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
-      const second = await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens({ accessToken: 'access-token-2', refreshToken: 'refresh-token-2' }),
-        connectedBy: userId,
-      });
+      const first = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
+      const second = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens({ accessToken: 'access-token-2', refreshToken: 'refresh-token-2' }),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
 
       expect(second.id).toBe(first.id);
       expect(second.access_token).toBe('access-token-2');
@@ -142,41 +166,57 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
 
     it('revives an errored connection and clears the error it was carrying', async () => {
       await reset();
-      const created = await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
+      const created = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
       await recordImportError(pool, created.id, 'Xero said 401');
       expect((await findConnection(pool, valuationId, 'xero'))!.status).toBe('error');
 
-      const revived = await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens({ accessToken: 'fresh' }),
-        connectedBy: userId,
-      });
+      const revived = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens({ accessToken: 'fresh' }),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
       expect(revived.status).toBe('connected');
       expect(revived.last_error).toBeNull();
     });
 
     it('revives a revoked connection with a working token', async () => {
       await reset();
-      await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
-      await revokeConnection(pool, valuationId, 'xero');
+      await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
+      await revokeConnection(pool, valuationId, 'xero', evActor());
 
-      const revived = await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens({ accessToken: 'fresh', refreshToken: 'fresh-refresh' }),
-        connectedBy: userId,
-      });
+      const revived = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens({ accessToken: 'fresh', refreshToken: 'fresh-refresh' }),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
       expect(revived).toMatchObject({
         status: 'connected',
         access_token: 'fresh',
@@ -186,32 +226,44 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
 
     it('keeps the org identity a reconnect did not report', async () => {
       await reset();
-      await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens({ externalOrgId: 'tenant-1', externalOrgName: 'Ledger Co Books' }),
-        connectedBy: userId,
-      });
+      await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens({ externalOrgId: 'tenant-1', externalOrgName: 'Ledger Co Books' }),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
       // A refresh that reveals no tenant must not blank the one on file — the
       // COALESCE in the DO UPDATE is what keeps the import able to address it.
-      const again = await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens({ externalOrgId: null, externalOrgName: null }),
-        connectedBy: userId,
-      });
+      const again = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens({ externalOrgId: null, externalOrgName: null }),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
       expect(again.external_org_id).toBe('tenant-1');
       expect(again.external_org_name).toBe('Ledger Co Books');
     });
 
     it('accepts a null refresh token and expiry', async () => {
       await reset();
-      const row = await upsertConnection(pool, {
-        valuationId,
-        provider: 'wave',
-        tokens: { accessToken: 'a', refreshToken: null, expiresAt: null },
-        connectedBy: null,
-      });
+      const row = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'wave',
+          tokens: { accessToken: 'a', refreshToken: null, expiresAt: null },
+          connectedBy: null,
+        },
+        evActor(),
+      );
       expect(row.refresh_token).toBeNull();
       expect(row.token_expires_at).toBeNull();
       expect(row.connected_by).toBeNull();
@@ -224,7 +276,11 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
         [valuationId, 'quickbooks'],
         [otherValuationId, 'xero'],
       ] as const) {
-        await upsertConnection(pool, { valuationId: vid, provider, tokens: tokens(), connectedBy: userId });
+        await upsertConnection(
+          pool,
+          { valuationId: vid, provider, tokens: tokens(), connectedBy: userId },
+          evActor(),
+        );
       }
       expect(await listConnections(pool, valuationId)).toHaveLength(2);
       expect(await listConnections(pool, otherValuationId)).toHaveLength(1);
@@ -233,12 +289,16 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
     it('refuses a connection for a valuation that does not exist', async () => {
       await reset();
       await expect(
-        upsertConnection(pool, {
-          valuationId: newUlid(),
-          provider: 'xero',
-          tokens: tokens(),
-          connectedBy: userId,
-        }),
+        upsertConnection(
+          pool,
+          {
+            valuationId: newUlid(),
+            provider: 'xero',
+            tokens: tokens(),
+            connectedBy: userId,
+          },
+          evActor(),
+        ),
       ).rejects.toThrow();
     });
   });
@@ -247,14 +307,22 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
     it('lists only the asked-for valuation, ordered by provider', async () => {
       await reset();
       for (const provider of ['xero', 'sage', 'quickbooks'] as const) {
-        await upsertConnection(pool, { valuationId, provider, tokens: tokens(), connectedBy: userId });
+        await upsertConnection(
+          pool,
+          { valuationId, provider, tokens: tokens(), connectedBy: userId },
+          evActor(),
+        );
       }
-      await upsertConnection(pool, {
-        valuationId: otherValuationId,
-        provider: 'wave',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
+      await upsertConnection(
+        pool,
+        {
+          valuationId: otherValuationId,
+          provider: 'wave',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
 
       const rows = await listConnections(pool, valuationId);
       // `ORDER BY provider` on an enum column sorts by the enum's declaration
@@ -269,12 +337,16 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
 
     it('finds one provider and returns null for the others', async () => {
       await reset();
-      await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
+      await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
       expect((await findConnection(pool, valuationId, 'xero'))!.provider).toBe('xero');
       expect(await findConnection(pool, valuationId, 'sage')).toBeNull();
       // ...and never crosses to another valuation.
@@ -285,12 +357,16 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
   describe('toPublic', () => {
     it('drops both tokens and keeps everything a client needs', async () => {
       await reset();
-      const row = await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens({ externalOrgName: 'Ledger Co Books' }),
-        connectedBy: userId,
-      });
+      const row = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens({ externalOrgName: 'Ledger Co Books' }),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
 
       const view = toPublic(row);
       expect(Object.keys(view)).not.toContain('access_token');
@@ -307,12 +383,16 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
 
     it('does not mutate the row it was handed', async () => {
       await reset();
-      const row = await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
+      const row = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
       toPublic(row);
       expect(row.access_token).toBe('access-token-1');
     });
@@ -323,12 +403,16 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
 
     const fresh = async (): Promise<AccountingConnectionRow> => {
       await reset();
-      return upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
+      return upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
     };
 
     it('stamps a successful import and stores the whole summary', async () => {
@@ -382,14 +466,18 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
   describe('revokeConnection', () => {
     it('destroys the stored credential rather than only flagging the row', async () => {
       await reset();
-      await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
+      await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
 
-      expect(await revokeConnection(pool, valuationId, 'xero')).toBe(true);
+      expect(await revokeConnection(pool, valuationId, 'xero', evActor())).toBe(true);
 
       const after = (await findConnection(pool, valuationId, 'xero'))!;
       expect(after.status).toBe('revoked');
@@ -401,43 +489,59 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
 
     it('reports false when there is nothing to revoke', async () => {
       await reset();
-      expect(await revokeConnection(pool, valuationId, 'xero')).toBe(false);
+      expect(await revokeConnection(pool, valuationId, 'xero', evActor())).toBe(false);
     });
 
     it('reports false on a second revoke and leaves the row alone', async () => {
       await reset();
-      await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
-      expect(await revokeConnection(pool, valuationId, 'xero')).toBe(true);
-      expect(await revokeConnection(pool, valuationId, 'xero')).toBe(false);
+      await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
+      expect(await revokeConnection(pool, valuationId, 'xero', evActor())).toBe(true);
+      expect(await revokeConnection(pool, valuationId, 'xero', evActor())).toBe(false);
     });
 
     it('revokes only the named provider on the named valuation', async () => {
       await reset();
-      await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
-      await upsertConnection(pool, {
-        valuationId,
-        provider: 'quickbooks',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
-      await upsertConnection(pool, {
-        valuationId: otherValuationId,
-        provider: 'xero',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
+      await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
+      await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'quickbooks',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
+      await upsertConnection(
+        pool,
+        {
+          valuationId: otherValuationId,
+          provider: 'xero',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
 
-      await revokeConnection(pool, valuationId, 'xero');
+      await revokeConnection(pool, valuationId, 'xero', evActor());
 
       expect((await findConnection(pool, valuationId, 'quickbooks'))!.status).toBe('connected');
       expect((await findConnection(pool, otherValuationId, 'xero'))!.status).toBe('connected');
@@ -457,13 +561,17 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
      */
     it('is not undone by an import that finishes after it', async () => {
       await reset();
-      const conn = await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens(),
-        connectedBy: userId,
-      });
-      await revokeConnection(pool, valuationId, 'xero');
+      const conn = await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens(),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
+      await revokeConnection(pool, valuationId, 'xero', evActor());
 
       await recordImport(pool, conn.id, financials());
       let after = (await findConnection(pool, valuationId, 'xero'))!;
@@ -480,13 +588,17 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
 
     it('leaves the row listed, so the UI can offer a reconnect', async () => {
       await reset();
-      await upsertConnection(pool, {
-        valuationId,
-        provider: 'xero',
-        tokens: tokens({ externalOrgName: 'Ledger Co Books' }),
-        connectedBy: userId,
-      });
-      await revokeConnection(pool, valuationId, 'xero');
+      await upsertConnection(
+        pool,
+        {
+          valuationId,
+          provider: 'xero',
+          tokens: tokens({ externalOrgName: 'Ledger Co Books' }),
+          connectedBy: userId,
+        },
+        evActor(),
+      );
+      await revokeConnection(pool, valuationId, 'xero', evActor());
 
       const rows = await listConnections(pool, valuationId);
       expect(rows).toHaveLength(1);

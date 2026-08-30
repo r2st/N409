@@ -753,6 +753,70 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     });
   });
 
+  describe('the connect and disconnect on the audit spine (R256)', () => {
+    /**
+     * Connecting a payroll system grants this platform standing read access to
+     * a client's roster, in a named person's name. Neither that nor ending it
+     * was recorded anywhere: the only trace of a connect was `connected_by` /
+     * `connected_at` on the row, overwritten by the next one, and a disconnect
+     * left the row still naming whoever had *started* the connection.
+     */
+    const integrationEvents = async (valuationId: string) => {
+      const { rows } = await ctx.pool.query<{
+        type: string;
+        actor_id: string | null;
+        payload: Record<string, unknown>;
+      }>(
+        `SELECT type, actor_id, payload FROM valuation_events
+          WHERE valuation_id = $1 AND type LIKE 'integration_%'
+          ORDER BY seq ASC`,
+        [valuationId],
+      );
+      return rows;
+    };
+
+    it('records who connected the provider, and who ended it', async () => {
+      const v = await connectedValuation();
+      expect(await integrationEvents(v.id)).toEqual([
+        expect.objectContaining({
+          type: 'integration_connected',
+          actor_id: ops.id,
+          payload: expect.objectContaining({ family: 'hris', provider: 'rippling' }),
+        }),
+      ]);
+
+      const res = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/valuations/${v.id}/hris/rippling`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(204);
+
+      const after = await integrationEvents(v.id);
+      expect(after.map((e) => e.type)).toEqual(['integration_connected', 'integration_disconnected']);
+      expect(after[1]!.actor_id).toBe(ops.id);
+    });
+
+    it('does not record a second disconnect, because there was not one', async () => {
+      // `revoked` is terminal and the write is guarded on it, so the repeat
+      // updates no row. The event is written from what the statement returned
+      // rather than beside it, so nothing is recorded for a transition that
+      // did not happen — and the route still answers 404.
+      const v = await connectedValuation();
+      const del = () =>
+        ctx.app.inject({
+          method: 'DELETE',
+          url: `/api/v1/valuations/${v.id}/hris/rippling`,
+          headers: authHeader(ops.token),
+        });
+      expect((await del()).statusCode).toBe(204);
+      expect((await del()).statusCode).toBe(404);
+
+      const types = (await integrationEvents(v.id)).map((e) => e.type);
+      expect(types).toEqual(['integration_connected', 'integration_disconnected']);
+    });
+  });
+
   describe('a cadence changed while the sync was running (R256)', () => {
     /**
      * `recordSync` used to be handed `connection.sync_frequency` — the value

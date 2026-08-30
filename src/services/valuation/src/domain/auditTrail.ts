@@ -199,6 +199,21 @@ export const EVENT_CATALOG = {
   monitoring_enabled: D('Monitoring enabled', 'integration', 'info', 'client'),
   monitoring_disabled: D('Monitoring disabled', 'integration', 'info', 'client'),
   monitoring_trigger_fired: D('Monitoring trigger fired', 'integration', 'notice', 'client'),
+  /**
+   * A third party gained, or lost, standing read access to this engagement's
+   * data — a payroll system's roster, a cap-table provider's securities, a
+   * ledger's financials.
+   *
+   * Client-visible for the same reason `monitoring_enabled` is, and more so:
+   * the thing being connected is the client's own account at another vendor,
+   * and the authorisation is granted in their name. Until R256 neither
+   * transition was recorded anywhere. The only trace of a connect was
+   * `connected_by`/`connected_at` on the row, overwritten by the next one, and
+   * a disconnect left no trace of who ended it or when — the row goes on
+   * naming the person who *started* it.
+   */
+  integration_connected: D('Integration connected', 'integration', 'notice', 'client'),
+  integration_disconnected: D('Integration disconnected', 'integration', 'notice', 'client'),
 } satisfies Record<string, EventDescriptor>;
 
 /**
