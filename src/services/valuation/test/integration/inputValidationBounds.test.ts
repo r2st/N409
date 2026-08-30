@@ -308,4 +308,46 @@ describe.skipIf(!dbUp)('input size bounds at the route', () => {
       expect((await patch({ wacc_inputs: buildUp(13) })).statusCode).toBeLessThan(400);
     });
   });
+
+  describe('the one mutation body that was read by cast', () => {
+    /*
+     * `POST /admin/sso/scim-tokens` took `req.body.label` through a cast and
+     * `.slice(0, 200)`. Every other mutation in the service parses its body,
+     * and the two things a schema does are the two things missing here: an
+     * over-long value was silently shortened rather than refused, and an
+     * unknown field was silently ignored where the rest of this file's bodies
+     * are `.strict()`.
+     */
+    const mint = (payload: unknown) =>
+      ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/sso/scim-tokens',
+        headers: authHeader(admin.token),
+        payload: payload as Record<string, unknown>,
+      });
+
+    it('refuses an over-long label instead of storing a shortened one', async () => {
+      const res = await mint({ label: 'x'.repeat(201) });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().detail).toContain('label');
+    });
+
+    it('refuses a misspelt field rather than minting a token without it', async () => {
+      expect((await mint({ labell: 'Okta' })).statusCode).toBe(422);
+    });
+
+    it('refuses a label that is not a string', async () => {
+      expect((await mint({ label: 42 })).statusCode).toBe(422);
+    });
+
+    it('still mints on an empty body and on a label at the bound', async () => {
+      expect((await mint({})).statusCode).toBe(201);
+      // Two hundred characters of astral text: 200 code points is 400 UTF-16
+      // units, so the old `.slice(0, 200)` cut this in half and the `jsonb`
+      // payload of `scim_token_created` would have refused the orphan.
+      const res = await mint({ label: '\u{1F600}'.repeat(200) });
+      expect(res.statusCode).toBe(422);
+      expect((await mint({ label: '\u{1F600}'.repeat(100) })).statusCode).toBe(201);
+    });
+  });
 });

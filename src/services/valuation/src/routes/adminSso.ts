@@ -36,6 +36,25 @@ import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
  * before/after config is not what the trail is for.
  */
 
+/**
+ * The label an administrator files a SCIM token under.
+ *
+ * This route was the one mutation in the service that read `req.body` by cast
+ * instead of through a schema, and it did the two things a schema exists to
+ * stop. It accepted whatever else was in the object — every other body here is
+ * `.strict()`, so a misspelt field is a 422 rather than a silently ignored
+ * one — and it *truncated* an over-long label with `.slice(0, 200)` where the
+ * rest of the estate refuses it, which turns a caller's mistake into a row
+ * they did not ask for and cannot tell apart from the one they wanted.
+ *
+ * `.slice` was also the wrong cut. Two hundred UTF-16 units can land inside an
+ * astral character, and the half that survives is a string UTF-8 cannot encode
+ * — the `jsonb` payload of the `scim_token_created` event below would refuse
+ * it and take the whole request to a 500 (domain/textSlice.ts). Refusing at
+ * `max(200)` means the cut never happens.
+ */
+const ScimTokenBody = z.object({ label: z.string().trim().min(1).max(200).nullish() }).strict();
+
 const SamlBody = z.object({
   enabled: z.boolean(),
   idp_entity_id: z.string().trim().max(500).nullable().optional(),
@@ -107,9 +126,10 @@ export function registerAdminSsoRoutes(app: FastifyInstance, deps: { pool: pg.Po
 
   app.post('/api/v1/admin/sso/scim-tokens', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireAdmin(req);
-    const label = (req.body as { label?: string } | undefined)?.label;
+    const parsed = ScimTokenBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw invalidBody('Invalid SCIM token', parsed.error);
     const { row, token } = await createScimToken(deps.pool, {
-      label: typeof label === 'string' ? label.slice(0, 200) : null,
+      label: parsed.data.label ?? null,
       createdBy: principal.id,
     });
     const { token_hash: _t, ...safe } = row;
