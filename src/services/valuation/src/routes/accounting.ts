@@ -12,6 +12,7 @@ import {
   exchangeCode,
   fetchFinancials,
   refreshTokens,
+  storableRevenueCents,
   type AccountingProvider,
   type FetchFn,
   type ProviderCredentials,
@@ -299,6 +300,49 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
             ? `Import failed: ${err.message}`
             : `${PROVIDER_LABELS[provider]} import failed — the details are in the connection's last error`,
         );
+      }
+
+      /*
+       * The bound the params form enforces, on the figures nobody typed
+       * (round 259, methodology M6).
+       *
+       * `ytd_revenue_cents` and `last_year_revenue_cents` are `bigint` columns
+       * that `PATCH .../params` holds to `int, >= 0, <= MAX_SAFE_INTEGER`. This
+       * path wrote whatever `toCents` made of the provider's cell. Two figures
+       * a ledger can genuinely produce were out of range in different
+       * directions, and neither said so:
+       *
+       *   - a negative Total Income — a period whose credit notes exceed its
+       *     invoices — went in as a negative revenue *and* set
+       *     `revenue_status` to `pre_revenue`, because the route reads the
+       *     sign; a trading company with a bad quarter was filed and valued as
+       *     one that has never sold anything.
+       *   - a figure past the column went to `patchParams`, which is outside
+       *     the catch above, so the driver's `value out of range for type
+       *     bigint` left the connection with no error recorded and the request
+       *     with a 500 in Postgres's words.
+       *
+       * Refused before either write, and recorded on the connection like the
+       * cap-table sync's row cap, so the analyst is told which figure and can
+       * enter it by hand. The rest of the snapshot is still on the response, so
+       * nothing about what the ledger said is hidden by the refusal.
+       */
+      const outOfRange = (
+        [
+          ['this year', financials.revenue_cents],
+          ['last year', financials.prior_year_revenue_cents],
+        ] as const
+      ).find(([, cents]) => !storableRevenueCents(cents));
+      if (outOfRange) {
+        const [which, cents] = outOfRange;
+        const message =
+          `the revenue ${PROVIDER_LABELS[provider]} reported for ${which} — ` +
+          `${(cents as number) / 100} — is not a figure this engagement can store. ` +
+          'Revenue must be a whole amount of at least zero; enter it by hand if the ledger is right.';
+        await recordImportError(deps.pool, connection.id, message).catch((bookErr: unknown) => {
+          req.log.warn({ err: bookErr, connectionId: connection.id }, 'could not record import error');
+        });
+        throw problems.unprocessable(`Import failed: ${message}`);
       }
 
       // Apply to the valuation: revenue params + the full snapshot as engine

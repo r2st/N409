@@ -471,7 +471,15 @@ export function parseXeroBalanceSheet(report: unknown): ImportedBalanceSheet {
     asRows<{ Id?: string; Value?: string }>(root?.Fields).map((f) => [f.Id, f.Value]),
   );
   // A balance sheet is a point in time, so the report's ToDate is its date.
-  out.as_of = (fields.ToDate as string | undefined) ?? (fields.FromDate as string | undefined) ?? null;
+  // Cast rather than checked until R259: the value is whatever Xero's JSON had
+  // at that key, and it is copied into two `jsonb` documents — the engagement's
+  // `engine_inputs.accounting_import` and the connection's
+  // `last_import_summary` — where a NUL byte or a lone surrogate is refused by
+  // the driver rather than stored. `recordImport` writes the second of those
+  // *after* both applies have committed and outside the route's catch, which is
+  // the state that leaves an engagement holding a ledger's figures under a
+  // connection still reporting its previous import.
+  out.as_of = storableProviderText(fields.ToDate) ?? storableProviderText(fields.FromDate);
   return out;
 }
 
@@ -496,8 +504,45 @@ export function parseQuickBooksBalanceSheet(report: unknown): ImportedBalanceShe
     }
   };
   walk(r.Rows?.Row, 0);
-  out.as_of = r.Header?.EndPeriod ?? null;
+  out.as_of = storableProviderText(r.Header?.EndPeriod);
   return out;
+}
+
+/**
+ * The largest revenue figure this platform will store, in cents.
+ *
+ * `ytd_revenue_cents` and `last_year_revenue_cents` are `bigint` columns, and
+ * `PATCH /api/v1/valuations/:id/params` holds both to
+ * `z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)`. The import wrote
+ * neither bound: `toCents` is `Math.round(n * 100)` over whatever the provider
+ * put in the cell, so a `"1e300"` in a Total Income row arrived as `1e302` and
+ * the driver refused it — `22003 value out of range for type bigint` — from
+ * `patchParams`, which sits *outside* this route's catch. The import then had
+ * no error recorded against it and a 500 whose message was the column's.
+ *
+ * Past `Number.MAX_SAFE_INTEGER` nothing is refused and the failure is quieter:
+ * the figure is stored, rounded to whichever double was nearest, and read back
+ * as the company's revenue.
+ *
+ * The same rule the form is held to, applied to a payload nobody typed — the
+ * move `mapGrant` states for the HRIS import. Refused rather than clamped: a
+ * revenue is the market approach's multiplicand, and a clamped one is a number
+ * nobody chose sitting under a concluded value.
+ */
+export const MAX_REVENUE_CENTS = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Whether a parsed revenue figure is one the engagement's params can hold.
+ *
+ * Negative is included, and it is not a hypothetical: a period whose credit
+ * notes exceed its invoices reports a negative Total Income, which is a real
+ * ledger answer and an impossible column value. Worse than the refusal, the
+ * route derives `revenue_status` from the sign — `> 0 ? 'post_revenue' :
+ * 'pre_revenue'` — so a trading company with a bad quarter was filed as
+ * pre-revenue and valued as one.
+ */
+export function storableRevenueCents(cents: number | null): boolean {
+  return cents === null || (Number.isSafeInteger(cents) && cents >= 0 && cents <= MAX_REVENUE_CENTS);
 }
 
 /** Did the parse find anything worth keeping? */
