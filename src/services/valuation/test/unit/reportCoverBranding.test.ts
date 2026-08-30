@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { brandingFor } from '../../src/routes/reports.js';
 import { sampleReportPdfInput } from '../../src/domain/sampleReportPdf.js';
 import { kindLabel } from '../../src/domain/valuationSelector.js';
+import { liveBrand, type BrandingSource } from '../../src/domain/branding.js';
 import type { ValuationRow } from '../../src/repos/valuations.js';
 
 /**
@@ -111,5 +112,50 @@ describe('report cover facts', () => {
 
   it('degrades to the raw key for a kind nobody has named', () => {
     expect(kindLabel('not-a-kind')).toBe('not-a-kind');
+  });
+});
+
+/**
+ * The rule the cover and the firm's own portal heading share: name the firm
+ * either way, wear its colours only once white label is live.
+ */
+describe('liveBrand', () => {
+  const source = {
+    id: 'ptr-1',
+    name: 'bridge-uk (ops channel)',
+    subdomain: null,
+    brand_name: 'Bridge Valuation Advisors LLP',
+    brand_tagline: null,
+    brand_color: '#1d4ed8',
+    accent_color_dark: null,
+    logo_url: 'https://cdn.example.com/bridge.png',
+    logo_dark_url: null,
+    favicon_url: null,
+    support_email: null,
+    white_label_enabled: true,
+  } satisfies BrandingSource;
+
+  it('hands over the whole brand once it is live', () => {
+    expect(liveBrand(source)).toEqual({
+      name: 'Bridge Valuation Advisors LLP',
+      accent: '#1d4ed8',
+      logo_url: 'https://cdn.example.com/bridge.png',
+    });
+  });
+
+  it('withholds the colour and the mark while the brand is staged', () => {
+    expect(liveBrand({ ...source, white_label_enabled: false })).toEqual({
+      // Still names the firm — a heading whose job is to say which firm this is
+      // cannot answer "N409" the way the themed chrome correctly does.
+      name: 'bridge-uk (ops channel)',
+      accent: null,
+      logo_url: null,
+    });
+  });
+
+  it('lifts a live accent that could not be seen on a light ground', () => {
+    const brand = liveBrand({ ...source, brand_color: '#f7f3a0' });
+    expect(brand.accent).not.toBe('#f7f3a0');
+    expect(brand.accent).toMatch(/^#[0-9a-f]{6}$/);
   });
 });

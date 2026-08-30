@@ -8,6 +8,8 @@ import { canManageUsers, isOps } from '../auth/rbac.js';
 import { PARTNER_ROLES, ROLE_KEYS, RoleSet, type RoleKey } from '../domain/roles.js';
 import { CAPABILITIES, ROLE_DEFS, capabilitiesFor } from '../domain/permissions.js';
 import { normalizeSubdomain } from '../domain/partnerSubdomain.js';
+import { liveBrand } from '../domain/branding.js';
+import { findBrandingByPartnerId } from '../repos/branding.js';
 import { NullablePhone } from '../domain/phone.js';
 import { listValuations } from '../repos/valuations.js';
 import { VALUATION_STATES } from '../domain/valuation.js';
@@ -731,18 +733,41 @@ export function registerAdminUserRoutes(
   });
 
   /** A partner user's own organisation — name + branding for the portal. */
+  /**
+   * The firm a signed-in member belongs to, as their own portal heads itself.
+   *
+   * Resolved rather than read off the row. This served `partners.name`, the raw
+   * `brand_color` and `logo_url` — the columns that existed before migration
+   * 0091 — so a firm's own portal page carried a different identity from the
+   * application chrome around it, which resolves through `/api/v1/branding`:
+   * the internal ops channel label beside the firm's brand name, and a mark and
+   * colour that were still staged.
+   *
+   * The name falls back to the ops label rather than to the platform's when
+   * white label is off, on the same reasoning as the report cover's
+   * attribution: the heading names the firm either way. The colour and the mark
+   * are the brand, and they wait for the switch.
+   */
   app.get('/api/v1/partners/mine', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     if (!principal.partnerId) throw problems.notFound();
-    const partner = await findPartnerById(deps.pool, principal.partnerId);
+    // Two reads because `key` is channel administration and lives on the other
+    // one. `findBrandingByPartnerId` resolves an archived channel to null,
+    // which is the rule every branding read applies — a closed firm stops
+    // branding anything — while the row itself still answers who they were.
+    const [partner, source] = await Promise.all([
+      findPartnerById(deps.pool, principal.partnerId),
+      findBrandingByPartnerId(deps.pool, principal.partnerId),
+    ]);
     if (!partner) throw problems.notFound();
+    const brand = source ? liveBrand(source) : null;
     return {
       partner: {
         id: partner.id,
-        name: partner.name,
+        name: brand?.name ?? partner.name,
         key: partner.key,
-        brand_color: partner.brand_color,
-        logo_url: partner.logo_url,
+        brand_color: brand?.accent ?? null,
+        logo_url: brand?.logo_url ?? null,
       },
     };
   });

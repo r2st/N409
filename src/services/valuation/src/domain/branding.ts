@@ -229,6 +229,34 @@ export function resolveBranding(source: BrandingSource | null | undefined): Bran
 }
 
 /**
+ * A firm's identity on a surface that is not the themed application: the report
+ * cover, the firm's own portal heading. One name, and the brand assets only
+ * once the firm has taken them live.
+ *
+ * The split is the point. `resolveBranding` answers "what brand is this tenant
+ * wearing", and for a tenant with the switch off the answer is the platform's —
+ * which is right for the chrome and wrong for a heading whose whole job is to
+ * name the firm. These surfaces name the firm either way and wear its colours
+ * only when they are live, which is also what keeps a staged brand off a
+ * client-facing document.
+ */
+export interface LiveBrand {
+  /** The firm's public name: `brand_name` once live, the ops label until then. */
+  name: string;
+  /** Accent for a light ground, lifted until legible. Null while staged. */
+  accent: string | null;
+  /** The firm's mark. Null while staged. */
+  logo_url: string | null;
+}
+
+export function liveBrand(source: BrandingSource): LiveBrand {
+  const branding = resolveBranding(source);
+  return branding.white_label
+    ? { name: branding.name, accent: branding.accent, logo_url: branding.logo_url }
+    : { name: source.name, accent: null, logo_url: null };
+}
+
+/**
  * CSS custom properties for one theme mode.
  *
  * The SPA themes itself by re-pointing design tokens (index.css does exactly

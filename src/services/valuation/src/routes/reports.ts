@@ -62,7 +62,7 @@ import { kindLabel } from '../domain/valuationSelector.js';
 import { fitsInt4, int4Version } from '../domain/int4.js';
 import { latestCalculationForKind } from '../repos/calculations.js';
 import { findBrandingByPartnerId } from '../repos/branding.js';
-import { publicPartnerName, resolveBranding } from '../domain/branding.js';
+import { liveBrand } from '../domain/branding.js';
 import { fetchPartnerLogoCached } from '../clients/partnerLogoCache.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { recordEvent, type EventActor } from '../events/record.js';
@@ -272,22 +272,19 @@ export async function brandingFor(
   // read applies — a closed firm stops branding anything.
   const source = await findBrandingByPartnerId(pool, valuation.partner_id);
   if (!source) return undefined;
-  const branding = resolveBranding(source);
-  // `publicPartnerName` rather than `branding.name`, which is the platform's
-  // own once the switch is off — the attribution still has a firm to name.
-  const partner_name = publicPartnerName(source);
-  if (!branding.white_label) return { partner_name, brand_color: null, logo: null };
+  // `liveBrand`: the firm's public name either way, and its colour and mark
+  // only once white label is live. The accent is the resolved one rather than
+  // the raw column — a colour that cannot be seen on a light ground is lifted
+  // until it can, and the cover band and rule are drawn on one, so a report and
+  // the application it came from are the same green.
+  const brand = liveBrand(source);
   return {
-    partner_name,
-    // The resolved accent, not the raw column: `resolveBranding` lifts a
-    // colour that cannot be seen on a light ground, and the cover band and rule
-    // are drawn on one. Same value the SPA paints with, so a report and the
-    // app it came from are the same green.
-    brand_color: branding.accent,
+    partner_name: brand.name,
+    brand_color: brand.accent,
     // Cached for a beat: the logo is the same bytes on every render, and
     // fetching it is a DNS lookup plus an HTTP GET on the render's critical
     // path. See clients/partnerLogoCache.ts.
-    logo: await fetchPartnerLogoCached(branding.logo_url),
+    logo: await fetchPartnerLogoCached(brand.logo_url),
   };
 }
 
