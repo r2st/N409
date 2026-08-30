@@ -586,16 +586,72 @@ export function receiptSections(r: ReceiptForRender): Array<{ heading: string; h
     { heading: 'Line items', html: table },
   ];
 
-  // A chargeback is not a refund and must not read as one: the money is held
-  // pending the dispute, and a client owed an explanation gets the status
-  // rather than a document that quietly still says "paid".
-  if (r.dispute_status) {
-    sections.push({
-      heading: 'Dispute',
-      html: `<p>This payment is subject to a dispute — status: <strong>${esc(r.dispute_status)}</strong>.</p>`,
-    });
-  }
+  // A chargeback is not a refund and must not read as one: while it is open the
+  // money is held, and a client owed an explanation gets that rather than a
+  // document that quietly still says "paid".
+  const dispute = r.dispute_status ? disputeNote(r.dispute_status) : null;
+  if (dispute) sections.push({ heading: 'Dispute', html: `<p>${dispute}</p>` });
   return sections;
+}
+
+/**
+ * What a chargeback's verdict means, in the tense it happened in.
+ *
+ * `dispute_status` is written once per verdict and never cleared, so every one
+ * of the three values is a permanent property of the row — and the receipt
+ * printed all three through one present-tense sentence, "This payment is
+ * subject to a dispute — status: won". A case closed in our favour (which is
+ * also what `disputeStatusOf` records for `warning_closed`, an early-warning
+ * enquiry that never became a chargeback at all) therefore left the client
+ * holding a document that reads as an unresolved problem, for good.
+ *
+ * The browser already told the three apart — see `DISPUTE_STATUS_LABELS` in
+ * PaymentSection — and the PDF, which is the copy the client keeps, did not.
+ *
+ * An unrecognised value is described rather than dropped: `dispute_status` is a
+ * text column and a verdict this build has no wording for is still a fact about
+ * the money that the reader has to be told.
+ */
+function disputeNote(status: string): string {
+  if (status === 'open') {
+    return (
+      'A chargeback has been raised against this payment and is still under review. ' +
+      'The amount above is held pending the outcome.'
+    );
+  }
+  if (status === 'won') {
+    return (
+      'A chargeback was raised against this payment and was resolved in our favour. ' + 'The payment stands.'
+    );
+  }
+  if (status === 'lost') {
+    return (
+      'A chargeback against this payment was upheld, and the amount was returned ' +
+      'to the card it was charged to.'
+    );
+  }
+  return `This payment is subject to a dispute — status: <strong>${esc(status)}</strong>.`;
+}
+
+/**
+ * The one word at the head of a receipt.
+ *
+ * Read from both the payment's status and the dispute column because either
+ * can be the reason the money is not simply ours. It was `dispute_status ?
+ * 'disputed' : 'paid'`, which is right for an open case and wrong for both
+ * closed ones: a chargeback we *won* headed the receipt "disputed" for ever,
+ * over money the client had paid and we had kept, and a chargeback we lost —
+ * which returns the whole amount and moves the row to 'refunded' — said
+ * "disputed" where "charged back" is what happened to it.
+ *
+ * 'won' is deliberately not a heading of its own. The payment is paid; that the
+ * case existed and how it ended is what the Dispute section below says.
+ */
+export function receiptStatusLabel(r: { payment_status: string; dispute_status: string | null }): string {
+  if (r.dispute_status === 'open') return 'disputed';
+  if (r.dispute_status === 'lost') return 'charged back';
+  if (r.dispute_status !== null && r.dispute_status !== 'won') return 'disputed';
+  return r.payment_status === 'refunded' ? 'refunded' : 'paid';
 }
 
 // ── "We have your money" ─────────────────────────────────────────────────────

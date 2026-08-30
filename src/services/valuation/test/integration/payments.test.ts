@@ -355,6 +355,31 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
       expect(text).not.toContain('Refunded');
     });
 
+    it('does not head a receipt disputed for a chargeback we won', async () => {
+      /*
+       * `dispute_status` is never cleared, so 'won' is permanent — and the
+       * heading read it as "there is a dispute" rather than "there was one and
+       * we kept the money". The client's own copy of a payment they made, and
+       * we retained, said it was disputed for ever. `warning_closed` — an
+       * early-warning enquiry that never became a chargeback at all — records
+       * 'won' too, so it carried the same brand.
+       */
+      const { vid, payment } = await settledPayment('Receipt Won Co', 'cs_test_receipt_won');
+      await recordDispute(ctx.pool, payment.id, 'won');
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments/${payment.id}/receipt.pdf`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      const text = readable(res.rawPayload);
+      // The case is still stated — it happened — but in the tense it happened
+      // in, and the payment is headed as what it is.
+      expect(text).toContain('resolved in our favour');
+      expect(text).toContain('paid');
+      expect(text).not.toContain('disputed');
+    });
+
     it('renders a payment taken before add-ons were itemised', async () => {
       // `price_breakdown` is null on every row written before migration 0108.
       // With no lines to print, the receipt states the engagement and the total

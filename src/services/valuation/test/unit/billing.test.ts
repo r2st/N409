@@ -9,6 +9,7 @@ import {
   planLimitDetail,
   quotaAwaitsRenewal,
   receiptSections,
+  receiptStatusLabel,
   usageView,
 } from '../../src/domain/billing.js';
 import { sanitizeHtml } from '../../src/domain/report.js';
@@ -171,6 +172,85 @@ describe('engagement receipts', () => {
     const headings = sections.map((s) => s.heading);
     expect(headings).toContain('Dispute');
     expect(sections.map((s) => s.html).join('')).toContain('needs_response');
+  });
+
+  /**
+   * `dispute_status` is written once per verdict and never cleared, so all
+   * three values are permanent properties of the row — and the receipt printed
+   * every one of them through a single present-tense sentence. A chargeback we
+   * *won* therefore left the client holding a document that read as an
+   * unresolved problem for good, over money they had paid and we had kept.
+   */
+  describe('chargeback verdicts', () => {
+    const dispute = (status: string) =>
+      receiptSections({ ...base, dispute_status: status })
+        .filter((s) => s.heading === 'Dispute')
+        .map((s) => s.html)
+        .join('');
+
+    it('says an open case is still open and the money is held', () => {
+      const out = dispute('open');
+      expect(out).toContain('still under review');
+      expect(out).toContain('held');
+      expect(out).not.toContain('resolved in our favour');
+    });
+
+    it('says a case we won is closed and the payment stands', () => {
+      const out = dispute('won');
+      expect(out).toContain('resolved in our favour');
+      expect(out).toContain('The payment stands');
+      // The tense is the whole bug: not "is subject to a dispute".
+      expect(out).not.toContain('is subject to');
+    });
+
+    it('says a case we lost returned the money', () => {
+      const out = dispute('lost');
+      expect(out).toContain('upheld');
+      expect(out).toContain('returned');
+    });
+
+    it('describes a verdict it has no wording for rather than dropping it', () => {
+      // The column is text and Stripe's vocabulary is wider than ours; a
+      // verdict this build cannot phrase is still a fact about the money.
+      expect(dispute('warning_needs_response')).toContain('warning_needs_response');
+    });
+  });
+
+  /**
+   * The heading was `dispute_status ? 'disputed' : 'paid'` — one column
+   * answering a question that takes two, and answering it wrongly for both
+   * closed verdicts.
+   */
+  describe('receiptStatusLabel', () => {
+    it('heads an ordinary settled payment paid', () => {
+      expect(receiptStatusLabel({ payment_status: 'succeeded', dispute_status: null })).toBe('paid');
+    });
+
+    it('heads a refunded payment refunded, not paid', () => {
+      expect(receiptStatusLabel({ payment_status: 'refunded', dispute_status: null })).toBe('refunded');
+    });
+
+    it('heads a live chargeback disputed, whatever the row says', () => {
+      expect(receiptStatusLabel({ payment_status: 'succeeded', dispute_status: 'open' })).toBe('disputed');
+    });
+
+    it('heads a chargeback we won paid — the case is closed and we kept it', () => {
+      expect(receiptStatusLabel({ payment_status: 'succeeded', dispute_status: 'won' })).toBe('paid');
+    });
+
+    it('heads a chargeback we lost as one, rather than as an open dispute', () => {
+      // A lost dispute returns the whole amount and moves the row to
+      // 'refunded'; "disputed" describes neither half of that.
+      expect(receiptStatusLabel({ payment_status: 'refunded', dispute_status: 'lost' })).toBe('charged back');
+    });
+
+    it('treats an unrecognised verdict as live rather than as settled', () => {
+      // The damaging way to guess wrong is to head a receipt "paid" over a case
+      // that is still running — the same asymmetry `disputeStatusOf` makes.
+      expect(receiptStatusLabel({ payment_status: 'succeeded', dispute_status: 'under_review' })).toBe(
+        'disputed',
+      );
+    });
   });
 
   it('escapes a company name into HTML the report sanitizer accepts', () => {

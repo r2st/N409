@@ -4,7 +4,12 @@ import { z } from 'zod';
 import { ApiProblem, isUlid, logUnretried, problems } from '@n409/shared';
 import { renderReportPdf } from '../clients/reportRender.js';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
-import { formatMoneyCents, paymentReceivedMessage, receiptSections } from '../domain/billing.js';
+import {
+  formatMoneyCents,
+  paymentReceivedMessage,
+  receiptSections,
+  receiptStatusLabel,
+} from '../domain/billing.js';
 import {
   addonFlags,
   EXPRESS_DELIVERY_DAYS,
@@ -536,16 +541,16 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         meta: [
           { label: 'Receipt', value: valuation.number },
           /*
-           * Three answers, not two. A row on 'refunded' has settled — that is
-           * why it has a receipt at all — but heading it "paid" is the claim
-           * this document must not make about money that has gone back. The
-           * dispute still wins where both are true: a chargeback is live and is
-           * what the reader has to act on, and the refund lines in the body
-           * below state the amount either way.
+           * More than two answers, and not out of one column. The rule lives in
+           * `receiptStatusLabel` so this heading and the Dispute section in the
+           * body below cannot come to say different things about one row.
            */
           {
             label: 'Status',
-            value: payment.dispute_status ? 'disputed' : payment.status === 'refunded' ? 'refunded' : 'paid',
+            value: receiptStatusLabel({
+              payment_status: payment.status,
+              dispute_status: payment.dispute_status,
+            }),
           },
           /*
            * `settled_at`, not `updated_at` (migration 0195).
