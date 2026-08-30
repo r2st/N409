@@ -634,6 +634,61 @@ describe('SubscriptionSection (feature 7)', () => {
     });
 
     /**
+     * What the totals are denominated in.
+     *
+     * Every figure in `summary` is a sum of integer minor units, and minor
+     * units only mean anything inside one currency — Stripe reports ¥100,000
+     * and $1,000.00 as the same `100000`. This panel rendered all four through
+     * a formatter defaulted to USD, so a ledger holding one non-dollar invoice
+     * printed a dollar sign in front of a number that was not dollars.
+     */
+    describe('the currency the totals are in', () => {
+      it('renders the figures in the currency the summary names', async () => {
+        flags.ops = true;
+        mockApi(subscribed(), undefined, {
+          '/admin/billing': {
+            body: {
+              ...adminBilling,
+              summary: { ...adminBilling.summary, currency: 'eur', mixed_currency: false },
+            },
+          },
+        });
+        render(<SubscriptionSection />);
+        const panel = await screen.findByTestId('admin-billing');
+        // Not "$120,000.00" — the same minor units, correctly denominated.
+        expect(within(panel).queryByText('$120,000.00')).not.toBeInTheDocument();
+        expect(within(panel).getByText(/120,000\.00/)).toBeInTheDocument();
+        expect(within(panel).queryByTestId('mixed-currency-note')).not.toBeInTheDocument();
+      });
+
+      it('says the totals are a mixed sum rather than one amount', async () => {
+        flags.ops = true;
+        mockApi(subscribed(), undefined, {
+          '/admin/billing': {
+            body: {
+              ...adminBilling,
+              summary: { ...adminBilling.summary, currency: 'usd', mixed_currency: true },
+            },
+          },
+        });
+        render(<SubscriptionSection />);
+        const panel = await screen.findByTestId('admin-billing');
+        expect(within(panel).getByTestId('mixed-currency-note').textContent).toContain(
+          'more than one currency',
+        );
+      });
+
+      it('stays silent for a response written before the field existed', async () => {
+        flags.ops = true;
+        mockApi(subscribed(), undefined, { '/admin/billing': { body: adminBilling } });
+        render(<SubscriptionSection />);
+        const panel = await screen.findByTestId('admin-billing');
+        expect(within(panel).queryByTestId('mixed-currency-note')).not.toBeInTheDocument();
+        expect(within(panel).getByText('$120,000.00')).toBeInTheDocument();
+      });
+    });
+
+    /**
      * `isOps` reads the token on the client, so a 403 means the server has
      * decided this reader is not ops after all — the section belongs to
      * someone else and removing it silently is right.

@@ -415,6 +415,17 @@ interface AdminBilling {
     month_start: string;
     month_collected_cents: number;
     prev_month_collected_cents: number;
+    /**
+     * The currency every money figure in this object is in. Optional because a
+     * response written before the field existed does not carry it, and the
+     * formatter's own default is what those figures were already rendered as.
+     */
+    currency?: string;
+    /**
+     * The figures are a sum across more than one currency — minor units added
+     * together, which is a number and not an amount. See `billingSummary`.
+     */
+    mixed_currency?: boolean;
   };
 }
 
@@ -465,16 +476,22 @@ function AdminBillingDashboard() {
         <Metric label="Trialing" value={String(data.summary.trialing)} />
         <Metric label="Past due" value={String(data.summary.past_due)} />
         <Metric label="Served" value={String(data.summary.served)} />
-        <Metric label="MRR (active + trialing)" value={money(data.summary.mrr_cents)} />
+        <Metric
+          label="MRR (active + trialing)"
+          value={money(data.summary.mrr_cents, data.summary.currency)}
+        />
         {/* Net of refunds. Gross was the figure until invoices could record
             one at all — a revenue line a customer could disprove from their own
             card statement, which is the lesson the engagement side learned
             first (domain/payments.collectedTotals). The refunded figure is
             shown beside it rather than folded away, because "collected went
             down" is a question ops has to be able to answer. */}
-        <Metric label="Collected (net, all time)" value={money(data.summary.collected_cents)} />
+        <Metric
+          label="Collected (net, all time)"
+          value={money(data.summary.collected_cents, data.summary.currency)}
+        />
         {data.summary.refunded_cents > 0 && (
-          <Metric label="Refunded" value={money(data.summary.refunded_cents)} />
+          <Metric label="Refunded" value={money(data.summary.refunded_cents, data.summary.currency)} />
         )}
         {/* Every revenue figure on this screen used to be since-the-beginning,
             which cannot answer the question ops opens it with. This one is the
@@ -483,10 +500,24 @@ function AdminBillingDashboard() {
             of being a second answer to the same word. */}
         <Metric
           label={`Collected in ${monthLabel(data.summary.month_start)}`}
-          value={money(data.summary.month_collected_cents)}
+          value={money(data.summary.month_collected_cents, data.summary.currency)}
           note={monthDelta(data.summary.month_collected_cents, data.summary.prev_month_collected_cents)}
         />
       </div>
+      {/* Every figure above is a sum of integer minor units, and minor units
+          are only comparable inside one currency — ¥100,000 and $1,000.00 are
+          both 100000 on the wire. The formatter was defaulted to USD, so a
+          ledger holding a single non-dollar invoice printed a dollar sign in
+          front of a number that was not dollars and folded it into the month's
+          revenue at whatever its own scale happened to be. Said out loud rather
+          than fixed by splitting the console per currency: refusing to present
+          the mixed sum as one amount is the part that has to be true first. */}
+      {data.summary.mixed_currency && (
+        <p className="mt-3 text-sm text-amber-900" role="status" data-testid="mixed-currency-note">
+          These totals cover more than one currency. They add each invoice’s minor units together, so they are
+          a running figure rather than one amount — read the invoice table below for what was actually billed.
+        </p>
+      )}
       <div className="mt-4 overflow-x-auto overscroll-x-contain rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[560px] text-sm">
           <caption className="sr-only">Subscribers</caption>

@@ -19,6 +19,15 @@ const sqlList = (statuses: readonly string[]) => statuses.map((s) => `'${s}'`).j
 const SERVED_SQL = sqlList(SERVED_SUBSCRIPTION_STATUSES);
 const BILLING_SQL = sqlList(BILLING_SUBSCRIPTION_STATUSES);
 
+/**
+ * What a money figure over an empty ledger is denominated in.
+ *
+ * The same default the webhook writes (`String(obj.currency ?? 'usd')`) and the
+ * same one both money formatters fall back to, so a zero on the billing console
+ * is labelled the way a first invoice will be.
+ */
+const DEFAULT_BILLING_CURRENCY = 'usd';
+
 // ── Plans ────────────────────────────────────────────────────────────────────
 
 export async function listPlans(pool: pg.Pool): Promise<PlanLimit[]> {
@@ -968,6 +977,41 @@ export interface BillingSummary {
   month_collected_cents: number;
   /** The same figure for the month before it, so the number has a direction. */
   prev_month_collected_cents: number;
+  /**
+   * The currency every money figure above is in.
+   *
+   * Each of them is a sum of integer minor units, and minor units are only
+   * comparable within one currency: ¥100,000 and $1,000.00 are both `100000`
+   * on the wire, and adding them produces a number that is not an amount of
+   * anything. The console rendered the result through a formatter defaulted to
+   * USD, so a ledger holding one yen invoice would have stated it as a $1,000
+   * charge and folded it into the month's revenue at a hundred times its worth.
+   *
+   * `plan_limits.currency` is a per-row column an operator maintains by hand
+   * and `invoices.currency` is `String(obj.currency ?? 'usd')` off a Stripe
+   * webhook into a `text` column with no constraint on it — which is the reason
+   * `formatMoneyCents` and the browser's formatter were both written to survive
+   * a code they do not recognise. So the mix is a state this schema admits,
+   * and this is the figure that says which one the totals are about.
+   *
+   * Falls back to the platform default when there is no single answer — an
+   * empty ledger, or a mixed one. Which of those it is, is what
+   * {@link BillingSummary.mixed_currency} beside it says: this field is a label
+   * for the figures, and it is only a claim about their denomination when that
+   * flag is false.
+   */
+  currency: string;
+  /**
+   * Whether the figures above are a sum across more than one currency, and are
+   * therefore a number rather than an amount.
+   *
+   * Reported rather than resolved. Splitting the console into a set of totals
+   * per currency is a real answer and a bigger one; refusing to present a mixed
+   * sum as though it were dollars is the part that has to be true first, and
+   * the operator seeing the mix is what makes the bigger change a decision
+   * somebody takes rather than a discrepancy they chase.
+   */
+  mixed_currency: boolean;
 }
 
 /**
@@ -1024,6 +1068,8 @@ export async function billingSummary(pool: pg.Pool): Promise<BillingSummary> {
     month_start: string;
     month_collected_cents: string;
     prev_month_collected_cents: string;
+    currency: string | null;
+    currencies: string | number;
   }>(
     `WITH bounds AS (
        SELECT date_trunc('month', now() AT TIME ZONE 'UTC') AS this_month,
@@ -1035,21 +1081,41 @@ export async function billingSummary(pool: pg.Pool): Promise<BillingSummary> {
      collected AS (
        SELECT amount_cents,
               least(refunded_cents, amount_cents) AS refunded,
+              lower(btrim(currency)) AS currency,
               coalesce(paid_at, issued_at) AT TIME ZONE 'UTC' AS at
          FROM invoices WHERE status = 'paid'
+     ),
+     -- MRR per currency of the plan being billed, so the total below and the
+     -- count of currencies it spans come off one read of subscriptions
+     -- rather than two. The rounding is still per subscription and then
+     -- summed, which is what the reduce this replaced did.
+     mrr AS (
+       SELECT lower(btrim(p.currency)) AS currency,
+              sum(CASE p.interval
+                    WHEN 'year'  THEN round(p.price_cents / 12.0)
+                    WHEN 'month' THEN p.price_cents
+                    ELSE 0
+                  END) AS cents
+         FROM subscriptions s
+         JOIN plan_limits p ON p.tier = s.plan_tier
+        WHERE s.status IN (${BILLING_SQL})
+        GROUP BY 1
+     ),
+     -- Every currency any figure on this screen is made of, from both ledgers.
+     -- A plan priced in one currency and an invoice settled in another are the
+     -- same problem for a reader adding the two columns up.
+     currencies AS (
+       SELECT currency FROM collected UNION SELECT currency FROM mrr
      )
      SELECT
        (SELECT count(*) FROM subscriptions WHERE status = 'active')   AS active,
        (SELECT count(*) FROM subscriptions WHERE status = 'trialing') AS trialing,
        (SELECT count(*) FROM subscriptions WHERE status = 'past_due') AS past_due,
-       (SELECT coalesce(sum(CASE p.interval
-                              WHEN 'year'  THEN round(p.price_cents / 12.0)
-                              WHEN 'month' THEN p.price_cents
-                              ELSE 0
-                            END), 0)
-          FROM subscriptions s
-          JOIN plan_limits p ON p.tier = s.plan_tier
-         WHERE s.status IN (${BILLING_SQL})) AS mrr_cents,
+       (SELECT coalesce(sum(cents), 0) FROM mrr) AS mrr_cents,
+       (SELECT count(*) FROM currencies) AS currencies,
+       -- The one currency the figures are in, and null the moment there is more
+       -- than one — a name for a mixed sum would be the lie this exists to stop.
+       (SELECT CASE WHEN count(*) = 1 THEN min(currency) END FROM currencies) AS currency,
        (SELECT coalesce(sum(amount_cents), 0) FROM collected) AS gross_cents,
        -- Netted, not gross. A refund does not move a Stripe invoice's status,
        -- so 'paid' is still the right set to sum over; what changed is that the
@@ -1072,6 +1138,7 @@ export async function billingSummary(pool: pg.Pool): Promise<BillingSummary> {
   const pastDue = Number(row?.past_due ?? 0);
   const gross = Number(row?.gross_cents ?? 0);
   const refunded = Number(row?.refunded_cents ?? 0);
+  const currencies = Number(row?.currencies ?? 0);
   return {
     active,
     trialing,
@@ -1084,5 +1151,10 @@ export async function billingSummary(pool: pg.Pool): Promise<BillingSummary> {
     month_start: row?.month_start ?? '',
     month_collected_cents: Number(row?.month_collected_cents ?? 0),
     prev_month_collected_cents: Number(row?.prev_month_collected_cents ?? 0),
+    // An empty ledger is in no currency at all; the platform default is the
+    // only honest label for nothing, and it is what the formatter assumed
+    // anyway. A mixed one has no single currency and says so instead.
+    currency: row?.currency ?? DEFAULT_BILLING_CURRENCY,
+    mixed_currency: currencies > 1,
   };
 }

@@ -302,4 +302,70 @@ describe.skipIf(!dbUp)('ops billing summary', () => {
     const after = await billingSummary(ctx.pool);
     expect(after).toEqual(before);
   });
+
+  /**
+   * What the money figures are denominated in, which nothing on this screen
+   * said.
+   *
+   * Each of them is a sum of integer minor units, and minor units only mean
+   * anything inside one currency: Stripe reports ¥100,000 as `100000` and
+   * $1,000.00 as `100000` too. The console rendered the sum through a formatter
+   * defaulted to USD, so one yen invoice in the ledger became a $1,000 line in
+   * the all-time total and in that month's revenue — a figure an operator
+   * reconciles against the bank.
+   *
+   * `plan_limits.currency` is a per-row column an operator maintains by hand
+   * and `invoices.currency` arrives as `String(obj.currency ?? 'usd')` into a
+   * `text` column with no constraint on it, which is why both money formatters
+   * were already written to survive a code they cannot parse. The mix is a
+   * state this schema admits; the summary now names its currency and refuses to
+   * call a mixed sum one.
+   */
+  describe('what the totals are denominated in', () => {
+    const yenInvoice = 'in_currency_mix_jpy';
+
+    it('names the one currency the ledger is in', async () => {
+      const summary = await billingSummary(ctx.pool);
+      expect(summary.currency).toBe('usd');
+      expect(summary.mixed_currency).toBe(false);
+    });
+
+    it('refuses to name one once a second currency is in the figures', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await ctx.pool.query(
+        `INSERT INTO invoices (id, user_id, number, amount_cents, currency, status, issued_at,
+                               line_items, stripe_invoice_id)
+         VALUES ($1, $2, $3, 100000, 'JPY', 'paid', now(), '[]', $4)`,
+        [newUlid(), user.id, `INV-JPY-${Date.now()}`, yenInvoice],
+      );
+      try {
+        const summary = await billingSummary(ctx.pool);
+        expect(summary.mixed_currency).toBe(true);
+        // The figures are still returned — the console needs something to draw
+        // and the invoice table below it is the honest breakdown — but nothing
+        // claims they are dollars.
+        expect(summary.gross_cents).toBeGreaterThan(0);
+      } finally {
+        await ctx.pool.query('DELETE FROM invoices WHERE stripe_invoice_id = $1', [yenInvoice]);
+      }
+    });
+
+    it('reads a currency code case-insensitively, so USD and usd are one currency', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const upper = 'in_currency_case_usd';
+      await ctx.pool.query(
+        `INSERT INTO invoices (id, user_id, number, amount_cents, currency, status, issued_at,
+                               line_items, stripe_invoice_id)
+         VALUES ($1, $2, $3, 1000, ' USD ', 'paid', now(), '[]', $4)`,
+        [newUlid(), user.id, `INV-CASE-${Date.now()}`, upper],
+      );
+      try {
+        const summary = await billingSummary(ctx.pool);
+        expect(summary.mixed_currency).toBe(false);
+        expect(summary.currency).toBe('usd');
+      } finally {
+        await ctx.pool.query('DELETE FROM invoices WHERE stripe_invoice_id = $1', [upper]);
+      }
+    });
+  });
 });
