@@ -138,6 +138,65 @@ describe('BillingPage — refunds and chargebacks', () => {
     expect(screen.getByText('succeeded')).toBeInTheDocument();
   });
 
+  /**
+   * Two documents, not one — the same pair the engagement's own payment panel
+   * has always offered.
+   *
+   * This column linked `receipt_url` and nothing else. Stripe's receipt states
+   * one gross figure and knows nothing about a refund, so the itemised PDF —
+   * the only document that says what the charge was made of and what is left —
+   * was unreachable from the page that lists every payment a client has made.
+   * A settled row whose `receipt_url` had not been resolved yet showed a dash.
+   */
+  describe('receipt affordances', () => {
+    const itemised = () => screen.getByRole('link', { name: /itemised pdf/i });
+
+    it('links the itemised receipt for a settled payment with no Stripe URL', async () => {
+      mount({ payments: [payment({})], unpaid_valuations: [], totals: totals() });
+      await screen.findAllByText('$1,190.00');
+      expect(itemised()).toHaveAttribute('href', '/api/v1/valuations/v1/payments/p1/receipt.pdf');
+      expect(screen.queryByRole('link', { name: /stripe receipt/i })).not.toBeInTheDocument();
+      expect(screen.queryByText('—')).not.toBeInTheDocument();
+    });
+
+    it('offers both documents when Stripe resolved a receipt too', async () => {
+      mount({
+        payments: [payment({ receipt_url: 'https://pay.stripe.com/receipts/abc' })],
+        unpaid_valuations: [],
+        totals: totals(),
+      });
+      await screen.findAllByText('$1,190.00');
+      expect(itemised()).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /stripe receipt/i })).toHaveAttribute(
+        'href',
+        'https://pay.stripe.com/receipts/abc',
+      );
+    });
+
+    it('still offers the itemised receipt on a payment refunded in full', async () => {
+      // 'refunded' is a settled row whose money went back, and the itemised
+      // receipt is the one document that states that. The server issues it.
+      mount({
+        payments: [payment({ status: 'refunded', refunded_cents: 119_000 })],
+        unpaid_valuations: [],
+        totals: totals({ refunded_cents: 119_000, paid_cents: 0, succeeded_count: 0, refunded_count: 1 }),
+      });
+      await screen.findAllByText('$1,190.00');
+      expect(itemised()).toBeInTheDocument();
+    });
+
+    it('offers nothing for a checkout that never settled', async () => {
+      mount({
+        payments: [payment({ status: 'expired' })],
+        unpaid_valuations: [],
+        totals: totals({ gross_cents: 0, paid_cents: 0, succeeded_count: 0, payment_count: 1 }),
+      });
+      expect(await screen.findByText('expired')).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /itemised pdf/i })).not.toBeInTheDocument();
+      expect(screen.getByText('—')).toBeInTheDocument();
+    });
+  });
+
   it('flags an open chargeback on the row', async () => {
     mount({
       payments: [payment({ dispute_status: 'open' })],

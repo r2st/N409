@@ -5,6 +5,7 @@ import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { isOps, isPartner } from '../lib/rbac';
 import { formatDateTime, formatChargedCents } from '../lib/format';
+import { hasSettled, itemisedReceiptHref } from '../lib/receipts';
 import {
   EmptyState,
   KindBadge,
@@ -324,19 +325,39 @@ export function BillingPage() {
                         </span>
                       )}
                     </td>
+                    {/* Both documents, as the engagement's own payment panel
+                        already offers them. Stripe's receipt proves the card
+                        was charged and states one gross figure; ours is the
+                        only one that says what the charge was made of and what
+                        is left after a refund. This column offered Stripe's
+                        alone — so the itemised receipt was unreachable from the
+                        page that lists every payment the client has made, and a
+                        row whose `receipt_url` had not resolved yet showed a
+                        dash where a receipt existed. */}
                     <td className="px-5 py-3.5">
-                      {p.receipt_url ? (
-                        <a
-                          href={p.receipt_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-xs font-semibold text-bond-600 hover:text-bond-700"
-                        >
-                          View receipt ↗
-                        </a>
-                      ) : (
-                        <span className="text-xs text-ink-400">—</span>
-                      )}
+                      <div className="flex flex-col gap-0.5">
+                        {hasSettled(p.status) && (
+                          <a
+                            href={itemisedReceiptHref(p)}
+                            className="text-xs font-semibold text-bond-600 hover:text-bond-700"
+                          >
+                            Itemised PDF
+                          </a>
+                        )}
+                        {p.receipt_url && (
+                          <a
+                            href={p.receipt_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-ink-500 hover:underline"
+                          >
+                            Stripe receipt ↗
+                          </a>
+                        )}
+                        {!hasSettled(p.status) && !p.receipt_url && (
+                          <span className="text-xs text-ink-400">—</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

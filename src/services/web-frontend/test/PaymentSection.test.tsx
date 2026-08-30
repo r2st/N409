@@ -494,6 +494,26 @@ describe('PaymentHistory', () => {
       );
     });
 
+    it('still offers the itemised receipt on a payment refunded in full', async () => {
+      /*
+       * The link was gated on `status === 'succeeded'`, which is the answer to
+       * "is this row still holding money". A full refund moves it to
+       * 'refunded', and that is precisely the row whose receipt has something
+       * to say — the server issues one, stating the gross, the refund and the
+       * nil balance. Hidden here, the client's only document was Stripe's,
+       * which states the gross alone.
+       */
+      listPayments([
+        { ...PAYMENT, status: 'refunded', refunded_cents: 119_000, refunded_at: '2026-07-09T09:00:00Z' },
+      ]);
+      render(<PaymentHistory valuation={{ ...VALUATION, paid_status: 'unpaid' }} />);
+      await waitFor(() => expect(screen.getByText('refunded')).toBeInTheDocument());
+      expect(screen.getByRole('link', { name: /itemised pdf/i })).toHaveAttribute(
+        'href',
+        `/api/v1/valuations/${PAYMENT.valuation_id}/payments/${PAYMENT.id}/receipt.pdf`,
+      );
+    });
+
     it('says nothing extra about an ordinary settled payment', async () => {
       listPayments([PAYMENT]);
       render(<PaymentHistory valuation={{ ...VALUATION, paid_status: 'paid' }} />);

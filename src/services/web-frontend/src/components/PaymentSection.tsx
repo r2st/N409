@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError, describeRequestFailure } from '../lib/api';
 import { formatDate, formatChargedCents } from '../lib/format';
 import type { Payment, PaymentQuote, Valuation } from '../lib/types';
+import { hasSettled, itemisedReceiptHref } from '../lib/receipts';
 import { Button, ErrorNote, ListTruncationNote } from './ui';
 
 /**
@@ -361,9 +362,14 @@ export function PaymentHistory({ valuation }: { valuation: Valuation }) {
                     was made of. A client querying an add-on needs the second. */}
                 <td className="py-2.5 text-right">
                   <div className="flex flex-col items-end gap-0.5">
-                    {p.status === 'succeeded' && (
+                    {/* `hasSettled`, not `=== 'succeeded'`: a full refund
+                        moves the row to 'refunded' and the server issues a
+                        receipt for it — one that states what came back. Gating
+                        the link on 'succeeded' hid that document from the row
+                        it was written for. */}
+                    {hasSettled(p.status) && (
                       <a
-                        href={`/api/v1/valuations/${p.valuation_id}/payments/${p.id}/receipt.pdf`}
+                        href={itemisedReceiptHref(p)}
                         className="font-semibold text-bond-700 hover:underline"
                       >
                         Itemised PDF
@@ -379,7 +385,7 @@ export function PaymentHistory({ valuation }: { valuation: Valuation }) {
                         Stripe receipt ↗
                       </a>
                     )}
-                    {p.status !== 'succeeded' && !p.receipt_url && <span className="text-ink-400">—</span>}
+                    {!hasSettled(p.status) && !p.receipt_url && <span className="text-ink-400">—</span>}
                   </div>
                 </td>
               </tr>
