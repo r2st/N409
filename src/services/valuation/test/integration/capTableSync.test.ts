@@ -7,7 +7,7 @@ import { runDueCapTableSyncs } from '../../src/routes/capTableSync.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /** A sweep logger that keeps nothing — these cases assert on the row. */
-const silentLog = { warn: () => {}, error: () => {} };
+const silentLog = { warn: () => {}, error: () => {}, info: () => {} };
 
 const dbUp = await isDbAvailable();
 
@@ -421,7 +421,7 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
     const processed = await runDueCapTableSyncs({
       pool: ctx.pool,
       fetchFn: trackingFetch as unknown as typeof fetch,
-      log: { warn: (o) => warnings.push(o), error: (o) => warnings.push(o) },
+      log: { warn: (o) => warnings.push(o), error: (o) => warnings.push(o), info: () => {} },
     });
 
     // All N were attempted; the one 500 is isolated → N-1 succeed.

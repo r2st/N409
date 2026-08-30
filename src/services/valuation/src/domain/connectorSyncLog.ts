@@ -51,6 +51,11 @@ export interface ConnectorSyncSubject {
   priorFailures?: number;
 }
 
+/** A sweep's logger: the failure contract's two levels, plus the one a recovery uses. */
+export interface ConnectorLogger extends FailureLogger {
+  info: (obj: Record<string, unknown>, msg: string) => void;
+}
+
 const FAMILY_LABEL: Record<IntegrationFamily, string> = {
   hris: 'HRIS',
   cap_table: 'cap-table',
@@ -67,6 +72,37 @@ const FAMILY_LABEL: Record<IntegrationFamily, string> = {
  * either — the connection is equally dead, and what the analyst saw was one
  * 422.
  */
+/**
+ * The other half of the same story, and the half nothing told.
+ *
+ * A connection that fails transiently is retried on a backoff and, usually,
+ * comes back. The failure wrote a line; the recovery wrote none, so what the
+ * log holds is an open-ended run of warns about a connector that has in fact
+ * been healthy since the second one — and the only way to know which is to go
+ * and read the row. It is the alert-without-a-resolve shape: a reader counting
+ * failure lines cannot tell a connector that is still broken from one that
+ * fixed itself an hour ago.
+ *
+ * `info`, and only where there was something to recover from: an ordinary
+ * scheduled sync is not news, and a line per connection per tick is how a
+ * journal stops being read. The failure count is what the line is for — it says
+ * how deep into the backoff this went, and so how long the roster or the cap
+ * table behind it had been stale.
+ */
+export function logConnectorSyncRecovered(log: ConnectorLogger, subject: ConnectorSyncSubject): void {
+  if (!subject.priorFailures) return;
+  log.info(
+    {
+      connectionId: subject.connectionId,
+      valuationId: subject.valuationId,
+      family: subject.family,
+      provider: subject.provider,
+      priorFailures: subject.priorFailures,
+    },
+    `${FAMILY_LABEL[subject.family]} connection recovered`,
+  );
+}
+
 export function logConnectorSyncFailure(
   log: FailureLogger,
   err: unknown,

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import pLimit from 'p-limit';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems, type FailureLogger } from '@n409/shared';
+import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { signHrisState, verifyHrisState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -39,7 +39,11 @@ import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
-import { logConnectorSyncFailure } from '../domain/connectorSyncLog.js';
+import {
+  logConnectorSyncFailure,
+  logConnectorSyncRecovered,
+  type ConnectorLogger,
+} from '../domain/connectorSyncLog.js';
 
 /**
  * HRIS / payroll integration for ASC 718 (feature 11). OAuth2 connect + pull of
@@ -306,7 +310,7 @@ export async function runDueHrisSyncs(deps: {
    * silently doing less than the manual pull beside it.
    */
   credentials?: Partial<Record<HrisProvider, ProviderCredentials>>;
-  log?: FailureLogger;
+  log?: ConnectorLogger;
 }): Promise<number> {
   const fetchFn = deps.fetchFn ?? fetch;
   const due = await findDueConnections(deps.pool);
@@ -322,6 +326,17 @@ export async function runDueHrisSyncs(deps: {
           await syncHrisConnection({ pool: deps.pool, fetchFn, credentials: deps.credentials }, connection, {
             actorId: connection.connected_by ?? connection.id,
           });
+          // A connection the backoff brought back. Read off the row this tick
+          // started from, because `recordSync` has just cleared it.
+          if (deps.log) {
+            logConnectorSyncRecovered(deps.log, {
+              family: 'hris',
+              provider: connection.provider,
+              connectionId: connection.id,
+              valuationId: connection.valuation_id,
+              priorFailures: connection.sync_failures,
+            });
+          }
           return true;
         } catch (err) {
           if (deps.log) {

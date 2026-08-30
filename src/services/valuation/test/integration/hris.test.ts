@@ -14,7 +14,7 @@ import {
 } from './helpers.js';
 
 /** A sweep logger that keeps nothing — these cases assert on the row. */
-const silentLog = { warn: () => {}, error: () => {} };
+const silentLog = { warn: () => {}, error: () => {}, info: () => {} };
 
 const dbUp = await isDbAvailable();
 
@@ -665,16 +665,23 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
         `UPDATE hris_connections SET next_sync_at = now() - interval '1 minute' WHERE valuation_id = $1`,
         [v.id],
       );
+      const recovered: Array<Record<string, unknown>> = [];
       const processed = await runDueHrisSyncs({
         pool: ctx.pool,
         fetchFn: mockFetch() as unknown as typeof fetch,
-        log: silentLog,
+        log: { ...silentLog, info: (fields) => void recovered.push(fields as Record<string, unknown>) },
       });
 
       expect(processed).toBeGreaterThanOrEqual(1);
       const row = await connectionRow(v.id);
       expect(row.status).toBe('connected');
       expect(row.sync_failures).toBe(0);
+      // And the log closes the loop it opened (R258). Without this the journal
+      // holds a warn about a connector that has been healthy ever since, and
+      // the only way to tell that from one still broken is to read the row.
+      expect(recovered).toEqual([
+        expect.objectContaining({ valuationId: v.id, provider: 'rippling', priorFailures: 1 }),
+      ]);
     });
 
     it('backs off further on each consecutive failure', async () => {
@@ -716,6 +723,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
         log: {
           warn: (fields) => void lines.push({ level: 'warn', fields: fields as Record<string, unknown> }),
           error: (fields) => void lines.push({ level: 'error', fields: fields as Record<string, unknown> }),
+          info: (fields) => void lines.push({ level: 'info', fields: fields as Record<string, unknown> }),
         },
       });
 
@@ -1027,7 +1035,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     const processed = await runDueHrisSyncs({
       pool: ctx.pool,
       fetchFn: trackingFetch as unknown as typeof fetch,
-      log: { warn: (o) => warnings.push(o), error: (o) => warnings.push(o) },
+      log: { warn: (o) => warnings.push(o), error: (o) => warnings.push(o), info: () => {} },
     });
 
     expect(rosterCalls).toBe(N);
