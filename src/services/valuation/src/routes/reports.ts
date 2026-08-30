@@ -62,7 +62,7 @@ import { kindLabel } from '../domain/valuationSelector.js';
 import { fitsInt4, int4Version } from '../domain/int4.js';
 import { latestCalculationForKind } from '../repos/calculations.js';
 import { findBrandingByPartnerId } from '../repos/branding.js';
-import { resolveBranding } from '../domain/branding.js';
+import { publicPartnerName, resolveBranding } from '../domain/branding.js';
 import { fetchPartnerLogoCached } from '../clients/partnerLogoCache.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { recordEvent, type EventActor } from '../events/record.js';
@@ -273,9 +273,12 @@ export async function brandingFor(
   const source = await findBrandingByPartnerId(pool, valuation.partner_id);
   if (!source) return undefined;
   const branding = resolveBranding(source);
-  if (!branding.white_label) return { partner_name: source.name, brand_color: null, logo: null };
+  // `publicPartnerName` rather than `branding.name`, which is the platform's
+  // own once the switch is off — the attribution still has a firm to name.
+  const partner_name = publicPartnerName(source);
+  if (!branding.white_label) return { partner_name, brand_color: null, logo: null };
   return {
-    partner_name: branding.name,
+    partner_name,
     // The resolved accent, not the raw column: `resolveBranding` lifts a
     // colour that cannot be seen on a light ground, and the cover band and rule
     // are drawn on one. Same value the SPA paints with, so a report and the

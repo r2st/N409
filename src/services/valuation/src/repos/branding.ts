@@ -13,6 +13,23 @@ import type { BrandingPatch, BrandingSource } from '../domain/branding.js';
 const BRANDING_COLUMNS = `id, name, subdomain, brand_name, brand_tagline, brand_color, accent_color_dark,
                           logo_url, logo_dark_url, favicon_url, support_email, white_label_enabled`;
 
+/**
+ * `domain/branding.publicPartnerName`, for a query that joins `partners`.
+ *
+ * The client-facing sends resolve the firm's name inside SQL — a campaign scan
+ * reads one row per candidate and a state change reads the partner beside its
+ * templates — so the rule has to exist in both languages. Both spellings are
+ * held together by `partnerNameCensus`.
+ *
+ * `nullif(btrim(...))` is `brand_name?.trim() ||`: a brand name of spaces is
+ * not a brand name.
+ */
+export function publicPartnerNameSql(alias: string): string {
+  return `CASE WHEN ${alias}.white_label_enabled
+               THEN coalesce(nullif(btrim(${alias}.brand_name), ''), ${alias}.name)
+               ELSE ${alias}.name END`;
+}
+
 /** What `GET /api/partner/v1/me` reports about the organisation behind a key. */
 export interface PartnerIdentity {
   id: string;

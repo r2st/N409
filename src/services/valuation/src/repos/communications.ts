@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { publicPartnerNameSql } from './branding.js';
 import {
   TEMPLATE_CATEGORIES,
   type AutoEmailRow,
@@ -385,7 +386,7 @@ export async function dueCandidates(
     `SELECT v.id AS valuation_id, v.company_name, v.kind, v.number::text AS number,
             v.user_id, u.email AS to_email, u.phone AS to_phone,
             u.first_name AS recipient_name, v.due_date, v.state,
-            p.name AS partner_name,
+            ${publicPartnerNameSql('p')} AS partner_name,
             (SELECT vp.engine_inputs->>'valuation_date' FROM valuation_params vp
               WHERE vp.valuation_id = v.id) AS valuation_date,
             COALESCE(

@@ -17,6 +17,7 @@ import { TEMPLATE_VARIABLES, previewTemplate, unknownPlaceholders } from '../dom
 import { valuationTemplateVars } from '../domain/communications.js';
 import type { SupportEmailSource } from '../hooks/autoEmails.js';
 import { findValuationById } from '../repos/valuations.js';
+import { publicPartnerNameSql } from '../repos/branding.js';
 import {
   createAutoEmail,
   createCommunicationTemplate,
@@ -295,10 +296,15 @@ export function registerCommunicationRoutes(
         // Ops-only route, so no scope check beyond requireOps: the preview
         // shows nothing the caller could not read on the valuation itself.
         const [{ rows: partnerRows }, { rows: dateRows }] = await Promise.all([
+          // The *public* name, the same one the send resolves — an operator
+          // previewing a template has to be shown what the client will read,
+          // and `partners.name` is the internal channel label. See
+          // `publicPartnerName`.
           valuation.partner_id
-            ? deps.pool.query<{ name: string }>('SELECT name FROM partners WHERE id = $1', [
-                valuation.partner_id,
-              ])
+            ? deps.pool.query<{ name: string }>(
+                `SELECT ${publicPartnerNameSql('p')} AS name FROM partners p WHERE p.id = $1`,
+                [valuation.partner_id],
+              )
             : Promise.resolve({ rows: [] as Array<{ name: string }> }),
           // The measurement date lives in valuation_params.engine_inputs
           // (0041) and nowhere on the valuation row — it is an engine input,

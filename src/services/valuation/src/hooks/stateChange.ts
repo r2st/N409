@@ -28,6 +28,7 @@ import type { SupportEmailSource } from './autoEmails.js';
 
 export type { SupportEmailSource };
 import { templateOverrides } from '../repos/communications.js';
+import { publicPartnerName } from '../domain/branding.js';
 import { firePartnerWebhooksForTransition } from './partnerWebhooks.js';
 
 /**
@@ -208,13 +209,27 @@ async function deliverTransitionMessages(
   // it went into `applyPartnerEmailTemplates`' own vars and nowhere else, so a
   // DB template on a partner engagement rendered `{{partner_name}}` blank
   // while the partner's own template beside it rendered it correctly.
+  //
+  // The name read here is the *public* one. `partners.name` is the internal
+  // label ops picked for the channel — migration 0091 added `brand_name`
+  // because it "is not necessarily what clients should read" — and this row
+  // fills `{{partner_name}}` and `{{platform_name}}` in a message that goes to
+  // the firm's client. A firm that had set its brand name saw it everywhere it
+  // looked, and its clients read the ops channel label. See
+  // `publicPartnerName`, which is the same rule the app and the report cover
+  // resolve through.
   let partner: { name: string; email_templates: PartnerEmailTemplates } | null = null;
   if (valuation.partner_id && emailSpecs.length > 0) {
     const { rows } = await deps.pool.query<{
       name: string;
+      brand_name: string | null;
+      white_label_enabled: boolean;
       email_templates: PartnerEmailTemplates;
-    }>('SELECT name, email_templates FROM partners WHERE id = $1', [valuation.partner_id]);
-    partner = rows[0] ?? null;
+    }>('SELECT name, brand_name, white_label_enabled, email_templates FROM partners WHERE id = $1', [
+      valuation.partner_id,
+    ]);
+    const row = rows[0];
+    partner = row ? { name: publicPartnerName(row), email_templates: row.email_templates } : null;
   }
 
   const recipients = await resolveRecipients(deps.pool, valuation, [

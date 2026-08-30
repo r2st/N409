@@ -173,6 +173,29 @@ export function ensureContrast(color: string, background: string, minRatio = MIN
 }
 
 /**
+ * The firm's public-facing name, from a partner row.
+ *
+ * `partners.name` is the internal label ops picked for the channel; migration
+ * 0091 added `brand_name` precisely because that label "is not necessarily what
+ * clients should read". Which of the two a client sees is decided by
+ * `white_label_enabled` on the same terms as every other brand field: staged
+ * until the firm goes live.
+ *
+ * Split out of `resolveBranding` because the surfaces that need *only* the name
+ * — the report cover's attribution, the `{{partner_name}}` and
+ * `{{platform_name}}` a client-facing email renders — read a partner row that
+ * is not a whole `BrandingSource`, and each of them had picked `name` on its
+ * own. The rule is one rule; `resolveBranding` is its only other caller.
+ */
+export function publicPartnerName(row: {
+  name: string;
+  brand_name?: string | null;
+  white_label_enabled?: boolean | null;
+}): string {
+  return row.white_label_enabled ? row.brand_name?.trim() || row.name : row.name;
+}
+
+/**
  * Partner row → render-ready branding.
  *
  * A tenant with `white_label_enabled = false` resolves to platform branding
@@ -191,7 +214,7 @@ export function resolveBranding(source: BrandingSource | null | undefined): Bran
   return {
     tenant_id: source.id,
     subdomain: source.subdomain,
-    name: source.brand_name?.trim() || source.name,
+    name: publicPartnerName(source),
     tagline: source.brand_tagline?.trim() || null,
     accent: ensureContrast(accent, LIGHT_SURFACE),
     accent_dark: accentDark,
