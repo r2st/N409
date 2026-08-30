@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isUlid, logUnretried, problems } from '@n409/shared';
 import { signSession, type JwtConfig } from '../auth/jwt.js';
 import { setSessionCookie, type SessionCookieConfig } from '../auth/cookies.js';
 import { verifyReauthPassword } from '../auth/reauth.js';
@@ -237,7 +237,15 @@ export function registerAccountRoutes(
             },
           );
         } catch (err) {
-          req.log.warn({ err, userId: user.id }, 'failed to send verification email on email change');
+          // Nothing comes back for this. The outbox row is what the retry
+          // sweep works from, and reaching this catch means there is no outbox
+          // row — the address is now unverified with no link on its way to it.
+          logUnretried(
+            req.log,
+            err,
+            { userId: user.id },
+            'failed to send verification email on email change',
+          );
         }
       })();
     }

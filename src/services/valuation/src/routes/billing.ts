@@ -705,7 +705,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         })),
       );
     } catch (err) {
-      log.warn({ err, userId }, 'second-subscription alert failed');
+      logUnretried(log, err, { userId }, 'second-subscription alert failed');
     }
   }
 

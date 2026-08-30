@@ -199,6 +199,11 @@ async function announce(
       );
     });
   } catch (err) {
+    // announcement-loss: retried. `deliverJobAlertAnnouncement` leaves the row
+    // unstamped when the transaction rolls back, so the next scan owes this
+    // announcement again — the one announcement on the platform that is not
+    // lost when it fails. `logUnretried` would claim the opposite.
+    //
     // Logged at error, not warn: the row stays unstamped and will be retried,
     // but an announcement that keeps failing is an operator not being told
     // about a stalled queue, which is the failure this subsystem exists to
