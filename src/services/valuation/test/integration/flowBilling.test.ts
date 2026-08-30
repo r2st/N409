@@ -244,6 +244,17 @@ describe.skipIf(!dbUp)('the subscription lifecycle', () => {
     const over = await openValuation('Thirteenth');
     expect(over.statusCode).toBe(402);
     expect(over.json().type).toContain('plan-limit');
+    /*
+     * And what the subscriber reads. This said "upgrade or purchase additional
+     * valuations", which named a remedy this product does not sell —
+     * ADDON_KEYS is express delivery and the QSBS letter, both per-engagement
+     * extras that return no quota — and stated none of the figures the
+     * subscription row it was raised from already held.
+     */
+    const detail = over.json().detail as string;
+    expect(detail).toContain('all 12 valuations included in');
+    expect(detail).not.toMatch(/purchase additional/i);
+    expect(detail).toContain('/billing');
 
     const usage = (await subscriptionView()).usage;
     expect(usage).toMatchObject({ used: 12, remaining: 0, exhausted: true });
