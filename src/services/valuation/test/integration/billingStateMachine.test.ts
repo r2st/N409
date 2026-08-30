@@ -7,13 +7,18 @@ import { newUlid } from '@n409/shared';
 import {
   BILLING_SUBSCRIPTION_STATUSES,
   canTransitionInvoice,
+  canTransitionSubscription,
   INVOICE_INITIAL_STATUSES,
   INVOICE_REACHABLE_STATUSES,
   INVOICE_STATUSES,
   INVOICE_TRANSITIONS,
   invoiceNumber,
   isTerminalInvoiceStatus,
+  isTerminalSubscriptionStatus,
   SERVED_SUBSCRIPTION_STATUSES,
+  SUBSCRIPTION_INITIAL_STATUSES,
+  SUBSCRIPTION_STATUSES,
+  SUBSCRIPTION_TRANSITIONS,
   type InvoiceStatus,
 } from '../../src/domain/billing.js';
 import {
@@ -110,6 +115,65 @@ describe('the declared invoice state machine', () => {
   });
 });
 
+describe('the declared subscription state machine', () => {
+  it('gives every status an entry, and names no status that is not one', () => {
+    expect(Object.keys(SUBSCRIPTION_TRANSITIONS).sort()).toEqual([...SUBSCRIPTION_STATUSES].sort());
+    for (const [from, tos] of Object.entries(SUBSCRIPTION_TRANSITIONS)) {
+      for (const to of tos) {
+        expect(SUBSCRIPTION_STATUSES, `${from} → ${to} names an undeclared status`).toContain(to);
+      }
+    }
+  });
+
+  it('has no self-edges — a redelivery is not a transition', () => {
+    // The property `newly_canceled` and `inserted` exist to answer. Stripe
+    // sends two events for one cancellation and redelivers both; the second
+    // reading of a state is not a move into it.
+    for (const status of SUBSCRIPTION_STATUSES) {
+      expect(SUBSCRIPTION_TRANSITIONS[status], `${status} lists itself`).not.toContain(status);
+    }
+  });
+
+  it('makes cancellation the one ending, reachable from everywhere else', () => {
+    expect(isTerminalSubscriptionStatus('canceled')).toBe(true);
+    for (const status of SUBSCRIPTION_STATUSES) {
+      if (status === 'canceled') continue;
+      expect(isTerminalSubscriptionStatus(status), `${status} is terminal`).toBe(false);
+      // A subscription in any live state can end; that is the whole point of
+      // there being an ending.
+      expect(canTransitionSubscription(status, 'canceled'), `${status} cannot end`).toBe(true);
+    }
+  });
+
+  it('refuses every way back out of an ended subscription', () => {
+    // The invariant all three writers enforce, and the one this machine is
+    // really about: cancellation is terminal in Stripe too, so "already
+    // cancelled" is never stale information whatever order events arrive in.
+    for (const status of SUBSCRIPTION_STATUSES) {
+      expect(canTransitionSubscription('canceled', status), `canceled → ${status}`).toBe(false);
+    }
+  });
+
+  it('splits the vocabulary into the two sets the queries read, and no others', () => {
+    // SERVED and BILLING are subsets of the same list, and 'canceled' is in
+    // neither — a served cancelled account would be quota granted to somebody
+    // who has left.
+    for (const s of SERVED_SUBSCRIPTION_STATUSES) expect(SUBSCRIPTION_STATUSES).toContain(s);
+    for (const s of BILLING_SUBSCRIPTION_STATUSES) expect(SERVED_SUBSCRIPTION_STATUSES).toContain(s);
+    expect(SERVED_SUBSCRIPTION_STATUSES).not.toContain('canceled');
+    expect([...SERVED_SUBSCRIPTION_STATUSES, 'canceled'].sort()).toEqual([...SUBSCRIPTION_STATUSES].sort());
+  });
+
+  it('lets a subscription be created in its ended state, unlike an invoice', () => {
+    // Deliberate, and the one place the two machines differ. An `updated`
+    // carrying `status: 'canceled'` for a subscription we hold no row for is a
+    // subscription we never carried; recording it is honest, and refusing the
+    // insert would leave the next event nothing to conflict against.
+    expect(SUBSCRIPTION_INITIAL_STATUSES).toContain('canceled');
+    expect(INVOICE_INITIAL_STATUSES).not.toContain('void');
+  });
+});
+
 // ── Part 2: censuses — the machine against the schema, and against the code ──
 
 /** Every `.ts` under the service's src tree. */
@@ -194,6 +258,96 @@ describe('the invoice status census', () => {
   });
 });
 
+describe('the subscription status census', () => {
+  /**
+   * Every statement that moves `subscriptions.status`, held to the one rule the
+   * machine actually enforces: a cancelled subscription is never written back
+   * into a live state.
+   *
+   * A grep, because the property is about statements rather than about
+   * outcomes — a writer that guards correctly and a writer that does not look
+   * identical from the outside until the ordinary out-of-order delivery that
+   * exposes it. Each UPDATE has to either write the ending itself or exclude a
+   * row already in it.
+   *
+   * Three writers exist and they are spelled three different ways: an
+   * `INSERT … ON CONFLICT DO UPDATE` whose guard is in the conflict clause, a
+   * plain `UPDATE … WHERE`, and a CTE that reads the prior status under a lock.
+   * So the scan slices on the whole statement rather than on any one shape of
+   * WHERE, and counts what it found — a matcher that had stopped matching would
+   * otherwise pass by having nothing left to ask.
+   */
+  it('lets no statement write a subscription out of its ended state', () => {
+    const files = sourceFiles();
+    expect(files.length, 'the source scan found no files').toBeGreaterThan(0);
+
+    const writers: Array<{ file: string; sql: string }> = [];
+    for (const { file, text } of files) {
+      // Each statement that assigns the column, from the verb to the end of the
+      // SQL literal it lives in.
+      for (const m of text.matchAll(/(UPDATE\s+subscriptions\b|INSERT\s+INTO\s+subscriptions\b)/gi)) {
+        const start = m.index!;
+        const end = text.indexOf('`', start);
+        const sql = text.slice(start, end === -1 ? text.length : end);
+        if (/\bstatus\s*=/i.test(sql)) writers.push({ file, sql });
+      }
+    }
+    // Vacuity guard: the three known writers are `upsertSubscription`,
+    // `cancelSubscription` and `markSubscriptionPastDue`.
+    expect(
+      writers.length,
+      'no subscription status writer was found — the scan is vacuous',
+    ).toBeGreaterThanOrEqual(3);
+
+    const unguarded = writers.filter(({ sql }) => {
+      // An INSERT with no conflict clause creates a row; there is no prior
+      // status for it to write over. See SUBSCRIPTION_INITIAL_STATUSES.
+      if (/^INSERT/i.test(sql) && !/ON\s+CONFLICT/i.test(sql)) return false;
+      // Writes the ending, which is the one assignment that needs no guard:
+      // 'canceled' over 'canceled' is the same value.
+      if (/status\s*=\s*'canceled'/i.test(sql)) return false;
+      // Otherwise the statement must refuse a row that has already ended.
+      return !/status\s*<>\s*'canceled'/i.test(sql);
+    });
+    expect(unguarded.map((w) => w.file)).toEqual([]);
+  });
+
+  it('grants a new period’s quota only where money has arrived', () => {
+    // The R240 finding, pinned at the statement rather than only through the
+    // webhook: Stripe advances `current_period_start` when it raises the
+    // renewal invoice, so the period moving is not evidence that the period was
+    // paid for. The reset is gated on BILLING_SUBSCRIPTION_STATUSES, and the
+    // comparison is against `quota_period_start` — the period the counter is
+    // counting — rather than against the period the row is showing.
+    const files = sourceFiles();
+    const repo = files.find((f) => f.file === path.join('repos', 'billing.ts'));
+    expect(repo, 'repos/billing.ts was not scanned').toBeTruthy();
+    const reset = /valuations_used\s*=\s*CASE([\s\S]*?)END/i.exec(repo!.text);
+    expect(reset, 'the quota reset is no longer a CASE in repos/billing.ts').toBeTruthy();
+    // The gate is the declared set interpolated in, not a list restated in the
+    // SQL — a second spelling of BILLING_SUBSCRIPTION_STATUSES is the drift the
+    // sets at the top of domain/billing.ts were separated to end.
+    expect(reset![1], 'the reset no longer gates on BILLING_SUBSCRIPTION_STATUSES').toContain(
+      '${BILLING_SQL}',
+    );
+    expect(reset![1], 'the reset no longer compares against the counter’s own period').toContain(
+      'quota_period_start',
+    );
+    // ...and it names no served-but-unpaid status of its own.
+    for (const status of SERVED_SUBSCRIPTION_STATUSES) {
+      if ((BILLING_SUBSCRIPTION_STATUSES as readonly string[]).includes(status)) continue;
+      expect(reset![1], `the reset names ${status}, which is served without being paid`).not.toContain(
+        `'${status}'`,
+      );
+    }
+    // The set it interpolates is the paying one, wherever the SQL list is built.
+    expect(
+      /const BILLING_SQL = sqlList\(BILLING_SUBSCRIPTION_STATUSES\)/.test(repo!.text),
+      'BILLING_SQL is no longer built from BILLING_SUBSCRIPTION_STATUSES',
+    ).toBe(true);
+  });
+});
+
 describe.skipIf(!dbUp)('the schema states the same machine', () => {
   let ctx: TestApp;
   beforeAll(async () => {
@@ -221,12 +375,14 @@ describe.skipIf(!dbUp)('the schema states the same machine', () => {
     expect(await checkedValues('invoices', 'status')).toEqual([...INVOICE_STATUSES].sort());
   });
 
-  it('permits exactly the subscription statuses the domain splits into sets', async () => {
-    // SERVED ∪ {canceled} is the whole vocabulary; BILLING is a subset of
-    // SERVED. Both are asserted so neither set can grow a status the column
-    // would reject, nor miss one it would accept.
+  it('permits exactly the subscription statuses the domain declares', async () => {
+    // The machine's vocabulary against the column's, and the two sets against
+    // the machine — so neither a set nor the transition table can grow a status
+    // the column would reject, nor miss one it would accept.
+    expect(await checkedValues('subscriptions', 'status')).toEqual([...SUBSCRIPTION_STATUSES].sort());
+    expect(Object.keys(SUBSCRIPTION_TRANSITIONS).sort()).toEqual([...SUBSCRIPTION_STATUSES].sort());
     const declared = [...new Set([...SERVED_SUBSCRIPTION_STATUSES, 'canceled'])].sort();
-    expect(await checkedValues('subscriptions', 'status')).toEqual(declared);
+    expect(declared).toEqual([...SUBSCRIPTION_STATUSES].sort());
     for (const s of BILLING_SUBSCRIPTION_STATUSES) expect(SERVED_SUBSCRIPTION_STATUSES).toContain(s);
   });
 });
@@ -554,6 +710,42 @@ describe.skipIf(!dbUp)('subscription transitions', () => {
         current_period_start: Math.floor(Date.now() / 1000),
       },
     },
+  });
+
+  /**
+   * Every edge the machine declares, driven through the real webhook.
+   *
+   * The declaration above is a table in a file; this is the join between it and
+   * what the writers actually do. Each live pair is walked on its own
+   * subscription — one row per edge, so a failure names the edge — and the
+   * moves out of `canceled` are asserted in the negative afterwards, because
+   * the only way to observe a refused transition is that the row did not move.
+   */
+  it('performs every transition it declares, and only those', async () => {
+    for (const from of SUBSCRIPTION_STATUSES) {
+      for (const to of SUBSCRIPTION_TRANSITIONS[from]) {
+        const user = await seedUser(ctx, { roles: ['valuation_user'] });
+        const stripeId = `sub_edge_${from}_${to}_${uniq()}`;
+        await deliver(subscriptionEvent(user.id, stripeId, from));
+        expect((await subRow(stripeId))?.status, `${from} was not reached`).toBe(from);
+        await deliver(subscriptionEvent(user.id, stripeId, to));
+        expect((await subRow(stripeId))?.status, `${from} → ${to} did not happen`).toBe(to);
+      }
+    }
+  });
+
+  it('refuses every transition it does not declare', async () => {
+    // Which is exactly the four out of `canceled`, self-edges aside. A row that
+    // moved here would be a subscriber who left being served again.
+    for (const to of SUBSCRIPTION_STATUSES) {
+      if (canTransitionSubscription('canceled', to)) continue;
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const stripeId = `sub_noedge_canceled_${to}_${uniq()}`;
+      await deliver(subscriptionEvent(user.id, stripeId, 'active'));
+      await deliver(subscriptionEvent(user.id, stripeId, 'canceled'));
+      await deliver(subscriptionEvent(user.id, stripeId, to));
+      expect((await subRow(stripeId))?.status, `canceled → ${to} was allowed`).toBe('canceled');
+    }
   });
 
   it('walks the whole live ladder: trialing → active → past_due → active', async () => {

@@ -52,6 +52,74 @@ export const SERVED_SUBSCRIPTION_STATUSES = ['active', 'trialing', 'past_due'] a
  */
 export const BILLING_SUBSCRIPTION_STATUSES = ['active', 'trialing'] as const;
 
+/**
+ * Every state a subscription row can be in (migration 0080's CHECK), as one
+ * list rather than as the union of two sets that happen to cover it.
+ *
+ * `SERVED_` and `BILLING_` above answer *questions about* a status; this is the
+ * vocabulary itself, and {@link SUBSCRIPTION_TRANSITIONS} beside it is the part
+ * that had never been written down at all. Both the invoice machine and the
+ * payments machine (domain/payments.ts) declare their edges; the subscription
+ * one — the machine that decides whether an account is served — declared only
+ * its states, in a CHECK constraint, with nothing saying which moves between
+ * them are legal or which of them is an ending.
+ */
+export const SUBSCRIPTION_STATUSES = ['trialing', 'active', 'past_due', 'canceled'] as const;
+
+/**
+ * The legal moves, which are Stripe's moves.
+ *
+ * This platform does not decide a subscription's status; it mirrors one, and
+ * every write comes off a `customer.subscription.*` event, a settled Checkout
+ * Session, or a failed invoice. So the table below says what Stripe's own
+ * lifecycle permits once projected through {@link STRIPE_STATUS_MAP}, and the
+ * one edge that is *ours* is the absence of any row out of `canceled`.
+ *
+ * `active → trialing` is here because Stripe allows it — setting `trial_end`
+ * on a live subscription puts it back into `trialing`, which is how a trial is
+ * granted or extended from the dashboard — and a machine that called it illegal
+ * would be describing a product rule nobody wrote instead of the system it
+ * mirrors.
+ *
+ * No status lists itself: a redelivery of the state a subscription is already
+ * in is not a transition, and the writers depend on that distinction —
+ * `newly_canceled` exists precisely because 'canceled' arriving twice must fire
+ * once. See `cancelSubscription` and `upsertSubscription`.
+ */
+export const SUBSCRIPTION_TRANSITIONS: Record<SubscriptionStatus, readonly SubscriptionStatus[]> = {
+  trialing: ['active', 'past_due', 'canceled'],
+  active: ['trialing', 'past_due', 'canceled'],
+  past_due: ['active', 'trialing', 'canceled'],
+  // Terminal, and terminal in Stripe too: a cancelled subscription cannot be
+  // reactivated, and resubscribing issues a new subscription id. That is what
+  // makes "already cancelled" never stale information whatever order events
+  // arrive in, which is the invariant every writer of this column enforces.
+  canceled: [],
+};
+
+/**
+ * The statuses a row may be *created* in.
+ *
+ * All four, including the ending — deliberately, and it is the one place this
+ * machine differs from the invoice one. A `customer.subscription.updated`
+ * carrying `status: 'canceled'` for a subscription this platform has no row for
+ * is a subscription it never carried, and recording it as cancelled is the
+ * honest answer; refusing the insert would leave the account with no row at all
+ * and the next event with nothing to conflict against. It is not *news*, which
+ * is a separate question the write answers with `newly_canceled`.
+ */
+export const SUBSCRIPTION_INITIAL_STATUSES = SUBSCRIPTION_STATUSES;
+
+/** Whether a subscription may move from one status to another. */
+export function canTransitionSubscription(from: SubscriptionStatus, to: SubscriptionStatus): boolean {
+  return SUBSCRIPTION_TRANSITIONS[from].includes(to);
+}
+
+/** A status with no way out — the one property the writers actually enforce. */
+export function isTerminalSubscriptionStatus(status: SubscriptionStatus): boolean {
+  return SUBSCRIPTION_TRANSITIONS[status].length === 0;
+}
+
 export interface UsageState {
   valuation_limit: number | null;
   valuations_used: number;
@@ -778,7 +846,13 @@ export const STRIPE_SUBSCRIPTION_STATUSES = [
 ] as const;
 export type StripeSubscriptionStatus = (typeof STRIPE_SUBSCRIPTION_STATUSES)[number];
 
-export type LocalSubscriptionStatus = 'active' | 'trialing' | 'past_due' | 'canceled';
+/**
+ * The four this schema holds — the same list {@link SUBSCRIPTION_STATUSES}
+ * declares, spelled once so a status cannot be added to the machine and not to
+ * the mapping's range, or the other way about.
+ */
+export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
+export type LocalSubscriptionStatus = SubscriptionStatus;
 
 /**
  * Stripe's status → the four this schema holds (migration 0080).
