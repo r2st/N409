@@ -36,6 +36,7 @@ import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { IntegrationError } from '../clients/deadline.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
 
 /**
  * Live cap-table sync (feature 4). Flow mirrors the accounting integration:
@@ -329,12 +330,12 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       throw invalidQuery(parsedQuery.error, 'Invalid callback parameters');
     }
     const q = parsedQuery.data;
-    if (!q.state) throw problems.badRequest('Missing state');
+    if (!q.state) throw problems.badRequest(integrationCallbackRefusal('capTable'));
     let state;
     try {
       state = await verifyCapTableSyncState(q.state, deps.jwt);
     } catch {
-      throw problems.unprocessable('Invalid or expired state');
+      throw problems.unprocessable(integrationCallbackRefusal('capTable'));
     }
     const provider = parseProvider(state.provider);
     const back = (result: string) =>

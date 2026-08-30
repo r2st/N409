@@ -35,6 +35,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
 
 /**
  * HRIS / payroll integration for ASC 718 (feature 11). OAuth2 connect + pull of
@@ -319,12 +320,12 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
       throw invalidQuery(parsedQuery.error, 'Invalid callback parameters');
     }
     const q = parsedQuery.data;
-    if (!q.state) throw problems.badRequest('Missing state');
+    if (!q.state) throw problems.badRequest(integrationCallbackRefusal('hris'));
     let state;
     try {
       state = await verifyHrisState(q.state, deps.jwt);
     } catch {
-      throw problems.unprocessable('Invalid or expired state');
+      throw problems.unprocessable(integrationCallbackRefusal('hris'));
     }
     const provider = parseProvider(state.provider);
     const back = (result: string) =>

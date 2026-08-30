@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { isDbAvailable, setupTestApp, type TestApp } from './helpers.js';
+import {
+  integrationCallbackRefusal,
+  type IntegrationCallbackKind,
+} from '../../src/domain/oauthCallbackRefusal.js';
 
 const dbUp = await isDbAvailable();
 
@@ -17,9 +21,9 @@ const dbUp = await isDbAvailable();
  * Both callbacks share a shape, so they share a table.
  */
 const CALLBACKS = [
-  { name: 'cap-table sync', path: '/api/v1/cap-table-sync/callback' },
-  { name: 'HRIS', path: '/api/v1/hris/callback' },
-] as const;
+  { name: 'cap-table sync', path: '/api/v1/cap-table-sync/callback', kind: 'capTable' },
+  { name: 'HRIS', path: '/api/v1/hris/callback', kind: 'hris' },
+] as const satisfies ReadonlyArray<{ name: string; path: string; kind: IntegrationCallbackKind }>;
 
 describe.skipIf(!dbUp)('sync OAuth callbacks — query validation', () => {
   let ctx: TestApp;
@@ -34,7 +38,7 @@ describe.skipIf(!dbUp)('sync OAuth callbacks — query validation', () => {
     await ctx?.teardown();
   });
 
-  for (const { name, path } of CALLBACKS) {
+  for (const { name, path, kind } of CALLBACKS) {
     describe(name, () => {
       const callback = (query: string) => app.inject({ method: 'GET', url: `${path}?${query}` });
 
@@ -98,7 +102,7 @@ describe.skipIf(!dbUp)('sync OAuth callbacks — query validation', () => {
       it('still reports a missing state as such', async () => {
         const res = await callback('code=abc');
         expect(res.statusCode).toBe(400);
-        expect(res.json().detail).toBe('Missing state');
+        expect(res.json().detail).toBe(integrationCallbackRefusal(kind));
       });
 
       it('passes well-formed parameters through to state verification', async () => {
@@ -107,7 +111,7 @@ describe.skipIf(!dbUp)('sync OAuth callbacks — query validation', () => {
         // point — validation bounds the input, it does not authenticate it.
         const res = await callback('state=not-a-jwt&code=abc&company_id=12345');
         expect(res.statusCode).toBe(422);
-        expect(res.json().detail).toBe('Invalid or expired state');
+        expect(res.json().detail).toBe(integrationCallbackRefusal(kind));
       });
 
       it('ignores unknown provider-appended parameters rather than failing', async () => {
@@ -116,7 +120,7 @@ describe.skipIf(!dbUp)('sync OAuth callbacks — query validation', () => {
         // request is judged on the fields we actually read.
         const res = await callback('state=not-a-jwt&code=abc&scope=read&session_state=xyz');
         expect(res.statusCode).toBe(422);
-        expect(res.json().detail).toBe('Invalid or expired state');
+        expect(res.json().detail).toBe(integrationCallbackRefusal(kind));
       });
 
       it('rejects the array before the missing-state check, not after', async () => {

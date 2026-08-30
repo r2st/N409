@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { isDbAvailable, setupTestApp, type TestApp } from './helpers.js';
+import { integrationCallbackRefusal } from '../../src/domain/oauthCallbackRefusal.js';
 
 const dbUp = await isDbAvailable();
 
@@ -66,7 +67,7 @@ describe.skipIf(!dbUp)('accounting OAuth callback — query validation', () => {
   it('still reports a missing state as such', async () => {
     const res = await callback('code=abc');
     expect(res.statusCode).toBe(400);
-    expect(res.json().detail).toBe('Missing state');
+    expect(res.json().detail).toBe(integrationCallbackRefusal('accounting'));
   });
 
   it('passes well-formed parameters through to state verification', async () => {
@@ -75,7 +76,7 @@ describe.skipIf(!dbUp)('accounting OAuth callback — query validation', () => {
     // validation bounds the input, it does not authenticate it.
     const res = await callback('state=not-a-jwt&code=abc&realmId=12345');
     expect(res.statusCode).toBe(422);
-    expect(res.json().detail).toBe('Invalid or expired state');
+    expect(res.json().detail).toBe(integrationCallbackRefusal('accounting'));
   });
 
   it('ignores unknown provider-appended parameters rather than failing', async () => {
@@ -84,6 +85,6 @@ describe.skipIf(!dbUp)('accounting OAuth callback — query validation', () => {
     // judged on the fields we actually read.
     const res = await callback('state=not-a-jwt&code=abc&scope=accounting&session_state=xyz');
     expect(res.statusCode).toBe(422);
-    expect(res.json().detail).toBe('Invalid or expired state');
+    expect(res.json().detail).toBe(integrationCallbackRefusal('accounting'));
   });
 });

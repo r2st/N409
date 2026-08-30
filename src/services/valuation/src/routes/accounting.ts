@@ -30,6 +30,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { IntegrationError } from '../clients/deadline.js';
 import { invalidQuery } from '../domain/validationProblem.js';
+import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
 
 /**
  * Accounting software integrations (409.ai §23).
@@ -144,13 +145,13 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
       throw invalidQuery(parsedQuery.error, 'Invalid callback parameters');
     }
     const q = parsedQuery.data;
-    if (!q.state) throw problems.badRequest('Missing state');
+    if (!q.state) throw problems.badRequest(integrationCallbackRefusal('accounting'));
 
     let state;
     try {
       state = await verifyAccountingState(q.state, deps.jwt);
     } catch {
-      throw problems.unprocessable('Invalid or expired state');
+      throw problems.unprocessable(integrationCallbackRefusal('accounting'));
     }
     const provider = parseProvider(state.provider);
     const back = (result: string) =>
