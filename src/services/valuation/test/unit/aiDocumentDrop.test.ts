@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { encodeDocuments } from '../../src/routes/ai.js';
+import { encodeDocuments, MAX_AI_REQUEST_DOCUMENT_BYTES } from '../../src/routes/ai.js';
 
 type Doc = Parameters<typeof encodeDocuments>[1][number];
 
@@ -193,5 +193,68 @@ describe('documents that never reached the AI', () => {
     await expect(encodeDocuments(dir, [doc({ id: 'gone', storage_path: 'missing.bin' })])).resolves.toEqual(
       [],
     );
+  });
+});
+
+/**
+ * The other side of the same wire.
+ *
+ * Each document is capped at 5 MB and no more than ten go, and the product of
+ * those two — 66.7 MB once base64 has had it — is more than twice the 32 MiB
+ * body the AI service accepts (`limits.py`). Five real uploads on one
+ * engagement were therefore a 413, and a 413 is not retryable, so the AI step
+ * failed permanently on exactly the engagements that had the most to reason
+ * from.
+ */
+describe('the request budget the two ceilings did not add up to', () => {
+  let dir: string;
+  /** The per-document ceiling itself — the worst case the two caps allow. */
+  const BIG = 5 * 1024 * 1024;
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'n409-ai-budget-'));
+    for (let i = 0; i < 6; i++) {
+      await writeFile(join(dir, `big${i}.bin`), Buffer.alloc(BIG, 0x61));
+    }
+  });
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const bigDocs = () =>
+    Array.from({ length: 6 }, (_, i) => doc({ id: `big${i}`, storage_path: `big${i}.bin`, size_bytes: BIG }));
+
+  it('sends no more base64 than the receiver will take', async () => {
+    const { log } = recorder();
+    const encoded = await encodeDocuments(dir, bigDocs(), log);
+
+    const bytes = encoded.reduce((n, e) => n + String(e.content_base64).length, 0);
+    expect(bytes).toBeLessThanOrEqual(MAX_AI_REQUEST_DOCUMENT_BYTES);
+    // Not by refusing everything: what fits, goes. Three of these weigh
+    // 20.97 MB encoded and a fourth would be 27.96 MB, over the budget.
+    expect(encoded.map((e) => e.id)).toEqual(['big0', 'big1', 'big2']);
+  });
+
+  it('says so, because the run then reasons from a smaller set', async () => {
+    const { log, warns } = recorder();
+    const encoded = await encodeDocuments(dir, bigDocs(), log);
+
+    const line = warns.find((w) => w.msg === 'AI input truncated to the request budget');
+    expect(line, 'the truncation line is missing').toBeDefined();
+    expect(line!.obj).toMatchObject({
+      overBudget: 6 - encoded.length,
+      eligible: 6,
+      sent: encoded.length,
+      budgetBytes: MAX_AI_REQUEST_DOCUMENT_BYTES,
+    });
+  });
+
+  it('leaves an ordinary set alone', async () => {
+    const { log, warns } = recorder();
+    const encoded = await encodeDocuments(dir, [bigDocs()[0]!], log);
+
+    expect(encoded).toHaveLength(1);
+    expect(warns.some((w) => w.msg === 'AI input truncated to the request budget')).toBe(false);
   });
 });

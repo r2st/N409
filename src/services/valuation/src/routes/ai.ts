@@ -97,6 +97,31 @@ export const EXTRACTABLE_EXTENSIONS = new Set([
 const MAX_AI_DOCUMENT_BYTES = 5 * 1024 * 1024;
 const MAX_AI_DOCUMENTS = 10;
 
+/**
+ * The most base64 this service will put in one AI request.
+ *
+ * The two caps above bound each document and how many of them go, and nothing
+ * bounded the two multiplied together: ten documents at the per-file ceiling is
+ * 50 MB of blob, which base64 makes 66.7 MB of JSON. The AI service refuses a
+ * request body over 32 MiB (`limits.py`, `MAX_REQUEST_BODY_BYTES`), so five
+ * five-megabyte uploads on one engagement — a cap table, two board consents and
+ * two offer letters is not an unusual set — were a 413 the moment the pipeline
+ * ran. A 413 is not retryable, so the run failed permanently, and what an
+ * analyst saw was the AI step failing on an engagement whose only distinguishing
+ * feature was that it had documents on it.
+ *
+ * Two ceilings written on opposite sides of a wire, each sound on its own, with
+ * nothing stating the relationship: the sender's own maximum was twice what the
+ * receiver would take. This is that relationship, written on the sending side
+ * because that is the side that can do something about it.
+ *
+ * 24 MiB rather than the whole 32: the request also carries the params, the
+ * narrative sections, the market research, the company profile and the tag
+ * catalogue, and a budget with no headroom for those is the same bug with a
+ * smaller margin.
+ */
+export const MAX_AI_REQUEST_DOCUMENT_BYTES = 24 * 1024 * 1024;
+
 export interface AiPipelineResponse {
   model: string;
   result: Record<string, unknown>;
@@ -198,6 +223,8 @@ export async function encodeDocuments(
     .slice(0, MAX_AI_DOCUMENTS);
   const encoded: Array<Record<string, unknown>> = [];
   const unreadable: string[] = [];
+  const overBudget: string[] = [];
+  let budgetUsed = 0;
   for (const doc of eligible) {
     try {
       const stored = await readFile(path.join(documentsDir, doc.storage_path));
@@ -212,6 +239,19 @@ export async function encodeDocuments(
       // The download route has refused these since round 197; this path, which
       // is the one that feeds a valuation, did not.
       const buf = readStoredBlob(doc, stored, log);
+      // Base64 is four characters per three bytes, and the JSON string that
+      // carries it needs no escaping — so this is the number of bytes the
+      // request will actually weigh, not an estimate of it.
+      const encodedBytes = Math.ceil(buf.length / 3) * 4;
+      if (budgetUsed + encodedBytes > MAX_AI_REQUEST_DOCUMENT_BYTES) {
+        // Skipped rather than sent, because sending it makes the *whole*
+        // request a 413 and this engagement's analysis fails on every attempt.
+        // Recorded for the same reason the unreadable ones are: the run goes
+        // ahead on a smaller set than the firm uploaded.
+        overBudget.push(doc.id);
+        continue;
+      }
+      budgetUsed += encodedBytes;
       encoded.push({
         id: doc.id,
         filename: doc.filename,
@@ -228,6 +268,17 @@ export async function encodeDocuments(
     log?.warn(
       { unreadable: unreadable.length, eligible: eligible.length, sent: encoded.length },
       'AI input is missing documents',
+    );
+  }
+  if (overBudget.length > 0) {
+    log?.warn(
+      {
+        overBudget: overBudget.length,
+        eligible: eligible.length,
+        sent: encoded.length,
+        budgetBytes: MAX_AI_REQUEST_DOCUMENT_BYTES,
+      },
+      'AI input truncated to the request budget',
     );
   }
   return encoded;
