@@ -239,8 +239,23 @@ export function CapTableSyncPanel({
             <table className="w-full text-sm">
               <caption className="sr-only">Cap table sync conflicts</caption>
               <tbody>
-                {pending.outcome.diff.conflicts.map((c) => (
-                  <tr key={c.security_class} className="border-b border-paper-200 last:border-0 align-top">
+                {/*
+                  Keyed by position, not by class name. A cap table may hold the
+                  same class name on two rows — `duplicate_class` is a warning,
+                  and a provider that returns one certificate per row produces
+                  the shape by construction — so the diff names a class more
+                  than once whenever one of those rows is added or removed.
+                  Under a name key React reconciles those rows onto each other
+                  and the table draws fewer rows than the "n changed · n added ·
+                  n removed" line above it counts, on the screen an analyst
+                  reads before overwriting the cap table on file. The list is
+                  rendered whole and never reordered, so the index is stable.
+                */}
+                {pending.outcome.diff.conflicts.map((c, i) => (
+                  <tr
+                    key={`${c.security_class}:${c.status}:${i}`}
+                    className="border-b border-paper-200 last:border-0 align-top"
+                  >
                     <th scope="row" className="px-3 py-2 text-left font-semibold text-ink-800">
                       {c.security_class}
                     </th>

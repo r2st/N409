@@ -685,6 +685,91 @@ describe('cap-table diff', () => {
     expect(diff.conflicts[0]!.changes).toEqual([{ field: 'class_type', from: 'common', to: 'preferred' }]);
   });
 
+  /*
+   * A repeated class name is a shape both sides produce. `duplicate_class` is a
+   * warning, so a table with "Series A" twice is stored and read back; a
+   * provider returning one row per certificate produces it by construction.
+   * Keying the two sides by name collapsed all but the last of them, and the
+   * collapse was silent in the direction that loses shares.
+   */
+  describe('a class name that appears on more than one row', () => {
+    it('reports the row an apply would drop, rather than reading past it', () => {
+      const diff = diffCapTables(
+        [
+          entry({ security_class: 'Series A', class_type: 'preferred', shares: 100_000 }),
+          entry({ security_class: 'Series A', class_type: 'preferred', shares: 50_000 }),
+        ],
+        [entry({ security_class: 'Series A', class_type: 'preferred', shares: 100_000 })],
+      );
+      expect(diff.removed).toBe(1);
+      expect(diff.changed).toBe(0);
+      expect(diff.has_conflicts).toBe(true);
+      expect(diff.conflicts).toContainEqual({
+        security_class: 'Series A',
+        status: 'removed',
+        changes: [],
+      });
+    });
+
+    it('reports the extra row a pull adds under a name already on file', () => {
+      const diff = diffCapTables(
+        [entry({ security_class: 'Series A', class_type: 'preferred', shares: 100_000 })],
+        [
+          entry({ security_class: 'Series A', class_type: 'preferred', shares: 100_000 }),
+          entry({ security_class: 'Series A', class_type: 'preferred', shares: 50_000 }),
+        ],
+      );
+      expect(diff.added).toBe(1);
+      expect(diff.changed).toBe(0);
+    });
+
+    it('matches repeats off in order rather than all against the last', () => {
+      const diff = diffCapTables(
+        [
+          entry({ security_class: 'Series A', class_type: 'preferred', shares: 100_000 }),
+          entry({ security_class: 'Series A', class_type: 'preferred', shares: 50_000 }),
+        ],
+        [
+          entry({ security_class: 'Series A', class_type: 'preferred', shares: 100_000 }),
+          entry({ security_class: 'Series A', class_type: 'preferred', shares: 60_000 }),
+        ],
+      );
+      expect(diff.added).toBe(0);
+      expect(diff.removed).toBe(0);
+      expect(diff.changed).toBe(1);
+      expect(diff.conflicts[0]!.changes).toEqual([{ field: 'shares', from: 50_000, to: 60_000 }]);
+    });
+
+    it('counts a name repeated on both sides once per row, not once per name', () => {
+      const twice = [
+        entry({ security_class: 'Common', shares: 1000 }),
+        entry({ security_class: 'common ', shares: 2000 }),
+      ];
+      expect(diffCapTables(twice, [])).toMatchObject({ removed: 2, added: 0, changed: 0 });
+      expect(diffCapTables([], twice)).toMatchObject({ added: 2, removed: 0, changed: 0 });
+    });
+
+    it('leaves an unrepeated table diffing exactly as it did', () => {
+      const diff = diffCapTables(
+        [entry({ security_class: 'Common', shares: 1000 })],
+        [entry({ security_class: 'Common', shares: 1200 })],
+      );
+      expect(diff).toEqual({
+        conflicts: [
+          {
+            security_class: 'Common',
+            status: 'changed',
+            changes: [{ field: 'shares', from: 1000, to: 1200 }],
+          },
+        ],
+        has_conflicts: true,
+        added: 0,
+        removed: 0,
+        changed: 1,
+      });
+    });
+  });
+
   it('reports two empty tables as no conflict at all', () => {
     expect(diffCapTables([], [])).toEqual({
       conflicts: [],

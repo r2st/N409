@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { CapTableSyncPanel } from '../src/components/valuation/CapTableSyncPanel';
 
@@ -92,6 +92,53 @@ describe('CapTableSyncPanel (feature 4)', () => {
     applied = true;
     await user.click(screen.getByRole('button', { name: 'Apply provider data' }));
     await waitFor(() => expect(onApplied).toHaveBeenCalled());
+  });
+
+  /*
+   * A cap table may hold one class name on two rows (`duplicate_class` is a
+   * warning, and a provider returning one row per certificate produces the
+   * shape by construction), so the diff names a class twice whenever one of
+   * those rows is added or removed. Keyed by class name, React reconciled the
+   * two onto each other and drew one row — under a summary line counting two —
+   * on the screen an analyst reads before overwriting the table on file.
+   */
+  it('draws a row per conflict when two of them name the same class', async () => {
+    const user = userEvent.setup();
+    const repeated = {
+      ...conflictOutcome,
+      diff: {
+        has_conflicts: true,
+        added: 0,
+        removed: 1,
+        changed: 1,
+        conflicts: [
+          {
+            security_class: 'Series A',
+            status: 'changed',
+            changes: [{ field: 'shares', from: 100000, to: 120000 }],
+          },
+          { security_class: 'Series A', status: 'removed', changes: [] },
+        ],
+      },
+    };
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/cap-table/sync/carta/pull': () => jsonResponse(repeated),
+    });
+    // React draws both rows on a first mount and warns; it is the *next*
+    // render of the list that reconciles them onto one another. The warning is
+    // the defect stated at the point it happens, so it is what this asserts —
+    // React's own words for it are that the behaviour is unsupported.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={() => {}} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Sync now' }));
+    const table = await screen.findByTestId('sync-conflicts');
+    expect(screen.getByText(/1 changed · 0 added · 1 removed/)).toBeInTheDocument();
+    expect(within(table).getAllByRole('rowheader', { name: 'Series A' })).toHaveLength(2);
+    expect(within(table).getByText('removed')).toBeInTheDocument();
+    expect(consoleError.mock.calls.map((c) => String(c[0])).join('\n')).not.toMatch(
+      /two children with the same key/,
+    );
   });
 
   /**
