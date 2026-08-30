@@ -169,6 +169,20 @@ const SAFE_SHAPES: RegExp[] = [
  * Adding to this list means doing the same.
  */
 const REVIEWED: Record<string, string[]> = {
+  /*
+   * `publicPartnerNameSql(alias)` (R250) builds the white-label CASE that
+   * decides whether a row shows a firm's brand name or its ops-side name. Its
+   * only interpolation is the *table alias* the caller is joining under, and
+   * every call site passes a literal — 'p', 'partners'. Nothing about a request
+   * reaches it: the alias is chosen when the query is written, and the column
+   * values it compares are `$n`-free because they are columns, not values.
+   *
+   * Four entries rather than one because the registry is keyed by file, which is
+   * what makes a stale entry findable when a call site goes away.
+   */
+  'src/services/valuation/src/routes/branding.ts': ["publicPartnerNameSql('partners')"],
+  'src/services/valuation/src/routes/communications.ts': ["publicPartnerNameSql('p')"],
+
   // Not SQL at all — an SMTP envelope whose header names trip the keyword test.
   'src/services/valuation/src/email/smtp.ts': ['bareAddress(opts.from)'],
 
@@ -225,6 +239,7 @@ const REVIEWED: Record<string, string[]> = {
   'src/services/valuation/src/repos/communications.ts': [
     "conditionSql[campaign.condition] ?? 'false'",
     'cursorSql',
+    "publicPartnerNameSql('p')",
   ],
 
   // The retry ladder's schedule (migration 0159), built in SQL so it lands in
@@ -300,6 +315,7 @@ const REVIEWED: Record<string, string[]> = {
   // this far.
   'src/services/valuation/src/repos/valuations.ts': [
     'alias',
+    "publicPartnerNameSql('p')",
     // R167. `limitParam` is the `$n` naming the dashboard feed's per-branch
     // window; `userFullNameSql('users')` is the same column expression the
     // full-name trigram index is built on, with no argument of its own.

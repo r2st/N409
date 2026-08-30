@@ -410,11 +410,16 @@ export async function buildPersonalDataExport(pool: pg.Pool, userId: string): Pr
     // Money that moved. Keyed on the engagement's owner rather than on who
     // clicked pay, because ops open checkouts on a client's behalf and the
     // client is who the payment is about.
+    //
+    // `settled_at` is exported alongside the other dated facts rather than
+    // explained away with `updated_at`: it is when the money actually landed,
+    // which is what the subject's receipt is dated from, and it is a different
+    // day from `created_at` whenever a payment was not instant.
     section(
       pool,
       `SELECT p.id, p.valuation_id, p.provider, p.amount_cents, p.currency, p.status,
               p.refunded_cents, p.refunded_at, p.dispute_status, p.disputed_at, p.receipt_url,
-              p.express, p.qsbs_letter, p.price_breakdown, p.created_at
+              p.express, p.qsbs_letter, p.price_breakdown, p.settled_at, p.created_at
          FROM payments p JOIN valuations v ON v.id = p.valuation_id
         WHERE v.user_id = $1 ORDER BY p.created_at DESC LIMIT $2`,
       [userId],
