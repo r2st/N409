@@ -1723,6 +1723,15 @@ def _check_monte_carlo(c: _Collector, inputs: dict) -> None:
     Same rules as the engine, deliberately: this function exists to say the
     engine's own refusals earlier and against a field, not to add any of its
     own. `test_validate_guards.py` holds the two to each other.
+
+    One engine refusal is deliberately *not* mirrored here, and its absence is
+    not an omission to close: `monte_carlo.MAX_CONSERVATION_ERROR` is struck on
+    the residual the simulation actually leaves, which is a property of the
+    draw and not of the payload. Nothing available before the run predicts it —
+    the volatility and horizon it depends on are resolved inside `compute`, and
+    the seed decides which side of the bound a marginal case lands on. A
+    pre-flight that guessed at it would refuse runs that would have been fine
+    and clear runs that would not.
     """
     raw = inputs.get("monte_carlo")
     if raw is None:
