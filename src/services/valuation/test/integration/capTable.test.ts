@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { buildXlsx } from '../../src/export/xlsx.js';
+import { buildZip } from '../../src/export/zip.js';
 
 /** Multipart POST with a binary body, for the spreadsheet upload endpoint. */
 function uploadFile(
@@ -479,13 +480,67 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
       expect(res.json().detail ?? res.json().title).toMatch(/re-save this file as \.xlsx or CSV/i);
     });
 
-    it('rejects an empty file', async () => {
+    it('rejects an empty file, naming it and what to do about it', async () => {
+      // "Uploaded file is empty" named neither the file nor a remedy, on the
+      // sibling of an upload path that already says both. Zero bytes arriving
+      // intact is a failed export, not a truncated transfer, so re-uploading
+      // the same file changes nothing — the instruction is to open it.
       const res = await uploadFile(app, uploadUrl(), client.token, {
         filename: 'empty.csv',
         content: '',
         contentType: 'text/csv',
       });
       expect(res.statusCode).toBe(422);
+      const body = res.json();
+      expect(body.detail).toContain('empty.csv');
+      expect(body.detail).toMatch(/zero bytes/i);
+      expect(body.detail).toMatch(/open it/i);
+      expect(body.filename).toBe('empty.csv');
+    });
+
+    it('says a workbook whose sheet parts are missing is damaged, not unreadable', async () => {
+      /*
+       * `xl/workbook.xml` names a sheet and the part it names is not in the
+       * package — a truncated or damaged download. (A file merely renamed to
+       * `.xlsx` never gets this far: `parseSheetIndex` raises "Not an Excel
+       * workbook".) The old answer, "The workbook has no readable sheets",
+       * states a property of our reader rather than of the file, which reads
+       * as our defect and names nothing the uploader could do.
+       */
+      const damaged = buildZip([
+        {
+          name: '_rels/.rels',
+          data: Buffer.from(
+            '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+              '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+              '</Relationships>',
+            'utf8',
+          ),
+        },
+        {
+          name: 'xl/workbook.xml',
+          data: Buffer.from(
+            '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+              'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+              '<sheets><sheet name="Cap Table" sheetId="1" r:id="rId2"/></sheets></workbook>',
+            'utf8',
+          ),
+        },
+      ]);
+
+      const res = await uploadFile(app, uploadUrl(), client.token, {
+        filename: 'captable.xlsx',
+        content: damaged,
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      expect(res.statusCode).toBe(422);
+      const body = res.json();
+      expect(body.detail).toContain('captable.xlsx');
+      expect(body.detail).toMatch(/damaged or only partly downloaded/i);
+      expect(body.detail).toMatch(/save a fresh copy/i);
+      // Says nothing about our reader, which is the half that was not the
+      // uploader's business.
+      expect(body.detail).not.toMatch(/readable/i);
     });
 
     it('will not let an unrelated client upload', async () => {

@@ -220,9 +220,22 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (!file) throw problems.badRequest('Expected a multipart file field named "file"');
 
     const buffer = await bufferUpload(file, MAX_CAP_TABLE_UPLOAD_BYTES);
-    if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
-
     const filename = file.filename ?? 'upload';
+    if (buffer.length === 0) {
+      // The same condition the document upload answers, on the sibling path
+      // that was left saying "Uploaded file is empty" — three words that name
+      // neither the file nor anything to do about it. Zero bytes arriving
+      // intact is not the truncated-upload case (`bufferUpload` answers that
+      // one); it is a failed export or a placeholder, and re-uploading the same
+      // file changes nothing, so the instruction is to open it rather than to
+      // retry.
+      throw problems.unprocessable(
+        `“${filename}” contains no data — it is zero bytes, so there are no rows to read. ` +
+          'Open it to check it exported correctly, then upload it again.',
+        { filename },
+      );
+    }
+
     let sheets: Array<{
       name: string;
       headers: string[];
@@ -239,7 +252,27 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
       } catch (err) {
         asUnreadableFile(err, filename);
       }
-      if (sheets.length === 0) throw problems.unprocessable('The workbook has no readable sheets');
+      if (sheets.length === 0) {
+        /*
+         * The workbook part parsed and named its sheets, and not one of the
+         * sheet parts it names is in the package — the file is damaged or was
+         * only partly downloaded. A file renamed to `.xlsx` never reaches here
+         * (`parseSheetIndex` raises "Not an Excel workbook"), so this really is
+         * a workbook with its contents missing.
+         *
+         * "The workbook has no readable sheets" states a property of our reader
+         * rather than of the file, which reads as our defect: the person
+         * uploading it has no way to check what "readable" means, and no
+         * instruction that would change the outcome.
+         */
+        throw problems.unprocessable(
+          `“${filename}” is an Excel workbook, but the sheets it lists are not inside the file — ` +
+            'its contents are missing, which usually means it was damaged or only partly ' +
+            'downloaded. Open it in Excel to check the cap table is still there, save a fresh ' +
+            'copy, and upload that. A CSV export works too.',
+          { filename },
+        );
+      }
     } else if (/\.(xls|xlsm|xlsb|numbers|ods)$/i.test(filename)) {
       // Legacy and non-OOXML spreadsheets have entirely different containers.
       throw problems.unprocessable(
