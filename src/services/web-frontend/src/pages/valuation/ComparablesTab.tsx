@@ -85,9 +85,14 @@ interface RefreshResponse {
  * union of its own rejected half and the comps it chose that the market data
  * could not price — `unusable` counts that second group separately, because the
  * two are set aside for opposite reasons and only one of them is a judgement.
+ *
+ * `unverified` is a third reason and the only one that is about the agent's run
+ * rather than about a company: the market-data service was unreachable, so the
+ * agent fell back to the model's own suggestions and no ticker in the run was
+ * checked against anything. Those rows want looking up, not filling in.
  */
 interface CompSelectionApplied {
-  applied: { selected: number; excluded: number; unusable: number };
+  applied: { selected: number; excluded: number; unusable: number; unverified?: number };
   written: number;
 }
 
@@ -255,14 +260,19 @@ export function ComparablesTab() {
           method: 'POST',
           body: {},
         });
-        const { selected, excluded, unusable } = res.applied;
+        const { selected, excluded, unusable, unverified = 0 } = res.applied;
         setFeedNote(
           `Applied the AI peer set — ${selected} ${selected === 1 ? 'company' : 'companies'} included, ` +
             `${excluded} set aside` +
             (unusable > 0
               ? `, ${unusable} of those chosen by the agent but carrying no market figures to strike a ` +
-                `multiple on.`
-              : '.'),
+                `multiple on`
+              : '') +
+            (unverified > 0
+              ? `, ${unverified} chosen while the market-data service was unreachable and never ` +
+                `verified — check those tickers exist before including them`
+              : '') +
+            '.',
         );
       } finally {
         setAiPhase(null);

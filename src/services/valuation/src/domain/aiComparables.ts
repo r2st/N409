@@ -32,6 +32,18 @@
  * about a specific observation. Labelling an unknown vintage `live` is the
  * column lying; `snapshot` — the engine's curated reference set, which calls
  * itself illustrative — is true of both cases.
+ *
+ * **A run whose tickers were never verified says so.** "The agent selects only
+ * from candidates the engine recognised" is true of the agent's normal path and
+ * false of its degraded one: when the market-data service is unreachable the
+ * agent falls back to the model's raw suggestions, flags them `verified: false`
+ * and reports `market_data_verified: false` on the run. This mapping read
+ * neither. Every such row arrived with no figures, so it was set aside as
+ * unpriced — under a reason that reads "the market data carried no revenue to
+ * strike a multiple on", which vouches for a ticker nothing had checked. An
+ * analyst told the feed merely lacks a revenue figure types one in; an analyst
+ * told the ticker was never verified goes and looks. Same row, opposite
+ * actions, and only one of the two sentences is true.
  */
 
 import type { ComparableFiguresSource } from './comparables.js';
@@ -60,13 +72,29 @@ export interface MappedComparable {
 
 export interface MappedComparableSet {
   rows: MappedComparable[];
-  /** Counts for the audit event and the response — what actually landed. */
-  summary: { selected: number; excluded: number; unusable: number };
+  /**
+   * Counts for the audit event and the response — what actually landed.
+   *
+   * `unusable` and `unverified` are both "the agent chose it and it is not in
+   * the set", and they are counted apart because they are opposite findings:
+   * one is a real company the reference data could not price, the other is a
+   * name nothing has confirmed exists.
+   */
+  summary: { selected: number; excluded: number; unusable: number; unverified: number };
 }
 
 /** The reason stored against a selected comp the engine could not price. */
 export const UNPRICED_REASON =
   'selected by the AI agent, but the market data carried no revenue to strike a multiple on';
+
+/**
+ * The reason stored against a comp from a run that never reached the market
+ * data — see the header. Deliberately not phrased as a data gap: the ticker
+ * itself is the unchecked thing.
+ */
+export const UNVERIFIED_REASON =
+  'selected by the AI agent while the market-data service was unreachable, so this ticker was ' +
+  'never checked against it — confirm the company exists and is listed before including it';
 
 const MAX_ROWS = 40;
 
@@ -140,10 +168,18 @@ export function mapAgentComparables(result: unknown, observedAt: Date): MappedCo
 
   const selectedRaw = Array.isArray(doc.selected) ? doc.selected : [];
   const excludedRaw = Array.isArray(doc.excluded) ? doc.excluded : [];
+  /*
+   * Only an explicit `false` counts as unverified, on both the run and the row.
+   * A stored result from before the agent reported either field says nothing
+   * about verification, and reading its silence as a failure would relabel
+   * every historical peer set as unchecked.
+   */
+  const runVerified = doc.market_data_verified !== false;
 
   const rows: MappedComparable[] = [];
   const seen = new Set<string>();
   let unusable = 0;
+  let unverified = 0;
 
   for (const entry of selectedRaw.slice(0, MAX_ROWS)) {
     const candidate = asRecord(entry);
@@ -159,15 +195,20 @@ export function mapAgentComparables(result: unknown, observedAt: Date): MappedCo
     const ev = enterpriseValueFor(candidate);
     // The justification is the agent's own sentence about why the comp belongs;
     // the one-line rationale from the suggest step is the fallback.
-    const priced = revenueLtm !== null && ev !== null;
-    if (!priced) unusable += 1;
+    const rowVerified = runVerified && candidate.verified !== false;
+    const priced = rowVerified && revenueLtm !== null && ev !== null;
+    // Checked before `unusable`, because an unverified row is also unpriced and
+    // the two counters must not both claim it. Which sentence the analyst gets
+    // is the whole point of separating them.
+    if (!rowVerified) unverified += 1;
+    else if (!priced) unusable += 1;
 
     rows.push({
       ticker,
       name: str(candidate.name, 200) ?? ticker,
       sic: str(candidate.sic_code, 12),
       included: priced,
-      excludeReason: priced ? null : UNPRICED_REASON,
+      excludeReason: priced ? null : rowVerified ? UNPRICED_REASON : UNVERIFIED_REASON,
       revenueLtm,
       ebitdaLtm: ebitdaFor(candidate),
       ev,
@@ -211,5 +252,5 @@ export function mapAgentComparables(result: unknown, observedAt: Date): MappedCo
   }
 
   const selected = rows.filter((r) => r.included).length;
-  return { rows, summary: { selected, excluded: rows.length - selected, unusable } };
+  return { rows, summary: { selected, excluded: rows.length - selected, unusable, unverified } };
 }

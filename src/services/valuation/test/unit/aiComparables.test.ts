@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AiComparablesError,
   UNPRICED_REASON,
+  UNVERIFIED_REASON,
   ebitdaFor,
   enterpriseValueFor,
   mapAgentComparables,
@@ -110,7 +111,7 @@ describe('mapAgentComparables', () => {
       ev: null,
       revenueLtm: null,
     });
-    expect(summary).toEqual({ selected: 1, excluded: 1, unusable: 0 });
+    expect(summary).toEqual({ selected: 1, excluded: 1, unusable: 0, unverified: 0 });
   });
 
   it('supplies a reason for an excluded comp the agent gave none for', () => {
@@ -220,5 +221,89 @@ describe('mapAgentComparables', () => {
     );
     expect(stats.ev_revenue_ltm.count).toBe(2);
     expect(stats.ev_revenue_ltm.median).toBe(20);
+  });
+});
+
+/**
+ * A run the market-data service never answered for (round 216).
+ *
+ * The agent degrades rather than failing when the engine is unreachable: it
+ * falls back to the model's own suggestions, marks each `verified: false` and
+ * reports `market_data_verified: false` on the run. Those rows arrive with no
+ * figures, which is indistinguishable — to a mapping that reads neither flag —
+ * from a real company the reference set could not price. So they were stored
+ * under a reason that vouches for a ticker nothing had checked.
+ */
+describe('a comp_selection run whose tickers were never verified', () => {
+  const unverifiedRun = (over: Record<string, unknown> = {}) => ({
+    market_data_verified: false,
+    engine_error: 'engine 503',
+    selected: [
+      {
+        name: 'Nortech Systems Holdings',
+        ticker: 'NTSH',
+        rationale: 'Same sector.',
+        verified: false,
+        sic_code: null,
+        market_cap: null,
+        ev_revenue: null,
+        ev_ebitda: null,
+      },
+    ],
+    excluded: [],
+    ...over,
+  });
+
+  it('says the ticker was never checked, not that the data lacked a revenue', () => {
+    const { rows } = mapAgentComparables(unverifiedRun(), OBSERVED);
+    const row = rows.find((r) => r.ticker === 'NTSH');
+    expect(row?.included).toBe(false);
+    expect(row?.excludeReason).toBe(UNVERIFIED_REASON);
+    expect(row?.excludeReason).not.toBe(UNPRICED_REASON);
+  });
+
+  it('counts it apart from an unpriced comp — the two want opposite actions', () => {
+    const { summary } = mapAgentComparables(unverifiedRun(), OBSERVED);
+    expect(summary).toEqual({ selected: 0, excluded: 1, unusable: 0, unverified: 1 });
+  });
+
+  it('keeps the row rather than dropping it, like every other set-aside comp', () => {
+    const { rows } = mapAgentComparables(unverifiedRun(), OBSERVED);
+    expect(rows).toHaveLength(1);
+  });
+
+  it('will not include an unverified comp even if it carries figures', () => {
+    /*
+     * The degraded path nulls the market fields, so this is the model having
+     * volunteered its own numbers. Pricing a peer off figures no index produced
+     * is the failure the whole verify step exists to prevent.
+     */
+    const { rows, summary } = mapAgentComparables(
+      unverifiedRun({
+        selected: [comp({ verified: false })],
+      }),
+      OBSERVED,
+    );
+    expect(rows[0]).toMatchObject({ ticker: 'ACME', included: false, excludeReason: UNVERIFIED_REASON });
+    expect(summary.unverified).toBe(1);
+  });
+
+  it('honours a row that says it is unverified inside an otherwise verified run', () => {
+    const { summary } = mapAgentComparables(
+      { selected: [comp(), comp({ ticker: 'BBB', verified: false })], excluded: [] },
+      OBSERVED,
+    );
+    expect(summary).toEqual({ selected: 1, excluded: 1, unusable: 0, unverified: 1 });
+  });
+
+  it('reads a run that says nothing about verification as verified', () => {
+    /*
+     * Only an explicit `false` counts. A stored result from before the agent
+     * reported either field is silent, and reading silence as failure would
+     * relabel every historical peer set as unchecked.
+     */
+    const { summary } = mapAgentComparables(result(), OBSERVED);
+    expect(summary.unverified).toBe(0);
+    expect(summary.selected).toBe(1);
   });
 });
