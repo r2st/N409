@@ -86,23 +86,65 @@ describe('a failure logged from a valuation-scoped route', () => {
     expect(scoped.length).toBeGreaterThanOrEqual(30);
   });
 
+  const identifies = (fields: string): boolean =>
+    fields
+      .split(',')
+      .map((k) => k.trim().split(':')[0]!.trim())
+      .filter(Boolean)
+      // `err` is the failure, not the subject. Anything else identifying is
+      // accepted: some of these routes work on a nested resource and naming
+      // that is at least as useful as naming its parent.
+      .some((k) => k !== 'err' && k !== 'error');
+
   it('names the valuation on every warn and error it writes', () => {
     const anonymous: string[] = [];
     for (const route of scoped) {
       const calls = route.body.matchAll(/req\.log\.(warn|error)\(\s*\{([^{}]*)\}/g);
       for (const call of calls) {
-        const keys = call[2]!
-          .split(',')
-          .map((k) => k.trim().split(':')[0]!.trim())
-          .filter(Boolean);
-        // `err` is the failure, not the subject. Anything else identifying is
-        // accepted: some of these routes work on a nested resource and naming
-        // that is at least as useful as naming its parent.
-        if (!keys.some((k) => k !== 'err' && k !== 'error')) {
-          anonymous.push(`${route.file} ${route.path}: ${call[0]!.slice(0, 60)}`);
-        }
+        if (!identifies(call[2]!)) anonymous.push(`${route.file} ${route.path}: ${call[0]!.slice(0, 60)}`);
       }
     }
+    expect(anonymous).toEqual([]);
+  });
+
+  /**
+   * The same rule where the logging goes through a helper.
+   *
+   * `req.log.warn({ … })` is not the only way one of these routes writes a
+   * line any more, and every other way is invisible to the scan above.
+   * `logFailure` and `logUnretried` (`shared/failure.ts`) take the logger and a
+   * context object, `logConnectorSyncFailure` takes a subject — and a site
+   * converted to one of them silently leaves this census rather than failing
+   * it, which is the population blind spot in its purest form: the check goes
+   * on passing over a set that is quietly shrinking.
+   *
+   * So the helpers are read too. The argument that carries the fields is found
+   * by shape — the first object literal after the logger — because that is
+   * what the three of them have in common and what a fourth will have.
+   */
+  const HELPERS = ['logFailure', 'logUnretried', 'logConnectorSyncFailure'];
+
+  const helperCalls = scoped.flatMap((route) =>
+    HELPERS.flatMap((helper) =>
+      [
+        ...route.body.matchAll(
+          new RegExp(`(?<![\\w.])${helper}\\(\\s*(?:req\\.log|log)\\s*,[^{}]*\\{([^{}]*)\\}`, 'g'),
+        ),
+      ].map((m) => ({ route, helper, fields: m[1]!, text: m[0]! })),
+    ),
+  );
+
+  it('finds the helper-logged failures at all — the vacuity guard', () => {
+    // Without this the regex could stop matching and the check below would
+    // pass over nothing, which is how the sites that left this census by being
+    // converted would leave it again.
+    expect(helperCalls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('names the valuation on those too', () => {
+    const anonymous = helperCalls
+      .filter((call) => !identifies(call.fields))
+      .map((call) => `${call.route.file} ${call.route.path}: ${call.text.slice(0, 60)}`);
     expect(anonymous).toEqual([]);
   });
 });
