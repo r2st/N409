@@ -530,6 +530,85 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     }
   }
 
+  /**
+   * The one-live-subscription-per-user index refusing a second one.
+   *
+   * `subscriptions_one_active_per_user` (migration 0080) is a partial UNIQUE
+   * over the served statuses, and it is what keeps quota accounting honest —
+   * two live rows for one account is two limits, two usage counters and no
+   * answer to which one `findActiveSubscription` should return.
+   */
+  const isSecondLiveSubscription = (err: unknown): boolean => {
+    const e = err as { code?: string; constraint?: string } | null;
+    return e?.code === '23505' && e?.constraint === 'subscriptions_one_active_per_user';
+  };
+
+  /**
+   * Record a subscription, or report that this account already has one.
+   *
+   * Uncaught, that index violation was a bare 500 on the webhook — which to
+   * Stripe is not an answer but a delivery to retry for three days, every
+   * retry failing identically. Meanwhile the customer is being charged for a
+   * subscription this platform holds no row for: no quota, no plan on the
+   * Billing screen, and `invoice.paid` cannot find the subscription either, so
+   * the renewals go unrecorded too.
+   *
+   * It is not a rare shape. `POST /billing/subscribe` guards on a read, so two
+   * checkouts for different plans started before either completes both
+   * succeed; a subscription added from the Stripe dashboard for an existing
+   * subscriber does it; and the ordinary way is a customer in dunning who
+   * believes their plan has lapsed — `past_due` is a served status, so their
+   * old row still holds the slot — and subscribes again.
+   *
+   * Answered rather than retried. The conflicting row is ours, not the event's,
+   * so redelivery cannot resolve it and would only replay the alert; and the
+   * choice of which subscription survives is a refund decision somebody has to
+   * make in Stripe. So the delivery is accepted, the ledger records it, and the
+   * fact lands where it can be acted on: an `alert: true` line carrying the
+   * Stripe subscription id, and a notification to the billing group.
+   */
+  async function alertSecondLiveSubscription(
+    log: FastifyBaseLogger,
+    userId: string,
+    stripeSubscriptionId: string | null,
+  ): Promise<void> {
+    log.error(
+      { alert: true, actorType: 'system', source: 'stripe', userId, stripeSubscriptionId },
+      'account already holds a live subscription — the new one was not recorded',
+    );
+    try {
+      const opsIds = await listUserIdsWithRoles(deps.pool, BILLING_ALERT_ROLES);
+      if (opsIds.length === 0) return;
+      await createNotifications(
+        deps.pool,
+        opsIds.map((opsId) => ({
+          userId: opsId,
+          type: 'subscription_conflict',
+          title: 'An account started a second subscription',
+          body:
+            `Stripe subscription ${stripeSubscriptionId ?? '(unknown)'} could not be recorded — ` +
+            'the account already has a live one. Both are being billed until one is cancelled in Stripe.',
+        })),
+      );
+    } catch (err) {
+      log.warn({ err, userId }, 'second-subscription alert failed');
+    }
+  }
+
+  /** {@link upsertSubscription}, with the conflict above reported instead of thrown. */
+  async function recordSubscription(
+    log: FastifyBaseLogger,
+    input: Parameters<typeof upsertSubscription>[1],
+  ): Promise<Awaited<ReturnType<typeof upsertSubscription>> | null> {
+    try {
+      return await upsertSubscription(deps.pool, input);
+    } catch (err) {
+      if (!isSecondLiveSubscription(err)) throw err;
+      await alertSecondLiveSubscription(log, input.userId, input.stripeSubscriptionId ?? null);
+      return null;
+    }
+  }
+
   // ── Webhook (subscription lifecycle + invoices) ──────────────────────────
   void app.register(async (scope) => {
     scope.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) =>
@@ -585,7 +664,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         if (type === 'checkout.session.completed' && obj.mode === 'subscription') {
           const meta = (obj.metadata ?? {}) as Record<string, string>;
           if (meta.user_id && meta.plan_tier) {
-            await upsertSubscription(deps.pool, {
+            await recordSubscription(log, {
               userId: meta.user_id,
               planTier: meta.plan_tier,
               // Not unconditionally 'active'. A subscription started with a
@@ -652,7 +731,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
                 );
               }
             }
-            const written = await upsertSubscription(deps.pool, {
+            const written = await recordSubscription(log, {
               userId: meta.user_id,
               planTier,
               status: mapStatus(String(obj.status ?? 'active')),
@@ -663,7 +742,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             });
             // The other writer of a cancellation, and the one that lands first
             // about as often as not.
-            if (written.newly_canceled) await announceSubscriptionCanceled(log, written);
+            if (written?.newly_canceled) await announceSubscriptionCanceled(log, written);
           }
         } else if (type === 'customer.subscription.trial_will_end' && typeof obj.id === 'string') {
           const sub = await findSubscriptionByStripeId(deps.pool, obj.id);

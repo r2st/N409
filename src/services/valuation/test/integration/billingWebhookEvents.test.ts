@@ -309,6 +309,75 @@ describe.skipIf(!dbUp)('billing webhook events', () => {
     });
   });
 
+  describe('an account that already holds a live subscription', () => {
+    /*
+     * `subscriptions_one_active_per_user` refuses a second live row, and
+     * nothing caught it: the webhook answered a bare 500, which to Stripe is a
+     * delivery to retry for three days rather than an answer — every retry
+     * failing identically, while the customer is charged for a subscription
+     * this platform holds no row for.
+     *
+     * The ordinary way in is a customer in dunning: `past_due` is a served
+     * status, so their old row still holds the slot, and they subscribe again
+     * believing the plan has lapsed.
+     */
+    it('answers the delivery instead of failing it forever', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await upsertSubscription(ctx.pool, {
+        userId: user.id,
+        planTier: 'annual_retainer',
+        status: 'past_due',
+        stripeSubscriptionId: 'sub_first_live',
+      });
+      const res = await deliver({
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            mode: 'subscription',
+            payment_status: 'paid',
+            subscription: 'sub_second_live',
+            customer: 'cus_second_live',
+            metadata: { user_id: user.id, plan_tier: 'enterprise' },
+          },
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      // The first subscription is untouched — which one survives is a refund
+      // decision somebody makes in Stripe, not one this handler makes.
+      const { rows } = await ctx.pool.query<{ stripe_subscription_id: string }>(
+        'SELECT stripe_subscription_id FROM subscriptions WHERE user_id = $1',
+        [user.id],
+      );
+      expect(rows.map((r) => r.stripe_subscription_id)).toEqual(['sub_first_live']);
+    });
+
+    it('tells the billing group, with the Stripe id needed to reconcile it', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const admin = await seedUser(ctx, { roles: ['admin'] });
+      await upsertSubscription(ctx.pool, {
+        userId: user.id,
+        planTier: 'annual_retainer',
+        stripeSubscriptionId: 'sub_conflict_first',
+      });
+      await deliver({
+        type: 'customer.subscription.created',
+        data: {
+          object: {
+            id: 'sub_conflict_second',
+            status: 'active',
+            metadata: { user_id: user.id, plan_tier: 'enterprise' },
+          },
+        },
+      });
+      const { rows } = await ctx.pool.query<{ body: string }>(
+        "SELECT body FROM notifications WHERE user_id = $1 AND type = 'subscription_conflict'",
+        [admin.id],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.body).toContain('sub_conflict_second');
+    });
+  });
+
   describe('the subscriber is warned before a trial converts', () => {
     const noticesOf = async (userId: string) => {
       const { rows } = await ctx.pool.query<{ title: string; body: string }>(
