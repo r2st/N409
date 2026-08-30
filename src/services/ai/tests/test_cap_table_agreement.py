@@ -219,3 +219,61 @@ def test_a_reconciliation_failure_states_both_totals_legibly(monkeypatch, client
     joined = " ".join(result["validation"]["issues"])
     assert "6,000,000" in joined and "10,000,000" in joined
     assert "e+0" not in joined
+
+
+# ── the basis the stated total is on ─────────────────────────────────────────
+
+
+class TestAConvertingClassAgainstAStatedTotal:
+    """R229, methodology M2.
+
+    The identify prompt asks for "the fully-diluted total the documents state",
+    and a fully-diluted total is an as-converted one. `_validate` compared it
+    against the raw sum of `shares`, so a charter that stated its own total
+    correctly was reported as failing to reconcile the moment any class
+    converted at other than 1:1 — a 2:1 ratio is 100% out and no tolerance
+    reaches that.
+
+    `domain/capTable.validateCapTable` already answers the same question about
+    an uploaded sheet's totals row by accepting either basis, on the stated
+    reasoning that a sheet is not asked to say which it meant. A charter is not
+    asked either.
+    """
+
+    CONVERTING = {
+        "name": "Series A Preferred",
+        "kind": "preferred",
+        "shares": 2_000_000,
+        "preference": 4_000_000,
+        "conversion_ratio": 2,
+    }
+
+    def run_with(self, monkeypatch, client, stated):
+        return run(
+            monkeypatch,
+            client,
+            {"classes": named(2), "total_shares_stated": stated},
+            {"share_classes": [COMMON, self.CONVERTING]},
+        )
+
+    def test_the_as_converted_total_reconciles(self, monkeypatch, client):
+        # 6,000,000 common + 2,000,000 x 2 = 10,000,000 fully diluted.
+        v = self.run_with(monkeypatch, client, 10_000_000)["validation"]
+        assert v["share_total_computed"] == 8_000_000
+        assert v["share_total_as_converted"] == 10_000_000
+        assert v["reconciles"] is True
+        assert v["issues"] == []
+
+    def test_the_unconverted_total_still_reconciles(self, monkeypatch, client):
+        """The other basis a document may state, and the one that always
+        worked. Accepting the new reading must not cost the old one."""
+        v = self.run_with(monkeypatch, client, 8_000_000)["validation"]
+        assert v["reconciles"] is True
+
+    def test_a_total_on_neither_basis_is_still_a_mismatch(self, monkeypatch, client):
+        v = self.run_with(monkeypatch, client, 15_000_000)["validation"]
+        assert v["reconciles"] is False
+        # Both figures in the message, so the analyst can see which basis the
+        # documents were closer to rather than being handed one number.
+        assert "8,000,000" in v["issues"][0]
+        assert "10,000,000 as converted" in v["issues"][0]

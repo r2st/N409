@@ -182,6 +182,30 @@ def _validate(
     cannot act on is worse than none. A count is exact.
     """
     computed = round(sum(cl["shares"] for cl in share_classes), 4)
+    # The same table on the basis the identify prompt actually asks for.
+    #
+    # `total_shares_stated` is spelled "fully-diluted total the documents
+    # state", and a fully-diluted total is an as-converted one: a charter
+    # stating 12,000,000 fully diluted over 8,000,000 common and 2,000,000
+    # Series A converting 2:1 is stating the converted count. The raw sum of
+    # `shares` is 10,000,000, so the reconciliation below was comparing a figure
+    # against a different figure's definition and calling the difference an
+    # extraction error. The docstring's answer — "preferred convert
+    # as-converted, so a tolerance beats an exact match" — is not one a
+    # tolerance can give: a 2:1 ratio is 100% out, not 1%.
+    #
+    # Both bases are computed and agreement with either is agreement, which is
+    # what `domain/capTable.validateCapTable` already does for the same question
+    # about an uploaded sheet's totals row: a document is not asked to say which
+    # basis it meant. Only preferred converts, matching the engine
+    # (`waterfall._normalize` attaches a ratio to no other kind).
+    converted = round(
+        sum(
+            cl["shares"] * (cl.get("conversion_ratio", 1.0) if cl["kind"] == "preferred" else 1.0)
+            for cl in share_classes
+        ),
+        4,
+    )
     issues: list[str] = []
     has_common = any(cl["kind"] == "common" for cl in share_classes)
     if not has_common:
@@ -195,15 +219,24 @@ def _validate(
         )
     matches: bool | None = None
     if total_stated is not None and total_stated > 0:
-        # Preferred convert as-converted, so a tolerance beats an exact match.
-        matches = abs(computed - total_stated) <= max(1.0, 0.01 * total_stated)
+        # A tolerance still, for rounding and for a charter that states the
+        # total to the nearest thousand — but struck against each basis rather
+        # than asked to absorb the difference between them.
+        tolerance = max(1.0, 0.01 * total_stated)
+        matches = (
+            abs(computed - total_stated) <= tolerance or abs(converted - total_stated) <= tolerance
+        )
         if not matches:
+            basis = f" ({_shares(converted)} as converted)" if converted != computed else ""
             issues.append(
-                f"parsed share total {_shares(computed)} does not reconcile with "
-                f"the stated total {_shares(total_stated)}"
+                f"parsed share total {_shares(computed)}{basis} does not reconcile "
+                f"with the stated total {_shares(total_stated)}"
             )
     return {
         "share_total_computed": computed,
+        # The as-converted count beside the raw one, so the analyst reading a
+        # mismatch can see which basis the documents were stating.
+        "share_total_as_converted": converted,
         "share_total_stated": total_stated,
         "reconciles": matches,
         "class_count": len(share_classes),
