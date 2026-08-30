@@ -18,7 +18,7 @@ import {
   registerRequestDrain,
   requestIdFromHeaders,
 } from '@n409/shared';
-import { CHART_SERIES_LIMITS, renderReportPdf, verifyFontAssets } from './pdf.js';
+import { CHART_SERIES_LIMITS, configureReportPdfLogging, renderReportPdf, verifyFontAssets } from './pdf.js';
 
 /**
  * Report service (M2): stateless PDF rendering for valuation reports.
@@ -219,6 +219,11 @@ export function buildApp(): FastifyInstance {
   });
   registerPermissionsPolicy(app, API_PERMISSIONS_POLICY);
   registerProblemHandler(app);
+  // Say why a white-labelled report came out without the firm's mark on it.
+  // The renderer is a library with no logger of its own; this is the one door
+  // it reports a degraded render through. Same reason the valuation service
+  // calls `configurePartnerLogoLogging` for the fetch half of the question.
+  configureReportPdfLogging(app.log);
   // Shared secret, same contract as the AI and engine services. Registered
   // before the render route so an unauthenticated caller is refused before the
   // 8 MB body is read, let alone rendered.

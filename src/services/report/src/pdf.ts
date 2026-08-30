@@ -208,6 +208,31 @@ export interface RenderOptions {
   compress?: boolean;
 }
 
+/** Somewhere to say why a render came out missing something. */
+export interface RenderIssueLog {
+  warn: (obj: Record<string, unknown>, msg: string) => void;
+}
+
+let issueLog: RenderIssueLog | null = null;
+
+/**
+ * Install the logger this module reports a degraded render through.
+ *
+ * A module-level sink rather than a field on {@link RenderOptions}, for two
+ * reasons. This file is a library with two hosts — the report service renders
+ * through it over HTTP and the valuation service imports it directly as its
+ * fallback — and threading a logger down through the twenty frames between a
+ * route and a cover would touch every one of them. And `RenderOptions` is not
+ * free: the valuation service's client treats *any* option as a reason to skip
+ * the offload entirely (`render_options` in clients/reportRender.ts), so a
+ * logger passed that way would silently move every render back in-process.
+ *
+ * Null until a host installs one, which is what a test gets.
+ */
+export function configureReportPdfLogging(log: RenderIssueLog | null): void {
+  issueLog = log;
+}
+
 // ── HTML subset → layout blocks ───────────────────────────────────────────────
 
 export interface Run {
@@ -2485,8 +2510,35 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
           valign: 'center',
         });
       });
-    } catch {
-      // Undecodable image bytes — render the cover without the logo.
+    } catch (err) {
+      /*
+       * Undecodable image bytes — render the cover without the logo, and say
+       * so, because nothing downstream of here can.
+       *
+       * This is the last of the ways a white-labelled report comes out with no
+       * mark on it. R155 named the other nine, all of them in
+       * `clients/partnerLogo.ts` where the bytes are fetched, for exactly the
+       * reason this one needs naming too: the URL is stored and looks fine,
+       * the render succeeds, and the PDF is simply missing the logo, so
+       * support has nothing to look at. The fetch sniffs the format before it
+       * stores anything, which is what makes the remaining case narrow — a
+       * truncated or malformed file whose first bytes are a good PNG header —
+       * and narrow is not the same as never, and a partner is watching every
+       * report they ship go out unbranded either way.
+       *
+       * A `warn` and not an `error`: the report is correct, complete and
+       * delivered. What it is missing is the firm's mark, which is a
+       * conversation with that firm rather than a page.
+       */
+      issueLog?.warn(
+        {
+          reason: 'undecodable_image',
+          partner: input.branding?.partner_name ?? null,
+          bytes: input.branding?.logo?.length ?? 0,
+          err,
+        },
+        'partner logo could not be drawn — rendering the cover without it',
+      );
     }
   }
   doc.y = COVER_TITLE_TOP;

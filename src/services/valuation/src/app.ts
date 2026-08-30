@@ -33,7 +33,7 @@ declare module 'fastify' {
     metrics: MetricsRegistry;
   }
 }
-import { verifyFontAssets } from '@n409/report/pdf';
+import { configureReportPdfLogging, verifyFontAssets } from '@n409/report/pdf';
 import type { Config } from './config.js';
 import { GoogleOidc } from './auth/google.js';
 import { registerAuth } from './plugins/auth.js';
@@ -388,6 +388,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // frames below a route handler — and the nine ways that fetch can fail were
   // one silent `return null` until R155. See clients/partnerLogo.ts.
   configurePartnerLogoLogging(app.log);
+
+  // And the tenth way, which is the renderer's rather than the fetch's: bytes
+  // that sniffed as a PNG and that pdfkit cannot decode. This process renders
+  // reports itself whenever the report unit is unreachable, so the library
+  // needs a logger here as well as in that service.
+  configureReportPdfLogging(app.log);
 
   // Persist every engagement-scoped engine/AI call (409.ai §11, migration
   // 0127). Set here rather than passed through the twelve route modules that
