@@ -29,13 +29,23 @@ const payment = (over: Record<string, unknown>) => ({
   ...over,
 });
 
-function mount(billing: Record<string, unknown>) {
+function mount(billing: Record<string, unknown>, path = '/billing') {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
     if (String(url).includes('/me/billing')) return jsonResponse({ billing });
     throw new Error(`unexpected fetch ${String(url)}`);
   });
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[path]}>
+      <BillingPage />
+    </MemoryRouter>,
+  );
+}
+
+/** A page whose only read fails, so the return note is the only thing on it. */
+function mountWithFailedHistory(path: string) {
+  vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));
+  return render(
+    <MemoryRouter initialEntries={[path]}>
       <BillingPage />
     </MemoryRouter>,
   );
@@ -165,5 +175,58 @@ describe('BillingPage — refunds and chargebacks', () => {
     // Once as the stat-card label, once as the section heading.
     expect(await screen.findAllByText('Unpaid engagements')).toHaveLength(2);
     expect(screen.getByRole('link', { name: /Pay now/ })).toHaveAttribute('href', '/valuations/v1');
+  });
+});
+
+/**
+ * The half of Stripe's return leg that speaks.
+ *
+ * A subscription checkout returned to `/settings?billing=…`, which renders no
+ * subscription card and reads no query parameter, so both outcomes a customer
+ * cares about — the plan started, or it did not — arrived as silence on the
+ * wrong page. The redirects now come here.
+ */
+describe('BillingPage — the subscription checkout return leg', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  const empty = {
+    payments: [],
+    unpaid_valuations: [],
+    totals: { ...totals({ paid_cents: 0, succeeded_count: 0, payment_count: 0 }), currency: 'usd' },
+  };
+
+  it('confirms a completed subscription checkout without promising the plan is live yet', async () => {
+    mount(empty, '/billing?subscription=success');
+    const note = await screen.findByTestId('subscription-return-note');
+    expect(note.textContent).toMatch(/Payment accepted/i);
+    // Stripe's redirect is not the event that starts the plan; the
+    // subscription.created webhook is, and it can be seconds behind.
+    expect(note.textContent).toMatch(/being set up/i);
+  });
+
+  it('says nothing was charged when the customer backed out', async () => {
+    mount(empty, '/billing?subscription=canceled');
+    const note = await screen.findByTestId('subscription-return-note');
+    expect(note.textContent).toMatch(/not been charged/i);
+    expect(note.textContent).not.toMatch(/Payment accepted/i);
+  });
+
+  it('leaves the page alone when the visit is not a return leg', async () => {
+    mount(empty);
+    await screen.findByRole('heading', { name: 'Billing' });
+    expect(screen.queryByTestId('subscription-return-note')).toBeNull();
+    // An unrecognised value is not an outcome either.
+    vi.restoreAllMocks();
+    mount(empty, '/billing?subscription=whatever');
+    await screen.findByRole('heading', { name: 'Billing' });
+    expect(screen.queryByTestId('subscription-return-note')).toBeNull();
+  });
+
+  it('still confirms the charge when the billing history fails to load', async () => {
+    mountWithFailedHistory('/billing?subscription=success');
+    // The read this page makes has nothing to do with the payment just taken,
+    // and a bare load error is the worst moment to withhold the confirmation.
+    const note = await screen.findByTestId('subscription-return-note');
+    expect(note.textContent).toMatch(/Payment accepted/i);
   });
 });

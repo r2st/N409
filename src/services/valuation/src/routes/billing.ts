@@ -197,8 +197,8 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     if (await findActiveSubscription(deps.pool, principal.id)) {
       throw problems.conflict(
         'You already have an active subscription, so this would be a second one. ' +
-          'To move to a different plan or change how you pay, open the billing portal from ' +
-          'Settings → Billing rather than subscribing again.',
+          'To move to a different plan or change how you pay, open “Manage subscription” on the ' +
+          'billing page (/billing) rather than subscribing again.',
       );
     }
     const user = await findUserById(deps.pool, principal.id);
@@ -222,8 +222,21 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         amountCents: plan.price_cents,
         currency: plan.currency,
         interval: plan.interval,
-        successUrl: `${base}/settings?billing=success`,
-        cancelUrl: `${base}/settings?billing=canceled`,
+        /*
+         * Both legs return to the billing page, which is where a subscription
+         * is. They pointed at `/settings?billing=…` — a route that renders no
+         * subscription card, no plan, no invoice list, and reads neither query
+         * parameter. So a customer who had just committed to a recurring
+         * charge was returned to their profile settings with nothing anywhere
+         * on the page acknowledging it, and a customer who backed out of
+         * Checkout landed in the same silence; the only way to see whether the
+         * plan had started was to find `/billing` unaided.
+         *
+         * The one-time flow has had `/payment/success` and `/payment/cancel`
+         * since it was written. This is the recurring flow's version of them.
+         */
+        successUrl: `${base}/billing?subscription=success`,
+        cancelUrl: `${base}/billing?subscription=canceled`,
         customerEmail: user?.email,
       });
     } catch (err) {

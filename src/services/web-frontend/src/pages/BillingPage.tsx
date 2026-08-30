@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
@@ -12,6 +12,7 @@ import {
   LoadError,
   Spinner,
   StatCard,
+  SuccessNote,
   useRetry,
 } from '../components/ui';
 import { SubscriptionSection } from '../components/SubscriptionSection';
@@ -81,8 +82,65 @@ const num = (v: string | number | null | undefined): number => {
 
 /** P2 #13 — account-level billing: payment history with receipts, totals,
  * and a pay-now path for unpaid engagements. Server-side scoped per role. */
+/**
+ * What Stripe's return leg says, on the page it now returns to.
+ *
+ * A subscription checkout used to come back to `/settings?billing=success`,
+ * a route with no subscription card on it that reads no query parameter, so
+ * the two outcomes a customer most wants confirmed — the plan started, or it
+ * did not — were both rendered as nothing at all. The redirects were moved to
+ * this page (routes/billing.ts) and this is the half that speaks.
+ *
+ * The success line is deliberately provisional. Stripe's redirect is not the
+ * event that starts a plan — `customer.subscription.created` is, and it may be
+ * seconds behind — so the card below can still be empty while this is on
+ * screen, and a sentence promising an active plan beside an empty card is
+ * worse than one that says the payment went through and the plan follows.
+ */
+function subscriptionReturnNote(
+  outcome: string | null,
+): { tone: 'success' | 'neutral'; text: string } | null {
+  if (outcome === 'success') {
+    return {
+      tone: 'success',
+      text:
+        'Payment accepted — your subscription is being set up and appears below within a minute. ' +
+        'Reload the page if it has not.',
+    };
+  }
+  // Not a success and not a failure: the customer chose this, nothing went
+  // wrong, and nothing was charged. A green tick would congratulate them for
+  // not subscribing and a red note would report a fault that did not happen.
+  if (outcome === 'canceled') {
+    return {
+      tone: 'neutral',
+      text: 'Checkout was cancelled, so no plan was started and you have not been charged.',
+    };
+  }
+  return null;
+}
+
+function SubscriptionReturnNote({ note }: { note: { tone: 'success' | 'neutral'; text: string } }) {
+  return (
+    <div className="mt-4" data-testid="subscription-return-note">
+      {note.tone === 'success' ? (
+        <SuccessNote>{note.text}</SuccessNote>
+      ) : (
+        <div
+          role="status"
+          className="rounded-md border border-paper-300 bg-paper-100 px-3.5 py-2.5 text-sm text-ink-600"
+        >
+          {note.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function BillingPage() {
   const { user } = useAuth();
+  const [params] = useSearchParams();
+  const returnNote = subscriptionReturnNote(params.get('subscription'));
   const [billing, setBilling] = useState<Billing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { token, retryProps } = useRetry(() => setError(null));
@@ -93,8 +151,27 @@ export function BillingPage() {
       .catch(() => setError('Could not load your billing history.'));
   }, [token]);
 
-  if (error) return <LoadError message={error} {...retryProps} />;
-  if (!billing) return <Spinner />;
+  /*
+   * The return note outlives both gates. It confirms a payment the customer
+   * has just made and it depends on nothing this page reads, so a billing
+   * history that fails to load — or has not arrived yet — must not swallow it:
+   * the one moment a subscriber most needs to be told the charge went through
+   * is the moment they would otherwise be looking at a bare load error.
+   */
+  if (error)
+    return (
+      <div>
+        {returnNote && <SubscriptionReturnNote note={returnNote} />}
+        <LoadError message={error} {...retryProps} />
+      </div>
+    );
+  if (!billing)
+    return (
+      <div>
+        {returnNote && <SubscriptionReturnNote note={returnNote} />}
+        <Spinner />
+      </div>
+    );
 
   const scopeNote = isOps(user)
     ? 'Showing payments across all engagements (operations view).'
@@ -110,6 +187,8 @@ export function BillingPage() {
       </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Billing</h1>
       <p className="mt-2 text-sm text-ink-500">{scopeNote}</p>
+
+      {returnNote && <SubscriptionReturnNote note={returnNote} />}
 
       {/* "Total paid" is net of refunds and lost chargebacks, so the refunded
           figure is shown beside it rather than left to be inferred from a
