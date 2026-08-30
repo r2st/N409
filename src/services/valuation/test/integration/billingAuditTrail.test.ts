@@ -3,8 +3,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { newUlid } from '@n409/shared';
 import { ADMIN_EVENT_CATALOG } from '../../src/domain/auditTrail.js';
-import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { createPayment } from '../../src/repos/payments.js';
+import { priceForKind } from '../../src/routes/payments.js';
+import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * The billing surface on the audit spine.
@@ -54,8 +57,10 @@ const BILLING_EVENT_TYPES = [
   'subscription_canceled',
   'subscription_payment_failed',
   'invoice_paid',
-  'invoice_refunded',
 ] as const;
+
+/** ...and the reversals, which the payments endpoint writes. */
+const REVERSAL_EVENT_TYPES = ['invoice_refunded', 'payment_refunded', 'payment_disputed'] as const;
 
 const priceItem = (amountCents: number, interval: 'month' | 'year' = 'year') => ({
   data: [{ quantity: 1, price: { unit_amount: amountCents, currency: 'usd', recurring: { interval } } }],
@@ -296,26 +301,245 @@ describe.skipIf(!dbUp)('the billing audit spine', () => {
   });
 });
 
+// ── Money going back out, on the engagement side ─────────────────────────────
+
+describe.skipIf(!dbUp)('the reversal audit spine', () => {
+  let ctx: TestApp;
+  let ops: Awaited<ReturnType<typeof seedUser>>;
+  let client: Awaited<ReturnType<typeof seedUser>>;
+  const PRICE = priceForKind('409a');
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET });
+    ops = await seedUser(ctx, { roles: ['admin'] });
+    client = await seedUser(ctx, { roles: ['valuation_user'] });
+  });
+  afterAll(async () => ctx?.teardown());
+
+  const post = (body: unknown) => {
+    const payload = JSON.stringify(body);
+    return ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/stripe/webhook',
+      headers: signed(payload),
+      payload,
+    });
+  };
+
+  const eventsFor = async (subjectId: string, type: string) => {
+    const { rows } = await ctx.pool.query<{
+      actor_type: string;
+      source: string | null;
+      payload: Record<string, unknown>;
+    }>(
+      `SELECT actor_type, source, payload FROM admin_events
+        WHERE subject_id = $1 AND type = $2 ORDER BY occurred_at ASC, id ASC`,
+      [subjectId, type],
+    );
+    return rows;
+  };
+
+  /** A valuation owned by `client`, paid for through the ordinary webhook. */
+  const seedPaid = async (name: string, key: string) => {
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(client.token),
+      payload: { kind: '409a', company_name: name },
+    });
+    expect(created.statusCode).toBe(201);
+    const vid = created.json().valuation.id as string;
+    const sessionId = `cs_${key}_${uniq()}`;
+    const chargeId = `ch_${key}_${uniq()}`;
+    await createPayment(ctx.pool, {
+      valuationId: vid,
+      sessionId,
+      amountCents: PRICE,
+      currency: 'USD',
+      createdBy: ops.id,
+    });
+    expect(
+      (
+        await post({
+          id: `evt_${uniq()}`,
+          type: 'checkout.session.completed',
+          data: {
+            object: {
+              id: sessionId,
+              payment_intent: `pi_${key}`,
+              payment_status: 'paid',
+              amount_total: PRICE,
+            },
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+    await ctx.pool.query('UPDATE payments SET charge_id = $1 WHERE session_id = $2', [chargeId, sessionId]);
+    return { vid, chargeId };
+  };
+
+  it('records a partial refund, which changes no status and so reaches no other ledger', async () => {
+    const { vid, chargeId } = await seedPaid('Partial Refund Co', 'partial');
+    expect(
+      (
+        await post({
+          id: `evt_${uniq()}`,
+          type: 'charge.refunded',
+          data: { object: { id: chargeId, amount: PRICE, amount_refunded: Math.floor(PRICE / 4) } },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const rows = await eventsFor(vid, 'payment_refunded');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.actor_type).toBe('system');
+    expect(rows[0]!.source).toBe('stripe');
+    expect(rows[0]!.payload.fully_refunded).toBe(false);
+    expect(rows[0]!.payload.refunded_cents).toBe(Math.floor(PRICE / 4));
+    expect(String(rows[0]!.payload.stripe_event_id)).toMatch(/^evt_/);
+  });
+
+  it('records an opened chargeback, which deliberately revokes nothing', async () => {
+    const { vid, chargeId } = await seedPaid('Disputed Co', 'dispute');
+    expect(
+      (
+        await post({
+          id: `evt_${uniq()}`,
+          type: 'charge.dispute.created',
+          data: { object: { charge: chargeId, status: 'warning_needs_response' } },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const rows = await eventsFor(vid, 'payment_disputed');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.payload.dispute_status).toBe('open');
+  });
+
+  it('writes no second row for a redelivered reversal', async () => {
+    // The compare-and-set inside `recordRefund` decides whether this delivery
+    // is news; the audit row rides the same decision, so a redelivery of one
+    // refund is one refund in the trail.
+    const { vid, chargeId } = await seedPaid('Redelivered Refund Co', 'redeliver');
+    const event = () => ({
+      id: `evt_${uniq()}`,
+      type: 'charge.refunded',
+      data: { object: { id: chargeId, amount: PRICE, amount_refunded: PRICE } },
+    });
+    expect((await post(event())).statusCode).toBe(200);
+    expect((await post(event())).statusCode).toBe(200);
+    expect(await eventsFor(vid, 'payment_refunded')).toHaveLength(1);
+  });
+
+  it('records a refunded subscription invoice against the account', async () => {
+    const subscriber = await seedUser(ctx, { roles: ['valuation_user'] });
+    const stripeInvoiceId = `in_refund_${uniq()}`;
+    const object = {
+      id: stripeInvoiceId,
+      metadata: { user_id: subscriber.id },
+      amount_paid: 2_000_000,
+      currency: 'usd',
+      description: 'Annual retainer',
+    };
+    // Settled on the billing endpoint, refunded on the payments one — the two
+    // halves of a subscription refund arrive at different webhooks.
+    const paid = JSON.stringify({ id: `evt_${uniq()}`, type: 'invoice.paid', data: { object } });
+    expect(
+      (
+        await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/billing/webhook',
+          headers: signed(paid),
+          payload: paid,
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    expect(
+      (
+        await post({
+          id: `evt_${uniq()}`,
+          type: 'charge.refunded',
+          data: {
+            object: {
+              id: `ch_${uniq()}`,
+              invoice: stripeInvoiceId,
+              amount_refunded: 2_000_000,
+              currency: 'usd',
+            },
+          },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const rows = await eventsFor(subscriber.id, 'invoice_refunded');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.payload.fully_refunded).toBe(true);
+    expect(rows[0]!.payload.unreconciled).toBe(false);
+    expect(rows[0]!.payload.refunded_cents).toBe(2_000_000);
+  });
+
+  it('records a refund against an invoice that is not on file — the case with no other ledger at all', async () => {
+    // A subscriber of ours, refunded against an invoice `invoice.paid` never
+    // managed to write. The money is gone and nothing else records it: the
+    // alerting log line ages out of retention, and the audit row does not.
+    const subscriber = await seedUser(ctx, { roles: ['valuation_user'] });
+    const customerId = `cus_${uniq()}`;
+    await ctx.pool.query(
+      `INSERT INTO subscriptions (id, user_id, plan_tier, status, stripe_subscription_id, stripe_customer_id)
+       VALUES ($1, $2, 'annual_retainer', 'active', $3, $4)`,
+      [newUlid(), subscriber.id, `sub_${uniq()}`, customerId],
+    );
+
+    const res = await post({
+      id: `evt_${uniq()}`,
+      type: 'charge.refunded',
+      data: {
+        object: {
+          id: `ch_${uniq()}`,
+          invoice: `in_never_recorded_${uniq()}`,
+          customer: customerId,
+          amount_refunded: 500_000,
+          currency: 'usd',
+        },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ unreconciled: 'refunded invoice is not on file' });
+
+    const rows = await eventsFor(subscriber.id, 'invoice_refunded');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.payload.unreconciled).toBe(true);
+    expect(rows[0]!.payload.refunded_cents).toBe(500_000);
+  });
+});
+
 // ── The vocabulary against the handlers ──────────────────────────────────────
 
 describe('the billing vocabulary', () => {
-  const routeSource = readFileSync(
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/routes/billing.ts'),
-    'utf8',
-  );
+  const src = (file: string) =>
+    readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/routes', file),
+      'utf8',
+    );
+  const routeSource = src('billing.ts');
+  const paymentsSource = src('payments.ts');
 
   it('names every billing type in the admin catalog', () => {
-    for (const type of BILLING_EVENT_TYPES) {
+    for (const type of [...BILLING_EVENT_TYPES, ...REVERSAL_EVENT_TYPES]) {
       expect(Object.keys(ADMIN_EVENT_CATALOG), `${type} has no descriptor`).toContain(type);
     }
   });
 
   it('leaves no billing type that nothing writes', () => {
     // The other direction, and the one that rots quietly: a type with a label
-    // and no writer reads as a covered case. `invoice_refunded` is written by
-    // the payments route rather than this one, so it is checked there.
-    const written = BILLING_EVENT_TYPES.filter((t) => t !== 'invoice_refunded');
-    const missing = written.filter((t) => !new RegExp(`'${t}'`).test(routeSource));
+    // and no writer reads as a covered case, which is indistinguishable from a
+    // case that is covered. Both money routes are scanned, because the two
+    // Stripe endpoints split the vocabulary between them — settlement on the
+    // billing one, everything going back out on the payments one.
+    const missing = [...BILLING_EVENT_TYPES, ...REVERSAL_EVENT_TYPES].filter(
+      (t) => !new RegExp(`'${t}'`).test(routeSource) && !new RegExp(`'${t}'`).test(paymentsSource),
+    );
     expect(missing).toEqual([]);
   });
 
@@ -328,6 +552,9 @@ describe('the billing vocabulary', () => {
       'subscription_changed',
       'subscription_canceled',
       'subscription_payment_failed',
+      'invoice_refunded',
+      'payment_refunded',
+      'payment_disputed',
     ] as const) {
       expect(ADMIN_EVENT_CATALOG[type].severity, type).toBe('critical');
     }

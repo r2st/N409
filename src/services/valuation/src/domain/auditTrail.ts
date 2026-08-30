@@ -353,6 +353,15 @@ export const ADMIN_EVENT_CATALOG = {
   subscription_payment_failed: D('Subscription payment failed', 'integration', 'critical'),
   invoice_paid: D('Invoice paid', 'integration', 'notice'),
   invoice_refunded: D('Invoice refunded', 'integration', 'critical'),
+  // The engagement side of the same ledger. A full refund already reaches the
+  // valuation spine, because taking the engagement off `paid` goes through
+  // `patchValuation` — but a *partial* refund deliberately leaves the
+  // engagement paid, and a chargeback deliberately does not revoke while the
+  // case is open, so those two moved money and changed nothing a reader could
+  // see. Both are recorded here whatever they do to the engagement: the fact
+  // being audited is that money went back out, not that a status followed it.
+  payment_refunded: D('Payment refunded', 'integration', 'critical'),
+  payment_disputed: D('Payment disputed', 'integration', 'critical'),
 
   // ── Platform operations ─────────────────────────────────────────────────
   system_settings_updated: D('System settings updated', 'integration', 'critical'),

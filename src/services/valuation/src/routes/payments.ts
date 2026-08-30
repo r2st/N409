@@ -56,6 +56,8 @@ import { findUserById, listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
 import { parseStripeEvent, stripeEventKey } from '../domain/stripeEvents.js';
 import { classifyStripeEvent, recordStripeEvent } from '../repos/stripeEvents.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
+import type { AdminEventType } from '../domain/auditTrail.js';
 
 /**
  * Stripe payment processing (remaining-gaps §3 #1 / §6 P0 #2).
@@ -568,6 +570,73 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
   }
 
   /**
+   * {@link auditPayment}'s subscription twin, subjected to the account.
+   *
+   * A subscription invoice belongs to no engagement, and the billing spine
+   * already keys its rows on the user so one customer's billing history is one
+   * filter. Refunds have to land in the same place or the history has a hole
+   * exactly where the money went back.
+   */
+  async function auditInvoiceRefund(
+    log: FastifyBaseLogger,
+    stripeEventId: string | null,
+    userId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await recordAdminEvent(deps.pool, {
+        type: 'invoice_refunded',
+        actor: { actorType: 'system', actorId: null, source: 'stripe' },
+        subjectType: 'user',
+        subjectId: userId,
+        payload: { stripe_event_id: stripeEventId, ...payload },
+      });
+    } catch (err) {
+      log.warn({ err, userId }, 'invoice refund audit event not recorded');
+    }
+  }
+
+  /**
+   * Money going back out, on the audit spine.
+   *
+   * A *full* refund already reaches a reader, because taking the engagement off
+   * `paid` goes through `patchValuation` and that writes a valuation event. The
+   * two reversals that deliberately change no status did not: a partial refund
+   * leaves the engagement paid on purpose, and a chargeback does not revoke
+   * while the case is still answerable. Both moved real money and left
+   * notifications as the only trace — and a notification is read once by
+   * whoever was on shift, then dismissed.
+   *
+   * Recorded as `system`/`stripe`, with the Stripe event id in the payload for
+   * the same reason the billing rows carry it: no principal of ours issued the
+   * refund, so the only useful join is back to the delivery Stripe indexes.
+   *
+   * Contained. Every caller of this is downstream of a compare-and-set that has
+   * already claimed the reversal, so a throw here would 5xx a webhook whose
+   * work is committed and whose redelivery the guard would decline — losing the
+   * alert and the revocation with it, to save an audit row.
+   */
+  async function auditPayment(
+    log: FastifyBaseLogger,
+    stripeEventId: string | null,
+    type: AdminEventType,
+    valuationId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await recordAdminEvent(deps.pool, {
+        type,
+        actor: { actorType: 'system', actorId: null, source: 'stripe' },
+        subjectType: 'valuation',
+        subjectId: valuationId,
+        payload: { stripe_event_id: stripeEventId, ...payload },
+      });
+    } catch (err) {
+      log.warn({ err, type, valuationId }, 'payment audit event not recorded');
+    }
+  }
+
+  /**
    * Takes a valuation's paid status back after money was returned in full.
    *
    * Straight to 'unpaid' rather than a new 'refunded' status: 'unpaid' is what
@@ -744,6 +813,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
    */
   async function handleInvoiceRefund(
     log: FastifyBaseLogger,
+    stripeEventId: string | null,
     charge: Record<string, unknown>,
   ): Promise<{ received: boolean; ignored?: string; refunded?: boolean; unreconciled?: string }> {
     const invoiceId = typeof charge.invoice === 'string' ? charge.invoice : null;
@@ -837,6 +907,17 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         },
         'stripe refunded a subscriber of ours against an invoice we never recorded — money returned and unreconciled',
       );
+      // Audited precisely *because* there is no invoice to attach it to. This
+      // is the one branch where the money is gone and the ledger has nothing
+      // that says so, and an alerting log line is not a record — it ages out of
+      // retention while the trail is append-only and kept.
+      await auditInvoiceRefund(log, stripeEventId, ours.user_id, {
+        stripe_invoice_id: invoiceId,
+        charge_id: typeof charge.id === 'string' ? charge.id : null,
+        refunded_cents: refundedCents,
+        currency: typeof charge.currency === 'string' ? charge.currency : null,
+        unreconciled: true,
+      });
       return { received: true, unreconciled: 'refunded invoice is not on file' };
     }
 
@@ -845,6 +926,17 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       invoice.currency,
     );
     const full = Number(invoice.refunded_cents) >= Number(invoice.amount_cents);
+    await auditInvoiceRefund(log, stripeEventId, invoice.user_id, {
+      invoice_id: invoice.id,
+      invoice_number: invoice.number,
+      stripe_invoice_id: invoiceId,
+      charge_id: typeof charge.id === 'string' ? charge.id : null,
+      refunded_cents: Number(invoice.refunded_cents),
+      amount_cents: Number(invoice.amount_cents),
+      currency: invoice.currency,
+      fully_refunded: full,
+      unreconciled: false,
+    });
     try {
       const opsIds = await listUserIdsWithRoles(deps.pool, BILLING_ALERT_ROLES);
       await createNotifications(deps.pool, [
@@ -878,6 +970,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
    */
   async function handleRefund(
     log: FastifyBaseLogger,
+    stripeEventId: string | null,
     charge: Record<string, unknown>,
   ): Promise<{ received: boolean; ignored?: string; refunded?: boolean; unreconciled?: string }> {
     const payment = await findPaymentByChargeOrIntent(deps.pool, {
@@ -891,7 +984,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       // an unknown charge — leaving `invoices` saying the money was collected,
       // permanently, because nothing else ever writes to that table after the
       // row is created. The ops dashboard's revenue line read the sum of it.
-      return handleInvoiceRefund(log, charge);
+      return handleInvoiceRefund(log, stripeEventId, charge);
     }
 
     const state = refundState({
@@ -919,6 +1012,18 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     });
     if (!recorded) return resumeRevocation(log, payment);
 
+    // Before the branch, so both arms are recorded by one line. The full one
+    // also moves the engagement off `paid` and that transition reaches the
+    // valuation spine on its own; what the spine cannot say either way is how
+    // much came back.
+    await auditPayment(log, stripeEventId, 'payment_refunded', payment.valuation_id, {
+      payment_id: payment.id,
+      charge_id: typeof charge.id === 'string' ? charge.id : null,
+      refunded_cents: state.refundedCents,
+      amount_cents: Number(payment.amount_cents),
+      currency: payment.currency,
+      fully_refunded: state.fullyRefunded,
+    });
     if (state.fullyRefunded) {
       await revokePaidStatus(log, recorded, 'The payment was refunded in full.');
     } else {
@@ -1001,6 +1106,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
    */
   async function handleDispute(
     log: FastifyBaseLogger,
+    stripeEventId: string | null,
     dispute: Record<string, unknown>,
   ): Promise<{ received: boolean; ignored?: string; dispute_status?: DisputeStatus }> {
     const payment = await findPaymentByChargeOrIntent(deps.pool, {
@@ -1026,6 +1132,17 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       return { received: true, dispute_status: status };
     }
 
+    // Every verdict, not only the ones that revoke: a dispute opening starts a
+    // clock somebody has to answer, and one won is the record that the money
+    // stayed. `recorded` above means this delivery is the one that moved the
+    // status, so a redelivery adds no row.
+    await auditPayment(log, stripeEventId, 'payment_disputed', payment.valuation_id, {
+      payment_id: payment.id,
+      charge_id: typeof dispute.charge === 'string' ? dispute.charge : null,
+      dispute_status: status,
+      amount_cents: Number(payment.amount_cents),
+      currency: payment.currency,
+    });
     if (status === 'lost') {
       await revokePaidStatus(log, recorded, 'A chargeback was decided against us.');
     } else if (status === 'open') {
@@ -1166,10 +1283,10 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       // existed they fell through it as `ignored` and a refunded engagement
       // stayed paid, published, and counted as revenue.
       if (event.type === 'charge.refunded') {
-        return settled(await handleRefund(log, session));
+        return settled(await handleRefund(log, eventKey.eventId, session));
       }
       if (event.type === 'charge.dispute.created' || event.type === 'charge.dispute.closed') {
-        return settled(await handleDispute(log, session));
+        return settled(await handleDispute(log, eventKey.eventId, session));
       }
 
       if (!event.type?.startsWith('checkout.session.') || !sessionId) {
