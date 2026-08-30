@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fetchRosterAndGrants, type FetchFn } from '../../src/clients/hris.js';
+import { fetchCapTable } from '../../src/clients/capTableSync.js';
 import {
   IntegrationError,
   MAX_PROVIDER_PAGES,
@@ -140,5 +141,42 @@ describe('fetchRosterAndGrants paging', () => {
       new RegExp(`after ${MAX_PROVIDER_PAGES} pages`),
     );
     expect(urls).toHaveLength(MAX_PROVIDER_PAGES);
+  });
+});
+
+describe('fetchCapTable paging', () => {
+  const capTokens = { accessToken: 'at', externalCompanyId: 'c-1', externalCompanyName: null };
+  const security = (name: string) => ({ shareClass: name, sharesOutstanding: 1000 });
+
+  it('follows the provider links and concatenates the securities', async () => {
+    const { fn, urls } = paged([
+      {
+        companyName: 'Acme',
+        securities: [security('Common')],
+        links: { next: 'https://api.pulley.com/v1/companies/c-1/cap-table?page=2' },
+      },
+      { securities: [security('Series A')], asOf: '2026-08-31' },
+    ]);
+    const pulled = await fetchCapTable('pulley', capTokens, fn);
+    expect(urls).toHaveLength(2);
+    expect(pulled.entries.map((e) => e.security_class)).toEqual(['Common', 'Series A']);
+    // The two fields that are not rows come from the first page that names
+    // them, which for `asOf` here is the second.
+    expect(pulled.external_company_name).toBe('Acme');
+    expect(pulled.as_of).toBe('2026-08-31');
+  });
+
+  it('refuses a cap table that continues in a spelling it cannot follow', async () => {
+    const { fn } = paged([{ securities: [security('Common')], has_more: true }]);
+    await expect(fetchCapTable('carta', capTokens, fn)).rejects.toThrow(
+      /cap table continues past this page \("has_more"\)/,
+    );
+  });
+
+  it('reads a single-page cap table without a second request', async () => {
+    const { fn, urls } = paged([{ securities: [security('Common')], has_more: false, next: null }]);
+    const pulled = await fetchCapTable('pulley', capTokens, fn);
+    expect(urls).toHaveLength(1);
+    expect(pulled.entries).toHaveLength(1);
   });
 });

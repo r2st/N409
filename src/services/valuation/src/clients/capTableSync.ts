@@ -17,8 +17,11 @@ import type { CapTableEntry, CapTableClassType, NumericCapTableField } from '../
 import {
   IMPORT_TIMEOUT_MS,
   IntegrationError,
+  MAX_PROVIDER_PAGES,
+  nextPageUrl,
   OAUTH_TIMEOUT_MS,
   providerRefused,
+  providerSaysMore,
   readJson,
   storableProviderText,
   withDeadline,
@@ -544,25 +547,79 @@ export async function fetchCapTable(
     provider === 'carta'
       ? `${e.apiBase}/v1/companies/${company}/capitalization`
       : `${e.apiBase}/v1/companies/${company}/cap-table`;
-  const res = await withDeadline(CAP_TABLE_PROVIDER_LABELS[provider], IMPORT_TIMEOUT_MS, (signal) =>
-    fetchFn(url, {
-      headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
-      signal,
-    }),
-  );
-  if (!res.ok) {
-    throw providerRefused(CAP_TABLE_PROVIDER_LABELS[provider], 'cap-table fetch', res);
+  const label = CAP_TABLE_PROVIDER_LABELS[provider];
+  /*
+   * Every page of the provider's capitalization, or a refusal saying it did not
+   * fit — the same gap the HRIS roster carried, on the payload it costs more.
+   *
+   * This asked once. Pulley's answer is a flat `securities` list rather than a
+   * list of classes, which is why `syncCapTableConnection` bounds it at
+   * `MAX_CAP_TABLE_ENTRIES` at all — a list long enough to need that bound is a
+   * list long enough for the provider to page, and a paged answer read as a
+   * whole one is a cap table missing securities. That is not a partial import
+   * anyone notices: the short table validates clean, the scheduled sync applies
+   * it with `apply: true` and nobody in the loop, and every per-share figure
+   * downstream is struck over a fully-diluted count that is missing shares.
+   *
+   * Followed where the provider hands over an absolute link on its own API host
+   * — the request carries this engagement's bearer token — and refused where it
+   * says there is more in a spelling this platform cannot act on. Entries are
+   * concatenated across pages, which is exactly what a paged collection means;
+   * the two fields that are not rows are taken from the first page that names
+   * them, since a cursor walk's later pages carry only records.
+   */
+  const pages: Record<string, unknown>[] = [];
+  let pageUrl = url;
+  for (let page = 0; ; page++) {
+    if (page >= MAX_PROVIDER_PAGES) {
+      throw new IntegrationError(
+        `${label} is still returning more securities after ${MAX_PROVIDER_PAGES} pages — the cap ` +
+          'table would be a part of the company stored as the whole of it. Import it from a ' +
+          'spreadsheet instead.',
+      );
+    }
+    const res = await withDeadline(label, IMPORT_TIMEOUT_MS, (signal) =>
+      fetchFn(pageUrl, {
+        headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
+        signal,
+      }),
+    );
+    if (!res.ok) {
+      throw providerRefused(label, 'cap-table fetch', res);
+    }
+    const page1 = await readJson(res, label);
+    pages.push(page1);
+    const next = nextPageUrl(page1, e.apiBase);
+    if (!next) {
+      const said = providerSaysMore(page1);
+      if (said) {
+        throw new IntegrationError(
+          `${label} says its cap table continues past this page ("${said}"), and does not give a link ` +
+            'this platform can follow — so the securities pulled would be a part of the company ' +
+            'stored as the whole of it. Import the cap table from a spreadsheet, or ask support to ' +
+            'add paging for this provider.',
+        );
+      }
+      break;
+    }
+    pageUrl = next;
   }
-  const payload = await readJson(res, CAP_TABLE_PROVIDER_LABELS[provider]);
-  const entries = provider === 'carta' ? mapCarta(payload) : mapPulley(payload);
+  const entries = pages.flatMap((page) => (provider === 'carta' ? mapCarta(page) : mapPulley(page)));
   // Same compile-time-only cast as the rows above, on the two fields that are
   // not rows. `external_company_name` is written to the connection and served
   // on its page; `as_of` is stamped on the sync summary and dated in the UI.
   // An object in either reached both as an object.
+  const named = (...keys: readonly string[]): string | null => {
+    for (const page of pages) {
+      const value = textField(page, ...keys);
+      if (value !== null) return value;
+    }
+    return null;
+  };
   return {
     provider,
-    external_company_name: textField(payload, 'companyName') ?? tokens.externalCompanyName ?? null,
+    external_company_name: named('companyName') ?? tokens.externalCompanyName ?? null,
     entries,
-    as_of: textField(payload, 'asOf', 'as_of'),
+    as_of: named('asOf', 'as_of'),
   };
 }
