@@ -201,6 +201,28 @@ class TestARevokedOrWrongKey:
 # ── Requests the provider will never serve ───────────────────────────────────
 
 
+class TestTheReadinessMemoAfterARejectedKey:
+    """A live chain that every candidate rejected the key on has disproved what
+    /ready is still repeating for up to a minute."""
+
+    def test_a_rejected_key_drops_the_memo(self, two_models, monkeypatch):
+        openrouter.reset_key_cache()
+        openrouter._cache_key_status("sk-or-test", openrouter.KeyStatus("valid", "primed"))
+        assert openrouter._key_cache is not None
+        client = _Client([_Reply("no", status=401), _Reply("no", status=401)])
+        with pytest.raises(AuthenticationFailed):
+            chat("sys", "user", client=client)
+        assert openrouter._key_cache is None
+
+    def test_a_quota_refusal_leaves_it_alone(self, two_models, monkeypatch):
+        openrouter.reset_key_cache()
+        openrouter._cache_key_status("sk-or-test", openrouter.KeyStatus("valid", "primed"))
+        client = _Client([_Reply("busy", status=429), _Reply("busy", status=429)])
+        with pytest.raises(RateLimited):
+            chat("sys", "user", client=client)
+        assert openrouter._key_cache is not None
+
+
 class TestARequestThatCannotBeServed:
     @pytest.mark.parametrize(
         "status",

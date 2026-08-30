@@ -728,6 +728,53 @@ class TestRefusalVerdicts:
             chat("s", "u", model=PREFIXED, client=client)
 
 
+class TestCredentialsThatLapseMidFlight:
+    """/ready memoises for a minute; an expired STS token lasts longer.
+
+    `AWS_SESSION_TOKEN` expiry does not change the credentials' fingerprint, so
+    nothing about it would have made the cached readiness answer stale — the
+    only thing that knows is a call that just got a 403, and it used to keep
+    that to itself. For up to a minute /ready said the credentials were good
+    while every prompt bound to a `bedrock/` model failed.
+    """
+
+    def _refused(self, monkeypatch):
+        configure(monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                403, json={"message": "The security token included in the request is expired"}
+            )
+
+        return transport(handler)
+
+    def test_a_refused_invocation_drops_the_readiness_answer(self, monkeypatch):
+        configure(monkeypatch)
+        # Prime the memo with a good answer, the way a passing /ready would.
+        good = transport(lambda r: httpx.Response(200, json={"modelSummaries": []}))
+        assert verify_credentials(client=good).ok
+        assert bedrock._key_cache is not None
+
+        with pytest.raises(BedrockAuthenticationFailed):
+            chat("s", "u", model=PREFIXED, client=self._refused(monkeypatch))
+        assert bedrock._key_cache is None
+
+    def test_a_throttle_leaves_it_alone(self, monkeypatch):
+        """Only the failure that contradicts the memo clears it. A 429 says
+        nothing about whether the credentials are good."""
+        configure(monkeypatch)
+        good = transport(lambda r: httpx.Response(200, json={"modelSummaries": []}))
+        verify_credentials(client=good)
+        with pytest.raises(BedrockRateLimited):
+            chat(
+                "s",
+                "u",
+                model=PREFIXED,
+                client=transport(lambda r: httpx.Response(429, json={"message": "slow down"})),
+            )
+        assert bedrock._key_cache is not None
+
+
 class TestVerdictsSurviveTheRouter:
     """The status `main` answers comes off the type, so the router must not flatten it."""
 

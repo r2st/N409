@@ -619,7 +619,16 @@ def chat(
             raise BedrockError(f"{model_id}: {exc}") from exc
 
         if resp.status_code != 200:
-            raise _refusal(model_id, resp)
+            refusal = _refusal(model_id, resp)
+            if isinstance(refusal, BedrockAuthenticationFailed):
+                # A live invocation has just disproved what /ready is still
+                # saying. The readiness answer is memoised for a minute, and
+                # with temporary credentials that minute is exactly when it
+                # matters: an expired AWS_SESSION_TOKEN does not change the
+                # fingerprint, so nothing else would have re-asked. Dropping
+                # the memo makes the next probe go and look.
+                reset_key_cache()
+            raise refusal
         try:
             data = resp.json()
         except ValueError as exc:

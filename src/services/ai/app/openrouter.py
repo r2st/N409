@@ -634,7 +634,15 @@ def chat(
                 completion_tokens=completion_tokens,
                 finish_reason=finish_reason,
             )
-        raise _classify(errors, statuses, retry_after_s)
+        failure = _classify(errors, statuses, retry_after_s)
+        if isinstance(failure, AuthenticationFailed):
+            # Same reason as the Bedrock arm: /ready memoises its answer for a
+            # minute, and a chain that every candidate rejected the key on has
+            # just disproved it. A readiness probe repeating a claim a live
+            # call contradicted is worth one extra round trip to the key
+            # endpoint.
+            reset_key_cache()
+        raise failure
     finally:
         if owns_client:
             http.close()
