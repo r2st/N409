@@ -4,6 +4,7 @@ import { listAllInvoices, listAllSubscriptions } from '../../src/repos/billing.j
 import { listInvitations } from '../../src/repos/invitations.js';
 import { listActiveEngagements } from '../../src/repos/engagements.js';
 import { listSuppressions } from '../../src/repos/emailDelivery.js';
+import { listJobs } from '../../src/repos/jobs.js';
 import { isDbAvailable, setupTestDb, type TestDb } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -163,6 +164,22 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
       run: captured(/FROM email_suppressions/i, (d) => listSuppressions(d.pool, { limit: 100 })),
     },
     {
+      // R231. Not a list with a bad ORDER BY but a *merge* with one: the
+      // Published Tasks page is a UNION ALL over five queue tables ordered by
+      // `created_at DESC`, which Postgres plans as a Merge Append that stops as
+      // soon as it has a page. It can only do that if every branch is walkable
+      // backwards on `created_at`, and four of the five had that column only as
+      // the second half of a composite led by `valuation_id`. One unindexed
+      // branch stalls the whole merge — it is read in full and sorted before
+      // the merge can produce its first row — which is why this case explains
+      // the page query and looks at `ai_jobs`. Measured at 300k outbox rows:
+      // 37.3ms with an 8MB external merge sort, 0.23ms with 0189.
+      name: 'listJobs',
+      table: 'ai_jobs',
+      index: 'ai_jobs_created_idx',
+      run: captured(/ORDER BY j\.created_at DESC/, (d) => listJobs(d.pool, { page: 1, perPage: 25 })),
+    },
+    {
       name: 'GET /scim/v2/Users',
       table: 'users',
       index: 'users_scim_provisioned_idx',
@@ -267,6 +284,7 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
               (SELECT count(*) FROM engagements WHERE current_stage <> 'complete') AS open_engagements,
               (SELECT count(*) FROM users WHERE provisioned_by = 'scim') AS scim_users,
               (SELECT count(*) FROM ai_jobs WHERE status = 'running') AS running_jobs,
+              (SELECT count(*) FROM ai_jobs) AS jobs_total,
               (SELECT count(*) FROM email_suppressions WHERE released_at IS NULL) AS held`,
     );
     const counts = rows[0]!;
@@ -278,6 +296,9 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
     // indexes small and the scans they replaced wasteful.
     expect(Number(counts.scim_users)).toBe(ROWS / 200);
     expect(Number(counts.running_jobs)).toBe(ROWS / 500);
+    // The jobs feed reads whichever branch has the newest rows, so the seed
+    // has to give it more than a page of them to have anything to stop at.
+    expect(Number(counts.jobs_total)).toBe(ROWS);
     // The opposite of selective, and deliberately so: 0183's index is plain
     // because this predicate keeps almost everything.
     expect(Number(counts.held)).toBe(ROWS - ROWS / 20);
