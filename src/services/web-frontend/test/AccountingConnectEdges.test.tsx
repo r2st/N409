@@ -91,12 +91,26 @@ describe('AccountingConnect — edges', () => {
       });
       renderComponent();
 
-      expect(await screen.findByText('Error')).toBeInTheDocument();
+      expect(await screen.findByText('Last import failed')).toBeInTheDocument();
       expect(screen.queryByText('Connected')).not.toBeInTheDocument();
       // Still connected enough to disconnect and to retry an import — the whole
       // point of showing the state rather than dropping the card.
       expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Import financials' })).toBeInTheDocument();
+
+      /*
+       * Round 262. This fixture has carried `last_error` since it was written
+       * and the assertion above was the whole of what the card said: a pill
+       * reading "Error" and a sentence the panel never drew. The import
+       * refusal on the server points at this very field — "the details are in
+       * the connection's last error" — so an analyst was sent to look at
+       * something no screen renders.
+       */
+      expect(screen.getByText(/token refresh rejected/)).toBeInTheDocument();
+      // And what to do about it. Accounting is manual-import only, so unlike
+      // the HRIS and cap-table cards there is no backoff to promise.
+      expect(screen.getByText(/Nothing is retried on its own here/)).toBeInTheDocument();
+      expect(screen.getByText(/Import again to retry/)).toBeInTheDocument();
     });
 
     it('treats a revoked connection as no connection, and offers Connect again', async () => {

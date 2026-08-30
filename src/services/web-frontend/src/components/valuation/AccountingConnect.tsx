@@ -161,7 +161,7 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
                         : 'border-emerald-200 bg-emerald-50 text-emerald-800'
                     }`}
                   >
-                    {p.connection!.status === 'error' ? 'Error' : 'Connected'}
+                    {p.connection!.status === 'error' ? 'Last import failed' : 'Connected'}
                   </span>
                 ) : (
                   <span className="rounded-full border border-paper-300 bg-paper-100 px-2 py-0.5 text-[0.65rem] font-semibold text-ink-500">
@@ -181,6 +181,31 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
                 <div className="mt-1 text-xs text-ink-400">
                   Last import {formatDateTime(p.connection!.last_import_at)}
                 </div>
+              )}
+              {/*
+               * The import refusal this card is the other half of says "the
+               * details are in the connection's last error" — and until round
+               * 262 this panel was the only one of the three that never drew
+               * it. The HRIS and cap-table cards have shown the same field
+               * since they were written; here the analyst was told an import
+               * failed, pointed at a field, and shown a pill reading "Error".
+               *
+               * Accounting is manual-import only — no schedule, so no backoff
+               * and nothing to promise about a retry. What to do next is
+               * therefore always the same two buttons already on the card, and
+               * the note says which one answers which failure rather than
+               * leaving a provider's sentence as the last word.
+               */}
+              {connected && p.connection!.status === 'error' && (
+                <>
+                  {p.connection!.last_error && (
+                    <p className="mt-2 text-xs text-red-600">Last error: {p.connection!.last_error}</p>
+                  )}
+                  <p className="mt-1 text-xs text-ink-500">
+                    Nothing is retried on its own here. Import again to retry, or disconnect and reconnect if{' '}
+                    {p.label} has ended the authorisation.
+                  </p>
+                </>
               )}
               <div className="mt-3 flex flex-wrap gap-2">
                 {!connected && (
