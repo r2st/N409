@@ -53,6 +53,7 @@ const { documentKey, documentKeyRing, decodeFromStorage, encodeForStorage, isEnc
 const { connectionKey, connectionKeyRing, isSealed, openSecret, sealSecret } = await import(
   `${DIST}/crypto/connectionSecrets.js`
 );
+const { isIncompleteBlobPath } = await import(`${DIST}/storage/blobFile.js`);
 
 const apply = process.argv.includes('--apply');
 const documentsOnly = process.argv.includes('--documents-only');
@@ -115,10 +116,12 @@ async function rotateDocuments() {
   const failed = [];
 
   for await (const file of walk(dir)) {
-    // Leftovers from an interrupted run: the rename below is the last step, so
-    // a `.rotating` file is a re-seal that never landed and the original is
-    // still in place.
-    if (file.endsWith('.rotating')) continue;
+    // Leftovers from an interrupted write, either this tool's own (`.rotating`
+    // — the rename below is its last step, so the original is still in place)
+    // or an upload's (`.partial`). Neither is a document, and counting one as
+    // unreadable would put a file on the list that is supposed to mean data
+    // loss. The suffixes live with the writer; see storage/blobFile.ts.
+    if (isIncompleteBlobPath(file)) continue;
     total += 1;
     const blob = await readFile(file);
     if (!isEncrypted(blob)) {

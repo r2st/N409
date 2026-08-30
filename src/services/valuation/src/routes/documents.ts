@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { access, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
@@ -32,6 +32,7 @@ import { checkUploadType } from '../documents/fileType.js';
 import { normalizeMediaType } from '../documents/mediaType.js';
 import { scanUpload, UploadRejected, type ScanPolicy } from '../documents/virusScan.js';
 import { decodeFromStorage, encodeForStorage } from '../storage/documentEncryption.js';
+import { writeBlobAtomically } from '../storage/blobFile.js';
 import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
@@ -233,7 +234,11 @@ export async function storeDocument(
     () => true,
     () => false,
   );
-  await writeFile(abs, encodeForStorage(input.buffer));
+  // Not `writeFile`. This path is shared — the same bytes under the same name
+  // are the same file, and a roll-forward clone copies `storage_path` into
+  // another engagement's rows — so truncating it in place is a window in which
+  // somebody else's readable document is short. See storage/blobFile.ts.
+  await writeBlobAtomically(abs, encodeForStorage(input.buffer));
 
   try {
     return await createDocument(
