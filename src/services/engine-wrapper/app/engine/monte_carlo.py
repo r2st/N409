@@ -56,6 +56,31 @@ OPM is exact and is what any single-lognormal engagement should use. What this
 method buys is a payoff structure the closed form cannot price, and it is bought
 at the cost of the last three decimals.
 
+Conservation, and the regime where it fails
+-------------------------------------------
+The one thing this method is not entitled to get wrong is the total. Every
+segment slope sums to one and the segments partition the exit value, so one
+path allocates that path's exit value exactly, and the risk-neutral,
+discounted mean of the exit value is the equity value being split. `Sigma class
+values == equity_value` is therefore an identity in expectation, and the
+residual measures only how well the draw sampled its own distribution.
+
+It samples it badly much earlier than the volatility band suggests. The
+terminal lognormal's mean lives in a right tail whose weight grows as
+`exp(sigma^2 t)`, so the estimator needs paths in proportion. At the default
+count a 100% volatility over seven years — inside `validate.VOLATILITY_BAND`,
+with an unremarkable horizon — allocated 113% of the equity value, and the
+reported standard error, struck from the same starved draw, said nothing. Past
+`sigma sqrt(t)` of about 2 the residual runs to tens of percent, and at a
+volatility of 5 every exit value underflows to zero and the whole cap table is
+allocated nothing at all, reported as `$0.0000 per share` with a zero standard
+error and a `[0, 0]` interval.
+
+So the residual is measured, disclosed on every response as
+`value_conservation`, and refused past `MAX_CONSERVATION_ERROR`. The closed-form
+OPM has no such regime — it is exact at any volatility — which is what the
+refusal points at.
+
 Variance reduction
 ------------------
 Antithetic variates: each normal draw Z is used with −Z as well. The payoff is
@@ -95,6 +120,46 @@ DEFAULT_SEED = 409
 
 #: Most scenarios anyone has a defensible story for.
 MAX_SCENARIOS = 20
+
+#: How far the allocated total may sit from the equity value before the run is
+#: refused rather than reported.
+#:
+#: The module's whole claim to correctness is that the probability-weighted,
+#: discounted payoff sums back to `equity_value` — the docstring says so, the
+#: single-scenario case is checked against the closed form on it, and the
+#: response tabulates a class-by-class split that a reader adds up. The sum is
+#: also, per path, exactly `exp(-r t) x equity_value x exp(drift + vol z)`,
+#: whose risk-neutral mean *is* the equity value, so the residual measures
+#: nothing but how badly the draw sampled the distribution it was given.
+#:
+#: It sampled it badly far earlier than anyone would guess. The terminal
+#: lognormal's mean is carried by its right tail, and the tail's weight grows as
+#: `exp(sigma^2 t)`, so at 20,000 paths a 100% volatility over a seven-year
+#: horizon — both inside `validate.VOLATILITY_BAND`, neither warned about —
+#: allocated $11.3M of a $10.0M equity value, and 120% over five years allocated
+#: $11.5M. Nothing said so: the classes summed to 113% of the value being
+#: split, the per-share conclusion was 13% high, and `standard_error_per_share`
+#: was struck from the same starved draw and so reported an interval as narrow
+#: as if the figure were sound.
+#:
+#: Past this bound the failure is total rather than noisy. `sigma` of 5 over
+#: four years underflows every exit value to zero, so the whole cap table is
+#: allocated $0.00 and the conclusion comes back `$0.0000 per share` with a
+#: standard error of exactly zero and a confidence interval of `[0, 0]` — a
+#: figure claiming certainty about a value the closed form puts at the entire
+#: equity. That is the shape R238 and R214 both found elsewhere: a boundary
+#: answered with a finite, plausible, precise, wrong number.
+#:
+#: Set where it is because a low path count is a documented exploration mode
+#: ("Fewer is defensible for exploration") and a coarse run is *supposed* to be
+#: loose. A tenth of the equity value going somewhere the classes do not report
+#: is past loose: it is larger than any discount this engine applies, larger
+#: than the spread between two credible enterprise values, and it lands whole
+#: on the per-share conclusion. Tightening it further starts refusing runs the
+#: engine's own tests make on purpose at a few hundred paths, which is the
+#: signal that the band below it is noise rather than failure — so that band is
+#: reported instead, on `value_conservation`.
+MAX_CONSERVATION_ERROR = 0.10
 
 #: Two-sided 95% normal quantile, for the interval around the simulated mean.
 NORMAL_95 = 1.959964
@@ -335,6 +400,25 @@ def allocate_monte_carlo(
             }
         )
 
+    # The invariant, measured. Every segment slope sums to one and the segments
+    # partition [0, inf), so one path's payoff over all classes is that path's
+    # exit value exactly; probability-weighted and discounted, its mean is the
+    # equity value. Anything left over is sampling error in the one figure this
+    # method is not entitled to get wrong, and it is the only diagnostic that
+    # sees the tail-starvation regime — `standard_error_per_share` is struck
+    # from the same starved draw and shrinks right along with it.
+    allocated_total = sum(totals)
+    conservation_error = (allocated_total - equity_value) / equity_value
+    if abs(conservation_error) > MAX_CONSERVATION_ERROR:
+        raise EngineInputError(
+            f"the Monte Carlo allocation did not conserve value: the classes were allocated "
+            f"{allocated_total:,.2f} against an equity value of {equity_value:,.2f} "
+            f"({conservation_error:+.1%}). The terminal distribution's mean sits in a tail this "
+            f"draw did not reach — raise monte_carlo.paths (up to {MAX_PATHS}), shorten the "
+            "horizon or lower the volatility, or use the 'opm' allocation, which prices the same "
+            "payoff in closed form and is exact at any volatility"
+        )
+
     common_value = sum(totals[i] for i in common_at)
     # Standard error of the *mean*, which is what the conclusion uses. Reported
     # per share, because that is the unit the reader is judging it in.
@@ -390,12 +474,25 @@ def allocate_monte_carlo(
             round(common_per_share + half_width, 6),
         ],
         "confidence_level": 0.95,
+        # What the classes above actually add up to, beside what they were
+        # splitting. Disclosed on every run and not only on the refused ones,
+        # because between "exact" and "refused" there is a wide band where the
+        # allocation is usable and several percent loose, and a reader
+        # reconciling an exhibit's class values against the equity value is
+        # owed the difference rather than left to find it.
+        "value_conservation": {
+            "equity_value": round(equity_value, 2),
+            "allocated_total": round(allocated_total, 2),
+            "relative_error": round(conservation_error, 8),
+            "tolerance": MAX_CONSERVATION_ERROR,
+        },
     }
 
 
 __all__ = [
     "DEFAULT_PATHS",
     "DEFAULT_SEED",
+    "MAX_CONSERVATION_ERROR",
     "MAX_PATHS",
     "MAX_SCENARIOS",
     "NORMAL_95",
