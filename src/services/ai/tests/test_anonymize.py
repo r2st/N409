@@ -47,7 +47,13 @@ def _doc(text: str) -> dict:
 def _mock_chat(monkeypatch, captured: dict):
     def fake_chat(system, user, *, model=None, client=None):
         captured["system"], captured["user"], captured["model"] = system, user, model
-        return LlmResult(model="test/model", content='{"gaps": [], "notes": "ok"}')
+        # Well-formed for every pipeline this stub feeds. `run_qa` refuses an
+        # answer carrying neither a verdict nor a findings list, so the two keys
+        # ride along here rather than the redaction tests exercising that path.
+        return LlmResult(
+            model="test/model",
+            content='{"gaps": [], "notes": "ok", "findings": [], "verdict": "pass"}',
+        )
 
     monkeypatch.setattr(pipelines, "chat", fake_chat)
 

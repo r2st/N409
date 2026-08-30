@@ -136,9 +136,39 @@ def test_qa_prompt_override(monkeypatch):
 
     def fake(system, user, *, model=None, client=None):
         captured["system"], captured["model"] = system, model
-        return LlmResult(model="custom/model", content="{}")
+        # A well-formed minimal review: a bare `{}` is now refused, since it
+        # carries neither a verdict nor a findings list to derive one from.
+        return LlmResult(model="custom/model", content='{"findings": [], "verdict": "pass"}')
 
     monkeypatch.setattr(pipelines, "chat", fake)
     pipelines.run_qa({"valuation": {}, "prompt": {"system": "Harsh reviewer.", "model": "custom/model"}})
     assert captured["system"] == "Harsh reviewer."
     assert captured["model"] == "custom/model"
+
+
+def test_qa_refuses_a_prose_answer_rather_than_passing_it(monkeypatch, client):
+    """A reviewer that wrote prose has not cleared the valuation.
+
+    `_safe_result` turns a non-JSON completion into `{"notes": ...}`. No finding
+    is extractable from that, so the severity set is empty and the verdict
+    ladder used to read that emptiness as "nothing was wrong" — an affirmative
+    `pass` on the AI half of the gate, with the prose discarded.
+    """
+    monkeypatch.setattr(pipelines, "chat", fake_chat("The valuation looks broadly reasonable to me."))
+    resp = client.post("/ai/v1/pipelines/qa", json={"valuation": {}, "calculation": CALCULATION})
+    assert resp.status_code == 502
+    assert "did not make it" in resp.json()["detail"]
+
+
+def test_qa_refuses_json_that_omits_both_findings_and_verdict(monkeypatch, client):
+    monkeypatch.setattr(pipelines, "chat", fake_chat({"assessment": "Looks fine."}))
+    resp = client.post("/ai/v1/pipelines/qa", json={"valuation": {}, "calculation": CALCULATION})
+    assert resp.status_code == 502
+
+
+def test_qa_keeps_an_explicit_verdict_even_without_findings(monkeypatch, client):
+    """The refusal is about deriving a verdict, not about having no findings."""
+    monkeypatch.setattr(pipelines, "chat", fake_chat({"assessment": "Clean.", "verdict": "pass"}))
+    resp = client.post("/ai/v1/pipelines/qa", json={"valuation": {}, "calculation": CALCULATION})
+    assert resp.status_code == 200
+    assert resp.json()["result"]["verdict"] == "pass"

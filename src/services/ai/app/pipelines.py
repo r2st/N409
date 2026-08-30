@@ -560,9 +560,10 @@ Review the calculation. Return JSON:
 
     llm = _ask(red, system, user, model)
     parsed = _safe_result(llm)
+    raw_findings = parsed.get("findings") if isinstance(parsed, dict) else None
     findings = []
-    if isinstance(parsed, dict) and isinstance(parsed.get("findings"), list):
-        for entry in parsed["findings"][:10]:
+    if isinstance(raw_findings, list):
+        for entry in raw_findings[:10]:
             if not isinstance(entry, dict) or not entry.get("finding"):
                 continue
             severity = entry.get("severity")
@@ -575,7 +576,36 @@ Review the calculation. Return JSON:
             )
     verdict = parsed.get("verdict") if isinstance(parsed, dict) else None
     if verdict not in QA_VERDICTS:
-        # Derive from findings when the model skipped/mangled the verdict.
+        # Derive from findings when the model skipped/mangled the verdict — but
+        # only when it returned a findings *list*, because that is the only case
+        # in which an empty set means anything.
+        #
+        # `_safe_result` hands back `{"notes": ...}` for a model that answered in
+        # prose, and a model may equally answer JSON that omits both keys.
+        # Either way `raw_findings` is absent, no finding is extracted, the
+        # severity set is empty — and the ladder below then read that emptiness
+        # as "nothing was wrong" and returned `"pass"`. That verdict is the
+        # whole output of this pipeline: it rides to `qa_reviews.ai_findings`
+        # via `combineWithAiVerdict`, it is what a reviewer sees under the AI
+        # half of the QA tab, and the publish gate consults the review it sits
+        # on. So an unreadable answer was recorded as the reviewer having
+        # cleared the valuation — and the prose it actually wrote was discarded
+        # on the way, because `assessment` reads a key a `notes` dict has not
+        # got and comes out `""`. A clean bill of health, from nobody.
+        #
+        # Refused rather than downgraded to `"warn"`. `routes/qa.ts` writes no
+        # review row when this call fails ("a half-run must not open the gate"),
+        # which is the correct outcome for a review that did not happen; a
+        # `"warn"` would still file one and still claim the reviewer spoke. Plain
+        # `ValueError`, which `main` answers 502 — "the model said something
+        # unusable" — so the retry ladder gets the one attempt that may well
+        # come back with the JSON the prompt asked for.
+        if not isinstance(raw_findings, list):
+            raise ValueError(
+                "the QA reviewer returned neither a verdict nor a list of findings, so there is "
+                "nothing to review from — an empty finding set is a claim that the calculation is "
+                "clean, and this answer did not make it"
+            )
         severities = {f["severity"] for f in findings}
         verdict = "fail" if "fail" in severities else "warn" if "warn" in severities else "pass"
     result = {
