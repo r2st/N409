@@ -341,6 +341,52 @@ export function registerAuthRoutes(
       // Record the failed attempt against both windows so guesses accumulate.
       allow(emailKey, 10, LOGIN_WINDOW_MS);
       allow(ipKey, 100, LOGIN_WINDOW_MS);
+      // Whether this failure is the one that filled the address window. Asked
+      // as a peek *after* consuming rather than read off the consuming call:
+      // the check at the top of the route is what refuses, so by the time an
+      // attempt is over the limit it never reaches here at all, and the
+      // consuming `allow` returns true right up to the last permitted guess.
+      // This is the row where the lock begins, and the attempts past it are
+      // recorded nowhere — so without the flag the trail ends mid-run with no
+      // way to tell a lockout from an attacker who simply stopped.
+      const lockedOut = !allow(emailKey, 10, LOGIN_WINDOW_MS, { peek: true });
+      /**
+       * And on the spine, which had only the successes.
+       *
+       * Written in every failing branch, unconditionally, for the same reason
+       * `forgot-password` records in both of its: the whole route is built so
+       * that an unknown address, a wrong password and a closed account are
+       * indistinguishable from outside, and a row written for only one of them
+       * would put that distinction back — as a latency difference on the one
+       * path that skipped an insert. The `reason` is recorded *inside* the row,
+       * where the reader is an operator who is entitled to it and an enumeration
+       * sweep shows up as a run of `unknown_account`.
+       *
+       * `subject_id` is the account when there is one, so an owner's failures
+       * join to the rest of their history, and null when there is not — the
+       * address still travels in `subject_label`, which is how a sweep across
+       * addresses that have never existed is visible at all.
+       *
+       * Bounded by the throttle above rather than by anything here: an
+       * unauthenticated route that inserts a row per request is a write
+       * amplifier, and the ceiling on rows is the ceiling on attempts — ten per
+       * address and a hundred per IP per fifteen minutes. The refusals past
+       * that point write nothing, which is why the one that trips the lock says
+       * so.
+       */
+      await recordAdminEvent(deps.pool, {
+        type: 'user_login_failed',
+        actor: { actorType: 'human', actorId: user?.id ?? null },
+        subjectType: 'user',
+        subjectId: user?.id ?? null,
+        subjectLabel: email,
+        payload: {
+          method: 'password',
+          reason: !user ? 'unknown_account' : user.deleted_at ? 'closed_account' : 'bad_password',
+          ip: req.ip,
+          locked_out: lockedOut,
+        },
+      });
       throw problems.unauthorized('Invalid email or password');
     }
 
@@ -405,7 +451,24 @@ export function registerAuthRoutes(
       const matched = backupCodeMatches(parsed.data.backup_code, hashes);
       if (matched) ok = await consumeBackupCode(deps.pool, user.id, matched);
     }
-    if (!ok) throw problems.unauthorized('That code is incorrect');
+    if (!ok) {
+      // The strongest single signal this service can emit. A challenge is only
+      // issued to a caller who has already presented the right password, so a
+      // wrong code here is somebody holding working credentials and missing the
+      // factor that stops them — which is what a phished password looks like
+      // for the minutes before it works. It was recorded nowhere: the throttle
+      // counted it in memory and the successful verification a few attempts
+      // later was the only row either way.
+      await recordAdminEvent(deps.pool, {
+        type: 'user_mfa_challenge_failed',
+        actor: { actorType: 'human', actorId: user.id },
+        subjectType: 'user',
+        subjectId: user.id,
+        subjectLabel: user.email,
+        payload: { factor: parsed.data.code ? 'totp' : 'backup_code', ip: req.ip },
+      });
+      throw problems.unauthorized('That code is incorrect');
+    }
 
     if (parsed.data.remember_device) {
       const raw = randomBytes(32).toString('base64url');

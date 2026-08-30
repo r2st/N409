@@ -218,6 +218,23 @@ export type ValuationEventType = keyof typeof EVENT_CATALOG;
 export const ADMIN_EVENT_CATALOG = {
   // ── Identity & access ───────────────────────────────────────────────────
   user_login: D('User signed in', 'access', 'info'),
+  // The half of authentication that was never recorded.
+  //
+  // A sign-in has been audited since the spine existed; the attempts that did
+  // not sign anybody in were counted by an in-memory sliding window and
+  // otherwise left no trace anywhere. So the trail could say when a session
+  // began and nothing about the four hundred guesses before it, and after a
+  // process restart even the counter was gone — an account takeover by
+  // credential stuffing and an ordinary Monday morning read identically.
+  //
+  // A failed password is a `notice`: it is the single most common event on any
+  // sign-in page and grading it higher would drown the filter that `critical`
+  // exists to serve. A failed *second factor* is `critical`, because reaching
+  // that endpoint at all means the password was already correct — the run of
+  // rows either side of one of these is what an account takeover looks like
+  // from here.
+  user_login_failed: D('Sign-in failed', 'access', 'notice'),
+  user_mfa_challenge_failed: D('Two-factor verification failed', 'access', 'critical'),
   user_invited: D('User invited', 'access', 'notice'),
   invitation_resent: D('Invitation resent', 'access', 'info'),
   invitation_revoked: D('Invitation revoked', 'access', 'notice'),
