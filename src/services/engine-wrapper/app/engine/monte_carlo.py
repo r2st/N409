@@ -420,9 +420,11 @@ def allocate_monte_carlo(
             f"the Monte Carlo allocation did not conserve value: the classes were allocated "
             f"{allocated_total:,.2f} against an equity value of {equity_value:,.2f} "
             f"({conservation_error:+.1%}). The terminal distribution's mean sits in a tail this "
-            f"draw did not reach — raise monte_carlo.paths (up to {MAX_PATHS}), shorten the "
-            "horizon or lower the volatility, or use the 'opm' allocation, which prices the same "
-            "payoff in closed form and is exact at any volatility",
+            "draw did not reach. Set the allocation method to 'opm' — the option pricing model "
+            "prices the same payoff in closed form and is exact at any volatility — or shorten "
+            "the horizon, or lower the volatility. Raising monte_carlo.paths (up to "
+            f"{MAX_PATHS:,}) also clears it, but that is a request-level input rather than an "
+            "engagement parameter, so it is not something the engagement's own screens set",
             event="monte_carlo_conservation",
             # Dimensionless only. The two dollar figures are in the sentence
             # above, which goes to the analyst who asked for the run; they are

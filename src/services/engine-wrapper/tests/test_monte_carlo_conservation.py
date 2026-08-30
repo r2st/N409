@@ -107,6 +107,26 @@ class TestTheStarvedTailIsRefused:
         # which method does work rather than only that this one did not.
         assert "'opm'" in message
 
+    def test_the_first_remedy_offered_is_one_the_reader_can_actually_apply(self):
+        """Round 262.
+
+        This refusal reaches an analyst, through the valuation service's 422.
+        It used to lead with "raise monte_carlo.paths", and `inputs.monte_carlo`
+        is not something that service ever sends: the allocation method, the
+        horizon and the volatility are engagement parameters with controls on
+        the params panel, and the path count is a request-level input with no
+        control anywhere. The first thing a refusal names is the thing its
+        reader tries, so the first thing it names has to be a thing they have.
+        """
+        with pytest.raises(EngineInputError) as excinfo:
+            mc(sigma=1.5, t=5.0)
+        message = str(excinfo.value)
+        assert message.index("'opm'") < message.index("monte_carlo.paths")
+        assert message.index("volatility") < message.index("monte_carlo.paths")
+        # And the one that is out of the reader's reach says so rather than
+        # being an instruction they cannot follow.
+        assert "request-level input" in message
+
     def test_the_underflow_regime_is_refused_rather_than_concluded_as_zero(self):
         # Every exit value underflows, so the cap table is allocated $0.00 and
         # the run used to report `$0.0000 per share` with a standard error of
