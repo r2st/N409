@@ -330,6 +330,52 @@ export async function claimRetryableEmails(
                WHERE s.to_email = lower(btrim(email_outbox.to_email)) AND s.released_at IS NULL
             )
           )
+          -- …and the recipient must not have switched this kind of mail off
+          -- since the row was written.
+          --
+          -- The three clauses above are facts that changed after the enqueue —
+          -- the work was withdrawn, the account was closed, the address was
+          -- suppressed — and this is the fourth and the only one the recipient
+          -- sets themselves. Both enqueue paths ask it: onStateChanged gates
+          -- a workflow email on channelsFor(...).email, and the drip scan
+          -- gates a promotional one on the same matrix's marketing row. The
+          -- claim asked neither, so the ladder was the one door into this
+          -- mailbox that a preference did not cover.
+          --
+          -- The marketing half is the one that matters most, and it is not a
+          -- courtesy. List-Unsubscribe is a promise to stop sending
+          -- (RFC 8058), and the one-click endpoint honours it by writing this
+          -- row — not by suppressing the address, which is for bounces. So a
+          -- promotional message whose first attempt failed was delivered by
+          -- the ladder hours later, after the recipient had clicked the
+          -- unsubscribe button in the message before it.
+          --
+          -- Which key a row answers to is the same rule the enqueues use: the
+          -- marketing row for a promotional send, the row named by the
+          -- template key otherwise — the workflow templateKey *is* its
+          -- preference event type (see NOTIFICATION_EVENT_TYPES). A
+          -- transactional must-send is untouched by construction: nothing ever
+          -- writes a password_reset or user_invitation preference row, so
+          -- the NOT EXISTS cannot find one. Same for a row addressed by
+          -- address alone, which has no account whose preferences to read.
+          --
+          -- Skipped rather than settled, for the reason the three clauses above
+          -- give: a preference is reversible from the settings screen, and a
+          -- row marked failed here could not be un-failed by switching it back
+          -- on.
+          AND (
+            channel <> 'email'
+            OR to_user_id IS NULL
+            OR NOT EXISTS (
+              SELECT 1 FROM notification_preferences p
+               WHERE p.user_id = email_outbox.to_user_id
+                 AND p.event_type = CASE
+                       WHEN email_outbox.promotional THEN 'marketing'
+                       ELSE email_outbox.template_key
+                     END
+                 AND p.email = false
+            )
+          )
           AND (status = 'queued' OR next_attempt_at IS NULL OR next_attempt_at <= now())
           AND (claimed_at IS NULL OR claimed_at < now() - ($3 || ' seconds')::interval)
         -- Oldest first: a backlog larger than the batch must not leave the
