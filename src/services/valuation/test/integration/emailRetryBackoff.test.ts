@@ -163,7 +163,7 @@ describe.skipIf(!dbUp)('email outbox retry backoff', () => {
       // then schedules off it.
       await ctx.pool.query('UPDATE email_outbox SET attempts = $2 WHERE id = $1', [id, made]);
       const startedAt = new Date();
-      await settleClaimedEmail(ctx.pool, id, 'failed', 'boom');
+      await settleClaimedEmail(ctx.pool, id, 'failed', 'boom', made);
       const row = await rowOf(id);
 
       const window = emailRetryWindowMs(made)!;
@@ -176,7 +176,7 @@ describe.skipIf(!dbUp)('email outbox retry backoff', () => {
   it('stops scheduling once the ladder is spent, and the ceiling holds the row', async () => {
     const id = await seed('backoff-terminal@test.example.com');
     await ctx.pool.query('UPDATE email_outbox SET attempts = $2 WHERE id = $1', [id, EMAIL_MAX_ATTEMPTS]);
-    await settleClaimedEmail(ctx.pool, id, 'failed', 'boom');
+    await settleClaimedEmail(ctx.pool, id, 'failed', 'boom', EMAIL_MAX_ATTEMPTS);
 
     const row = await rowOf(id);
     // Null rather than a far-future stamp: terminality is expressed once, by
@@ -227,5 +227,64 @@ describe.skipIf(!dbUp)('email outbox retry backoff', () => {
 
     const row = await rowOf(id);
     expect(row.next_attempt_at, 'a sent row must not keep a retry schedule').toBeNull();
+  });
+
+  /**
+   * Two sweepers holding one row, which is the same story `settleDelivery`
+   * next door was given in R196 and this settle was not.
+   *
+   * The lease is a flat fifteen minutes and a batch is up to five hundred rows
+   * sent one at a time, so a sweeper still working its batch — or holding a
+   * transport call that hangs past the lease — is settling a row a second
+   * sweeper has re-claimed. There are three ways to have a second sweeper: the
+   * timer, the ops retry route that runs outside it, and a second instance.
+   *
+   * Written unconditionally, the loser's outcome landed last and landed over a
+   * row already settled. The shape that matters is the one below: the winner
+   * delivered the mail and stamped `sent_at`, and the loser's late failure put
+   * the row back to 'failed' with a fresh place on the ladder — so the next
+   * sweep sent the same message again, and the table that is supposed to be the
+   * record of what was sent said the send had failed.
+   */
+  describe('a settle from a claim somebody else has taken over', () => {
+    it('is refused, and leaves the winner’s outcome standing', async () => {
+      const id = await seed('takeover@test.example.com');
+
+      // The first sweeper's claim: one attempt counted, lease held.
+      await ctx.pool.query(
+        `UPDATE email_outbox SET status = 'failed', attempts = 1, claimed_at = now() WHERE id = $1`,
+        [id],
+      );
+      // The lease lapses and a second sweeper re-claims — a second attempt
+      // counted — then delivers and settles.
+      await ctx.pool.query('UPDATE email_outbox SET attempts = 2 WHERE id = $1', [id]);
+      expect(await settleClaimedEmail(ctx.pool, id, 'sent', undefined, 2)).toBe(true);
+
+      // Now the first sweeper's hung transport finally reports back.
+      const stale = await settleClaimedEmail(ctx.pool, id, 'failed', 'smtp connect refused', 1);
+      expect(stale, 'a settle against a superseded claim must not be applied').toBe(false);
+
+      const { rows } = await ctx.pool.query<{
+        status: string;
+        error: string | null;
+        next_attempt_at: Date | null;
+        sent_at: Date | null;
+      }>('SELECT status, error, next_attempt_at, sent_at FROM email_outbox WHERE id = $1', [id]);
+      const row = rows[0]!;
+      expect(row.status, 'mail that was delivered must not read as failed').toBe('sent');
+      expect(row.sent_at).not.toBeNull();
+      expect(row.error).toBeNull();
+      // The half that turned a wrong badge into a duplicate delivery.
+      expect(row.next_attempt_at, 'a delivered message must not be scheduled again').toBeNull();
+    });
+
+    it('still applies while the claim it names is the one on the row', async () => {
+      const id = await seed('takeover-live@test.example.com');
+      await ctx.pool.query(
+        `UPDATE email_outbox SET status = 'failed', attempts = 1, claimed_at = now() WHERE id = $1`,
+        [id],
+      );
+      expect(await settleClaimedEmail(ctx.pool, id, 'sent', undefined, 1)).toBe(true);
+    });
   });
 });

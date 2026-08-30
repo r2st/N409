@@ -355,8 +355,10 @@ export async function claimRetryableEmails(
 }
 
 /**
- * Settles a row taken by claimRetryableEmails. Unlike markEmail this does not
- * count an attempt — the claim already did — and it releases the lease.
+ * Settles a row taken by claimRetryableEmails, while the claim still stands.
+ *
+ * Unlike markEmail this does not count an attempt — the claim already did — and
+ * it releases the lease.
  *
  * Releasing the lease used to be the whole of it, with a comment arguing that a
  * failed row should be "picked up by the next sweep instead of waiting one
@@ -365,26 +367,64 @@ export async function claimRetryableEmails(
  * lease is still released — it is a lease, and holding it would only make the
  * row wait twice — and `next_attempt_at` now carries the schedule (0159).
  *
- * The attempt count in the ladder's index is the row's own, not the claimed
- * copy's: `attempts` here is read fresh by the UPDATE, so a row another sweeper
- * has since touched is scheduled off what the table says rather than off what
- * this sweeper read.
+ * `attempts = $6` is the claim, restated as a precondition of the write, and
+ * it is the half R196 gave `settleDelivery` next door and did not give this.
+ * The note it left here — that the ladder's index is recomputed in SQL from the
+ * row's own `attempts`, so a stale caller cannot walk the schedule backwards —
+ * is true and answers only the second of the two things a stale settle does.
+ * The first is that it writes a *status* over one somebody else already
+ * settled, and there is no recomputation that makes that right.
+ *
+ * How two sweepers come to hold one row is written up under
+ * `claimRetryableEmails`: the lease is a fixed fifteen minutes, a batch is up
+ * to five hundred rows sent one at a time, and the sweep is reachable from the
+ * timer, from the ops retry route and from every instance at once. So a sweeper
+ * still working a long batch — or holding a transport call that hangs past the
+ * lease — can be settling a row a second sweeper re-claimed and has already
+ * delivered.
+ *
+ * What that wrote is the outbox contradicting itself about mail that has left
+ * the building. The winner settles 'sent' and stamps `sent_at`; the loser's
+ * late failure then puts the row back to 'failed' — `sent_at` untouched,
+ * because the CASE only writes it on success — and stamps a `next_attempt_at`
+ * from the ladder. The next sweep reads a failed, due row and delivers the same
+ * message a third time. Mail cannot be un-sent, which is what makes this worse
+ * than a wrong badge: the row that is supposed to be the record of what was
+ * sent says the send failed, and the ladder acts on it.
+ *
+ * Pinned on `attempts` rather than on `claimed_at`, for the same reason the
+ * webhook settle is: the claim increments it in the same statement that stamps
+ * the lease, so it names the claim exactly, and it is an integer — a
+ * `timestamptz` read back through the driver is truncated to milliseconds and
+ * would not compare equal to itself.
+ *
+ * Returns false when the row has moved on, so the caller can say so rather than
+ * report a settlement that did not happen.
  */
 export async function settleClaimedEmail(
   pool: pg.Pool,
   id: string,
   status: Exclude<EmailStatus, 'queued'>,
-  error?: string,
+  error: string | undefined,
+  expectAttempts: number,
   opts: { maxAttempts?: number } = {},
-): Promise<void> {
-  await pool.query(
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
     `UPDATE email_outbox
      SET status = $2::email_status, error = $3, claimed_at = NULL,
          sent_at = CASE WHEN $2::text = 'sent' THEN now() ELSE sent_at END,
          next_attempt_at = ${retryScheduleSql('$2', 'email_outbox.attempts', '$4', '$5')}
-     WHERE id = $1`,
-    [id, status, error ?? null, opts.maxAttempts ?? EMAIL_MAX_ATTEMPTS, EMAIL_RETRY_BACKOFF_MINUTES],
+     WHERE id = $1 AND attempts = $6`,
+    [
+      id,
+      status,
+      error ?? null,
+      opts.maxAttempts ?? EMAIL_MAX_ATTEMPTS,
+      EMAIL_RETRY_BACKOFF_MINUTES,
+      expectAttempts,
+    ],
   );
+  return (rowCount ?? 0) > 0;
 }
 
 export async function listOutbox(

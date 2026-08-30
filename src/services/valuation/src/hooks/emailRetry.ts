@@ -75,10 +75,39 @@ export async function retryFailedEmails(deps: {
     if (!transport) continue;
     try {
       await transport.send(email);
-      await settleClaimedEmail(deps.pool, email.id, 'sent', undefined, { maxAttempts });
+      // `email.attempts` is the count the claim stamped on this row. A settle
+      // that matches nothing means a second sweeper re-claimed the row while
+      // this send was in flight and has already settled it — see
+      // `settleClaimedEmail`. Counted as sent all the same, because it was.
+      const settled = await settleClaimedEmail(deps.pool, email.id, 'sent', undefined, email.attempts, {
+        maxAttempts,
+      });
+      if (!settled) {
+        deps.log?.warn(
+          { emailId: email.id, originRequestId: email.request_id, attempts: email.attempts },
+          'email sent on a claim another sweeper had already taken over — outcome not recorded',
+        );
+      }
       sent += 1;
     } catch (err) {
-      await settleClaimedEmail(deps.pool, email.id, 'failed', describeTransportFailure(err), { maxAttempts });
+      const settled = await settleClaimedEmail(
+        deps.pool,
+        email.id,
+        'failed',
+        describeTransportFailure(err),
+        email.attempts,
+        { maxAttempts },
+      );
+      // The row has moved on: another sweeper owns it, and writing this failure
+      // over its outcome is precisely what the pin refuses. The bounce below is
+      // still recorded — a hard rejection is a fact about the *address*, not
+      // about this claim, and it has to reach the suppression list either way.
+      if (!settled) {
+        deps.log?.warn(
+          { emailId: email.id, originRequestId: email.request_id, attempts: email.attempts },
+          'email retry failed on a claim another sweeper had already taken over',
+        );
+      }
       // A permanent rejection of the recipient takes the row out of the claim
       // and the address out of future sends (0163). Never allowed to throw:
       // the row is already settled, and losing the sweep over the bookkeeping
