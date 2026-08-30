@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { required, useFormValidation } from '../../lib/useFormValidation';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
@@ -70,7 +70,7 @@ export function DecisionsTab() {
     try {
       setData(await api<DecisionsResponse>(`/valuations/${valuation.id}/decisions`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the decision log.');
+      setError(describeActionFailure(err, 'Could not load the decision log.'));
     }
   }, [valuation.id]);
 
@@ -108,7 +108,7 @@ export function DecisionsTab() {
       reset();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not record the decision.');
+      setError(describeActionFailure(err, 'Could not record the decision.'));
     } finally {
       setSaving(false);
     }

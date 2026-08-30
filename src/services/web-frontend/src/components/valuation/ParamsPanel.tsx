@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, ifMatch } from '../../lib/api';
+import { api, ApiError, ifMatch, describeActionFailure } from '../../lib/api';
 import { numberRange, optional, useFormValidation, type Rules } from '../../lib/useFormValidation';
 import { weightsProblem, type ValuationParams } from '../../lib/pipeline';
 import { paramsVersionKey, useRowVersion } from '../../lib/rowVersion';
@@ -672,7 +672,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             'Someone else changed these parameters while you were editing. They have been reloaded — please reapply your changes.',
         );
       } else {
-        setError(err instanceof ApiError ? err.message : 'Could not save params.');
+        setError(describeActionFailure(err, 'Could not save params.'));
       }
     } finally {
       setBusy(false);
@@ -734,7 +734,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
       setVersion(res.params?.version);
       setScenariosSaved(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save PWERM scenarios.');
+      setError(describeActionFailure(err, 'Could not save PWERM scenarios.'));
     } finally {
       setScenariosBusy(false);
     }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { filenameStem, useDownload } from '../../lib/useDownload';
 import { formatDate, formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
@@ -187,7 +187,7 @@ export function ProgressTab() {
       try {
         setProgress(await api<ProgressResponse>(`/valuations/${valuation.id}/progress`));
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Could not load progress.');
+        setError(describeActionFailure(err, 'Could not load progress.'));
       }
     })();
   }, [valuation.id, token]);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { moneyFormatter } from '../../lib/format';
 import {
   Button,
@@ -171,7 +171,7 @@ export function ProjectionPanel({
     try {
       setData(await api<ProjectionResponse>(`/valuations/${valuationId}/projection`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the cash-flow projection.');
+      setError(describeActionFailure(err, 'Could not load the cash-flow projection.'));
     }
   }, [valuationId]);
 
@@ -186,7 +186,7 @@ export function ProjectionPanel({
       await work();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : failure);
+      setError(describeActionFailure(err, failure));
     } finally {
       setBusy(false);
     }

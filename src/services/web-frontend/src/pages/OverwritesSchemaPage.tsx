@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { OVERWRITE_CATEGORY_LABELS, type OverwriteSchema } from '../lib/m2';
 import { LoadError, ResultCount, Spinner, StatCard, TextInput, useRetry } from '../components/ui';
 
@@ -23,9 +23,7 @@ export function OverwritesSchemaPage() {
   useEffect(() => {
     api<OverwriteSchema>('/overwrites/schema')
       .then(setSchema)
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Could not load the overwrites schema.'),
-      );
+      .catch((err) => setError(describeActionFailure(err, 'Could not load the overwrites schema.')));
   }, [token]);
 
   const fields = useMemo(() => {

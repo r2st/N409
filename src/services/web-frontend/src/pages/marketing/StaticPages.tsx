@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { email as emailRule, required, useFormValidation } from '../../lib/useFormValidation';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { Button, ErrorNote, Field, TextInput } from '../../components/ui';
 import { PhoneInput, phoneFieldError } from '../../components/PhoneInput';
 import { Seo } from '../../components/Seo';
@@ -108,7 +108,7 @@ function ContactForm() {
       });
       setSent(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not send your message — please try again.');
+      setError(describeActionFailure(err, 'Could not send your message — please try again.'));
     } finally {
       setBusy(false);
     }

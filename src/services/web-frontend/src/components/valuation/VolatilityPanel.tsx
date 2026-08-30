@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import {
   Button,
   EmptyState,
@@ -114,7 +114,7 @@ export function VolatilityPanel({ valuationId }: { valuationId: string }) {
     try {
       setData(await api<VolatilityResponse>(`/valuations/${valuationId}/volatility`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the volatility derivation.');
+      setError(describeActionFailure(err, 'Could not load the volatility derivation.'));
     }
   }, [valuationId]);
 
@@ -130,7 +130,7 @@ export function VolatilityPanel({ valuationId }: { valuationId: string }) {
       await load();
       return true;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : failure);
+      setError(describeActionFailure(err, failure));
       return false;
     } finally {
       setBusy(false);

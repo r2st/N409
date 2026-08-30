@@ -146,7 +146,7 @@ describe('OrgAssignmentCard', () => {
     await userEvent.selectOptions(await screen.findByLabelText('Organization'), 'org_1');
     await userEvent.click(screen.getByRole('button', { name: 'Assign to portfolio' }));
 
-    expect(await screen.findByText('Could not assign to the organization.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not assign to the organization\./)).toBeInTheDocument();
   });
 
   /** A second attempt starts clean — the old success must not stand under it. */

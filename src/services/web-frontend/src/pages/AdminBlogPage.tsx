@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { all, optional, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { formatDate } from '../lib/format';
 import {
@@ -168,7 +168,7 @@ export function AdminBlogPage() {
       setEditor(null);
       load();
     } catch (err) {
-      setEditorError(err instanceof ApiError ? err.message : 'Could not save the post.');
+      setEditorError(describeActionFailure(err, 'Could not save the post.'));
     } finally {
       setBusy(false);
     }
@@ -179,7 +179,7 @@ export function AdminBlogPage() {
       await api(`/admin/blog/posts/${p.id}`, { method: 'PATCH', body: { published: !p.published } });
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not update the post.');
+      setError(describeActionFailure(err, 'Could not update the post.'));
     }
   };
 
@@ -195,7 +195,7 @@ export function AdminBlogPage() {
       await api(`/admin/blog/posts/${p.id}`, { method: 'DELETE' });
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not delete the post.');
+      setError(describeActionFailure(err, 'Could not delete the post.'));
     }
   };
 

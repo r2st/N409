@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, ApiError, ifMatch } from '../../lib/api';
+import { api, ApiError, ifMatch, describeActionFailure } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import {
@@ -282,7 +282,7 @@ export function CompanyTab() {
             'Someone else changed this company profile while you were editing. It has been reloaded — please reapply your changes.',
         );
       } else {
-        setFieldError(err instanceof ApiError ? err.message : 'Could not save the company profile.');
+        setFieldError(describeActionFailure(err, 'Could not save the company profile.'));
       }
     } finally {
       setSaving(false);
@@ -350,7 +350,7 @@ export function CompanyTab() {
           (held.length > 0 ? ` Left alone: ${held.join(', ')}.` : ''),
       );
     } catch (err) {
-      setAgentError(err instanceof ApiError ? err.message : 'Could not draft the company profile.');
+      setAgentError(describeActionFailure(err, 'Could not draft the company profile.'));
     } finally {
       setAgentPhase(null);
     }

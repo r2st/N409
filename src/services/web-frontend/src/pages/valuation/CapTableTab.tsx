@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { api, ApiError, apiUpload, ifMatch, type Problem } from '../../lib/api';
+import { api, ApiError, apiUpload, ifMatch, type Problem, describeActionFailure } from '../../lib/api';
 import { investedForDisplay } from '../../lib/capTableFigures';
 import { csvColumns } from '../../lib/csvColumns';
 import { useAuth } from '../../lib/auth';
@@ -270,7 +270,7 @@ export function CapTableTab() {
       setStored(res.cap_table);
       setCanEdit(res.can_edit);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the cap table.');
+      setError(describeActionFailure(err, 'Could not load the cap table.'));
     } finally {
       setLoading(false);
     }
@@ -332,7 +332,7 @@ export function CapTableTab() {
       setMapping({});
       setPreview(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not read that file.');
+      setError(describeActionFailure(err, 'Could not read that file.'));
     } finally {
       setBusy(false);
     }
@@ -348,7 +348,7 @@ export function CapTableTab() {
       );
       setPreview(res);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not preview the import.');
+      setError(describeActionFailure(err, 'Could not preview the import.'));
     } finally {
       setBusy(false);
     }
@@ -391,7 +391,7 @@ export function CapTableTab() {
       if (rejected?.validation) {
         setPreview({ entries: [], validation: rejected.validation });
       }
-      setError(err instanceof ApiError ? err.message : 'Could not save the cap table.');
+      setError(describeActionFailure(err, 'Could not save the cap table.'));
     } finally {
       setBusy(false);
     }
@@ -739,7 +739,7 @@ function AnonymizePanel({ valuationId }: { valuationId: string }) {
       });
       setResult(res);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not anonymize this cap table.');
+      setError(describeActionFailure(err, 'Could not anonymize this cap table.'));
     } finally {
       setBusy(false);
     }

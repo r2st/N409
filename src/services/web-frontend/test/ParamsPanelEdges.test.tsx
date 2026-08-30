@@ -64,10 +64,17 @@ function mockApi(opts: Setup = {}) {
       patched.push({ url: path, body: JSON.parse(String(init.body)) as Record<string, unknown> });
       if (opts.patchFails === 'network') throw new TypeError('Failed to fetch');
       if (opts.patchFails === 'problem')
-        return new Response(JSON.stringify({ title: 'weight_opm must be at most 1' }), {
-          status: 422,
-          headers: { 'content-type': 'application/problem+json' },
-        });
+        return new Response(
+          JSON.stringify({
+            title: 'Unprocessable Content',
+            status: 422,
+            detail: 'weight_opm must be at most 1',
+          }),
+          {
+            status: 422,
+            headers: { 'content-type': 'application/problem+json' },
+          },
+        );
       return jsonResponse({ params: row });
     }
     if (path.includes('/engine-inputs')) return jsonResponse({ engine_inputs: opts.engineInputs ?? {} });
@@ -208,7 +215,7 @@ describe('ParamsPanel — edges', () => {
       await screen.findByTestId('dlom-method');
       await userEvent.click(saveButton());
 
-      expect(await screen.findByText('Could not save params.')).toBeInTheDocument();
+      expect(await screen.findByText(/Could not save params\./)).toBeInTheDocument();
       // And the button comes back — a failed save is not a dead end.
       await waitFor(() => expect(saveButton()).not.toBeDisabled());
     });
@@ -327,7 +334,7 @@ describe('ParamsPanel — edges', () => {
       await screen.findByTestId('pwerm-scenarios');
       await userEvent.click(screen.getByRole('button', { name: /save scenarios/i }));
 
-      expect(await screen.findByText('Could not save PWERM scenarios.')).toBeInTheDocument();
+      expect(await screen.findByText(/Could not save PWERM scenarios\./)).toBeInTheDocument();
     });
   });
 

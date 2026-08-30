@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, ifMatch } from '../../lib/api';
+import { api, ApiError, ifMatch, describeActionFailure } from '../../lib/api';
 import { paramsVersionKey, useRowVersion } from '../../lib/rowVersion';
 import { Button, ErrorNote, Field, InfoTooltip, LoadError, Spinner, TextInput, useRetry } from '../ui';
 
@@ -163,7 +163,7 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
       });
       setLoaded(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the discount-rate build-up.');
+      setError(describeActionFailure(err, 'Could not load the discount-rate build-up.'));
     }
   }, [valuationId, setVersion]);
 
@@ -253,7 +253,7 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
         );
         return false;
       }
-      setError(err instanceof ApiError ? err.message : 'Could not save the discount-rate build-up.');
+      setError(describeActionFailure(err, 'Could not save the discount-rate build-up.'));
       return false;
     } finally {
       setBusy(false);
@@ -271,7 +271,7 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
       setPreview(res.wacc);
       setAppliedOnNextRun(res.applied_on_next_run);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not build the discount rate.');
+      setError(describeActionFailure(err, 'Could not build the discount rate.'));
     } finally {
       setBusy(false);
     }

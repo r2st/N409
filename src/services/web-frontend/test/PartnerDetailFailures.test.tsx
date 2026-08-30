@@ -180,7 +180,7 @@ describe('PartnerDetailPage — a save the API refuses', () => {
     await user.type(await screen.findByLabelText('Brand colour'), '#1f6f54');
     await user.click(screen.getByRole('button', { name: 'Save branding' }));
 
-    expect(await screen.findByText('Could not save the branding.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save the branding\./)).toBeInTheDocument();
   });
 });
 

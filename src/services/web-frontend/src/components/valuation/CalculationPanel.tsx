@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, ApiError, describeActionFailure } from '../../lib/api';
 import { formatDateTime, formatExactPercent, formatPerShare } from '../../lib/format';
 import {
   fieldLabel,
@@ -144,7 +144,7 @@ export function CalculationPanel({
       if (issues.length > 0) {
         setPreflight({ ok: false, engine_version: '', errors: issues, warnings: [] });
       }
-      setError(err instanceof ApiError ? err.message : 'Computation failed.');
+      setError(describeActionFailure(err, 'Computation failed.'));
       await load();
     } finally {
       setBusy(null);
@@ -162,7 +162,7 @@ export function CalculationPanel({
       });
       setPreflight(result);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not check the inputs.');
+      setError(describeActionFailure(err, 'Could not check the inputs.'));
     } finally {
       setChecking(false);
     }

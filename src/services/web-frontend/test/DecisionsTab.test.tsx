@@ -161,7 +161,7 @@ describe('DecisionsTab (audit defense §5.3)', () => {
     await userEvent.type(screen.getByLabelText('Rationale'), 'Pre-revenue.');
     await userEvent.click(screen.getByRole('button', { name: 'Record decision' }));
 
-    expect(await screen.findByText('Could not record the decision.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not record the decision\./)).toBeInTheDocument();
   });
 
   /** A log that will not load replaces the tab, because there is nothing to show. */

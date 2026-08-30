@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, ApiError, ifMatch } from '../../lib/api';
+import { api, ApiError, ifMatch, describeActionFailure } from '../../lib/api';
 import { paramsVersionKey, useRowVersion } from '../../lib/rowVersion';
 import type { EngineInputs, ShareClassInput } from '../../lib/pipeline';
 import {
@@ -336,7 +336,7 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
             'Someone else changed this financial model while you were editing. It has been reloaded — please reapply your changes.',
         );
       } else {
-        setError(err instanceof ApiError ? err.message : 'Could not save the financial model.');
+        setError(describeActionFailure(err, 'Could not save the financial model.'));
       }
     } finally {
       setBusy(false);

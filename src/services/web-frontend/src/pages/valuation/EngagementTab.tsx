@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import {
@@ -89,7 +89,7 @@ export function EngagementTab() {
       const res = await api<EngagementView>(`/valuations/${valuation.id}/engagement`);
       setView(res);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the engagement.');
+      setError(describeActionFailure(err, 'Could not load the engagement.'));
     }
   }, [valuation.id]);
 
@@ -126,7 +126,7 @@ export function EngagementTab() {
       setTarget('');
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not advance the stage.');
+      setError(describeActionFailure(err, 'Could not advance the stage.'));
     } finally {
       setBusy(false);
     }

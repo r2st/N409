@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatNumber } from '../../lib/format';
 /**
  * `lib/pipeline`'s `formatMoney`, which takes the currency's own units —
@@ -222,7 +222,7 @@ export function Asc718Tab() {
       });
       setSettings(s);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Failed to save settings');
+      setError(describeActionFailure(e, 'Could not save the ASC 718 settings.'));
     }
   }, [id, companyType, ticker, termMethod, settings]);
 
@@ -291,7 +291,7 @@ export function Asc718Tab() {
       const res = await api<Asc718Response>(`/valuations/${id}/asc718`, { method: 'POST', body: payload });
       setResult(res.asc718);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'ASC 718 computation failed');
+      setError(describeActionFailure(e, 'Could not run the ASC 718 computation.'));
     } finally {
       setRunning(false);
     }

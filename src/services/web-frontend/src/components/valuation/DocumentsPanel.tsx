@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
-import { api, apiDownload, apiUpload, ApiError } from '../../lib/api';
+import { api, apiDownload, apiUpload, describeActionFailure, describeRequestFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import {
   DOCUMENT_KIND_LABELS,
@@ -124,7 +124,11 @@ export function DocumentsPanel({
         await apiUpload(`/valuations/${valuationId}/documents`, form);
         uploaded += 1;
       } catch (err) {
-        failures.push(`${file.name} — ${err instanceof ApiError ? err.message : 'upload failed'}`);
+        // The filename is already the subject of the sentence, so the rest of
+        // it is purely why — including for the detail-less bodies, where
+        // `err.message` was the reason phrase and this row read "notes.pdf —
+        // Internal Server Error".
+        failures.push(`${file.name} — ${describeRequestFailure(err)}`);
       }
     }
     setProgress(null);
@@ -151,7 +155,7 @@ export function DocumentsPanel({
       await api(`/valuations/${valuationId}/documents/${doc.id}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not delete the document.');
+      setError(describeActionFailure(err, 'Could not delete the document.'));
     }
   };
 
@@ -173,7 +177,7 @@ export function DocumentsPanel({
       });
       await onReviewed?.();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not update the review mark.');
+      setError(describeActionFailure(err, 'Could not update the review mark.'));
       await load();
     }
   };
@@ -188,7 +192,7 @@ export function DocumentsPanel({
     try {
       await apiDownload(`/valuations/${valuationId}/documents/${doc.id}/download`, doc.filename);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Download failed.');
+      setError(describeActionFailure(err, 'Download failed.'));
     }
   };
 

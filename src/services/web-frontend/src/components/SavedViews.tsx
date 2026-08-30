@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import type { SavedView } from '../lib/types';
@@ -128,7 +128,7 @@ export function SavedViews() {
       setVisibility('private');
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save the view.');
+      setError(describeActionFailure(err, 'Could not save the view.'));
     } finally {
       setBusy(false);
     }
@@ -140,7 +140,7 @@ export function SavedViews() {
       await api(`/saved-views/${view.id}`, { method: 'PATCH', body: patch });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not update the view.');
+      setError(describeActionFailure(err, 'Could not update the view.'));
     }
   };
 

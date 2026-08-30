@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
 import {
@@ -171,7 +171,7 @@ export function AdminRetentionPage() {
         });
         await load();
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Could not save the policy.');
+        setError(describeActionFailure(err, 'Could not save the policy.'));
       }
     });
 
@@ -193,7 +193,7 @@ export function AdminRetentionPage() {
         setHoldForm({ scope: 'valuation', reference_id: '', reason: '' });
         await load();
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Could not place the hold.');
+        setError(describeActionFailure(err, 'Could not place the hold.'));
       }
     });
 
@@ -209,7 +209,7 @@ export function AdminRetentionPage() {
         await api(`/admin/retention/holds/${id}/release`, { method: 'POST' });
         await load();
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Could not release the hold.');
+        setError(describeActionFailure(err, 'Could not release the hold.'));
       }
     });
 
@@ -252,7 +252,7 @@ export function AdminRetentionPage() {
         setNote(`Restored ${referenceId}. It is back in the product and accepts changes again.`);
         await load();
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Could not restore that valuation.');
+        setError(describeActionFailure(err, 'Could not restore that valuation.'));
       }
     });
 
@@ -275,7 +275,7 @@ export function AdminRetentionPage() {
         );
         setRetired({ valuations: r.valuations, total: r.total });
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Could not search withdrawn engagements.');
+        setError(describeActionFailure(err, 'Could not search withdrawn engagements.'));
       }
     });
 
@@ -315,7 +315,7 @@ export function AdminRetentionPage() {
         setRetireForm({ id: '', reason: '' });
         await load();
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Could not retire that valuation.');
+        setError(describeActionFailure(err, 'Could not retire that valuation.'));
       }
     });
 
@@ -331,7 +331,7 @@ export function AdminRetentionPage() {
         setNote(`Sweep complete: ${result.archived} archived, ${result.skipped_hold} held.`);
         await load();
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Could not run the archival sweep.');
+        setError(describeActionFailure(err, 'Could not run the archival sweep.'));
       }
     });
 

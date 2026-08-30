@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { useWorkspace } from './ValuationWorkspace';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
@@ -78,7 +78,7 @@ export function IntakeTab() {
       setData(res);
       setAnswers(res.answers ?? {});
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the questionnaire.');
+      setError(describeActionFailure(err, 'Could not load the questionnaire.'));
     }
   }, [valuation.id]);
 
@@ -117,7 +117,7 @@ export function IntakeTab() {
       setData((d) => (d ? { ...d, completion: res.completion, answers: res.answers } : d));
       return true;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save.');
+      setError(describeActionFailure(err, 'Could not save.'));
       return false;
     } finally {
       setBusy(false);
@@ -131,7 +131,7 @@ export function IntakeTab() {
       await api(`/valuations/${valuation.id}/questionnaire/submit`, { method: 'POST', body: {} });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not submit — check required fields.');
+      setError(describeActionFailure(err, 'Could not submit — check required fields.'));
     } finally {
       setBusy(false);
     }
@@ -147,7 +147,7 @@ export function IntakeTab() {
       });
       setReminderNote(`Reminder sent to ${res.reminded}.`);
     } catch (err) {
-      setReminderNote(err instanceof ApiError ? err.message : 'Could not send reminder.');
+      setReminderNote(describeActionFailure(err, 'Could not send reminder.'));
     } finally {
       setBusy(false);
     }

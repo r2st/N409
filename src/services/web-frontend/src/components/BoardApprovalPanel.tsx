@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { email as emailRule, required, useFormValidation } from '../lib/useFormValidation';
 import { formatDateTime } from '../lib/format';
 import { sanitizeHtml } from '../lib/m2';
@@ -107,9 +107,7 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
       setData(await api<BoardResponse>(`/valuations/${valuation.id}/board`));
       setLoadFailed(null);
     } catch (err) {
-      setLoadFailed(
-        err instanceof ApiError ? err.message : 'Could not load the board approval for this valuation.',
-      );
+      setLoadFailed(describeActionFailure(err, 'Could not load the board approval for this valuation.'));
     }
   }, [valuation.id]);
 
@@ -124,7 +122,7 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
       await api(`/valuations/${valuation.id}/board`, { method: 'POST', body: {} });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not generate the resolution.');
+      setError(describeActionFailure(err, 'Could not generate the resolution.'));
     } finally {
       setBusy(false);
     }
@@ -158,7 +156,7 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
       setLastLink(`${window.location.origin}/board-sign#token=${res.sign_token}`);
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not add the board member.');
+      setError(describeActionFailure(err, 'Could not add the board member.'));
     } finally {
       setBusy(false);
     }
@@ -171,7 +169,7 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
       await api(`/valuations/${valuation.id}/board/members/${id}/send`, { method: 'POST', body: {} });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not send the signing link.');
+      setError(describeActionFailure(err, 'Could not send the signing link.'));
     } finally {
       setBusy(false);
     }
@@ -184,7 +182,7 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
       await api(`/valuations/${valuation.id}/board/members/${id}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not remove the board member.');
+      setError(describeActionFailure(err, 'Could not remove the board member.'));
     } finally {
       setBusy(false);
     }

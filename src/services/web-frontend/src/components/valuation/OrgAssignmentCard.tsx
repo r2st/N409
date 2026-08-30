@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { Button, ErrorNote, Field, PickerOverflowNote, Select, SuccessNote } from '../ui';
 
 interface Organization {
@@ -56,7 +56,7 @@ export function OrgAssignmentCard({ valuationId }: { valuationId: string }) {
       });
       setSaved(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not assign to the organization.');
+      setError(describeActionFailure(err, 'Could not assign to the organization.'));
     } finally {
       setBusy(false);
     }

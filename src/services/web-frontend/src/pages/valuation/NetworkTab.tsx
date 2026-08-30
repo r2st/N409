@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import {
@@ -124,7 +124,7 @@ function ItemDetail({ valuationId, itemId }: { valuationId: string; itemId: stri
         if (!cancelled) setDetail(res.item);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof ApiError ? err.message : 'Could not load the call.');
+        if (!cancelled) setError(describeActionFailure(err, 'Could not load the call.'));
       });
     return () => {
       cancelled = true;
@@ -172,7 +172,7 @@ export function NetworkTab() {
       setError(null);
       setData(await api<NetworkPage>(`/valuations/${valuation.id}/network-items?${params}`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the network log.');
+      setError(describeActionFailure(err, 'Could not load the network log.'));
     }
   }, [valuation.id, service, page]);
 

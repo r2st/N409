@@ -8,7 +8,7 @@ import {
   required,
   useFormValidation,
 } from '../../lib/useFormValidation';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatNumber } from '../../lib/format';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
@@ -186,7 +186,7 @@ function GrantDetailPanel({ valuationId, grant }: { valuationId: string; grant: 
         // An empty catch left the expanded grant spinning forever with nothing
         // said — the reader has no way to tell a slow request from a grant
         // they cannot see.
-        if (live) setError(err instanceof ApiError ? err.message : 'Could not load the grant.');
+        if (live) setError(describeActionFailure(err, 'Could not load the grant.'));
       });
     return () => {
       live = false;
@@ -309,7 +309,7 @@ export function GrantsTab() {
       // render at all; the empty state below defers to the error instead.
       setGrants([]);
       setLoadFailed(true);
-      setError(err instanceof ApiError ? err.message : 'Could not load the grants for this valuation.');
+      setError(describeActionFailure(err, 'Could not load the grants for this valuation.'));
     }
   }, [valuation.id]);
 
@@ -358,7 +358,7 @@ export function GrantsTab() {
       reset();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not issue the grant.');
+      setError(describeActionFailure(err, 'Could not issue the grant.'));
     } finally {
       setBusy(false);
     }
@@ -370,7 +370,7 @@ export function GrantsTab() {
       await api(`/valuations/${valuation.id}/grants/${id}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not cancel the grant.');
+      setError(describeActionFailure(err, 'Could not cancel the grant.'));
     } finally {
       setBusy(false);
     }

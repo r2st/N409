@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { all, integer, numberMin, numberRange, useFormValidation } from '../lib/useFormValidation';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatCents, formatExactPercent } from '../lib/format';
 import type { AxisTable, SensitivityAxis, SensitivityResult } from '../lib/types';
@@ -156,9 +156,7 @@ export function SensitivityPage() {
       setError(
         err instanceof ApiError && err.status === 403
           ? 'Sensitivity analysis is operations-only.'
-          : err instanceof ApiError
-            ? err.message
-            : 'Could not compute the stress table.',
+          : describeActionFailure(err, 'Could not compute the stress table.'),
       );
     } finally {
       setBusy(false);

@@ -326,7 +326,7 @@ describe('ProjectionPanel — failures and the run it reports', () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
     panel();
 
-    expect(await screen.findByText('Could not load the cash-flow projection.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load the cash-flow projection\./)).toBeInTheDocument();
     expect(screen.queryByRole('status')).toBeNull();
   });
 
@@ -373,7 +373,7 @@ describe('ProjectionPanel — failures and the run it reports', () => {
     await user.type(screen.getByLabelText('Revenue growth (%)'), '25');
     await user.click(screen.getByRole('button', { name: 'Project' }));
 
-    expect(await screen.findByText('Could not project the cash flows.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not project the cash flows\./)).toBeInTheDocument();
   });
 
   it('reports a refused adoption', async () => {

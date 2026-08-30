@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { Button, ErrorNote, LoadError, Select, Spinner, useRetry } from '../ui';
 
 type Provider = 'carta' | 'pulley';
@@ -87,7 +87,7 @@ export function CapTableSyncPanel({
       );
       window.location.href = authorize_url;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not start the connection.');
+      setError(describeActionFailure(err, 'Could not start the connection.'));
       setBusy(null);
     }
   };
@@ -108,7 +108,7 @@ export function CapTableSyncPanel({
         setPending({ provider, outcome });
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Sync failed.');
+      setError(describeActionFailure(err, 'Sync failed.'));
     } finally {
       setBusy(null);
     }
@@ -123,7 +123,7 @@ export function CapTableSyncPanel({
       });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not update the sync cadence.');
+      setError(describeActionFailure(err, 'Could not update the sync cadence.'));
     }
   };
 

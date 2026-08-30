@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { moneyFormatter } from '../lib/format';
 import {
@@ -204,7 +204,7 @@ export function DebtInstrumentsPage() {
       setLoadFailed(false);
       if (i.length > 0 && !selected) setSelected(i[0]!.id);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Failed to load instruments');
+      setError(describeActionFailure(e, 'Could not load the debt instruments.'));
       setLoadFailed(true);
     } finally {
       setLoading(false);
@@ -246,7 +246,7 @@ export function DebtInstrumentsPage() {
       await load();
       setSelected(instrument.id);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to create instrument');
+      setError(describeActionFailure(err, 'Could not create the debt instrument.'));
     } finally {
       setCreating(false);
     }
@@ -396,7 +396,7 @@ function InstrumentDetail({
       }
       setParams(p);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Failed to load instrument');
+      setError(describeActionFailure(e, 'Could not load this debt instrument.'));
     }
   }, [instrumentId]);
 
@@ -444,7 +444,7 @@ function InstrumentDetail({
       await load();
       onChanged();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Rename failed');
+      setError(describeActionFailure(e, 'Could not rename the debt instrument.'));
     } finally {
       setBusy(false);
     }
@@ -465,7 +465,7 @@ function InstrumentDetail({
       await api(`/debt/instruments/${instrumentId}`, { method: 'DELETE' });
       onDeleted();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Delete failed');
+      setError(describeActionFailure(e, 'Could not delete the debt instrument.'));
       setDeleting(false);
     }
   };
@@ -498,7 +498,7 @@ function InstrumentDetail({
       setResult(await runValue());
       await load();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Valuation failed');
+      setError(describeActionFailure(e, 'Could not value the debt instrument.'));
     } finally {
       setBusy(false);
     }
@@ -550,7 +550,7 @@ function InstrumentDetail({
       }
       setSensitivity(rows);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Sensitivity failed');
+      setError(describeActionFailure(e, 'Could not run the sensitivity for this instrument.'));
     } finally {
       setBusy(false);
     }
@@ -859,7 +859,7 @@ function CreditTermsCard({
       });
       onSaved();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Failed to save credit terms');
+      setError(describeActionFailure(e, 'Could not save the credit terms.'));
     } finally {
       setSaving(false);
     }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import {
   all,
   integer,
@@ -112,7 +112,7 @@ export function TasksPanel({ valuationId }: { valuationId: string }) {
       reset();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create the task.');
+      setError(describeActionFailure(err, 'Could not create the task.'));
     } finally {
       setBusy(false);
     }
@@ -123,7 +123,7 @@ export function TasksPanel({ valuationId }: { valuationId: string }) {
       await api(`/tasks/${task.id}`, { method: 'PATCH', body: { status } });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not update the task.');
+      setError(describeActionFailure(err, 'Could not update the task.'));
     }
   };
 

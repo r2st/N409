@@ -28,7 +28,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { describeRequestFailure, ApiError, OFFLINE_DETAIL } from '../src/lib/api';
+import { describeActionFailure, describeRequestFailure, ApiError, OFFLINE_DETAIL } from '../src/lib/api';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(HERE, '../src');
@@ -134,31 +134,77 @@ describe('a page that cannot reach the server says so', () => {
   });
 
   /**
-   * The idiom itself is not the bug, which is worth writing down because it
-   * looks like it ought to be.
+   * Round 222 looked at the 191 handlers shaped `err instanceof ApiError ?
+   * err.message : '…'` and decided the shape was fine, because the `else`
+   * branch names the operation. That reasoning was right about the branch it
+   * examined and never looked at the other one.
    *
-   * 191 sites are shaped `err instanceof ApiError ? err.message : '…'`, and the
-   * overwhelming majority fill that branch with the operation that failed —
-   * "Could not create the intake link.", "Could not record the signature." A
-   * fallback that names the action is doing its job: the reader knows what did
-   * not happen, and `err.message` carries the server's own remedy whenever
-   * there was one to carry. Banning the shape would be 191 edits to fix five
-   * strings.
+   * `err.message` is `detail ?? title ?? …`. On a body with no `detail` it is
+   * the RFC 9457 reason phrase — the one string the spec asks to be identical
+   * on every occurrence, and therefore the one guaranteed to say nothing about
+   * this request. Two of this API's own handlers emit exactly that body: the
+   * unhandled-500 arm of `registerProblemHandler`, and `setNotFoundHandler`.
+   * So all 191 sites rendered "Internal Server Error" or "Not Found" on the two
+   * failures a reader is least able to interpret, while the carefully-worded
+   * operation sentence sat unused in the branch that only fires when `fetch`
+   * itself rejects.
    *
-   * What separated the five was that they named *nothing*, and that is what the
-   * assertion above is keyed on. This one records the boundary so a later round
-   * does not mistake the population for the finding.
+   * `describeActionFailure` takes both halves, and round 255 moved every site
+   * onto it. The census below is over the new shape rather than over a ban on
+   * the old one, because what has to keep being true is that each of these
+   * still names its operation.
    */
-  it('leaves the fallbacks that name their operation alone', () => {
+  it('routes every displayed failure through a helper that can read the body', () => {
+    const raw = sources.flatMap(({ rel, text }) =>
+      rel === 'lib/api.ts'
+        ? [] // where the removed idiom is quoted, in prose, to explain itself
+        : [...text.matchAll(/\b(err|e|error)\s+instanceof ApiError \?\s*\1\.message\b/g)].map(() => rel),
+    );
+    expect(raw, 'pages still reading a problem body’s title back to the reader').toEqual([]);
+  });
+
+  it('still names the operation at every one of them', () => {
     const idiom = sources.flatMap(({ text }) => [
-      ...text.matchAll(/instanceof ApiError \? err\.message : '((?:[^\\']|\\.)*)'/g),
+      ...text.matchAll(/describeActionFailure\((?:err|e), '((?:[^\\']|\\.)*)'\)/g),
     ]);
     // The population is large and is expected to stay large.
-    expect(idiom.length).toBeGreaterThan(100);
-    // And every one of them says which operation failed, which is the property
-    // that made them acceptable while the five were not.
-    const empty = idiom.map((m) => m[1]!).filter((literal) => literal.trim().length < 12);
-    expect(empty, 'fallbacks too short to name an operation').toEqual([]);
+    expect(idiom.length).toBeGreaterThan(150);
+    const operations = idiom.map((m) => m[1]!);
+    // Too short to have named anything.
+    expect(
+      operations.filter((o) => o.trim().length < 12),
+      'operations too short to name an operation',
+    ).toEqual([]);
+    /*
+     * And a whole sentence, which the old population was not required to be and
+     * which now matters: the helper concatenates this with a second sentence
+     * about the failure, so a fragment ("upload failed", "Rename failed") runs
+     * into the next one. Five sites were fragments, and the four terse ones —
+     * "Failed to load funds", "Delete failed" — were also the least useful
+     * messages on the tree, which is not a coincidence.
+     */
+    expect(
+      operations.filter((o) => !/[.!?]$/.test(o.trim())),
+      'operations that are a fragment rather than a sentence',
+    ).toEqual([]);
+  });
+
+  /**
+   * A note on why the population jumped by sixteen when it was supposed to be a
+   * one-for-one rewrite.
+   *
+   * The round-222 census pinned `err\.message` with the variable spelled out,
+   * so `catch (e) { setError(e instanceof ApiError ? e.message : '…') }` was
+   * invisible to it. Sixteen sites across the fund, debt-instrument and ASC 718
+   * pages were written that way, and they held the worst strings on the tree —
+   * "Rename failed", "Delete failed", "Valuation failed" — precisely because
+   * nothing had ever looked at them. The assertion above matches any binding.
+   */
+  it('finds the sites whichever way the caught error is spelled', () => {
+    const spellings = sources
+      .flatMap(({ text }) => [...text.matchAll(/describeActionFailure\((\w+),/g)])
+      .map((m) => m[1]!);
+    expect(new Set(spellings)).toEqual(new Set(['err', 'e']));
   });
 });
 
@@ -265,5 +311,48 @@ describe('describeRequestFailure', () => {
     // Says both halves: what failed, and that nothing was half-done.
     expect(OFFLINE_DETAIL).toMatch(/could not reach the server/i);
     expect(OFFLINE_DETAIL).toMatch(/nothing was submitted/i);
+  });
+});
+
+describe('describeActionFailure', () => {
+  const operation = 'Could not remove the board member.';
+
+  it('yields to the server’s own sentence, which is written for the situation', () => {
+    const err = new ApiError(409, {
+      status: 409,
+      title: 'Conflict',
+      detail: 'That member has already signed and cannot be removed.',
+    });
+    expect(describeActionFailure(err, operation)).toBe(
+      'That member has already signed and cannot be removed.',
+    );
+  });
+
+  it('does not show the reason phrase where 191 handlers used to', () => {
+    // The founding case. `err.message` here is the title, and the title is
+    // "Internal Server Error".
+    const err = new ApiError(500, {
+      type: 'urn:n409:problem:internal',
+      title: 'Internal Server Error',
+      status: 500,
+    });
+    const described = describeActionFailure(err, operation);
+    expect(described).not.toContain('Internal Server Error');
+    expect(described).toContain(operation);
+    expect(described).toContain('500');
+  });
+
+  it('keeps the operation on an unroutable request too', () => {
+    const err = new ApiError(404, { type: 'urn:n409:problem:not-found', title: 'Not Found', status: 404 });
+    const described = describeActionFailure(err, operation);
+    expect(described).not.toContain('Not Found');
+    expect(described).toContain(operation);
+  });
+
+  it('says both halves when the request never left', () => {
+    // What the old `else` branch answered with the operation alone. The reader
+    // needed the operation *and* the reason it is worth retrying unchanged.
+    const described = describeActionFailure(new TypeError('Failed to fetch'), operation);
+    expect(described).toBe(`${operation} ${OFFLINE_DETAIL}`);
   });
 });

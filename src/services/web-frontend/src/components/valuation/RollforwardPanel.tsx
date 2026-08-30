@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatDate, moneyFormatter } from '../../lib/format';
 import {
   Button,
@@ -177,7 +177,7 @@ export function RollforwardPanel({
     try {
       setData(await api<RollforwardResponse>(`/valuations/${valuationId}/rollforward`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the roll-forward.');
+      setError(describeActionFailure(err, 'Could not load the roll-forward.'));
     }
   }, [valuationId]);
 
@@ -210,7 +210,7 @@ export function RollforwardPanel({
       await work();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : failure);
+      setError(describeActionFailure(err, failure));
     } finally {
       setBusy(false);
     }

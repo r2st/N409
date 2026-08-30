@@ -208,6 +208,34 @@ function describeDetaillessFailure(status: number): string {
 }
 
 /**
+ * The same, for a call site that already knows which operation it was doing.
+ *
+ * 193 handlers were written as `err instanceof ApiError ? err.message : '…'`,
+ * and round 222 looked at that shape and decided it was fine, because the
+ * `else` branch names the operation — "Could not create the intake link." It is
+ * fine, as far as it goes. What it misses is the *other* branch: `err.message`
+ * is `detail ?? title`, so every one of those 193 handlers renders the RFC 9457
+ * reason phrase whenever the body has no detail. On this API that is not a rare
+ * edge — it is every unhandled 500 and every unrouted 404, the two failures a
+ * reader is least equipped to interpret, and what all 193 showed them was
+ * "Internal Server Error" or "Not Found".
+ *
+ * Round 247 built `describeRequestFailure` for that, and wired it into the
+ * eleven signed-out pages. It could not be dropped into the other 193 as-is,
+ * because it does not know the operation and those pages do: replacing "Could
+ * not remove the board member." with a paragraph about status codes loses the
+ * only half of the message the reader could have acted on.
+ *
+ * So this takes both. The server's own `detail` still wins outright — it is
+ * written for the situation and usually carries the remedy. Failing that, the
+ * reader gets what did not happen *and* why, in that order.
+ */
+export function describeActionFailure(err: unknown, operation: string): string {
+  if (err instanceof ApiError && err.problem.detail) return err.message;
+  return `${operation} ${describeRequestFailure(err)}`;
+}
+
+/**
  * `If-Match` headers for a write guarded by an optimistic-lock version.
  *
  * Returns nothing when the version is absent so the call site can spread this

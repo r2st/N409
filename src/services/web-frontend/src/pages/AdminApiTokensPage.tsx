@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
 import { formatDate, formatDateTime } from '../lib/format';
@@ -107,7 +107,7 @@ export function AdminApiTokensPage() {
       await api(`/api-tokens/${token.id}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not revoke the token.');
+      setError(describeActionFailure(err, 'Could not revoke the token.'));
     } finally {
       setBusy(false);
     }

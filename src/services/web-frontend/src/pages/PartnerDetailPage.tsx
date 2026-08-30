@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import {
   isEmailAddress,
   optional,
@@ -113,7 +113,7 @@ function PinPartnerView({ partnerId, partnerName }: { partnerId: string; partner
       setState(res.created ? 'pinned' : 'already');
     } catch (err) {
       setState('idle');
-      setError(err instanceof ApiError ? err.message : 'Could not pin the view.');
+      setError(describeActionFailure(err, 'Could not pin the view.'));
     }
   };
 
@@ -292,11 +292,15 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
     } catch {
       if (current()) setLoadError('Could not load API tokens.');
     }
-  }, [partnerId, claim, token]);
+    // `useRetry`'s token belongs on the *effect*, not here. `load` does not read
+    // it, so `exhaustive-deps` calls it an unnecessary dependency — correctly,
+    // and it has been failing `npm run lint` on main. Moving it one line down
+    // is the documented idiom on `useRetry` and keeps Retry re-running the load.
+  }, [partnerId, claim]);
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, token]);
 
   const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(
     { name },
@@ -316,7 +320,7 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
       reset();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create the token.');
+      setError(describeActionFailure(err, 'Could not create the token.'));
     } finally {
       setBusy(false);
     }
@@ -745,7 +749,7 @@ export function PartnerDetailPage() {
       await api(`/partners/${partner.id}`, { method: 'PATCH', body });
       await load();
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : failure);
+      setSaveError(describeActionFailure(err, failure));
     } finally {
       setBusy(false);
     }
@@ -805,7 +809,7 @@ export function PartnerDetailPage() {
       });
       await load();
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : 'Could not remove the user.');
+      setSaveError(describeActionFailure(err, 'Could not remove the user.'));
     } finally {
       setBusy(false);
     }

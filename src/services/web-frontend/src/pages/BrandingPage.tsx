@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { useBrandingRefresh, type Branding } from '../lib/branding';
 import {
   Button,
@@ -199,7 +199,7 @@ export function BrandingPage() {
       // Repaint the app in the firm's colours straight away.
       await refreshBranding().catch(() => {});
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save branding.');
+      setError(describeActionFailure(err, 'Could not save branding.'));
     } finally {
       setBusy(false);
     }

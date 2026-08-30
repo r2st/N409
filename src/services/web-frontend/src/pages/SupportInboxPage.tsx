@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
 import { formatDateTime } from '../lib/format';
@@ -141,7 +141,7 @@ function SupportQueue() {
       await api(`/support/messages/${id}`, { method: 'PATCH', body: { status } });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not update the message.');
+      setError(describeActionFailure(err, 'Could not update the message.'));
     } finally {
       setBusyId(null);
     }
@@ -299,7 +299,7 @@ function ContactQueue() {
       await api(`/contact/submissions/${id}`, { method: 'PATCH', body: { status } });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not update the submission.');
+      setError(describeActionFailure(err, 'Could not update the submission.'));
     } finally {
       setBusyId(null);
     }

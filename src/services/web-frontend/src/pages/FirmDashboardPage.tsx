@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { formatDate } from '../lib/format';
 import {
   Button,
@@ -201,7 +201,7 @@ export function FirmDashboardPage() {
         // Not `setClients([])`: the table's empty text is "No clients yet", so a
         // firm whose book failed to load was told it has no book.
         if (!current()) return;
-        setClientsError(err instanceof ApiError ? err.message : 'Could not load the client list.');
+        setClientsError(describeActionFailure(err, 'Could not load the client list.'));
       }
     },
     [partnerId, claimClients],
@@ -239,7 +239,7 @@ export function FirmDashboardPage() {
     } catch (err) {
       // Not `setFullQueue([])`: the table's empty text is "Nothing needs
       // chasing", which is the opposite of what a failed load knows.
-      setQueueError(err instanceof ApiError ? err.message : 'Could not load the full attention queue.');
+      setQueueError(describeActionFailure(err, 'Could not load the full attention queue.'));
     } finally {
       setQueueBusy(false);
     }

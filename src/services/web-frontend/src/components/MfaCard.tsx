@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { useAuth } from '../lib/auth';
 import { Button, ErrorNote, Field, Spinner, TextInput } from './ui';
@@ -112,7 +112,7 @@ export function MfaCard() {
     try {
       setSetup(await api<SetupResponse>('/account/mfa/setup', { method: 'POST' }));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not start setup.');
+      setError(describeActionFailure(err, 'Could not start setup.'));
     } finally {
       setBusy(false);
     }
@@ -133,7 +133,7 @@ export function MfaCard() {
       if (user) setUser({ ...user, totp_enabled: true });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'That code was not accepted.');
+      setError(describeActionFailure(err, 'That code was not accepted.'));
     } finally {
       setBusy(false);
     }
@@ -150,7 +150,7 @@ export function MfaCard() {
       if (user) setUser({ ...user, totp_enabled: false });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not disable two-factor.');
+      setError(describeActionFailure(err, 'Could not disable two-factor.'));
     } finally {
       setBusy(false);
     }
@@ -175,7 +175,7 @@ export function MfaCard() {
       passwordForm.reset();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not regenerate backup codes.');
+      setError(describeActionFailure(err, 'Could not regenerate backup codes.'));
     } finally {
       setBusy(false);
     }

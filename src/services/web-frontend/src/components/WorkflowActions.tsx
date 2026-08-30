@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { displayName, STATE_LABELS } from '../lib/format';
 import type { UserOption, Valuation, ValuationState } from '../lib/types';
 import { Button, ErrorNote, Field, PickerOverflowNote, Select } from './ui';
@@ -65,7 +65,7 @@ export function WorkflowActions({
       await api(`/valuations/${valuation.id}/workflow/${path}`, { method: 'POST', body });
       await onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Workflow action failed.');
+      setError(describeActionFailure(err, 'Workflow action failed.'));
     } finally {
       setBusy(false);
     }

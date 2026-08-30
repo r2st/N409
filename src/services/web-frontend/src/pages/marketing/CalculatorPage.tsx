@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { optional, useFormValidation, type Rules } from '../../lib/useFormValidation';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
@@ -252,7 +252,9 @@ export function CalculatorPage() {
         .catch((err: unknown) => {
           if (ticket !== seq.current) return;
           setData(null);
-          setError(err instanceof ApiError ? err.problem.detail || err.message : 'Could not estimate.');
+          // `detail || message` already preferred the server's sentence; what it
+          // fell through to on a detail-less body was the reason phrase.
+          setError(describeActionFailure(err, 'Could not estimate.'));
         });
     }, 250);
     return () => clearTimeout(timer);

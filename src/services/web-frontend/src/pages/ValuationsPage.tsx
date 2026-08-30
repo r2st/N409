@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { api, apiDownload, ApiError } from '../lib/api';
+import { api, apiDownload, describeActionFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { displayName, formatDate, KIND_LABELS, SOURCE_LABELS, STATE_LABELS } from '../lib/format';
@@ -358,7 +358,7 @@ export function ValuationsPage() {
       reload();
       loadCounts();
     } catch (err) {
-      setBulkNote(err instanceof ApiError ? err.message : 'Bulk action failed.');
+      setBulkNote(describeActionFailure(err, 'Bulk action failed.'));
     } finally {
       setBulkBusy(false);
     }

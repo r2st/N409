@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { Button, EmptyState, ErrorNote, LoadError, Spinner, WriteGate, useRetry } from '../../components/ui';
@@ -56,7 +56,7 @@ export function MonitoringTab() {
     try {
       setData(await api<MonitorResponse>(`/valuations/${valuation.id}/monitor`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load monitoring.');
+      setError(describeActionFailure(err, 'Could not load monitoring.'));
     }
   }, [valuation.id]);
 
@@ -71,7 +71,7 @@ export function MonitoringTab() {
       await fn();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Action failed.');
+      setError(describeActionFailure(err, 'Action failed.'));
     } finally {
       setBusy(false);
     }
@@ -87,7 +87,7 @@ export function MonitoringTab() {
       );
       navigate(`/valuations/${res.valuation.id}`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not start a new valuation.');
+      setError(describeActionFailure(err, 'Could not start a new valuation.'));
       setBusy(false);
     }
   };

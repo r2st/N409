@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, ApiError, describeActionFailure } from '../../lib/api';
 import { formatPerShare } from '../../lib/format';
 import { Button, ErrorNote } from '../ui';
 import { Heatmap, type HeatCell } from '../charts';
@@ -97,9 +97,7 @@ export function ModelSensitivityPanel({ valuationId }: { valuationId: string }) 
       setError(
         err instanceof ApiError && err.status === 403
           ? 'Model sensitivity is operations-only.'
-          : err instanceof ApiError
-            ? err.message
-            : 'Could not run the model sensitivity.',
+          : describeActionFailure(err, 'Could not run the model sensitivity.'),
       );
     } finally {
       setBusy(false);

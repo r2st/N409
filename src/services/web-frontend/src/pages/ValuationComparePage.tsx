@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api, apiDownload, ApiError } from '../lib/api';
+import { api, apiDownload, describeActionFailure } from '../lib/api';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner } from '../components/ui';
 import { HelpIcon } from '../components/HelpIcon';
 import { KIND_LABELS, formatDate } from '../lib/format';
@@ -200,7 +200,7 @@ export function ValuationComparePage() {
         'comparison.csv',
       );
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not export the comparison.');
+      setError(describeActionFailure(err, 'Could not export the comparison.'));
     } finally {
       setExporting(false);
     }
@@ -213,7 +213,7 @@ export function ValuationComparePage() {
       // valuations before there is anything to compare" is a claim about the
       // account, and the account is not what failed.
       .catch((err: unknown) =>
-        setOptionsError(err instanceof ApiError ? err.message : 'Could not load the valuations to compare.'),
+        setOptionsError(describeActionFailure(err, 'Could not load the valuations to compare.')),
       );
   }, []);
 
@@ -250,7 +250,7 @@ export function ValuationComparePage() {
       .catch((err: unknown) => {
         if (!current()) return;
         setComparison(null);
-        setError(err instanceof ApiError ? err.message : 'Could not compare these valuations.');
+        setError(describeActionFailure(err, 'Could not compare these valuations.'));
       })
       .finally(() => current() && setLoading(false));
   }, [a, b, claim]);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import {
@@ -93,7 +93,7 @@ export function HealthTab() {
     try {
       setData(await api<HealthResponse>(`/valuations/${valuation.id}/health-checks`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load health checks.');
+      setError(describeActionFailure(err, 'Could not load health checks.'));
     }
   }, [valuation.id]);
 
@@ -108,7 +108,7 @@ export function HealthTab() {
       await api(`/valuations/${valuation.id}/health-checks`, { method: 'POST' });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Health checks run failed.');
+      setError(describeActionFailure(err, 'Health checks run failed.'));
     } finally {
       setRunning(false);
     }

@@ -716,7 +716,7 @@ describe('GrantsTab', () => {
       await ready();
       await user.click(within(grantCard('Dana Reed')).getByRole('button', { name: 'Detail' }));
 
-      expect(await screen.findByText('Could not load the grant.')).toBeInTheDocument();
+      expect(await screen.findByText(/Could not load the grant\./)).toBeInTheDocument();
     });
   });
 });

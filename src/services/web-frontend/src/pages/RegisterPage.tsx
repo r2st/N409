@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { AuthShell } from '../components/AuthShell';
 import type { PublicSystemSettings } from '../lib/types';
@@ -95,7 +95,7 @@ export function RegisterPage() {
       });
     } catch (err) {
       setDestination('/dashboard');
-      setError(err instanceof ApiError ? err.message : 'Unable to register — please try again.');
+      setError(describeActionFailure(err, 'Unable to register — please try again.'));
     } finally {
       setBusy(false);
     }

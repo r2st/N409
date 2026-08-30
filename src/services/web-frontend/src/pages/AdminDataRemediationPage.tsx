@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { formatDateTime, formatNumber } from '../lib/format';
 import { Button, EmptyState, LoadError, Spinner, StatCard, useRetry } from '../components/ui';
 
@@ -146,7 +146,7 @@ export function AdminDataRemediationPage() {
       setSelected(new Set());
       await load();
     } catch (err) {
-      setNote(err instanceof ApiError ? err.message : 'The re-run failed.');
+      setNote(describeActionFailure(err, 'The re-run failed.'));
     } finally {
       setBusy(false);
     }

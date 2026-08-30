@@ -100,10 +100,17 @@ describe('WorkbookTab — edges', () => {
   describe('when the server will not answer', () => {
     it("repeats the API's own words instead of the grid", async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-        new Response(JSON.stringify({ title: 'This valuation is not yours to read' }), {
-          status: 403,
-          headers: { 'content-type': 'application/problem+json' },
-        }),
+        new Response(
+          JSON.stringify({
+            title: 'Forbidden',
+            status: 403,
+            detail: 'This valuation is not yours to read',
+          }),
+          {
+            status: 403,
+            headers: { 'content-type': 'application/problem+json' },
+          },
+        ),
       );
       renderTab();
 
@@ -114,7 +121,7 @@ describe('WorkbookTab — edges', () => {
     it('falls back to its own words when the failure carries none', async () => {
       vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
       renderTab();
-      expect(await screen.findByText('Could not load the workbook.')).toBeInTheDocument();
+      expect(await screen.findByText(/Could not load the workbook\./)).toBeInTheDocument();
     });
 
     /**
@@ -132,7 +139,7 @@ describe('WorkbookTab — edges', () => {
       await userEvent.type(await screen.findByLabelText('Revenue fy_current'), '1000');
       await userEvent.click(screen.getByRole('button', { name: 'Save workbook' }));
 
-      expect(await screen.findByText('Could not save the workbook.')).toBeInTheDocument();
+      expect(await screen.findByText(/Could not save the workbook\./)).toBeInTheDocument();
       expect(screen.getByLabelText('Revenue fy_current')).toHaveValue('1000');
       expect(screen.getByText(/1 unsaved cell/)).toBeInTheDocument();
     });
@@ -140,7 +147,10 @@ describe('WorkbookTab — edges', () => {
     it('says why the auditor export could not be produced', async () => {
       vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
         String(url).includes('.xlsx')
-          ? jsonResponse({ title: 'The workbook is still being recalculated' }, 409)
+          ? jsonResponse(
+              { title: 'Conflict', status: 409, detail: 'The workbook is still being recalculated' },
+              409,
+            )
           : jsonResponse({ sheets: SHEETS }),
       );
       renderTab();
@@ -164,7 +174,7 @@ describe('WorkbookTab — edges', () => {
 
       await screen.findByText('Revenue');
       await userEvent.click(screen.getByRole('button', { name: /Export auditor workbook/ }));
-      expect(await screen.findByText('Could not export the workbook.')).toBeInTheDocument();
+      expect(await screen.findByText(/Could not export the workbook\./)).toBeInTheDocument();
     });
   });
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, apiDownload, ApiError } from '../../lib/api';
+import { api, apiDownload, describeActionFailure } from '../../lib/api';
 import { formatDateTime, formatNumber, formatPerShare } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import {
@@ -136,7 +136,7 @@ export function SpecialtyTab() {
     try {
       setData(await api<SpecialtyResponse>(`/valuations/${valuation.id}/specialty`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the specialty engine.');
+      setError(describeActionFailure(err, 'Could not load the specialty engine.'));
     }
   }, [valuation.id]);
 
@@ -167,7 +167,7 @@ export function SpecialtyTab() {
       await api(`/valuations/${valuation.id}/specialty`, { method: 'POST', body: { inputs } });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'The engine run failed.');
+      setError(describeActionFailure(err, 'The engine run failed.'));
     } finally {
       setRunning(false);
     }
@@ -178,7 +178,7 @@ export function SpecialtyTab() {
     try {
       await apiDownload(`/valuations/${valuation.id}/hmrc-form`, `hmrc-${valuation.id}.json`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not download the HMRC pack.');
+      setError(describeActionFailure(err, 'Could not download the HMRC pack.'));
     }
   };
 

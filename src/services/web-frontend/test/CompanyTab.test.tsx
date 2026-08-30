@@ -291,7 +291,7 @@ describe('CompanyTab', () => {
     await screen.findByDisplayValue('Acme Robotics, Inc.');
 
     await userEvent.click(screen.getByRole('button', { name: /Save profile/i }));
-    await screen.findByText('Could not save the company profile.');
+    await screen.findByText(/Could not save the company profile\./);
   });
 
   it('offers each revenue band and sends the one chosen', async () => {
@@ -558,7 +558,7 @@ describe('CompanyTab', () => {
       await screen.findByRole('button', { name: 'Draft with AI' });
 
       await userEvent.click(screen.getByRole('button', { name: 'Draft with AI' }));
-      expect(await screen.findByText('Could not draft the company profile.')).toBeInTheDocument();
+      expect(await screen.findByText(/Could not draft the company profile\./)).toBeInTheDocument();
     });
 
     /**

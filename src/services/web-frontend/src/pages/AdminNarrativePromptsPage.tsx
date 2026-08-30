@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { diffLines } from '../lib/diff';
 import { formatDateTime, KIND_LABELS } from '../lib/format';
 import type { ValuationKind } from '../lib/types';
@@ -131,7 +131,7 @@ function SectionCard({
       await onChanged();
       setSaved(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save the section.');
+      setError(describeActionFailure(err, 'Could not save the section.'));
     } finally {
       setSaving(false);
     }
@@ -150,7 +150,7 @@ function SectionCard({
       setEnabled(row.enabled);
       await onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not reset the section.');
+      setError(describeActionFailure(err, 'Could not reset the section.'));
     } finally {
       setSaving(false);
     }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { required, useFormValidation } from '../lib/useFormValidation';
 import { formatDateTime } from '../lib/format';
 import type { Valuation } from '../lib/types';
@@ -78,7 +78,7 @@ export function SignaturePanel({ valuation }: { valuation: Valuation }) {
       reset();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not record the signature.');
+      setError(describeActionFailure(err, 'Could not record the signature.'));
     } finally {
       setBusy(false);
     }
@@ -91,7 +91,7 @@ export function SignaturePanel({ valuation }: { valuation: Valuation }) {
       await api(`/valuations/${valuation.id}/signatures/${role}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not remove the signature.');
+      setError(describeActionFailure(err, 'Could not remove the signature.'));
     } finally {
       setBusy(false);
     }

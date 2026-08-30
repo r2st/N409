@@ -8,7 +8,7 @@ import {
   required,
   useFormValidation,
 } from '../lib/useFormValidation';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
 import {
@@ -303,7 +303,7 @@ function TemplateEditor({
       }
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save the template.');
+      setError(describeActionFailure(err, 'Could not save the template.'));
     } finally {
       setBusy(false);
     }
@@ -542,7 +542,7 @@ function TemplatesTab() {
       await api(`/admin/communication-templates/${t.id}`, { method: 'DELETE' });
       void load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not delete the template.');
+      setError(describeActionFailure(err, 'Could not delete the template.'));
     }
   };
 
@@ -761,7 +761,7 @@ function AutoEmailEditor({
       }
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save the campaign.');
+      setError(describeActionFailure(err, 'Could not save the campaign.'));
     } finally {
       setBusy(false);
     }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, apiDownload, ApiError, ifMatch } from '../lib/api';
+import { api, apiDownload, ApiError, ifMatch, describeActionFailure } from '../lib/api';
 import { required, useFormValidation } from '../lib/useFormValidation';
 import { useAuth } from '../lib/auth';
 import { editableFields, isOps } from '../lib/rbac';
@@ -85,7 +85,7 @@ export function ValuationDetailPage() {
       // would then render "No activity yet." — a wrong answer, on the one panel
       // whose job is to be the record of what happened.
       setEvents(null);
-      setEventsError(err instanceof ApiError ? err.message : 'Could not load the activity timeline.');
+      setEventsError(describeActionFailure(err, 'Could not load the activity timeline.'));
     }
   }, [valuation.id]);
 
@@ -161,7 +161,7 @@ export function ValuationDetailPage() {
             'Someone else changed this valuation while you were editing. It has been reloaded — please reapply your changes.',
         );
       } else {
-        setSaveError(err instanceof ApiError ? err.message : 'Could not save changes.');
+        setSaveError(describeActionFailure(err, 'Could not save changes.'));
       }
     } finally {
       setBusy(false);
@@ -178,7 +178,7 @@ export function ValuationDetailPage() {
       });
       navigate(`/valuations/${res.valuation.id}`);
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : 'Could not clone the valuation.');
+      setSaveError(describeActionFailure(err, 'Could not clone the valuation.'));
     } finally {
       setCloning(false);
     }
@@ -194,7 +194,7 @@ export function ValuationDetailPage() {
         { method: 'POST' },
       );
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : 'Could not export the evidence bundle.');
+      setSaveError(describeActionFailure(err, 'Could not export the evidence bundle.'));
     } finally {
       setExporting(false);
     }

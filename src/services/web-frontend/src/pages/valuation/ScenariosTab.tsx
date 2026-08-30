@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatMoney } from '../../lib/pipeline';
 import { formatDateTime, formatPerShare } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
@@ -189,7 +189,7 @@ export function ScenariosTab() {
           setDefaults(k);
         }
       } catch (err) {
-        setBootError(err instanceof ApiError ? err.message : 'Could not load the scenario sandbox.');
+        setBootError(describeActionFailure(err, 'Could not load the scenario sandbox.'));
       }
     })();
     void loadSaved();
@@ -212,7 +212,7 @@ export function ScenariosTab() {
       setSaveName('');
       await loadSaved();
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : 'Could not save the scenario.');
+      setSaveError(describeActionFailure(err, 'Could not save the scenario.'));
     } finally {
       setSaveBusy(false);
     }
@@ -223,7 +223,7 @@ export function ScenariosTab() {
       await api(`/valuations/${valuation.id}/scenarios/${scenarioId}`, { method: 'DELETE' });
       await loadSaved();
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : 'Could not delete the scenario.');
+      setSaveError(describeActionFailure(err, 'Could not delete the scenario.'));
     }
   };
 
@@ -241,7 +241,7 @@ export function ScenariosTab() {
         })
         .catch((err) => {
           if (seq === requestSeq.current) {
-            setPreviewError(err instanceof ApiError ? err.message : 'Preview failed.');
+            setPreviewError(describeActionFailure(err, 'Preview failed.'));
           }
         })
         .finally(() => {

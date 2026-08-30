@@ -207,7 +207,7 @@ describe('BotPromptsPage — version history', () => {
     await screen.findByText('v1');
 
     await user.click(screen.getByRole('button', { name: 'Revert' }));
-    expect(await screen.findByText('Could not revert the prompt.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not revert the prompt\./)).toBeInTheDocument();
   });
 
   it('reports a history that will not load instead of spinning', async () => {
@@ -266,7 +266,7 @@ describe('BotPromptsPage — editing failures and the empty registry', () => {
 
     await user.type(await screen.findByRole('textbox', { name: 'System prompt' }), '!');
     await user.click(screen.getByRole('button', { name: 'Save changes' }));
-    expect(await screen.findByText('Could not save the prompt.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save the prompt\./)).toBeInTheDocument();
   });
 
   it('confirms a successful save and settles back to a clean form', async () => {
@@ -355,7 +355,7 @@ describe('BotPromptsPage — editing failures and the empty registry', () => {
     await user.click(await screen.findByText('Test this prompt'));
     await user.type(screen.getByPlaceholderText(/Company: Acme/), 'Acme');
     await user.click(screen.getByRole('button', { name: 'Run test' }));
-    expect(await screen.findByText('The test run failed.')).toBeInTheDocument();
+    expect(await screen.findByText(/The test run failed\./)).toBeInTheDocument();
   });
 
   it('will not dry-run an unsaved edit, because the run uses the saved prompt', async () => {

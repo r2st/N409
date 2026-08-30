@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { Button, ErrorNote, LoadError, Select, Spinner, SuccessNote, useRetry } from '../ui';
 
 type Provider = 'rippling' | 'gusto' | 'deel';
@@ -68,7 +68,7 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
       );
       window.location.href = authorize_url;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not start the connection.');
+      setError(describeActionFailure(err, 'Could not start the connection.'));
       setBusy(null);
     }
   };
@@ -88,7 +88,7 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
       onImported();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Sync failed.');
+      setError(describeActionFailure(err, 'Sync failed.'));
     } finally {
       setBusy(null);
     }
@@ -102,7 +102,7 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
       });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not update the cadence.');
+      setError(describeActionFailure(err, 'Could not update the cadence.'));
     }
   };
 
@@ -118,7 +118,7 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
       // rejection went nowhere, the row stayed connected, and the analyst was
       // left to conclude the button does nothing. A revoked token is the usual
       // cause and the message says so.
-      setError(err instanceof ApiError ? err.message : 'Could not disconnect the provider.');
+      setError(describeActionFailure(err, 'Could not disconnect the provider.'));
     } finally {
       setBusy(null);
     }

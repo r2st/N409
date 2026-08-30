@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { Button, ErrorNote, Select, Spinner, WriteGate } from '../../components/ui';
 import type { TagCatalogueCategory, ValuationTag } from '../../lib/tags';
 
@@ -69,7 +69,7 @@ export function TagsPanel({
     } catch (err) {
       // Surfaced, not swallowed: an empty tag list and a tag list that failed
       // to load render identically, and only one of them means "untagged".
-      setLoadError(err instanceof ApiError ? err.message : 'Could not load the engagement tags.');
+      setLoadError(describeActionFailure(err, 'Could not load the engagement tags.'));
     }
   }, [valuationId]);
 
@@ -84,7 +84,7 @@ export function TagsPanel({
       await run();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not update the tag.');
+      setError(describeActionFailure(err, 'Could not update the tag.'));
     } finally {
       setBusy(null);
     }
@@ -143,7 +143,7 @@ export function TagsPanel({
             : ''),
       );
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not suggest tags.');
+      setError(describeActionFailure(err, 'Could not suggest tags.'));
     } finally {
       setPhase(null);
     }

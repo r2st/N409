@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import type { OptionalCapability } from '../lib/types';
 import { LoadError, LoadingBlock, Skeleton, useRetry } from './ui';
 
@@ -37,9 +37,7 @@ export function CapabilityRoster() {
   useEffect(() => {
     api<{ capabilities: OptionalCapability[] }>('/admin/capabilities')
       .then((d) => setRows(d.capabilities))
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Could not load the integration status.'),
-      );
+      .catch((err) => setError(describeActionFailure(err, 'Could not load the integration status.')));
   }, [token]);
 
   // The error wins over the skeleton. A panel that spins forever after a failed

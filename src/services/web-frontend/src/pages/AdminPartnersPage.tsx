@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { formatDate } from '../lib/format';
 import type { Partner } from '../lib/types';
@@ -71,7 +71,7 @@ export function AdminPartnersPage() {
       reset();
       await load();
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : 'Could not create the partner.');
+      setFormError(describeActionFailure(err, 'Could not create the partner.'));
     } finally {
       setBusy(false);
     }
@@ -85,7 +85,7 @@ export function AdminPartnersPage() {
       setRenamingId(null);
       await load();
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : failure);
+      setFormError(describeActionFailure(err, failure));
     } finally {
       setBusy(false);
     }

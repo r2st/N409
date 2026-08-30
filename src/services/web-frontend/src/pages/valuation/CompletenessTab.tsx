@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { useWorkspace } from './ValuationWorkspace';
 import {
   Button,
@@ -95,7 +95,7 @@ export function CompletenessTab() {
       setData(res.completeness);
       setError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load completeness.');
+      setError(describeActionFailure(err, 'Could not load completeness.'));
     }
   }, [valuation.id]);
 

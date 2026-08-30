@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { all, integer, numberMin, optional, required, useFormValidation } from '../lib/useFormValidation';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { formatDate, formatCents, formatNumber } from '../lib/format';
 import { TRANSACTION_KINDS } from '../lib/types';
 import type { FundingRound, ValuationTransaction } from '../lib/types';
@@ -84,7 +84,7 @@ export function FundingHistory({
       await fn();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save.');
+      setError(describeActionFailure(err, 'Could not save.'));
     } finally {
       setBusy(false);
     }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import type { CalculationDetail, CalculationStep } from '../../lib/pipeline';
 import { LoadError, Spinner, useRetry } from '../ui';
@@ -109,7 +109,7 @@ export function CalculationInspector({
         if (!cancelled) setDetail(res);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof ApiError ? err.message : 'Could not load the run.');
+        if (!cancelled) setError(describeActionFailure(err, 'Could not load the run.'));
       });
     return () => {
       cancelled = true;

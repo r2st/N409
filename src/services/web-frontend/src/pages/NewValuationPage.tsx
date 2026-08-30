@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { HelpIcon } from '../components/HelpIcon';
 import { KIND_LABELS } from '../lib/format';
@@ -68,7 +68,7 @@ export function NewValuationPage() {
       localStorage.removeItem(COMPANY_HINT_KEY);
       navigate(`/valuations/${res.valuation.id}`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create the valuation.');
+      setError(describeActionFailure(err, 'Could not create the valuation.'));
       setBusy(false);
     }
   });

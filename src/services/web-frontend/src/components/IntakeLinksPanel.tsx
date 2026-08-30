@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { formatDate, KIND_LABELS } from '../lib/format';
 import { VALUATION_KINDS, type ValuationKind } from '../lib/types';
 import {
@@ -187,7 +187,7 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
       setClientEmail('');
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create the intake link.');
+      setError(describeActionFailure(err, 'Could not create the intake link.'));
     } finally {
       setBusy(false);
     }
@@ -255,7 +255,7 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
     } catch (err) {
       // Kept inside the modal: the panel-level note renders behind it, so a
       // failure shown there is a button that silently did nothing.
-      setConvertError(err instanceof ApiError ? err.message : 'Could not convert that intake.');
+      setConvertError(describeActionFailure(err, 'Could not convert that intake.'));
     } finally {
       setBusy(false);
     }

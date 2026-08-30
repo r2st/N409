@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, apiDownload, ApiError, ifMatch } from '../../lib/api';
+import { api, apiDownload, ApiError, ifMatch, describeActionFailure } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import {
@@ -154,7 +154,7 @@ export function ReportTab() {
       if (err instanceof ApiError && err.status === 404) {
         setReport(null); // no report shared with this role yet
       } else {
-        setError(err instanceof ApiError ? err.message : 'Could not load the report.');
+        setError(describeActionFailure(err, 'Could not load the report.'));
       }
     } finally {
       setLoaded(true);
@@ -181,6 +181,20 @@ export function ReportTab() {
     );
   }
 
+  /*
+   * `label` doubles as the busy key for the button that is spinning, so it is a
+   * bare verb — and interpolating it produced "Could not download." on a tab
+   * where three different things can be downloaded. The object of the sentence
+   * is the half the reader needs.
+   */
+  const FAILED: Record<string, string> = {
+    save: 'Could not save the report.',
+    render: 'Could not render the report PDF.',
+    draft: 'Could not draft the report.',
+    download: 'Could not download the report PDF.',
+    restore: 'Could not restore that version of the report.',
+  };
+
   const run = async (label: string, fn: () => Promise<void>) => {
     setBusy(label);
     setError(null);
@@ -188,7 +202,7 @@ export function ReportTab() {
     try {
       await fn();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : `Could not ${label}.`);
+      setError(describeActionFailure(err, FAILED[label] ?? `Could not ${label}.`));
     } finally {
       setBusy(null);
     }

@@ -271,7 +271,7 @@ describe('FundPortfolioPage', () => {
   it('falls back to a plain message when the fund list fails without a problem body', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
     renderPage();
-    expect(await screen.findByText('Failed to load funds')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load the fund list\./)).toBeInTheDocument();
   });
 
   it('switches funds, and remounts the detail so nothing carries over', async () => {

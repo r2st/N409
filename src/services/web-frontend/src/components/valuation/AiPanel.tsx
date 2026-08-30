@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { AI_PIPELINE_META, AI_PIPELINES, type AiJob, type AiPipeline } from '../../lib/pipeline';
 import { Button, EmptyState, ErrorNote, ListTruncationNote, Spinner } from '../ui';
@@ -158,7 +158,7 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
       await api(`/valuations/${valuationId}/ai/${pipeline}`, { method: 'POST' });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'The AI pipeline failed.');
+      setError(describeActionFailure(err, 'The AI pipeline failed.'));
       await load(); // failed runs are recorded too
     } finally {
       setRunning(null);
@@ -172,7 +172,7 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
       await api(`/valuations/${valuationId}/ai/extract/apply`, { method: 'POST' });
       setAppliedAt(new Date().toISOString());
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not apply the extraction.');
+      setError(describeActionFailure(err, 'Could not apply the extraction.'));
     } finally {
       setApplying(false);
     }

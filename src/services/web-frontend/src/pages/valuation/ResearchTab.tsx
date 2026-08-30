@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { formatDateTime } from '../../lib/format';
@@ -273,7 +273,7 @@ export function ResearchTab() {
     try {
       setData(await api<ResearchResponse>(`/valuations/${valuation.id}/research`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load market research.');
+      setError(describeActionFailure(err, 'Could not load market research.'));
     }
   }, [valuation.id]);
 
@@ -295,7 +295,7 @@ export function ResearchTab() {
       await api(`/valuations/${valuation.id}/research`, { method: 'POST', body });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'The research run failed.');
+      setError(describeActionFailure(err, 'The research run failed.'));
     } finally {
       setRunning(null);
     }
@@ -308,7 +308,7 @@ export function ResearchTab() {
       await api(`/valuations/${valuation.id}/research/refresh-all`, { method: 'POST', body: {} });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'The refresh failed.');
+      setError(describeActionFailure(err, 'The refresh failed.'));
     } finally {
       setRunning(null);
     }

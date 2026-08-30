@@ -9,7 +9,7 @@ import {
   password as passwordRule,
 } from '../lib/useFormValidation';
 import { PASSWORD_HINT } from '../lib/passwordPolicy';
-import { api, ApiError, apiDownload, tokenExpiry } from '../lib/api';
+import { api, apiDownload, tokenExpiry, describeActionFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
@@ -97,7 +97,7 @@ function ProfileCard() {
       setUser(res.user);
       setSaved(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save your profile.');
+      setError(describeActionFailure(err, 'Could not save your profile.'));
     } finally {
       setBusy(false);
     }
@@ -186,7 +186,7 @@ function ChangeEmailCard() {
       setPassword('');
       setSaved(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not change your email.');
+      setError(describeActionFailure(err, 'Could not change your email.'));
     } finally {
       setBusy(false);
     }
@@ -296,7 +296,7 @@ function ChangePasswordCard() {
       // on a form the user has finished with.
       reset();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not change the password.');
+      setError(describeActionFailure(err, 'Could not change the password.'));
     } finally {
       setBusy(false);
     }
@@ -403,7 +403,7 @@ function NotificationPreferencesCard() {
       });
     } catch (err) {
       setPrefs(prefs); // roll the optimistic flip back
-      setError(err instanceof ApiError ? err.message : 'Could not save the preference.');
+      setError(describeActionFailure(err, 'Could not save the preference.'));
     } finally {
       setSaving(false);
     }
@@ -531,7 +531,7 @@ function ApiTokensCard() {
       reset();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create the token.');
+      setError(describeActionFailure(err, 'Could not create the token.'));
     } finally {
       setBusy(false);
     }
@@ -544,7 +544,7 @@ function ApiTokensCard() {
       await api(`/me/tokens/${token.id}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not revoke the token.');
+      setError(describeActionFailure(err, 'Could not revoke the token.'));
     }
   };
 
@@ -665,7 +665,7 @@ function SessionCard() {
       replaceToken(res.token);
       setDone(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not sign out other sessions.');
+      setError(describeActionFailure(err, 'Could not sign out other sessions.'));
     } finally {
       setBusy(false);
     }
@@ -729,7 +729,7 @@ function DataExportCard() {
     try {
       await apiDownload('/me/data-export', 'n409-data-export.json');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not build your export.');
+      setError(describeActionFailure(err, 'Could not build your export.'));
     } finally {
       setBusy(false);
     }
@@ -780,7 +780,7 @@ function CloseAccountCard() {
       logout();
       navigate('/login');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not close your account.');
+      setError(describeActionFailure(err, 'Could not close your account.'));
       setBusy(false);
     }
   });

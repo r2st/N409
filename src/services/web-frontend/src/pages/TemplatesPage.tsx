@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime, KIND_LABELS } from '../lib/format';
@@ -74,7 +74,7 @@ export function TemplatesPage() {
       await fn();
       await load();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Action failed.');
+      setActionError(describeActionFailure(err, 'Action failed.'));
     } finally {
       setBusy(false);
     }

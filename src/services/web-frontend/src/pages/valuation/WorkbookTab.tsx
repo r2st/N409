@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, apiDownload, ApiError } from '../../lib/api';
+import { api, apiDownload, describeActionFailure } from '../../lib/api';
 import {
   formatWorkbookValue,
   type AnomalySeverity,
@@ -138,7 +138,7 @@ export function WorkbookTab() {
       const { sheets: s, anomalies: a } = await api<WorkbookResponse>(`/valuations/${valuation.id}/workbook`);
       adoptSheets(s, a);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the workbook.');
+      setError(describeActionFailure(err, 'Could not load the workbook.'));
     }
   }, [valuation.id, adoptSheets]);
 
@@ -183,7 +183,7 @@ export function WorkbookTab() {
     try {
       await apiDownload(`/valuations/${valuation.id}/workbook.xlsx`, `workbook-${valuation.number}.xlsx`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not export the workbook.');
+      setError(describeActionFailure(err, 'Could not export the workbook.'));
     } finally {
       setExporting(false);
     }
@@ -235,7 +235,7 @@ export function WorkbookTab() {
       setDrafts(new Map());
       setSavedAt(Date.now());
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save the workbook.');
+      setError(describeActionFailure(err, 'Could not save the workbook.'));
     } finally {
       setBusy(false);
     }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
 import {
@@ -102,7 +102,7 @@ export function AdminSsoPage() {
       setConfig({ ...empty, ...c });
       setSaved(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save SAML config.');
+      setError(describeActionFailure(err, 'Could not save SAML config.'));
     } finally {
       setBusy(false);
     }
@@ -115,7 +115,7 @@ export function AdminSsoPage() {
       setMinted(r.secret);
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create a SCIM token.');
+      setError(describeActionFailure(err, 'Could not create a SCIM token.'));
     }
   };
 
@@ -129,7 +129,7 @@ export function AdminSsoPage() {
       await api(`/admin/sso/scim-tokens/${id}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not revoke the SCIM token.');
+      setError(describeActionFailure(err, 'Could not revoke the SCIM token.'));
     }
   };
 

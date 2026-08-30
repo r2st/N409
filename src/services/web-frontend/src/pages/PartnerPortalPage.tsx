@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { computeStats } from '../lib/stats';
@@ -81,7 +81,7 @@ export function PartnerPortalPage() {
       setName('');
       loadTokens();
     } catch (err) {
-      setTokenError(err instanceof ApiError ? err.message : 'Could not create the token.');
+      setTokenError(describeActionFailure(err, 'Could not create the token.'));
     } finally {
       setBusy(false);
     }

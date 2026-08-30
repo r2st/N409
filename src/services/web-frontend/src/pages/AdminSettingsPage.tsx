@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { email as emailRule, numberRange, optional, useFormValidation } from '../lib/useFormValidation';
 import { formatDateTime } from '../lib/format';
 import type { SystemSettings, SystemSettingsResponse } from '../lib/types';
@@ -83,7 +83,7 @@ export function AdminSettingsPage() {
         setData(d);
         setDraft(d.settings);
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load system settings.'));
+      .catch((err) => setError(describeActionFailure(err, 'Could not load system settings.')));
   }, [token]);
 
   /*
@@ -133,7 +133,7 @@ export function AdminSettingsPage() {
       setDraft(res.settings);
       setSaved(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save system settings.');
+      setError(describeActionFailure(err, 'Could not save system settings.'));
     } finally {
       setBusy(false);
     }

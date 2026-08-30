@@ -508,7 +508,7 @@ describe('ComparablesTab', () => {
   it('falls back to a plain message when the load fails without a problem body', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
     renderTab();
-    expect(await screen.findByText('Could not load the comparable set.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load the comparable set\./)).toBeInTheDocument();
   });
 
   it('falls back to a plain message when a write fails without a problem body', async () => {
@@ -526,7 +526,7 @@ describe('ComparablesTab', () => {
     expect(loaded).toBe(true);
 
     await userEvent.click(screen.getByRole('button', { name: 'Re-screen' }));
-    expect(await screen.findByText('Could not re-screen the comparable set.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not re-screen the comparable set\./)).toBeInTheDocument();
   });
 
   it('states the spread beside the median, and omits it when nothing was retained', async () => {
@@ -718,7 +718,7 @@ describe('ComparablesTab', () => {
       await screen.findByText('Alpha Analytics');
 
       await userEvent.click(screen.getByRole('button', { name: 'Find peers with AI' }));
-      expect(await screen.findByText('Could not run the AI comparable agent.')).toBeInTheDocument();
+      expect(await screen.findByText(/Could not run the AI comparable agent\./)).toBeInTheDocument();
     });
 
     /** Same ops-only gate the endpoints enforce — `can_edit` is `isOps`. */

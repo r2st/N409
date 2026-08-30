@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { Button, ErrorNote, Field, TextInput, inputClass, useDialogDismiss } from './ui';
 
 interface HelpTopic {
@@ -143,7 +143,7 @@ function ContactForm({ onSent }: { onSent: () => void }) {
       });
       onSent();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not send your message.');
+      setError(describeActionFailure(err, 'Could not send your message.'));
     } finally {
       setSending(false);
     }

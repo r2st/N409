@@ -352,7 +352,7 @@ describe('FinancialModelPanel — when the server says no', () => {
     await screen.findByLabelText('Common shares');
     await userEvent.click(screen.getByRole('button', { name: 'Save financial model' }));
 
-    expect(await screen.findByText('Could not save the financial model.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not save the financial model\./)).toBeInTheDocument();
     // The button has to come back — a failed save the analyst cannot retry is
     // a lost model.
     expect(screen.getByRole('button', { name: 'Save financial model' })).toBeEnabled();

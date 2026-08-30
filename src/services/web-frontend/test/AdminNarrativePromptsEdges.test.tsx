@@ -59,10 +59,17 @@ function mockApi(opts: Setup = {}) {
       writes.push({ path, method, body });
       if (opts.writeFails === 'network') throw new TypeError('Failed to fetch');
       if (opts.writeFails === 'problem')
-        return new Response(JSON.stringify({ title: 'guidance must not be empty' }), {
-          status: 422,
-          headers: { 'content-type': 'application/problem+json' },
-        });
+        return new Response(
+          JSON.stringify({
+            title: 'Unprocessable Content',
+            status: 422,
+            detail: 'guidance must not be empty',
+          }),
+          {
+            status: 422,
+            headers: { 'content-type': 'application/problem+json' },
+          },
+        );
       const row = rows.find((r) => path.includes(String(r.id)));
       if (row && body) Object.assign(row, body);
       if (row && path.endsWith('/reset')) row.guidance = row.default_guidance;
@@ -153,7 +160,7 @@ describe('AdminNarrativePromptsPage — refusals and failures', () => {
       fireEvent.change(textareas()[0]!, { target: { value: 'a firmer opening' } });
       await userEvent.click(screen.getAllByRole('button', { name: /save section/i })[0]!);
 
-      expect(await screen.findByText('Could not save the section.')).toBeInTheDocument();
+      expect(await screen.findByText(/Could not save the section\./)).toBeInTheDocument();
     });
 
     /**
@@ -193,7 +200,7 @@ describe('AdminNarrativePromptsPage — refusals and failures', () => {
       await screen.findByText('Discount for Lack of Marketability');
 
       await userEvent.click(screen.getByRole('button', { name: /reset to default/i }));
-      expect(await screen.findByText('Could not reset the section.')).toBeInTheDocument();
+      expect(await screen.findByText(/Could not reset the section\./)).toBeInTheDocument();
     });
 
     it('offers no reset on a section still carrying the text it shipped with', async () => {

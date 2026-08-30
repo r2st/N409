@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { diffLines } from '../lib/diff';
 import { formatDateTime } from '../lib/format';
@@ -141,7 +141,7 @@ function VersionHistory({
       await onReverted(reverted);
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not revert the prompt.');
+      setError(describeActionFailure(err, 'Could not revert the prompt.'));
     } finally {
       setReverting(false);
     }
@@ -253,7 +253,7 @@ function PromptCard({
       await onSaved();
       setSaved(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save the prompt.');
+      setError(describeActionFailure(err, 'Could not save the prompt.'));
     } finally {
       setSaving(false);
     }
@@ -270,7 +270,7 @@ function PromptCard({
       });
       setTestResult(test);
     } catch (err) {
-      setTestError(err instanceof ApiError ? err.message : 'The test run failed.');
+      setTestError(describeActionFailure(err, 'The test run failed.'));
     } finally {
       setTesting(false);
     }

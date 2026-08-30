@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { formatPerShare, moneyFormatter } from '../lib/format';
 import { HelpIcon } from '../components/HelpIcon';
 import {
@@ -198,7 +198,7 @@ export function PortfolioPage() {
       await loadOrgs();
       setSelected(r.organization.id);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create the organization.');
+      setError(describeActionFailure(err, 'Could not create the organization.'));
     } finally {
       setBusy(false);
     }

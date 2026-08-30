@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, apiUpload, ApiError, describeRequestFailure } from '../lib/api';
+import { api, apiUpload, ApiError, describeRequestFailure, describeActionFailure } from '../lib/api';
 import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { formatChargedCents, KIND_LABELS } from '../lib/format';
 import { DOCUMENT_KIND_LABELS, type DocumentKind } from '../lib/pipeline';
@@ -156,7 +156,7 @@ export function OnboardingPage() {
       // creates a duplicate.
       remember({ step: 1, valuation: res.valuation });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create the valuation request.');
+      setError(describeActionFailure(err, 'Could not create the valuation request.'));
     } finally {
       setBusy(false);
     }
@@ -222,7 +222,7 @@ export function OnboardingPage() {
         landed.push(file.name);
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Upload failed.');
+      setError(describeActionFailure(err, 'Upload failed.'));
     } finally {
       if (landed.length > 0) {
         setUploaded((u) => {

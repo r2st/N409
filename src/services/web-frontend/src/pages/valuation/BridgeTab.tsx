@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatDateTime, formatPerShare, moneyFormatter } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { WaterfallChart } from '../../components/charts';
@@ -108,10 +108,7 @@ export function BridgeTab() {
     setError(null);
     api<BridgeResponse>(`/valuations/${valuation.id}/bridge/${compareId}`)
       .then((d) => current() && setData(d))
-      .catch(
-        (err) =>
-          current() && setError(err instanceof ApiError ? err.message : 'Could not build the value bridge.'),
-      )
+      .catch((err) => current() && setError(describeActionFailure(err, 'Could not build the value bridge.')))
       .finally(() => current() && setBusy(false));
   }, [compareId, valuation.id, claim]);
 

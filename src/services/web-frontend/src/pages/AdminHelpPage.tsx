@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { all, numberRange, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { formatDate } from '../lib/format';
 import {
@@ -126,7 +126,7 @@ export function AdminHelpPage() {
       setEditor(null);
       load();
     } catch (err) {
-      setEditorError(err instanceof ApiError ? err.message : 'Could not save the article.');
+      setEditorError(describeActionFailure(err, 'Could not save the article.'));
     } finally {
       setBusy(false);
     }
@@ -140,7 +140,7 @@ export function AdminHelpPage() {
       });
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not update the article.');
+      setError(describeActionFailure(err, 'Could not update the article.'));
     }
   };
 
@@ -150,7 +150,7 @@ export function AdminHelpPage() {
       await api(`/admin/help/articles/${a.id}`, { method: 'DELETE' });
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not delete the article.');
+      setError(describeActionFailure(err, 'Could not delete the article.'));
     }
   };
 

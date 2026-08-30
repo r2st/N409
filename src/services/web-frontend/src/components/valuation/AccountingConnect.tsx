@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api, ApiError, describeRequestFailure } from '../../lib/api';
+import { api, ApiError, describeRequestFailure, describeActionFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { Button, ErrorNote } from '../ui';
 
@@ -95,7 +95,7 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
       setNotice('Financials imported — revenue params were updated from the P&L.');
       void load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Import failed.');
+      setError(describeActionFailure(err, 'Import failed.'));
     } finally {
       setBusy(null);
     }

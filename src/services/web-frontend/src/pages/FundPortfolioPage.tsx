@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import {
   all,
   integer,
@@ -117,7 +117,7 @@ export function FundPortfolioPage() {
       setTruncated(capped);
       if (f.length > 0 && !selected) setSelected(f[0]!.id);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Failed to load funds');
+      setError(describeActionFailure(e, 'Could not load the fund list.'));
     } finally {
       setLoading(false);
     }
@@ -163,7 +163,7 @@ export function FundPortfolioPage() {
       await loadFunds();
       setSelected(fund.id);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to create fund');
+      setError(describeActionFailure(err, 'Could not create the fund.'));
     } finally {
       setCreating(false);
     }
@@ -315,7 +315,7 @@ function FundDetailView({
         setNav(null);
       }
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Failed to load fund');
+      setError(describeActionFailure(e, 'Could not load this fund.'));
     }
   }, [fundId]);
 
@@ -340,7 +340,7 @@ function FundDetailView({
       await load();
       onChanged();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Rename failed');
+      setError(describeActionFailure(e, 'Could not rename the fund.'));
     }
   };
 
@@ -359,7 +359,7 @@ function FundDetailView({
       await api(`/funds/${fundId}`, { method: 'DELETE' });
       onDeleted();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Delete failed');
+      setError(describeActionFailure(e, 'Could not delete the fund.'));
       setDeleting(false);
     }
   };
@@ -402,7 +402,7 @@ function FundDetailView({
       positionForm.reset();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to add position');
+      setError(describeActionFailure(err, 'Could not add the position.'));
     } finally {
       setAdding(false);
     }
@@ -677,7 +677,7 @@ function PositionRow({
       await loadMarks();
       onChange();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to record mark');
+      setError(describeActionFailure(err, 'Could not record the mark.'));
     } finally {
       setRecording(false);
     }
@@ -811,7 +811,7 @@ function PositionRow({
                 void api(`/funds/${fundId}/positions/${position.id}`, { method: 'DELETE' })
                   .then(() => onChange())
                   .catch((e: unknown) => {
-                    setError(e instanceof ApiError ? e.message : 'Could not remove the holding');
+                    setError(describeActionFailure(e, 'Could not remove the holding.'));
                     setRemoving(false);
                   });
               }}
@@ -871,7 +871,7 @@ function WaterfallCard({
       });
       onSaved();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Failed to save LP terms');
+      setError(describeActionFailure(e, 'Could not save the LP terms.'));
     } finally {
       setBusy(null);
     }
@@ -888,7 +888,7 @@ function WaterfallCard({
       });
       setResult(waterfall);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Failed to run waterfall');
+      setError(describeActionFailure(e, 'Could not run the waterfall.'));
     } finally {
       setBusy(null);
     }

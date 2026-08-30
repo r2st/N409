@@ -127,7 +127,7 @@ describe('CalculationPanel — a run that fails without field issues', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Run calculation' }));
 
-    expect(await screen.findByText('Computation failed.')).toBeInTheDocument();
+    expect(await screen.findByText(/Computation failed\./)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Run calculation' })).toBeEnabled());
   });
 
@@ -139,7 +139,7 @@ describe('CalculationPanel — a run that fails without field issues', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Check inputs' }));
 
-    expect(await screen.findByText('Could not check the inputs.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not check the inputs\./)).toBeInTheDocument();
   });
 });
 

@@ -26,8 +26,10 @@ const valuation = (kind: string) =>
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-const problem = (title: string, status = 422) =>
-  new Response(JSON.stringify({ title, status }), {
+// `detail`, not `title`: every title this API sends is the status's fixed
+// reason phrase, so a refusal in `title` is a body the server cannot produce.
+const problem = (detail: string, status = 422) =>
+  new Response(JSON.stringify({ title: 'Unprocessable Content', detail, status }), {
     status,
     headers: { 'content-type': 'application/problem+json' },
   });
@@ -176,7 +178,7 @@ describe('SpecialtyTab — result shapes and failures', () => {
         throw new TypeError('Failed to fetch');
       });
       renderTab('emi');
-      expect(await screen.findByText('Could not load the specialty engine.')).toBeInTheDocument();
+      expect(await screen.findByText(/Could not load the specialty engine\./)).toBeInTheDocument();
     });
 
     /**
@@ -214,7 +216,7 @@ describe('SpecialtyTab — result shapes and failures', () => {
       await screen.findByText('Fund portfolio valuation');
 
       await userEvent.click(screen.getByRole('button', { name: /run fund portfolio valuation/i }));
-      expect(await screen.findByText('The engine run failed.')).toBeInTheDocument();
+      expect(await screen.findByText(/The engine run failed\./)).toBeInTheDocument();
     });
 
     it('clears a rejected-input message once the input is fixed and sent', async () => {

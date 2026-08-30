@@ -292,7 +292,7 @@ describe('TemplatesPage', () => {
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Activate' })[0]!);
 
-    expect(await screen.findByText('Action failed.')).toBeInTheDocument();
+    expect(await screen.findByText(/Action failed\./)).toBeInTheDocument();
   });
 
   /**

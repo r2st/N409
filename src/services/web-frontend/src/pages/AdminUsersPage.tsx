@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
-import { api, apiDownload, ApiError } from '../lib/api';
+import { api, apiDownload, describeActionFailure } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
 import { email as emailRule, password as passwordRule, useFormValidation } from '../lib/useFormValidation';
@@ -379,7 +379,7 @@ export function AdminUsersPage() {
       setEditor(null);
       load();
     } catch (err) {
-      setEditorError(err instanceof ApiError ? err.message : 'Could not save the user.');
+      setEditorError(describeActionFailure(err, 'Could not save the user.'));
     } finally {
       setBusy(false);
     }
@@ -391,7 +391,7 @@ export function AdminUsersPage() {
       await api(`/users/${u.id}`, { method: 'DELETE' });
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not delete the user.');
+      setError(describeActionFailure(err, 'Could not delete the user.'));
     }
   };
 
@@ -413,7 +413,7 @@ export function AdminUsersPage() {
         roles: new Set(['valuation_user']),
       });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not restore the user.');
+      setError(describeActionFailure(err, 'Could not restore the user.'));
     }
   };
 
@@ -428,7 +428,7 @@ export function AdminUsersPage() {
       });
       setNotice(res.message);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not send the reset link.');
+      setError(describeActionFailure(err, 'Could not send the reset link.'));
     }
   };
 
@@ -443,7 +443,7 @@ export function AdminUsersPage() {
       });
       setNotice(res.message);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not sign the user out.');
+      setError(describeActionFailure(err, 'Could not sign the user out.'));
     }
   };
 
@@ -464,7 +464,7 @@ export function AdminUsersPage() {
       await api(`/users/${u.id}/promote`, { method: 'POST', body: { role: 'admin' } });
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not promote the user.');
+      setError(describeActionFailure(err, 'Could not promote the user.'));
     }
   };
 
@@ -481,7 +481,7 @@ export function AdminUsersPage() {
       await api(`/users/${u.id}/demote`, { method: 'POST', body: { role: 'admin' } });
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not remove admin access.');
+      setError(describeActionFailure(err, 'Could not remove admin access.'));
     }
   };
 
@@ -490,7 +490,7 @@ export function AdminUsersPage() {
       await api(`/users/invitations/${i.id}/resend`, { method: 'POST' });
       loadInvitations();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not resend the invitation.');
+      setError(describeActionFailure(err, 'Could not resend the invitation.'));
     }
   };
 
@@ -500,7 +500,7 @@ export function AdminUsersPage() {
       await api(`/users/invitations/${i.id}`, { method: 'DELETE' });
       loadInvitations();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not revoke the invitation.');
+      setError(describeActionFailure(err, 'Could not revoke the invitation.'));
     }
   };
 

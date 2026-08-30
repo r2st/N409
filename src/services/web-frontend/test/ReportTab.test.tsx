@@ -684,13 +684,19 @@ describe('ReportTab', () => {
 
     it('still reports a failure whose body explains nothing', async () => {
       // A 502 from the edge is HTML, not problem+json. There is nothing to
-      // quote, so the status is the whole of what can honestly be said.
+      // quote — but "Request failed (502)", which this asserted until round 255,
+      // is `ApiError`'s internal last resort rather than a sentence anybody
+      // wrote, and it answers neither of the reader's two questions: what did
+      // not happen, and whether to press the button again.
       const user = userEvent.setup();
       mockApi({ pdf: () => new Response('<html>bad gateway</html>', { status: 502 }) });
       renderTab();
       await ready();
       await user.click(screen.getByRole('button', { name: 'Download PDF' }));
-      expect(await screen.findByRole('alert')).toHaveTextContent('Request failed (502)');
+      const note = await screen.findByRole('alert');
+      expect(note).not.toHaveTextContent('Request failed (502)');
+      expect(note).toHaveTextContent(/Could not download the report PDF/);
+      expect(note).toHaveTextContent(/did not get through to the application \(502\)/);
     });
   });
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import {
   OVERWRITE_CATEGORY_LABELS,
   type Overwrite,
@@ -139,7 +139,7 @@ export function OverwritesTab() {
       setSchema(schemaRes);
       setOverwrites(listRes.overwrites);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load overwrites.');
+      setError(describeActionFailure(err, 'Could not load overwrites.'));
     }
   }, [valuation.id]);
 
@@ -172,7 +172,7 @@ export function OverwritesTab() {
       setEditing(null);
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save the override.');
+      setError(describeActionFailure(err, 'Could not save the override.'));
     } finally {
       setBusy(false);
     }
@@ -185,7 +185,7 @@ export function OverwritesTab() {
       await api(`/valuations/${valuation.id}/overwrites/${fieldKey}`, { method: 'DELETE' });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not revert the override.');
+      setError(describeActionFailure(err, 'Could not revert the override.'));
     } finally {
       setBusy(false);
     }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { email as emailRule, required, useFormValidation } from '../lib/useFormValidation';
-import { ApiError } from '../lib/api';
+import { describeActionFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
 import type { Branding, BrandingResponse } from '../lib/branding';
@@ -70,7 +70,7 @@ export function PartnerLoginPage() {
       await login(email, password);
       navigate('/', { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to sign in — please try again.');
+      setError(describeActionFailure(err, 'Unable to sign in — please try again.'));
     } finally {
       setBusy(false);
     }

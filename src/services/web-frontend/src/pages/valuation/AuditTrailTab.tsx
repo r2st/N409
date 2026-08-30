@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { filenameStem, useDownload } from '../../lib/useDownload';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
@@ -140,7 +140,7 @@ export function AuditTrailTab() {
       setError(null);
       setData(await api<AuditResponse>(`/valuations/${valuation.id}/audit-trail?${params}`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the audit trail.');
+      setError(describeActionFailure(err, 'Could not load the audit trail.'));
     }
   }, [valuation.id, category, severity, page]);
 

@@ -139,7 +139,7 @@ describe('BridgeTab', () => {
     await screen.findByText(/Could not load comparable valuations/i);
     // The roll-forward panel shares the tab and fails its own load a tick
     // later; wait for it to settle before claiming nothing is still spinning.
-    await screen.findByText('Could not load the roll-forward.');
+    await screen.findByText(/Could not load the roll-forward\./);
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 

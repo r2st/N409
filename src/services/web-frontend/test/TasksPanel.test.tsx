@@ -154,7 +154,7 @@ describe('TasksPanel', () => {
     await userEvent.type(screen.getByLabelText('Title'), 'Tie out the pool');
     await userEvent.click(screen.getByRole('button', { name: 'Add task' }));
 
-    expect(await screen.findByText('Could not create the task.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not create the task\./)).toBeInTheDocument();
   });
 
   it('falls back to its own wording when a status move fails without a problem document', async () => {
@@ -172,7 +172,7 @@ describe('TasksPanel', () => {
       'in_progress',
     );
 
-    expect(await screen.findByText('Could not update the task.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not update the task\./)).toBeInTheDocument();
   });
 
   /**

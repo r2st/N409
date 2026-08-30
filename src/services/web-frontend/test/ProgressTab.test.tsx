@@ -157,9 +157,16 @@ describe('ProgressTab (client portal §5.6)', () => {
   });
 
   it('surfaces API errors', async () => {
+    // `setNotFoundHandler` sends a title and no detail, so this used to assert
+    // that the reader was shown the words "Not Found" — the RFC 9457 reason
+    // phrase, which the spec asks to be identical on every occurrence and is
+    // therefore the one string in the body that is not about their request.
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ title: 'Not Found', status: 404 }, 404));
     renderTab();
-    expect(await screen.findByText(/Not Found/)).toBeInTheDocument();
+    const note = await screen.findByRole('alert');
+    expect(note).not.toHaveTextContent('Not Found');
+    expect(note).toHaveTextContent(/404/);
+    expect(note).toHaveTextContent(/fault on our side/i);
   });
   it('shows the completion bar, headline stats and the next action', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(PROGRESS));

@@ -130,10 +130,17 @@ describe('AccountingConnect — edges', () => {
       vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, _init) => {
         const path = String(url);
         if (path.includes('/import'))
-          return new Response(JSON.stringify({ title: 'No published P&L for the period' }), {
-            status: 422,
-            headers: { 'content-type': 'application/problem+json' },
-          });
+          return new Response(
+            JSON.stringify({
+              title: 'Unprocessable Content',
+              status: 422,
+              detail: 'No published P&L for the period',
+            }),
+            {
+              status: 422,
+              headers: { 'content-type': 'application/problem+json' },
+            },
+          );
         return jsonResponse({ providers: [connected()] });
       });
       renderComponent();
@@ -156,7 +163,7 @@ describe('AccountingConnect — edges', () => {
       await screen.findByText('Xero');
 
       await user.click(screen.getByRole('button', { name: 'Import financials' }));
-      expect(await screen.findByText('Import failed.')).toBeInTheDocument();
+      expect(await screen.findByText(/Import failed\./)).toBeInTheDocument();
     });
 
     it('disconnects and re-reads the list rather than assuming it worked', async () => {

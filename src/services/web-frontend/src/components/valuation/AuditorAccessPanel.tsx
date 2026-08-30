@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { Button, ErrorNote, Field, ListTruncationNote, Select, TextInput } from '../ui';
 
@@ -58,7 +58,7 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
       setLabel('');
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create the link.');
+      setError(describeActionFailure(err, 'Could not create the link.'));
     } finally {
       setBusy(false);
     }
@@ -81,7 +81,7 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
       setMinted((m) => (m?.id === id ? null : m));
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not revoke the link.');
+      setError(describeActionFailure(err, 'Could not revoke the link.'));
     } finally {
       setBusy(false);
     }

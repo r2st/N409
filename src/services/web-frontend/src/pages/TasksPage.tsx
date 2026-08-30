@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { useFormValidation } from '../lib/useFormValidation';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
@@ -383,7 +383,7 @@ function ReviewQueue({ options, rosterFailed }: { options: UserOption[]; rosterF
       reset();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not record the decision.');
+      setError(describeActionFailure(err, 'Could not record the decision.'));
     } finally {
       setBusyId(null);
     }

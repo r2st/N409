@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { formatDate } from '../lib/format';
 import {
   Button,
@@ -134,7 +134,7 @@ export function AdminDocumentsPage() {
       );
       await load();
     } catch (err) {
-      setNote(err instanceof ApiError ? err.message : 'The re-filing failed.');
+      setNote(describeActionFailure(err, 'The re-filing failed.'));
     } finally {
       setBusy(false);
     }

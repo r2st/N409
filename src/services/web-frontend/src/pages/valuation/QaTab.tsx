@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import {
@@ -92,7 +92,7 @@ export function QaTab() {
     try {
       setData(await api<QaResponse>(`/valuations/${valuation.id}/qa`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load QA reviews.');
+      setError(describeActionFailure(err, 'Could not load QA reviews.'));
     }
   }, [valuation.id]);
 
@@ -107,7 +107,7 @@ export function QaTab() {
       await api(`/valuations/${valuation.id}/qa`, { method: 'POST', body: { ai } });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'QA run failed.');
+      setError(describeActionFailure(err, 'QA run failed.'));
     } finally {
       setRunning(null);
     }

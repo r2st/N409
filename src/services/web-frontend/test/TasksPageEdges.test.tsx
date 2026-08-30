@@ -307,7 +307,7 @@ describe('TasksPage — refusals and edges', () => {
       renderPage();
 
       await user.click(await screen.findByRole('button', { name: 'Pick up' }));
-      expect(await screen.findByText('Could not update the task.')).toBeInTheDocument();
+      expect(await screen.findByText(/Could not update the task\./)).toBeInTheDocument();
     });
 
     it('says the review queue could not be loaded', async () => {
@@ -325,10 +325,17 @@ describe('TasksPage — refusals and edges', () => {
       vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
         const path = String(url);
         if (path.includes('/review/decision'))
-          return new Response(JSON.stringify({ title: 'A main signature is required before approval' }), {
-            status: 409,
-            headers: { 'content-type': 'application/problem+json' },
-          });
+          return new Response(
+            JSON.stringify({
+              title: 'Conflict',
+              status: 409,
+              detail: 'A main signature is required before approval',
+            }),
+            {
+              status: 409,
+              headers: { 'content-type': 'application/problem+json' },
+            },
+          );
         if (path.includes('/users/options')) return jsonResponse({ options: [], truncated: false });
         if (path.includes('/reviews')) return jsonResponse({ reviews: [review], total: 1 });
         return jsonResponse({ tasks: [], total: 0 });

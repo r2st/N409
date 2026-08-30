@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { email as emailRule, required, useFormValidation } from '../lib/useFormValidation';
-import { api, ApiError } from '../lib/api';
+import { api, describeActionFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import type { AuthProviders } from '../lib/types';
 import { AuthShell } from '../components/AuthShell';
@@ -91,7 +91,7 @@ export function LoginPage() {
         goHome();
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unable to sign in — please try again.');
+      setError(describeActionFailure(err, 'Unable to sign in — please try again.'));
     } finally {
       setBusy(false);
     }
@@ -110,7 +110,7 @@ export function LoginPage() {
       });
       goHome();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'That code was not accepted.');
+      setError(describeActionFailure(err, 'That code was not accepted.'));
     } finally {
       setBusy(false);
     }

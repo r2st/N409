@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { required, useFormValidation } from '../../lib/useFormValidation';
-import { api, ApiError } from '../../lib/api';
+import { api, describeActionFailure } from '../../lib/api';
 import { useWorkspace } from './ValuationWorkspace';
 import {
   Button,
@@ -163,7 +163,7 @@ export function ComparablesTab() {
     try {
       setData(await api<ComparablesResponse>(`/valuations/${valuation.id}/comparables`));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the comparable set.');
+      setError(describeActionFailure(err, 'Could not load the comparable set.'));
     }
   }, [valuation.id]);
 
@@ -179,7 +179,7 @@ export function ComparablesTab() {
       await load();
       return true;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : failure);
+      setError(describeActionFailure(err, failure));
       return false;
     } finally {
       setBusy(false);

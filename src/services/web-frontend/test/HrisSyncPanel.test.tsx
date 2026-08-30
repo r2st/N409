@@ -173,7 +173,7 @@ describe('HrisSyncPanel (feature 11)', () => {
     render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Connect Gusto' }));
-    expect(await screen.findByText('Could not start the connection.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not start the connection\./)).toBeInTheDocument();
   });
 
   it('reports a failed import without claiming grants arrived', async () => {
@@ -201,7 +201,7 @@ describe('HrisSyncPanel (feature 11)', () => {
     render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Import now' }));
-    expect(await screen.findByText('Sync failed.')).toBeInTheDocument();
+    expect(await screen.findByText(/Sync failed\./)).toBeInTheDocument();
   });
 
   it('changes the cadence and reloads on the answer', async () => {
@@ -292,7 +292,7 @@ describe('HrisSyncPanel (feature 11)', () => {
     render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
 
     await user.click(await screen.findByRole('button', { name: 'Disconnect' }));
-    expect(await screen.findByText('Could not disconnect the provider.')).toBeInTheDocument();
+    expect(await screen.findByText(/Could not disconnect the provider\./)).toBeInTheDocument();
   });
 
   it('surfaces the provider’s last error, and treats a revoked link as disconnected', async () => {

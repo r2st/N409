@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, describeActionFailure } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
 import { formatDateTime } from '../lib/format';
@@ -115,7 +115,7 @@ export function SuppressionList() {
       await api('/admin/email/suppressions/release', { method: 'POST', body: { address } });
       await load();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Could not release that suppression.');
+      setActionError(describeActionFailure(err, 'Could not release that suppression.'));
     } finally {
       setBusy(null);
     }
