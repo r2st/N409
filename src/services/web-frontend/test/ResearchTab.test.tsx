@@ -151,6 +151,42 @@ describe('ResearchTab', () => {
   });
 
   /**
+   * The URL on a citation is the one string on this tab that neither this app
+   * nor its operators wrote: it comes from whichever search backend the
+   * deployment has configured, by way of a model choosing which hits to cite.
+   * It used to land in `href` untouched.
+   */
+  it('will not turn a citation into a link the browser would execute', async () => {
+    const hostile = {
+      ...RESEARCH,
+      research: [
+        {
+          ...RESEARCH.research[0],
+          citations: [
+            { url: 'javascript:alert(1)', title: 'Looks like a source' },
+            { url: 'https://example.com/ok', title: 'Actually a source' },
+          ],
+        },
+      ],
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.includes('/research/topics')) return jsonResponse(TOPICS);
+      if (path.includes('/research')) return jsonResponse(hostile);
+      throw new Error(`unexpected fetch ${path}`);
+    });
+    renderTab();
+    // Still shown — a source that cannot be followed is still evidence, and an
+    // analyst who cannot see it cannot judge the answer that rests on it.
+    expect(await screen.findByText('Looks like a source')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Looks like a source' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Actually a source' })).toHaveAttribute(
+      'href',
+      'https://example.com/ok',
+    );
+  });
+
+  /**
    * The citation list is the deliverable as much as the answer. An answer with
    * none is an ordinary completion, and the tab has to say so before it reaches
    * a report rather than after.
