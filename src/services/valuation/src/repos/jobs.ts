@@ -268,12 +268,29 @@ export async function oldestActiveJobs(
        -- the union: this predicate belongs to one of the five sources, the
        -- union is what every other reader of these branches pays for, and only
        -- rows the outer filter would have counted need testing at all.
-       AND NOT (
-         j.source = 'email'
-         AND j.id IN (
-           SELECT e.id FROM email_outbox e
-            WHERE e.status = 'queued' AND ${emailWithheldSql('e', suppressionExemptSql())}
-         )
+       --
+       -- Spelled as NOT EXISTS joined on e.id = j.id rather than as
+       -- j.id IN (SELECT …), which is the same set and a different plan.
+       -- The IN form is uncorrelated, so the planner reads it as a hashed
+       -- SubPlan attached to the email branch's filter — and a branch carrying
+       -- a SubPlan cannot go under a Parallel Append, so adding this clause
+       -- took the *whole* union serial. The five branches are scanned in full
+       -- whatever this predicate says (each one's status filter is a CASE, so
+       -- none of them is indexable), and losing their two workers cost more
+       -- than the withheld test itself: 27ms before R228, 83ms after, 34ms in
+       -- this spelling. Correlating it lets the planner build the withheld set
+       -- once as a Hash Anti Join above a Parallel Append instead.
+       --
+       -- j.source = 'email' stays inside the EXISTS. It is not redundant --
+       -- nothing constrains a pipeline_runs id to differ from an email_outbox
+       -- one -- and the planner treats it as a join qualifier, so keeping it
+       -- costs nothing measurable.
+       AND NOT EXISTS (
+         SELECT 1 FROM email_outbox e
+          WHERE j.source = 'email'
+            AND e.id = j.id
+            AND e.status = 'queued'
+            AND ${emailWithheldSql('e', suppressionExemptSql())}
        )
      GROUP BY j.source
      ORDER BY oldest_due_at ASC`,
