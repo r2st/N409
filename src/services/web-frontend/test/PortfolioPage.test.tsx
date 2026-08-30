@@ -407,7 +407,16 @@ describe('PortfolioPage — creating an organization', () => {
     await user.type(await screen.findByPlaceholderText('Acme Holdings'), 'Acme');
     await user.click(screen.getByRole('button', { name: 'Create' }));
 
-    expect(await screen.findByText('Could not create the organization.')).toBeInTheDocument();
+    /*
+     * Round 262: this asserted the operation sentence *alone*, and had been
+     * red on main since the call site moved to `describeActionFailure`. That
+     * helper deliberately answers with both halves — what did not happen, then
+     * why — so an exact match on the first half can only ever fail. Asserted as
+     * the two facts it is: the operation, and a reason beyond it.
+     */
+    const message = await screen.findByText(/Could not create the organization\./);
+    expect(message).toBeInTheDocument();
+    expect(message.textContent!.length).toBeGreaterThan('Could not create the organization.'.length);
   });
 
   /** A name that is only spaces is not a name. */
