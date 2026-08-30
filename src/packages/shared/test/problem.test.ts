@@ -138,6 +138,35 @@ describe('registerProblemHandler', () => {
    * A 4xx describes the request, not the server. Logging one is logging other
    * people's mistakes at whatever rate they care to make them.
    */
+  /**
+   * The alerting contract's own definition of a permanent failure — an
+   * exception nobody anticipated, on a request nobody will retry — and until
+   * R225 the one line describing it did not carry the field the contract is
+   * made of.
+   */
+  it('flags an unhandled 500 for alerting', async () => {
+    const lines: Array<{ fields: Record<string, unknown>; msg: string }> = [];
+    const app = Fastify({ logger: false });
+    app.addHook('onRequest', (req, _reply, done) => {
+      (req.log as unknown as Record<string, unknown>).error = (
+        fields: Record<string, unknown>,
+        msg: string,
+      ) => {
+        lines.push({ fields, msg });
+      };
+      done();
+    });
+    registerProblemHandler(app);
+    app.get('/boom', () => {
+      throw new Error('nobody saw this coming');
+    });
+    expect((await app.inject({ method: 'GET', url: '/boom' })).statusCode).toBe(500);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].msg).toBe('unhandled error');
+    expect(lines[0].fields.alert).toBe(true);
+    await app.close();
+  });
+
   it('logs nothing for a 4xx ApiProblem', async () => {
     const lines: string[] = [];
     const app = Fastify({ logger: false });

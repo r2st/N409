@@ -145,7 +145,16 @@ export function registerScimRoutes(
           return send(503, 'The directory store is temporarily unavailable. Nothing was changed.');
         }
         if (status >= 500) {
-          req.log.error({ err: scrubError(err), ...requestErrorContext(req) }, 'unhandled error');
+          // `alert: true` for the same reason as `registerProblemHandler`'s
+          // own 5xx arm: an exception nobody anticipated is the alert
+          // contract's definition of a permanent failure. This handler is a
+          // copy of that one in SCIM's error shape, and the flag has to be
+          // copied with it or the directory connector is the one surface
+          // whose 500s page nobody.
+          req.log.error(
+            { err: scrubError(err), ...requestErrorContext(req), alert: true },
+            'unhandled error',
+          );
           return send(status, 'The SCIM endpoint could not complete this request');
         }
         return send(status, fastifyErr.message || 'The SCIM endpoint refused this request');

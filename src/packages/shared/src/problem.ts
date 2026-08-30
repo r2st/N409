@@ -534,7 +534,18 @@ export function registerProblemHandler(app: FastifyInstance): void {
     if (status >= 500) {
       // Scrub the free-text message/stack — pino `redact` only masks structured
       // fields, so secrets interpolated into an Error string would leak (B-1 P3).
-      req.log.error({ err: scrubError(err), ...requestErrorContext(req) }, 'unhandled error');
+      //
+      // `alert: true`, which this line did not carry. It is the one condition
+      // the alerting contract in `shared/failure.ts` describes exactly: an
+      // exception nobody anticipated, on a request nobody will retry, that only
+      // a person changes. `logFailure` stamps the flag on every permanent
+      // failure it classifies and its default *is* permanent — so an error the
+      // classifier had never seen would have alerted, and the error that
+      // reached the top of the stack uncaught did not. The 5xx `ApiProblem`
+      // arm above is deliberately left without it: those are failures somebody
+      // described, most of them an upstream having a bad minute, and the
+      // breaker and the error-rate gauges are what watch a rate.
+      req.log.error({ err: scrubError(err), ...requestErrorContext(req), alert: true }, 'unhandled error');
       return reply.status(status).type('application/problem+json').send({
         type: 'urn:n409:problem:internal',
         title: 'Internal Server Error',
