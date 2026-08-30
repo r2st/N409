@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, describeActionFailure } from '../../lib/api';
-import { CONNECTOR_HEALTH_LABEL, connectorHealth, retryNote } from '../../lib/connectorState';
+import { CONNECTOR_HEALTH_LABEL, cadenceNote, connectorHealth, retryNote } from '../../lib/connectorState';
 import { Button, ErrorNote, LoadError, Select, Spinner, useRetry } from '../ui';
 
 type Provider = 'carta' | 'pulley';
@@ -175,6 +175,10 @@ export function CapTableSyncPanel({
           const health = connectorHealth(p.connection, p.configured);
           const failing = health === 'retrying' || health === 'stopped';
           const retrying = p.connection ? retryNote(p.connection, health) : null;
+          // R261 records a cadence on a stopped connection without starting it.
+          // Said here because the dropdown showing “Daily” beside a “Not syncing”
+          // pill is the card contradicting itself.
+          const cadence = p.connection ? cadenceNote(p.connection, health) : null;
           return (
             <div key={p.provider} className="rounded-md border border-paper-300 p-4">
               <div className="flex flex-wrap items-center gap-3">
@@ -202,6 +206,7 @@ export function CapTableSyncPanel({
                 <p className="mt-2 text-xs text-red-600">Last error: {p.connection.last_error}</p>
               )}
               {retrying && <p className="mt-1 text-xs text-ink-500">{retrying}</p>}
+              {cadence && <p className="mt-1 text-xs text-ink-500">{cadence}</p>}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {!connected ? (

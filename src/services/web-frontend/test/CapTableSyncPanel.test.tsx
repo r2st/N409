@@ -309,6 +309,8 @@ describe('CapTableSyncPanel (feature 4)', () => {
     expect(await screen.findByText(/Sync failing · retrying · Acme Inc/)).toBeInTheDocument();
     expect(screen.getByText(/Retrying automatically — next attempt/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Reconnect Carta' })).not.toBeInTheDocument();
+    // This one's cadence *is* running, so it must not be told it is not.
+    expect(screen.queryByText(/nothing is scheduled/)).not.toBeInTheDocument();
   });
 
   it('asks for a reconnect when no retry can clear the failure (R256)', async () => {
@@ -321,6 +323,9 @@ describe('CapTableSyncPanel (feature 4)', () => {
               connection: {
                 ...CARTA.connection,
                 status: 'error',
+                // Scheduled, not manual: R262's note is about a cadence that
+                // is set and will not run, and CARTA's default is `manual`.
+                sync_frequency: 'daily',
                 last_error: 'Carta no longer accepts the stored authorisation — reconnect Carta.',
                 reconnect_required: true,
               },
@@ -334,6 +339,15 @@ describe('CapTableSyncPanel (feature 4)', () => {
     expect(await screen.findByText(/Not syncing · Acme Inc/)).toBeInTheDocument();
     expect(screen.queryByText(/Retrying automatically/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reconnect Carta' })).toBeInTheDocument();
+    /*
+     * R262. Round 261 stopped `setSyncFrequency` restarting a schedule the
+     * provider has ended, and the card went on showing the cadence dropdown
+     * with no hint that setting it schedules nothing. Said in one place for
+     * both panels — see `cadenceNote`.
+     */
+    expect(
+      screen.getByText(/Auto-sync is saved, but nothing is scheduled until this connection is reconnected/),
+    ).toBeInTheDocument();
   });
 
   /**

@@ -357,6 +357,17 @@ describe('HrisSyncPanel (feature 11)', () => {
     // Still a live connection: importing by hand and changing the cadence are
     // both things a person may want to do from here.
     expect(screen.getByRole('button', { name: 'Import now' })).toBeInTheDocument();
+    /*
+     * R262. This fixture is `sync_frequency: 'daily'` on a stopped connection,
+     * which is the state round 261 created deliberately: the cadence is what
+     * the reconnect will start from, and until then nothing is scheduled.
+     * Nothing on the card said so, so the dropdown read "Daily" beside a pill
+     * reading "Not syncing" and the analyst who had just set it was left to
+     * work out which one was true.
+     */
+    expect(
+      screen.getByText(/Auto-sync is saved, but nothing is scheduled until this connection is reconnected/),
+    ).toBeInTheDocument();
   });
 
   it('says a failure that retries itself is retrying, and does not ask for a reconnect (R256)', async () => {
@@ -397,6 +408,8 @@ describe('HrisSyncPanel (feature 11)', () => {
     expect(screen.queryByRole('button', { name: 'Reconnect Rippling' })).not.toBeInTheDocument();
     // Nothing about it stops a person syncing by hand in the meantime.
     expect(screen.getByRole('button', { name: 'Import now' })).toBeInTheDocument();
+    // And the cadence on this one *is* running, so it must not be told it is not.
+    expect(screen.queryByText(/nothing is scheduled/)).not.toBeInTheDocument();
   });
 
   it('asks for a reconnect when the failure is one no retry can clear (R256)', async () => {

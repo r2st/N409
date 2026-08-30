@@ -72,3 +72,25 @@ export function retryNote(connection: ConnectorConnection, health: ConnectorHeal
   if (health !== 'retrying' || !connection.next_sync_at) return null;
   return `Retrying automatically — next attempt ${formatDateTime(connection.next_sync_at)}.`;
 }
+
+/**
+ * The sentence beside the cadence control on a connection that will not run it.
+ *
+ * Round 261 made `setSyncFrequency` stop restarting a terminally-failed
+ * schedule: the cadence is recorded, because it is what the reconnect will
+ * start from, but `next_sync_at` stays null and no sweep picks the row up.
+ * That is the right server behaviour and it left the card saying two things at
+ * once — "Not syncing" in the pill, "Daily" in the dropdown the analyst had
+ * just set and been given a silent success for. The reasonable reading of a
+ * saved cadence is that something is now scheduled.
+ *
+ * Returned from here rather than written into the two panels for the same
+ * reason `connectorHealth` is: R252 wrote this card twice and the copies
+ * diverged.
+ */
+export function cadenceNote(connection: ConnectorConnection, health: ConnectorHealth): string | null {
+  // Nothing to correct on a `manual` connection: it schedules nothing either
+  // way, and telling its reader that nothing is scheduled reads as a fault.
+  if (health !== 'stopped' || connection.sync_frequency === 'manual') return null;
+  return 'Auto-sync is saved, but nothing is scheduled until this connection is reconnected.';
+}
