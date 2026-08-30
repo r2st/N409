@@ -2922,10 +2922,21 @@ function keepLinesTogether(doc: PDFKit.PDFDocument, lines: number, lineHeight: n
   doc.addPage();
 }
 
-/** Zero-based index of the page currently being written. */
+/**
+ * Zero-based index of the page currently being written.
+ *
+ * Which is the last buffered page for all but one caller — `renderTable` sends
+ * the cursor back to a row's own page when a cell has overflowed, and while it
+ * is there the last page and the current page are different sheets. Reading the
+ * buffer for the page pdfkit is actually on answers both callers; taking the
+ * last one answered the table's question with the wrong sheet and put the row
+ * after a tall one back where the tall one started.
+ */
 function currentPageIndex(doc: PDFKit.PDFDocument): number {
   const range = doc.bufferedPageRange();
-  return range.start + range.count - 1;
+  const buffer = (doc as unknown as { _pageBuffer?: readonly unknown[] })._pageBuffer;
+  const at = Array.isArray(buffer) ? buffer.indexOf(doc.page) : -1;
+  return at >= 0 ? range.start + at : range.start + range.count - 1;
 }
 
 export interface PageLandmark {
@@ -3487,11 +3498,49 @@ function renderTable(
   const drawRow = (row: string[], bold: boolean, fill: string | null): number => {
     const height = heightOf(row, bold);
     const y = doc.y;
+    const startPage = currentPageIndex(doc);
+    const pageFloor = doc.page.height - doc.page.margins.bottom;
     // The zebra band is decoration; tagged, it would be an empty cell in the row.
     if (fill) artifact(doc, () => doc.rect(left, y, usable, height).fillColor(fill).fill());
     const tr = openTag(doc, table, 'TR');
+    /*
+     * Where the row actually ends, which for all but one shape of row is where
+     * the arithmetic says.
+     *
+     * A cell holding more prose than the page has room for is set by pdfkit
+     * across as many sheets as it needs, and pdfkit leaves the document on the
+     * sheet it finished on. Every later cell of that row was then drawn at the
+     * row's own `y` on *that* sheet: the figure belonging beside a paragraph,
+     * alone two pages further on, under no heading and level with nothing. The
+     * following row was worse — `doc.y` was set to `y + height` for a height
+     * measured as if the row had fitted, which on the page the cell ended on is
+     * a point near the foot, so the next row was set into the bottom margin.
+     *
+     * Neither is reachable from a schedule this file builds; both are reachable
+     * from an authored chapter, where the table is whatever an analyst pasted
+     * in and a cell may hold a paragraph.
+     */
+    let endPage = startPage;
+    let endY = y + height;
     row.forEach((cell, c) => {
       const width = widths[c] ?? usable;
+      /*
+       * Back to the row's own page for a cell that fits on it. Measured per
+       * cell rather than per row, and only once a cell has already overflowed
+       * — shaping every cell twice to answer a question that is "no" on every
+       * ordinary table is the cost this file's geometry cache exists to avoid.
+       *
+       * A cell that does not fit either is left where pdfkit put it: `addPage`
+       * appends, so sending a second overflowing cell back would set its
+       * continuation after the end of the report rather than after this table.
+       */
+      if (currentPageIndex(doc) !== startPage) {
+        const cellHeight = doc
+          .font(bold ? FONTS.bold : FONTS.regular)
+          .fontSize(TABLE_FONT_SIZE)
+          .heightOfString(cell || ' ', { width: width - TABLE_PADDING * 2, lineGap: 1 });
+        if (y + TABLE_PADDING + cellHeight <= pageFloor) doc.switchToPage(startPage);
+      }
       tagged(doc, tr, bold ? 'TH' : 'TD', bold ? headerCell : {}, () => {
         doc
           .font(bold ? FONTS.bold : FONTS.regular)
@@ -3503,9 +3552,17 @@ function renderTable(
             lineGap: 1,
           });
       });
+      const page = currentPageIndex(doc);
+      if (page > endPage) {
+        endPage = page;
+        endY = doc.y + TABLE_PADDING;
+      } else if (page === endPage && doc.y + TABLE_PADDING > endY) {
+        endY = doc.y + TABLE_PADDING;
+      }
     });
     tr.end();
-    doc.y = y + height;
+    if (currentPageIndex(doc) !== endPage) doc.switchToPage(endPage);
+    doc.y = endPage === startPage ? y + height : endY;
     doc.x = left;
     return height;
   };

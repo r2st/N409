@@ -8,7 +8,7 @@ import {
   runningHeadings,
   type ReportPdfInput,
 } from '../src/pdf.js';
-import { extractText, pageCount } from './support/pdfText.js';
+import { extractText, pageCount, pageLines } from './support/pdfText.js';
 
 /**
  * Table layout and page furniture.
@@ -564,5 +564,83 @@ describe('page furniture', () => {
     const text = extractText(await renderReportPdf(SAMPLE, { compress: false }));
     expect(text).toContain('Confidential');
     expect(text).toContain('Page 1 of');
+  });
+});
+
+/**
+ * A row holding more prose than a page.
+ *
+ * No schedule this platform builds produces one — the exhibits set figures and
+ * short labels — but an authored chapter's table is whatever an analyst pasted
+ * into it, and a cell may hold a paragraph. pdfkit sets such a cell across as
+ * many sheets as it needs and leaves the document on the last of them, which
+ * decided where the *rest* of the table went.
+ */
+describe('a table row taller than the page', () => {
+  const longCell = Array.from({ length: 1500 }, (_, i) => `w${i}`).join(' ');
+  const table = (cell: string) =>
+    `<table><tr><th>Reason</th><th>Amount</th></tr>` +
+    `<tr><td>${cell}</td><td>FIRST-AMOUNT</td></tr>` +
+    `<tr><td>Second reason</td><td>SECOND-AMOUNT</td></tr></table>`;
+
+  const rendered = async (cell: string) => {
+    const pdf = await renderReportPdf({
+      title: 'IRC 409A Valuation Report',
+      company_name: 'Northwind Robotics, Inc.',
+      meta: [],
+      sections: [{ heading: 'Body', html: table(cell) }],
+    });
+    const pages = pageLines(pdf);
+    const findBy = (matches: (text: string) => boolean) => {
+      for (const [page, lines] of pages.entries()) {
+        const line = lines.find((l) => matches(l.text));
+        if (line) return { page, y: line.baseline };
+      }
+      return null;
+    };
+    const find = (text: string) => findBy((t) => t === text);
+    return { pages, find, findBy };
+  };
+
+  it('keeps a row’s later cells on the row’s own page', async () => {
+    const { find, findBy } = await rendered(longCell);
+    // The prose cell runs over; the figure that belongs beside it was drawn at
+    // the row's y on the sheet the prose finished on — alone at the top of a
+    // page, under no heading, level with nothing.
+    const amount = find('FIRST-AMOUNT');
+    // Where the prose cell *starts*, which is where its row is — not the first
+    // header, which the break above the row left on the previous sheet.
+    const rowStart = findBy((t) => t.startsWith('w0 '));
+    expect(amount).not.toBeNull();
+    expect(rowStart).not.toBeNull();
+    expect(amount!.page).toBe(rowStart!.page);
+    expect(Math.abs(amount!.y - rowStart!.y)).toBeLessThan(2);
+  });
+
+  it('starts the next row after the tall one, not beside it', async () => {
+    const { pages, find } = await rendered(longCell);
+    const first = find('FIRST-AMOUNT')!;
+    const second = find('SECOND-AMOUNT')!;
+    // `doc.y` was advanced by a height measured as though the row had fitted,
+    // which on the page the cell ended on is a point near the foot — so the
+    // following row was set into the bottom margin of the page the tall row
+    // began on, with the tall cell still running underneath it.
+    expect(second.page).toBeGreaterThan(first.page);
+    // And inside the type area of wherever it did land.
+    for (const [, lines] of pages.entries()) {
+      for (const line of lines) {
+        if (line.text !== 'SECOND-AMOUNT' && line.text !== 'Second reason') continue;
+        expect(line.baseline).toBeGreaterThan(72);
+        expect(line.baseline).toBeLessThan(792 - 72);
+      }
+    }
+  });
+
+  it('leaves an ordinary row setting exactly as it did', async () => {
+    const { find } = await rendered('A short reason.');
+    const first = find('FIRST-AMOUNT')!;
+    const second = find('SECOND-AMOUNT')!;
+    expect(second.page).toBe(first.page);
+    expect(second.y).toBeLessThan(first.y);
   });
 });
