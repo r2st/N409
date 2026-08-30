@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError, describeRequestFailure } from '../lib/api';
 import { formatDate, formatChargedCents } from '../lib/format';
 import type { Payment, PaymentQuote, Valuation } from '../lib/types';
-import { hasSettled, itemisedReceiptHref } from '../lib/receipts';
+import { disputeLabel, hasSettled, itemisedReceiptHref } from '../lib/receipts';
 import { Button, ErrorNote, ListTruncationNote } from './ui';
 
 /**
@@ -231,12 +231,6 @@ const PAYMENT_STATUS_STYLES: Record<Payment['status'], string> = {
   refunded: 'bg-paper-200 text-ink-600',
 };
 
-const DISPUTE_STATUS_LABELS: Record<NonNullable<Payment['dispute_status']>, string> = {
-  open: 'Chargeback under review',
-  won: 'Chargeback resolved in our favour',
-  lost: 'Chargeback upheld',
-};
-
 const toCents = (value: string | number): number => {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -264,7 +258,7 @@ function settlementNote(p: Payment): string | null {
       }`,
     );
   }
-  if (p.dispute_status) parts.push(DISPUTE_STATUS_LABELS[p.dispute_status]);
+  if (p.dispute_status) parts.push(disputeLabel(p.dispute_status));
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 

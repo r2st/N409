@@ -5,7 +5,7 @@ import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { isOps, isPartner } from '../lib/rbac';
 import { formatDateTime, formatChargedCents } from '../lib/format';
-import { hasSettled, itemisedReceiptHref } from '../lib/receipts';
+import { disputeLabel, hasSettled, itemisedReceiptHref } from '../lib/receipts';
 import {
   EmptyState,
   KindBadge,
@@ -319,10 +319,15 @@ export function BillingPage() {
                       >
                         {p.status}
                       </span>
-                      {p.dispute_status === 'open' && (
-                        <span className="ml-1.5 inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-red-200 ring-inset">
-                          disputed
-                        </span>
+                      {/* Every verdict, not just the live one. `dispute_status`
+                          is never cleared, and a *lost* chargeback leaves the
+                          row 'refunded' with its refund annotation suppressed —
+                          so, badged only on 'open', money a bank took back was
+                          indistinguishable here from money we chose to return. */}
+                      {p.dispute_status && (
+                        <div className="mt-1 text-xs text-red-700" data-testid="billing-dispute-note">
+                          {disputeLabel(p.dispute_status)}
+                        </div>
                       )}
                     </td>
                     {/* Both documents, as the engagement's own payment panel

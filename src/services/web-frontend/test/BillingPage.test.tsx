@@ -197,13 +197,60 @@ describe('BillingPage — refunds and chargebacks', () => {
     });
   });
 
-  it('flags an open chargeback on the row', async () => {
-    mount({
-      payments: [payment({ dispute_status: 'open' })],
-      unpaid_valuations: [],
-      totals: totals(),
+  /**
+   * `dispute_status` is never cleared, so all three verdicts are permanent —
+   * and this column badged `=== 'open'` alone. A *lost* chargeback leaves the
+   * row 'refunded' with the refund annotation beside it suppressed (that
+   * annotation is for the partial case), so money a bank took back read here
+   * exactly like money we chose to give back.
+   */
+  describe('chargebacks', () => {
+    const note = () => screen.getByTestId('billing-dispute-note');
+
+    it('flags an open chargeback on the row', async () => {
+      mount({
+        payments: [payment({ dispute_status: 'open' })],
+        unpaid_valuations: [],
+        totals: totals(),
+      });
+      expect(await screen.findByTestId('billing-dispute-note')).toHaveTextContent('Chargeback under review');
     });
-    expect(await screen.findByText('disputed')).toBeInTheDocument();
+
+    it('distinguishes a lost chargeback from a voluntary refund', async () => {
+      mount({
+        payments: [payment({ status: 'refunded', refunded_cents: 119_000, dispute_status: 'lost' })],
+        unpaid_valuations: [],
+        totals: totals({ refunded_cents: 119_000, paid_cents: 0, succeeded_count: 0, refunded_count: 1 }),
+      });
+      await screen.findAllByText('$1,190.00');
+      expect(note()).toHaveTextContent('Chargeback upheld');
+    });
+
+    it('says a chargeback we won was resolved rather than saying nothing', async () => {
+      mount({
+        payments: [payment({ dispute_status: 'won' })],
+        unpaid_valuations: [],
+        totals: totals(),
+      });
+      await screen.findAllByText('$1,190.00');
+      expect(note()).toHaveTextContent('resolved in our favour');
+    });
+
+    it('shows a verdict it has no wording for rather than dropping it', async () => {
+      mount({
+        payments: [payment({ dispute_status: 'warning_under_review' })],
+        unpaid_valuations: [],
+        totals: totals(),
+      });
+      await screen.findAllByText('$1,190.00');
+      expect(note()).toHaveTextContent('warning_under_review');
+    });
+
+    it('says nothing about a payment with no dispute', async () => {
+      mount({ payments: [payment({})], unpaid_valuations: [], totals: totals() });
+      await screen.findAllByText('$1,190.00');
+      expect(screen.queryByTestId('billing-dispute-note')).not.toBeInTheDocument();
+    });
   });
 
   it('renders a status it has no tone for without crashing', async () => {
