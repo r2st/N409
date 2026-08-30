@@ -19,7 +19,7 @@ import {
 import type { ValuationState } from '../domain/valuation.js';
 import { findValuationById } from '../repos/valuations.js';
 import { documentCoverage } from '../repos/documents.js';
-import { latestSucceededJob } from '../repos/aiJobs.js';
+import { currentExplanation } from './ai.js';
 import { findReportByValuation } from '../repos/reports.js';
 import { firstEntryPerState, latestEventAt, listEvents } from '../events/record.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -72,7 +72,11 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
       }),
       latestEventAt(deps.pool, valuation.id),
       findReportByValuation(deps.pool, valuation.id),
-      latestSucceededJob(deps.pool, valuation.id, 'explain'),
+      // The same reading `GET /explanation` serves — an explanation of a run
+      // the engagement has since superseded is not offered, so the tracker
+      // must not announce one. Two readers disagreeing about whether a card
+      // exists is how a client is told to look for something that is not there.
+      currentExplanation(deps.pool, valuation),
     ]);
     const timelineTruncated = timelinePage.length > PROGRESS_TIMELINE_LIMIT;
     const events = timelinePage.slice(-PROGRESS_TIMELINE_LIMIT);
@@ -171,7 +175,7 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
       documents_uploaded: coverage.total,
       documents_missing: missingDocuments,
       report: { available: reportAvailable },
-      explanation: { available: reportVisible && explainJob !== null },
+      explanation: { available: reportVisible && explainJob.job !== null },
       timeline,
       /** True when older entries exist beyond the page this response carries. */
       timeline_truncated: timelineTruncated,

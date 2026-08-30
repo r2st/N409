@@ -408,6 +408,85 @@ describe.skipIf(!dbUp)('improvements phase 1', () => {
       });
       expect(stranger.statusCode).toBe(404);
     });
+
+    it('withholds an explanation of a run the engagement has superseded', async () => {
+      /*
+       * The summary states the conclusion — "$20M, or $2.00 per common share".
+       * Recompute and it is a sentence about a valuation that no longer exists,
+       * shown to the client beside the current figures under a heading with no
+       * date on it.
+       */
+      const id = await createValuation('SupersededExplainCo');
+      await runCalculation(id);
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/v1/valuations/${id}/ai/explain`,
+            headers: authHeader(ops.token),
+          })
+        ).statusCode,
+      ).toBe(201);
+
+      const fresh = await app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${id}/explanation`,
+        headers: authHeader(ops.token),
+      });
+      expect(fresh.json().explanation.summary).toContain('$20M');
+      expect(fresh.json().stale).toBe(false);
+
+      // A second run: a corrected input, a re-weighting — anything.
+      await runCalculation(id, { ...BASE_INPUTS, volatility: 0.75 });
+
+      const after = await app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${id}/explanation`,
+        headers: authHeader(ops.token),
+      });
+      expect(after.statusCode).toBe(200);
+      expect(after.json().explanation).toBeNull();
+      // Said out loud, so a caller can offer to re-run rather than implying
+      // the feature was never used.
+      expect(after.json().stale).toBe(true);
+
+      // And the progress tracker stops announcing a card that is not there.
+      for (let i = 0; i < 7; i++) await advance(id);
+      const progress = await app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${id}/progress`,
+        headers: authHeader(client.token),
+      });
+      expect(progress.statusCode).toBe(200);
+      expect(progress.json().explanation.available).toBe(false);
+
+      // Re-running the agent against the new run restores it.
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/v1/valuations/${id}/ai/explain`,
+            headers: authHeader(ops.token),
+          })
+        ).statusCode,
+      ).toBe(201);
+      const again = await app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${id}/explanation`,
+        headers: authHeader(ops.token),
+      });
+      expect(again.json().stale).toBe(false);
+      expect(again.json().explanation.summary).toContain('$20M');
+
+      // …and the tracker announces it again. Without this the assertion above
+      // would pass against a tracker that never announces anything.
+      const progressAgain = await app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${id}/progress`,
+        headers: authHeader(client.token),
+      });
+      expect(progressAgain.json().explanation.available).toBe(true);
+    });
   });
 
   // ── Client progress tracker (§5.6) ─────────────────────────────────────────

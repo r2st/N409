@@ -13,7 +13,11 @@ import {
   type AiPipeline,
 } from '../domain/pipeline.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
-import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
+import {
+  latestCalculationForKind,
+  latestSucceededCalculation,
+  type CalculationRow,
+} from '../repos/calculations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
 import { sanitizeExtractedInputs, type RejectedInput } from './engineInputs.js';
 import { findDocumentsByIds, listDocuments, type DocumentRow } from '../repos/documents.js';
@@ -456,6 +460,43 @@ export async function runAiPipeline(
     }
   }
   return { job: completed, appliedInputs, rejectedInputs };
+}
+
+/**
+ * The `explain` run that describes this engagement as it currently stands.
+ *
+ * The explanation is prose about a *particular* calculation — the pipeline is
+ * in `CALCULATION_DEPENDENT_PIPELINES` and the agent is asked for "what was
+ * concluded and what it means", so its first paragraph states the concluded
+ * equity value and the per-share figure. Nothing recorded which run it was
+ * written about, and both readers simply took the newest successful one.
+ *
+ * So an engagement that was recomputed after its explanation was drafted —
+ * a corrected input, a re-weighted approach, any second run — served the
+ * superseded conclusion in plain English beside the current figures, to the
+ * client, under a card headed "In plain English" with no date on it. That is
+ * the report's own conclusion contradicted on the page next to it, and the
+ * reader with the least means of noticing is the one it is written for.
+ *
+ * A run that predates the calculation it would purport to describe is
+ * therefore withheld rather than shown. `stale` says which of the two reasons
+ * there is nothing to render, so a caller can offer to re-run rather than
+ * implying the feature was never used.
+ *
+ * `created_at`, not `completed_at`: what the agent saw is the calculation that
+ * existed when its payload was assembled.
+ */
+export async function currentExplanation(
+  pool: pg.Pool,
+  valuation: Pick<ValuationRow, 'id' | 'kind'>,
+): Promise<{ job: AiJobRow | null; stale: boolean }> {
+  const [job, calculation] = await Promise.all([
+    latestSucceededJob(pool, valuation.id, 'explain'),
+    latestCalculationForKind(pool, valuation.id, valuation.kind),
+  ]);
+  if (!job) return { job: null, stale: false };
+  const stale = calculation !== null && job.created_at <= calculation.created_at;
+  return { job: stale ? null : job, stale };
 }
 
 /** The slice of a calculation the 'qa'/'explain' pipelines receive. */
@@ -930,13 +971,16 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       : null;
     if (!valuation || !ref || !canReadValuation(principal, ref)) throw problems.notFound();
     if (!canReadReport(principal, ref)) {
-      return { explanation: null, model: null, generated_at: null };
+      return { explanation: null, model: null, generated_at: null, stale: false };
     }
-    const job = await latestSucceededJob(deps.pool, id, 'explain');
+    const { job, stale } = await currentExplanation(deps.pool, valuation);
     return {
       explanation: job?.result ?? null,
       model: job?.model ?? null,
       generated_at: job?.completed_at ?? null,
+      // True when there is an explanation on file and it describes a run the
+      // engagement has since superseded — see `currentExplanation`.
+      stale,
     };
   });
 }
