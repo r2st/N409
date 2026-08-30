@@ -139,18 +139,72 @@ export const OFFLINE_DETAIL =
  *
  * So the test is the absence of `detail`, which is the property that matters,
  * rather than the shape of the fallback that absence happens to produce.
+ *
+ * What that absence *means*, though, is not one thing, and round 255 found the
+ * single sentence saying the wrong one of them (`describeDetaillessFailure`
+ * below).
  */
 export function describeRequestFailure(err: unknown): string {
   if (err instanceof ApiError) {
-    if (!err.problem.detail) {
-      return (
-        `The server answered with an error (${err.status}) and no explanation, which usually means ` +
-        'the request did not reach the application itself. Nothing was saved; wait a moment and try again.'
-      );
-    }
+    if (!err.problem.detail) return describeDetaillessFailure(err.status);
     return err.message;
   }
   return OFFLINE_DETAIL;
+}
+
+/**
+ * A problem body with no `detail`, described by the only thing left in it.
+ *
+ * The sentence this replaced was one sentence for every status, and it made two
+ * claims that the commonest case does not support:
+ *
+ *   "…which usually means the request did not reach the application itself.
+ *    Nothing was saved; wait a moment and try again."
+ *
+ * Both are read off the *gateway* case — a proxy answering for an app it could
+ * not reach — and that is not where detail-less bodies mostly come from here.
+ * `registerProblemHandler` ends with `{type: 'urn:n409:problem:internal', title:
+ * 'Internal Server Error', status, instance}` and no `detail`, and it sends that
+ * from inside the application, after a route threw. The request reached the app;
+ * it is the *reason* that is withheld, deliberately, so an internal message
+ * cannot leak.
+ *
+ * Which makes "nothing was saved" a durability claim the browser is in no
+ * position to make. An unhandled throw lands wherever it lands, including after
+ * the transaction that did the work committed — the announcement-after-commit
+ * shape all over this estate is precisely a write that succeeded followed by a
+ * step that threw. Telling somebody who pressed Save that nothing was saved, and
+ * in the same breath to try again, is how one engagement gets created twice.
+ *
+ * So each family says what its status actually licenses, and the 500 arm asks
+ * for a reload instead of a retry: looking is always safe, and it answers the
+ * question the reader has, which is whether the thing happened.
+ */
+function describeDetaillessFailure(status: number): string {
+  if (status >= 502 && status <= 504) {
+    return (
+      `The request did not get through to the application (${status}) and came back with no ` +
+      'explanation, so nothing was changed. Wait a moment and try again.'
+    );
+  }
+  if (status === 404) {
+    return (
+      'The server has no such address (404) and gave no explanation. Nothing was changed. That is a ' +
+      'fault on our side rather than anything you entered — reload the page, and if it keeps ' +
+      'happening the link you followed is out of date.'
+    );
+  }
+  if (status >= 500) {
+    return (
+      `The server hit an unexpected fault (${status}) and returned no explanation of it. The fault ` +
+      'has been recorded for us to look at. Reload the page before trying again — a failure this ' +
+      'late can leave the change either applied or not.'
+    );
+  }
+  return (
+    `The server refused the request (${status}) and gave no explanation. Nothing was changed. ` +
+    'Reload the page to see where things stand before trying again.'
+  );
 }
 
 /**

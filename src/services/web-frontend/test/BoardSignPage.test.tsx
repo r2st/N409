@@ -245,7 +245,12 @@ describe('BoardSignPage', () => {
     render(<BoardSignPage />);
     const note = await screen.findByRole('alert');
     expect(note).toHaveTextContent(/no explanation/i);
-    expect(note).toHaveTextContent(/nothing was saved/i);
+    // It used to also say "nothing was saved", on a GET, from a browser that
+    // cannot know — round 255 replaced that with the thing the reader can act
+    // on. `urn:n409:problem:internal` comes from inside the app after a route
+    // threw, so where the throw landed is exactly what is not knowable here.
+    expect(note).not.toHaveTextContent(/nothing was saved/i);
+    expect(note).toHaveTextContent(/reload the page before trying again/i);
   });
 });
 

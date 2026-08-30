@@ -182,7 +182,10 @@ describe('describeRequestFailure', () => {
     const described = describeRequestFailure(err);
     expect(described).not.toBe(err.message);
     expect(described).toContain('502');
-    expect(described).toMatch(/nothing was saved/i);
+    // A gateway status is the one family where the browser really can say the
+    // request never arrived, so this arm keeps saying it.
+    expect(described).toMatch(/did not get through/i);
+    expect(described).toMatch(/nothing was changed/i);
   });
 
   it('does not read this API’s 500 reason phrase back to the reader', () => {
@@ -205,7 +208,42 @@ describe('describeRequestFailure', () => {
     expect(described).not.toContain('Internal Server Error');
     expect(described).toContain('500');
     expect(described).toMatch(/no explanation/i);
-    expect(described).toMatch(/nothing was saved/i);
+  });
+
+  it('does not tell a reader nothing was saved when it cannot know that', () => {
+    /*
+     * Round 255. One sentence used to serve every detail-less status, and it was
+     * written from the gateway case: "the request did not reach the application
+     * itself. Nothing was saved; wait a moment and try again."
+     *
+     * A `urn:n409:problem:internal` 500 is the opposite of that. The app's own
+     * error handler sends it, from inside the app, after a route threw — so the
+     * request arrived, and where the throw landed relative to the commit is
+     * exactly what nobody on the browser side knows. This estate is full of
+     * writes that commit and then announce, and an exception in the second half
+     * of one of those is a saved row described to the reader as an unsaved one,
+     * with an invitation to press the button again underneath it.
+     */
+    const internal = describeRequestFailure(
+      new ApiError(500, { type: 'urn:n409:problem:internal', title: 'Internal Server Error', status: 500 }),
+    );
+    expect(internal).not.toMatch(/nothing was (saved|changed)/i);
+    expect(internal).not.toMatch(/did not reach the application/i);
+    // What it says instead: look before you leap.
+    expect(internal).toMatch(/reload the page before trying again/i);
+    expect(internal).toMatch(/either applied or not/i);
+  });
+
+  it('does not blame the reader for an address the server does not have', () => {
+    // `setNotFoundHandler` emits `{title: 'Not Found', status: 404}` with no
+    // detail, so an unrouted request showed the reader the words "Not Found".
+    const err = new ApiError(404, { type: 'urn:n409:problem:not-found', title: 'Not Found', status: 404 });
+    expect(err.message).toBe('Not Found');
+    const described = describeRequestFailure(err);
+    expect(described).not.toBe(err.message);
+    expect(described).toContain('404');
+    expect(described).toMatch(/fault on our side/i);
+    expect(described).toMatch(/out of date/i);
   });
 
   it('keeps a detail that happens to look like a title', () => {
