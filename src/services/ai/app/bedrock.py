@@ -121,10 +121,24 @@ def tokens_used() -> int:
 
 @dataclass(frozen=True)
 class Credentials:
+    """The signing material, with a repr that does not hand it out.
+
+    A dataclass writes its own `__repr__` over every field, so the default one
+    prints the secret access key and the session token in full — and this object
+    is passed as an argument to the signing and the retry loop, which is exactly
+    where a `TypeError` or an assertion quotes its arguments. Two of these four
+    fields are bearer material; none of the four is worth reading in a log line,
+    since "which credentials" is answered by the region and the key id, and the
+    key id is credential-shaped in its own right.
+    """
+
     access_key: str
     secret_key: str
     session_token: str | None
     region: str
+
+    def __repr__(self) -> str:
+        return f"Credentials(region={self.region!r}, access_key=[REDACTED], secret_key=[REDACTED])"
 
 
 def credentials() -> Credentials | None:

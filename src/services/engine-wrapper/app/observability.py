@@ -104,10 +104,23 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         "[PHONE]",
     ),
-    # Credentials that reached a message or a URL. `Bearer …` and `sk-…` are
-    # the two shapes this estate actually produces (internal token, OpenRouter).
+    # Credentials that reached a message or a URL. `Bearer …` and `sk-…` were
+    # the two shapes this estate produced — internal token, OpenRouter — until a
+    # second completion provider was added and signed its own requests.
     (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]+=*", re.IGNORECASE), "Bearer [REDACTED]"),
     (re.compile(r"\bsk-[A-Za-z0-9._-]{16,}"), "[API_KEY]"),
+    # AWS SigV4, which `bedrock.py` builds by hand rather than through botocore.
+    # Its authorization header is `AWS4-HMAC-SHA256 Credential=AKIA…/…,
+    # SignedHeaders=…, Signature=<64 hex>` and matches none of the rules above.
+    #
+    # Reachable by an ordinary misconfiguration rather than by bad luck: AWS
+    # answers a signature it will not accept — a skewed clock, a region that
+    # does not match the one signed for — with `SignatureDoesNotMatch`, and that
+    # body quotes the canonical request and the string-to-sign back at the
+    # caller. `_error_message` keeps 200 characters of it, and the credential
+    # scope is at the front of both.
+    (re.compile(r"(?i)\bSignature=[0-9a-f]{16,}"), "Signature=[REDACTED]"),
+    (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), "[AWS_KEY_ID]"),
     # Query-string credentials, e.g. an upstream URL in a traceback.
     (
         re.compile(r"(?i)\b(api[_-]?key|token|secret|password)=[^&\s\"']+"),
@@ -118,7 +131,25 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
 # Secrets whose literal value must never appear, whatever shape it happens to
 # have. Read per-line from the environment so a rotation takes effect without a
 # restart — the same reason internal_auth reads its token per-request.
-_SECRET_ENV_VARS = ("INTERNAL_SERVICE_TOKEN", "OPENROUTER_API_KEY")
+#
+# The AWS pair are the round-241 addition and the reason this list is a list
+# rather than a pattern. A second completion provider arrived with three
+# credential variables of its own, and the shape rules above knew none of them:
+# an AWS secret access key is forty characters of base64 with no prefix to
+# recognise, and a session token is a few kilobytes of the same. Nothing failed
+# and nothing looked wrong — which is the failure mode this net exists for, and
+# it went one whole provider without being told.
+#
+# `AWS_ACCESS_KEY_ID` is deliberately not here: it is an identifier rather than
+# a secret, it is matched by shape above, and putting it here would mean the
+# literal comparison ran against a value short enough to appear in ordinary
+# text the day an operator set it to something odd.
+_SECRET_ENV_VARS = (
+    "INTERNAL_SERVICE_TOKEN",
+    "OPENROUTER_API_KEY",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+)
 
 # Below this, a "secret" is either unset or too short to match without hitting
 # ordinary words.

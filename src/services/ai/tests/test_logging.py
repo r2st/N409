@@ -60,6 +60,61 @@ def test_a_rotated_key_of_an_unexpected_shape_is_still_struck(monkeypatch) -> No
     assert "totally-different-shape-9911" not in redact("key totally-different-shape-9911 rejected")
 
 
+# What AWS answers a signature it will not accept with: the string-to-sign,
+# quoted back. `_error_message` keeps 200 characters of a body like this and
+# puts them in the exception the give-up raises.
+_SIGNATURE_MISMATCH = (
+    "The request signature we calculated does not match the signature you provided. "
+    "Credential=AKIAIOSFODNN7EXAMPLE/20260830/us-east-1/bedrock/aws4_request, "
+    "SignedHeaders=content-type;host;x-amz-date, "
+    "Signature=5d672d79c15b13162d9279b0855cfba6789a8edb4c82c400e06b5924a6f2b5d7"
+)
+
+
+def test_a_bedrock_signature_and_key_id_never_reach_the_log() -> None:
+    """The second completion provider signs its own requests.
+
+    `Bearer …` and `sk-…` were the shapes this estate produced when those rules
+    were written; SigV4 matches neither, and the failure that quotes it back —
+    a skewed clock, a region that does not match the one signed for — is a
+    misconfiguration rather than an attack.
+    """
+    out = redact(_SIGNATURE_MISMATCH)
+    assert "5d672d79c15b13162d9279b0855cfba6789a8edb4c82c400e06b5924a6f2b5d7" not in out
+    assert "AKIAIOSFODNN7EXAMPLE" not in out
+    # The diagnosis is the whole reason the line is kept.
+    assert "does not match the signature you provided" in out
+    assert "us-east-1" in out
+
+
+def test_an_aws_secret_of_no_particular_shape_is_still_struck(monkeypatch) -> None:
+    """The same argument the OpenRouter case above makes, for the provider
+    added after it. An AWS secret access key is forty characters of base64 with
+    no prefix to recognise, so only the literal value can catch it."""
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "FwoGZXIvYXdzEBYaDNOT-A-REAL-TOKEN-9911")
+    struck = redact(
+        "signing failed with wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY "
+        "and FwoGZXIvYXdzEBYaDNOT-A-REAL-TOKEN-9911"
+    )
+    assert "wJalrXUtnFEMI" not in struck
+    assert "NOT-A-REAL-TOKEN-9911" not in struck
+
+
+def test_the_signing_credentials_do_not_print_themselves() -> None:
+    """A dataclass writes a repr over every field, and this object is an
+    argument to the signing and the retry loop — which is where a TypeError
+    quotes its arguments."""
+    from app.bedrock import Credentials
+
+    creds = Credentials("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG", "sess-9911", "us-east-1")
+    shown = repr(creds)
+    assert "wJalrXUtnFEMI" not in shown
+    assert "sess-9911" not in shown
+    # Still says which configuration it is.
+    assert "us-east-1" in shown
+
+
 def test_token_usage_counts_survive_redaction() -> None:
     # The llm_usage line is how spend is tracked; mangling its numbers would
     # trade one problem for another.
