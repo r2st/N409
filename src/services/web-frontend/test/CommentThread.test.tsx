@@ -149,6 +149,43 @@ describe('CommentsSection', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
+  /**
+   * R226. The banner was there and so was the sentence under it: "No messages
+   * yet — start the conversation below." A reader was told, in the same
+   * paragraph, that the thread could not be read and that it is empty; only
+   * one of those can be true, and the false one is the one carrying the
+   * invitation to write. On a valuation whose client is mid-conversation that
+   * invitation is how a message gets sent twice.
+   */
+  it('does not invite a first message on a thread it could not read', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ title: 'Down' }, 503));
+    renderSection();
+
+    await screen.findByRole('alert');
+    expect(screen.queryByText(/start the conversation below/i)).not.toBeInTheDocument();
+  });
+
+  it('goes back to the thread once a later load succeeds', async () => {
+    let fail = true;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url).includes('/comments') && init?.method === 'POST') return jsonResponse({ id: 'x' }, 201);
+      if (fail) {
+        fail = false;
+        return jsonResponse({ title: 'Down' }, 503);
+      }
+      return jsonResponse({ comments: [chat], truncated: false });
+    });
+    const user = userEvent.setup();
+    renderSection();
+
+    await screen.findByRole('alert');
+    await user.type(screen.getByLabelText('Write a message'), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('When is the draft due?')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('invites the first message rather than showing an empty list', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ comments: [] }));
     renderSection();
@@ -244,6 +281,19 @@ describe('CommentsSection', () => {
     it('says so when there are no notes', async () => {
       renderAsOps(() => jsonResponse({ comments: [chat] }));
       expect(await screen.findByText('No notes yet.')).toBeInTheDocument();
+    });
+
+    /**
+     * R226. One request carries the notes and the conversation, and its
+     * failure was reported only in the conversation section — so the notes
+     * panel, which is the internal record of what is outstanding on the
+     * engagement, said "No notes yet." with nothing near it to disagree.
+     */
+    it('does not report an unread notes panel as an empty one', async () => {
+      renderAsOps(() => jsonResponse({ title: 'Down' }, 503));
+
+      expect(await screen.findByText(/Could not load the internal notes/i)).toBeInTheDocument();
+      expect(screen.queryByText('No notes yet.')).not.toBeInTheDocument();
     });
 
     it('posts a note pinned, under the note kind', async () => {

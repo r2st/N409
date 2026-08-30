@@ -29,6 +29,13 @@ export function CommentsSection({
   const ops = isOps(user);
   const [comments, setComments] = useState<Comment[] | null>(null);
   const [truncated, setTruncated] = useState(false);
+  /*
+   * The load failure is held apart from the action failures, because the two
+   * decide different things. An action failure is a banner; a *load* failure
+   * is the reason there is nothing to draw, and every empty-state sentence
+   * below is a claim about the record that only a reply can support.
+   */
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
@@ -42,8 +49,9 @@ export function CommentsSection({
         // older message that was sent and answered reads as one that was
         // never sent — on the record of what the client was told.
         setTruncated(res.truncated);
+        setLoadError(null);
       })
-      .catch(() => setError('Could not load the conversation.'));
+      .catch(() => setLoadError('Could not load the conversation.'));
   }, [valuationId]);
 
   useEffect(() => {
@@ -103,7 +111,7 @@ export function CommentsSection({
    */
   const { shown: recent, hidden: earlier, showMore: showEarlier } = useListWindow(thread, { edge: 'tail' });
 
-  if (!comments && !error) return <Spinner />;
+  if (!comments && !loadError) return <Spinner />;
 
   const canModerate = (c: Comment) => ops || c.author_id === user?.id;
 
@@ -146,8 +154,19 @@ export function CommentsSection({
                 </li>
               );
             })}
-            {notes.length === 0 && <li className="text-sm text-ink-400">No notes yet.</li>}
+            {!loadError && notes.length === 0 && <li className="text-sm text-ink-400">No notes yet.</li>}
           </ul>
+          {/*
+           * One request carries both halves, so a failure here is the same
+           * failure the conversation reports below — but a reader of this
+           * panel is looking at *these* rows, and "No notes yet." on the
+           * strength of a 503 is the panel telling them the file is clean.
+           */}
+          {loadError && (
+            <div className="mt-1">
+              <ErrorNote>Could not load the internal notes.</ErrorNote>
+            </div>
+          )}
           <form
             className="mt-4 flex gap-2"
             onSubmit={(e: FormEvent) => {
@@ -172,9 +191,9 @@ export function CommentsSection({
       {/* Conversation: chat + (for ops) threaded inbound email */}
       <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h2 className="overline mb-4 text-ink-400">Conversation</h2>
-        {error && (
+        {(loadError ?? error) && (
           <div className="mb-4">
-            <ErrorNote>{error}</ErrorNote>
+            <ErrorNote>{loadError ?? error}</ErrorNote>
           </div>
         )}
         <ShowMoreRows hidden={earlier} noun="message" onMore={showEarlier} label="Show earlier messages" />
@@ -218,7 +237,13 @@ export function CommentsSection({
               </div>
             </li>
           ))}
-          {thread.length === 0 && (
+          {/*
+           * The invitation is a claim that there is nothing here to reply to,
+           * and it used to be printed directly under "Could not load the
+           * conversation." — two sentences contradicting each other, with the
+           * false one carrying the call to action.
+           */}
+          {!loadError && thread.length === 0 && (
             <li className="text-sm text-ink-400">No messages yet — start the conversation below.</li>
           )}
         </ul>

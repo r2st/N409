@@ -61,6 +61,8 @@ const SILENT_BY_DESIGN: Record<string, string> = {
     'Falls back to the built-in topic list, so the widget still answers the questions it shipped with.',
   'src/pages/CommunicationsPage.tsx\t/admin/communication-templates/variables':
     'A palette of insertable variables. Without it they are typed by hand, which is what the page did before.',
+  'src/pages/PartnerDetailPage.tsx\t/admin/communication-templates/variables':
+    'The same palette, on the white-label template editor. It degrades to the three variables the send is typed to require — and the endpoint is ops-only, so a partner administrator may legitimately be refused it.',
   'src/pages/PartnerPortalPage.tsx\t/partners/mine':
     'Branding only. The heading falls back to "Your portfolio", which is true of every partner and claims nothing.',
 };
