@@ -7,10 +7,8 @@ out), model fallback, and explicit errors the valuation service can surface.
 
 from __future__ import annotations
 
-import email.utils
 import json
 import logging
-import math
 import os
 import re
 import threading
@@ -21,7 +19,9 @@ import httpx
 
 from .http_client import new_client
 from .llm_http import (
+    DEFAULT_RETRY_AFTER_S,
     MAX_RETRIES,
+    MAX_RETRY_AFTER_S,
     MIN_ATTEMPT_S,
     RETRY_BACKOFF_BASE_S,
     TIMEOUT_S,
@@ -31,8 +31,10 @@ from .llm_http import (
     DeadlineExceeded as _BaseDeadlineExceeded,
     TokenLedger,
     backoff_sleep as _backoff_sleep,
+    clamp_wait as _clamp_wait_shared,
     estimate_tokens as _estimate_tokens,
     finish_reason as _read_finish_reason,
+    retry_after_seconds as _read_retry_after,
     token_count as _token_count,
 )
 
@@ -423,57 +425,14 @@ def _post_with_retry(
     raise last_exc if last_exc else OpenRouterError(f"{candidate}: retries exhausted")
 
 
-# The longest wait worth passing on. A provider that says "come back in three
-# days" is telling an operator something, not telling a client to hold the tab
-# open, and an unbounded number here rides out to an HTTP header.
-MAX_RETRY_AFTER_S = 3600.0
-# What a 429 carrying no `Retry-After` is reported as. The free tier's window is
-# a day and its headers are inconsistent about saying so, so this is not a
-# prediction — it is the shortest interval at which asking again is polite.
-DEFAULT_RETRY_AFTER_S = 60.0
-# CHARS_PER_TOKEN and the estimate that uses it are shared — see `llm_http`.
-
-
-def _retry_after_seconds(resp: httpx.Response) -> float | None:
-    """How long the provider asked us to wait, in seconds, or None.
-
-    Two spellings, because OpenRouter uses both depending on which upstream
-    refused: `Retry-After` (RFC 9110 — a delta in seconds *or* an HTTP-date),
-    and `X-RateLimit-Reset` (an epoch, in milliseconds, which is what the free
-    tier's daily counter reports).
-    """
-    headers = resp.headers
-    raw = headers.get("retry-after")
-    if raw:
-        try:
-            return _clamp_wait(float(raw.strip()))
-        except ValueError:
-            pass
-        try:
-            when = email.utils.parsedate_to_datetime(raw)
-        except (TypeError, ValueError):
-            when = None
-        if when is not None:
-            return _clamp_wait(when.timestamp() - time.time())
-    reset = headers.get("x-ratelimit-reset")
-    if reset:
-        try:
-            # Epoch milliseconds. A value that is plainly seconds instead (too
-            # small to be a millisecond epoch) is read as seconds rather than
-            # reported as a wait of half a century.
-            value = float(reset.strip())
-        except ValueError:
-            return None
-        epoch_s = value / 1000 if value > 1e11 else value
-        return _clamp_wait(epoch_s - time.time())
-    return None
-
-
-def _clamp_wait(seconds: float) -> float | None:
-    """A wait we are willing to quote: positive, finite, and under the ceiling."""
-    if not math.isfinite(seconds) or seconds <= 0:
-        return None
-    return min(seconds, MAX_RETRY_AFTER_S)
+# The retry-after ceiling, the default, and the header reader itself live in
+# `llm_http`: a provider that refuses with 429 says when it will serve us again
+# in one of three spellings, and that is not an OpenRouter fact. Re-exported
+# here under the names this module has always used so `main` and the tests keep
+# importing them from one place.
+# CHARS_PER_TOKEN and the estimate that uses it are shared the same way.
+_retry_after_seconds = _read_retry_after
+_clamp_wait = _clamp_wait_shared
 
 
 def _finish_reason(data: dict) -> str | None:

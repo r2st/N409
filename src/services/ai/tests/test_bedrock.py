@@ -16,8 +16,11 @@ import pytest
 
 from app import bedrock, llm_router
 from app.bedrock import (
+    BedrockAuthenticationFailed,
     BedrockError,
     BedrockNotConfigured,
+    BedrockRateLimited,
+    BedrockRequestRejected,
     Credentials,
     chat,
     completion_text,
@@ -31,7 +34,12 @@ from app.bedrock import (
     strip_prefix,
     verify_credentials,
 )
-from app.openrouter import OpenRouterError
+from app.openrouter import (
+    AuthenticationFailed,
+    OpenRouterError,
+    RateLimited,
+    RequestRejected,
+)
 
 MODEL = "anthropic.claude-sonnet-4-20250514-v1:0"
 PREFIXED = f"bedrock/{MODEL}"
@@ -625,3 +633,150 @@ class TestRouting:
         # Including one this installation does not list at all — a prompt bound
         # to a model an operator later removed still shows its own binding.
         assert llm_router.configured_models(preferred="bedrock/other")[0] == "bedrock/other"
+
+
+# ── Why the call failed ──────────────────────────────────────────────────────
+
+
+class TestRefusalVerdicts:
+    """A Bedrock refusal says which kind it is, and keeps saying it through the router.
+
+    Every one of these used to arrive as a bare `BedrockError` and leave `main`
+    as 503. `clients/internal.ts` retries a 5xx and counts five toward a breaker
+    shared by every engagement, so a throttled invocation on the provider that
+    is always billed was paid for twice and charged against everyone else.
+    """
+
+    def _refuse(self, monkeypatch, status: int, headers: dict | None = None):
+        configure(monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                status, headers=headers or {}, json={"message": f"status {status}"}
+            )
+
+        return transport(handler)
+
+    def test_a_throttle_is_rate_limited_not_an_outage(self, monkeypatch):
+        client = self._refuse(monkeypatch, 429, {"retry-after": "17"})
+        with pytest.raises(BedrockRateLimited) as caught:
+            chat("s", "u", model=PREFIXED, client=client)
+        assert caught.value.retry_after_s == 17.0
+
+    def test_a_throttle_without_a_header_quotes_no_wait_of_its_own(self, monkeypatch):
+        # `main._rate_limited` supplies the default; inventing one here would
+        # make the client's answer look like the provider's.
+        client = self._refuse(monkeypatch, 429)
+        with pytest.raises(BedrockRateLimited) as caught:
+            chat("s", "u", model=PREFIXED, client=client)
+        assert caught.value.retry_after_s is None
+
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_a_rejected_signature_is_an_authentication_failure(self, monkeypatch, status):
+        with pytest.raises(BedrockAuthenticationFailed):
+            chat("s", "u", model=PREFIXED, client=self._refuse(monkeypatch, status))
+
+    @pytest.mark.parametrize("status", [400, 404, 413, 424])
+    def test_an_unservable_request_says_so_rather_than_looking_transient(
+        self, monkeypatch, status
+    ):
+        with pytest.raises(BedrockRequestRejected) as caught:
+            chat("s", "u", model=PREFIXED, client=self._refuse(monkeypatch, status))
+        assert caught.value.status == status
+
+    def test_a_5xx_that_survived_the_retries_stays_an_outage(self, monkeypatch):
+        # 503 is the honest answer for this one, and the retry ladder above it
+        # is the right response — so it keeps the base class it always had.
+        monkeypatch.setattr(bedrock, "backoff_sleep", lambda attempt, deadline: True)
+        client = self._refuse(monkeypatch, 502)
+        with pytest.raises(BedrockError) as caught:
+            chat("s", "u", model=PREFIXED, client=client)
+        assert type(caught.value) is BedrockError
+
+    def test_the_message_still_names_bedrock_and_the_model(self, monkeypatch):
+        client = self._refuse(monkeypatch, 429)
+        with pytest.raises(BedrockError, match=MODEL):
+            chat("s", "u", model=PREFIXED, client=client)
+
+
+class TestVerdictsSurviveTheRouter:
+    """The status `main` answers comes off the type, so the router must not flatten it."""
+
+    def _route(self, monkeypatch, exc):
+        configure(monkeypatch)
+
+        def boom(*args, **kwargs):
+            raise exc
+
+        monkeypatch.setattr(bedrock, "chat", boom)
+
+    def test_a_throttle_arrives_as_the_429_the_handlers_answer(self, monkeypatch):
+        self._route(monkeypatch, BedrockRateLimited("bedrock/x: throttled", 12.0))
+        with pytest.raises(RateLimited) as caught:
+            llm_router.chat("s", "u", model=PREFIXED)
+        assert caught.value.retry_after_s == 12.0
+        assert "throttled" in str(caught.value)
+
+    def test_an_unservable_request_arrives_as_the_422(self, monkeypatch):
+        self._route(monkeypatch, BedrockRequestRejected("bedrock/x: too long", 400))
+        with pytest.raises(RequestRejected) as caught:
+            llm_router.chat("s", "u", model=PREFIXED)
+        assert caught.value.status == 400
+
+    def test_refused_credentials_arrive_as_an_authentication_failure(self, monkeypatch):
+        self._route(monkeypatch, BedrockAuthenticationFailed("bedrock/x: expired token"))
+        with pytest.raises(AuthenticationFailed):
+            llm_router.chat("s", "u", model=PREFIXED)
+
+    def test_everything_else_is_still_the_error_every_caller_catches(self, monkeypatch):
+        self._route(monkeypatch, BedrockError("bedrock/x: HTTP 502"))
+        with pytest.raises(OpenRouterError) as caught:
+            llm_router.chat("s", "u", model=PREFIXED)
+        assert type(caught.value) is OpenRouterError
+
+    def test_every_verdict_is_still_catchable_as_the_one_error(self, monkeypatch):
+        # The whole reason the router translates rather than lets Bedrock's own
+        # hierarchy escape: an agent's `except OpenRouterError` must keep working.
+        for exc in (
+            BedrockRateLimited("a", 1.0),
+            BedrockAuthenticationFailed("b"),
+            BedrockRequestRejected("c", 400),
+            BedrockError("d"),
+        ):
+            self._route(monkeypatch, exc)
+            with pytest.raises(OpenRouterError):
+                llm_router.chat("s", "u", model=PREFIXED)
+
+
+class TestTheRouteAnswersTheVerdict:
+    """The whole stack, once: HTTP 429 from AWS out to HTTP 429 from us.
+
+    The two classes above test each hop; this one is the reason they matter.
+    Before it, this exchange ended in a 503 — retried at full price and counted
+    toward a breaker shared by every engagement on the platform.
+    """
+
+    def test_a_throttled_invocation_leaves_as_a_429_with_the_wait_aws_named(
+        self, monkeypatch
+    ):
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+
+        configure(monkeypatch)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                429,
+                headers={"retry-after": "25"},
+                json={"message": "Too many requests, please wait before trying again."},
+            )
+
+        monkeypatch.setattr(bedrock, "new_client", lambda **kw: transport(handler))
+        res = TestClient(app).post(
+            "/ai/v1/test", json={"system": "s", "user": "u", "model": PREFIXED}
+        )
+        assert res.status_code == 429
+        assert res.headers["retry-after"] == "25"
+        assert "Too many requests" in res.json()["detail"]

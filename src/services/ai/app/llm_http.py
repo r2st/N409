@@ -14,10 +14,13 @@ itself. One `Deadline`, imported.
 
 from __future__ import annotations
 
+import email.utils
 import math
 import os
 import threading
 import time
+
+import httpx
 
 # One HTTP attempt's ceiling. `Deadline.attempt_timeout` never exceeds it.
 TIMEOUT_S = 90.0
@@ -193,6 +196,67 @@ def stop_reason(data: dict) -> str | None:
     """
     reason = data.get("stopReason")
     return reason if isinstance(reason, str) and reason else None
+
+
+# ── "When, then" ─────────────────────────────────────────────────────────────
+#
+# A provider that refuses with 429 usually says when it will serve us again,
+# and that answer is worth carrying the whole way out rather than re-guessed at
+# each hop. Shared rather than per-client for the reason the readers above are:
+# the second provider to refuse this way would otherwise either invent its own
+# clamp or, far more likely, quote no wait at all.
+
+# The longest wait worth passing on. A provider that says "come back in three
+# days" is telling an operator something, not telling a client to hold the tab
+# open, and an unbounded number here rides out to an HTTP header.
+MAX_RETRY_AFTER_S = 3600.0
+# What a 429 carrying no `Retry-After` is reported as. A free tier's window is a
+# day and its headers are inconsistent about saying so, so this is not a
+# prediction — it is the shortest interval at which asking again is polite.
+DEFAULT_RETRY_AFTER_S = 60.0
+
+
+def clamp_wait(seconds: float) -> float | None:
+    """A wait we are willing to quote: positive, finite, and under the ceiling."""
+    if not math.isfinite(seconds) or seconds <= 0:
+        return None
+    return min(seconds, MAX_RETRY_AFTER_S)
+
+
+def retry_after_seconds(resp: httpx.Response) -> float | None:
+    """How long the provider asked us to wait, in seconds, or None.
+
+    Three spellings, because the providers here use all three depending on which
+    upstream refused: `Retry-After` (RFC 9110 — a delta in seconds *or* an
+    HTTP-date), which is also what Bedrock sends on a `ThrottlingException`, and
+    `X-RateLimit-Reset` (an epoch, in milliseconds, which is what OpenRouter's
+    free-tier daily counter reports).
+    """
+    headers = resp.headers
+    raw = headers.get("retry-after")
+    if raw:
+        try:
+            return clamp_wait(float(raw.strip()))
+        except ValueError:
+            pass
+        try:
+            when = email.utils.parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
+            when = None
+        if when is not None:
+            return clamp_wait(when.timestamp() - time.time())
+    reset = headers.get("x-ratelimit-reset")
+    if reset:
+        try:
+            # Epoch milliseconds. A value that is plainly seconds instead (too
+            # small to be a millisecond epoch) is read as seconds rather than
+            # reported as a wait of half a century.
+            value = float(reset.strip())
+        except ValueError:
+            return None
+        epoch_s = value / 1000 if value > 1e11 else value
+        return clamp_wait(epoch_s - time.time())
+    return None
 
 
 # ── Spend accounting ─────────────────────────────────────────────────────────

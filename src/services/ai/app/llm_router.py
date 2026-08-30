@@ -23,7 +23,13 @@ ever reached from behind that gate.
 from __future__ import annotations
 
 from . import bedrock, openrouter
-from .openrouter import LlmResult, OpenRouterError
+from .openrouter import (
+    AuthenticationFailed,
+    LlmResult,
+    OpenRouterError,
+    RateLimited,
+    RequestRejected,
+)
 
 
 def provider_for(model: str | None) -> str:
@@ -43,13 +49,37 @@ def chat(
     Bedrock failure escaping as an unhandled 500 from the one code path nobody
     exercised. The message keeps the provider's own wording, so what an
     operator reads still says Bedrock.
+
+    Which *subclass* is not a wart either — see `_as_openrouter_error`. The
+    verdict a provider drew is the whole input to the status `main` answers,
+    and Bedrock's used to be discarded on the way through here.
     """
     if bedrock.handles(model):
         try:
             return bedrock.chat(system, user, model=model, client=client)
         except bedrock.BedrockError as exc:
-            raise OpenRouterError(str(exc)) from exc
+            raise _as_openrouter_error(exc) from exc
     return openrouter.chat(system, user, model=model, client=client)
+
+
+def _as_openrouter_error(exc: bedrock.BedrockError) -> OpenRouterError:
+    """The Bedrock verdict, wearing the type this service's handlers read.
+
+    Flattening every one of them to the base class was not merely untidy: the
+    status `main` picks comes off the type, so a `ThrottlingException` — the
+    routine one, on the provider that is always billed — arrived as 503, was
+    retried by `clients/internal.ts` at full price, and counted toward a
+    breaker shared by every engagement. The mapping is one line per verdict so
+    a provider added later has somewhere obvious to join.
+    """
+    message = str(exc)
+    if isinstance(exc, bedrock.BedrockRateLimited):
+        return RateLimited(message, exc.retry_after_s)
+    if isinstance(exc, bedrock.BedrockAuthenticationFailed):
+        return AuthenticationFailed(message)
+    if isinstance(exc, bedrock.BedrockRequestRejected):
+        return RequestRejected(message, exc.status)
+    return OpenRouterError(message)
 
 
 def configured_models(preferred: str | None = None) -> list[str]:

@@ -60,6 +60,7 @@ from .llm_http import (
     env_float,
     env_int,
     estimate_tokens,
+    retry_after_seconds as _read_retry_after,
     stop_reason as _read_stop_reason,
     token_count,
 )
@@ -99,6 +100,58 @@ class DeadlineExceeded(BedrockError, _BaseDeadlineExceeded):
 
 class TokenBudgetExceeded(BedrockError):
     """Raised when BEDROCK_TOKEN_BUDGET is spent."""
+
+
+# ── Why the call failed ──────────────────────────────────────────────────────
+#
+# Every Bedrock refusal used to arrive as a bare `BedrockError`, which
+# `llm_router` flattened to `OpenRouterError` and `main` answered 503 for. That
+# is right for an outage and wrong for the two things Bedrock actually does
+# most: `ThrottlingException` (429 — the account's per-model invocation rate,
+# which a busy afternoon hits routinely) and `ValidationException` (400 — a
+# prompt past the model's context window, which will be past it forever).
+#
+# The cost of getting it wrong is written down in `openrouter._classify` and is
+# the same here: `clients/internal.ts` retries a 5xx, so a throttled Bedrock
+# call was billed twice, and five of them opened a circuit breaker shared by
+# every engagement on the platform. The verdicts below mirror OpenRouter's one
+# for one, and `llm_router` maps each onto the type the callers already catch —
+# so the second provider stops being the one whose failures all look alike.
+
+
+class BedrockRateLimited(BedrockError):
+    """Bedrock throttled the invocation (429).
+
+    `retry_after_s` is AWS's own answer to "when, then" when it gave one.
+    """
+
+    def __init__(self, message: str, retry_after_s: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
+
+class BedrockAuthenticationFailed(BedrockError):
+    """AWS rejected the signature, or the role lacks `bedrock:InvokeModel` (401/403).
+
+    Still a 503 on the way out — a service whose credentials are refused *is*
+    unavailable — but a distinct type, so the log and the readiness detail can
+    say which of the two 503s this is. One needs an operator; the other needs
+    patience. It is also the failure a rotated or expired `AWS_SESSION_TOKEN`
+    produces, and that one needs an operator quickly.
+    """
+
+
+class BedrockRequestRejected(BedrockError):
+    """A 4xx no retry and no second attempt can turn into an answer.
+
+    `ValidationException` (400) for a prompt past the context window,
+    `ResourceNotFoundException` (404) for a model id this account cannot
+    invoke, `ModelErrorException` (424). The fix is in the request.
+    """
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 #: This provider's share of the process's spend, and its own ceiling.
@@ -345,6 +398,26 @@ def _error_message(resp: httpx.Response) -> str:
     return f"HTTP {resp.status_code} {resp.text[:200]}"
 
 
+def _refusal(model_id: str, resp: httpx.Response) -> BedrockError:
+    """The exception that says *why* this invocation was refused.
+
+    One model, so there is no chain to reconcile — the status on the single
+    response is the whole verdict, which is the one way this is simpler than
+    `openrouter._classify`. A 5xx keeps the base `BedrockError` (and its 503):
+    it is retried above before we ever get here, and one that survived the
+    retries is an outage, which is what 503 means.
+    """
+    message = f"{model_id}: {_error_message(resp)}"
+    status = resp.status_code
+    if status in (401, 403):
+        return BedrockAuthenticationFailed(message)
+    if status == 429:
+        return BedrockRateLimited(message, _read_retry_after(resp))
+    if 400 <= status < 500:
+        return BedrockRequestRejected(message, status)
+    return BedrockError(message)
+
+
 # ── Credential verification ──────────────────────────────────────────────────
 
 _key_lock = threading.Lock()
@@ -545,7 +618,7 @@ def chat(
             raise BedrockError(f"{model_id}: {exc}") from exc
 
         if resp.status_code != 200:
-            raise BedrockError(f"{model_id}: {_error_message(resp)}")
+            raise _refusal(model_id, resp)
         try:
             data = resp.json()
         except ValueError as exc:
