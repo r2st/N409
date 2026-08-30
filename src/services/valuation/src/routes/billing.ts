@@ -1139,6 +1139,49 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
                 typeof obj.cancel_at_period_end === 'boolean' ? obj.cancel_at_period_end : undefined,
             });
             if (written) await auditSubscriptionWrite(key.eventId, written, before);
+            /**
+             * A renewal that granted the next period's quota, which nothing
+             * said either.
+             *
+             * The reset lives inside `upsertSubscription`'s statement, gated on
+             * the money as well as the date — `quota_period_start` moves, and
+             * the counter goes back to zero, only on an event whose status says
+             * a renewal cleared. That gate is subtle enough to have been got
+             * wrong twice (see migration 0190), and its two failure modes are
+             * invisible from outside: a grant that should not have happened
+             * hands a free period, and a grant that never happens leaves a
+             * paid-for period exhausted. Both are silent, and the second
+             * surfaces only as the refusal logged in routes/valuations.ts —
+             * with nothing to say whether the period it names was ever granted.
+             *
+             * Off the two rows rather than out of the SQL: the statement cannot
+             * report what it replaced, and `before` is already read here for the
+             * audit row's `from` side. A racing delivery can make this line
+             * miss a grant it did not perform, which is the right way round for
+             * something that reports rather than decides.
+             */
+            // By instant, not by reference: both sides are `Date` objects the
+            // driver built separately, so `!==` is true for two readings of one
+            // timestamp and this would have fired on every subscription update.
+            const grantedAt = written?.quota_period_start?.getTime() ?? null;
+            const grantedBefore = before?.quota_period_start?.getTime() ?? null;
+            if (written && before && grantedAt !== grantedBefore) {
+              log.info(
+                {
+                  actorType: 'system',
+                  source: 'stripe',
+                  userId: written.user_id,
+                  subscriptionId: written.id,
+                  stripeSubscriptionId: written.stripe_subscription_id,
+                  planTier: written.plan_tier,
+                  status: written.status,
+                  quotaPeriodStart: written.quota_period_start?.toISOString() ?? null,
+                  previousQuotaPeriodStart: before.quota_period_start?.toISOString() ?? null,
+                  valuationsUsedBefore: before.valuations_used,
+                },
+                'plan quota granted for a new billing period',
+              );
+            }
             // The other writer of a cancellation, and the one that lands first
             // about as often as not.
             if (written?.newly_canceled) await announceSubscriptionCanceled(log, written);

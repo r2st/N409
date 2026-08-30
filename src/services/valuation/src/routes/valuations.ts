@@ -268,6 +268,44 @@ export function registerValuationRoutes(
        * leaves the figures out and the remedy in.
        */
       const plan = await findPlanForSubscription(deps.pool, subscription.plan_tier);
+      /**
+       * And said out loud, which a 402 is not.
+       *
+       * The shared error handler logs 5xx and the two database branches; a 4xx
+       * `ApiProblem` is a described refusal and passes without a line, which is
+       * right for a bad request and wrong for this one. A plan limit reached is
+       * not a malformed call — it is a paying customer being turned away from
+       * the product, the single most actionable commercial signal this service
+       * produces, and it was legible only to the customer who hit it.
+       *
+       * It is also the symptom of the two ways the quota accounting goes wrong,
+       * neither of which anybody can see from the outside: a renewal that moved
+       * `current_period_start` without moving `quota_period_start` (see
+       * `upsertSubscription`, where the reset is gated on the money as well as
+       * the date) leaves an exhausted counter across a period that was in fact
+       * paid for, and a release that failed leaves it one high forever. Both
+       * present as this refusal and nothing else — so the line carries the two
+       * periods that decide which it is.
+       *
+       * `warn` and no alert: the refusal is correct behaviour and the customer
+       * has a remedy in the sentence they were given. What it needs is to be
+       * countable.
+       */
+      req.log.warn(
+        {
+          userId,
+          subscriptionId: subscription.id,
+          planTier: subscription.plan_tier,
+          valuationsUsed: subscription.valuations_used,
+          valuationLimit: plan?.valuation_limit ?? null,
+          quotaPeriodStart: subscription.quota_period_start?.toISOString() ?? null,
+          currentPeriodStart: subscription.current_period_start?.toISOString() ?? null,
+          currentPeriodEnd: subscription.current_period_end?.toISOString() ?? null,
+          subscriptionStatus: subscription.status,
+          awaitingRenewal: quotaAwaitsRenewal(subscription),
+        },
+        'plan valuation limit reached — creation refused',
+      );
       throw new ApiProblem({
         status: 402,
         title: 'Plan limit reached',

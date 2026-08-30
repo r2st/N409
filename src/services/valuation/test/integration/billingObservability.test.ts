@@ -562,3 +562,188 @@ describe.skipIf(!dbUp)('a subscription checkout on the billing webhook', () => {
     expect(lines.length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * The quota, whose two events were both silent.
+ *
+ * A subscriber turned away at their plan limit is a 402, and the shared error
+ * handler logs 5xx and the database branches — a described 4xx passes without a
+ * line. So the most actionable commercial signal this service produces was
+ * legible only to the customer who hit it, and so were the two ways the quota
+ * accounting goes wrong: a period that was paid for but never granted, and a
+ * counter left one high by a release that failed. Both present as this refusal
+ * and nothing else.
+ */
+describe.skipIf(!dbUp)('plan quota', () => {
+  let ctx: TestApp;
+  let lines: Array<Record<string, unknown>>;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET, LOG_LEVEL: 'info' });
+    lines = [];
+    (ctx.app.log as unknown as Record<symbol, unknown>)[pino.symbols.streamSym] = new Writable({
+      write(chunk, _enc, cb) {
+        lines.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        cb();
+      },
+    });
+  });
+  afterAll(async () => ctx?.teardown());
+
+  it('says who was refused, on what plan, and which period the counter is counting', async () => {
+    const user = await seedUser(ctx, { roles: ['valuation_user'] });
+    const periodStart = new Date(Date.UTC(2026, 0, 1));
+    // Exhausted on arrival: the refusal is the subject, not the twelve
+    // creations that would otherwise get there.
+    const { rows } = await ctx.pool.query<{ id: string }>(
+      `INSERT INTO subscriptions
+         (id, user_id, plan_tier, status, stripe_subscription_id, stripe_customer_id,
+          current_period_start, current_period_end, quota_period_start, valuations_used)
+       VALUES ($1, $2, 'annual_retainer', 'active', 'sub_obs_quota', 'cus_obs_quota', $3, $4, $3, 12)
+       RETURNING id`,
+      [newUlid(), user.id, periodStart, new Date(Date.UTC(2027, 0, 1))],
+    );
+
+    const mark = lines.length;
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(user.token),
+      payload: { kind: '409a', company_name: 'Over Limit Co' },
+    });
+    expect(res.statusCode).toBe(402);
+
+    const line = lines.slice(mark).find((l) => String(l.msg).includes('plan valuation limit reached'));
+    expect(line).toBeDefined();
+    expect(line!.userId).toBe(user.id);
+    expect(line!.subscriptionId).toBe(rows[0]!.id);
+    expect(line!.planTier).toBe('annual_retainer');
+    expect(line!.valuationsUsed).toBe(12);
+    expect(line!.valuationLimit).toBe(12);
+    // The pair that says whether this period was ever granted: equal here, so
+    // the counter is counting the period the row is showing.
+    expect(line!.quotaPeriodStart).toBe(periodStart.toISOString());
+    expect(line!.currentPeriodStart).toBe(periodStart.toISOString());
+    expect(line!.subscriptionStatus).toBe('active');
+    expect(line!.level).toBe('warn');
+  });
+
+  /**
+   * And the grant itself, which happens inside `upsertSubscription`'s statement
+   * — gated on the money as well as the date, subtle enough to have been got
+   * wrong twice, and reported by nothing.
+   */
+  it('says when a renewal grants the next period', async () => {
+    const userId = (
+      await createUser(ctx.pool, {
+        email: 'quota-grant@obs.example.com',
+        passwordDigest: 'x',
+        roles: ['valuation_user'],
+      })
+    ).id;
+    const first = Math.floor(Date.UTC(2026, 0, 1) / 1000);
+    const second = Math.floor(Date.UTC(2027, 0, 1) / 1000);
+    const renewal = (eventId: string, start: number) => {
+      const payload = JSON.stringify({
+        id: eventId,
+        type: 'customer.subscription.updated',
+        created: start,
+        data: {
+          object: {
+            id: 'sub_obs_grant',
+            object: 'subscription',
+            status: 'active',
+            customer: 'cus_obs_grant',
+            current_period_start: start,
+            current_period_end: start + 31_536_000,
+            metadata: { user_id: userId, plan_tier: 'annual_retainer' },
+          },
+        },
+      });
+      return ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/billing/webhook',
+        headers: signedHeaders(payload),
+        payload,
+      });
+    };
+
+    // The first delivery creates the row, so there is no previous period and
+    // nothing was granted *again*.
+    const opened = lines.length;
+    expect((await renewal('evt_obs_grant_1', first)).statusCode).toBe(200);
+    expect(lines.slice(opened).find((l) => String(l.msg).includes('quota granted'))).toBeUndefined();
+    await ctx.pool.query(
+      `UPDATE subscriptions SET valuations_used = 7 WHERE stripe_subscription_id = 'sub_obs_grant'`,
+    );
+
+    const mark = lines.length;
+    expect((await renewal('evt_obs_grant_2', second)).statusCode).toBe(200);
+    const line = lines.slice(mark).find((l) => String(l.msg).includes('quota granted'));
+    expect(line).toBeDefined();
+    expect(line!.userId).toBe(userId);
+    expect(line!.quotaPeriodStart).toBe(new Date(second * 1000).toISOString());
+    expect(line!.previousQuotaPeriodStart).toBe(new Date(first * 1000).toISOString());
+    // What the grant cleared, which is the figure that says whether the period
+    // it replaced was fully used or thrown away.
+    expect(line!.valuationsUsedBefore).toBe(7);
+    expect(
+      (
+        await ctx.pool.query<{ valuations_used: number }>(
+          `SELECT valuations_used FROM subscriptions WHERE stripe_subscription_id = 'sub_obs_grant'`,
+        )
+      ).rows[0]!.valuations_used,
+    ).toBe(0);
+  });
+
+  /**
+   * The reference-equality trap this line was first written with: two `Date`
+   * objects the driver built separately are never `===`, so an update that
+   * grants nothing must stay quiet or the line means nothing.
+   */
+  it('says nothing on an update that grants no new period', async () => {
+    const userId = (
+      await createUser(ctx.pool, {
+        email: 'quota-nogrant@obs.example.com',
+        passwordDigest: 'x',
+        roles: ['valuation_user'],
+      })
+    ).id;
+    const start = Math.floor(Date.UTC(2026, 5, 1) / 1000);
+    const deliver = (eventId: string, extra: Record<string, unknown> = {}) => {
+      const payload = JSON.stringify({
+        id: eventId,
+        type: 'customer.subscription.updated',
+        created: start,
+        data: {
+          object: {
+            id: 'sub_obs_nogrant',
+            object: 'subscription',
+            status: 'active',
+            customer: 'cus_obs_nogrant',
+            current_period_start: start,
+            current_period_end: start + 2_592_000,
+            metadata: { user_id: userId, plan_tier: 'annual_retainer' },
+            ...extra,
+          },
+        },
+      });
+      return ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/billing/webhook',
+        headers: signedHeaders(payload),
+        payload,
+      });
+    };
+    await deliver('evt_obs_nogrant_1');
+
+    const mark = lines.length;
+    // Same period, a different fact about it — the shape Stripe sends most of.
+    expect((await deliver('evt_obs_nogrant_2', { cancel_at_period_end: true })).statusCode).toBe(200);
+    expect(lines.slice(mark).find((l) => String(l.msg).includes('quota granted'))).toBeUndefined();
+  });
+
+  it('is reading a log stream at all', () => {
+    expect(lines.length).toBeGreaterThan(0);
+  });
+});
