@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -27,6 +27,12 @@ describe.skipIf(!dbUp)('valuation export column scope', () => {
   let ops: Awaited<ReturnType<typeof seedUser>>;
   let client: Awaited<ReturnType<typeof seedUser>>;
   let reviewer: Awaited<ReturnType<typeof seedUser>>;
+
+  /** The label ops typed when the channel was opened. */
+  const OPS_LABEL = 'bridge-uk (ops)';
+  /** What the firm calls itself in front of its own clients (migration 0091). */
+  const BRAND_NAME = 'Bridge Advisors LLP';
+  let brandedClient: Awaited<ReturnType<typeof seedUser>>;
 
   /** The export as `token` sees it, parsed into a header row and its columns. */
   const exportCsv = async (token: string): Promise<{ headers: string[]; body: string }> => {
@@ -64,6 +70,21 @@ describe.skipIf(!dbUp)('valuation export column scope', () => {
       payload: { assigned_reviewer_id: reviewer.id },
     });
     expect(assigned.statusCode, assigned.body).toBe(200);
+
+    // A firm that has taken its brand live, and a client inside it.
+    const partnerId = await seedPartner(ctx, OPS_LABEL);
+    await ctx.pool.query(`UPDATE partners SET brand_name = $2, white_label_enabled = true WHERE id = $1`, [
+      partnerId,
+      BRAND_NAME,
+    ]);
+    brandedClient = await seedUser(ctx, { roles: ['valuation_user'], partnerId });
+    const branded = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(brandedClient.token),
+      payload: { kind: '409a', company_name: 'Branded Co' },
+    });
+    expect(branded.statusCode, branded.body).toBe(201);
   });
   afterAll(async () => ctx?.teardown());
 
@@ -102,6 +123,40 @@ describe.skipIf(!dbUp)('valuation export column scope', () => {
    * chosen once and all three renderers read it — otherwise the CSV is fixed
    * and the XLSX still leaks.
    */
+  /**
+   * The other column a reader outside the firm should not have been given.
+   *
+   * `partner_name` was `partners.name` — the label ops typed when the channel
+   * was opened — while every other surface a client meets has resolved through
+   * `publicPartnerName` since round 237: the report cover, the portal heading,
+   * the workflow emails. The export was the one file left calling the firm by
+   * its internal name, and unlike `reviewer_email` it cannot be withheld: the
+   * client is entitled to know which firm holds their engagement. It has to be
+   * the right name instead.
+   */
+  it('names the firm by its brand in a client’s export, not by the ops label', async () => {
+    const { body } = await exportCsv(brandedClient.token);
+    expect(body).toContain('Branded Co');
+    expect(body).toContain(BRAND_NAME);
+    expect(body).not.toContain(OPS_LABEL);
+  });
+
+  /**
+   * The rule is gated on the switch, so a firm that has only staged a brand
+   * still reads as the channel it is — otherwise this test would pass on an
+   * implementation that simply preferred `brand_name` whenever it was set.
+   */
+  it('keeps the channel label while the brand is only staged', async () => {
+    await ctx.pool.query(`UPDATE partners SET white_label_enabled = false WHERE name = $1`, [OPS_LABEL]);
+    try {
+      const { body } = await exportCsv(brandedClient.token);
+      expect(body).toContain(OPS_LABEL);
+      expect(body).not.toContain(BRAND_NAME);
+    } finally {
+      await ctx.pool.query(`UPDATE partners SET white_label_enabled = true WHERE name = $1`, [OPS_LABEL]);
+    }
+  });
+
   it('withholds the reviewer from the client’s XLSX too', async () => {
     const res = await ctx.app.inject({
       method: 'GET',
