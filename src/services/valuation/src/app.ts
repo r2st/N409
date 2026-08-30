@@ -328,13 +328,28 @@ export function buildApp(deps: AppDeps): FastifyInstance {
    * sequence, not the code unit. Query strings arrive decoded, so `%00` and a
    * percent-encoded `%ED%A0%80` are caught here too.
    *
+   * **Path parameters are scanned for the same reason**, and were not. They are
+   * decoded exactly as a query string is, so `GET /help/articles/a%00b` put a
+   * NUL in `req.params.slug`, which `findArticleBySlug` handed to the driver as
+   * a `text` parameter — Postgres answers `22021 invalid byte sequence for
+   * encoding "UTF8": 0x00`, and a request that should have been a 404 for a
+   * page that does not exist became a 500 for a database that does. Most
+   * params never get that far because they are ULIDs, or names looked up in a
+   * registry, or shape-checked before the query (`/blog/posts/:slug`,
+   * `/public/branding/:key` both do) — but that is a property of each route
+   * rather than of the boundary, which is exactly the argument above for
+   * putting the guard here. An unpaired surrogate cannot arrive this way:
+   * `decodeURIComponent('%ED%A0%80')` throws and Fastify answers 400 on its
+   * own. The NUL is the half that gets through.
+   *
    * This runs ahead of route-level authentication, so an unauthenticated caller
    * sending one gets 400 rather than 401. That is the same ordering Fastify's
    * own schema validation has, and the refusal discloses nothing: it names a
    * field of the caller's own request.
    */
   app.addHook('preValidation', (req, _reply, done) => {
-    const at = findUnstorableText(req.body) ?? findUnstorableText(req.query);
+    const at =
+      findUnstorableText(req.body) ?? findUnstorableText(req.query) ?? findUnstorableText(req.params);
     if (at) {
       done(problems.badRequest(unstorableTextMessage(at)));
       return;

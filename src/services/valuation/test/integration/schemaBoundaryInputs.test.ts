@@ -98,6 +98,30 @@ describe.skipIf(!dbUp)('schema boundary inputs', () => {
       expect(res.json().detail).toContain('q');
     });
 
+    // A path segment is decoded exactly as a query string is, and the guard
+    // read neither params. `/help/articles/:slug` is the shortest route from a
+    // path segment to a `text` parameter: no ULID check, no registry, no shape
+    // test — straight into `WHERE slug = $1`, where Postgres answers 22021 and
+    // the request that should have been a 404 becomes a 500.
+    it('is refused in a path parameter, which reaches the driver unchecked', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/help/articles/a%00b',
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().detail).toContain('slug');
+    });
+
+    it('leaves an ordinary unknown slug a 404', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/help/articles/no-such-article',
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
     it('does not disturb the awkward text that is legitimate', async () => {
       for (const name of ['Ünïcödé 🏢 Ltd', "O'Brien & Sons, Ltd.", 'Acme\tHoldings']) {
         const res = await ctx.app.inject({
@@ -372,6 +396,7 @@ describe.skipIf(!dbUp)('schema boundary inputs', () => {
         },
       ],
       ['NUL in query', { method: 'GET', url: '/api/v1/valuations?q=%00', headers: authHeader(ops.token) }],
+      ['NUL in path', { method: 'GET', url: '/api/v1/help/articles/a%00b', headers: authHeader(ops.token) }],
       [
         'BC window',
         {
