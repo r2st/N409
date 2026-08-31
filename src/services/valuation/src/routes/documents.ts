@@ -70,8 +70,8 @@ export { safeFilename };
  *
  * Scrubbed first, which it was not. Two of the callers pass a name that has
  * already been through {@link safeFilename} — but `report.pdf` builds its
- * filename out of `valuation.company_name`, which is `z.string().min(1).max(300)`
- * and nothing else, and that reached the header raw:
+ * filename out of `valuation.company_name`, which is bounded and trimmed and
+ * nothing else, and that reached the header raw:
  *
  *   "Acme\"            → filename="Acme\"; filename*=UTF-8''Acme%5C
  *   "../../etc/passwd" → filename="../../etc/passwd"

@@ -151,8 +151,8 @@ export const PARTNER_API_SCHEMAS = new Map<string, OpenApiSchemas>();
 
 const CreateBody = z.object({
   kind: z.enum(VALUATION_KINDS),
-  company_name: z.string().min(1).max(300),
-  service_name: z.string().min(1).max(300).optional(),
+  company_name: z.string().trim().min(1).max(300),
+  service_name: z.string().trim().min(1).max(300).optional(),
   currency: CurrencyCode.optional(),
   service_countries: z.array(z.string().length(2)).max(50).optional(),
   /**
@@ -180,8 +180,8 @@ const CreateBody = z.object({
  */
 const UpdateBody = z
   .object({
-    company_name: z.string().min(1).max(300).optional(),
-    service_name: z.string().min(1).max(300).nullable().optional(),
+    company_name: z.string().trim().min(1).max(300).optional(),
+    service_name: z.string().trim().min(1).max(300).nullable().optional(),
     currency: CurrencyCode.optional(),
     service_countries: z.array(z.string().length(2)).max(50).optional(),
     external_id: z.string().trim().min(1).max(200).nullable().optional(),

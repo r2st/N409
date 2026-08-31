@@ -57,8 +57,8 @@ import { forbidden } from '../domain/accessProblem.js';
 
 const CreateBody = z.object({
   kind: z.enum(VALUATION_KINDS),
-  company_name: z.string().min(1).max(300),
-  service_name: z.string().min(1).max(300).optional(),
+  company_name: z.string().trim().min(1).max(300),
+  service_name: z.string().trim().min(1).max(300).optional(),
   currency: CurrencyCode.optional(),
   service_countries: z.array(z.string().length(2)).max(50).optional(),
   source: z.enum(VALUATION_SOURCES).optional(),
@@ -70,8 +70,8 @@ const CreateBody = z.object({
 
 const PatchBody = z
   .object({
-    company_name: z.string().min(1).max(300),
-    service_name: z.string().min(1).max(300).nullable(),
+    company_name: z.string().trim().min(1).max(300),
+    service_name: z.string().trim().min(1).max(300).nullable(),
     state: z.enum(VALUATION_STATES),
     waiting_on_client: z.boolean(),
     // The column is the `ulid` domain with a foreign key to `users`. Neither

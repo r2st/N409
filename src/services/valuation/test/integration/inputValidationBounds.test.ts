@@ -195,6 +195,56 @@ describe.skipIf(!dbUp)('input size bounds at the route', () => {
     });
   });
 
+  describe('the name the deliverable identifies the company by', () => {
+    /*
+     * `company_name` was `z.string().min(1).max(300)` — a character count, so
+     * `'   '` is three of them and passed. It is not a label the product can
+     * shrug at: `instantiateTemplate` substitutes it into
+     * `<strong>{{company_name}}</strong>` in five sections of the 409A
+     * skeleton *and stores the result*, so an engagement opened under a blank
+     * name has that blank written permanently into the identifying sentence of
+     * its report. The sibling create routes — client intake and the fund
+     * holding — already trimmed; these two, which open the engagement itself,
+     * did not.
+     */
+    const create = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(admin.token),
+        payload: { kind: '409a', ...payload },
+      });
+
+    it('refuses a company name that is only whitespace', async () => {
+      expect((await create({ company_name: '   ' })).statusCode).toBe(422);
+      expect((await create({ company_name: '\t\n' })).statusCode).toBe(422);
+    });
+
+    it('refuses a whitespace service name beside a real company name', async () => {
+      const res = await create({ company_name: 'TrimCo', service_name: ' ' });
+      expect(res.statusCode).toBe(422);
+    });
+
+    it('stores the trimmed name, so padding is not part of the company', async () => {
+      const res = await create({ company_name: '  Padded Holdings  ' });
+      expect(res.statusCode).toBe(201);
+      expect(res.json().valuation.company_name).toBe('Padded Holdings');
+    });
+
+    it('applies the same rule to the edit, not only the create', async () => {
+      const id = (await create({ company_name: 'Editable Co' })).json().valuation.id;
+      const patch = (company_name: string) =>
+        ctx.app.inject({
+          method: 'PATCH',
+          url: `/api/v1/valuations/${id}`,
+          headers: authHeader(admin.token),
+          payload: { company_name },
+        });
+      expect((await patch('  ')).statusCode).toBe(422);
+      expect((await patch('  Renamed Co ')).json().valuation.company_name).toBe('Renamed Co');
+    });
+  });
+
   describe('the questionnaire an anonymous client fills in', () => {
     let valuationId: string;
 
