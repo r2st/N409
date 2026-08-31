@@ -20,10 +20,15 @@ import {
   listValuations,
   updateInstrument,
   upsertCreditTerms,
+  type DebtInstrumentRow,
   type InstrumentType,
 } from '../repos/debtInstruments.js';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
-import { refuseIfSubjectRetired, refuseIfRetired } from '../domain/retiredEngagement.js';
+import {
+  refuseIfSubjectRetired,
+  refuseIfSubjectRetiredIn,
+  refuseIfRetired,
+} from '../domain/retiredEngagement.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import type { ValuationEventType } from '../domain/auditTrail.js';
@@ -157,6 +162,24 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     return instrument;
   };
 
+  /**
+   * The same instrument, re-read and re-judged inside the transaction that is
+   * about to write it. The fund side's `fundForWriteIn` twin — see it for both
+   * halves of what falls through the gap between a guard on the pool and a
+   * write in a transaction opened afterwards, and `refuseIfSubjectRetiredIn`
+   * for why the row is locked rather than merely re-read.
+   */
+  const instrumentForWriteIn = async (
+    client: pg.PoolClient,
+    id: string,
+    doing: string,
+  ): Promise<DebtInstrumentRow> => {
+    const live = await findInstrument(client, id);
+    if (!live) throw problems.notFound();
+    await refuseIfSubjectRetiredIn(client, live, doing);
+    return live;
+  };
+
   app.post('/api/v1/debt/instruments', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     requireOps(principal);
@@ -216,15 +239,16 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    const existing = await loadInstrumentForWrite(id, 'accepting changes');
+    await loadInstrumentForWrite(id, 'accepting changes');
     const parsed = UpdateBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid update', parsed.error);
     const instrument = await withTransaction(deps.pool, async (client) => {
+      const live = await instrumentForWriteIn(client, id, 'accepting changes');
       const updated = await updateInstrument(client, id, {
         name: parsed.data.name,
         params: parsed.data.params,
       });
-      await recordInstrumentEvent(client, existing, 'debt_instrument_updated', principal.id, {
+      await recordInstrumentEvent(client, live, 'debt_instrument_updated', principal.id, {
         instrument_id: id,
         changes: parsed.data,
       });
@@ -291,11 +315,12 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    const existing = await loadInstrumentForWrite(id, 'accepting changes to its credit terms');
+    await loadInstrumentForWrite(id, 'accepting changes to its credit terms');
     const parsed = CreditTermsBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid credit terms', parsed.error);
     const b = parsed.data;
     const creditTerms = await withTransaction(deps.pool, async (client) => {
+      const live = await instrumentForWriteIn(client, id, 'accepting changes to its credit terms');
       const saved = await upsertCreditTerms(client, id, {
         rating: b.rating ?? null,
         benchmarkYield: b.benchmark_yield ?? null,
@@ -303,7 +328,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         seniority: b.seniority,
         secured: b.secured,
       });
-      await recordInstrumentEvent(client, existing, 'debt_credit_terms_updated', principal.id, {
+      await recordInstrumentEvent(client, live, 'debt_credit_terms_updated', principal.id, {
         instrument_id: id,
         changes: b,
       });
@@ -364,6 +389,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       );
     }
     const valuation = await withTransaction(deps.pool, async (client) => {
+      const live = await instrumentForWriteIn(client, id, 'accepting new valuations');
       const priced = await createValuation(client, {
         instrumentId: id,
         valuationDate: parsed.data.valuation_date ?? todayLocal(),
@@ -372,7 +398,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         fairValue,
         createdBy: principal.id,
       });
-      await recordInstrumentEvent(client, instrument, 'debt_valuation_recorded', principal.id, {
+      await recordInstrumentEvent(client, live, 'debt_valuation_recorded', principal.id, {
         instrument_id: id,
         // `debt_valuation_id`, not `valuation_id`. This row is a pricing of an
         // instrument (`debt_valuations`), and the event it sits in is on a

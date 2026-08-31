@@ -28,12 +28,17 @@ import {
   updateFund,
   updatePosition,
   upsertLpTerms,
+  type FundRow,
   type MarkMethod,
 } from '../repos/funds.js';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
 import { findValuationById } from '../repos/valuations.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
-import { refuseIfSubjectRetired, refuseIfRetired } from '../domain/retiredEngagement.js';
+import {
+  refuseIfSubjectRetired,
+  refuseIfSubjectRetiredIn,
+  refuseIfRetired,
+} from '../domain/retiredEngagement.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import type { ValuationEventType } from '../domain/auditTrail.js';
@@ -248,6 +253,46 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     return fund;
   };
 
+  /**
+   * The same portfolio, re-read and re-judged inside the transaction that is
+   * about to write it.
+   *
+   * `loadFundForWrite` above stays where it is: it refuses early, before the
+   * route spends an engine call on work nobody is doing, and it is what answers
+   * the 404. What it cannot do is bind its answer to the write, because the
+   * answer is a statement on the pool and the write is a transaction opened
+   * afterwards. Two things fall through that gap.
+   *
+   * The engagement can be retired in it — see `refuseIfSubjectRetiredIn`, and
+   * note that on `POST /positions/:pid/marks` the gap is the whole engine round
+   * trip rather than a scheduling hiccup.
+   *
+   * And the *link* can move in it, which decides whether there is a spine event
+   * at all. `recordFundEvent` writes only when the portfolio is linked, from
+   * the copy the route read; a `PUT /funds/:id/valuation` landing in between
+   * therefore produced a holding, a mark or a rewritten waterfall on a linked
+   * engagement with nothing on its trail — R280's invariant defeated by a stale
+   * read rather than by a failure, which is the harder half to notice because
+   * both the row and the trail look complete on their own.
+   *
+   * So the transaction resolves both for itself, and every `recordFundEvent`
+   * below names the row this returned rather than the one the request came in
+   * with.
+   */
+  const fundForWriteIn = async (client: pg.PoolClient, id: string, doing: string): Promise<FundRow> => {
+    const live = await findFund(client, id);
+    if (!live) throw problems.notFound();
+    await refuseIfSubjectRetiredIn(client, live, doing);
+    return live;
+  };
+
+  /** The link half of {@link fundForWriteIn}, for the writes retirement leaves open. */
+  const fundLinkIn = async (client: pg.PoolClient, id: string): Promise<FundRow> => {
+    const live = await findFund(client, id);
+    if (!live) throw problems.notFound();
+    return live;
+  };
+
   // ── Funds ────────────────────────────────────────────────────────────────
   app.post('/api/v1/funds', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
@@ -296,11 +341,12 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    const existing = await loadFundForWrite(id, 'accepting changes');
+    await loadFundForWrite(id, 'accepting changes');
     const parsed = FundPatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid fund', parsed.error);
     const b = parsed.data;
     const fund = await withTransaction(deps.pool, async (client) => {
+      const live = await fundForWriteIn(client, id, 'accepting changes');
       const updated = await updateFund(client, id, {
         name: b.name,
         fundType: b.fund_type,
@@ -315,7 +361,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       // stayed silent about the portfolio being renamed, reclassified, or
       // redenominated — the last of which changes what every figure under it
       // means, and what the NAV exhibit prints beside them.
-      await recordFundEvent(client, existing, 'fund_updated', principal, {
+      await recordFundEvent(client, live, 'fund_updated', principal, {
         fund_id: id,
         changes: b,
       });
@@ -352,11 +398,12 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    const fund = await loadFundForWrite(id, 'accepting new holdings');
+    await loadFundForWrite(id, 'accepting new holdings');
     const parsed = PositionBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid position', parsed.error);
     const b = parsed.data;
     const position = await withTransaction(deps.pool, async (client) => {
+      const live = await fundForWriteIn(client, id, 'accepting new holdings');
       const created = await createPosition(client, {
         fundId: id,
         companyName: b.company_name,
@@ -365,7 +412,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         costBasis: b.cost_basis,
         markMethod: b.mark_method,
       });
-      await recordFundEvent(client, fund, 'fund_position_added', principal, {
+      await recordFundEvent(client, live, 'fund_position_added', principal, {
         fund_id: id,
         position_id: created.id,
         company_name: created.company_name,
@@ -381,12 +428,13 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id, pid } = req.params as { id: string; pid: string };
-    const fund = await loadFundForWrite(id, 'accepting changes to its holdings');
+    await loadFundForWrite(id, 'accepting changes to its holdings');
     if (!isUlid(pid) || !(await findPosition(deps.pool, id, pid))) throw problems.notFound();
     const parsed = PositionPatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid position', parsed.error);
     const b = parsed.data;
     const position = await withTransaction(deps.pool, async (client) => {
+      const live = await fundForWriteIn(client, id, 'accepting changes to its holdings');
       const updated = await updatePosition(client, id, pid, {
         companyName: b.company_name,
         securityType: b.security_type,
@@ -395,7 +443,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         markMethod: b.mark_method,
       });
       if (!updated) throw problems.notFound();
-      await recordFundEvent(client, fund, 'fund_position_updated', principal, {
+      await recordFundEvent(client, live, 'fund_position_updated', principal, {
         fund_id: id,
         position_id: pid,
         changes: b,
@@ -418,9 +466,10 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id, pid } = req.params as { id: string; pid: string };
-    const fund = await loadFund(id);
+    await loadFund(id);
     if (!isUlid(pid)) throw problems.notFound();
     await withTransaction(deps.pool, async (client) => {
+      const live = await fundLinkIn(client, id);
       // Read before the delete, and inside the transaction that does it: the
       // row is what the event has to name, and after the cascade there is
       // nothing left to name it with.
@@ -436,7 +485,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       const latest = (await latestMarks(client, [pid])).get(pid) ?? null;
       const marksRemoved = await countMarks(client, pid);
       if (!(await deletePosition(client, id, pid))) throw problems.notFound();
-      await recordFundEvent(client, fund, 'fund_position_removed', principal, {
+      await recordFundEvent(client, live, 'fund_position_removed', principal, {
         fund_id: id,
         position_id: pid,
         company_name: position.company_name,
@@ -463,7 +512,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id, pid } = req.params as { id: string; pid: string };
-    const fund = await loadFundForWrite(id, 'accepting new marks');
+    await loadFundForWrite(id, 'accepting new marks');
     const position = await findPosition(deps.pool, id, pid);
     if (!position) throw problems.notFound();
     const parsed = MarkBody.safeParse(req.body);
@@ -491,6 +540,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     });
     const marked = nav.positions[0]!;
     const mark = await withTransaction(deps.pool, async (client) => {
+      const live = await fundForWriteIn(client, id, 'accepting new marks');
       const recorded = await createMark(client, {
         positionId: pid,
         measurementDate: b.measurement_date,
@@ -500,7 +550,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         inputs,
         createdBy: principal.id,
       });
-      await recordFundEvent(client, fund, 'fund_mark_recorded', principal, {
+      await recordFundEvent(client, live, 'fund_mark_recorded', principal, {
         fund_id: id,
         position_id: pid,
         // The row the event is about. Every other writer on the spine names
@@ -561,6 +611,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         // trusting the copy above: the engine call sits in between.
         await refuseIfSubjectRetired(deps.pool, fund, 'accepting new marks');
         const mark = await withTransaction(deps.pool, async (client) => {
+          const live = await fundForWriteIn(client, id, 'accepting new marks');
           const recorded = await createMark(client, {
             positionId: pid,
             measurementDate: b.measurement_date ?? todayLocal(),
@@ -575,7 +626,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
             inputs: { model_value: rolled.new_fair_value, rolled_from: prior.id, roll_method: b.method },
             createdBy: principal.id,
           });
-          await recordFundEvent(client, fund, 'fund_mark_recorded', principal, {
+          await recordFundEvent(client, live, 'fund_mark_recorded', principal, {
             fund_id: id,
             position_id: pid,
             mark_id: recorded.id,
@@ -699,11 +750,12 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    const fund = await loadFundForWrite(id, 'accepting changes to its LP terms');
+    await loadFundForWrite(id, 'accepting changes to its LP terms');
     const parsed = LpTermsBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid LP terms', parsed.error);
     const b = parsed.data;
     const lpTerms = await withTransaction(deps.pool, async (client) => {
+      const live = await fundForWriteIn(client, id, 'accepting changes to its LP terms');
       const saved = await upsertLpTerms(client, id, {
         committedCapital: b.committed_capital,
         contributedCapital: b.contributed_capital,
@@ -714,7 +766,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         managementFeesPaid: b.management_fees_paid,
         gpDistributionsToDate: b.gp_distributions_to_date,
       });
-      await recordFundEvent(client, fund, 'fund_lp_terms_updated', principal, {
+      await recordFundEvent(client, live, 'fund_lp_terms_updated', principal, {
         fund_id: id,
         changes: b,
       });

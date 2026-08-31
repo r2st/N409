@@ -172,3 +172,54 @@ export async function refuseIfSubjectRetired(
   if (!valuation) return;
   refuseIfRetired(valuation, doing);
 }
+
+/**
+ * The same refusal, asked *inside* the transaction that does the write, with
+ * the engagement row locked.
+ *
+ * WHY THE POOL VERSION ABOVE IS NOT ENOUGH. `refuseIfSubjectRetired` reads the
+ * engagement on the pool and the route then opens a transaction and writes, so
+ * the question and the answer are two statements with a gap between them. On
+ * most of the measurement surface that gap is sub-millisecond and the exposure
+ * is theoretical. On `POST /funds/:id/positions/:pid/marks` it was the whole
+ * engine round trip: the guard ran, the route spent up to `timeoutMs` in
+ * `/engine/v1/fund-valuation`, and only then wrote the mark. That is the exact
+ * window `refuseIfRetiredNow` exists for — "a run is exactly the length of time
+ * in which a decision about a file gets made" — and the two sibling routes that
+ * also call the engine before writing (`POST /debt/instruments/:id/value`,
+ * `POST /funds/:id/positions/:pid/rollforward`) both re-ask afterwards. The
+ * mark route, the one whose figure the NAV schedule is a sum of, did not.
+ *
+ * Re-asking on the pool would only narrow the window. `FOR SHARE` closes it:
+ * `retireValuations` archives with an UPDATE, which takes `FOR NO KEY UPDATE`
+ * on the row, and that conflicts with `FOR SHARE`. So the two orders are the
+ * only two orders. Either this transaction takes the lock first, the retirement
+ * waits for the mark to commit, and the mark is genuinely a write that happened
+ * before the withdrawal; or the retirement commits first, this read sees
+ * `archived_at` set, and the write is refused. There is no interleaving in
+ * which a mark lands on work the firm had already withdrawn.
+ *
+ * Read through the client and not through `findValuationById`, deliberately.
+ * That reader is the 5s read-through cache from `repos/valuations.ts`, and a
+ * cached row is a row nobody locked — the check would answer from a copy taken
+ * before the transaction began, which is the failure this function exists to
+ * remove rather than a smaller version of it.
+ *
+ * A link that reads back no valuation is not refused, for the reason the pool
+ * version gives: 0110's `ON DELETE SET NULL` means a missing row is a deleted
+ * engagement clearing its own link, not a retired one.
+ */
+export async function refuseIfSubjectRetiredIn(
+  client: pg.PoolClient,
+  subject: { valuation_id: string | null },
+  doing: string,
+): Promise<void> {
+  if (subject.valuation_id === null) return;
+  const { rows } = await client.query<{ archived_at: Date | null }>(
+    'SELECT archived_at FROM valuations WHERE id = $1 FOR SHARE',
+    [subject.valuation_id],
+  );
+  const live = rows[0];
+  if (!live) return;
+  refuseIfRetired(live, doing);
+}
