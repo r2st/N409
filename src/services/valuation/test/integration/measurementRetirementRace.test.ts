@@ -4,7 +4,6 @@ import type pg from 'pg';
 import { migrate } from '../../src/db/migrate.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
-import { newUlid } from '@n409/shared';
 import { retireValuations } from '../../src/repos/valuationPurge.js';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
 
