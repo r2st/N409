@@ -3,6 +3,7 @@ import { newUlid, problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { ENGAGEMENT_EVENT_TYPES, stageByKey, type StageHistoryEntry } from '../domain/engagement.js';
+import type { RoleKey } from '../domain/roles.js';
 
 export interface EngagementRow {
   id: string;
@@ -204,6 +205,14 @@ export interface EngagementListRow extends EngagementRow {
   valuation_state: string;
   kind: string;
   analyst_email: string | null;
+  /**
+   * The assigned analyst's account state, carried so the sweep can decide
+   * whether the assignment is still one it may act on. Null across all three
+   * when nobody is assigned. See {@link analystIsChasable}.
+   */
+  analyst_deleted_at: Date | null;
+  analyst_roles: RoleKey[] | null;
+  analyst_partner_id: string | null;
 }
 
 /** Ceiling on one page of the active-engagement pipeline. */
@@ -250,7 +259,10 @@ export async function listActiveEngagements(
  * stayed open — and the stage cannot close, because nobody is working it.
  */
 const ACTIVE_ENGAGEMENT_SELECT = `
-  SELECT e.*, v.company_name, v.state AS valuation_state, v.kind, u.email AS analyst_email
+  SELECT e.*, v.company_name, v.state AS valuation_state, v.kind, u.email AS analyst_email,
+         u.deleted_at AS analyst_deleted_at, u.partner_id AS analyst_partner_id,
+         (SELECT array_agg(r.key) FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+           WHERE ur.user_id = u.id) AS analyst_roles
     FROM engagements e
     JOIN valuations v ON v.id = e.valuation_id
     LEFT JOIN users u ON u.id = e.assigned_analyst_id`;

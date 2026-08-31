@@ -1,3 +1,6 @@
+import { isOps } from '../auth/rbac.js';
+import type { RoleKey } from './roles.js';
+
 /**
  * Engagement lifecycle model (feature 8). An engagement is the operational
  * overlay on a valuation: the stages an analyst moves it through, each with an
@@ -126,6 +129,55 @@ export function planStageTransition(
   const reopen = isTerminalStage(from);
   if (reopen && opts.reopen !== true) return { ok: false, reason: 'reopen_required' };
   return { ok: true, from, to: target, reopen };
+}
+
+/**
+ * Whether the analyst assigned to an engagement is still somebody the overdue
+ * sweep may chase.
+ *
+ * The assignment is checked once, at the moment it is made:
+ * `assertAssignableAnalyst` refuses a non-existent id, refuses a client, and
+ * refuses a suspended account, and the reason it gives is the sweep — "the
+ * overdue sweep emails whoever is assigned, by name, with the company and the
+ * internal SLA state, so a mis-assignment sends one client's engagement status
+ * to an unrelated one". Nothing asked the question again afterwards, and every
+ * fact it rests on is one an administrator changes on a different screen:
+ *
+ *   * The account is closed. `deleted_at` is this platform's soft delete for a
+ *     user; the console's deactivation and SCIM's `active: false` both set it,
+ *     and every other reader of `users` filters on it — the roster, the
+ *     reviewer picker, password reset, the auto-email drip
+ *     (`repos/communications.ts`, which says so at length). This join did not,
+ *     so a closed account went on receiving a daily email naming a client and
+ *     that client's internal SLA state, at an address the platform had just
+ *     finished cutting off from everything else. That is the one thing
+ *     deactivating it was supposed to stop.
+ *   * The account is suspended, or is no longer on the operations team.
+ *     `ignored` subtracts every privilege the row otherwise carries, and roles
+ *     can simply be taken away; either way the assigned analyst can no longer
+ *     open the engagement the mail is chasing them about.
+ *
+ * Asked through `isOps` rather than re-spelled in SQL, so this stays the same
+ * predicate the assign route enforces rather than a second copy of it that can
+ * drift. Null roles is the LEFT JOIN's "nobody is assigned" — and an account
+ * with no roles at all is not ops either, so both fall out the same way.
+ */
+export function analystIsChasable<
+  T extends {
+    analyst_email: string | null;
+    analyst_deleted_at: Date | null;
+    analyst_roles: RoleKey[] | null;
+    analyst_partner_id: string | null;
+    assigned_analyst_id: string | null;
+  },
+>(analyst: T): analyst is T & { analyst_email: string; assigned_analyst_id: string } {
+  if (!analyst.assigned_analyst_id || !analyst.analyst_email) return false;
+  if (analyst.analyst_deleted_at !== null) return false;
+  return isOps({
+    id: analyst.assigned_analyst_id,
+    roles: analyst.analyst_roles ?? [],
+    partnerId: analyst.analyst_partner_id,
+  });
 }
 
 export type SlaLevel = 'green' | 'yellow' | 'red';

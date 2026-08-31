@@ -9,6 +9,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import {
+  analystIsChasable,
   ENGAGEMENT_EVENT_TYPES,
   ENGAGEMENT_STAGES,
   planStageTransition,
@@ -187,6 +188,13 @@ export function registerEngagementRoutes(
         current_stage: r.current_stage,
         assigned_analyst_id: r.assigned_analyst_id,
         analyst_email: r.analyst_email,
+        // Whether the assignment is still one the overdue sweep will act on.
+        // An engagement can sit here with an analyst named against it and be
+        // chased by nobody, because the account was closed, suspended or
+        // moved off the operations team after it was assigned — see
+        // `analystIsChasable`. The board is where that gets noticed and
+        // reassigned, so it is shown rather than quietly worked around.
+        analyst_active: analystIsChasable(r),
         stage_entered_at: r.stage_entered_at,
         sla: slaStatus(r.current_stage, r.stage_entered_at, now),
       })),
@@ -287,13 +295,27 @@ export function registerEngagementRoutes(
     requireOps(principal);
     const now = new Date();
     const reminded: string[] = [];
+    /**
+     * Overdue engagements whose assigned analyst is no longer someone this
+     * sweep may write to. Reported rather than skipped in silence: an
+     * engagement that is past SLA and has nobody being chased about it is
+     * precisely what a reminder sweep exists to surface, and dropping it
+     * quietly leaves the endpoint reporting a clean run over work nobody was
+     * told about. Engagements with no analyst at all are not in this list —
+     * that is an unassigned engagement, which the board already shows as one.
+     */
+    const unreachable: string[] = [];
     let scanned = 0;
     // Paged rather than capped: a missed reminder is the whole point of the
     // sweep going unsent, and it would report success either way.
     for await (const r of eachActiveEngagement(deps.pool)) {
       scanned++;
       const sla = slaStatus(r.current_stage, r.stage_entered_at, now);
-      if (!sla.overdue || !r.analyst_email) continue;
+      if (!sla.overdue) continue;
+      if (!analystIsChasable(r)) {
+        if (r.assigned_analyst_id) unreachable.push(r.valuation_id);
+        continue;
+      }
       await sendTransactionalEmail(
         { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
         {
@@ -318,6 +340,18 @@ export function registerEngagementRoutes(
       );
       reminded.push(r.valuation_id);
     }
-    return { reminded_count: reminded.length, reminded, scanned };
+    if (unreachable.length > 0) {
+      app.log.warn(
+        { valuation_ids: unreachable, alert: true },
+        'engagements are past SLA with an analyst assigned who can no longer be reminded',
+      );
+    }
+    return {
+      reminded_count: reminded.length,
+      reminded,
+      unreachable_count: unreachable.length,
+      unreachable,
+      scanned,
+    };
   });
 }

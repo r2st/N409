@@ -31,6 +31,13 @@ interface EngagementSummary {
   valuation_state: string;
   current_stage: string;
   analyst_email: string | null;
+  /**
+   * False when an analyst is named against this engagement but the overdue
+   * sweep will not chase them — the account was closed, suspended, or moved
+   * off the operations team after the assignment was made. The card says so
+   * rather than showing an address that looks like cover it no longer is.
+   */
+  analyst_active?: boolean;
   stage_entered_at: string;
   sla: Sla;
 }
@@ -118,8 +125,21 @@ export function EngagementsPage() {
                         >
                           {e.sla.overdue ? 'Overdue' : hours(e.sla.elapsedHours)}
                         </span>
-                        <span className="truncate text-xs text-ink-400">
-                          {e.analyst_email ?? 'Unassigned'}
+                        <span
+                          className={`truncate text-xs ${
+                            e.analyst_email && e.analyst_active === false ? 'text-amber-700' : 'text-ink-400'
+                          }`}
+                          title={
+                            e.analyst_email && e.analyst_active === false
+                              ? 'This analyst can no longer be reminded about the engagement — reassign it.'
+                              : undefined
+                          }
+                        >
+                          {e.analyst_email
+                            ? e.analyst_active === false
+                              ? `${e.analyst_email} (inactive)`
+                              : e.analyst_email
+                            : 'Unassigned'}
                         </span>
                       </div>
                       <div className="tnum mt-1.5 text-[0.7rem] text-ink-400">
