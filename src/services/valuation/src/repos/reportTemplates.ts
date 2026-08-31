@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { newUlid } from '@n409/shared';
+import { newUlid, problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import type { ValuationKind } from '../domain/valuation.js';
 
@@ -191,6 +191,26 @@ export async function activateTemplate(pool: pg.Pool, id: string): Promise<Repor
     );
     const template = target[0];
     if (!template || template.status === 'active') return template ?? null;
+    /*
+     * The route's own refusal, made again under the lock.
+     *
+     * `POST /report-templates/:id/activate` refuses an archived version —
+     * "Archived versions cannot be re-activated — create a new version" — and
+     * that read is on the pool, one statement before this transaction opens.
+     * The lock above was added for a different race and re-checked a different
+     * predicate, so a `POST /:id/archive` committing in between walked straight
+     * through it: the version came back from 'archived' to 'active', and on the
+     * way it archived whichever version of the name the operator had put live
+     * instead. The withdrawn skeleton every new report of that kind is built
+     * from, restored by a request that had been told it could not be.
+     *
+     * Thrown rather than returned as a no-op: an activate that answers 200 over
+     * a version it did not activate is the discarded failure this codebase keeps
+     * finding, and the caller asked for a state change it did not get.
+     */
+    if (template.status === 'archived') {
+      throw problems.conflict('Archived versions cannot be re-activated — create a new version');
+    }
     await client.query(
       `UPDATE report_templates SET status = 'archived', updated_at = now()
        WHERE name = $1 AND status = 'active'`,

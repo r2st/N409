@@ -133,6 +133,21 @@ describe.skipIf(!dbUp)('report template activation under concurrency', () => {
 
   const freshName = () => `act_${newUlid().toLowerCase().slice(-12)}`;
 
+  /** Somebody is stopped on a lock — see `measurementLinkRace.test.ts`. */
+  const waitForABlockedBackend = async (): Promise<void> => {
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      const { rows } = await ctx.pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'
+            AND pid <> pg_backend_pid()`,
+      );
+      if ((rows[0]?.n ?? 0) > 0) return;
+      if (Date.now() >= deadline) throw new Error('no backend ever blocked on the template name');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  };
+
   /** Rows of `name`, by version, as `{version: status}`. */
   async function statuses(name: string): Promise<Record<number, string>> {
     const { templates: rows } = await listTemplates(ctx.pool, { name });
@@ -189,6 +204,60 @@ describe.skipIf(!dbUp)('report template activation under concurrency', () => {
 
     const byVersion = await statuses(name);
     expect(Object.values(byVersion).filter((s) => s === 'active')).toHaveLength(1);
+  });
+
+  /**
+   * The predicate the lock was not re-checking.
+   *
+   * The activate route refuses an archived version on the pool, one statement
+   * before `activateTemplate` opens its transaction; the lock inside it was
+   * added for the two-versions-at-once race and asked only whether the target
+   * was already active. So an archive committing in the window walked through
+   * a refusal that had already been made — and an activation does not merely
+   * restore its own row, it archives whichever version of the name is live, so
+   * the withdrawn skeleton came back and took the intended one down with it.
+   */
+  it('refuses to re-activate a version archived while the request was in flight', async () => {
+    const name = freshName();
+    const v1 = await createTemplateVersion(ctx.pool, { name, kind: '409a', createdBy: ops.id });
+    const v2 = await createTemplateVersion(ctx.pool, { name, kind: '409a', createdBy: ops.id });
+    await activateTemplate(ctx.pool, v1.id);
+
+    const holder = await ctx.pool.connect();
+    let inFlight: ReturnType<typeof ctx.app.inject> | null = null;
+    try {
+      // The competing archive of v1, in flight and not yet committed. It holds
+      // the name's advisory lock, which is what the activation queues on.
+      await holder.query('BEGIN');
+      await holder.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [0x74706c6, name]);
+      await holder.query(
+        `UPDATE report_templates SET status = 'archived', updated_at = now() WHERE id = $1`,
+        [v1.id],
+      );
+      // v2 takes v1's place, so this is not "the name has no active version"
+      // but the ordinary replacement an operator performs.
+      await holder.query(
+        `UPDATE report_templates SET status = 'active', updated_at = now() WHERE id = $1`,
+        [v2.id],
+      );
+
+      // The route reads v1 as 'active' — the archive is uncommitted — passes
+      // its own check, and stops on the name lock inside the repo.
+      inFlight = ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/report-templates/${v1.id}/activate`,
+        headers: { authorization: `Bearer ${ops.token}` },
+      });
+      await waitForABlockedBackend();
+      await holder.query('COMMIT');
+    } finally {
+      holder.release();
+    }
+
+    expect((await inFlight!).statusCode).toBe(409);
+    // v2 is still the live skeleton: the refused activation did not archive it
+    // on its way to restoring v1.
+    expect(await statuses(name)).toEqual({ 1: 'archived', 2: 'active' });
   });
 
   it('keeps activations of different names independent', async () => {
