@@ -1,4 +1,4 @@
-import type pg from 'pg';
+import type { Queryable } from '../db/pool.js';
 import { newUlid } from '@n409/shared';
 import { calendarDateRow } from '../domain/calendarDate.js';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
@@ -58,28 +58,28 @@ const debtValuation = (row: DebtValuationRow): DebtValuationRow => calendarDateR
 export const DEBT_INSTRUMENT_PAGE_LIMIT = 200;
 
 export async function listInstruments(
-  pool: pg.Pool,
+  db: Queryable,
   opts: { limit?: number } = {},
 ): Promise<{ instruments: DebtInstrumentRow[]; truncated: boolean }> {
   const limit = Math.min(Math.max(opts.limit ?? DEBT_INSTRUMENT_PAGE_LIMIT, 1), DEBT_INSTRUMENT_PAGE_LIMIT);
-  const { rows } = await pool.query<DebtInstrumentRow>(
+  const { rows } = await db.query<DebtInstrumentRow>(
     'SELECT * FROM debt_instruments ORDER BY created_at DESC LIMIT $1',
     [limit + 1],
   );
   return { instruments: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
-export async function findInstrument(pool: pg.Pool, id: string): Promise<DebtInstrumentRow | null> {
-  const { rows } = await pool.query<DebtInstrumentRow>('SELECT * FROM debt_instruments WHERE id = $1', [id]);
+export async function findInstrument(db: Queryable, id: string): Promise<DebtInstrumentRow | null> {
+  const { rows } = await db.query<DebtInstrumentRow>('SELECT * FROM debt_instruments WHERE id = $1', [id]);
   return rows[0] ?? null;
 }
 
 /** The instrument an engagement prices, if one has been linked (0109). */
 export async function findInstrumentByValuation(
-  pool: pg.Pool,
+  db: Queryable,
   valuationId: string,
 ): Promise<DebtInstrumentRow | null> {
-  const { rows } = await pool.query<DebtInstrumentRow>(
+  const { rows } = await db.query<DebtInstrumentRow>(
     'SELECT * FROM debt_instruments WHERE valuation_id = $1',
     [valuationId],
   );
@@ -88,12 +88,12 @@ export async function findInstrumentByValuation(
 
 /** Point an instrument at an engagement, or (null) detach it (0109). */
 export async function linkInstrumentToValuation(
-  pool: pg.Pool,
+  db: Queryable,
   instrumentId: string,
   valuationId: string | null,
 ): Promise<DebtInstrumentRow | null> {
   try {
-    const { rows } = await pool.query<DebtInstrumentRow>(
+    const { rows } = await db.query<DebtInstrumentRow>(
       'UPDATE debt_instruments SET valuation_id = $2, updated_at = now() WHERE id = $1 RETURNING *',
       [instrumentId, valuationId],
     );
@@ -106,7 +106,7 @@ export async function linkInstrumentToValuation(
 }
 
 export async function createInstrument(
-  pool: pg.Pool,
+  db: Queryable,
   input: {
     name: string;
     instrumentType: InstrumentType;
@@ -115,7 +115,7 @@ export async function createInstrument(
     createdBy: string;
   },
 ): Promise<DebtInstrumentRow> {
-  const { rows } = await pool.query<DebtInstrumentRow>(
+  const { rows } = await db.query<DebtInstrumentRow>(
     `INSERT INTO debt_instruments (id, name, instrument_type, currency, params, created_by)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
     [
@@ -131,11 +131,11 @@ export async function createInstrument(
 }
 
 export async function updateInstrument(
-  pool: pg.Pool,
+  db: Queryable,
   id: string,
   input: { name?: string; params?: Record<string, unknown> },
 ): Promise<DebtInstrumentRow | null> {
-  const { rows } = await pool.query<DebtInstrumentRow>(
+  const { rows } = await db.query<DebtInstrumentRow>(
     `UPDATE debt_instruments SET
        name = COALESCE($2, name),
        params = COALESCE($3, params),
@@ -155,20 +155,20 @@ export async function updateInstrument(
  * the evidence behind a report we have issued. Returns false when the id is
  * already gone, so a double-submitted delete is a 404 rather than a 500.
  */
-export async function deleteInstrument(pool: pg.Pool, id: string): Promise<boolean> {
-  const { rowCount } = await pool.query('DELETE FROM debt_instruments WHERE id = $1', [id]);
+export async function deleteInstrument(db: Queryable, id: string): Promise<boolean> {
+  const { rowCount } = await db.query('DELETE FROM debt_instruments WHERE id = $1', [id]);
   return (rowCount ?? 0) > 0;
 }
 
-export async function findCreditTerms(pool: pg.Pool, instrumentId: string): Promise<CreditTermsRow | null> {
-  const { rows } = await pool.query<CreditTermsRow>('SELECT * FROM credit_terms WHERE instrument_id = $1', [
+export async function findCreditTerms(db: Queryable, instrumentId: string): Promise<CreditTermsRow | null> {
+  const { rows } = await db.query<CreditTermsRow>('SELECT * FROM credit_terms WHERE instrument_id = $1', [
     instrumentId,
   ]);
   return rows[0] ?? null;
 }
 
 export async function upsertCreditTerms(
-  pool: pg.Pool,
+  db: Queryable,
   instrumentId: string,
   input: {
     rating: string | null;
@@ -178,7 +178,7 @@ export async function upsertCreditTerms(
     secured: boolean;
   },
 ): Promise<CreditTermsRow> {
-  const { rows } = await pool.query<CreditTermsRow>(
+  const { rows } = await db.query<CreditTermsRow>(
     `INSERT INTO credit_terms (instrument_id, rating, benchmark_yield, spread, seniority, secured)
      VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (instrument_id) DO UPDATE SET
@@ -221,12 +221,12 @@ export async function upsertCreditTerms(
 export const DEBT_VALUATION_PAGE_LIMIT = 50;
 
 export async function listValuations(
-  pool: pg.Pool,
+  db: Queryable,
   instrumentId: string,
   opts: { limit?: number } = {},
 ): Promise<{ valuations: DebtValuationRow[]; truncated: boolean }> {
   const limit = Math.min(Math.max(opts.limit ?? DEBT_VALUATION_PAGE_LIMIT, 1), DEBT_VALUATION_PAGE_LIMIT);
-  const { rows } = await pool.query<DebtValuationRow>(
+  const { rows } = await db.query<DebtValuationRow>(
     `SELECT * FROM debt_valuations WHERE instrument_id = $1
       ORDER BY valuation_date DESC, created_at DESC LIMIT $2`,
     [instrumentId, limit + 1],
@@ -235,7 +235,7 @@ export async function listValuations(
 }
 
 export async function createValuation(
-  pool: pg.Pool,
+  db: Queryable,
   input: {
     instrumentId: string;
     valuationDate: string;
@@ -245,7 +245,7 @@ export async function createValuation(
     createdBy: string;
   },
 ): Promise<DebtValuationRow> {
-  const { rows } = await pool.query<DebtValuationRow>(
+  const { rows } = await db.query<DebtValuationRow>(
     `INSERT INTO debt_valuations (id, instrument_id, valuation_date, inputs, result, fair_value, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
     [

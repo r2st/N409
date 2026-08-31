@@ -199,6 +199,43 @@ describe.skipIf(!dbUp)('measurement changes land on the engagement audit trail',
     expect(types).toContain('fund_lp_terms_updated');
   });
 
+  it('names the mark it recorded, so the figure in the exhibit can be reached from the trail', async () => {
+    const { rows } = await pool.query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'fund_mark_recorded'`,
+      [fundValuation],
+    );
+    expect(rows).toHaveLength(1);
+    // Every other writer on the spine names the row it wrote — `grant_id`,
+    // `report_id`. A mark is the one whose figure the NAV schedule is a sum
+    // of, so "a mark was recorded" leaves an auditor asking which one.
+    const markId = rows[0]!.payload.mark_id;
+    expect(typeof markId).toBe('string');
+    const mark = await pool.query('SELECT id FROM fund_marks WHERE id = $1', [markId]);
+    expect(mark.rowCount).toBe(1);
+  });
+
+  it('records a change to the portfolio itself, not only to what is under it', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/funds/${fundId}`,
+      headers: authHeader(ops.token),
+      payload: { name: 'Spine Fund I (renamed)', currency: 'EUR' },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const { rows } = await pool.query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM valuation_events WHERE valuation_id = $1 AND type = 'fund_updated'`,
+      [fundValuation],
+    );
+    expect(rows).toHaveLength(1);
+    // The currency is why this one is not cosmetic: every stored mark and
+    // every LP-terms figure under the fund is a number in it, and the NAV
+    // exhibit prints the fund's — so this restates the whole schedule's
+    // meaning without moving a single figure.
+    expect(rows[0]!.payload.changes).toMatchObject({ currency: 'EUR' });
+  });
+
   it('names the holding it removed, which the cascade would otherwise take with it', async () => {
     const res = await app.inject({
       method: 'DELETE',
@@ -248,6 +285,24 @@ describe.skipIf(!dbUp)('measurement changes land on the engagement audit trail',
     expect(types).toContain('debt_instrument_updated');
     expect(types).toContain('debt_credit_terms_updated');
     expect(types).toContain('debt_valuation_recorded');
+  });
+
+  it('names the priced row by a key that is not the spine’s own', async () => {
+    const { rows } = await pool.query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'debt_valuation_recorded'`,
+      [debtValuation],
+    );
+    expect(rows).toHaveLength(1);
+    // `debt_valuations` and `valuations` are two tables, and the event sits on
+    // a spine whose own `valuation_id` column is the second of them. A payload
+    // key called `valuation_id` is therefore the same word for both, and the
+    // reader who joins it to the engagement gets nothing back and no error.
+    expect(rows[0]!.payload.valuation_id).toBeUndefined();
+    const priced = await pool.query('SELECT id FROM debt_valuations WHERE id = $1', [
+      rows[0]!.payload.debt_valuation_id,
+    ]);
+    expect(priced.rowCount).toBe(1);
   });
 
   it('does not price a run that stores nothing onto the trail', async () => {

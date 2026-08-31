@@ -1,4 +1,4 @@
-import type pg from 'pg';
+import type { Queryable } from '../db/pool.js';
 import { newUlid } from '@n409/shared';
 import { calendarDateRow } from '../domain/calendarDate.js';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
@@ -78,25 +78,25 @@ export const FUND_PAGE_LIMIT = 200;
  * the caller can say the list is partial rather than imply it is complete.
  */
 export async function listFunds(
-  pool: pg.Pool,
+  db: Queryable,
   opts: { limit?: number } = {},
 ): Promise<{ funds: FundRow[]; truncated: boolean }> {
   const limit = Math.min(Math.max(opts.limit ?? FUND_PAGE_LIMIT, 1), FUND_PAGE_LIMIT);
-  const { rows } = await pool.query<FundRow>(
+  const { rows } = await db.query<FundRow>(
     'SELECT * FROM fund_portfolios ORDER BY created_at DESC LIMIT $1',
     [limit + 1],
   );
   return { funds: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
-export async function findFund(pool: pg.Pool, id: string): Promise<FundRow | null> {
-  const { rows } = await pool.query<FundRow>('SELECT * FROM fund_portfolios WHERE id = $1', [id]);
+export async function findFund(db: Queryable, id: string): Promise<FundRow | null> {
+  const { rows } = await db.query<FundRow>('SELECT * FROM fund_portfolios WHERE id = $1', [id]);
   return rows[0] ?? null;
 }
 
 /** The portfolio an engagement measures, if one has been linked (0109). */
-export async function findFundByValuation(pool: pg.Pool, valuationId: string): Promise<FundRow | null> {
-  const { rows } = await pool.query<FundRow>('SELECT * FROM fund_portfolios WHERE valuation_id = $1', [
+export async function findFundByValuation(db: Queryable, valuationId: string): Promise<FundRow | null> {
+  const { rows } = await db.query<FundRow>('SELECT * FROM fund_portfolios WHERE valuation_id = $1', [
     valuationId,
   ]);
   return rows[0] ?? null;
@@ -104,12 +104,12 @@ export async function findFundByValuation(pool: pg.Pool, valuationId: string): P
 
 /** Point a portfolio at an engagement, or (null) detach it (0109). */
 export async function linkFundToValuation(
-  pool: pg.Pool,
+  db: Queryable,
   fundId: string,
   valuationId: string | null,
 ): Promise<FundRow | null> {
   try {
-    const { rows } = await pool.query<FundRow>(
+    const { rows } = await db.query<FundRow>(
       'UPDATE fund_portfolios SET valuation_id = $2 WHERE id = $1 RETURNING *',
       [fundId, valuationId],
     );
@@ -122,7 +122,7 @@ export async function linkFundToValuation(
 }
 
 export async function createFund(
-  pool: pg.Pool,
+  db: Queryable,
   input: {
     name: string;
     fundType: FundType;
@@ -131,7 +131,7 @@ export async function createFund(
     createdBy: string;
   },
 ): Promise<FundRow> {
-  const { rows } = await pool.query<FundRow>(
+  const { rows } = await db.query<FundRow>(
     `INSERT INTO fund_portfolios (id, name, fund_type, currency, vintage_year, created_by)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
     [newUlid(), input.name, input.fundType, input.currency, input.vintageYear, input.createdBy],
@@ -149,7 +149,7 @@ export async function createFund(
  * translate and an audit story of its own.
  */
 export async function updateFund(
-  pool: pg.Pool,
+  db: Queryable,
   id: string,
   patch: { name?: string; fundType?: FundType; currency?: string; vintageYear?: number | null },
 ): Promise<FundRow | null> {
@@ -163,8 +163,8 @@ export async function updateFund(
   if (patch.fundType !== undefined) add('fund_type', patch.fundType);
   if (patch.currency !== undefined) add('currency', patch.currency);
   if (patch.vintageYear !== undefined) add('vintage_year', patch.vintageYear);
-  if (sets.length === 0) return findFund(pool, id);
-  const { rows } = await pool.query<FundRow>(
+  if (sets.length === 0) return findFund(db, id);
+  const { rows } = await db.query<FundRow>(
     `UPDATE fund_portfolios SET ${sets.join(', ')} WHERE id = $1 RETURNING *`,
     params,
   );
@@ -179,8 +179,8 @@ export async function updateFund(
  * to delete a portfolio linked to an engagement: those marks are the NAV a
  * report we have issued speaks for. Returns false when the row is already gone.
  */
-export async function deleteFund(pool: pg.Pool, id: string): Promise<boolean> {
-  const { rowCount } = await pool.query('DELETE FROM fund_portfolios WHERE id = $1', [id]);
+export async function deleteFund(db: Queryable, id: string): Promise<boolean> {
+  const { rowCount } = await db.query('DELETE FROM fund_portfolios WHERE id = $1', [id]);
   return (rowCount ?? 0) > 0;
 }
 
@@ -197,12 +197,12 @@ export async function deleteFund(pool: pg.Pool, id: string): Promise<boolean> {
 export const FUND_POSITION_PAGE_LIMIT = 200;
 
 export async function listPositions(
-  pool: pg.Pool,
+  db: Queryable,
   fundId: string,
   opts: { limit?: number } = {},
 ): Promise<{ positions: FundPositionRow[]; truncated: boolean }> {
   const limit = Math.min(Math.max(opts.limit ?? FUND_POSITION_PAGE_LIMIT, 1), FUND_POSITION_PAGE_LIMIT);
-  const { rows } = await pool.query<FundPositionRow>(
+  const { rows } = await db.query<FundPositionRow>(
     'SELECT * FROM fund_positions WHERE fund_id = $1 ORDER BY company_name LIMIT $2',
     [fundId, limit + 1],
   );
@@ -210,11 +210,11 @@ export async function listPositions(
 }
 
 export async function findPosition(
-  pool: pg.Pool,
+  db: Queryable,
   fundId: string,
   positionId: string,
 ): Promise<FundPositionRow | null> {
-  const { rows } = await pool.query<FundPositionRow>(
+  const { rows } = await db.query<FundPositionRow>(
     'SELECT * FROM fund_positions WHERE id = $1 AND fund_id = $2',
     [positionId, fundId],
   );
@@ -222,7 +222,7 @@ export async function findPosition(
 }
 
 export async function createPosition(
-  pool: pg.Pool,
+  db: Queryable,
   input: {
     fundId: string;
     companyName: string;
@@ -232,7 +232,7 @@ export async function createPosition(
     markMethod: MarkMethod;
   },
 ): Promise<FundPositionRow> {
-  const { rows } = await pool.query<FundPositionRow>(
+  const { rows } = await db.query<FundPositionRow>(
     `INSERT INTO fund_positions (id, fund_id, company_name, security_type, quantity, cost_basis, mark_method)
      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
     [
@@ -258,7 +258,7 @@ export async function createPosition(
  * default the *next* mark is taken at.
  */
 export async function updatePosition(
-  pool: pg.Pool,
+  db: Queryable,
   fundId: string,
   positionId: string,
   patch: {
@@ -280,8 +280,8 @@ export async function updatePosition(
   if (patch.quantity !== undefined) add('quantity', patch.quantity);
   if (patch.costBasis !== undefined) add('cost_basis', patch.costBasis);
   if (patch.markMethod !== undefined) add('mark_method', patch.markMethod);
-  if (sets.length === 0) return findPosition(pool, fundId, positionId);
-  const { rows } = await pool.query<FundPositionRow>(
+  if (sets.length === 0) return findPosition(db, fundId, positionId);
+  const { rows } = await db.query<FundPositionRow>(
     `UPDATE fund_positions SET ${sets.join(', ')} WHERE id = $1 AND fund_id = $2 RETURNING *`,
     params,
   );
@@ -296,8 +296,8 @@ export async function updatePosition(
  * route's 404 for a mismatched pair depends on this clause rather than on the
  * caller having checked first.
  */
-export async function deletePosition(pool: pg.Pool, fundId: string, positionId: string): Promise<boolean> {
-  const { rowCount } = await pool.query('DELETE FROM fund_positions WHERE id = $1 AND fund_id = $2', [
+export async function deletePosition(db: Queryable, fundId: string, positionId: string): Promise<boolean> {
+  const { rowCount } = await db.query('DELETE FROM fund_positions WHERE id = $1 AND fund_id = $2', [
     positionId,
     fundId,
   ]);
@@ -319,12 +319,12 @@ const mark = (row: FundMarkRow): FundMarkRow => calendarDateRow(row, 'measuremen
 export const FUND_MARK_PAGE_LIMIT = 200;
 
 export async function listMarks(
-  pool: pg.Pool,
+  db: Queryable,
   positionId: string,
   opts: { limit?: number } = {},
 ): Promise<{ marks: FundMarkRow[]; truncated: boolean }> {
   const limit = Math.min(Math.max(opts.limit ?? FUND_MARK_PAGE_LIMIT, 1), FUND_MARK_PAGE_LIMIT);
-  const { rows } = await pool.query<FundMarkRow>(
+  const { rows } = await db.query<FundMarkRow>(
     `SELECT * FROM fund_marks WHERE position_id = $1
       ORDER BY measurement_date DESC, created_at DESC LIMIT $2`,
     [positionId, limit + 1],
@@ -344,11 +344,11 @@ export async function listMarks(
  * was; nothing about which mark answers for a position changes.
  */
 export async function latestMarks(
-  pool: pg.Pool,
+  db: Queryable,
   positionIds: readonly string[],
 ): Promise<Map<string, FundMarkRow>> {
   if (positionIds.length === 0) return new Map();
-  const { rows } = await pool.query<FundMarkRow>(
+  const { rows } = await db.query<FundMarkRow>(
     `SELECT DISTINCT ON (m.position_id) m.*
        FROM fund_marks m
       WHERE m.position_id = ANY($1::ulid[])
@@ -361,7 +361,7 @@ export async function latestMarks(
 }
 
 export async function createMark(
-  pool: pg.Pool,
+  db: Queryable,
   input: {
     positionId: string;
     measurementDate: string;
@@ -372,7 +372,7 @@ export async function createMark(
     createdBy: string;
   },
 ): Promise<FundMarkRow> {
-  const { rows } = await pool.query<FundMarkRow>(
+  const { rows } = await db.query<FundMarkRow>(
     `INSERT INTO fund_marks (id, position_id, measurement_date, method, fair_value, level, inputs, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
     [
@@ -391,13 +391,13 @@ export async function createMark(
 
 // ── LP terms ────────────────────────────────────────────────────────────────
 
-export async function findLpTerms(pool: pg.Pool, fundId: string): Promise<LpTermsRow | null> {
-  const { rows } = await pool.query<LpTermsRow>('SELECT * FROM lp_terms WHERE fund_id = $1', [fundId]);
+export async function findLpTerms(db: Queryable, fundId: string): Promise<LpTermsRow | null> {
+  const { rows } = await db.query<LpTermsRow>('SELECT * FROM lp_terms WHERE fund_id = $1', [fundId]);
   return rows[0] ?? null;
 }
 
 export async function upsertLpTerms(
-  pool: pg.Pool,
+  db: Queryable,
   fundId: string,
   input: {
     committedCapital: number;
@@ -410,7 +410,7 @@ export async function upsertLpTerms(
     gpDistributionsToDate: number;
   },
 ): Promise<LpTermsRow> {
-  const { rows } = await pool.query<LpTermsRow>(
+  const { rows } = await db.query<LpTermsRow>(
     `INSERT INTO lp_terms
        (fund_id, committed_capital, contributed_capital, preferred_return_rate, carry_pct,
         gp_catch_up, management_fee_pct, management_fees_paid, gp_distributions_to_date)

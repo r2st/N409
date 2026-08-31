@@ -157,6 +157,12 @@ export const EVENT_CATALOG = {
    * portfolio is an ops sketch with no engagement to write to, and
    * `valuation_events.valuation_id` is NOT NULL.
    */
+  // The portfolio's own fields, which R279 left off the catalog while adding
+  // the eleven around it. `currency` is the reason it matters most: every
+  // stored mark and every LP-terms figure under this fund is a number in it,
+  // and the NAV exhibit prints the fund's — so changing it restates the whole
+  // schedule's meaning without touching a single figure.
+  fund_updated: D('Fund portfolio updated', 'data', 'critical'),
   fund_position_added: D('Fund holding added', 'data', 'critical'),
   fund_position_updated: D('Fund holding updated', 'data', 'critical'),
   fund_position_removed: D('Fund holding removed', 'data', 'critical'),

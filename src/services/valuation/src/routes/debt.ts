@@ -124,25 +124,25 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   };
 
   /**
-   * Put a measurement change on the engagement's audit spine. The fund side's
-   * `recordFundEvent` twin — see it for why this surface had none.
+   * Put a measurement change on the engagement's audit spine, in the
+   * transaction that makes the change. The fund side's `recordFundEvent` twin
+   * — see it for why this surface had none, and for why the transaction is
+   * the caller's rather than this helper's.
    */
-  const recordInstrumentEvent = async (
+  const recordInstrumentEvent = (
+    client: pg.PoolClient,
     instrument: { valuation_id: string | null },
     type: ValuationEventType,
     principalId: string,
     payload: Record<string, unknown>,
-  ): Promise<void> => {
-    if (instrument.valuation_id === null) return;
-    const valuationId = instrument.valuation_id;
-    await withTransaction(deps.pool, (client) =>
-      recordEvent(client, {
-        valuationId,
-        type,
-        actor: { actorType: 'human', actorId: principalId, source: 'api' },
-        payload,
-      }),
-    );
+  ): Promise<unknown> => {
+    if (instrument.valuation_id === null) return Promise.resolve();
+    return recordEvent(client, {
+      valuationId: instrument.valuation_id,
+      type,
+      actor: { actorType: 'human', actorId: principalId, source: 'api' },
+      payload,
+    });
   };
 
   /**
@@ -219,13 +219,16 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const existing = await loadInstrumentForWrite(id, 'accepting changes');
     const parsed = UpdateBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid update', parsed.error);
-    const instrument = await updateInstrument(deps.pool, id, {
-      name: parsed.data.name,
-      params: parsed.data.params,
-    });
-    await recordInstrumentEvent(existing, 'debt_instrument_updated', principal.id, {
-      instrument_id: id,
-      changes: parsed.data,
+    const instrument = await withTransaction(deps.pool, async (client) => {
+      const updated = await updateInstrument(client, id, {
+        name: parsed.data.name,
+        params: parsed.data.params,
+      });
+      await recordInstrumentEvent(client, existing, 'debt_instrument_updated', principal.id, {
+        instrument_id: id,
+        changes: parsed.data,
+      });
+      return updated;
     });
     return { instrument };
   });
@@ -257,27 +260,26 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     }
 
     try {
-      const instrument = await linkInstrumentToValuation(deps.pool, id, valuationId);
-      // Both ends of the move, each on its own engagement's trail — see the
-      // fund link for why the detach is the sharper of the two.
-      if (existing.valuation_id !== null && existing.valuation_id !== valuationId) {
-        await recordInstrumentEvent(existing, 'measurement_subject_unlinked', principal.id, {
-          subject: 'debt',
-          instrument_id: id,
-          instrument_name: existing.name,
-        });
-      }
-      if (
-        instrument &&
-        instrument.valuation_id !== null &&
-        instrument.valuation_id !== existing.valuation_id
-      ) {
-        await recordInstrumentEvent(instrument, 'measurement_subject_linked', principal.id, {
-          subject: 'debt',
-          instrument_id: id,
-          instrument_name: instrument.name,
-        });
-      }
+      const instrument = await withTransaction(deps.pool, async (client) => {
+        const linked = await linkInstrumentToValuation(client, id, valuationId);
+        // Both ends of the move, each on its own engagement's trail — see the
+        // fund link for why the detach is the sharper of the two.
+        if (existing.valuation_id !== null && existing.valuation_id !== valuationId) {
+          await recordInstrumentEvent(client, existing, 'measurement_subject_unlinked', principal.id, {
+            subject: 'debt',
+            instrument_id: id,
+            instrument_name: existing.name,
+          });
+        }
+        if (linked && linked.valuation_id !== null && linked.valuation_id !== existing.valuation_id) {
+          await recordInstrumentEvent(client, linked, 'measurement_subject_linked', principal.id, {
+            subject: 'debt',
+            instrument_id: id,
+            instrument_name: linked.name,
+          });
+        }
+        return linked;
+      });
       return { instrument };
     } catch (err) {
       if (err instanceof MeasurementLinkConflict) throw problems.conflict(err.message);
@@ -293,16 +295,19 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const parsed = CreditTermsBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid credit terms', parsed.error);
     const b = parsed.data;
-    const creditTerms = await upsertCreditTerms(deps.pool, id, {
-      rating: b.rating ?? null,
-      benchmarkYield: b.benchmark_yield ?? null,
-      spread: b.spread ?? null,
-      seniority: b.seniority,
-      secured: b.secured,
-    });
-    await recordInstrumentEvent(existing, 'debt_credit_terms_updated', principal.id, {
-      instrument_id: id,
-      changes: b,
+    const creditTerms = await withTransaction(deps.pool, async (client) => {
+      const saved = await upsertCreditTerms(client, id, {
+        rating: b.rating ?? null,
+        benchmarkYield: b.benchmark_yield ?? null,
+        spread: b.spread ?? null,
+        seniority: b.seniority,
+        secured: b.secured,
+      });
+      await recordInstrumentEvent(client, existing, 'debt_credit_terms_updated', principal.id, {
+        instrument_id: id,
+        changes: b,
+      });
+      return saved;
     });
     return { credit_terms: creditTerms };
   });
@@ -339,19 +344,28 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     // after the engine call rather than before it.
     await refuseIfMeasurementRetired(deps.pool, instrument, 'accepting new valuations');
 
-    const valuation = await createValuation(deps.pool, {
-      instrumentId: id,
-      valuationDate: parsed.data.valuation_date ?? todayLocal(),
-      inputs: { instrument_type: instrument.instrument_type, params },
-      result,
-      fairValue: requireStorableFigure(extractFairValue(result), 'Fair value', DEBT_FAIR_VALUE),
-      createdBy: principal.id,
-    });
-    await recordInstrumentEvent(instrument, 'debt_valuation_recorded', principal.id, {
-      instrument_id: id,
-      valuation_id: valuation.id,
-      valuation_date: valuation.valuation_date,
-      fair_value: valuation.fair_value,
+    const valuation = await withTransaction(deps.pool, async (client) => {
+      const priced = await createValuation(client, {
+        instrumentId: id,
+        valuationDate: parsed.data.valuation_date ?? todayLocal(),
+        inputs: { instrument_type: instrument.instrument_type, params },
+        result,
+        fairValue: requireStorableFigure(extractFairValue(result), 'Fair value', DEBT_FAIR_VALUE),
+        createdBy: principal.id,
+      });
+      await recordInstrumentEvent(client, instrument, 'debt_valuation_recorded', principal.id, {
+        instrument_id: id,
+        // `debt_valuation_id`, not `valuation_id`. This row is a pricing of an
+        // instrument (`debt_valuations`), and the event it sits in is on a
+        // spine whose own `valuation_id` column is the engagement — so a
+        // payload key by that name is the same word for two different tables,
+        // and a reader joining it to `valuations` gets nothing back and no
+        // error to say why.
+        debt_valuation_id: priced.id,
+        valuation_date: priced.valuation_date,
+        fair_value: priced.fair_value,
+      });
+      return priced;
     });
     return { valuation, result };
   });

@@ -204,23 +204,33 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
    * the *stored* marks at render time — so the deliverable's figure could
    * change with nothing on the trail saying who changed it. The route surface
    * is keyed by fund id, which is why the spine never saw any of it.
+   *
+   * IN THE TRANSACTION THAT WRITES, which is the spine's one standing rule —
+   * `events/record.ts`: "Events are written in the SAME transaction as the
+   * change they describe, so a change without its event (or vice versa) is
+   * impossible." R279 wrote these from the route rather than from a repo, and
+   * took its own transaction *after* the mutation had already committed in
+   * another one. That is the invariant read backwards: a statement timeout on
+   * the INSERT (the pool sets one) left the holding added, the mark recorded or
+   * the terms rewritten with nothing on the trail, and answered the caller 500
+   * for work that had landed — so a retry adds it twice. Every other one of the
+   * thirty-odd `recordEvent` callers in this service is inside the repo
+   * transaction that does the write; these two files were the exception.
    */
-  const recordFundEvent = async (
+  const recordFundEvent = (
+    client: pg.PoolClient,
     fund: { valuation_id: string | null },
     type: ValuationEventType,
     principal: Principal,
     payload: Record<string, unknown>,
-  ): Promise<void> => {
-    if (fund.valuation_id === null) return;
-    const valuationId = fund.valuation_id;
-    await withTransaction(deps.pool, (client) =>
-      recordEvent(client, {
-        valuationId,
-        type,
-        actor: { actorType: 'human', actorId: principal.id, source: 'api' },
-        payload,
-      }),
-    );
+  ): Promise<unknown> => {
+    if (fund.valuation_id === null) return Promise.resolve();
+    return recordEvent(client, {
+      valuationId: fund.valuation_id,
+      type,
+      actor: { actorType: 'human', actorId: principal.id, source: 'api' },
+      payload,
+    });
   };
 
   /**
@@ -282,19 +292,34 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   });
 
   app.patch('/api/v1/funds/:id', { preHandler: app.authenticate }, async (req) => {
-    requireOps(requirePrincipal(req));
+    const principal = requirePrincipal(req);
+    requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadFundForWrite(id, 'accepting changes');
+    const existing = await loadFundForWrite(id, 'accepting changes');
     const parsed = FundPatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid fund', parsed.error);
     const b = parsed.data;
-    const fund = await updateFund(deps.pool, id, {
-      name: b.name,
-      fundType: b.fund_type,
-      currency: b.currency?.toUpperCase(),
-      vintageYear: b.vintage_year,
+    const fund = await withTransaction(deps.pool, async (client) => {
+      const updated = await updateFund(client, id, {
+        name: b.name,
+        fundType: b.fund_type,
+        currency: b.currency?.toUpperCase(),
+        vintageYear: b.vintage_year,
+      });
+      if (!updated) throw problems.notFound();
+      // The one write on this surface R279 guarded and did not record. Its
+      // twin on the debt side (`PUT /debt/instruments/:id`) writes
+      // `debt_instrument_updated`, so the asymmetry was the tell: a fund
+      // engagement's activity feed showed every holding and every mark and
+      // stayed silent about the portfolio being renamed, reclassified, or
+      // redenominated — the last of which changes what every figure under it
+      // means, and what the NAV exhibit prints beside them.
+      await recordFundEvent(client, existing, 'fund_updated', principal, {
+        fund_id: id,
+        changes: b,
+      });
+      return updated;
     });
-    if (!fund) throw problems.notFound();
     return { fund };
   });
 
@@ -330,20 +355,23 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const parsed = PositionBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid position', parsed.error);
     const b = parsed.data;
-    const position = await createPosition(deps.pool, {
-      fundId: id,
-      companyName: b.company_name,
-      securityType: b.security_type,
-      quantity: b.quantity,
-      costBasis: b.cost_basis,
-      markMethod: b.mark_method,
-    });
-    await recordFundEvent(fund, 'fund_position_added', principal, {
-      fund_id: id,
-      position_id: position.id,
-      company_name: position.company_name,
-      quantity: position.quantity,
-      cost_basis: position.cost_basis,
+    const position = await withTransaction(deps.pool, async (client) => {
+      const created = await createPosition(client, {
+        fundId: id,
+        companyName: b.company_name,
+        securityType: b.security_type,
+        quantity: b.quantity,
+        costBasis: b.cost_basis,
+        markMethod: b.mark_method,
+      });
+      await recordFundEvent(client, fund, 'fund_position_added', principal, {
+        fund_id: id,
+        position_id: created.id,
+        company_name: created.company_name,
+        quantity: created.quantity,
+        cost_basis: created.cost_basis,
+      });
+      return created;
     });
     return reply.status(201).send({ position });
   });
@@ -357,18 +385,21 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const parsed = PositionPatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid position', parsed.error);
     const b = parsed.data;
-    const position = await updatePosition(deps.pool, id, pid, {
-      companyName: b.company_name,
-      securityType: b.security_type,
-      quantity: b.quantity,
-      costBasis: b.cost_basis,
-      markMethod: b.mark_method,
-    });
-    if (!position) throw problems.notFound();
-    await recordFundEvent(fund, 'fund_position_updated', principal, {
-      fund_id: id,
-      position_id: pid,
-      changes: b,
+    const position = await withTransaction(deps.pool, async (client) => {
+      const updated = await updatePosition(client, id, pid, {
+        companyName: b.company_name,
+        securityType: b.security_type,
+        quantity: b.quantity,
+        costBasis: b.cost_basis,
+        markMethod: b.mark_method,
+      });
+      if (!updated) throw problems.notFound();
+      await recordFundEvent(client, fund, 'fund_position_updated', principal, {
+        fund_id: id,
+        position_id: pid,
+        changes: b,
+      });
+      return updated;
     });
     return { position };
   });
@@ -383,18 +414,23 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
    * and the fund survives.
    */
   app.delete('/api/v1/funds/:id/positions/:pid', { preHandler: app.authenticate }, async (req, reply) => {
-    requireOps(requirePrincipal(req));
+    const principal = requirePrincipal(req);
+    requireOps(principal);
     const { id, pid } = req.params as { id: string; pid: string };
     const fund = await loadFund(id);
-    // Read before the delete: the row is what the event has to name, and after
-    // the cascade there is nothing left to name it with.
-    const position = isUlid(pid) ? await findPosition(deps.pool, id, pid) : null;
-    if (!position || !(await deletePosition(deps.pool, id, pid))) throw problems.notFound();
-    await recordFundEvent(fund, 'fund_position_removed', requirePrincipal(req), {
-      fund_id: id,
-      position_id: pid,
-      company_name: position.company_name,
-      cost_basis: position.cost_basis,
+    if (!isUlid(pid)) throw problems.notFound();
+    await withTransaction(deps.pool, async (client) => {
+      // Read before the delete, and inside the transaction that does it: the
+      // row is what the event has to name, and after the cascade there is
+      // nothing left to name it with.
+      const position = await findPosition(client, id, pid);
+      if (!position || !(await deletePosition(client, id, pid))) throw problems.notFound();
+      await recordFundEvent(client, fund, 'fund_position_removed', principal, {
+        fund_id: id,
+        position_id: pid,
+        company_name: position.company_name,
+        cost_basis: position.cost_basis,
+      });
     });
     return reply.status(204).send();
   });
@@ -440,23 +476,31 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       liabilities: 0,
     });
     const marked = nav.positions[0]!;
-    const mark = await createMark(deps.pool, {
-      positionId: pid,
-      measurementDate: b.measurement_date,
-      method: b.method,
-      fairValue: requireStorableFigure(marked.fair_value, 'Fair value', FUND_MARK_FAIR_VALUE)!,
-      level: marked.level,
-      inputs,
-      createdBy: principal.id,
-    });
-    await recordFundEvent(fund, 'fund_mark_recorded', principal, {
-      fund_id: id,
-      position_id: pid,
-      company_name: position.company_name,
-      measurement_date: mark.measurement_date,
-      method: mark.method,
-      level: mark.level,
-      fair_value: mark.fair_value,
+    const mark = await withTransaction(deps.pool, async (client) => {
+      const recorded = await createMark(client, {
+        positionId: pid,
+        measurementDate: b.measurement_date,
+        method: b.method,
+        fairValue: requireStorableFigure(marked.fair_value, 'Fair value', FUND_MARK_FAIR_VALUE)!,
+        level: marked.level,
+        inputs,
+        createdBy: principal.id,
+      });
+      await recordFundEvent(client, fund, 'fund_mark_recorded', principal, {
+        fund_id: id,
+        position_id: pid,
+        // The row the event is about. Every other writer on the spine names
+        // the row it wrote — `grant_id`, `report_id` — and a mark is the one
+        // whose figure the NAV schedule is a sum of, so an auditor asking
+        // which mark moved the exhibit has to be able to reach it from here.
+        mark_id: recorded.id,
+        company_name: position.company_name,
+        measurement_date: recorded.measurement_date,
+        method: recorded.method,
+        level: recorded.level,
+        fair_value: recorded.fair_value,
+      });
+      return recorded;
     });
     return reply.status(201).send({ mark });
   });
@@ -497,30 +541,34 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         // than at the top so the read stays open, and asked again rather than
         // trusting the copy above: the engine call sits in between.
         await refuseIfMeasurementRetired(deps.pool, fund, 'accepting new marks');
-        const mark = await createMark(deps.pool, {
-          positionId: pid,
-          measurementDate: b.measurement_date ?? todayLocal(),
-          // A rolled mark is a model estimate → Level 3 (unless a fresh calibration).
-          method: 'calibrated_opm',
-          fairValue: requireStorableFigure(
-            rolled.new_fair_value,
-            'Rolled-forward fair value',
-            FUND_MARK_FAIR_VALUE,
-          )!,
-          level: 3,
-          inputs: { model_value: rolled.new_fair_value, rolled_from: prior.id, roll_method: b.method },
-          createdBy: principal.id,
-        });
-        await recordFundEvent(fund, 'fund_mark_recorded', principal, {
-          fund_id: id,
-          position_id: pid,
-          company_name: position.company_name,
-          measurement_date: mark.measurement_date,
-          method: mark.method,
-          level: mark.level,
-          fair_value: mark.fair_value,
-          rolled_from: prior.id,
-          roll_method: b.method,
+        const mark = await withTransaction(deps.pool, async (client) => {
+          const recorded = await createMark(client, {
+            positionId: pid,
+            measurementDate: b.measurement_date ?? todayLocal(),
+            // A rolled mark is a model estimate → Level 3 (unless a fresh calibration).
+            method: 'calibrated_opm',
+            fairValue: requireStorableFigure(
+              rolled.new_fair_value,
+              'Rolled-forward fair value',
+              FUND_MARK_FAIR_VALUE,
+            )!,
+            level: 3,
+            inputs: { model_value: rolled.new_fair_value, rolled_from: prior.id, roll_method: b.method },
+            createdBy: principal.id,
+          });
+          await recordFundEvent(client, fund, 'fund_mark_recorded', principal, {
+            fund_id: id,
+            position_id: pid,
+            mark_id: recorded.id,
+            company_name: position.company_name,
+            measurement_date: recorded.measurement_date,
+            method: recorded.method,
+            level: recorded.level,
+            fair_value: recorded.fair_value,
+            rolled_from: prior.id,
+            roll_method: b.method,
+          });
+          return recorded;
         });
         return reply.status(201).send({ rollforward: rolled, mark });
       }
@@ -590,25 +638,29 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     }
 
     try {
-      const fund = await linkFundToValuation(deps.pool, id, valuationId);
-      // Both ends of the move, and each on its own engagement's trail. A
-      // detach is the sharper of the two: it takes away the whole data source
-      // the report renders its NAV schedule from, and it is the step `DELETE
-      // /funds/:id` tells a caller to take before discarding the marks.
-      if (existing.valuation_id !== null && existing.valuation_id !== valuationId) {
-        await recordFundEvent(existing, 'measurement_subject_unlinked', principal, {
-          subject: 'fund',
-          fund_id: id,
-          fund_name: existing.name,
-        });
-      }
-      if (fund && fund.valuation_id !== null && fund.valuation_id !== existing.valuation_id) {
-        await recordFundEvent(fund, 'measurement_subject_linked', principal, {
-          subject: 'fund',
-          fund_id: id,
-          fund_name: fund.name,
-        });
-      }
+      const fund = await withTransaction(deps.pool, async (client) => {
+        const linked = await linkFundToValuation(client, id, valuationId);
+        // Both ends of the move, and each on its own engagement's trail. A
+        // detach is the sharper of the two: it takes away the whole data
+        // source the report renders its NAV schedule from, and it is the step
+        // `DELETE /funds/:id` tells a caller to take before discarding the
+        // marks.
+        if (existing.valuation_id !== null && existing.valuation_id !== valuationId) {
+          await recordFundEvent(client, existing, 'measurement_subject_unlinked', principal, {
+            subject: 'fund',
+            fund_id: id,
+            fund_name: existing.name,
+          });
+        }
+        if (linked && linked.valuation_id !== null && linked.valuation_id !== existing.valuation_id) {
+          await recordFundEvent(client, linked, 'measurement_subject_linked', principal, {
+            subject: 'fund',
+            fund_id: id,
+            fund_name: linked.name,
+          });
+        }
+        return linked;
+      });
       return { fund };
     } catch (err) {
       if (err instanceof MeasurementLinkConflict) throw problems.conflict(err.message);
@@ -632,17 +684,23 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const parsed = LpTermsBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid LP terms', parsed.error);
     const b = parsed.data;
-    const lpTerms = await upsertLpTerms(deps.pool, id, {
-      committedCapital: b.committed_capital,
-      contributedCapital: b.contributed_capital,
-      preferredReturnRate: b.preferred_return_rate,
-      carryPct: b.carry_pct,
-      gpCatchUp: b.gp_catch_up,
-      managementFeePct: b.management_fee_pct,
-      managementFeesPaid: b.management_fees_paid,
-      gpDistributionsToDate: b.gp_distributions_to_date,
+    const lpTerms = await withTransaction(deps.pool, async (client) => {
+      const saved = await upsertLpTerms(client, id, {
+        committedCapital: b.committed_capital,
+        contributedCapital: b.contributed_capital,
+        preferredReturnRate: b.preferred_return_rate,
+        carryPct: b.carry_pct,
+        gpCatchUp: b.gp_catch_up,
+        managementFeePct: b.management_fee_pct,
+        managementFeesPaid: b.management_fees_paid,
+        gpDistributionsToDate: b.gp_distributions_to_date,
+      });
+      await recordFundEvent(client, fund, 'fund_lp_terms_updated', principal, {
+        fund_id: id,
+        changes: b,
+      });
+      return saved;
     });
-    await recordFundEvent(fund, 'fund_lp_terms_updated', principal, { fund_id: id, changes: b });
     return { lp_terms: lpTerms };
   });
 
