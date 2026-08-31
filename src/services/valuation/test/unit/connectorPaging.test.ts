@@ -10,6 +10,7 @@ import {
   PAGED_PULL_BUDGET_MS,
   pagedPullBudget,
   providerSaysMore,
+  readJson,
 } from '../../src/clients/deadline.js';
 import { classifyFailure } from '@n409/shared';
 
@@ -219,11 +220,39 @@ describe('the bytes a paged pull may hold across all its pages (R265)', () => {
     await expect(budget.readPage(body(300))).rejects.toThrow(/across the pages of one import/);
   });
 
-  it('says a retry is worth it, like the time budget beside it', async () => {
+  it('says a retry is not worth it, unlike the time budget beside it (R267)', async () => {
+    // The two halves of one budget are two different failures. A walk that ran
+    // out of *time* met a slow provider and is worth another tick; a walk that
+    // ran out of *bytes* met a collection that is simply this large, and will
+    // meet the same one every eight hours forever. Transient meant `warn` with
+    // no `alert` — the level whose written promise is that the retry handles it.
     const budget = pagedPullBudget('Carta', 120_000, () => 0, 50);
     const err = await budget.readPage(body(200)).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(IntegrationError);
-    expect(classifyFailure(err).kind).toBe('transient');
+    expect(classifyFailure(err).kind).toBe('permanent');
+    // The wording follows the classification: nothing here asks for a retry.
+    expect(String((err as IntegrationError).message)).not.toMatch(/try again/i);
+  });
+
+  it('classifies an oversized single page the way `readJson` classifies the same bytes', async () => {
+    // One condition, two doors. The per-response cap reached through `readJson`
+    // has always classified `permanent` by the classifier's own default; the
+    // walk's copy of it must not disagree.
+    const budget = pagedPullBudget('Gusto');
+    const huge = new Response('{}', {
+      status: 200,
+      headers: { 'content-length': String(MAX_INTEGRATION_JSON_BYTES + 1) },
+    });
+    const walked = await budget.readPage(huge).catch((e: unknown) => e);
+    const direct = await readJson(
+      new Response('{}', {
+        status: 200,
+        headers: { 'content-length': String(MAX_INTEGRATION_JSON_BYTES + 1) },
+      }),
+      'Gusto',
+    ).catch((e: unknown) => e);
+    expect(classifyFailure(walked).kind).toBe('permanent');
+    expect(classifyFailure(direct).kind).toBe('permanent');
   });
 
   it('still names an oversized single response as one', async () => {

@@ -331,11 +331,24 @@ export interface PagedPullBudget {
 }
 
 /**
- * The shrinking deadline of one paged pull.
+ * The shrinking deadline of one paged pull, and the bytes it may hold.
  *
- * Transient, like {@link withDeadline}'s own timeout and for the same reason: a
- * provider that was slow this time is worth another attempt on the backoff, and
- * the classifier cannot read that off an `IntegrationError` unless it is said.
+ * The *time* budget is transient, like {@link withDeadline}'s own timeout and
+ * for the same reason: a provider that was slow this time is worth another
+ * attempt on the backoff, and the classifier cannot read that off an
+ * `IntegrationError` unless it is said.
+ *
+ * The *byte* budget is not, and it inherited the wrong half of that sentence
+ * (round 267, methodology M11). A collection that needs more than
+ * {@link PAGED_PULL_BUDGET_BYTES} is that size because of how much the client
+ * has in it, not because of anything the network did this minute: the next
+ * attempt reads the same rows and stops at the same page, and the one after
+ * that too. Marked transient it logged `warn` with no `alert` — `logFailure`'s
+ * contract says warn *because the retry is going to handle it* — and the
+ * connection sat on the backoff refusing identically every eight hours with
+ * nothing in the log that a person was needed. The same oversized bytes
+ * arriving through {@link readJson} classify `permanent` already, by the
+ * classifier's own default, so the two doors on one condition disagreed.
  */
 export function pagedPullBudget(
   label: string,
@@ -368,14 +381,18 @@ export function pagedPullBudget(
         // walk that got there by accumulating is the one this budget exists for,
         // and telling the analyst one page was too big would send them looking
         // for a page that is not there.
+        //
+        // Both are `permanent`: see the note on this function. Neither sentence
+        // asks the analyst to try again, because neither will come out
+        // differently on the next tick.
         throw markFailure(
           new IntegrationError(
             limit < MAX_INTEGRATION_JSON_BYTES
               ? `${label} sent more than ${asMb(budgetBytes)} MB across the pages of one import — the ` +
-                  'import was stopped rather than held in memory. Try again, or import from a file.'
+                  'import was stopped rather than held in memory. Import from a file instead.'
               : `${label} returned a response larger than ${OVERSIZE_MB} MB`,
           ),
-          'transient',
+          'permanent',
         );
       }
       bytesLeft -= bytes.byteLength;
