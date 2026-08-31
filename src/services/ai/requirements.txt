@@ -35,3 +35,18 @@ pypdf>=6.15.0
 pydantic>=2.9
 starlette>=0.46
 anyio>=4.0
+
+# Imported by tools/check_installed_deps.py, which infra/deploy.sh runs as its
+# preflight gate — with *this venv's* interpreter, because the whole point is to
+# read the distributions installed here. So it belongs in the runtime file, not
+# requirements-dev.txt: the deploy host gets `pip install -r requirements.txt`
+# and nothing else.
+#
+# It was reaching the tool only because pytest depends on it, and pytest is a
+# dev dependency that is never installed on the host. Resolving this file on its
+# own installs 17 distributions and `packaging` is not one of them. The tool
+# fails closed on the missing import (SystemExit 2), so the symptom is not a
+# skipped check — it is every deploy to a freshly built host dying at preflight
+# under deploy.sh's "the host's venv does not satisfy its requirements.txt",
+# which is not what went wrong and does not say what to install.
+packaging>=24.0

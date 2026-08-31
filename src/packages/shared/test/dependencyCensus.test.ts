@@ -358,6 +358,61 @@ describe('python services declare every package they import', () => {
 });
 
 /**
+ * `tools/`, which runs inside the services' venvs but lives in neither.
+ *
+ * `tools/check_installed_deps.py` is the preflight `infra/deploy.sh` blocks on,
+ * and it is run as `.venv/bin/python tools/check_installed_deps.py` — with the
+ * *service's* interpreter, because its whole job is to read the distributions
+ * installed there. Its imports are therefore requirements of every service venv
+ * it is pointed at, and the census above could not see that: it walks `app/`
+ * and `tests/` under each service, and this file is under neither.
+ *
+ * What hid there was `packaging`. The tool needs it to compare a PEP 440
+ * version against a PEP 508 specifier — the docstring says so, and says why
+ * string comparison is not a substitute — and it reached the tool only because
+ * pytest depends on it. pytest is a dev dependency; the deploy host gets
+ * `pip install -r requirements.txt` and nothing else. Resolving either runtime
+ * file on its own brings 17 and 34 distributions respectively, and `packaging`
+ * is not one of them. The tool fails closed, so the cost was not a skipped
+ * check: it was every deploy to a freshly built host dying at preflight under a
+ * message about the venv not satisfying requirements.txt.
+ *
+ * Checked against *runtime* requirements, both services, deliberately. A
+ * dev-only declaration would be satisfied on a developer's machine and on CI
+ * and absent on exactly the host this gate exists to protect.
+ */
+describe('tools/ declares what it imports in every venv it runs in', () => {
+  const toolsDir = path.join(repoRoot, 'tools');
+
+  for (const svc of PY_SERVICES) {
+    it(`${svc}/requirements.txt`, () => {
+      const declared = requirementNames(path.join(repoRoot, svc, 'requirements.txt'));
+      const local = new Set(
+        readdirSync(toolsDir, { withFileTypes: true }).map((e) => e.name.replace(/\.py$/, '')),
+      );
+
+      const undeclared = new Map<string, string>();
+      for (const file of filesUnder(toolsDir)) {
+        if (!file.endsWith('.py')) continue;
+        for (const mod of pyImports(readFileSync(file, 'utf8'))) {
+          if (PY_STDLIB.has(mod) || local.has(mod)) continue;
+          const dist = (PY_IMPORT_TO_DIST[mod] ?? mod).toLowerCase();
+          if (declared.has(dist)) continue;
+          if (!undeclared.has(mod)) undeclared.set(mod, path.relative(repoRoot, file));
+        }
+      }
+
+      expect(
+        [...undeclared].map(([mod, where]) => `${mod} (imported by ${where})`),
+        `tools/ runs under ${svc}'s venv and imports these, and ${svc}/requirements.txt ` +
+          `declares none of them. The deploy host installs that file and nothing else, ` +
+          `so whatever is missing is missing exactly where the deploy gate runs.`,
+      ).toEqual([]);
+    });
+  }
+});
+
+/**
  * Requirement lines as `name` -> the whole normalised spec (`pydantic>=2.9`).
  *
  * Same parse as {@link requirementNames}, kept separate because the comparison

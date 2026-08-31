@@ -24,3 +24,10 @@ yfinance>=0.2
 pydantic>=2.9
 starlette>=0.46
 anyio>=4.0
+
+# Imported by tools/check_installed_deps.py, which infra/deploy.sh runs with
+# *this venv's* interpreter as its preflight gate — see the matching block in
+# ../ai/requirements.txt. It arrived here only as a pytest transitive, and
+# pytest is not installed on the deploy host; resolving this file alone brings
+# 34 distributions and `packaging` is not among them.
+packaging>=24.0
