@@ -468,6 +468,39 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       }
     });
 
+    it('refuses a chapter heading, or a report title, that is only whitespace', async () => {
+      /*
+       * `heading` names a chapter of the deliverable: it is drawn at the head
+       * of the section, listed in the exhibit index, and quoted back by the QA
+       * reviewer's own findings ("<heading> sends the reader to Exhibit …").
+       * `min(1)` counts characters, so a heading of spaces saved with a 200 and
+       * produced an unnamed chapter in a signed 409A and a blank row in its
+       * index. A chapter with nothing to say is what `hidden` is for.
+       */
+      const current = (await opsGet(`/api/v1/valuations/${computed.id}/report`)).json();
+      const put = (content: unknown) =>
+        ctx.app.inject({
+          method: 'PUT',
+          url: `/api/v1/valuations/${computed.id}/report`,
+          headers: authHeader(ops.token),
+          payload: { content },
+        });
+
+      const blankHeading = structuredClone(current.version.content);
+      blankHeading.sections[0].heading = '  ';
+      const headingRes = await put(blankHeading);
+      expect(headingRes.statusCode).toBe(422);
+      expect(headingRes.json().detail).toMatch(/whitespace/i);
+
+      const blankTitle = structuredClone(current.version.content);
+      blankTitle.title = '\n';
+      expect((await put(blankTitle)).statusCode).toBe(422);
+
+      // Unchanged content still saves, so the rule is about the blank and not
+      // about the round trip.
+      expect((await put(current.version.content)).statusCode).toBe(200);
+    });
+
     it('survives an editor round-trip — a schedule cannot be edited away', async () => {
       const current = (await opsGet(`/api/v1/valuations/${computed.id}/report`)).json();
       const content = current.version.content;

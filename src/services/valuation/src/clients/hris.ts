@@ -9,7 +9,7 @@
 import { isIsoCalendarDate } from '@n409/shared';
 import { isStorableEmail, MAX_EMAIL_LENGTH } from '../domain/email.js';
 import { INT4_MAX } from '../domain/int4.js';
-import { clampScheduleMonths } from '../domain/vesting.js';
+import { clampScheduleMonths, MAX_GRANTEE_NAME } from '../domain/vesting.js';
 import {
   pagedPullBudget,
   IntegrationError,
@@ -233,7 +233,6 @@ const toDate = (v: unknown): string | null => {
  * dropped is counted and reported (`HrisSyncOutcome.grants_rejected`) rather
  * than being a silence the analyst has to notice.
  */
-const MAX_GRANTEE_NAME = 200;
 const MAX_EXTERNAL_ID = 255;
 const MAX_EXERCISE_PRICE = 1e9;
 /** `hris_connections.external_company_name`, which no index covers. */

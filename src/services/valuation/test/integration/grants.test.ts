@@ -120,6 +120,42 @@ describe.skipIf(!dbUp)('feature 6 — grant management', () => {
     expect(grant.vesting.fullyVested).toBe(true);
   });
 
+  it('refuses a grantee name that is only whitespace, as the HRIS import does', async () => {
+    /*
+     * `grants.grantee_name` is NOT NULL and is the label every schedule,
+     * exhibit and ASC 718 expense line identifies the grant by. The connector
+     * path already refused a blank one — `storableProviderText` trims before it
+     * decides — and said in a comment that "the manual route bounds it at 200
+     * and so does this". The claim held for the length and not for the blank:
+     * `min(1)` counts characters, so a form could issue an option grant to
+     * nobody and every downstream schedule printed a blank name beside a real
+     * number of shares.
+     */
+    const blank = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/grants`,
+      headers: authHeader(ops.token),
+      payload: { grantee_name: '   ', grant_date: '2015-01-01', options_count: 100 },
+    });
+    expect(blank.statusCode).toBe(422);
+    expect(blank.json().detail).toMatch(/whitespace/i);
+
+    // The edit too, not only the create.
+    const issued = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/grants`,
+      headers: authHeader(ops.token),
+      payload: { grantee_name: 'Nadia Grantee', grant_date: '2015-01-01', options_count: 100 },
+    });
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${valuationId}/grants/${issued.json().grant.id}`,
+      headers: authHeader(ops.token),
+      payload: { grantee_name: '\t' },
+    });
+    expect(patched.statusCode).toBe(422);
+  });
+
   it('honours an explicit exercise price and custom vesting', async () => {
     const res = await app.inject({
       method: 'POST',

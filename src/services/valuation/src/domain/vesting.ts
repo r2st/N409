@@ -93,6 +93,17 @@ export function isIssuableTemplate(key: string): boolean {
  * is not a schedule.
  */
 export const VESTING_MONTHS_MAX = 240;
+
+/**
+ * `grants.grantee_name`, which is `NOT NULL` and the label every schedule,
+ * exhibit and expense line identifies the grant by.
+ *
+ * Here rather than beside either caller because there are two: the form, and
+ * the HRIS import. `clients/hris.ts` already said "the manual route bounds it
+ * at 200 and so does this" — a claim about a number written out twice, which
+ * held for the length and not for the blank (R287).
+ */
+export const MAX_GRANTEE_NAME = 200;
 export const CLIFF_MONTHS_MAX = 120;
 export const FREQUENCY_MONTHS_MAX = 12;
 

@@ -24,6 +24,7 @@ import {
   FREQUENCY_MONTHS_MAX,
   isIssuableTemplate,
   ISSUABLE_TEMPLATE_KEYS,
+  MAX_GRANTEE_NAME,
   MAX_SCENARIO_FMVS,
   templateByKey,
   toIsoDate,
@@ -34,6 +35,7 @@ import {
   type VestingSchedule,
 } from '../domain/vesting.js';
 import { int4Positive } from '../domain/int4.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
@@ -71,7 +73,7 @@ const GrantDate = z
   .refine(isIsoCalendarDate, 'Not a real calendar date');
 
 const CreateBody = z.object({
-  grantee_name: z.string().min(1).max(200),
+  grantee_name: nonBlankText(1, MAX_GRANTEE_NAME),
   grantee_email: z.string().email().max(320).nullable().optional(),
   grant_date: GrantDate,
   options_count: int4Positive(),
@@ -85,7 +87,7 @@ const CreateBody = z.object({
 });
 
 const PatchBody = z.object({
-  grantee_name: z.string().min(1).max(200).optional(),
+  grantee_name: nonBlankText(1, MAX_GRANTEE_NAME).optional(),
   grantee_email: z.string().email().max(320).nullable().optional(),
   grant_date: GrantDate.optional(),
   options_count: int4Positive().optional(),

@@ -71,12 +71,13 @@ import { contentDisposition } from './documents.js';
 import type { Principal } from '../auth/rbac.js';
 import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 import { forbidden } from '../domain/accessProblem.js';
 
 const SectionSchema = z
   .object({
     key: z.string().min(1).max(100),
-    heading: z.string().min(1).max(300),
+    heading: nonBlankText(1, 300),
     html: z.string().max(100_000),
     /**
      * Optional so every client that predates the toggle keeps saving valid
@@ -91,7 +92,7 @@ const PutBody = z
   .object({
     content: z
       .object({
-        title: z.string().min(1).max(300),
+        title: nonBlankText(1, 300),
         sections: z.array(SectionSchema).min(1).max(50),
       })
       .strict(),
