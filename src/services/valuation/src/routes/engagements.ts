@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isUlid, logUnretried, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { listEvents } from '../events/record.js';
@@ -316,6 +316,32 @@ export function registerEngagementRoutes(
      * clean run over a row it deliberately declined to act on.
      */
     const withdrawn: string[] = [];
+    /**
+     * Engagements this run reached and could not chase, because something threw
+     * while it was chasing them.
+     *
+     * The loop below had no per-row catch at all, which contradicts the rule
+     * the two lists above are built on and which {@link isRetiredNow} states in
+     * as many words: "a sweep that raised on the first withdrawn row would
+     * abandon every row behind it". The withdrawn case obeys it. A *failure*
+     * did not — one transient blip on the row the sweep happened to be holding
+     * (a statement timeout on the enqueue, a pool checkout that waited out its
+     * ceiling, the spine INSERT losing a deadlock) took the whole run down.
+     *
+     * And took the accounting with it. The 500 that came back carried no
+     * `reminded`, so an operator re-running it — the obvious response to a 500
+     * on a manual sweep — mails every analyst already chased a second time,
+     * about the same engagements, on a surface whose own worst case is "mail
+     * cannot be un-sent". The rows behind the failure were never reached at
+     * all, and nothing said which ones those were.
+     *
+     * Reported by classified reason rather than by message: `failure_reason` is
+     * a token an operator can group a run's failures by (`pg.57014`,
+     * `pg.pool_exhausted`), and it is what `logUnretried` has already written
+     * beside the error itself. The driver's own sentence stays in the log,
+     * where the scrub is.
+     */
+    const failed: { valuation_id: string; failure_reason: string }[] = [];
     let scanned = 0;
     // Paged rather than capped: a missed reminder is the whole point of the
     // sweep going unsent, and it would report success either way.
@@ -342,55 +368,73 @@ export function registerEngagementRoutes(
         }
         continue;
       }
-      // Asked here rather than trusted from the page, and asked before the
-      // send rather than after it: mail cannot be un-sent, and the event below
-      // lands on a spine whose 0001 trigger refuses every UPDATE and DELETE.
-      if (await isRetiredNow(deps.pool, r.valuation_id)) {
-        withdrawn.push(r.valuation_id);
-        continue;
+      // Per row, so one engagement's bad minute costs that engagement's
+      // reminder and not the rest of the run. See `failed`.
+      try {
+        // Asked here rather than trusted from the page, and asked before the
+        // send rather than after it: mail cannot be un-sent, and the event below
+        // lands on a spine whose 0001 trigger refuses every UPDATE and DELETE.
+        if (await isRetiredNow(deps.pool, r.valuation_id)) {
+          withdrawn.push(r.valuation_id);
+          continue;
+        }
+        await sendTransactionalEmail(
+          { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
+          {
+            valuationId: r.valuation_id,
+            toUserId: r.assigned_analyst_id,
+            toEmail: r.analyst_email,
+            templateKey: 'engagement_overdue',
+            subject: `Overdue: ${r.company_name} is past SLA in ${sla.label}`,
+            body:
+              `The engagement for ${r.company_name} has been in the "${sla.label}" stage for ` +
+              `${Math.round(sla.elapsedHours)}h, past its ${sla.expectedHours}h SLA. ` +
+              `Please move it forward.`,
+            vars: { company_name: r.company_name, stage: sla.label },
+          },
+        );
+        await withTransaction(deps.pool, (client) =>
+          recordEvent(client, {
+            valuationId: r.valuation_id,
+            type: ENGAGEMENT_EVENT_TYPES.overdueReminded,
+            actor: { actorType: 'human', actorId: principal.id },
+            // The analyst by id, not by address. `valuation_events` carries
+            // `valuation_events_immutable`, a BEFORE UPDATE OR DELETE trigger
+            // from 0001 whose whole body is `RAISE EXCEPTION`, so a row written
+            // here cannot afterwards be edited or removed by anything — not the
+            // retention engine, which declares `valuation` as archive-only, and
+            // not `DELETE /api/v1/me`, which soft-deletes the account and leaves
+            // the spine alone by design.
+            //
+            // This sweep is schedulable and runs over every overdue engagement,
+            // so it was the platform's highest-volume writer of a staff member's
+            // address into the one table nothing can erase — a new copy per
+            // overdue engagement per run, indefinitely, for a person whose
+            // account deactivation R279 had just taught it to respect. The id is
+            // what every other payload on this spine names a person by, it is
+            // the column the board and the assign route already key on, and
+            // `users` holds the address behind it for as long as the account
+            // does. Nothing read the old key: see `eventPayloadContactKeys` in
+            // `piiInventory.test.ts`, which now refuses a new one.
+            payload: { stage: r.current_stage, analyst_id: r.assigned_analyst_id },
+          }),
+        );
+        reminded.push(r.valuation_id);
+      } catch (err) {
+        // `logUnretried` rather than a bare `log.error`: this row's reminder is
+        // lost whatever the error's class was, and that is the condition the
+        // alerting contract in `shared/failure.ts` describes — "the transience
+        // of the cause says nothing about the durability of the consequence".
+        // It stamps `alert: true` and classifies the reason, which is the token
+        // reported below.
+        const failure = logUnretried(
+          app.log,
+          err,
+          { valuation_id: r.valuation_id, analyst_id: r.assigned_analyst_id, stage: r.current_stage },
+          'overdue reminder failed for one engagement — the rest of the run continues',
+        );
+        failed.push({ valuation_id: r.valuation_id, failure_reason: failure.reason });
       }
-      await sendTransactionalEmail(
-        { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
-        {
-          valuationId: r.valuation_id,
-          toUserId: r.assigned_analyst_id,
-          toEmail: r.analyst_email,
-          templateKey: 'engagement_overdue',
-          subject: `Overdue: ${r.company_name} is past SLA in ${sla.label}`,
-          body:
-            `The engagement for ${r.company_name} has been in the "${sla.label}" stage for ` +
-            `${Math.round(sla.elapsedHours)}h, past its ${sla.expectedHours}h SLA. ` +
-            `Please move it forward.`,
-          vars: { company_name: r.company_name, stage: sla.label },
-        },
-      );
-      await withTransaction(deps.pool, (client) =>
-        recordEvent(client, {
-          valuationId: r.valuation_id,
-          type: ENGAGEMENT_EVENT_TYPES.overdueReminded,
-          actor: { actorType: 'human', actorId: principal.id },
-          // The analyst by id, not by address. `valuation_events` carries
-          // `valuation_events_immutable`, a BEFORE UPDATE OR DELETE trigger
-          // from 0001 whose whole body is `RAISE EXCEPTION`, so a row written
-          // here cannot afterwards be edited or removed by anything — not the
-          // retention engine, which declares `valuation` as archive-only, and
-          // not `DELETE /api/v1/me`, which soft-deletes the account and leaves
-          // the spine alone by design.
-          //
-          // This sweep is schedulable and runs over every overdue engagement,
-          // so it was the platform's highest-volume writer of a staff member's
-          // address into the one table nothing can erase — a new copy per
-          // overdue engagement per run, indefinitely, for a person whose
-          // account deactivation R279 had just taught it to respect. The id is
-          // what every other payload on this spine names a person by, it is
-          // the column the board and the assign route already key on, and
-          // `users` holds the address behind it for as long as the account
-          // does. Nothing read the old key: see `eventPayloadContactKeys` in
-          // `piiInventory.test.ts`, which now refuses a new one.
-          payload: { stage: r.current_stage, analyst_id: r.assigned_analyst_id },
-        }),
-      );
-      reminded.push(r.valuation_id);
     }
     if (unreachable.length > 0) {
       app.log.warn(
@@ -405,6 +449,8 @@ export function registerEngagementRoutes(
       unreachable,
       withdrawn_count: withdrawn.length,
       withdrawn,
+      failed_count: failed.length,
+      failed,
       scanned,
     };
   });
