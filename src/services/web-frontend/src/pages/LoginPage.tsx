@@ -85,6 +85,7 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [providers, setProviders] = useState<AuthProviders | null>(null);
+  const [providersFailed, setProvidersFailed] = useState(false);
   // Second-factor step: set once the password step returns a challenge.
   const [challenge, setChallenge] = useState<string | null>(null);
   const [code, setCode] = useState('');
@@ -93,10 +94,27 @@ export function LoginPage() {
   const ssoErrorCode = new URLSearchParams(location.search).get('sso_error');
   const ssoError = ssoErrorCode ? (SSO_ERROR_MESSAGES[ssoErrorCode] ?? SSO_ERROR_FALLBACK) : null;
 
+  /*
+   * Which doors exist, and what to say when we could not find out.
+   *
+   * The failure used to substitute `{ password: true, google: false }` — an
+   * answer nobody gave, asserting that the password box below is the only way
+   * in. R267 fixed the server's half of exactly this: the route logs when it
+   * cannot read the SAML configuration, because `saml: false` "is not 'we could
+   * not tell' — the SPA reads it as a fact and draws no SSO button, so an
+   * organisation whose people sign in *only* through their IdP is shown a
+   * password field for a password they were never issued". The browser was
+   * fabricating the same claim one layer up, out of a request that never
+   * arrived, and with no log or banner anywhere.
+   *
+   * Nothing here can know whether the missing button existed, so the page says
+   * so rather than deciding. The password form is untouched and still works for
+   * everyone it works for.
+   */
   useEffect(() => {
     api<AuthProviders>('/auth/providers')
       .then(setProviders)
-      .catch(() => setProviders({ password: true, google: false }));
+      .catch(() => setProvidersFailed(true));
   }, []);
 
   /*
@@ -245,6 +263,13 @@ export function LoginPage() {
           {busy ? 'Signing in…' : 'Sign in'}
         </Button>
       </form>
+
+      {providersFailed && (
+        <p className="mt-6 rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900">
+          We couldn’t load the other ways to sign in. If your firm uses Google or single sign-on, reload this
+          page to try again.
+        </p>
+      )}
 
       {(providers?.google || providers?.saml) && (
         <>

@@ -96,7 +96,14 @@ describe('LoginPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid email or password');
   });
 
-  it('falls back to a password-only form when the provider probe fails', async () => {
+  /*
+   * R270 — this used to end at `expect(queryByText('Sign in with SSO')).not
+   * .toBeInTheDocument()` and nothing else, which is the bug written down as a
+   * requirement: a probe that never answered was rendered as "there is no SSO
+   * here". The page still cannot draw a button it does not know exists; what it
+   * must not do is let the absence pass as an answer.
+   */
+  it('keeps the password form when the provider probe fails, and says the rest is unknown', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       if (String(url).endsWith('/auth/providers')) return jsonResponse({ title: 'Down' }, 503);
       throw new Error(`unexpected fetch ${String(url)}`);
@@ -105,6 +112,19 @@ describe('LoginPage', () => {
     expect(await screen.findByLabelText('Password')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('Continue with Google')).not.toBeInTheDocument());
     expect(screen.queryByText('Sign in with SSO')).not.toBeInTheDocument();
+    const note = await screen.findByText(/couldn’t load the other ways to sign in/i);
+    expect(note).toHaveTextContent(/reload this page/i);
+  });
+
+  it('says nothing about other doors when the probe answered', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).endsWith('/auth/providers'))
+        return jsonResponse({ password: true, google: false, saml: false });
+      throw new Error(`unexpected fetch ${String(url)}`);
+    });
+    renderLogin();
+    expect(await screen.findByLabelText('Password')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(/couldn’t load the other ways/i)).not.toBeInTheDocument());
   });
 
   it('offers the SAML entry point when the tenant has it configured', async () => {

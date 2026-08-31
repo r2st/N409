@@ -63,6 +63,8 @@ const SILENT_BY_DESIGN: Record<string, string> = {
     'A palette of insertable variables. Without it they are typed by hand, which is what the page did before.',
   'src/pages/PartnerDetailPage.tsx\t/admin/communication-templates/variables':
     'The same palette, on the white-label template editor. It degrades to the three variables the send is typed to require — and the endpoint is ops-only, so a partner administrator may legitimately be refused it.',
+  'src/components/GettingStarted.tsx\t/onboarding/progress':
+    'A checklist of onboarding steps, additive to the ones the user has ticked by hand. Its own comment says so, and the panel is dismissible.',
   'src/pages/PartnerPortalPage.tsx\t/partners/mine':
     'Branding only. The heading falls back to "Your portfolio", which is true of every partner and claims nothing.',
 };
@@ -91,8 +93,20 @@ function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
-/** Empty body, or one that only substitutes an empty collection or null. */
-const SWALLOW = /\.catch\(\(\)\s*=>\s*(?:\{\s*\}|set[A-Za-z0-9_]*\(\s*(?:\[\s*\]|null)\s*\))\s*\)/g;
+/**
+ * Empty body, or one that only substitutes a value nobody sent.
+ *
+ * R270 widened the second half twice. It read `[]` and `null` — the two
+ * substitutions that at least *look* like an absence — and the sign-in page was
+ * answering a failed `/auth/providers` with `setProviders({ password: true,
+ * google: false })`: a whole record, invented, asserting which doors into the
+ * product exist. That is the worst version of this shape and it was the one
+ * spelling the census could not see, because a fabricated object reads as data
+ * rather than as a gap. `undefined` joined it for the same reason `{}` is
+ * there: it is a discarded failure wearing a value.
+ */
+const SWALLOW =
+  /\.catch\(\(\)\s*=>\s*(?:\{\s*\}|undefined|set[A-Za-z0-9_]*\(\s*(?:\[\s*\]|null|\{[^}]*\})\s*\))\s*\)/g;
 
 /** The request a catch belongs to: the nearest path literal before it. */
 const REQUEST = /(?:api|fetch)\s*(?:<[^>]*>)?\s*\(\s*[`'"]([^`'"]*)[`'"]/g;
@@ -125,6 +139,14 @@ describe('swallowed request failures', () => {
     expect(SWALLOW.test('.catch(() => {})')).toBe(true);
     SWALLOW.lastIndex = 0;
     expect(SWALLOW.test('.catch(() => setItems([]))')).toBe(true);
+    SWALLOW.lastIndex = 0;
+    // The R270 spelling: a record nobody sent, which is a claim, not a gap.
+    expect(SWALLOW.test('.catch(() => setProviders({ password: true }))')).toBe(true);
+    SWALLOW.lastIndex = 0;
+    expect(SWALLOW.test('.catch(() => undefined)')).toBe(true);
+    SWALLOW.lastIndex = 0;
+    // The shape that is the fix, not the bug: a failure the page can draw.
+    expect(SWALLOW.test('.catch(() => setProvidersFailed(true))')).toBe(false);
     SWALLOW.lastIndex = 0;
     expect(SWALLOW.test(".catch(() => setError('Could not load.'))")).toBe(false);
     SWALLOW.lastIndex = 0;
