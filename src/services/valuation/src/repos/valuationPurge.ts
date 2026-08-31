@@ -98,6 +98,7 @@ export async function retireValuations(pool: pg.Pool, ids: readonly string[]): P
       alreadyArchived,
     };
   } catch (err) {
+    // swallow: ROLLBACK in a catch that is re-raising the error that caused it.
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
@@ -188,6 +189,7 @@ export async function restoreValuations(pool: pg.Pool, ids: readonly string[]): 
       notArchived: found.filter((id) => !restored.includes(id)),
     };
   } catch (err) {
+    // swallow: ROLLBACK in a catch that is re-raising the error that caused it.
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {

@@ -1,4 +1,4 @@
-import { describeTransportFailure } from '@n409/shared';
+import { describeTransportFailure, logUnretried } from '@n409/shared';
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import {
@@ -177,6 +177,8 @@ async function scan(
   const settingsUrl = deps.publicBaseUrl ? `${deps.publicBaseUrl.replace(/\/$/, '')}/settings` : null;
   // Once per pass, not once per message: it is a cached read, but the scan
   // renders a whole backlog and the address does not change inside one pass.
+  // swallow: the settings store logs its own read failures and serves the last
+  // values it read (repos/systemSettings.ts).
   const supportEmail = (await deps.settings?.get('support_email').catch(() => null)) ?? null;
 
   const campaigns = (await listAutoEmails(db)).filter((c) => c.enabled);
@@ -293,7 +295,26 @@ async function scan(
             // Terminal rejection of the recipient stops the ladder and suppresses
             // the address (0163). Uses this sweep's own client rather than taking
             // a second one from the pool.
-            const bounce = await recordSendFailure(db, email, err).catch(() => null);
+            /*
+             * `null` from this write is not the same `null` as "the provider
+             * did not reject the recipient" (round 267, methodology M11), and
+             * the line below prints both as `bounce: null`. A terminal bounce
+             * that could not be recorded leaves the address *unsuppressed*, so
+             * the ladder keeps sending to a mailbox that has hard-rejected us —
+             * the one outcome `recordSendFailure` exists to stop, reached
+             * through the catch written so it could not stop the send loop.
+             */
+            const bounce = await recordSendFailure(db, email, err).catch((bookErr: unknown) => {
+              if (deps.log) {
+                logUnretried(
+                  deps.log,
+                  bookErr,
+                  { emailId: email.id, campaign: campaign.name },
+                  'send failure could not be recorded — a terminal bounce has not suppressed the address',
+                );
+              }
+              return null;
+            });
             deps.log?.warn({ err, emailId: email.id, bounce }, 'auto email delivery failed; left in outbox');
           },
         });

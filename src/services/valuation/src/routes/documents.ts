@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { access, mkdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
@@ -259,7 +259,12 @@ export async function storeDocument(
   },
   actor: EventActor,
   uploadedBy: string,
-  options: { scan?: ScanPolicy } = {},
+  /**
+   * `log` is here for the rollback below, which is the only part of this
+   * function that decides something on its own and can be wrong quietly — see
+   * the note on `documentPathInUse`. Every other failure is raised.
+   */
+  options: { scan?: ScanPolicy; log?: FastifyBaseLogger } = {},
 ): Promise<DocumentRow> {
   const filename = safeFilename(input.filename);
 
@@ -346,7 +351,19 @@ export async function storeDocument(
      * moment to guess.
      */
     if (!preexisting) {
-      const referenced = await documentPathInUse(pool, storageRel).catch(() => true);
+      // The safe answer is also the one that leaves something behind, so it is
+      // said out loud (round 267, M11): every failed lookup here is a blob on
+      // disk that no row names and nothing will ever collect, and "assume
+      // referenced" is indistinguishable on every other surface from a blob
+      // that really is.
+      const referenced = await documentPathInUse(pool, storageRel).catch((lookupErr: unknown) => {
+        options.log?.warn(
+          { err: lookupErr, storageRel },
+          'could not tell whether the stored file is still referenced — leaving it in place',
+        );
+        return true;
+      });
+      // swallow: best-effort cleanup of a file we have just proved unreferenced.
       if (!referenced) await unlink(abs).catch(() => undefined);
     }
     throw err;
@@ -417,7 +434,7 @@ export function registerDocumentRoutes(
       { kind, category, filename: file.filename, contentType: file.mimetype, buffer },
       actorFor(principal),
       principal.id,
-      { scan: deps.scan },
+      { scan: deps.scan, log: req.log },
     ).catch(rethrowRejectedUpload(file.filename));
 
     // Improvement 2 — auto-pipeline: an extractable upload kicks off

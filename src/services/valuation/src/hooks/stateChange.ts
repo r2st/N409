@@ -1,4 +1,4 @@
-import { describeTransportFailure } from '@n409/shared';
+import { describeTransportFailure, logUnretried } from '@n409/shared';
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import { withTransaction } from '../db/pool.js';
@@ -273,6 +273,7 @@ async function deliverTransitionMessages(
             );
             return null;
           }),
+        // swallow: the settings store logs its own read failures.
         deps.settings?.get('support_email').catch(() => null) ?? null,
       ])
     : [null, null];
@@ -371,7 +372,26 @@ async function deliverTransitionMessages(
           await markEmail(deps.pool, email.id, 'failed', describeTransportFailure(err));
           // Terminal rejection of the recipient stops the ladder and suppresses
           // the address (0163); anything else stays retryable.
-          const bounce = await recordSendFailure(deps.pool, email, err).catch(() => null);
+          /*
+           * `null` from this write is not the same `null` as "the provider
+           * did not reject the recipient" (round 267, methodology M11), and
+           * the line below prints both as `bounce: null`. A terminal bounce
+           * that could not be recorded leaves the address *unsuppressed*, so
+           * the ladder keeps sending to a mailbox that has hard-rejected us —
+           * the one outcome `recordSendFailure` exists to stop, reached
+           * through the catch written so it could not stop the send loop.
+           */
+          const bounce = await recordSendFailure(deps.pool, email, err).catch((bookErr: unknown) => {
+            if (deps.log) {
+              logUnretried(
+                deps.log,
+                bookErr,
+                { emailId: email.id, valuationId: valuation.id },
+                'send failure could not be recorded — a terminal bounce has not suppressed the address',
+              );
+            }
+            return null;
+          });
           deps.log?.warn({ err, emailId: email.id, bounce }, 'email delivery failed; left in outbox');
         } catch (settleErr) {
           // The row stays 'queued' and the sweep re-sends it once the lease

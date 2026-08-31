@@ -441,11 +441,34 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         if (sameQuote) {
           return reply.status(200).send({ payment: live, checkout_url: live.checkout_url, quote });
         }
-        const closed = await expireCheckoutSession(deps.stripeSecretKey, live.session_id).catch(() => false);
+        /*
+         * Two situations, one word (round 267, methodology M11). `false` here
+         * is both "Stripe answered and said no" and "we never got an answer" —
+         * a timeout, a 500 from their API, a network that is down — and the
+         * line below said "stripe refused" for both, carrying no `err` at all.
+         * The analyst is told the same thing either way, which is right; the
+         * operator reading why a client cannot pay is not, and the second cause
+         * is one that clears itself while the first does not.
+         */
+        let expireError: unknown;
+        // swallow: not discarded — captured here and reported on the warn just
+        // below, which is where the two causes are told apart.
+        const closed = await expireCheckoutSession(deps.stripeSecretKey, live.session_id).catch(
+          (err: unknown) => {
+            expireError = err;
+            return false;
+          },
+        );
         if (!closed) {
           req.log.warn(
-            { valuationId: valuation.id, sessionId: live.session_id },
-            'stripe refused to expire the open checkout session — refusing to open a second one',
+            {
+              valuationId: valuation.id,
+              sessionId: live.session_id,
+              ...(expireError ? { err: expireError } : {}),
+            },
+            expireError
+              ? 'the open checkout session could not be expired — refusing to open a second one'
+              : 'stripe refused to expire the open checkout session — refusing to open a second one',
           );
           throw problems.conflict(
             'A payment for this engagement is already in progress. Finish it, or try again in a few minutes.',

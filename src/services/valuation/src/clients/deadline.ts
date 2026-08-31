@@ -457,6 +457,8 @@ export async function readCappedBytes(res: Response, limitBytes: number): Promis
   } finally {
     // Releasing the lock is not enough — the body must be discarded, or the
     // connection stays open feeding a buffer that is already over budget.
+    // swallow: discarding a body we have already refused; the refusal is the
+    // event, and a cancel that fails costs one socket the agent will reap.
     await reader.cancel().catch(() => undefined);
   }
   return Buffer.concat(chunks);

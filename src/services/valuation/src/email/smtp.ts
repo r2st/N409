@@ -279,6 +279,8 @@ export async function sendSmtp(
       autoSubmitted: 'auto-generated',
     });
     await expect(dialogue, `${message}.`, ['250'], 'body');
+    // swallow: a courtesy QUIT after the message is already accepted or
+    // refused; the send's own outcome is the event.
     await dialogue.send('QUIT').catch(() => undefined);
   } finally {
     dialogue.end();
@@ -347,6 +349,8 @@ export function smtpTransport(opts: SmtpTransportOptions, log?: FastifyBaseLogge
       // A support address we cannot read is one header short of a good message,
       // not a reason to drop it: without this the mail still goes, replies just
       // land where they landed before.
+      // swallow: `opts.replyTo` reads the settings store, which logs its own
+      // read failures (repos/systemSettings.ts) — one header short, not silent.
       const replyTo = (await opts.replyTo?.().catch(() => null)) || undefined;
       await sendSmtp(opts, {
         to: email.to_email,

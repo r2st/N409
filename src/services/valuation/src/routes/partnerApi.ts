@@ -1021,7 +1021,7 @@ export function registerPartnerApiRoutes(
           },
           actorFor(principal),
           principal.id,
-          { scan: deps.scan },
+          { scan: deps.scan, log: req.log },
         ).catch(rethrowRejectedUpload(parsed.data.filename));
         return {
           status: 201,

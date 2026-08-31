@@ -233,6 +233,7 @@ export async function deleteOrganization(pool: pg.Pool, id: string): Promise<Del
       reparentedOrganizations: reparented.rows.map((r) => r.id),
     };
   } catch (err) {
+    // swallow: ROLLBACK in a catch that is re-raising the error that caused it.
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {

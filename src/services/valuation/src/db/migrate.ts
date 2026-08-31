@@ -436,6 +436,7 @@ export async function migrate(
         // the connection is what broke, ROLLBACK throws too, and an unguarded
         // one replaces a message naming the migration with a socket error
         // naming nothing.
+        // swallow: ROLLBACK in a catch that is re-raising the error that caused it.
         await client.query('ROLLBACK').catch(() => {});
         throw new Error(explainMigrationFailure(file, err, timeouts));
       }
@@ -443,6 +444,8 @@ export async function migrate(
       log(`applied ${file}`);
     }
   } finally {
+    // swallow: releasing the advisory lock, which the session ending releases
+    // anyway; the migration's own outcome is what is reported.
     await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]).catch(() => {});
     client.release();
   }

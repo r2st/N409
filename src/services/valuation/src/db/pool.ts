@@ -161,6 +161,7 @@ export async function withClientTransaction<T>(
     await client.query('COMMIT');
     return result;
   } catch (err) {
+    // swallow: ROLLBACK in a catch that is re-raising the error that caused it.
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   }

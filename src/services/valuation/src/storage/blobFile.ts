@@ -88,6 +88,7 @@ export async function writeBlobAtomically(abs: string, bytes: Buffer): Promise<v
     }
     await rename(tmp, abs);
   } catch (err) {
+    // swallow: removing a temp file after the failure that is being raised.
     await unlink(tmp).catch(() => undefined);
     throw err;
   }

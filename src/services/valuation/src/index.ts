@@ -218,7 +218,10 @@ if (!dependencies.ok) {
     { missing: dependencies.missing, elapsedMs: dependencies.elapsedMs, alert: true },
     'required dependencies are unavailable — refusing to start',
   );
+  // swallow: shutdown. Nothing is left that could act on the failure, and the
+  // logger is going down with the process.
   await pool.end().catch(() => {});
+  // swallow: shutdown, as above.
   await telemetry.shutdown().catch(() => {});
   // Non-zero so systemd restarts us rather than recording a clean exit — the
   // database being late is precisely the case a restart fixes.
