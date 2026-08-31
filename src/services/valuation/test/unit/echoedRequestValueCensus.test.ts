@@ -155,9 +155,7 @@ describe('a refusal that names a path segment quotes it first', () => {
   });
 
   it('accepts the quoted form', () => {
-    const [call] = problemCalls(
-      'throw problems.notFound(`Unknown field "${quoteForMessage(field_key)}"`);',
-    );
+    const [call] = problemCalls('throw problems.notFound(`Unknown field "${quoteForMessage(field_key)}"`);');
     // The identifier is still interpolated — what excuses it is the wrapper,
     // so the check has to be the wrapper and not the absence of the name.
     expect(interpolated(call!.message)).toEqual([]);

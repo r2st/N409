@@ -68,10 +68,27 @@ describe('a query-string boolean', () => {
 
 // ── The census ───────────────────────────────────────────────────────────────
 
+/**
+ * Every route file, with its comments stripped.
+ *
+ * Prose about a spelling is not the spelling — `schemaBoundaryCensus` states
+ * the same rule for the same reason. The routes that were fixed explain in a
+ * comment what they used to do, and a scan that could not tell a comment from
+ * code would fail on its own documentation.
+ */
 function routeSources(): Array<{ file: string; src: string }> {
   return readdirSync(ROUTES)
     .filter((f) => f.endsWith('.ts'))
-    .map((f) => ({ file: f, src: readFileSync(path.join(ROUTES, f), 'utf8') }));
+    .map((f) => ({
+      file: f,
+      src: readFileSync(path.join(ROUTES, f), 'utf8')
+        .split('\n')
+        .filter((line) => {
+          const t = line.trim();
+          return !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/*');
+        })
+        .join('\n'),
+    }));
 }
 
 describe('one spelling of a query-string boolean, service-wide', () => {
@@ -100,9 +117,30 @@ describe('one spelling of a query-string boolean, service-wide', () => {
     // Not a style rule. The inline form is correct, and that is the problem:
     // it is correct in six places and wrong in six others, and nothing about
     // reading one of them tells you which kind you are looking at.
-    const inline = files
-      .filter((f) => /z\s*\n?\s*\.\s*enum\(\[\s*'true'\s*,\s*'false'\s*\]\)/.test(f.src))
-      .map((f) => f.file);
+    //
+    // Matched on the *presence* of `'true'` among the members rather than on
+    // the exact pair. `routes/organizations.ts` wrote
+    // `z.enum(['true', 'false', '1', '0'])` — a third spelling, admitting two
+    // values no other flag in the service takes — and the pair-shaped pattern
+    // walked straight past it (R287). A rule a variant escapes by adding a
+    // member is a rule about a string, not about the idiom.
+    const inline = files.filter((f) => /z\s*\n?\s*\.\s*enum\(\[[^\]]*'true'/.test(f.src)).map((f) => f.file);
     expect(inline).toEqual([]);
+  });
+
+  it('has no route deciding a query flag with a comparison of its own', () => {
+    /*
+     * The fourth spelling, and the one no schema-shaped scan could see:
+     * `routes/payments.ts` read the raw query object and asked
+     * `q[name] === 'true' || q[name] === '1'`, with everything else silently
+     * false. On the route that quotes a price, so `?express=TRUE` — and the
+     * `['true','true']` a repeated key arrives as — priced work the caller had
+     * asked for as though they had not, and said nothing.
+     *
+     * `queryFlag.ts` owns the comparison; anywhere else it is a route with its
+     * own opinion about what a query string means.
+     */
+    const comparing = files.filter((f) => /===\s*'true'/.test(f.src)).map((f) => f.file);
+    expect(comparing).toEqual([]);
   });
 });

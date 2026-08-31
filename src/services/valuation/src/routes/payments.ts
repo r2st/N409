@@ -91,7 +91,8 @@ export {
   quotePrice,
   RAISE_BANDS,
 } from '../domain/pricing.js';
-import { invalidBody } from '../domain/validationProblem.js';
+import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { flagParam } from '../domain/queryFlag.js';
 
 /**
  * The one sentence every "we cannot take your card today" answers with.
@@ -293,6 +294,13 @@ const CheckoutBody = z
     qsbs_letter: z.boolean().optional(),
   })
   .default({});
+
+/**
+ * The same two add-ons, as the pay screen asks for them before anything is
+ * created. `.strict()` so a misspelt flag is a 400 rather than a quote for the
+ * base price that looks like an answer.
+ */
+const QuoteQuery = z.object({ express: flagParam(false), qsbs_letter: flagParam(false) }).strict();
 
 export interface PaymentDeps {
   pool: pg.Pool;
@@ -627,12 +635,24 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorized(deps.pool, principal, id);
-    const q = req.query as Record<string, unknown>;
-    const flag = (name: string) => q[name] === 'true' || q[name] === '1' || q[name] === true;
+    /*
+     * The add-ons decide the price, so they are parsed by the service's one
+     * spelling of a query-string boolean rather than by a predicate written
+     * here. The predicate this replaced read `=== 'true' || === '1'` and
+     * answered *false* to everything else — `?express=TRUE`, and, more likely,
+     * the `['true','true']` a repeated key arrives as. Both are a quote for
+     * work the caller did not ask to drop, shown as the list price with
+     * nothing saying an add-on was ignored; the checkout takes its add-ons
+     * from a JSON body, which has no such spelling to get wrong, so the two
+     * ends of the "the figure shown is the figure charged" invariant were
+     * being decided by different rules. `flagParam` refuses instead.
+     */
+    const q = QuoteQuery.safeParse(req.query ?? {});
+    if (!q.success) throw invalidQuery(q.error, 'Invalid quote');
     const quote = quotePriceImpl({
       kind: valuation.kind,
       amountRaisedCents: valuation.amount_raised_cents,
-      addons: { express: flag('express'), qsbs_letter: flag('qsbs_letter') },
+      addons: { express: q.data.express, qsbs_letter: q.data.qsbs_letter },
     });
     return {
       quote: {

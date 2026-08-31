@@ -24,6 +24,7 @@ import { buildEntityTree, consolidate, labelEntities } from '../domain/portfolio
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { flagParam } from '../domain/queryFlag.js';
 
 /**
  * Multi-entity / fund portfolio (feature 6). An organization (holding company
@@ -57,12 +58,7 @@ const EntityBody = z.object({
  * group rather than tidying an empty one. Query rather than body because a
  * DELETE body is not reliably sent by the clients that would use this.
  */
-const DeleteQuery = z.object({
-  detach: z
-    .enum(['true', 'false', '1', '0'])
-    .optional()
-    .transform((v) => v === 'true' || v === '1'),
-});
+const DeleteQuery = z.object({ detach: flagParam(false) });
 
 export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   const loadOwnedOrg = async (principal: Principal, id: string): Promise<OrganizationRow> => {

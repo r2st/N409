@@ -95,7 +95,7 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
       const vid = await createValuation('Quote Addon Co');
       const res = await ctx.app.inject({
         method: 'GET',
-        url: `/api/v1/valuations/${vid}/payments/quote?express=true&qsbs_letter=1`,
+        url: `/api/v1/valuations/${vid}/payments/quote?express=true&qsbs_letter=true`,
         headers: authHeader(ops.token),
       });
       expect(res.statusCode).toBe(200);
@@ -114,6 +114,45 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
         headers: authHeader(ops.token),
       });
       expect(list.json().payments).toEqual([]);
+    });
+
+    it('refuses an add-on flag it cannot read, rather than quoting without it', async () => {
+      /*
+       * The add-ons decide the price, and this predicate used to be
+       * `=== 'true' || === '1'` with everything else silently false — so
+       * `?express=TRUE`, and the `['true','true']` a repeated key arrives as,
+       * both produced a quote for work the caller had asked for, shown as the
+       * list price with nothing saying an add-on had been dropped. The
+       * checkout takes its add-ons from a JSON body, which has no spelling to
+       * get wrong, so the two ends of "the figure shown is the figure charged"
+       * were decided by different rules.
+       *
+       * `flagParam` is the service's one spelling of a query-string boolean and
+       * refuses anything else, naming the field. `?qsbs_letter=1` was accepted
+       * before and is not now: a 400 a caller can read beats a price whose
+       * add-on set they cannot verify.
+       */
+      const vid = await createValuation('Quote Flag Co');
+      const ask = (query: string) =>
+        ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/valuations/${vid}/payments/quote?${query}`,
+          headers: authHeader(ops.token),
+        });
+
+      for (const query of ['express=TRUE', 'express=1', 'express=true&express=true', 'express=']) {
+        const res = await ask(query);
+        expect(res.statusCode, query).toBe(400);
+        expect(res.json().detail, query).toContain('express');
+      }
+
+      // A misspelt flag is refused too, rather than quoted at the base price.
+      expect((await ask('expres=true')).statusCode).toBe(400);
+
+      // And the spelling the pay screen actually sends still quotes.
+      const ok = await ask('express=false&qsbs_letter=false');
+      expect(ok.statusCode).toBe(200);
+      expect(ok.json().quote.addons).toEqual([]);
     });
 
     it('is valuation-scoped: out-of-scope client sees 404', async () => {
