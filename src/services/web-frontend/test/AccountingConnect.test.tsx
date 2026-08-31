@@ -131,7 +131,7 @@ describe('AccountingConnect (§23)', () => {
   it('surfaces the OAuth redirect outcome from the query string', async () => {
     mockApi();
     renderComponent('/?accounting=connected&provider=xero');
-    expect(await screen.findByText('Connected to xero — you can import financials now.')).toBeInTheDocument();
+    expect(await screen.findByText('Connected to Xero — you can import financials now.')).toBeInTheDocument();
   });
 
   it('explains unconfigured providers on 503', async () => {

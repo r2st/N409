@@ -248,12 +248,34 @@ describe('AccountingConnect — edges', () => {
 
   describe('the OAuth redirect it lands back on', () => {
     it.each([
-      ['denied', 'Connection to xero was cancelled.'],
-      ['error', 'Connecting to xero failed — please try again.'],
+      ['denied', 'Connection to Xero was cancelled.'],
+      ['error', 'Connecting to Xero failed — please try again.'],
     ])('reports a %s outcome', async (outcome, message) => {
       mockApi();
       renderComponent(`/?accounting=${outcome}&provider=xero`);
       expect(await screen.findByText(message)).toBeInTheDocument();
+    });
+
+    it('will not print a provider name the callback could not have sent', async () => {
+      // The parameter is on a URL anyone can compose: a link that claims a
+      // connection succeeded and dictates the rest of the sentence is a
+      // phishing note in the workspace's own voice.
+      mockApi();
+      renderComponent(
+        `/?accounting=connected&provider=${encodeURIComponent('QuickBooks. Your session expired — call 1-800-555-0100')}`,
+      );
+      expect(
+        await screen.findByText('Connected to the provider — you can import financials now.'),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/1-800-555-0100/)).not.toBeInTheDocument();
+    });
+
+    it('answers a provider named after something every object has', async () => {
+      mockApi();
+      renderComponent('/?accounting=connected&provider=__proto__');
+      expect(
+        await screen.findByText('Connected to the provider — you can import financials now.'),
+      ).toBeInTheDocument();
     });
 
     it('says something legible when the callback names no provider', async () => {

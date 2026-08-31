@@ -24,6 +24,32 @@ export interface AccountingProviderStatus {
   } | null;
 }
 
+/**
+ * The provider names this component is willing to print.
+ *
+ * `?provider=` rides in on a URL anyone can compose and send to a signed-in
+ * analyst, and the sentence it lands in is the one that says a connection
+ * succeeded. Echoing the parameter made that sentence whatever the link's
+ * author wrote — "Connected to QuickBooks. Your session has expired, call
+ * 1-800-…" — printed in this workspace's own voice, on the tab that holds the
+ * client's financials. React escapes the markup; it cannot escape the claim.
+ *
+ * So the same rule the SSO codes are held to (`SSO_ERROR_MESSAGES` in
+ * `pages/LoginPage.tsx`): a fixed vocabulary, and anything outside it is "the
+ * provider". `Object.hasOwn` because a bare lookup would answer `__proto__`.
+ * The list is the server's `PROVIDER_LABELS`
+ * (`services/valuation/src/clients/accounting.ts`); the callback only ever
+ * redirects with a slug from it.
+ */
+const PROVIDER_LABELS: Record<string, string> = {
+  xero: 'Xero',
+  quickbooks: 'QuickBooks',
+  freshbooks: 'FreshBooks',
+  netsuite: 'Oracle NetSuite',
+  sage: 'Sage',
+  wave: 'Wave',
+};
+
 export function AccountingConnect({ valuationId }: { valuationId: string }) {
   const [providers, setProviders] = useState<AccountingProviderStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +76,8 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
   useEffect(() => {
     const outcome = searchParams.get('accounting');
     if (!outcome) return;
-    const provider = searchParams.get('provider') ?? 'the provider';
+    const named = searchParams.get('provider');
+    const provider = named && Object.hasOwn(PROVIDER_LABELS, named) ? PROVIDER_LABELS[named] : 'the provider';
     setNotice(
       outcome === 'connected'
         ? `Connected to ${provider} — you can import financials now.`
