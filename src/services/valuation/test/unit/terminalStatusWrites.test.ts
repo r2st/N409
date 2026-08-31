@@ -100,7 +100,7 @@ const DECIDED: Record<string, Verdict> = {
     unguarded:
       'activate re-reads the row under a lock on the template *name*, and under that lock R288 ' +
       'refuses an archived target — the route refuses it on the pool, and an archive committing in ' +
-      "between used to restore the row and archive the live one on its way; archive is deliberately " +
+      'between used to restore the row and archive the live one on its way; archive is deliberately ' +
       'reachable from any status — a skeleton is withdrawn from whatever state it is in',
   },
   'repos/support.ts :: support_messages': {

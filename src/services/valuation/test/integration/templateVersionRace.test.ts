@@ -236,10 +236,9 @@ describe.skipIf(!dbUp)('report template activation under concurrency', () => {
       );
       // v2 takes v1's place, so this is not "the name has no active version"
       // but the ordinary replacement an operator performs.
-      await holder.query(
-        `UPDATE report_templates SET status = 'active', updated_at = now() WHERE id = $1`,
-        [v2.id],
-      );
+      await holder.query(`UPDATE report_templates SET status = 'active', updated_at = now() WHERE id = $1`, [
+        v2.id,
+      ]);
 
       // The route reads v1 as 'active' — the archive is uncommitted — passes
       // its own check, and stops on the name lock inside the repo.
