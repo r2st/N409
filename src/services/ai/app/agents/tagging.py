@@ -234,7 +234,7 @@ def run_tagging(payload: dict) -> tuple[str, dict]:
 
     red = c.redactor(payload)
     docs, _ = c.load_docs(payload, red)
-    corpus, _ = c.corpus(docs, red, CORPUS_LIMIT)
+    corpus, _, reviewed = c.corpus(docs, red, CORPUS_LIMIT)
 
     system, model = c.prompt_overrides(payload, _SYSTEM)
     user = f"""Company: {c.subject(payload)} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
@@ -272,7 +272,7 @@ Propose at most {MAX_TAGS} tags. Only tag what the material supports — a tag n
         # tags feel thin.
         "unknown_slugs": unknown,
         "notes": c.clean_str(doc.get("notes"), limit=2000),
-        "documents_reviewed": [d.filename for d in docs],
+        "documents_reviewed": [d.filename for d in reviewed],
         "catalogue_size": len(index),
         "anonymization": red.report(),
     }

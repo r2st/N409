@@ -103,7 +103,7 @@ def _grant_payload() -> dict:
 def test_documents_whose_redacted_names_collide_stay_distinct_in_the_corpus():
     red = pipelines._redactor(_grant_payload())
     docs, _ = pipelines._load_docs(_grant_payload(), red)
-    corpus, by_shown = pipelines._corpus(docs, red, 45_000)
+    corpus, by_shown, _ = pipelines._corpus(docs, red, 45_000)
 
     # One key per document, or the lookup silently answers with the wrong file.
     assert len(by_shown) == len(docs)
@@ -158,7 +158,7 @@ def test_uploads_genuinely_sharing_a_name_are_disambiguated_too(monkeypatch):
     }
     red = pipelines._redactor(payload)
     docs, _ = pipelines._load_docs(payload, red)
-    _, by_shown = pipelines._corpus(docs, red, 45_000)
+    _, by_shown, _ = pipelines._corpus(docs, red, 45_000)
     assert list(by_shown) == ["cap table.xlsx", "cap table (2).xlsx"]
 
 

@@ -528,11 +528,30 @@ def extract_texts(documents: list[dict]) -> list[DocText]:
     return out
 
 
-def render_corpus(docs: list[DocText]) -> str:
-    if not docs:
-        return "(no documents uploaded)"
-    blocks = [
+#: What separates two documents in a rendered corpus. Exported because the
+#: budgeting in `pipelines._corpus` has to price a block *plus* its join.
+CORPUS_SEPARATOR = "\n\n"
+
+#: What a corpus with nothing in it says. Not "" — a model handed an empty
+#: string where documents were promised answers about documents anyway.
+EMPTY_CORPUS = "(no documents uploaded)"
+
+
+def corpus_blocks(docs: list[DocText]) -> list[str]:
+    """One rendered block per document, in order.
+
+    Split out of {@link render_corpus} because the corpus is fitted to a
+    character budget one document at a time — see `pipelines._corpus`. The
+    ordinal is the document's position in the list it was handed, so a caller
+    that drops a trailing block does not renumber the ones it keeps.
+    """
+    return [
         f'--- DOCUMENT {i + 1}: "{d.filename}" (type: {d.kind}) ---\n{d.text or "(empty)"}'
         for i, d in enumerate(docs)
     ]
-    return "\n\n".join(blocks)
+
+
+def render_corpus(docs: list[DocText]) -> str:
+    if not docs:
+        return EMPTY_CORPUS
+    return CORPUS_SEPARATOR.join(corpus_blocks(docs))

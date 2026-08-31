@@ -8,15 +8,24 @@ valuation service persists in ai_jobs.result.
 from __future__ import annotations
 
 import json
+import logging
 import math
 from dataclasses import replace
 from typing import Any
 
 from . import bedrock
 from .anonymize import Redactor
-from .documents import DocText, extract_texts, render_corpus
+from .documents import (
+    CORPUS_SEPARATOR,
+    EMPTY_CORPUS,
+    DocText,
+    corpus_blocks,
+    extract_texts,
+)
 from .llm_router import chat
 from .openrouter import LlmResult, extract_json, max_output_tokens
+
+_log = logging.getLogger("pipelines")
 
 # Fields the extraction pipeline may emit — everything else is dropped so a
 # hallucinated key can never reach the calculation engine.
@@ -184,9 +193,29 @@ def _load_docs(payload: dict, red: Redactor | None = None) -> tuple[list[DocText
     return docs, red.report()
 
 
-def _corpus(docs: list[DocText], red: Redactor, limit: int) -> tuple[str, dict[str, DocText]]:
-    """The corpus as the model sees it, and a map back from the filename it
-    will echo to the document that filename belongs to.
+#: Appended to a document the character budget cut short, in the corpus itself.
+#:
+#: The model is the only reader who can act on it — it is the one being asked
+#: to draw a conclusion from the text above, and a cap table that stops in the
+#: middle of the preferred rows reads exactly like a cap table with no
+#: preferred rows. Everything else on this platform that trims a thing a person
+#: will act on says so; this is the same rule for the reader that happens not
+#: to be a person.
+_CUT_NOTE = "\n[... this document was cut short here; the rest was not sent]"
+
+#: The least of a document worth sending once it has to be cut. Below this a
+#: "block" is a header, a line and a half, and the note above — which is not
+#: material a conclusion can be drawn from, and is worth less than the budget
+#: it spends. Anything under it is left out whole instead.
+_MIN_CUT_BLOCK_CHARS = 2000
+
+
+def _corpus(
+    docs: list[DocText], red: Redactor, limit: int
+) -> tuple[str, dict[str, DocText], list[DocText]]:
+    """The corpus as the model sees it, a map back from the filename it will
+    echo to the document that filename belongs to, and the documents the corpus
+    actually contains.
 
     Real 409A uploads are called "Acme Robotics - Cap Table 2025.xlsx" and
     "Ada Lovelace Option Grant.pdf". `render_corpus` heads each block with the
@@ -196,10 +225,73 @@ def _corpus(docs: list[DocText], red: Redactor, limit: int) -> tuple[str, dict[s
     The `DocText` keeps its real filename: `documents_reviewed` and the
     per-document summaries are read by the analyst who uploaded the file, and
     they go to our own database, not to the model.
+
+    The third return value is the reason this function budgets per document
+    instead of rendering everything and slicing the result to `limit`, which is
+    what it used to do. Two facts met there:
+
+    * `extract_texts` allows 20 000 characters per document and 60 000 across
+      the corpus, and every caller here passes a `limit` below 60 000 — 15 000
+      on one of them. So the cut was not a theoretical ceiling: three ordinary
+      spreadsheets overrun the smallest budget on their own.
+    * `documents_reviewed` was `[d.filename for d in docs]` — every document
+      handed to the pipeline, not every document that survived the slice.
+
+    Together those made an analyst-facing work product that names documents the
+    model was never shown, and — worse, because it is silent on both sides — a
+    document cut off mid-table that the model reads as complete. That is the
+    same defect `routes/ai.ts` names in the valuation service, where
+    `document_ids` was recorded off the engagement's whole corpus rather than
+    off what `encodeDocuments` actually sent: *a defensibility record naming
+    documents a run never saw is worse than one naming none*. This is that
+    record, one tier down and about the same documents.
+
+    So: whole documents while they fit, one cut document with the cut declared
+    in the text, nothing after it, and a `reviewed` list that says which. A
+    document too large for an empty budget is still cut rather than dropped —
+    the alternative is a run over no documents at all whenever the first upload
+    is bigger than the limit, which is a `limit` of 15 000 against a per-doc
+    ceiling of 20 000.
     """
     shown_names = _distinct_filenames([red.text(doc.filename) for doc in docs])
     shown = [replace(doc, filename=name) for doc, name in zip(docs, shown_names)]
-    return render_corpus(shown)[:limit], dict(zip(shown_names, docs))
+    by_shown_filename = dict(zip(shown_names, docs))
+    if not docs:
+        return EMPTY_CORPUS, by_shown_filename, []
+
+    kept: list[str] = []
+    reviewed: list[DocText] = []
+    remaining = limit
+    for original, block in zip(docs, corpus_blocks(shown)):
+        join = len(CORPUS_SEPARATOR) if kept else 0
+        if join + len(block) <= remaining:
+            kept.append(block)
+            reviewed.append(original)
+            remaining -= join + len(block)
+            continue
+        room = remaining - join
+        # The first document is cut however little room there is: see above.
+        if room <= 0 or (room < _MIN_CUT_BLOCK_CHARS and kept):
+            break
+        # The note is spent out of the room it declares. A budget smaller than
+        # the note itself is degenerate — every real `limit` here is five
+        # figures — and there a hard cut is the only thing that fits.
+        body = room - len(_CUT_NOTE)
+        kept.append(block[:body] + _CUT_NOTE if body > 0 else block[:room])
+        reviewed.append(original)
+        break
+
+    if len(reviewed) < len(docs):
+        _log.warning(
+            "corpus truncated to the character budget",
+            extra={
+                "event": "corpus_truncated",
+                "reviewed": len(reviewed),
+                "documents": len(docs),
+                "detail": f"limit={limit}",
+            },
+        )
+    return CORPUS_SEPARATOR.join(kept) or EMPTY_CORPUS, by_shown_filename, reviewed
 
 
 def _numbered(name: str, n: int) -> str:
@@ -286,7 +378,7 @@ def run_missing_data(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
     red = _redactor(payload)
     docs, _ = _load_docs(payload, red)
-    corpus, _ = _corpus(docs, red, 30000)
+    corpus, _, reviewed = _corpus(docs, red, 30000)
     uploaded_kinds = {d.kind for d in docs}
     params = payload.get("params") or {}
 
@@ -329,7 +421,7 @@ preference amounts, projections without expenses). Maximum 10 gaps."""
         "missing_params": missing_params,
         "gaps": gaps if isinstance(gaps, list) else [],
         "notes": parsed.get("notes", "") if isinstance(parsed, dict) else "",
-        "documents_reviewed": [d.filename for d in docs],
+        "documents_reviewed": [d.filename for d in reviewed],
         "anonymization": red.report(),
     }
     return llm.model, result
@@ -339,7 +431,7 @@ def run_extract(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
     red = _redactor(payload)
     docs, _ = _load_docs(payload, red)
-    corpus, _ = _corpus(docs, red, 45000)
+    corpus, _, reviewed = _corpus(docs, red, 45000)
 
     system, model = _prompt_overrides(
         payload,
@@ -384,7 +476,7 @@ Use null for anything not found. ebitda may be negative."""
     result = {
         "engine_inputs": engine_inputs,
         "extractions": extractions if isinstance(extractions, list) else [],
-        "documents_reviewed": [d.filename for d in docs],
+        "documents_reviewed": [d.filename for d in reviewed],
         "anonymization": red.report(),
     }
     return llm.model, result
@@ -395,7 +487,7 @@ def run_comparables(payload: dict) -> tuple[str, dict]:
     params = payload.get("params") or {}
     red = _redactor(payload)
     docs, _ = _load_docs(payload, red)
-    corpus, _ = _corpus(docs, red, 15000)
+    corpus, _, _ = _corpus(docs, red, 15000)
 
     system, model = _prompt_overrides(
         payload,
@@ -454,7 +546,7 @@ def run_summarize(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
     red = _redactor(payload)
     docs, _ = _load_docs(payload, red)
-    corpus, by_shown_filename = _corpus(docs, red, 45000)
+    corpus, by_shown_filename, reviewed = _corpus(docs, red, 45000)
 
     system, model = _prompt_overrides(
         payload,
@@ -502,7 +594,7 @@ actually present in that document (share counts, preferences, cash, revenue)."""
     result = {
         "summaries": summaries,
         "overall": parsed.get("overall", "") if isinstance(parsed, dict) else "",
-        "documents_reviewed": [d.filename for d in docs],
+        "documents_reviewed": [d.filename for d in reviewed],
         "anonymization": red.report(),
     }
     return llm.model, result

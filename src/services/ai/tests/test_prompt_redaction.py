@@ -409,7 +409,7 @@ def test_document_bodies_are_redacted_before_anything_assembles_them():
 def test_the_corpus_hands_back_the_document_under_the_name_it_showed():
     red = pipelines._redactor(payload())
     docs, _ = pipelines._load_docs(payload(), red)
-    corpus, by_shown = pipelines._corpus(docs, red, 45_000)
+    corpus, by_shown, _ = pipelines._corpus(docs, red, 45_000)
     assert not _leaks(corpus)
     # Keyed on the redacted name — the only one the model can echo back. Keyed
     # on the real one, every lookup misses and every summary silently falls
@@ -425,7 +425,7 @@ def test_the_corpus_truncates_after_redacting_not_before():
     # result — which would also cut a name in half and leave the stub of it in.
     red = pipelines._redactor(payload())
     docs, _ = pipelines._load_docs(payload(), red)
-    corpus, _ = pipelines._corpus(docs, red, 60)
+    corpus, _, _ = pipelines._corpus(docs, red, 60)
     assert len(corpus) == 60
     assert not _leaks(corpus)
 

@@ -142,7 +142,7 @@ def run_company_profile(payload: dict) -> tuple[str, dict]:
 
     red = c.redactor(payload)
     docs, _ = c.load_docs(payload, red)
-    corpus, _ = c.corpus(docs, red, CORPUS_LIMIT)
+    corpus, _, reviewed = c.corpus(docs, red, CORPUS_LIMIT)
 
     system, model = c.prompt_overrides(payload, _SYSTEM)
     metric_spec = ",\n".join(
@@ -186,7 +186,7 @@ Rank the classification candidates most likely first. Leave any value the docume
         "sic_code": sic[0]["code"] if sic else None,
         "naics_code": naics[0]["code"] if naics else None,
         "key_metrics": _metrics(doc.get("key_metrics")),
-        "documents_reviewed": [d.filename for d in docs],
+        "documents_reviewed": [d.filename for d in reviewed],
         "documents_used": c.str_list(doc.get("documents_used"), limit=20, item_limit=300),
         # What the profile still needs. This is the half an analyst acts on:
         # a description with three gaps named is a to-do list, and one with none

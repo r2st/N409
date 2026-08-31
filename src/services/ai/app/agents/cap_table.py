@@ -282,7 +282,7 @@ def _citations(identified: list, share_classes: list[dict], by_shown: dict) -> l
 def run_cap_table(payload: dict) -> tuple[str, dict]:
     red = c.redactor(payload)
     docs, _ = c.load_docs(payload, red)
-    corpus, by_shown = c.corpus(docs, red, 45000)
+    corpus, by_shown, reviewed = c.corpus(docs, red, 45000)
 
     identify_system, model = c.prompt_overrides(payload, _IDENTIFY_SYSTEM)
     identify_user = f"""Company: {c.subject(payload)}
@@ -390,7 +390,7 @@ in dollars. Lower seniority number = paid first. Do not add classes."""
         "notes": c.clean_str(identified_doc.get("notes"))
         if isinstance(identified_doc, dict)
         else "",
-        "documents_reviewed": [d.filename for d in docs],
+        "documents_reviewed": [d.filename for d in reviewed],
         "anonymization": red.report(),
     }
     # Model of record is the structuring call (what produced the schema).
