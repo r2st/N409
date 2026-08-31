@@ -203,6 +203,9 @@ export async function runRetentionSweep(
    * this codebase keeps finding on the other side of a catch.
    */
   let outboxFailure: unknown = null;
+  // swallow: not discarded — held. `finish` re-raises it once the archival pass
+  // has had its turn, and `logFailure` below writes it on the one path where
+  // that re-raise cannot happen because the second pass threw first.
   const outbox = await sweepOutbox(pool, policies, opts).catch((err: unknown) => {
     outboxFailure = err;
     return { purged: 0, skippedHold: 0 };

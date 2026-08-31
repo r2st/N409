@@ -73,6 +73,14 @@ const BOUNDED: Record<string, Bound> = {
     bound: 'scalar',
     why: 'The same `SELECT 1`, on the boot path rather than the probe — the process refuses to start against a database it cannot query.',
   },
+  'domain/retiredEngagement.ts:valuations': {
+    bound: 'key',
+    why: 'Whether one engagement is withdrawn, by primary key, taken `FOR SHARE` so a retirement landing mid-transaction cannot commit between the guard and the write it guards.',
+  },
+  'domain/retiredEngagement.ts:valuations#2': {
+    bound: 'key',
+    why: 'The same question on the pool rather than in a transaction, for the callers that only read: one engagement by primary key.',
+  },
   'domain/transitionGuard.ts:valuations': {
     bound: 'key',
     why: 'The state of one valuation by primary key, taken `FOR UPDATE` so the transition it guards serialises against a second one.',
