@@ -49,9 +49,16 @@ def _env(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     for name in ("OPENROUTER_MODEL", "RESEARCH_SYNTHESIS_MODEL"):
         monkeypatch.delenv(name, raising=False)
+    # Both ledgers, on both sides: the `/ready` counters are process-wide, and
+    # `test_perplexity` asserts the three of them stay separate — so a test that
+    # spends here and does not clean up is a failure over in that file.
     openrouter._budget._used = 0
+    bedrock.reset_budget()
+    bedrock.reset_key_cache()
     yield
     openrouter._budget._used = 0
+    bedrock.reset_budget()
+    bedrock.reset_key_cache()
 
 
 class TestAllowedModels:
