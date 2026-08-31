@@ -61,6 +61,56 @@ describe('normalizeMediaType', () => {
     expect(normalizeMediaType(long).startsWith('text/x')).toBe(false);
   });
 
+  /**
+   * R274. The NUL test above passed because the *unquoted* half of a media type
+   * is spelled as an allow-list. The quoted half was a negated class — `[^"\\]`
+   * — which excluded exactly the two characters it names and admitted the whole
+   * C0 block, so a control character inside a parameter value was kept and
+   * stored. That value is the download response's own `Content-Type`, and Node
+   * refuses to set a header carrying one: the upload answered 201 and every
+   * later download of that document answered 500.
+   */
+  it('replaces a type carrying a control character inside a quoted parameter', () => {
+    for (const bad of [
+      'text/plain; charset="\u0007"',
+      'text/plain; charset="\u0001"',
+      'text/plain; name="a\u0000b"',
+      // Written to split the response. Node turns it into a 500 rather than an
+      // injection; neither is an answer this function should be handing on.
+      'text/plain; charset="\r\nX-Evil: 1"',
+      'text/plain; name="a\nb"',
+      // The quoted-pair arm was `\\.` — any character at all after the escape.
+      'text/plain; charset="\\\u0007"',
+    ]) {
+      expect(normalizeMediaType(bad), JSON.stringify(bad)).toBe(DEFAULT_MEDIA_TYPE);
+    }
+  });
+
+  /**
+   * The same failure spelled with whitespace: `\s` matches CR, LF, FF and VT as
+   * well as the space and tab RFC 9110 §5.6.3 allows as `OWS`.
+   */
+  it('replaces a type whose parameter separator carries a line break', () => {
+    for (const bad of [
+      'text/plain;\rcharset=utf-8',
+      'text/plain;\ncharset=utf-8',
+      'text/plain; charset\r=utf-8',
+      'text/plain; charset=\u000butf-8',
+    ]) {
+      expect(normalizeMediaType(bad), JSON.stringify(bad)).toBe(DEFAULT_MEDIA_TYPE);
+    }
+  });
+
+  /**
+   * A header value is Latin-1 on the wire; Node refuses to set one carrying a
+   * code point above U+00FF, so a parameter that reached the column with one in
+   * it would be the same stored 500 as a control character.
+   */
+  it('keeps obs-text in a quoted parameter but replaces a type carrying anything above it', () => {
+    expect(normalizeMediaType('text/plain; name="caf\u00e9.csv"')).toBe('text/plain; name="caf\u00e9.csv"');
+    expect(normalizeMediaType('text/plain; name="\u20ac.csv"')).toBe(DEFAULT_MEDIA_TYPE);
+  });
+
   it('replaces anything that is not a media type at all', () => {
     for (const bad of [
       '',

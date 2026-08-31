@@ -80,17 +80,52 @@ export const MAX_MEDIA_TYPE_LENGTH = 255;
 const TOKEN = String.raw`[!#$%&'*+.^_\`|~0-9A-Za-z-]+`;
 
 /**
+ * RFC 9110 §5.6.4 quoted-string body: `qdtext` (HTAB, SP, `!`, %x23–5B,
+ * %x5D–7E and `obs-text` %x80–FF) or a `quoted-pair` (`\` followed by HTAB,
+ * SP, a visible character or `obs-text`).
+ *
+ * Spelled out for the same reason {@link TOKEN} is, and it was not: this arm
+ * used to be `[^"\\]|\\.`, a negated class that excluded the two characters it
+ * names and admitted every other one — the whole C0 block among them. So the
+ * paragraph above about the NUL was true only of the *unquoted* half of a
+ * media type, and `text/plain; charset="<BEL>"` was, to this parser, a
+ * well-formed type to be kept intact.
+ *
+ * That is the same 500 one arm over, and a worse-shaped one, because it is
+ * stored first and fails later. The stored value is the download response's
+ * own `Content-Type`, Node refuses to set a header carrying a character
+ * outside `\t` and %x20–FF, and the throw arrives at the error handler as an
+ * unrecognised failure — so the upload is accepted 201 and *every subsequent
+ * download of that document answers 500*, for the analyst as much as for the
+ * client who uploaded it. `charset="\r\nX-Evil: 1"` is the same input written
+ * to split the response; Node stops that from being a header injection and
+ * leaves the 500 behind.
+ *
+ * `obs-text` is kept because a header value may carry it and Node will set it.
+ * Anything above U+00FF is not: Node refuses that too, so a `name="€"` that
+ * reached the column would be the same stored 500.
+ */
+const QUOTED_STRING = String.raw`"(?:[\t !#-\[\]-~\x80-\xFF]|\\[\t !-~\x80-\xFF])*"`;
+
+/**
+ * RFC 9110 §5.6.3 `OWS`: space and horizontal tab, and nothing else.
+ *
+ * `\s` was what stood here, and it also matches CR, LF, FF and VT — the
+ * characters this file exists to keep out of a stored header. `text/plain;<CR>
+ * charset=utf-8` was well-formed to the old expression and a 500 on download.
+ */
+const OWS = String.raw`[ \t]*`;
+
+/**
  * `type/subtype` followed by any number of `; name=value` parameters, where a
  * value is a token or a quoted-string.
  *
  * The quoted-string alternative is not decoration: `boundary="a b"` and
  * `name="my report.pdf"` are both ordinary, and a parser that only accepted
- * tokens would throw away the parameters of a perfectly well-formed type. `\\.`
- * inside it is RFC 9110's quoted-pair, which is how a quote reaches the inside
- * of one.
+ * tokens would throw away the parameters of a perfectly well-formed type.
  */
 const MEDIA_TYPE = new RegExp(
-  `^${TOKEN}/${TOKEN}` + `(?:\\s*;\\s*${TOKEN}\\s*=\\s*(?:${TOKEN}|"(?:[^"\\\\]|\\\\.)*"))*$`,
+  `^${TOKEN}/${TOKEN}` + `(?:${OWS};${OWS}${TOKEN}${OWS}=${OWS}(?:${TOKEN}|${QUOTED_STRING}))*$`,
 );
 
 /**

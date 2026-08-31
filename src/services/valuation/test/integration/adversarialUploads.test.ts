@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { DEFAULT_MEDIA_TYPE } from '../../src/documents/mediaType.js';
 
 const dbUp = await isDbAvailable();
@@ -222,5 +222,103 @@ describe.skipIf(!dbUp)('adversarial document uploads', () => {
       expect(dl.statusCode).toBe(200);
       expect(dl.body).toBe(CSV);
     }
+  });
+});
+
+/**
+ * R274. The parameter half of the same field, which only the partner API can
+ * reach: busboy drops a part header's parameters before the session route ever
+ * sees them, so `content_type` arrives whole only when a JSON body carries it.
+ *
+ * `normalizeMediaType` spelled its *token* characters as an allow-list — which
+ * is what kept the NUL out above — and its *quoted-string* characters as
+ * `[^"\\]`, a negated class admitting every control character there is. So the
+ * one shape that reaches the column intact was the one shape that was not
+ * checked, and the failure it produces is worse than the 500 the token half
+ * gave: the upload is accepted, the value is stored, and the 500 lands on
+ * *every later download* of that document — for the analyst as much as for the
+ * client who uploaded it.
+ */
+describe.skipIf(!dbUp)('adversarial partner-API declared media types', () => {
+  let ctx: TestApp;
+  let apiKey: string;
+  let adminToken: string;
+  let valuationId: string;
+  let uploadUrl: string;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp();
+    const partnerId = await seedPartner(ctx, 'Media Type Advisors');
+    const admin = await seedUser(ctx, { roles: ['partner'], partnerId });
+    adminToken = admin.token;
+    const minted = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/partners/${partnerId}/tokens`,
+      headers: authHeader(adminToken),
+      payload: { name: 'adversarial media types' },
+    });
+    expect(minted.statusCode).toBe(201);
+    apiKey = minted.json().secret as string;
+
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/partner/v1/valuations',
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: { kind: '409a', company_name: 'Media Type Co' },
+    });
+    expect(created.statusCode).toBe(201);
+    valuationId = created.json().valuation.id as string;
+    uploadUrl = `/api/partner/v1/valuations/${valuationId}/documents`;
+  });
+  afterAll(async () => ctx?.teardown());
+
+  const put = (filename: string, contentType: string) =>
+    ctx.app.inject({
+      method: 'POST',
+      url: uploadUrl,
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: {
+        filename,
+        content_type: contentType,
+        content_base64: Buffer.from(CSV).toString('base64'),
+      },
+    });
+
+  const download = (documentId: string) =>
+    ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${valuationId}/documents/${documentId}/download`,
+      headers: authHeader(adminToken),
+    });
+
+  it.each([
+    ['a bell inside a quoted parameter', 'text/plain; charset="\u0007"'],
+    ['a CRLF written to split the response', 'text/plain; charset="\r\nX-Evil: 1"'],
+    ['a control character behind a quoted-pair', 'text/plain; charset="\\\u0007"'],
+    ['a line break standing in for the parameter separator', 'text/plain;\rcharset=utf-8'],
+    ['a code point a header value has no room for', 'text/plain; name="\u20ac.csv"'],
+  ])('stores %s as the default, and the document stays downloadable', async (_what, declared) => {
+    const res = await put('poisoned.csv', declared);
+    expect(res.statusCode).toBe(201);
+    expect(res.json().document.content_type).toBe(DEFAULT_MEDIA_TYPE);
+
+    const dl = await download(res.json().document.id as string);
+    expect(dl.statusCode).toBe(200);
+    expect(dl.headers['content-type']).toBe(DEFAULT_MEDIA_TYPE);
+    expect(dl.body).toBe(CSV);
+  });
+
+  /**
+   * The other half of the fix: a quoted parameter is ordinary and must survive.
+   * `obs-text` is kept because a header value may carry it and Node will set it.
+   */
+  it('keeps a well-formed quoted parameter, obs-text included', async () => {
+    const res = await put('kept.csv', 'text/csv; name="caf\u00e9 report.csv"');
+    expect(res.statusCode).toBe(201);
+    expect(res.json().document.content_type).toBe('text/csv; name="caf\u00e9 report.csv"');
+
+    const dl = await download(res.json().document.id as string);
+    expect(dl.statusCode).toBe(200);
+    expect(dl.headers['content-type']).toBe('text/csv; name="caf\u00e9 report.csv"');
   });
 });

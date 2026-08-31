@@ -83,7 +83,14 @@ export const PublicDocumentSchema = z
     id: z.string().describe('ULID of the stored document.'),
     kind: z.enum(DOCUMENT_KINDS).describe('What the document is — the category the firm files it under.'),
     filename: z.string().describe('The name it was uploaded under.'),
-    content_type: z.string().describe('MIME type as stored, sniffed rather than trusted from the upload.'),
+    content_type: z
+      .string()
+      .describe(
+        'MIME type as stored. Parsed rather than trusted: a declared type that is not a well-formed ' +
+          'media type is stored — and served back on download — as application/octet-stream. The ' +
+          'file’s own bytes are sniffed separately, and an upload whose content contradicts its ' +
+          'extension is refused rather than relabelled.',
+      ),
     /**
      * `bigint`, so a string like every other bigint on this API — the same
      * reason `number` is one. Typing it as a JSON number would be the more
