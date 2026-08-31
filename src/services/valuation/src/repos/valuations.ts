@@ -1368,6 +1368,45 @@ export interface PatchOptions {
 }
 
 /**
+ * Columns a valuation patch may name.
+ *
+ * `patchValuation` interpolates each key of `fields` into the UPDATE's SET
+ * clause — a column name cannot be a bound parameter — and the list of keys it
+ * would accept was `Object.keys(fields)`: whatever the caller happened to
+ * pass. Every caller today builds that object by hand or hands over a
+ * `.strict()` Zod result, which strips unknown keys, so nothing else reaches
+ * here. But that is a property of six call sites rather than of this function,
+ * and `repos/communications.ts` already wrote down why it is not enough:
+ * "`.passthrough()`, a second caller, or a hand-built patch object each turn
+ * `Object.entries(patch)` into attacker-chosen SQL. The type annotation says
+ * the same thing and is erased at runtime." Every sibling repo that builds an
+ * UPDATE this way names its columns in the repo; this one — the most-written
+ * row on the service, and the one with a public API PATCH in front of it —
+ * did not.
+ *
+ * A key outside this set throws rather than being skipped. Skipping would turn
+ * a mistyped column into a write that reports success and changes nothing,
+ * which is a worse failure than the one a wrong column already produces (the
+ * driver refusing an unknown column, as a 500) and much harder to see.
+ */
+export const PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
+  'amount_cents',
+  'assigned_reviewer_id',
+  'company_name',
+  'currency',
+  'delivery_days',
+  'due_date',
+  'external_id',
+  'paid_at',
+  'paid_status',
+  'qsbs_attestation',
+  'service_countries',
+  'service_name',
+  'state',
+  'waiting_on_client',
+]);
+
+/**
  * Applies a field-level patch and writes `valuation_updated` (plus
  * `state_changed` when state moves) in the same transaction.
  *
@@ -1390,7 +1429,13 @@ export async function patchValuation(
     throw staleWrite(current.version, expectedVersion);
   }
 
-  const changes = diffRecords(current, fields, Object.keys(fields));
+  const named = Object.keys(fields);
+  const unknown = named.filter((key) => !PATCHABLE_COLUMNS.has(key));
+  if (unknown.length > 0) {
+    throw new Error(`patchValuation: not a patchable column: ${unknown.join(', ')}`);
+  }
+
+  const changes = diffRecords(current, fields, named);
   const entries = Object.entries(changes).map(([key, change]) => [key, change.to] as const);
   // Nothing to write, so nothing to lose: the caller's values already match the
   // row. Returning before the transaction keeps a no-op PATCH from burning a
