@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isUlid, logFailure, problems } from '@n409/shared';
 import { canManageUsers } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById, invalidateValuation } from '../repos/valuations.js';
@@ -216,83 +216,118 @@ export async function runRetentionSweep(
     return r;
   };
 
-  const valPolicy = policies.find((p) => p.data_type === 'valuation');
-  if (!valPolicy || !valPolicy.enabled || valPolicy.archive_after_days === null) return finish(result);
-
-  const candidates = await findArchivableValuations(pool, valPolicy.archive_after_days, opts.limit ?? 500);
-  const frozen = candidates.filter((c) => c.frozen);
-
   /*
-   * The archival and its record of itself, in one transaction — and two
-   * statements for the whole pass, not two per candidate.
-   * `findArchivableValuations` returns up to 500 rows with the hold flag
-   * already computed, and the loop this replaced spent an UPDATE and an INSERT
-   * on each of them in turn: around a thousand sequential round trips to say
-   * the same two things.
+   * From here to the end, inside a catch that answers one question the hold
+   * above left open: what says the outbox pass failed, when the archival pass
+   * fails too?
    *
-   * They were two statements on the pool, and the second one failing was the
-   * expensive half of the pair. `findArchivableValuations` selects on
-   * `archived_at IS NULL`, so a row this UPDATE committed is a row no later
-   * sweep will look at again: an INSERT that lost a deadlock, or ran past the
-   * statement timeout on a five-hundred-row batch, left those engagements
-   * archived for ever with nothing in `retention_actions` saying it happened —
-   * and `retention_actions` is the evidence the storage-limitation policy is
-   * being enforced, which is the whole point of writing it. The throw also
-   * skipped `firePartnerWebhooksForRetirement` below, so the partners whose
-   * engagements had just been retired were never told, on a surface where
-   * "nothing retries a retirement announcement" is already the known hazard.
+   * `finish` is the only place `outboxFailure` is re-raised, and everything
+   * between the catch and it can throw on its own account —
+   * `findArchivableValuations`, the archival transaction, the webhook fan-out.
+   * When one of them did, its error propagated and the held one went out of
+   * scope unmentioned: an irreversible purge that could not run, on a
+   * compliance obligation, with nothing anywhere saying so. The scheduler
+   * reports the failure it is given and it was only ever given the second one.
    *
-   * Together, both or neither: a failed pass leaves every candidate live and
-   * the next tick, six hours later, does the whole batch again. That is the
-   * spine's own standing rule — an event is written in the same transaction as
-   * the change it describes — applied to the one governance log that was
-   * outside it.
+   * `logFailure` rather than `logUnretried`: the next tick genuinely does take
+   * this batch again, so a transient cause is a `warn` and only a permanent one
+   * is worth waking somebody for. Written only when the failure is about to be
+   * lost — the ordinary path still re-raises it and is still reported once, by
+   * the scheduler, rather than twice.
    *
-   * Logged from `archived` rather than from the input list, as before: a
-   * candidate a concurrent sweep took first is absent from `RETURNING` and is
-   * therefore neither counted nor logged here.
-   *
-   * A pass with no candidate at all — the ordinary tick on a settled
-   * deployment — has nothing to say and so opens no connection to say it in.
+   * Conditional on a logger because `opts.log` is optional and there is
+   * genuinely nowhere else to put it; both production callers — the six-hourly
+   * tick in `index.ts` and `POST /retention/sweep` — pass `app.log`.
    */
-  const archived =
-    candidates.length === 0
-      ? []
-      : await withTransaction(pool, async (client) => {
-          const taken = await markValuationsArchived(
-            client,
-            candidates.filter((c) => !c.frozen).map((c) => c.id),
-          );
-          await recordActions(client, [
-            ...frozen.map((c) => ({
-              dataType: 'valuation',
-              action: 'skipped_hold' as const,
-              referenceId: c.id,
-            })),
-            ...taken.map((id) => ({
-              dataType: 'valuation',
-              action: 'archived' as const,
-              referenceId: id,
-              detail: { archive_after_days: valPolicy.archive_after_days },
-            })),
-          ]);
-          return taken;
-        });
-  // Again, after the COMMIT. `markValuationsArchived` invalidates as it goes,
-  // which inside a transaction is a moment before the rows actually change —
-  // long enough for a concurrent read to have put the pre-archive row back.
-  for (const id of archived) invalidateValuation(id);
+  try {
+    const valPolicy = policies.find((p) => p.data_type === 'valuation');
+    if (!valPolicy || !valPolicy.enabled || valPolicy.archive_after_days === null) return finish(result);
 
-  // After the log, and never allowed to fail the sweep: `firePartnerWebhooks`
-  // swallows and logs a dispatch failure per webhook, and the batch shape is
-  // what keeps this to one query rather than one per archived row.
-  await firePartnerWebhooksForRetirement({ pool, log: opts.log }, archived);
+    const candidates = await findArchivableValuations(pool, valPolicy.archive_after_days, opts.limit ?? 500);
+    const frozen = candidates.filter((c) => c.frozen);
 
-  result.archived = archived.length;
-  // `+=`: the outbox pass above may already have counted frozen rows of its
-  // own, and one sweep reports one number.
-  result.skipped_hold += frozen.length;
-  return finish(result);
+    /*
+     * The archival and its record of itself, in one transaction — and two
+     * statements for the whole pass, not two per candidate.
+     * `findArchivableValuations` returns up to 500 rows with the hold flag
+     * already computed, and the loop this replaced spent an UPDATE and an INSERT
+     * on each of them in turn: around a thousand sequential round trips to say
+     * the same two things.
+     *
+     * They were two statements on the pool, and the second one failing was the
+     * expensive half of the pair. `findArchivableValuations` selects on
+     * `archived_at IS NULL`, so a row this UPDATE committed is a row no later
+     * sweep will look at again: an INSERT that lost a deadlock, or ran past the
+     * statement timeout on a five-hundred-row batch, left those engagements
+     * archived for ever with nothing in `retention_actions` saying it happened —
+     * and `retention_actions` is the evidence the storage-limitation policy is
+     * being enforced, which is the whole point of writing it. The throw also
+     * skipped `firePartnerWebhooksForRetirement` below, so the partners whose
+     * engagements had just been retired were never told, on a surface where
+     * "nothing retries a retirement announcement" is already the known hazard.
+     *
+     * Together, both or neither: a failed pass leaves every candidate live and
+     * the next tick, six hours later, does the whole batch again. That is the
+     * spine's own standing rule — an event is written in the same transaction as
+     * the change it describes — applied to the one governance log that was
+     * outside it.
+     *
+     * Logged from `archived` rather than from the input list, as before: a
+     * candidate a concurrent sweep took first is absent from `RETURNING` and is
+     * therefore neither counted nor logged here.
+     *
+     * A pass with no candidate at all — the ordinary tick on a settled
+     * deployment — has nothing to say and so opens no connection to say it in.
+     */
+    const archived =
+      candidates.length === 0
+        ? []
+        : await withTransaction(pool, async (client) => {
+            const taken = await markValuationsArchived(
+              client,
+              candidates.filter((c) => !c.frozen).map((c) => c.id),
+            );
+            await recordActions(client, [
+              ...frozen.map((c) => ({
+                dataType: 'valuation',
+                action: 'skipped_hold' as const,
+                referenceId: c.id,
+              })),
+              ...taken.map((id) => ({
+                dataType: 'valuation',
+                action: 'archived' as const,
+                referenceId: id,
+                detail: { archive_after_days: valPolicy.archive_after_days },
+              })),
+            ]);
+            return taken;
+          });
+    // Again, after the COMMIT. `markValuationsArchived` invalidates as it goes,
+    // which inside a transaction is a moment before the rows actually change —
+    // long enough for a concurrent read to have put the pre-archive row back.
+    for (const id of archived) invalidateValuation(id);
+
+    // After the log, and never allowed to fail the sweep: `firePartnerWebhooks`
+    // swallows and logs a dispatch failure per webhook, and the batch shape is
+    // what keeps this to one query rather than one per archived row.
+    await firePartnerWebhooksForRetirement({ pool, log: opts.log }, archived);
+
+    result.archived = archived.length;
+    // `+=`: the outbox pass above may already have counted frozen rows of its
+    // own, and one sweep reports one number.
+    result.skipped_hold += frozen.length;
+    return finish(result);
+  } catch (err) {
+    if (opts.log && outboxFailure !== null && err !== outboxFailure) {
+      logFailure(
+        opts.log,
+        outboxFailure,
+        { sweep: 'retention', pass: 'email_outbox' },
+        'the outbox retention pass also failed; its error is being dropped for the archival pass’s',
+      );
+    }
+    throw err;
+  }
 }
 
 export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {

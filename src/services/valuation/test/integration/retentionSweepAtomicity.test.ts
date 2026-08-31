@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { FastifyBaseLogger } from 'fastify';
 import { createValuation } from '../../src/repos/valuations.js';
 import { enqueueEmail, markEmail } from '../../src/repos/emailOutbox.js';
 import { runRetentionSweep } from '../../src/routes/retention.js';
@@ -6,6 +7,22 @@ import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from 
 
 const dbUp = await isDbAvailable();
 const actor = { actorType: 'human' as const, actorId: 'test', source: 'test' };
+
+/** Enough of a Fastify logger to read back what the sweep wrote, with spies. */
+function stubLog() {
+  const log = {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    fatal: vi.fn(),
+    trace: vi.fn(),
+    silent: vi.fn(),
+    level: 'info',
+  };
+  (log as unknown as { child: () => unknown }).child = () => log;
+  return log as unknown as FastifyBaseLogger & typeof log;
+}
 
 /**
  * The retention sweep's action log failing after the archival has landed.
@@ -210,6 +227,123 @@ describe.skipIf(!dbUp)('a retention sweep whose action log fails', () => {
       // return made impossible.
       expect(await archivedAt(stillLive.id)).not.toBeNull();
       expect(await actionsFor(stillLive.id)).toContain('archived');
+    } finally {
+      await ctx.pool.query('DROP TRIGGER IF EXISTS test_refuse_outbox_purge ON email_outbox');
+      await set(false);
+    }
+  });
+  it('reports the outbox failure when the archival pass fails on top of it', async () => {
+    /*
+     * The held failure, when the pass it is being held for throws too.
+     *
+     * `finish` is the only place the outbox error is re-raised, and everything
+     * between the catch and it can throw on its own account. When something
+     * did, its error propagated and the held one went out of scope
+     * unmentioned — an irreversible purge that could not run, on a compliance
+     * obligation, with the scheduler reporting only the second failure and
+     * nothing anywhere naming the first.
+     */
+    const set = (enabled: boolean) =>
+      ctx.app.inject({
+        method: 'PUT',
+        url: '/api/v1/admin/retention/policies/email_outbox',
+        headers: authHeader(admin.token),
+        payload: { archive_after_days: null, retention_days: 30, enabled },
+      });
+    expect((await set(true)).statusCode).toBe(200);
+
+    const row = await enqueueEmail(ctx.pool, {
+      toEmail: 'both@test.example.com',
+      toUserId: null,
+      valuationId: null,
+      templateKey: 'test_template',
+      subject: 'Old mail',
+      body: 'Body',
+    });
+    await markEmail(ctx.pool, row.id, 'sent');
+    await ctx.pool.query(`UPDATE email_outbox SET created_at = now() - interval '90 days' WHERE id = $1`, [
+      row.id,
+    ]);
+    // A candidate, so the archival pass opens the transaction that will fail.
+    await agedValuation('BothFailCo', 500);
+
+    await ctx.pool.query(
+      `CREATE OR REPLACE FUNCTION test_refuse_outbox_purge() RETURNS trigger
+         LANGUAGE plpgsql AS $$
+         BEGIN
+           RAISE EXCEPTION 'outbox purge unavailable';
+         END $$;
+       CREATE TRIGGER test_refuse_outbox_purge BEFORE DELETE ON email_outbox
+         FOR EACH ROW EXECUTE FUNCTION test_refuse_outbox_purge();
+       CREATE OR REPLACE FUNCTION test_refuse_retention_action() RETURNS trigger
+         LANGUAGE plpgsql AS $$
+         BEGIN
+           RAISE EXCEPTION 'retention_actions unavailable';
+         END $$;
+       CREATE TRIGGER test_refuse_retention_action BEFORE INSERT ON retention_actions
+         FOR EACH ROW EXECUTE FUNCTION test_refuse_retention_action()`,
+    );
+    const log = stubLog();
+    try {
+      // The archival failure is the one that comes out, as it must: it is the
+      // one that stopped the run where it stopped.
+      await expect(runRetentionSweep(ctx.pool, { log })).rejects.toThrow(/retention_actions unavailable/);
+
+      // And the outbox failure is not simply gone. `logFailure` classifies it,
+      // so the level says whether a person is needed; either way the line names
+      // the pass and carries the error.
+      const lines = [...log.warn.mock.calls, ...log.error.mock.calls] as [Record<string, unknown>, string][];
+      const held = lines.filter((c) => c[0]?.pass === 'email_outbox');
+      expect(held).toHaveLength(1);
+      expect(held[0]![0]).toMatchObject({ sweep: 'retention', pass: 'email_outbox' });
+      expect(String((held[0]![0] as { err: unknown }).err)).toMatch(/outbox purge unavailable/);
+      expect(held[0]![1]).toMatch(/outbox retention pass also failed/);
+    } finally {
+      await ctx.pool.query('DROP TRIGGER IF EXISTS test_refuse_outbox_purge ON email_outbox');
+      await ctx.pool.query('DROP TRIGGER IF EXISTS test_refuse_retention_action ON retention_actions');
+      await set(false);
+    }
+  });
+
+  it('reports the outbox failure once, and only through the throw, when the archival pass works', async () => {
+    // The ordinary path is unchanged: the failure is re-raised for the
+    // scheduler to classify, and nothing logs it a second time here.
+    const set = (enabled: boolean) =>
+      ctx.app.inject({
+        method: 'PUT',
+        url: '/api/v1/admin/retention/policies/email_outbox',
+        headers: authHeader(admin.token),
+        payload: { archive_after_days: null, retention_days: 30, enabled },
+      });
+    expect((await set(true)).statusCode).toBe(200);
+
+    const row = await enqueueEmail(ctx.pool, {
+      toEmail: 'once@test.example.com',
+      toUserId: null,
+      valuationId: null,
+      templateKey: 'test_template',
+      subject: 'Old mail',
+      body: 'Body',
+    });
+    await markEmail(ctx.pool, row.id, 'sent');
+    await ctx.pool.query(`UPDATE email_outbox SET created_at = now() - interval '90 days' WHERE id = $1`, [
+      row.id,
+    ]);
+
+    await ctx.pool.query(
+      `CREATE OR REPLACE FUNCTION test_refuse_outbox_purge() RETURNS trigger
+         LANGUAGE plpgsql AS $$
+         BEGIN
+           RAISE EXCEPTION 'outbox purge unavailable';
+         END $$;
+       CREATE TRIGGER test_refuse_outbox_purge BEFORE DELETE ON email_outbox
+         FOR EACH ROW EXECUTE FUNCTION test_refuse_outbox_purge()`,
+    );
+    const log = stubLog();
+    try {
+      await expect(runRetentionSweep(ctx.pool, { log })).rejects.toThrow(/outbox purge unavailable/);
+      const lines = [...log.warn.mock.calls, ...log.error.mock.calls] as [Record<string, unknown>, string][];
+      expect(lines.filter((c) => c[0]?.pass === 'email_outbox')).toHaveLength(0);
     } finally {
       await ctx.pool.query('DROP TRIGGER IF EXISTS test_refuse_outbox_purge ON email_outbox');
       await set(false);
