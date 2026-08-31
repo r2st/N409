@@ -17,6 +17,7 @@ import {
   type CalculationStep,
 } from '../repos/calculations.js';
 import {
+  describeForUser,
   InternalServiceError,
   parseIssues,
   postJson,
@@ -413,7 +414,12 @@ export async function runCalculation(
           engineVersion: 'unknown',
           status: 'failed',
           inputs: payload,
-          error: err.message,
+          // `describeForUser`, not `err.message`: this column is drawn straight
+          // onto the calculation list and the inspector, so an opaque upstream
+          // body stored here is a traceback in front of a client, redrawn every
+          // time the history is listed. The full error is in the log line the
+          // caller writes around this.
+          error: describeForUser(err),
           diagnostics: err.issues,
           createdBy: args.createdBy,
         },

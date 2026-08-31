@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { AdminEventType } from '../domain/auditTrail.js';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
-import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
+import { describeForUser, InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
@@ -593,7 +593,10 @@ export function registerComparableRoutes(
             // "the feed is down for BADCO" beside four updated rows is more
             // use than a 502 that leaves them guessing which.
             req.log.warn({ err, ticker }, 'market feed fetch failed');
-            unavailable.push({ ticker, warning: err.message });
+            // Composed rather than quoted: `err.message` is the raw feed body
+            // whenever `opaque` is set, and this warning is drawn beside the
+            // ticker in the comparables table.
+            unavailable.push({ ticker, warning: describeForUser(err) });
             continue;
           }
           throw err;

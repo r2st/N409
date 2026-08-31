@@ -17,7 +17,7 @@ import { applyValuationState } from '../domain/applyState.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
-import { InternalServiceError } from '../clients/internal.js';
+import { describeForUser, InternalServiceError } from '../clients/internal.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
 /**
@@ -377,9 +377,17 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
           id,
           ok: false,
           error:
-            err instanceof ApiProblem || err instanceof InternalServiceError
+            err instanceof ApiProblem
               ? err.message
-              : 'This engagement could not be updated.',
+              : err instanceof InternalServiceError
+                ? // R277: the narrowing above was right about `ApiProblem`, whose
+                  // message *is* its authored `detail`, and half right about this
+                  // one. An `InternalServiceError`'s message is the upstream's
+                  // raw body whenever `opaque` is set — which is the case that
+                  // flag was added for — so it gets the same composition
+                  // `toProblem` would have given it.
+                  describeForUser(err)
+                : 'This engagement could not be updated.',
         });
       }
     }

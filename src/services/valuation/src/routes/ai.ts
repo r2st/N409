@@ -36,7 +36,7 @@ import { listNarrativePromptsForKind } from '../repos/narrativePrompts.js';
 import { narrativeSectionsPayload } from '../domain/narrativePrompts.js';
 import { narrativeResearchPayload } from '../domain/research.js';
 import { listMarketResearch } from '../repos/marketResearch.js';
-import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
+import { describeForUser, InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { readStoredBlob } from '../storage/blobFile.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { kindLabel } from '../domain/valuationSelector.js';
@@ -622,6 +622,15 @@ export async function runAiPipeline(
      * vouched-for wording is stored, and the rest is in the log line the caller
      * already writes around this.
      *
+     * R277: "carries a detail the upstream wrote for a caller to read" is true
+     * of an `InternalServiceError` only when `opaque` is false, and that flag
+     * exists because it often is not — a pydantic error list echoing the
+     * payload, a traceback, a proxy's HTML page. `err.message` is
+     * `${service}: ${detail}` with nothing consulted, so what was stored on
+     * those runs was exactly the text the flag withholds from a 502, in a
+     * column that is redrawn every time the job feed is listed.
+     * `describeForUser` is the one thing that asks.
+     *
      * Best-effort, and the original error is what propagates. A settlement
      * write that itself fails leaves the row for the reaper, which is exactly
      * the case the reaper exists for.
@@ -632,7 +641,9 @@ export async function runAiPipeline(
       {
         status: 'failed',
         error:
-          err instanceof InternalServiceError ? err.message : 'the run ended before the AI service answered',
+          err instanceof InternalServiceError
+            ? describeForUser(err)
+            : 'the run ended before the AI service answered',
         latencyMs: Date.now() - startedAt,
       },
       args.actor,

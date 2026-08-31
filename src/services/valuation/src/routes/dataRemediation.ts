@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
-import { InternalServiceError } from '../clients/internal.js';
+import { describeForUser, InternalServiceError } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import {
   findRerunnableBacksolves,
@@ -172,7 +172,10 @@ export function registerDataRemediationRoutes(
         });
         results.push({ valuation_id: id, ok: true });
       } catch (err) {
-        const message = err instanceof InternalServiceError ? err.message : 'Re-run failed';
+        // A 200 body is still a body somebody reads. `err.message` carries the
+        // raw upstream detail whenever `opaque` is set, which is the case the
+        // flag exists for — see `describeForUser`.
+        const message = err instanceof InternalServiceError ? describeForUser(err) : 'Re-run failed';
         req.log.warn({ err, valuationId: id }, 'remediation re-run failed');
         results.push({ valuation_id: id, ok: false, error: message });
       }

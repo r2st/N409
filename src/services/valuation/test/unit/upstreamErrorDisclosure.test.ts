@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { InternalServiceError, postJson, toProblem } from '../../src/clients/internal.js';
+import { describeForUser, InternalServiceError, postJson, toProblem } from '../../src/clients/internal.js';
 
 /**
  * What an upstream failure is allowed to tell the caller.
@@ -177,5 +177,60 @@ describe('the bound on an upstream detail', () => {
     // And it round-trips through UTF-8, which is what the column and the log
     // line both need of it.
     expect(Buffer.from(err.detail, 'utf8').toString('utf8')).toBe(err.detail);
+  });
+});
+
+/**
+ * R277, methodology M19. `toProblem` is not the only way an upstream failure
+ * reaches a person, and it was the only one that asked.
+ *
+ * A bulk endpoint answers per row inside a 200; a failed `calculations` or
+ * `ai_jobs` row stores the reason in a column the UI draws. Every one of those
+ * sites reached for `err.message` — which is `${service}: ${detail}` with
+ * nothing consulted, so it is the raw body on exactly the errors `opaque` marks
+ * as raw. A stored one is worse than a leaked 502 body: it is redrawn every
+ * time the row is listed.
+ */
+describe('the sentence for a failure that is not answered with a problem', () => {
+  // Built directly rather than through `failWith`: the breaker is module-level
+  // and the tests above have already opened it for `engine`, so a call made
+  // here answers with the breaker's own sentence instead of the body.
+  const opaqueFailure = (detail: string) => new InternalServiceError('engine', 500, detail, [], false, true);
+
+  it('withholds the same traceback the problem document withholds', () => {
+    const err = opaqueFailure(
+      'Traceback (most recent call last):\n' +
+        '  File "/opt/N409/src/services/engine-wrapper/app/engine/compute.py", line 412, in allocate\n' +
+        '    raise ZeroDivisionError\n',
+    );
+
+    // What the six call sites used to store or return.
+    expect(err.message).toContain('/opt/N409');
+    expect(describeForUser(err)).not.toContain('Traceback');
+    expect(describeForUser(err)).not.toContain('/opt/N409');
+    expect(describeForUser(err)).not.toContain('compute.py');
+  });
+
+  it('withholds the payload a pydantic body echoes back', () => {
+    const err = opaqueFailure(
+      JSON.stringify({
+        detail: [{ msg: 'Input should be greater than 0', input: { holder_email: 'cfo@acme.example' } }],
+      }),
+    );
+    expect(err.message).toContain('cfo@acme.example');
+    expect(describeForUser(err)).not.toContain('cfo@acme.example');
+  });
+
+  it('keeps the upstream sentence when the upstream wrote one for a caller', () => {
+    // The narrowing to `InternalServiceError` was there for a reason — this is
+    // it, and it survives.
+    const err = new InternalServiceError('engine', 422, 'volatility is required');
+    expect(describeForUser(err)).toContain('volatility is required');
+  });
+
+  it('never names the internal service the way `err.message` does', () => {
+    const err = new InternalServiceError('engine', 500, 'boom', [], false, true);
+    expect(err.message).toMatch(/^engine: /);
+    expect(describeForUser(err)).not.toMatch(/^engine: /);
   });
 });

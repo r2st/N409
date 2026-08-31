@@ -3,7 +3,13 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
-import { internalAuthHeaders, InternalServiceError, postJson, toProblem } from '../clients/internal.js';
+import {
+  describeForUser,
+  internalAuthHeaders,
+  InternalServiceError,
+  postJson,
+  toProblem,
+} from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findQuestionnaire } from '../repos/intake.js';
@@ -182,7 +188,9 @@ export function registerSpecialtyRoutes(
             engineVersion: version,
             status: 'failed',
             inputs: { endpoint: request.path, ...request.body },
-            error: err.message,
+            // The same column the 409A run writes, drawn by the same two
+            // components — see the note in routes/calculations.ts.
+            error: describeForUser(err),
             diagnostics: err.issues,
             createdBy: principal.id,
           },

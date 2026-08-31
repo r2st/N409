@@ -762,3 +762,31 @@ export function toProblem(err: InternalServiceError): ApiProblem {
     detail: compose(voice.label, said, voice.brokenRemedy),
   });
 }
+
+/**
+ * The sentence to show a person for an upstream failure that is not being
+ * answered with a problem document.
+ *
+ * Several places report an upstream failure inside a 200 body or store it in a
+ * column the UI draws — a bulk endpoint answering per row, the `error` on a
+ * failed `calculations` or `ai_jobs` row — and every one of them reached for
+ * `err.message`. That is `${service}: ${detail}`, which is two things this file
+ * spends its length being careful about:
+ *
+ *   - `detail` is the raw upstream body whenever {@link
+ *     InternalServiceError.opaque} is set, which is the case `opaque` exists
+ *     for: a pydantic error list echoing the payload, a traceback, a proxy's
+ *     HTML page. `toProblem` withholds it through `describedBy`; `err.message`
+ *     is the same string with nothing consulted. A stored one is worse than a
+ *     leaked 502 body, because it is drawn again every time the row is listed.
+ *   - `service` is an internal component name. The note on DEGRADED_MESSAGES
+ *     already says why that is useless to the reader: it "names an internal
+ *     component the reader has never heard of".
+ *
+ * So: the same composition `toProblem` builds, which is the one place that
+ * decides whether an upstream's words may be repeated. Callers that store this
+ * keep the whole error in their log line, which is where the traceback belongs.
+ */
+export function describeForUser(err: InternalServiceError): string {
+  return toProblem(err).detail ?? voiceOf(err.service).label;
+}

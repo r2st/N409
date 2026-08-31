@@ -163,7 +163,7 @@ export function problemCalls(text: string): ProblemCall[] {
  * not a thrown thing — is not mistaken for one.
  */
 const ECHOES_CAUGHT_ERROR =
-  /\b(?:err|error|e)\s*\.\s*(?:message|stack|detail|cause|toString)\b|\bString\(\s*(?:err|error|e)\s*\)/;
+  /\b(?:err|error|e)\s*\.\s*(?:message|stack|detail|cause|toString)\b|\bString\(\s*(?:err|error|e)\s*\)|\bdescribeForUser\(/;
 
 /**
  * `err instanceof SomeError` — the guard that makes an echo deliberate.
@@ -176,7 +176,25 @@ const ECHOES_CAUGHT_ERROR =
  * would be a census that reported success on its own founding case, which is
  * the failure mode this codebase keeps a register of.
  */
-const NARROWS_BY_TYPE = /\b(?:err|error|e)\s+instanceof\s+(?!Error\b)[A-Z][\w$]*/;
+const NARROWS_BY_TYPE = /\b(?:err|error|e)\s+instanceof\s+(?!Error\b)[A-Z][\w$]*|\bdescribeForUser\(/;
+
+/*
+ * `describeForUser` is on both lists on purpose (R277, methodology M19).
+ *
+ * It publishes a caught error's text, so it is an echo and the scan must see
+ * it. And it takes an `InternalServiceError` — which is the narrowing, stated
+ * as a parameter type rather than as an `if` — and then puts the value through
+ * the one function that decides whether an upstream's words may be repeated at
+ * all (`describedBy`, reading `opaque`). So it is a vouched echo wherever it
+ * appears, including where a `catch` binds nothing this regex would recognise.
+ *
+ * The narrowing these sites used to carry, `err instanceof InternalServiceError
+ * ? err.message : …`, satisfied the census and was still wrong: the class is
+ * the right *class*, and its `message` is `${service}: ${detail}` with the raw
+ * upstream body in it whenever `opaque` is set. The guard proved the author
+ * had thought about the type. It could not prove they had thought about the
+ * string.
+ */
 
 interface Finding {
   file: string;
@@ -370,9 +388,9 @@ describe('a response body carries no wording the route did not author either', (
       0,
     );
     // The legitimate ones: a failed AI job, a failed calculation, a specialty
-    // run, an unreachable market feed, a per-topic research failure — each
-    // behind `err instanceof InternalServiceError`, and each proof the scan
-    // sees real code.
+    // run, an unreachable market feed, a per-topic research failure, a bulk
+    // transition row, a remediation re-run — each publishing through
+    // `describeForUser`, and each proof the scan sees real code.
     expect(guarded).toBeGreaterThan(4);
   });
 

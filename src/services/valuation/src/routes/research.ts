@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
-import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
+import { describeForUser, InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
@@ -318,10 +318,16 @@ export function registerResearchRoutes(app: FastifyInstance, deps: { pool: pg.Po
         await runOne(valuation, def.topic, facts, principal);
         results.push({ topic: def.topic, ok: true });
       } catch (err) {
+        // `ResearchInputError` is ours and its message is written to be read;
+        // an `InternalServiceError`'s is `${service}: ${raw upstream body}`
+        // whenever `opaque` is set, so it goes through the same composition a
+        // problem document would get.
         const message =
-          err instanceof ResearchInputError || err instanceof InternalServiceError
+          err instanceof ResearchInputError
             ? err.message
-            : 'Research run failed';
+            : err instanceof InternalServiceError
+              ? describeForUser(err)
+              : 'Research run failed';
         req.log.warn({ err, topic: def.topic }, 'research refresh-all: topic failed');
         results.push({ topic: def.topic, ok: false, error: message });
       }
