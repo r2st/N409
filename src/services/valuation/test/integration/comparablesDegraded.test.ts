@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { newUlid } from '@n409/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { invalidateValuation } from '../../src/repos/valuations.js';
 
 const dbUp = await isDbAvailable();
 
@@ -408,6 +409,90 @@ describe.skipIf(!dbUp)('the peer set on the unhappy paths', () => {
      * not hold the row at all. Driven through the stub rather than a sleep, so
      * "the delete committed before the write" is an ordering the test enforces.
      */
+    /**
+     * A withdrawal landing while the refresh is in flight.
+     *
+     * `refuseIfRetired` reads the engagement the request came in with, and the
+     * loop then spends up to `REFRESH_BATCH` x `FEED_TIMEOUT_MS` — over three
+     * minutes — leaving the process before it stops writing. Every row after
+     * the withdrawal carried observed market figures onto a file the firm had
+     * closed, changing the multiples of an approach a report already rests on,
+     * and retirement is reversible (R90) so they come back with the engagement.
+     *
+     * The rows written *before* the withdrawal are legitimate and stay, which
+     * is why the audit event is written before the refusal is raised.
+     */
+    it('stops writing market figures when the engagement is retired mid-refresh', async () => {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: '409a', company_name: 'WithdrawnCo' },
+      });
+      expect(created.statusCode, created.body).toBe(201);
+      const retiredId = created.json().valuation.id as string;
+      for (const ticker of ['RRA', 'RRB']) {
+        const seeded = await app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${retiredId}/comparables`,
+          headers: authHeader(ops.token),
+          payload: { ticker, name: `${ticker} Co`, revenue_ltm: 10, ev: 100 },
+        });
+        expect(seeded.statusCode, seeded.body).toBe(201);
+        state.feed[ticker] = { source: 'yfinance', market_cap: 9_000, total_revenue: 900, ebitda: 90 };
+      }
+      // Machine-sourced, and staleness-ordered so RRA is fetched first.
+      await ctx.pool.query(
+        `UPDATE comparable_items SET figures_source = 'snapshot',
+           figures_as_of = CASE WHEN ticker = 'RRA' THEN now() - interval '2 days' ELSE now() END
+         WHERE valuation_id = $1`,
+        [retiredId],
+      );
+
+      // Withdrawn after the first ticker's fetch is issued: RRA's write lands
+      // (it was in flight while the engagement was live), RRB's must not.
+      state.onFeed = async (ticker) => {
+        if (ticker !== 'RRA') return;
+        await ctx.pool.query('UPDATE valuations SET archived_at = now() WHERE id = $1', [retiredId]);
+        // What every archive writer in the service does beside the UPDATE —
+        // `retireValuations`, `valuationPurge`, the admin route. Without it
+        // this drives the 5s read-through cache rather than the guard.
+        invalidateValuation(retiredId);
+      };
+      let res;
+      try {
+        res = await app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${retiredId}/comparables/refresh`,
+          headers: authHeader(ops.token),
+          payload: {},
+        });
+      } finally {
+        state.onFeed = null;
+        delete state.feed.RRA;
+        delete state.feed.RRB;
+      }
+      expect(res.statusCode, res.body).toBe(409);
+
+      const { rows } = await ctx.pool.query<{ ticker: string; ev: string; figures_source: string }>(
+        'SELECT ticker, ev, figures_source FROM comparable_items WHERE valuation_id = $1',
+        [retiredId],
+      );
+      const rrb = rows.find((r) => r.ticker === 'RRB');
+      expect(rrb?.figures_source).toBe('snapshot');
+      expect(Number(rrb?.ev)).toBe(100);
+
+      // What did land before the withdrawal is on the trail rather than lost
+      // with the refusal.
+      const { rows: events } = await ctx.pool.query<{ payload: { refreshed: string[] } }>(
+        `SELECT payload FROM admin_events
+          WHERE type = 'comparables_refreshed' AND subject_id = $1
+          ORDER BY occurred_at DESC LIMIT 1`,
+        [retiredId],
+      );
+      expect(events[0]?.payload.refreshed).toEqual(['RRA']);
+    });
+
     it('does not report a comp deleted mid-refresh as one it refreshed', async () => {
       const seeded = await add({ ticker: 'GONE', name: 'Gone Co', revenue_ltm: 10, ev: 100 });
       expect(seeded.statusCode, seeded.body).toBe(201);

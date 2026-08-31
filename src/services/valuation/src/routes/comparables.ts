@@ -30,7 +30,7 @@ import {
   summarizeSet,
   type ComparableFiguresSource,
 } from '../domain/comparables.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { isRetiredNow, refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
 /**
@@ -517,6 +517,13 @@ export function registerComparableRoutes(
         score: fin(c.score),
       }));
 
+      // The engagement the guard above read is `SCREEN_TIMEOUT_MS` old by now,
+      // and a screen is exactly the length of time in which somebody decides a
+      // piece of work is over. Rewriting the machine half of the peer set of a
+      // withdrawn engagement is not a note in the margin: the comparable
+      // approach reads these rows, retirement is reversible (R90), and the set
+      // comes back with the engagement bearing multiples nobody asked for.
+      await refuseIfRetiredNow(deps.pool, valuation.id, 'accepting new runs');
       const written = await replaceMachineComparables(deps.pool, valuation.id, 'market_feed', [
         ...selected,
         ...rejected,
@@ -610,6 +617,25 @@ export function registerComparableRoutes(
       const dropped: string[] = [];
 
       for (const row of batch) {
+        // Asked once per row, for the reason the overdue sweep asks it once per
+        // engagement: this loop is sweep-shaped. `refuseIfRetired` above read
+        // the engagement the request came in with, and the loop then spends up
+        // to `REFRESH_BATCH` x `FEED_TIMEOUT_MS` — over three minutes — leaving
+        // the process before it stops writing. A withdrawal landing inside that
+        // window is the ordinary case, not the exotic one, and every row after
+        // it carried observed market figures onto a file the firm had closed,
+        // changing the multiples of an approach a report already rests on.
+        // Retirement is reversible since R90, so those figures come back with
+        // the engagement.
+        //
+        // Broken rather than continued: unlike a sweep, the rows behind this
+        // one belong to the same withdrawn engagement, so there is nothing to
+        // carry on to. The audit below still runs, so what this press did
+        // before the withdrawal is recorded, and the refusal is raised after it
+        // — a 409 that reports nothing would be the discarded record this
+        // codebase keeps finding.
+        if (await isRetiredNow(deps.pool, valuation.id)) break;
+
         const ticker = row.ticker!;
         let feed: MarketFeedResponse;
         try {
@@ -705,6 +731,11 @@ export function registerComparableRoutes(
         unavailable: unavailable.map((r) => r.ticker),
         dropped,
       });
+
+      // The loop's own break, raised now that the trail carries the rows that
+      // did land. A no-op on every press that ran to the end, and it also
+      // closes the gap between the last write and this response.
+      await refuseIfRetiredNow(deps.pool, valuation.id, 'accepting changes');
 
       const { items: after, truncated } = await listComparableItems(deps.pool, valuation.id);
       return reply.status(200).send({
