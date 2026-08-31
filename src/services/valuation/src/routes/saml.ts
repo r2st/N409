@@ -357,13 +357,22 @@ export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
         // about *this platform's* state rather than the IdP's, so it is the one
         // an operator asks about — and it wrote nothing, while the same account
         // tried at the password door wrote `closed_account`.
+        //
+        // `ip` for the same reason the other three failed-auth writes carry it
+        // (round 273, methodology M11): password, MFA and Google each stamp
+        // `req.ip` on the failure, and this one did not. A failed sign-in is
+        // read to answer "who has been trying, and from where", and the address
+        // is the only field on it that says where — the account is closed, so
+        // there is no session, no principal and no later request to join to.
+        // This is the door the largest firms use, and it was the one that could
+        // not answer.
         await recordAdminEvent(deps.pool, {
           type: 'user_login_failed',
           actor: { actorType: 'human', actorId: user.id },
           subjectType: 'user',
           subjectId: user.id,
           subjectLabel: user.email,
-          payload: { method: 'saml', reason: 'closed_account', provisioned },
+          payload: { method: 'saml', reason: 'closed_account', provisioned, ip: req.ip },
         });
         return refuseSso(
           req,
