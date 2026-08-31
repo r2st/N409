@@ -162,22 +162,54 @@ export function planStageTransition(
  * drift. Null roles is the LEFT JOIN's "nobody is assigned" — and an account
  * with no roles at all is not ops either, so both fall out the same way.
  */
-export function analystIsChasable<
-  T extends {
-    analyst_email: string | null;
-    analyst_deleted_at: Date | null;
-    analyst_roles: RoleKey[] | null;
-    analyst_partner_id: string | null;
-    assigned_analyst_id: string | null;
-  },
->(analyst: T): analyst is T & { analyst_email: string; assigned_analyst_id: string } {
-  if (!analyst.assigned_analyst_id || !analyst.analyst_email) return false;
-  if (analyst.analyst_deleted_at !== null) return false;
+export interface AnalystAssignment {
+  analyst_email: string | null;
+  analyst_deleted_at: Date | null;
+  analyst_roles: RoleKey[] | null;
+  analyst_partner_id: string | null;
+  assigned_analyst_id: string | null;
+}
+
+/**
+ * Why the assignment cannot be chased, or null when it can.
+ *
+ * The three causes are three different things to do about it, and the sweep's
+ * alert is where somebody decides which. A closed account has to be reassigned
+ * — the person is gone. A suspension is usually temporary and the engagement
+ * may be fine where it is once it lifts. A role taken away is neither: the
+ * account is live and the person is at their desk, and either the role was
+ * removed by mistake or the work belongs to someone else now.
+ *
+ * `unassigned` is separate from all three and is not a fault: the board shows
+ * an unassigned engagement as one, and the sweep does not count it as
+ * unreachable. It is named so the caller can tell "nobody is assigned" from
+ * "somebody is, and they cannot be written to" without re-deriving it.
+ *
+ * `no_address` is the fourth and should not happen — `users.email` is NOT NULL
+ * — so it exists to be visible if it ever does rather than to be indistinguish-
+ * able from a suspension.
+ */
+export type AnalystChaseBlock = 'unassigned' | 'no_address' | 'closed' | 'suspended' | 'not_ops';
+
+export function analystChaseBlock(analyst: AnalystAssignment): AnalystChaseBlock | null {
+  if (!analyst.assigned_analyst_id) return 'unassigned';
+  if (!analyst.analyst_email) return 'no_address';
+  if (analyst.analyst_deleted_at !== null) return 'closed';
+  const roles = analyst.analyst_roles ?? [];
+  if (roles.includes('ignored')) return 'suspended';
   return isOps({
     id: analyst.assigned_analyst_id,
-    roles: analyst.analyst_roles ?? [],
+    roles,
     partnerId: analyst.analyst_partner_id,
-  });
+  })
+    ? null
+    : 'not_ops';
+}
+
+export function analystIsChasable<T extends AnalystAssignment>(
+  analyst: T,
+): analyst is T & { analyst_email: string; assigned_analyst_id: string } {
+  return analystChaseBlock(analyst) === null;
 }
 
 export type SlaLevel = 'green' | 'yellow' | 'red';

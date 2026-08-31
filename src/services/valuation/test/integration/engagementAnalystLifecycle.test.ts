@@ -177,14 +177,23 @@ describe.skipIf(!dbUp)('overdue sweep re-checks the assigned analyst', () => {
       url: '/api/v1/admin/engagements/remind-overdue',
       headers: authHeader(ops.token),
     });
-    const body = res.json();
-    expect(body.unreachable).toContain(closedId);
-    expect(body.unreachable).toContain(suspendedId);
-    expect(body.unreachable).toContain(demotedId);
+    const body = res.json() as {
+      unreachable: { valuation_id: string; analyst_id: string; reason: string }[];
+      unreachable_count: number;
+    };
+    const reasons = new Map(body.unreachable.map((u) => [u.valuation_id, u.reason]));
+    // With the reason, because the three causes are three different things to
+    // do about it: the closed account has to be reassigned, the suspension
+    // usually lifts, and the demoted analyst is live and at their desk. One
+    // message over all three leaves whoever reads the alert to go and find out
+    // which — R258's lesson, where terminal and retrying logged identically.
+    expect(reasons.get(closedId)).toBe('closed');
+    expect(reasons.get(suspendedId)).toBe('suspended');
+    expect(reasons.get(demotedId)).toBe('not_ops');
     expect(body.unreachable_count).toBe(body.unreachable.length);
     // An engagement with no analyst at all is not an unreachable assignment —
     // it is an unassigned engagement, which the board already says.
-    expect(body.unreachable).not.toContain(unassignedId);
-    expect(body.unreachable).not.toContain(liveId);
+    expect(reasons.has(unassignedId)).toBe(false);
+    expect(reasons.has(liveId)).toBe(false);
   });
 });

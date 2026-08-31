@@ -9,6 +9,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import {
+  analystChaseBlock,
   analystIsChasable,
   ENGAGEMENT_EVENT_TYPES,
   ENGAGEMENT_STAGES,
@@ -304,7 +305,7 @@ export function registerEngagementRoutes(
      * told about. Engagements with no analyst at all are not in this list —
      * that is an unassigned engagement, which the board already shows as one.
      */
-    const unreachable: string[] = [];
+    const unreachable: { valuation_id: string; analyst_id: string; reason: string }[] = [];
     let scanned = 0;
     // Paged rather than capped: a missed reminder is the whole point of the
     // sweep going unsent, and it would report success either way.
@@ -312,8 +313,23 @@ export function registerEngagementRoutes(
       scanned++;
       const sla = slaStatus(r.current_stage, r.stage_entered_at, now);
       if (!sla.overdue) continue;
+      // The guard stays the predicate — it narrows the row for the send below
+      // — and the reason is asked separately for the alert.
       if (!analystIsChasable(r)) {
-        if (r.assigned_analyst_id) unreachable.push(r.valuation_id);
+        const block = analystChaseBlock(r);
+        // With the reason, because the three causes are three different things
+        // to do about it: a closed account has to be reassigned, a suspension
+        // usually lifts, and a role taken away means the account is live and
+        // the person is at their desk. One message over all three leaves
+        // whoever reads the alert to go and find out which — see R258, where
+        // a terminal failure and a retrying one logged identically.
+        if (r.assigned_analyst_id) {
+          unreachable.push({
+            valuation_id: r.valuation_id,
+            analyst_id: r.assigned_analyst_id,
+            reason: block ?? 'unknown',
+          });
+        }
         continue;
       }
       await sendTransactionalEmail(
@@ -342,7 +358,7 @@ export function registerEngagementRoutes(
     }
     if (unreachable.length > 0) {
       app.log.warn(
-        { valuation_ids: unreachable, alert: true },
+        { unreachable, alert: true },
         'engagements are past SLA with an analyst assigned who can no longer be reminded',
       );
     }
