@@ -77,6 +77,16 @@ const FIGURES_LABELS: Record<string, string> = {
 interface RefreshResponse {
   refreshed: Array<{ ticker: string; as_of: string }>;
   unavailable: Array<{ ticker: string; warning: string }>;
+  /**
+   * Comps this press did not reach. The refresh leaves the process once per
+   * ticker and the server caps how many it will fetch in one request, so a set
+   * wider than `refresh_batch` comes back part-done — and a note reading
+   * "Refreshed 25 companies" over a set of forty is the partial result
+   * presented as the finished one. Oldest-first server-side, so pressing again
+   * makes progress.
+   */
+  remaining: number;
+  refresh_batch: number;
 }
 
 /**
@@ -289,11 +299,17 @@ export function ComparablesTab() {
       });
       const done = res.refreshed.length;
       const missed = res.unavailable;
+      const left =
+        res.remaining > 0
+          ? ` ${res.remaining} more ${res.remaining === 1 ? 'company was' : 'companies were'} not ` +
+            `reached — one press fetches at most ${res.refresh_batch}, oldest first. Refresh again ` +
+            'to continue.'
+          : '';
       setFeedNote(
-        missed.length === 0
+        (missed.length === 0
           ? `Refreshed ${done} ${done === 1 ? 'company' : 'companies'} from observed market data.`
           : `Refreshed ${done} of ${done + missed.length}. No live figures for ` +
-              `${missed.map((m) => m.ticker).join(', ')} — those rows keep the figures they had.`,
+            `${missed.map((m) => m.ticker).join(', ')} — those rows keep the figures they had.`) + left,
       );
     }, 'Could not refresh the comparable set from market data.');
   };

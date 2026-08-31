@@ -373,6 +373,55 @@ describe('ComparablesTab', () => {
     expect(note).toHaveTextContent('those rows keep the figures they had');
   });
 
+  /**
+   * The server fetches at most `refresh_batch` tickers per press, because the
+   * loop leaves the process once per comp and a wide set would otherwise hold
+   * the request open past the socket timeout. A note reading "Refreshed 25
+   * companies" over a set of forty is the partial result presented as the
+   * finished one — the same failure the per-ticker reporting above exists to
+   * prevent, arriving by the other door.
+   */
+  it('says a refresh was partial when the server did not reach the whole set', async () => {
+    mockApi({}, (path) => {
+      if (path.includes('/refresh')) {
+        return jsonResponse({
+          refreshed: [{ ticker: 'AAA', as_of: '2026-08-01' }],
+          unavailable: [],
+          remaining: 14,
+          refresh_batch: 25,
+        });
+      }
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh from market' }));
+    const note = await screen.findByText(/Refreshed 1 company from observed market data\./);
+    expect(note).toHaveTextContent('14 more companies were not reached');
+    expect(note).toHaveTextContent('one press fetches at most 25, oldest first');
+    expect(note).toHaveTextContent('Refresh again to continue');
+  });
+
+  it('says nothing about a remainder when the press reached the whole set', async () => {
+    mockApi({}, (path) => {
+      if (path.includes('/refresh')) {
+        return jsonResponse({
+          refreshed: [{ ticker: 'AAA', as_of: '2026-08-01' }],
+          unavailable: [],
+          remaining: 0,
+          refresh_batch: 25,
+        });
+      }
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh from market' }));
+    expect(await screen.findByText('Refreshed 1 company from observed market data.')).toBeInTheDocument();
+  });
+
   it('adds a peer by hand, sending blank optional fields as null', async () => {
     const sent: Array<Record<string, unknown>> = [];
     mockApi({}, (path, init) => {
