@@ -17,6 +17,24 @@ export type ReviewTaskKind = (typeof REVIEW_TASK_KINDS)[number];
 export const REVIEW_TASK_STATUSES = ['open', 'in_progress', 'blocked', 'done', 'cancelled'] as const;
 export type ReviewTaskStatus = (typeof REVIEW_TASK_STATUSES)[number];
 
+/**
+ * How a task status is named to a person.
+ *
+ * The board draws these from its own copy in `web-frontend/src/lib/pipeline.ts`
+ * — web-frontend has no `@n409/shared` dependency, so user-visible vocabulary
+ * is duplicated by construction and pinned by test instead. This copy exists
+ * because a refusal has to name the status the task moved to, and answering an
+ * ops user with `in_progress` is the column value standing in for the word the
+ * screen they are looking at uses.
+ */
+export const TASK_STATUS_LABELS: Record<ReviewTaskStatus, string> = {
+  open: 'Open',
+  in_progress: 'In progress',
+  blocked: 'Blocked',
+  done: 'Done',
+  cancelled: 'Cancelled',
+};
+
 export const DOCUMENT_KINDS = [
   'cap_table',
   'income_statement',

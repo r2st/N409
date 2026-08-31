@@ -123,7 +123,13 @@ export function TasksPanel({ valuationId }: { valuationId: string }) {
       await api(`/tasks/${task.id}`, { method: 'PATCH', body: { status } });
       await load();
     } catch (err) {
-      setError(describeActionFailure(err, 'Could not update the task.'));
+      // Reload on the failure too. A status move that lost a race is refused
+      // with the status the task actually reached, and leaving the list drawn
+      // as it was makes the panel a screen disagreeing with the sentence
+      // printed above it. See TasksPage, which owns the other copy of this.
+      const message = describeActionFailure(err, 'Could not update the task.');
+      await load();
+      setError(message);
     }
   };
 

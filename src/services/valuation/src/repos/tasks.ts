@@ -1,7 +1,12 @@
 import type pg from 'pg';
-import { newUlid } from '@n409/shared';
+import { newUlid, problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
-import { PIPELINE_EVENT_TYPES, type ReviewTaskKind, type ReviewTaskStatus } from '../domain/pipeline.js';
+import {
+  PIPELINE_EVENT_TYPES,
+  TASK_STATUS_LABELS,
+  type ReviewTaskKind,
+  type ReviewTaskStatus,
+} from '../domain/pipeline.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 
 export interface ReviewTaskRow {
@@ -138,7 +143,36 @@ const TASK_PATCH_COLUMNS = new Set([
   'due_at',
 ]);
 
-/** Applies a field patch; stamps started_at/completed_at on status moves. */
+/**
+ * Applies a field patch; stamps started_at/completed_at on status moves.
+ *
+ * A STATUS MOVE IS CONDITIONAL ON THE STATUS THE CALLER READ. Everything this
+ * decides — whether the status is changing at all, whether the clock starts,
+ * whether completion is stamped or cleared, and what the audit event says the
+ * task moved *from* — is computed from `current`, a row read on a different
+ * connection some milliseconds earlier by the route. The tasks board is a
+ * shared ops worklist with a status control on every row, so two people working
+ * the same queue is the ordinary case rather than the exotic one, and off one
+ * read both moves committed:
+ *
+ *   * Two `task_updated` events for one transition, the second saying
+ *     `from: open` for a move out of `in_progress` — a transition that never
+ *     happened, on the append-only spine a compliance reader is entitled to
+ *     believe. `terminalStatusWrites` marks this table unguarded and is right
+ *     about the question it asks: reopening a task is *meant* to be legal, so
+ *     there is no terminal state to protect. "Is this still the state I read"
+ *     is a different question and nothing was asking it.
+ *   * `completed_at` re-stamped, so a task closed at 09:00 and touched again at
+ *     11:00 by somebody still holding the morning's row reports the later time.
+ *
+ * Guarding only the status move is deliberate: a reassignment or a due-date
+ * edit sets its own column and clobbers nothing, so failing it because a
+ * colleague moved the status would be a refusal with no lost write behind it.
+ *
+ * `started_at` is decided in SQL rather than from `current` for the same
+ * reason the guard exists — COALESCE reads the row being written, so the clock
+ * cannot be restarted by a caller whose copy predates it starting.
+ */
 export async function patchTask(
   pool: pg.Pool,
   current: ReviewTaskRow,
@@ -157,18 +191,25 @@ export async function patchTask(
     }
 
     const newStatus = fields.status as ReviewTaskStatus | undefined;
-    if (newStatus && newStatus !== current.status) {
-      if (newStatus === 'in_progress' && !current.started_at) sets.push('started_at = now()');
+    const moving = Boolean(newStatus && newStatus !== current.status);
+    if (moving) {
+      if (newStatus === 'in_progress') sets.push('started_at = COALESCE(started_at, now())');
       if (newStatus === 'done' || newStatus === 'cancelled') sets.push('completed_at = now()');
       else sets.push('completed_at = NULL');
     }
 
     params.push(current.id);
+    const where = [`id = $${params.length}`];
+    if (moving) {
+      params.push(current.status);
+      where.push(`status = $${params.length}`);
+    }
     const { rows } = await client.query<ReviewTaskRow>(
-      `UPDATE review_tasks AS t SET ${sets.join(', ')} WHERE id = $${params.length}
+      `UPDATE review_tasks AS t SET ${sets.join(', ')} WHERE ${where.join(' AND ')}
        RETURNING *, ${OVERDUE_SQL}`,
       params,
     );
+    if (rows.length === 0) throw await stalePatch(client, current);
 
     const changes = Object.fromEntries(entries.map(([k, v]) => [k, { from: current[k] ?? null, to: v }]));
     await recordEvent(client, {
@@ -179,4 +220,31 @@ export async function patchTask(
     });
     return rows[0]!;
   });
+}
+
+/**
+ * Why the conditional UPDATE matched nothing, as something to throw.
+ *
+ * The same two possibilities `staleAdvance` distinguishes for the engagement
+ * board, and they want the same two answers: somebody else moved the task
+ * (409, naming where it went, because that is what decides what the caller does
+ * next), or the task is gone — its valuation was hard-deleted and
+ * `ON DELETE CASCADE` took it (404). The throw rolls the transaction back, so a
+ * lost race writes no event either.
+ */
+async function stalePatch(client: pg.PoolClient, current: ReviewTaskRow): Promise<Error> {
+  const { rows } = await client.query<{ status: ReviewTaskStatus }>(
+    'SELECT status FROM review_tasks WHERE id = $1',
+    [current.id],
+  );
+  const actual = rows[0]?.status;
+  if (actual === undefined)
+    return problems.notFound(
+      'This task no longer exists — the valuation it belongs to was deleted while this change was ' +
+        'being made. Nothing was recorded.',
+    );
+  return problems.conflict(
+    `This task moved to "${TASK_STATUS_LABELS[actual] ?? actual}" while your change was being made. ` +
+      'Reload the task list and try again.',
+  );
 }

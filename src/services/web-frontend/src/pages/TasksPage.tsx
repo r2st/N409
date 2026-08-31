@@ -174,12 +174,28 @@ function TaskQueue({
     void load();
   }, [load]);
 
+  /**
+   * Two things a failed patch owes the reader, and this owed neither.
+   *
+   * The server refuses a status move that lost a race by naming where the task
+   * actually went — "This task moved to 'Done' while your change was being
+   * made" — and a bare `catch` threw that sentence away for "Could not update
+   * the task", which is the operation and not the reason.
+   * `describeActionFailure` is what the panel next door already uses.
+   *
+   * And the board is now a screen showing a status the database disagrees with:
+   * the row still reads "Open" because nothing re-fetched. Reloading on the
+   * failure is what makes the refusal actionable — the reader is told the task
+   * moved *and* shown where to.
+   */
   const patchTask = async (task: ReviewTask, patch: Record<string, unknown>) => {
     try {
       await api(`/tasks/${task.id}`, { method: 'PATCH', body: patch });
       await load();
-    } catch {
-      setError('Could not update the task.');
+    } catch (err) {
+      const message = describeActionFailure(err, 'Could not update the task.');
+      await load();
+      setError(message);
     }
   };
 

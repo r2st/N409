@@ -310,6 +310,45 @@ describe('TasksPage — refusals and edges', () => {
       expect(await screen.findByText(/Could not update the task\./)).toBeInTheDocument();
     });
 
+    it('repeats the conflict the server sent, and redraws the row where the task actually went', async () => {
+      // A status move that lost a race is refused with the status the task
+      // reached. The bare `catch` threw that sentence away for the operation
+      // name, and nothing re-fetched — so the board went on drawing "Open"
+      // underneath a message about a task that is not open.
+      const user = userEvent.setup();
+      let listed = 0;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        const path = String(url);
+        if ((init?.method ?? 'GET') === 'PATCH')
+          return jsonResponse(
+            {
+              type: 'urn:n409:problem:conflict',
+              title: 'Conflict',
+              detail: 'This task moved to "Done" while your change was being made.',
+            },
+            409,
+          );
+        if (path.includes('/users/options')) return jsonResponse({ options: [], truncated: false });
+        if (path.includes('/reviews')) return jsonResponse({ reviews: [], total: 0 });
+        if (path.includes('/tasks')) {
+          listed += 1;
+          // The second listing is what the database says now.
+          const status = listed === 1 ? 'open' : 'done';
+          return jsonResponse({ tasks: [{ ...task, status }], total: 1 });
+        }
+        return jsonResponse({});
+      });
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: 'Pick up' }));
+      expect(
+        await screen.findByText(/This task moved to "Done" while your change was being made\./),
+      ).toBeInTheDocument();
+      // Re-fetched, so the row agrees with the sentence above it.
+      expect(listed).toBeGreaterThan(1);
+      expect(screen.queryByRole('button', { name: 'Pick up' })).not.toBeInTheDocument();
+    });
+
     it('says the review queue could not be loaded', async () => {
       mockApi({ fail: ['/reviews'] });
       const user = userEvent.setup();
