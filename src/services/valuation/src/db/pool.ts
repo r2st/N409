@@ -167,6 +167,45 @@ export async function withClientTransaction<T>(
   }
 }
 
+/**
+ * Runs fn against one consistent view of the database.
+ *
+ * READ COMMITTED — the default, and what every read on the pool gets — takes a
+ * fresh snapshot per *statement*, so an assembly that answers one question with
+ * several statements answers it from several different databases. That is
+ * invisible while the parts are independent and wrong the moment they are not:
+ * a report pack whose holdings come from one snapshot and whose marks come from
+ * the next prints a holding that was deleted in between as an unmarked one,
+ * carried at cost, with a sentence under the schedule saying so.
+ *
+ * REPEATABLE READ takes the snapshot once, at the first statement inside the
+ * transaction, and every later read in it sees exactly that. READ ONLY says so
+ * to the server — this is for assembling a view, and a writer that reached in
+ * here would be in the one isolation level that can fail on a serialisation
+ * conflict rather than block.
+ *
+ * Not a substitute for {@link withTransaction}: that one is for writes, and its
+ * READ COMMITTED is what lets a write see the rows another transaction
+ * committed a moment ago.
+ */
+export async function withSnapshot<T>(pool: pg.Pool, fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    try {
+      const result = await fn(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      // swallow: ROLLBACK in a catch that is re-raising the error that caused it.
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    }
+  } finally {
+    client.release();
+  }
+}
+
 /** Runs fn inside a transaction, rolling back on any error. */
 export async function withTransaction<T>(
   pool: pg.Pool,

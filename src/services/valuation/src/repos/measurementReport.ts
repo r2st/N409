@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { withSnapshot } from '../db/pool.js';
 import type { FundReportData, DebtReportData } from '../domain/navExhibits.js';
 import { findFundByValuation, latestMarks, listPositions, findLpTerms } from './funds.js';
 import {
@@ -23,35 +24,57 @@ import type { ValuationRow } from './valuations.js';
 
 export async function loadFundReport(pool: pg.Pool, valuation: ValuationRow): Promise<FundReportData | null> {
   if (valuation.kind !== 'fund') return null;
-  const fund = await findFundByValuation(pool, valuation.id);
-  if (!fund) return null;
+  // ONE SNAPSHOT, because this pack is one figure. The NAV schedule is a sum
+  // over the marks of the holdings this returns, and on the pool the holdings
+  // and the marks come from two READ COMMITTED snapshots taken a statement
+  // apart. Delete a holding in that gap — `DELETE /funds/:id/positions/:pid`,
+  // which stays open on withdrawn work by design — and `fund_marks` cascades
+  // with it (0086), so the position read a moment earlier comes back with no
+  // mark. `markedPositions` reads that as never having been marked: the
+  // deliverable prints a holding that no longer exists, at cost, at Level 3,
+  // under a sentence that says "N of M holdings carry no mark at the
+  // measurement date". Every part of that is false and none of it is visibly
+  // wrong on the page.
+  //
+  // The debt pack below already reasoned about its own version of this and
+  // answered it by pinning the head by id. Under one snapshot that pinning is
+  // belt and braces rather than the whole belt.
+  return withSnapshot(pool, async (db) => {
+    const fund = await findFundByValuation(db, valuation.id);
+    if (!fund) return null;
 
-  const [positions, lpTerms] = await Promise.all([listPositions(pool, fund.id), findLpTerms(pool, fund.id)]);
-  // After the page, not beside it: the marks this report prints are the ones
-  // for the positions it prints.
-  const marks = await latestMarks(
-    pool,
-    positions.positions.map((p) => p.id),
-  );
+    const [positions, lpTerms] = await Promise.all([listPositions(db, fund.id), findLpTerms(db, fund.id)]);
+    // After the page, not beside it: the marks this report prints are the ones
+    // for the positions it prints.
+    const marks = await latestMarks(
+      db,
+      positions.positions.map((p) => p.id),
+    );
 
-  return {
-    fund,
-    positions: positions.positions.map((position) => ({
-      position,
-      mark: marks.get(position.id) ?? null,
-    })),
-    lpTerms,
-  };
+    return {
+      fund,
+      positions: positions.positions.map((position) => ({
+        position,
+        mark: marks.get(position.id) ?? null,
+      })),
+      lpTerms,
+    };
+  });
 }
 
 export async function loadDebtReport(pool: pg.Pool, valuation: ValuationRow): Promise<DebtReportData | null> {
   if (valuation.kind !== 'debt') return null;
-  const instrument = await findInstrumentByValuation(pool, valuation.id);
+  // One snapshot, for the reason the fund pack above gives.
+  return withSnapshot(pool, async (db) => loadDebtReportIn(db, valuation));
+}
+
+async function loadDebtReportIn(db: pg.PoolClient, valuation: ValuationRow): Promise<DebtReportData | null> {
+  const instrument = await findInstrumentByValuation(db, valuation.id);
   if (!instrument) return null;
 
   const [creditTerms, history] = await Promise.all([
-    findCreditTerms(pool, instrument.id),
-    listValuations(pool, instrument.id),
+    findCreditTerms(db, instrument.id),
+    listValuations(db, instrument.id),
   ]);
 
   // listValuations is newest-first, so the head is the measurement the report
@@ -73,7 +96,7 @@ export async function loadDebtReport(pool: pg.Pool, valuation: ValuationRow): Pr
   return {
     instrument,
     creditTerms,
-    valuation: head ? await findValuationRun(pool, head.id) : null,
+    valuation: head ? await findValuationRun(db, head.id) : null,
     history: history.valuations,
   };
 }
