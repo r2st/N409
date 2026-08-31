@@ -242,10 +242,24 @@ export async function setValuationAutoPipeline(
  * What makes this safe is the `attempts` pin on `setPipelineRunStatus`: a
  * re-queue moves the row to a new generation, and the wedged worker this reap
  * gave up on can no longer write to it if it ever does return.
+ *
+ * `holding` is the one exception, and it is the difference between a run
+ * nothing is watching and a run that is simply behind others (round 268, M5).
+ * `updated_at` moves when a run changes *status*, and a run waiting for a
+ * semaphore slot changes none: it sits at 'queued', stamped when it was created
+ * or claimed, for as long as the queue ahead of it takes. Four slots draining
+ * under three runs a minute against a retry sweep claiming twenty every five is
+ * a queue that grows, so the tail of an outage's backlog reaches thirty minutes
+ * of *waiting* and is failed for a wedge that is not happening. The caller
+ * passes the ids it is holding un-started — see
+ * `pipeline/autoPipeline.ts`'s `pipelineRunsAwaitingSlot`. A run that is
+ * executing is not in that set and is still reaped, because wedged on a stuck
+ * upstream call is exactly what this is for; a run orphaned by a restart is in
+ * no live process's set at all.
  */
 export async function reapStalePipelineRuns(
   pool: pg.Pool,
-  opts: { olderThanMs: number; actor: EventActor; limit?: number },
+  opts: { olderThanMs: number; actor: EventActor; limit?: number; holding?: readonly string[] },
 ): Promise<PipelineRunRow[]> {
   const seconds = Math.max(1, Math.floor(opts.olderThanMs / 1000));
   const reason = `run exceeded ${seconds}s in an active state (reaped)`;
@@ -256,10 +270,11 @@ export async function reapStalePipelineRuns(
       `SELECT * FROM pipeline_runs
        WHERE status IN ('queued', 'extracting', 'calculating')
          AND updated_at < now() - ($1 || ' seconds')::interval
+         AND NOT (id = ANY($3::text[]))
        ORDER BY updated_at ASC
        LIMIT $2
        FOR UPDATE SKIP LOCKED`,
-      [String(seconds), opts.limit ?? 100],
+      [String(seconds), opts.limit ?? 100, opts.holding ?? []],
     );
     const reaped: PipelineRunRow[] = [];
     for (const run of stale) {
@@ -333,6 +348,8 @@ export async function reapStalePipelineRuns(
  * attempt's message would show a failure reason on a run that is currently
  * running, which is what the UI polls.
  */
+export const PIPELINE_RETRY_CLAIM_LIMIT = 20;
+
 export async function claimRetryablePipelineRuns(
   pool: pg.Pool,
   opts: { limit?: number; actor: EventActor },
@@ -346,7 +363,7 @@ export async function claimRetryablePipelineRuns(
         ORDER BY next_attempt_at ASC
         LIMIT $1
         FOR UPDATE SKIP LOCKED`,
-      [opts.limit ?? 20],
+      [opts.limit ?? PIPELINE_RETRY_CLAIM_LIMIT],
     );
 
     const claimed: PipelineRunRow[] = [];

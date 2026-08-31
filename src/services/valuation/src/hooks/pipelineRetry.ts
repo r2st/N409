@@ -1,8 +1,16 @@
 import type pg from 'pg';
 import { FLAGS, flagEnabled } from '@n409/shared';
-import { claimRetryablePipelineRuns, setPipelineRunStatus } from '../repos/pipelineRuns.js';
+import {
+  claimRetryablePipelineRuns,
+  PIPELINE_RETRY_CLAIM_LIMIT,
+  setPipelineRunStatus,
+} from '../repos/pipelineRuns.js';
 import { findValuationById } from '../repos/valuations.js';
-import { resumePipelineRun, type AutoPipelineDeps } from '../pipeline/autoPipeline.js';
+import {
+  autoPipelineConcurrency,
+  resumePipelineRun,
+  type AutoPipelineDeps,
+} from '../pipeline/autoPipeline.js';
 
 /**
  * Re-runs auto-pipeline orchestrations that failed against a dependency which
@@ -38,7 +46,30 @@ export async function retryFailedPipelineRuns(deps: {
   if (!flagEnabled(FLAGS.retryLadders)) return { claimed: 0, resumed: 0 };
 
   const actor = { actorType: 'system', actorId: 'retry-sweep', source: 'auto-pipeline' } as const;
-  const claimed = await claimRetryablePipelineRuns(deps.pool, { limit: deps.limit, actor });
+
+  /*
+   * Claim no more than the queue can absorb (round 268, methodology M5).
+   *
+   * The two rates are not related to each other by anything. This sweep claims
+   * twenty every five minutes; the limiter runs four at a time, each of which
+   * spends up to three minutes on the AI service and more on the engine. So
+   * recovering from an outage adds runs faster than it retires them, and the
+   * backlog moves out of `failed` — where the ladder holds it, recoverable, and
+   * a restart costs nothing — into `queued`, where it is an in-memory list this
+   * process loses on the next deploy and where every row holds its valuation's
+   * one-active-run index against any new trigger.
+   *
+   * Bounded against the *whole* queue rather than this sweep's share of it,
+   * because there is one limiter: a burst of uploads is the same pressure and
+   * the ladder should give way to it. Nothing is lost by not claiming — the
+   * rows keep their schedule and the next tick takes them — which is the same
+   * argument the retry-ladder flag above is made of.
+   */
+  const limit = deps.limit ?? PIPELINE_RETRY_CLAIM_LIMIT;
+  const room = Math.max(0, limit - autoPipelineConcurrency().pending);
+  if (room === 0) return { claimed: 0, resumed: 0 };
+
+  const claimed = await claimRetryablePipelineRuns(deps.pool, { limit: room, actor });
 
   let resumed = 0;
   for (const run of claimed) {

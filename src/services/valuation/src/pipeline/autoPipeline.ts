@@ -39,6 +39,66 @@ export function autoPipelineConcurrency(): { active: number; pending: number } {
 }
 
 /**
+ * The runs this process has queued and not yet started (round 268, M5).
+ *
+ * `pipeline_runs.updated_at` moves when a run changes status, and a run waiting
+ * for a semaphore slot changes nothing: it sits at 'queued', stamped at the
+ * moment it was created or claimed, for as long as the queue ahead of it takes.
+ * The reaper reads exactly that column, so past
+ * `AUTO_PIPELINE_STALE_MINUTES` — thirty by default — it fails a run this
+ * process is holding, healthily, and is about to run.
+ *
+ * That is reachable by arithmetic rather than by mishap. Four slots at a minute
+ * or two each drain under three runs a minute; the retry sweep claims twenty
+ * every five. So recovering from an AI outage fills the queue faster than it
+ * empties, and the tail of the backlog is reaped for a wedge that is not
+ * happening — with `auto_pipeline_failed` on the audit spine saying the run
+ * "exceeded 1800s in an active state", a rung of its ladder spent, and (since
+ * R264) a re-queue that puts it at the back of the same queue to be reaped
+ * again.
+ *
+ * A run that has not been given a slot has not made a single upstream call, so
+ * it cannot be the case the reaper exists for. A run that *is* executing is
+ * still reaped: wedged on a stuck upstream call is precisely that case, and the
+ * `attempts` pin is what makes taking the row away from it safe. And a run
+ * orphaned by a restart is in no live process's set at all, which is why this
+ * can be read from memory without weakening the guarantee that matters.
+ */
+const awaitingSlot = new Set<string>();
+
+/** Run ids queued in this process and not yet started. See {@link awaitingSlot}. */
+export function pipelineRunsAwaitingSlot(): string[] {
+  return [...awaitingSlot];
+}
+
+/**
+ * Hand a run to the limiter, and hold it in {@link awaitingSlot} until it has a
+ * slot. One door for both callers, so a third one cannot forget the bookkeeping
+ * and reintroduce the reap.
+ */
+function queueRun(
+  deps: AutoPipelineDeps,
+  run: PipelineRunRow,
+  valuation: ValuationRow,
+  triggeredBy: string,
+  crashMessage: string,
+): void {
+  awaitingSlot.add(run.id);
+  void autoPipelineLimiter
+    .run(() => {
+      // Inside the limiter's callback, which is the moment a slot was granted.
+      awaitingSlot.delete(run.id);
+      return executeRun(deps, run, valuation, triggeredBy);
+    })
+    .catch((err) => {
+      deps.log.error({ err, runId: run.id }, crashMessage);
+    })
+    // Belt and braces: a rejection *from the acquire* would never reach the
+    // callback, and a run left in this set is a run the reaper can never take.
+    .finally(() => awaitingSlot.delete(run.id));
+}
+
+/**
  * Auto-pipeline orchestrator (final-status §4.4 #3): when a document lands,
  * run extraction → parameter auto-apply → draft calculation unattended so ops
  * opens an already-populated valuation. Each step reuses the exact same code
@@ -118,13 +178,10 @@ export async function startPipelineRun(
   // Fire-and-forget, but gated by the concurrency limiter: the run row returns
   // immediately (status 'queued'); execution waits for a free slot so a burst
   // of uploads can't spawn unbounded concurrent orchestrations.
-  void autoPipelineLimiter
-    .run(() => executeRun(deps, run, args.valuation, args.triggeredBy))
-    .catch((err) => {
-      // executeRun already converts step failures into a 'failed' run; this only
-      // catches a failure to record that status (e.g. the pool going away).
-      deps.log.error({ err, runId: run.id }, 'auto-pipeline run crashed');
-    });
+  //
+  // The crash message covers only a failure to *record* a status: executeRun
+  // already converts step failures into a 'failed' run.
+  queueRun(deps, run, args.valuation, args.triggeredBy, 'auto-pipeline run crashed');
   return run;
 }
 
@@ -371,10 +428,5 @@ export function resumePipelineRun(
   run: PipelineRunRow,
   valuation: ValuationRow,
 ): void {
-  const triggeredBy = run.triggered_by ?? 'retry-sweep';
-  void autoPipelineLimiter
-    .run(() => executeRun(deps, run, valuation, triggeredBy))
-    .catch((err) => {
-      deps.log.error({ err, runId: run.id }, 'auto-pipeline retry crashed');
-    });
+  queueRun(deps, run, valuation, run.triggered_by ?? 'retry-sweep', 'auto-pipeline retry crashed');
 }

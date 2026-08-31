@@ -33,7 +33,7 @@ const { reapStaleAiJobs } = await import('./repos/aiJobs.js');
 const { runDueCapTableSyncs } = await import('./routes/capTableSync.js');
 const { runRetentionSweep } = await import('./routes/retention.js');
 const { runDueHrisSyncs } = await import('./routes/hris.js');
-const { autoPipelineConcurrency } = await import('./pipeline/autoPipeline.js');
+const { autoPipelineConcurrency, pipelineRunsAwaitingSlot } = await import('./pipeline/autoPipeline.js');
 const { probeReady } = await import('./clients/internal.js');
 
 const config = loadConfig();
@@ -396,7 +396,13 @@ if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
   // the only scheduler here without the non-overlap guard, despite a comment
   // claiming it followed its siblings.
   const sweep = scheduleSweep('pipeline-reaper', async () => {
-    const reaped = await reapStalePipelineRuns(pool, { olderThanMs, actor: reaperActor });
+    const reaped = await reapStalePipelineRuns(pool, {
+      olderThanMs,
+      actor: reaperActor,
+      // Runs this process has queued and not yet started are waiting, not
+      // wedged, and their row cannot say so — see `pipelineRunsAwaitingSlot`.
+      holding: pipelineRunsAwaitingSlot(),
+    });
     if (reaped.length > 0) {
       app.log.warn({ count: reaped.length, runIds: reaped.map((r) => r.id) }, 'reaped stale pipeline runs');
     }

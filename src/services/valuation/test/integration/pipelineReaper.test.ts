@@ -169,3 +169,80 @@ describe.skipIf(!dbUp)('auto-pipeline reaper (B-3)', () => {
     expect(second.map((r) => r.id)).not.toContain(run.id);
   });
 });
+
+/**
+ * A run that is waiting is not a run that is wedged (round 268, methodology M5).
+ *
+ * `updated_at` moves when a run changes status, and a run queued behind the
+ * concurrency limiter changes none: it holds 'queued', stamped when it was
+ * created or claimed, for as long as the queue ahead of it takes. The reaper
+ * reads exactly that column, so a backlog deeper than the stale window is
+ * failed for a wedge that is not happening — with `auto_pipeline_failed` on the
+ * spine claiming it "exceeded 1800s in an active state", a rung of its ladder
+ * spent, and a re-queue that puts it back at the end of the same queue.
+ *
+ * The caller passes what it is holding un-started. A run that is *executing* is
+ * not in that set and is still reaped: wedged on a stuck upstream call is
+ * precisely the case this exists for.
+ */
+describe.skipIf(!dbUp)('auto-pipeline reaper and the in-process queue', () => {
+  let ctx: TestApp;
+  let ops: Awaited<ReturnType<typeof seedUser>>;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ AUTO_PIPELINE: 'off' });
+    ops = await seedUser(ctx, { roles: ['reviewer'] });
+  });
+
+  afterAll(async () => {
+    await ctx?.teardown();
+  });
+
+  async function stuckRun(company: string) {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(ops.token),
+      payload: { kind: '409a', company_name: company },
+    });
+    const valuationId = res.json().valuation.id as string;
+    const run = (await createPipelineRun(
+      ctx.pool,
+      { valuationId, trigger: 'upload', triggeredBy: ops.id },
+      SYSTEM,
+    ))!;
+    await ctx.pool.query(`UPDATE pipeline_runs SET updated_at = now() - interval '2 hours' WHERE id = $1`, [
+      run.id,
+    ]);
+    return run;
+  }
+
+  it('leaves a run this process has queued and not yet started', async () => {
+    const waiting = await stuckRun('QueuedBehindCo');
+    const wedged = await stuckRun('WedgedCo');
+
+    const reaped = await reapStalePipelineRuns(ctx.pool, {
+      olderThanMs: 60_000,
+      actor: SYSTEM,
+      holding: [waiting.id],
+    });
+
+    expect(reaped.map((r) => r.id)).toEqual([wedged.id]);
+    // Untouched: same status, same attempt, and nothing on the spine.
+    expect(await latestPipelineRun(ctx.pool, waiting.valuation_id)).toMatchObject({
+      status: 'queued',
+      attempts: waiting.attempts,
+    });
+    const { rows } = await ctx.pool.query(
+      `SELECT 1 FROM valuation_events WHERE valuation_id = $1 AND type = 'auto_pipeline_failed'`,
+      [waiting.valuation_id],
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it('still reaps everything when the process is holding nothing', async () => {
+    const run = await stuckRun('NobodyHoldingCo');
+    const reaped = await reapStalePipelineRuns(ctx.pool, { olderThanMs: 60_000, actor: SYSTEM });
+    expect(reaped.map((r) => r.id)).toContain(run.id);
+  });
+});
