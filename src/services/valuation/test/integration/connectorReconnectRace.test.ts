@@ -5,12 +5,14 @@ import {
   recordSync,
   recordSyncError,
   setSyncFrequency,
+  updateTokens,
   upsertConnection,
   type HrisConnectionRow,
 } from '../../src/repos/hrisConnections.js';
 import {
   findConnection as findCapTableConnection,
   recordSyncError as recordCapTableSyncError,
+  updateTokens as updateCapTableTokens,
   upsertConnection as upsertCapTable,
 } from '../../src/repos/capTableConnections.js';
 
@@ -178,6 +180,89 @@ describe.skipIf(!dbUp)('connector bookkeeping across a reconnect', () => {
     const live = (await findCapTableConnection(ctx.pool, valuationId, 'carta'))!;
     expect(live.status).toBe('connected');
     expect(live.reconnect_required).toBe(false);
+  });
+
+  /*
+   * The refresh, which is the writer with the credential in its hands.
+   *
+   * `accessTokenFor` renews *inside* the pull, on the row the scheduler read at
+   * the top of the tick, so it has the same window the pull has. Writing a
+   * token minted from the superseded refresh token over the one the reconnect
+   * installed is not a superseded summary the next tick corrects — on the
+   * premise migration 0197 is built on (a provider invalidating the old refresh
+   * token family when a user re-authorises) it is a dead credential stored as
+   * the live one, and the next sync's 401 is read as "reconnect required".
+   */
+  it('does not overwrite a reconnect’s credential with the old authorisation’s refresh', async () => {
+    const stale = await connectScheduled('LateRefreshCo');
+    const fresh = await reconnect(stale);
+
+    await updateTokens(ctx.pool, stale, {
+      accessToken: 'tok-1-refreshed',
+      refreshToken: 'ref-1-refreshed',
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+
+    const live = (await findConnection(ctx.pool, fresh.valuation_id, 'gusto'))!;
+    expect(live.access_token).toBe('tok-2');
+    expect(live.refresh_token).toBe('ref-2');
+    // And the schedule the reconnect restored is untouched, so the standing
+    // pull is not waiting on a credential nobody can spend.
+    expect(live.next_sync_at).not.toBeNull();
+  });
+
+  it('closes the refresh race on the cap-table family too', async () => {
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(ops.token),
+      payload: { kind: '409a', company_name: 'CapTableRefreshRaceCo' },
+    });
+    const valuationId = created.json().valuation.id as string;
+    const stale = await upsertCapTable(
+      ctx.pool,
+      {
+        valuationId,
+        provider: 'pulley',
+        tokens: { accessToken: 'tok-1', refreshToken: 'ref-1', expiresAt: null },
+        connectedBy: ops.id,
+      },
+      { ...ACTOR, actorId: ops.id },
+    );
+    await upsertCapTable(
+      ctx.pool,
+      {
+        valuationId,
+        provider: 'pulley',
+        tokens: { accessToken: 'tok-2', refreshToken: 'ref-2', expiresAt: null },
+        connectedBy: ops.id,
+      },
+      { ...ACTOR, actorId: ops.id },
+    );
+
+    await updateCapTableTokens(ctx.pool, stale, {
+      accessToken: 'tok-1-refreshed',
+      refreshToken: 'ref-1-refreshed',
+      expiresAt: null,
+    });
+
+    const live = (await findCapTableConnection(ctx.pool, valuationId, 'pulley'))!;
+    expect(live.access_token).toBe('tok-2');
+    expect(live.refresh_token).toBe('ref-2');
+  });
+
+  it('still stores a refresh the current authorisation asked for', async () => {
+    // The pin has to be narrow enough that the ordinary renewal still lands —
+    // an unstorable refresh is the 401 loop R252 removed, back again.
+    const row = await connect('OrdinaryRefreshCo');
+    await updateTokens(ctx.pool, row, {
+      accessToken: 'tok-renewed',
+      refreshToken: 'ref-renewed',
+      expiresAt: null,
+    });
+    const after = (await findConnection(ctx.pool, row.valuation_id, 'gusto'))!;
+    expect(after.access_token).toBe('tok-renewed');
+    expect(after.refresh_token).toBe('ref-renewed');
   });
 
   it('still records the outcome of a pull nothing superseded', async () => {

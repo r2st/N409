@@ -411,10 +411,33 @@ export async function setSyncFrequency(
  * `refreshToken` is `undefined` when the provider did not rotate it, which is
  * the common case, and the column is then left alone — writing `null` there
  * would make that the last successful refresh this connection ever had.
+ *
+ * PINNED TO THE AUTHORISATION THE REFRESH WAS SPENT UNDER, for the reason
+ * `recordSync` gives at length and with more at stake than either bookkeeping
+ * writer. A refresh is a round trip against the provider, so it has the same
+ * window a pull has — and it is *inside* one: `accessTokenFor` renews before it
+ * fetches, on the row the scheduler read at the top of the tick. An analyst who
+ * reconnects during that window has `upsertConnection` install a new credential
+ * and bump the generation; the refresh then lands and writes a token minted
+ * from the *superseded* refresh token over it.
+ *
+ * That is worse than a superseded summary, which the next tick corrects. This
+ * writes the credential itself, and on the premise migration 0197 is built on —
+ * many providers invalidate the old refresh token family when a user
+ * re-authorises — the token it stores is already dead. The next sync 401s,
+ * `clients/oauthRefresh.ts` reads that as a `ReconnectRequiredError`, and the
+ * connection lands on `reconnect_required = true` with `next_sync_at = NULL`:
+ * the exact card R264 set out to stop showing over a healthy authorisation,
+ * reached through the one writer on this row it left unpinned.
+ *
+ * A refresh that no longer owns the row still returns its access token to the
+ * caller, and the pull carries on with it — that is deliberate. The outcome of
+ * that pull is discarded by `recordSync`/`recordSyncError`, which are pinned to
+ * the same generation, so nothing it does reaches the row.
  */
 export async function updateTokens(
   pool: pg.Pool,
-  id: string,
+  connection: ConnectionGeneration,
   tokens: { accessToken: string; refreshToken?: string | undefined; expiresAt: Date | null },
 ): Promise<void> {
   await pool.query(
@@ -422,8 +445,14 @@ export async function updateTokens(
         SET access_token = $2,
             refresh_token = COALESCE($3, refresh_token),
             token_expires_at = $4
-      WHERE id = $1 AND status <> 'revoked'`,
-    [id, sealSecret(tokens.accessToken), sealNullable(tokens.refreshToken ?? null), tokens.expiresAt],
+      WHERE id = $1 AND status <> 'revoked' AND auth_generation = $5`,
+    [
+      connection.id,
+      sealSecret(tokens.accessToken),
+      sealNullable(tokens.refreshToken ?? null),
+      tokens.expiresAt,
+      connection.auth_generation,
+    ],
   );
 }
 

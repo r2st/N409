@@ -153,7 +153,7 @@ async function accessTokenFor(
   const creds = deps.credentials?.[connection.provider];
   if (!creds || !connection.refresh_token) return connection.access_token;
   const refreshed = await refreshTokens(connection.provider, creds, connection.refresh_token, deps.fetchFn);
-  await updateTokens(deps.pool, connection.id, refreshed);
+  await updateTokens(deps.pool, connection, refreshed);
   return refreshed.accessToken;
 }
 
