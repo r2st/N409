@@ -47,9 +47,22 @@ const SERVICE = path.resolve(HERE, '../..');
  * `sendTransactionalEmail` and its background twin are the only two ways an
  * email leaves this service outside the outbox sweep. A subsystem that grows a
  * fourth door adds it here, which is the one judgement this file states.
+ *
+ * THE FOURTH DOOR (round 273, methodology M11). A partner integration is told
+ * things too, and `firePartnerWebhooks` and its two batch entry points are the
+ * whole of how. It is the same shape as the three above and it fails the same
+ * way: the fan-out runs after the transition or the retirement has committed,
+ * a failure before `recordDelivery` leaves no delivery row, and the retry sweep
+ * works from delivery rows — so there is nothing to revisit and the partner is
+ * simply not told. The census did not know about it, and the one caller that
+ * did wrap it logged the loss at `warn`.
+ *
+ * `deliverToWebhook` is deliberately not here: it is one hop below these, its
+ * failure *does* leave a row, and `partnerApi.ts` calls it for a test ping
+ * whose whole purpose is to report the outcome to the caller.
  */
 const ANNOUNCERS =
-  /\b(createNotifications?|sendTransactionalEmail(?:InBackground)?|notifyCommentPosted)\s*\(/;
+  /\b(createNotifications?|sendTransactionalEmail(?:InBackground)?|notifyCommentPosted|firePartnerWebhooks(?:ForTransition|ForRetirement)?)\s*\(/;
 
 /**
  * The whole service tree, not the two directories where these happen to live

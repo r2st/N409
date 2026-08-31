@@ -167,7 +167,24 @@ export async function onStateChanged(
     try {
       await firePartnerWebhooksForTransition({ pool: deps.pool, log: deps.log }, valuation.id, to);
     } catch (err) {
-      deps.log?.warn({ err, valuationId: valuation.id }, 'partner webhook dispatch failed');
+      // `warn` promised a retry that does not exist (round 273, methodology
+      // M11). The transition has committed, no delivery row was written — the
+      // dispatch never got as far as one — and nothing revisits a partner
+      // event that was never queued, so the partner is simply not told. Same
+      // level and the same reason as the per-hook arm inside
+      // `firePartnerWebhooks`, which reaches `error` for the narrower case.
+      //
+      // Belt-and-braces now: R273 contained the read inside that door, so this
+      // arm should no longer be reachable. Kept, because "should not be
+      // reachable" is what the door's own note said about its callers.
+      if (deps.log) {
+        logUnretried(
+          deps.log,
+          err,
+          { valuationId: valuation.id, to },
+          'partner webhook dispatch failed before any delivery row existed; the transition’s events were not queued',
+        );
+      }
     }
   }
 

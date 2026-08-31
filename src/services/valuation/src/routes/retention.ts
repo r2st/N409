@@ -433,13 +433,21 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
           detail: { manual: true, retired_by: principal.id, reason: parsed.data.reason ?? null },
         },
       ]);
+      // The audit first (round 273, methodology M11). The retirement has
+      // already committed, and this event is the spine's record of *who* did
+      // it — so it must not sit behind an announcement to somebody else. It
+      // did: `firePartnerWebhooksForRetirement` awaited a `SELECT` here, and a
+      // statement timeout on it answered the admin 500 for work that had
+      // landed and skipped `valuation_retired` on the way out, leaving a
+      // retirement on the retention log and off the admin trail. The door is
+      // contained now; the order is what makes it not matter next time.
+      await audit(principal.id, 'valuation_retired', 'valuation', id, valuation.company_name, {
+        reason: parsed.data.reason ?? null,
+      });
       // A partner integration otherwise finds out by a 409 on its next write,
       // or never. `valuation.retired` is the only terminal event on that API
       // and this is one of the two things that produces it.
       await firePartnerWebhooksForRetirement({ pool: deps.pool, log: app.log }, [id]);
-      await audit(principal.id, 'valuation_retired', 'valuation', id, valuation.company_name, {
-        reason: parsed.data.reason ?? null,
-      });
     }
     return { retired, valuation: await findValuationById(deps.pool, id) };
   });

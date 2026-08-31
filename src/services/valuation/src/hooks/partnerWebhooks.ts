@@ -1,7 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
-import { describeTransportFailure, FLAGS, flagEnabled } from '@n409/shared';
+import { describeTransportFailure, FLAGS, flagEnabled, logUnretried } from '@n409/shared';
 import {
   buildWebhookPayload,
   DELIVERY_HEADER,
@@ -386,10 +386,29 @@ export async function retryDueDeliveries(deps: WebhookDeps & { limit?: number; l
  * It also cannot be recovered downstream. The retry sweep works from delivery
  * rows, and a `recordDelivery` that failed left none — so an aborted fan-out
  * does not delay the remaining webhooks, it drops their event entirely, with
- * nothing anywhere recording that it was owed. The caller
- * (`onStateChanged`) logs and swallows what escapes, which is right for a
- * transition that has already committed and is also what would have made this
- * silent.
+ * nothing anywhere recording that it was owed.
+ *
+ * THE READ ABOVE THE LOOP IS CONTAINED HERE TOO (round 273, methodology M11).
+ * It used to say the caller "logs and swallows what escapes", naming
+ * `onStateChanged` — which does. The other two callers do not, and the escape
+ * is a plain `SELECT` on a busy pool:
+ *
+ *   - `retention.ts` fires the retirement batch under a comment reading "never
+ *     allowed to fail the sweep", which was true of `deliverToWebhook` and not
+ *     of the read that finds the hooks. A statement timeout there took the
+ *     whole archival sweep down *after* it had archived, so the run reported
+ *     nothing and the retention actions it had just written had no summary.
+ *   - the manual withdrawal route awaits the same call between `recordActions`
+ *     and `audit`. The engagement was retired and committed, so a throw
+ *     answered the admin 500 for work that had landed — and skipped the
+ *     `valuation_retired` audit event entirely, leaving a retirement on the
+ *     spine's retention log and off its admin trail.
+ *
+ * A door whose whole contract is "a dispatch failure never reaches the caller"
+ * has to hold that itself; it cannot be three call sites each remembering. So
+ * the read is caught here, and `logUnretried` rather than `warn` for the reason
+ * the per-hook arm below gives: no delivery row exists to carry this, nothing
+ * revisits it, and the partner is simply not told.
  */
 export async function firePartnerWebhooks(
   deps: WebhookDeps,
@@ -398,7 +417,20 @@ export async function firePartnerWebhooks(
   valuation: WebhookValuationView | null,
   extra: Record<string, unknown> = {},
 ): Promise<void> {
-  const hooks = await enabledWebhooks(deps.pool, partnerId);
+  let hooks: PartnerWebhookRow[];
+  try {
+    hooks = await enabledWebhooks(deps.pool, partnerId);
+  } catch (err) {
+    if (deps.log) {
+      logUnretried(
+        deps.log,
+        err,
+        { partnerId, event, valuationId: valuation?.id ?? null },
+        'could not read a partner’s webhooks; the event was owed and no delivery row exists',
+      );
+    }
+    return;
+  }
   const wanted = hooks.filter((h) => webhookWantsEvent(h.events, event));
   if (wanted.length === 0) return;
   const payload = buildWebhookPayload(event, valuation, extra);
@@ -442,18 +474,34 @@ export async function firePartnerWebhooksForRetirement(
 ): Promise<void> {
   const ids = [...new Set(valuationIds)];
   if (ids.length === 0) return;
-  const { rows } = await deps.pool.query<{
-    id: string;
-    number: string | number | null;
-    kind: string;
-    state: string;
-    company_name: string;
-    partner_id: string;
-  }>(
-    `SELECT id, number, kind, state, company_name, partner_id
+  // Contained, like the transition entry point above. The sweep call site's
+  // comment — "never allowed to fail the sweep" — was a statement about
+  // `deliverToWebhook` and not about this read.
+  const rows = await deps.pool
+    .query<{
+      id: string;
+      number: string | number | null;
+      kind: string;
+      state: string;
+      company_name: string;
+      partner_id: string;
+    }>(
+      `SELECT id, number, kind, state, company_name, partner_id
        FROM valuations WHERE id = ANY($1::ulid[]) AND partner_id IS NOT NULL`,
-    [ids],
-  );
+      [ids],
+    )
+    .then((r) => r.rows)
+    .catch((err: unknown) => {
+      if (deps.log) {
+        logUnretried(
+          deps.log,
+          err,
+          { valuationIds: ids.length },
+          'could not look up retired engagements to announce; partner webhooks not queued',
+        );
+      }
+      return [];
+    });
   for (const row of rows) {
     await firePartnerWebhooks(deps, row.partner_id, 'valuation.retired', {
       id: row.id,
@@ -476,14 +524,32 @@ export async function firePartnerWebhooksForTransition(
   valuationId: string,
   to: string,
 ): Promise<void> {
-  const { rows } = await deps.pool.query<{
-    id: string;
-    number: string | number | null;
-    kind: string;
-    state: string;
-    company_name: string;
-    partner_id: string | null;
-  }>('SELECT id, number, kind, state, company_name, partner_id FROM valuations WHERE id = $1', [valuationId]);
+  // Contained for the reason `firePartnerWebhooks` gives: the entry points are
+  // the other half of the same door, and their own lookup is a `SELECT` on the
+  // same pool.
+  const rows = await deps.pool
+    .query<{
+      id: string;
+      number: string | number | null;
+      kind: string;
+      state: string;
+      company_name: string;
+      partner_id: string | null;
+    }>('SELECT id, number, kind, state, company_name, partner_id FROM valuations WHERE id = $1', [
+      valuationId,
+    ])
+    .then((r) => r.rows)
+    .catch((err: unknown) => {
+      if (deps.log) {
+        logUnretried(
+          deps.log,
+          err,
+          { valuationId, to },
+          'could not look up the engagement to announce its transition; partner webhooks not queued',
+        );
+      }
+      return [];
+    });
   const row = rows[0];
   if (!row?.partner_id) return;
   const view: WebhookValuationView = {
