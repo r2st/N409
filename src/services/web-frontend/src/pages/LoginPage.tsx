@@ -92,7 +92,19 @@ export function LoginPage() {
   const [useBackup, setUseBackup] = useState(false);
   const [rememberDevice, setRememberDevice] = useState(false);
   const ssoErrorCode = new URLSearchParams(location.search).get('sso_error');
-  const ssoError = ssoErrorCode ? (SSO_ERROR_MESSAGES[ssoErrorCode] ?? SSO_ERROR_FALLBACK) : null;
+  /*
+   * `Object.hasOwn`, not a bare lookup: the code is whatever the query string
+   * carries, and every object answers to `__proto__`, `constructor` and
+   * `toString`. A bare lookup handed `Object.prototype` — an object, which
+   * React refuses to render — to `ErrorNote` below, so
+   * `/login?sso_error=__proto__` took the sign-in page down for anyone who
+   * followed the link.
+   */
+  const ssoError = ssoErrorCode
+    ? Object.hasOwn(SSO_ERROR_MESSAGES, ssoErrorCode)
+      ? SSO_ERROR_MESSAGES[ssoErrorCode]
+      : SSO_ERROR_FALLBACK
+    : null;
 
   /*
    * Which doors exist, and what to say when we could not find out.

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from '../src/lib/auth';
@@ -179,6 +179,19 @@ describe('LoginPage', () => {
       const note = await screen.findByRole('alert');
       expect(note).toHaveTextContent(/Single sign-on did not complete/);
       expect(note.textContent).not.toContain('img src');
+    });
+
+    it('answers a code every object already has with the general sentence, not the inherited member', async () => {
+      // `SSO_ERROR_MESSAGES[code]` is a bare lookup on an object literal, and the
+      // code comes off the query string, so `__proto__` resolves to
+      // `Object.prototype` — which React refuses to render, taking the whole
+      // sign-in page down for anyone who follows the link.
+      for (const key of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+        withProviders(`/login?sso_error=${encodeURIComponent(key)}`);
+        const note = await screen.findByRole('alert');
+        expect(note).toHaveTextContent(/Single sign-on did not complete/);
+        cleanup();
+      }
     });
 
     it('draws nothing when the visitor simply came to sign in', async () => {
