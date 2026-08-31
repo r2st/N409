@@ -121,10 +121,6 @@ const BOUNDED: Record<string, Bound> = {
     bound: 'caller',
     why: 'Aggregated per analyst over one firm; the group set is the firm’s user roster, which `listUsers` pages.',
   },
-  'funds.ts:latestMarks': {
-    bound: 'caller',
-    why: 'Keyed on the position ids the caller is rendering — the page `listPositions` returned, which is capped at FUND_POSITION_PAGE_LIMIT. Asked by fund it read a mark for every position the fund holds and dropped the ones past that page.',
-  },
   'hrisConnections.ts:existingGrantExternalIds': {
     bound: 'caller',
     why: 'A decision set: the sync skips a grant it finds here, so a short one is a duplicate grant rather than a short list. Bounded by the provider pull the caller is about to iterate, never by a cap.',
@@ -317,7 +313,26 @@ function returnsMany(ret: string): boolean {
   return /\[\]/.test(ret) || /\b(?:Readonly)?Array</.test(ret) || /\bMap</.test(ret) || /\bSet</.test(ret);
 }
 
-/** Multi-row reads with no `LIMIT` of any kind — literal or parameterised. */
+/**
+ * Multi-row reads with no `LIMIT` of any kind — literal or parameterised.
+ *
+ * KNOWN BLIND SPOT, and the reason `funds.ts:latestMarks` is no longer accounted
+ * for below. The test is `\bLIMIT\b` over the whole body, so a `LIMIT` anywhere
+ * in the statement takes the read out of the population — including one that
+ * bounds a *subquery* and says nothing about the outer result. R283 rewrote
+ * `latestMarks` as `unnest($1::ulid[]) CROSS JOIN LATERAL (SELECT … LIMIT 1)`,
+ * which still returns one row per id the caller passes and is exactly as
+ * uncapped as it was, and this census stopped seeing it. It failed loudly rather
+ * than quietly — the entry became an account of nothing — but for the opposite
+ * reason to the real one, and removing the entry is what makes it green.
+ *
+ * Counting parenthesis depth and accepting only a `LIMIT` at the outer
+ * `SELECT`'s own depth is most of the answer and not all of it: several
+ * statements here are assembled from interpolated fragments
+ * (`${ACTIVE_ENGAGEMENT_SELECT}`), so the outer `SELECT` is not in the body to
+ * take a depth from, and four correctly-capped reads read as uncapped. Resolving
+ * those constants is the missing piece.
+ */
 function unboundedReads(): string[] {
   const found: string[] = [];
   for (const file of readdirSync(REPOS).filter((f) => f.endsWith('.ts'))) {
