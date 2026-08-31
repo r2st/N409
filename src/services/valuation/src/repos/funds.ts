@@ -94,6 +94,28 @@ export async function findFund(db: Queryable, id: string): Promise<FundRow | nul
   return rows[0] ?? null;
 }
 
+/**
+ * The portfolio, with its row held for the rest of the transaction.
+ *
+ * For `PUT /funds/:id/valuation`, which is a read-then-write pair: it decides
+ * which engagement's spine gets `measurement_subject_unlinked` from the link
+ * the row *had*, and then overwrites it. Read on the pool, those are two
+ * statements with a gap, and a second link change landing in the gap makes the
+ * first half describe a state that no longer exists — the detach event goes to
+ * the engagement the fund used to be on, and the one it was actually taken off
+ * is never told. Its trail then says the portfolio is its measurement subject
+ * with nothing afterwards saying it stopped, which is what an auditor reads to
+ * find out where the NAV schedule went.
+ *
+ * `FOR UPDATE` makes the pair atomic against a second change to the same
+ * portfolio, exactly as `restoreValuations` uses it against a second restore of
+ * the same id.
+ */
+export async function lockFund(db: Queryable, id: string): Promise<FundRow | null> {
+  const { rows } = await db.query<FundRow>('SELECT * FROM fund_portfolios WHERE id = $1 FOR UPDATE', [id]);
+  return rows[0] ?? null;
+}
+
 /** The portfolio an engagement measures, if one has been linked (0109). */
 export async function findFundByValuation(db: Queryable, valuationId: string): Promise<FundRow | null> {
   const { rows } = await db.query<FundRow>('SELECT * FROM fund_portfolios WHERE valuation_id = $1', [

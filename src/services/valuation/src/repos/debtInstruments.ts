@@ -91,6 +91,15 @@ export async function findInstrument(db: Queryable, id: string): Promise<DebtIns
   return rows[0] ?? null;
 }
 
+/** The instrument, with its row held for the transaction — see `lockFund`. */
+export async function lockInstrument(db: Queryable, id: string): Promise<DebtInstrumentRow | null> {
+  const { rows } = await db.query<DebtInstrumentRow>(
+    'SELECT * FROM debt_instruments WHERE id = $1 FOR UPDATE',
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
 /** The instrument an engagement prices, if one has been linked (0109). */
 export async function findInstrumentByValuation(
   db: Queryable,

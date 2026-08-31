@@ -18,6 +18,7 @@ import {
   linkInstrumentToValuation,
   listInstruments,
   listValuations,
+  lockInstrument,
   updateInstrument,
   upsertCreditTerms,
   type DebtInstrumentRow,
@@ -265,7 +266,9 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    const existing = await loadInstrument(id);
+    // The early 404 only; the link the detach event names comes from the row
+    // the transaction below locks. See `lockFund` on the fund side.
+    await loadInstrument(id);
     const parsed = LinkBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid link', parsed.error);
 
@@ -285,6 +288,8 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
 
     try {
       const instrument = await withTransaction(deps.pool, async (client) => {
+        const existing = await lockInstrument(client, id);
+        if (!existing) throw problems.notFound();
         const linked = await linkInstrumentToValuation(client, id, valuationId);
         // Both ends of the move, each on its own engagement's trail — see the
         // fund link for why the detach is the sharper of the two.

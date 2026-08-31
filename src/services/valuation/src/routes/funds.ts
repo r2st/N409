@@ -25,6 +25,7 @@ import {
   listFunds,
   listMarks,
   listPositions,
+  lockFund,
   updateFund,
   updatePosition,
   upsertLpTerms,
@@ -683,7 +684,9 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    const existing = await loadFund(id);
+    // The early 404 only. Which engagement the detach event goes to is decided
+    // from the row this transaction locks, not from this copy — see `lockFund`.
+    await loadFund(id);
     const parsed = LinkBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid link', parsed.error);
 
@@ -709,6 +712,8 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
 
     try {
       const fund = await withTransaction(deps.pool, async (client) => {
+        const existing = await lockFund(client, id);
+        if (!existing) throw problems.notFound();
         const linked = await linkFundToValuation(client, id, valuationId);
         // Both ends of the move, and each on its own engagement's trail. A
         // detach is the sharper of the two: it takes away the whole data
