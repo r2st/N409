@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, ApiError, describeRequestFailure, describeActionFailure } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
-import { Button, ErrorNote } from '../ui';
+import { Button, ErrorNote, SuccessNote } from '../ui';
 
 /**
  * Accounting software connections (409.ai §23) — shown on the Documents tab.
@@ -78,13 +78,29 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
     if (!outcome) return;
     const named = searchParams.get('provider');
     const provider = named && Object.hasOwn(PROVIDER_LABELS, named) ? PROVIDER_LABELS[named] : 'the provider';
-    setNotice(
-      outcome === 'connected'
-        ? `Connected to ${provider} — you can import financials now.`
-        : outcome === 'denied'
-          ? `Connection to ${provider} was cancelled.`
-          : `Connecting to ${provider} failed — please try again.`,
-    );
+    /*
+     * Three outcomes, and until R277 one voice for all of them: every sentence
+     * went into `notice`, which is drawn in the success colour and carries no
+     * role at all. So "Connecting to Xero failed" arrived green, and this is
+     * the one surface where that is the whole signal — the browser has just
+     * come back from the provider, nothing on the page is in a failed state,
+     * and there is no request to have answered with a problem.
+     *
+     * A refusal goes to `error` (`ErrorNote`, `role="alert"`) and a success to
+     * `SuccessNote` (`role="status"`), which is the pairing the rest of the
+     * product uses. A cancellation is the reader's own deliberate act, so it is
+     * stated as a refusal — the connection did not happen and the button has to
+     * be pressed again — rather than as a fault.
+     */
+    if (outcome === 'connected') {
+      setNotice(`Connected to ${provider} — you can import financials now.`);
+    } else {
+      setError(
+        outcome === 'denied'
+          ? `Connection to ${provider} was cancelled — nothing was connected. Press Connect to try again.`
+          : `Connecting to ${provider} failed — nothing was connected. Press Connect to try again.`,
+      );
+    }
     searchParams.delete('accounting');
     searchParams.delete('provider');
     setSearchParams(searchParams, { replace: true });
@@ -167,7 +183,11 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
         Connect your accounting software and we&rsquo;ll pull your financials directly — no exports, no
         re-typing.
       </p>
-      {notice && <p className="mt-3 text-sm font-medium text-emerald-700">{notice}</p>}
+      {notice && (
+        <div className="mt-3">
+          <SuccessNote>{notice}</SuccessNote>
+        </div>
+      )}
       {error && (
         <div className="mt-3">
           <ErrorNote>{error}</ErrorNote>

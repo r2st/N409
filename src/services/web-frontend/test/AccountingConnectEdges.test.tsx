@@ -247,13 +247,34 @@ describe('AccountingConnect — edges', () => {
   });
 
   describe('the OAuth redirect it lands back on', () => {
+    /*
+     * R277, methodology M19. All three outcomes went into one `notice`, drawn
+     * in the success colour with no role on it, so "Connecting to Xero failed"
+     * arrived green and silent. This is the surface where that is the whole
+     * signal: the browser has just come back from the provider, and there is no
+     * failed request anywhere on the page to have said so.
+     *
+     * Asserted on the role rather than the colour, which jsdom cannot see —
+     * and the role is the half a screen reader gets.
+     */
     it.each([
-      ['denied', 'Connection to Xero was cancelled.'],
-      ['error', 'Connecting to Xero failed — please try again.'],
-    ])('reports a %s outcome', async (outcome, message) => {
+      ['denied', /was cancelled — nothing was connected/],
+      ['error', /failed — nothing was connected/],
+    ])('reports a %s outcome as a refusal, not as good news', async (outcome, message) => {
       mockApi();
       renderComponent(`/?accounting=${outcome}&provider=xero`);
-      expect(await screen.findByText(message)).toBeInTheDocument();
+      const note = await screen.findByRole('alert');
+      expect(note).toHaveTextContent(message);
+      expect(note).toHaveTextContent(/Press Connect to try again/);
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('announces the one outcome that did work', async () => {
+      mockApi();
+      renderComponent('/?accounting=connected&provider=xero');
+      const note = await screen.findByRole('status');
+      expect(note).toHaveTextContent('Connected to Xero — you can import financials now.');
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
 
     it('will not print a provider name the callback could not have sent', async () => {
