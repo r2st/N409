@@ -57,7 +57,8 @@ const DECIDED: Record<string, Verdict> = {
   'repos/boardApprovals.ts :: board_resolutions': {
     unguarded:
       'the aggregate is recomputed from the sign-offs under a FOR UPDATE on the resolution, and a ' +
-      'member added or removed is meant to move it',
+      'member added or removed is meant to move it — except out of `approved`, which R288 refuses ' +
+      'under that same lock rather than letting an addition clear an approval and its `approved_at`',
   },
   'repos/capTableConnections.ts :: cap_table_connections': {
     guard:
@@ -97,7 +98,9 @@ const DECIDED: Record<string, Verdict> = {
   },
   'repos/reportTemplates.ts :: report_templates': {
     unguarded:
-      'activate re-reads the row under a lock on the template *name* and archive is deliberately ' +
+      'activate re-reads the row under a lock on the template *name*, and under that lock R288 ' +
+      'refuses an archived target — the route refuses it on the pool, and an archive committing in ' +
+      "between used to restore the row and archive the live one on its way; archive is deliberately " +
       'reachable from any status — a skeleton is withdrawn from whatever state it is in',
   },
   'repos/support.ts :: support_messages': {
