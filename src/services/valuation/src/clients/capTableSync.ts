@@ -589,7 +589,10 @@ export async function fetchCapTable(
     if (!res.ok) {
       throw providerRefused(label, 'cap-table fetch', res);
     }
-    const page1 = await readJson(res, label);
+    // Read against the walk's byte budget rather than the per-response cap:
+    // every page is kept so the mappers can run over the whole capitalization,
+    // so the heap this holds is the sum of them. See `PAGED_PULL_BUDGET_BYTES`.
+    const page1 = await budget.readPage(res);
     pages.push(page1);
     const next = nextPageUrl(page1, e.apiBase);
     if (!next) {

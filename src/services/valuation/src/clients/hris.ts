@@ -461,7 +461,10 @@ async function fetchEmployeePages(
     // provider's own Retry-After instead, and leaves every other status with
     // the wording it had.
     if (!res.ok) throw providerRefused(label, 'roster fetch', res);
-    const payload = await readJson(res, label);
+    // Read against the walk's byte budget rather than the per-response cap:
+    // every page is kept so the mappers can run over the whole roster, so the
+    // heap this holds is the sum of them. See `PAGED_PULL_BUDGET_BYTES`.
+    const payload = await budget.readPage(res);
     pages.push(payload);
     const next = nextPageUrl(payload, e.apiBase);
     if (!next) {

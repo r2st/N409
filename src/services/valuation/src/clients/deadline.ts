@@ -292,6 +292,45 @@ export async function withDeadline<T>(
 export const PAGED_PULL_BUDGET_MS = 120_000;
 
 /**
+ * The most JSON one paged collection may hold in total, across every page.
+ *
+ * {@link MAX_INTEGRATION_JSON_BYTES} bounds *a response*, and the paragraph
+ * above it is explicit about what it is protecting: the process, and with it
+ * the other four services sharing the box, because the one that dies is the one
+ * holding the heap. R259 then turned both import paths into page walks, and a
+ * per-response cap inside a twenty-iteration loop is not a cap — it is twenty of
+ * them. Both walks keep every page (`pages.push(payload)`) so the mappers can
+ * run over the whole collection, so the real bound became
+ * `MAX_PROVIDER_PAGES × 16 MB` = 320 MB of raw bytes, several times that once
+ * parsed, and the HRIS sweep runs four connections at a time.
+ *
+ * That is the same mistake {@link PAGED_PULL_BUDGET_MS} was added for, on the
+ * other resource a page walk spends, and it wants the same answer: a budget for
+ * the walk rather than an allowance per page. No status code is involved and
+ * nothing in the log says "too big" — the process is simply killed — so it
+ * cannot be left to be noticed.
+ *
+ * 32 MB is twice what any single answer may be and several times the largest
+ * honest pull this platform has seen (a few thousand grants, well under 5 MB).
+ * Paging exists because pages are *small*; a collection that needs twenty of
+ * them and 32 MB is not one this import path should be reading at all, which is
+ * what the refusal says.
+ */
+export const PAGED_PULL_BUDGET_BYTES = 32 * 1024 * 1024;
+
+/**
+ * What a page walk spends, in both the resources one can be spent in.
+ *
+ * `readPage` rather than a byte allowance the caller subtracts from: the count
+ * that matters is what came off the socket, which only the reader knows, and a
+ * budget a call site has to remember to charge is one a new call site forgets.
+ */
+export interface PagedPullBudget {
+  nextPageTimeoutMs: () => number;
+  readPage: (res: Response) => Promise<Record<string, unknown>>;
+}
+
+/**
  * The shrinking deadline of one paged pull.
  *
  * Transient, like {@link withDeadline}'s own timeout and for the same reason: a
@@ -302,8 +341,10 @@ export function pagedPullBudget(
   label: string,
   budgetMs: number = PAGED_PULL_BUDGET_MS,
   now: () => number = Date.now,
-): { nextPageTimeoutMs: () => number } {
+  budgetBytes: number = PAGED_PULL_BUDGET_BYTES,
+): PagedPullBudget {
   const endsAt = now() + budgetMs;
+  let bytesLeft = budgetBytes;
   return {
     nextPageTimeoutMs() {
       const left = endsAt - now();
@@ -317,6 +358,28 @@ export function pagedPullBudget(
         );
       }
       return Math.min(left, IMPORT_TIMEOUT_MS);
+    },
+    async readPage(res: Response): Promise<Record<string, unknown>> {
+      const limit = Math.min(bytesLeft, MAX_INTEGRATION_JSON_BYTES);
+      const bytes = await readCappedBytes(res, limit);
+      if (bytes === null) {
+        // Which bound was reached decides which sentence is true. A single body
+        // over the per-response cap is the failure {@link readJson} names; a
+        // walk that got there by accumulating is the one this budget exists for,
+        // and telling the analyst one page was too big would send them looking
+        // for a page that is not there.
+        throw markFailure(
+          new IntegrationError(
+            limit < MAX_INTEGRATION_JSON_BYTES
+              ? `${label} sent more than ${asMb(budgetBytes)} MB across the pages of one import — the ` +
+                  'import was stopped rather than held in memory. Try again, or import from a file.'
+              : `${label} returned a response larger than ${OVERSIZE_MB} MB`,
+          ),
+          'transient',
+        );
+      }
+      bytesLeft -= bytes.byteLength;
+      return parseJsonObject(new TextDecoder().decode(bytes), label);
     },
   };
 }
@@ -340,7 +403,9 @@ export function pagedPullBudget(
  */
 export const MAX_INTEGRATION_JSON_BYTES = 16 * 1024 * 1024;
 
-const OVERSIZE_MB = MAX_INTEGRATION_JSON_BYTES / (1024 * 1024);
+const asMb = (bytes: number): number => bytes / (1024 * 1024);
+
+const OVERSIZE_MB = asMb(MAX_INTEGRATION_JSON_BYTES);
 
 /**
  * Reads a body to a Buffer, or `null` if it runs past `limitBytes`.
@@ -410,7 +475,18 @@ async function readCappedText(res: Response, label: string): Promise<string> {
  * refusal, named as such, rather than a dead process.
  */
 export async function readJson(res: Response, label: string): Promise<Record<string, unknown>> {
-  const text = await readCappedText(res, label);
+  return parseJsonObject(await readCappedText(res, label), label);
+}
+
+/**
+ * The parse half of {@link readJson}, shared with a page walk's `readPage`.
+ *
+ * Split out rather than duplicated: a walk reads its bytes against the budget in
+ * {@link pagedPullBudget} instead of the per-response cap, but everything it
+ * then does with them — and every refusal it words — has to be the one every
+ * other provider body gets.
+ */
+function parseJsonObject(text: string, label: string): Record<string, unknown> {
   let body: unknown;
   try {
     body = JSON.parse(text);

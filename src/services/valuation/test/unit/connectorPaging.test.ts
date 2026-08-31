@@ -3,8 +3,10 @@ import { fetchRosterAndGrants, type FetchFn } from '../../src/clients/hris.js';
 import { fetchCapTable } from '../../src/clients/capTableSync.js';
 import {
   IntegrationError,
+  MAX_INTEGRATION_JSON_BYTES,
   MAX_PROVIDER_PAGES,
   nextPageUrl,
+  PAGED_PULL_BUDGET_BYTES,
   PAGED_PULL_BUDGET_MS,
   pagedPullBudget,
   providerSaysMore,
@@ -195,6 +197,75 @@ describe('fetchCapTable paging', () => {
  * time out of twenty-five due — into an hour, dropping every tick underneath
  * it.
  */
+/**
+ * The other resource a page walk spends (round 265, methodology M6).
+ *
+ * `MAX_INTEGRATION_JSON_BYTES` bounds *a response*, and it says what it is
+ * protecting: the process, and with it the four other services on the box,
+ * because the one that dies is the one holding the heap. Both walks keep every
+ * page so the mappers can run over the whole collection, so a per-response cap
+ * inside a twenty-iteration loop made the real bound 320 MB — the same shape
+ * that made a per-request deadline into twenty of them.
+ */
+describe('the bytes a paged pull may hold across all its pages (R265)', () => {
+  const body = (bytes: number) => new Response(JSON.stringify({ pad: 'x'.repeat(bytes) }), { status: 200 });
+
+  it('reads pages until the walk budget is spent, not until each page is too big', async () => {
+    const budget = pagedPullBudget('Gusto', 120_000, () => 0, 400);
+    expect(await budget.readPage(body(100))).toHaveProperty('pad');
+    expect(await budget.readPage(body(100))).toHaveProperty('pad');
+    // Each page is far inside the per-response cap; together they are past the
+    // walk's, which is the only bound that describes what is held in memory.
+    await expect(budget.readPage(body(300))).rejects.toThrow(/across the pages of one import/);
+  });
+
+  it('says a retry is worth it, like the time budget beside it', async () => {
+    const budget = pagedPullBudget('Carta', 120_000, () => 0, 50);
+    const err = await budget.readPage(body(200)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(IntegrationError);
+    expect(classifyFailure(err).kind).toBe('transient');
+  });
+
+  it('still names an oversized single response as one', async () => {
+    // The two bounds want two sentences: telling the analyst one page was too
+    // big when the walk got there by accumulating sends them looking for a page
+    // that is not there, and the reverse hides a provider that really did send
+    // one enormous body.
+    const budget = pagedPullBudget('Gusto');
+    const huge = new Response('{}', {
+      status: 200,
+      headers: { 'content-length': String(MAX_INTEGRATION_JSON_BYTES + 1) },
+    });
+    await expect(budget.readPage(huge)).rejects.toThrow(/larger than 16 MB/);
+  });
+
+  it('refuses a non-JSON page in the wording every other provider body gets', async () => {
+    const budget = pagedPullBudget('Gusto');
+    const html = new Response('<html><head>', { status: 200 });
+    await expect(budget.readPage(html)).rejects.toThrow(/returned a non-JSON response/);
+    await expect(pagedPullBudget('Gusto').readPage(new Response('[]', { status: 200 }))).rejects.toThrow(
+      /unexpected response body/,
+    );
+  });
+
+  it('is the same byte budget for every paged pull, and wider than one answer', () => {
+    expect(PAGED_PULL_BUDGET_BYTES).toBe(32 * 1024 * 1024);
+    expect(PAGED_PULL_BUDGET_BYTES).toBeGreaterThan(MAX_INTEGRATION_JSON_BYTES);
+  });
+
+  it('is the walk that reads the page, on both families', async () => {
+    // The wiring, stated where it can regress: a walk still reading through
+    // `readJson` would take the per-response cap and none of the budget above.
+    const oversized = (async () =>
+      new Response('{}', {
+        status: 200,
+        headers: { 'content-length': String(MAX_INTEGRATION_JSON_BYTES + 1) },
+      })) as FetchFn;
+    await expect(fetchRosterAndGrants('gusto', tokens, oversized)).rejects.toThrow(/larger than 16 MB/);
+    await expect(fetchCapTable('carta', tokens, oversized)).rejects.toThrow(/larger than 16 MB/);
+  });
+});
+
 describe('the budget a paged pull spends across all its pages (R261)', () => {
   it('gives the first page the per-request deadline, not the whole budget', () => {
     const budget = pagedPullBudget('Carta', 120_000, () => 1_000);
