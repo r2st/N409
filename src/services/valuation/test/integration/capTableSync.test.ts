@@ -3,7 +3,8 @@ import { createValuation } from '../../src/repos/valuations.js';
 import { findCapTable } from '../../src/repos/capTables.js';
 import { MAX_CAP_TABLE_ENTRIES } from '../../src/domain/capTable.js';
 import { signCapTableSyncState } from '../../src/auth/jwt.js';
-import { runDueCapTableSyncs } from '../../src/routes/capTableSync.js';
+import { runDueCapTableSyncs, syncCapTableConnection } from '../../src/routes/capTableSync.js';
+import { findConnection } from '../../src/repos/capTableConnections.js';
 import {
   authHeader,
   interceptPoolQueries,
@@ -519,5 +520,152 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
     // Bounded to 4 in flight, yet genuinely concurrent (>1 at once).
     expect(peak).toBeLessThanOrEqual(4);
     expect(peak).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * The window between "there is nothing on file" and the write that relies on it
+ * (round 268, methodology M5).
+ *
+ * A pull asked *not* to apply applies anyway when the valuation has no cap
+ * table — "nothing to disturb" — and that read is a separate statement from the
+ * write, with a diff, a validation pass and an `await` in between.
+ * `saveCapTable` upserts, so an import that commits inside that window was
+ * replaced by the provider's table, by a pull that was told not to write, under
+ * a `system` actor and with nothing refused anywhere.
+ *
+ * Reproduced by committing the import from inside the window itself — hooked on
+ * the `SELECT` that reads the absence — rather than by racing two timers.
+ */
+describe.skipIf(!dbUp)('cap-table preview against a table that arrives mid-pull', () => {
+  let ctx: TestApp;
+  let ops: Awaited<ReturnType<typeof seedUser>>;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp(CARTA_ENV, {
+      capTableSyncFetch: mockFetch(() => CARTA_V1) as unknown as typeof fetch,
+    });
+    ops = await seedUser(ctx, { roles: ['admin'] });
+  });
+  afterAll(async () => ctx?.teardown());
+
+  const SHEET = [
+    'class,shares,price,invested',
+    'Common Stock,4000000,0.10,',
+    '"Series Seed",1000000,1.00,1000000',
+  ].join('\n');
+
+  /** A connected Carta connection on a fresh valuation. */
+  async function connected(company: string) {
+    const v = await createValuation(
+      ctx.pool,
+      { kind: '409a', companyName: company, userId: ops.id },
+      { actorType: 'human', actorId: ops.id, source: 'test' },
+    );
+    const state = await signCapTableSyncState(
+      { valuationId: v.id, provider: 'carta', userId: ops.id },
+      { secret: 'integration-test-secret-0123456789abcdef', issuer: 'n409', ttlSeconds: 3600 },
+    );
+    const cb = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/cap-table-sync/callback?state=${encodeURIComponent(state)}&code=abc&company_id=co_1`,
+    });
+    expect(cb.statusCode).toBe(302);
+    return { valuationId: v.id, connection: (await findConnection(ctx.pool, v.id, 'carta'))! };
+  }
+
+  it('refuses to replace it, and leaves the connection healthy', async () => {
+    const { valuationId, connection } = await connected('Race Import Co');
+
+    // The colleague's spreadsheet commits in the window itself: on the way back
+    // from the very SELECT that told the pull there was nothing on file.
+    let raced = false;
+    const restore = interceptPoolQueries(ctx.pool, async (sql, phase) => {
+      if (raced || phase !== 'after') return;
+      if (!sql.includes('SELECT * FROM cap_tables WHERE valuation_id')) return;
+      raced = true;
+      const put = await ctx.app.inject({
+        method: 'PUT',
+        url: `/api/v1/valuations/${valuationId}/cap-table`,
+        headers: authHeader(ops.token),
+        payload: { format: 'generic', csv: SHEET },
+      });
+      expect(put.statusCode).toBe(200);
+    });
+
+    try {
+      await expect(
+        syncCapTableConnection(
+          {
+            pool: ctx.pool,
+            fetchFn: mockFetch(() => CARTA_V1) as unknown as typeof fetch,
+            log: silentLog,
+          },
+          connection,
+          { apply: false, actorId: ops.id },
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+    } finally {
+      restore();
+    }
+    expect(raced).toBe(true);
+
+    // The spreadsheet stands, at the version its own import wrote.
+    const saved = await findCapTable(ctx.pool, valuationId);
+    expect(saved?.source_format).toBe('generic');
+    expect(saved?.entries.length).toBe(2);
+    expect(saved?.version).toBe(1);
+
+    // And the connection is untouched: nothing about it failed, so nothing may
+    // spend a rung of its backoff ladder or put a message on its card.
+    const { rows } = await ctx.pool.query<{
+      status: string;
+      last_error: string | null;
+      sync_failures: number;
+    }>('SELECT status, last_error, sync_failures FROM cap_table_connections WHERE id = $1', [connection.id]);
+    expect(rows[0]).toMatchObject({ status: 'connected', last_error: null, sync_failures: 0 });
+  });
+
+  it('still applies a first pull when nothing lands in the window', async () => {
+    const { valuationId, connection } = await connected('Quiet Import Co');
+    const outcome = await syncCapTableConnection(
+      { pool: ctx.pool, fetchFn: mockFetch(() => CARTA_V1) as unknown as typeof fetch, log: silentLog },
+      connection,
+      { apply: false, actorId: ops.id },
+    );
+    expect(outcome.applied).toBe(true);
+    expect((await findCapTable(ctx.pool, valuationId))?.source_format).toBe('carta');
+  });
+
+  /**
+   * The sweep is not guarded, and must not be: it always applies, so a person
+   * touching the table between two ticks is not a reason to refuse the pull.
+   */
+  it('lets a pull that was asked to apply replace a table that arrived mid-pull', async () => {
+    const { valuationId, connection } = await connected('Applied Import Co');
+    let raced = false;
+    const restore = interceptPoolQueries(ctx.pool, async (sql, phase) => {
+      if (raced || phase !== 'after') return;
+      if (!sql.includes('SELECT * FROM cap_tables WHERE valuation_id')) return;
+      raced = true;
+      await ctx.app.inject({
+        method: 'PUT',
+        url: `/api/v1/valuations/${valuationId}/cap-table`,
+        headers: authHeader(ops.token),
+        payload: { format: 'generic', csv: SHEET },
+      });
+    });
+    try {
+      const outcome = await syncCapTableConnection(
+        { pool: ctx.pool, fetchFn: mockFetch(() => CARTA_V1) as unknown as typeof fetch, log: silentLog },
+        connection,
+        { apply: true, actorId: ops.id },
+      );
+      expect(outcome.applied).toBe(true);
+    } finally {
+      restore();
+    }
+    expect(raced).toBe(true);
+    expect((await findCapTable(ctx.pool, valuationId))?.source_format).toBe('carta');
   });
 });

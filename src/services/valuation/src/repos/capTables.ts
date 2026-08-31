@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { newUlid, problems } from '@n409/shared';
+import { ApiProblem, newUlid, problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import {
@@ -40,6 +40,33 @@ function staleWrite(current: number | undefined, expected: number): never {
     `This cap table was changed by someone else (expected version ${expected}, ` +
       `now ${current ?? 'unknown'}). Reload and reapply your changes.`,
   );
+}
+
+/**
+ * The 409 an `expectAbsent` write is refused with.
+ *
+ * Its own sentence rather than `staleWrite`'s, because the caller asserted
+ * something else: not "I read version N" but "there was nothing here". Naming a
+ * version it never held would send the reader looking for a read it never made.
+ *
+ * Its own *type* because of who catches it. The provider sync wraps this write
+ * in the catch that records a failure on the connection and puts it on a
+ * backoff, and this is not that: the pull worked, the provider is well, and the
+ * only thing that happened is that somebody else got there first. A caller has
+ * to be able to tell those apart by something better than a status code, and
+ * the class still renders as the 409 it is if one ever lets it through.
+ */
+export class CapTableAppearedError extends ApiProblem {
+  constructor() {
+    super({
+      status: 409,
+      title: 'Conflict',
+      type: 'urn:n409:problem:conflict',
+      detail:
+        'A cap table was saved for this valuation while the provider pull was running, and this pull ' +
+        'was not asked to replace one. Reload and pull again.',
+    });
+  }
 }
 
 /**
@@ -108,6 +135,25 @@ export interface SaveCapTableOptions {
    * that a sync landed underneath it.
    */
   expectedVersion?: number;
+  /**
+   * The write is authorised by there being no table to disturb, and says so
+   * (round 268, methodology M5).
+   *
+   * The exemption above is right about the provider sync's ordinary case and
+   * has a hole in the one branch where the sync *does* read this row. A pull
+   * asked not to apply (`apply: false`) applies anyway when the valuation has
+   * no cap table yet — "there is nothing to disturb" — and that read is a
+   * separate statement from the write that relies on it, with a diff, a
+   * validation pass and an `await` in between. An import that commits inside
+   * that window has its table replaced by the provider's, by a pull that was
+   * told not to write, under a `system` actor and with nothing refused.
+   *
+   * `ON CONFLICT DO NOTHING` is the whole guard: it asks the question in the
+   * statement that acts on the answer, so there is no window left, and it needs
+   * no `FOR UPDATE` — a row that does not exist yet cannot be locked, which is
+   * exactly why the `expectedVersion` shape below could not cover this case.
+   */
+  expectAbsent?: boolean;
 }
 
 /** Insert-or-replace the valuation's cap table with a fresh import. */
@@ -124,7 +170,7 @@ export async function saveCapTable(
   actor: EventActor,
   options: SaveCapTableOptions = {},
 ): Promise<CapTableRow> {
-  const { expectedVersion } = options;
+  const { expectedVersion, expectAbsent } = options;
   return withTransaction(pool, async (client) => {
     if (expectedVersion !== undefined) {
       // `FOR UPDATE` is what makes this a check rather than a race of its own:
@@ -148,7 +194,10 @@ export async function saveCapTable(
     const { rows } = await client.query<CapTableRow>(
       `INSERT INTO cap_tables (id, valuation_id, source_format, entries, validation, column_mapping, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (valuation_id) DO UPDATE SET
+       ${
+         expectAbsent
+           ? 'ON CONFLICT (valuation_id) DO NOTHING'
+           : `ON CONFLICT (valuation_id) DO UPDATE SET
          source_format  = EXCLUDED.source_format,
          entries        = EXCLUDED.entries,
          validation     = EXCLUDED.validation,
@@ -158,7 +207,8 @@ export async function saveCapTable(
          -- reset the counter on every import and make a stale ETag look current
          -- again. Every write moves it forward, whether or not this caller
          -- asked to be guarded.
-         version        = cap_tables.version + 1
+         version        = cap_tables.version + 1`
+       }
        RETURNING *`,
       [
         newUlid(),
@@ -170,6 +220,10 @@ export async function saveCapTable(
         input.createdBy,
       ],
     );
+    // `DO NOTHING` returns no row when one was already there, which is the
+    // refusal — and it must be raised before the event, or the trail records an
+    // import that did not happen.
+    if (rows.length === 0) throw new CapTableAppearedError();
     await recordEvent(client, {
       valuationId: input.valuationId,
       type: CAP_TABLE_EVENT_TYPES.imported,

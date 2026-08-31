@@ -29,7 +29,7 @@ import {
   upsertConnection,
   type CapTableConnectionRow,
 } from '../repos/capTableConnections.js';
-import { findCapTable, saveCapTable } from '../repos/capTables.js';
+import { CapTableAppearedError, findCapTable, saveCapTable } from '../repos/capTables.js';
 import { MAX_CAP_TABLE_ENTRIES, validateCapTable } from '../domain/capTable.js';
 import { diffCapTables, type CapTableDiff } from '../domain/capTableSync.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
@@ -284,6 +284,24 @@ export async function syncCapTableConnection(
     // Apply when asked, or when there is no on-file table to disturb. Never
     // persist an invalid pull.
     applied = validation.valid && (opts.apply || !existing);
+    /*
+     * And when the *only* thing authorising the write is that absence, say so
+     * to the statement that performs it (round 268, methodology M5).
+     *
+     * `!existing` is one statement and the write is another, with a diff over
+     * both tables, a validation pass and an `await` between them — long enough
+     * for the import route next door to commit, which is all a race needs.
+     * `saveCapTable` upserts, so the table that arrived is replaced by the
+     * provider's, by a pull that was told `apply: false`, under a `system`
+     * actor and with no refusal anywhere: the analyst who just imported their
+     * spreadsheet sees Carta's table on the tab and their own import event
+     * above it.
+     *
+     * Only in this branch. A pull asked to apply is asked to replace whatever
+     * is there, and guarding it would refuse the scheduled sweep — which always
+     * applies — every time a person touched the table between two ticks.
+     */
+    const authorisedByAbsence = applied && !opts.apply;
     if (applied) {
       const actor: EventActor = {
         actorType: 'system',
@@ -301,9 +319,22 @@ export async function syncCapTableConnection(
           createdBy: opts.actorId,
         },
         actor,
+        { expectAbsent: authorisedByAbsence },
       );
     }
   } catch (err) {
+    /*
+     * Except the one refusal that is not a sync failure (round 268, M5).
+     *
+     * `expectAbsent` above refuses a preview whose authorisation — that there
+     * was no table to disturb — stopped being true while the provider was
+     * answering. Nothing is wrong with the connection: the pull succeeded, and
+     * the write was declined on purpose. Recording it would move a healthy
+     * connection to `error`, spend a rung of the backoff ladder and put a
+     * message on the card about a race between two people, so this one leaves
+     * by the door it came in and the caller decides what to say.
+     */
+    if (err instanceof CapTableAppearedError) throw err;
     /*
      * The half of the sync after the pull (round 186, methodology M5).
      *
@@ -606,6 +637,10 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
           { apply: body.apply, actorId: principal.id },
         );
       } catch (err) {
+        // A preview refused because somebody else's table landed first is not a
+        // sync failure and must not be logged as one — see the sync's own note.
+        // It is already a 409 written for this caller to read.
+        if (err instanceof CapTableAppearedError) throw err;
         /**
          * Only wording this codebase vouched for reaches the client.
          *
