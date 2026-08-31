@@ -436,11 +436,39 @@ export async function purgeExpiredOutbox(
          OR (h.scope = 'valuation' AND h.reference_id = e.valuation_id))
   )`;
 
-  // Counted before the delete and over the whole eligible set rather than the
-  // batch, because this number is the operator-facing one: "how much is your
-  // hold holding" is not a question about how far through the backlog we are.
+  /*
+   * Counted before the delete and over the whole eligible set rather than the
+   * batch, because this number is the operator-facing one: "how much is your
+   * hold holding" is not a question about how far through the backlog we are.
+   *
+   * AND GATED ON THERE BEING A HOLD AT ALL, which is the difference between a
+   * whole-backlog scan and nothing (R290). Every conjunct of `frozen` is
+   * correlated to the candidate row, so the planner cannot lift any of it: it
+   * walks every eligible row of `email_outbox` and asks an empty `legal_holds`
+   * about each one in turn. On 300k messages with 270k eligible that is 170ms
+   * and 270,327 blocks to reach the number zero — against 15.7ms and 4,358 for
+   * the DELETE beside it, which is the work the sweep is actually here to do.
+   * It grows with the backlog and nothing bounds it.
+   *
+   * `EXISTS (SELECT 1 FROM legal_holds WHERE active)` correlates to nothing, so
+   * it plans as an InitPlan evaluated once and a One-Time Filter above the
+   * scan: no active hold, no scan. 0.028ms. The conjunct changes no answer
+   * because it is implied by `frozen` — a row that satisfies that EXISTS is a
+   * row for which an active hold exists — so it can only ever short-circuit a
+   * count that was going to be zero.
+   *
+   * Which matters more since R289 than it did before it: the caller now runs
+   * this and the DELETE and the action log in one transaction, so this scan is
+   * time a write transaction is held open rather than a slow read on the pool.
+   *
+   * The comment on `frozen` said the outer EXISTS "finds nothing to expand when
+   * the hold list is empty". That is true of the inner `users` lookup, which is
+   * never executed, and false of the row it is asked about.
+   */
   const { rows: heldRows } = await db.query<{ count: string }>(
-    `SELECT count(*)::text AS count FROM email_outbox e WHERE ${eligible} AND ${frozen}`,
+    `SELECT count(*)::text AS count FROM email_outbox e
+      WHERE EXISTS (SELECT 1 FROM legal_holds lh WHERE lh.active)
+        AND ${eligible} AND ${frozen}`,
     [String(retentionDays), EMAIL_MAX_ATTEMPTS],
   );
 
