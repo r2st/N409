@@ -136,11 +136,23 @@ jobs:
       # already on the deploy target, which are not fresh installs and drift
       # below the floors silently; `tools/check_installed_deps.py`, run by
       # infra/deploy.sh against the host, is the half that covers those.
+      #
+      # Both files, not just the shipping one. The job above installs
+      # `requirements-dev.txt` and then runs pytest out of it, so every dev-only
+      # package executes here with the repository and the workflow token in
+      # scope — the same blast radius a compromised action has, and the one this
+      # pipeline already checks its curl downloads for. Auditing only the
+      # runtime file left that half unscanned. The dev file opens with
+      # `-r requirements.txt`, which pip-audit follows, so its run is a superset;
+      # the runtime line is kept anyway so a failure on something that *ships*
+      # names the file that ships it rather than the dev file that included it.
       - name: pip-audit (Python services)
         run: |
           python -m pip install --upgrade pip pip-audit
           pip-audit -r src/services/ai/requirements.txt
+          pip-audit -r src/services/ai/requirements-dev.txt
           pip-audit -r src/services/engine-wrapper/requirements.txt
+          pip-audit -r src/services/engine-wrapper/requirements-dev.txt
       # The one thing in this pipeline that was never verified was the
       # verifier. `curl ... | tar -xz` streams a release asset straight into an
       # extractor and then executes it, in a job that has the whole repository
