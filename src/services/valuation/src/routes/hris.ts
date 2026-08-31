@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import pLimit from 'p-limit';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems, type FailureLogger } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { signHrisState, verifyHrisState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -48,6 +48,7 @@ import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
 import {
   logConnectorSyncFailure,
   logConnectorSyncRecovered,
+  logSyncBookkeepingFailure,
   type ConnectorLogger,
 } from '../domain/connectorSyncLog.js';
 
@@ -186,6 +187,13 @@ export async function syncHrisConnection(
     pool: pg.Pool;
     fetchFn: FetchFn;
     credentials?: Partial<Record<HrisProvider, ProviderCredentials>>;
+    /**
+     * Where a *bookkeeping* failure goes. The pull's own failure is logged by
+     * both callers, which hold the request or the sweep's logger; the three
+     * best-effort `recordSyncError` writes below are inside this function and
+     * had nowhere to report to at all. See `logSyncBookkeepingFailure`.
+     */
+    log?: FailureLogger;
   },
   connection: HrisConnectionRow,
   opts: { actorId: string },
@@ -219,7 +227,20 @@ export async function syncHrisConnection(
       // — the sentence has said "try again in about 120s" since R255 while the
       // sweep came back in fifteen minutes regardless.
       retryAfterSeconds: retryAfterSecondsFor(err),
-    }).catch(() => undefined);
+    }).catch((bookErr: unknown) => {
+      if (deps.log)
+        logSyncBookkeepingFailure(
+          deps.log,
+          bookErr,
+          {
+            family: 'hris',
+            provider: connection.provider,
+            connectionId: connection.id,
+            valuationId: connection.valuation_id,
+          },
+          'provider fetch failed',
+        );
+    });
     throw err;
   }
 
@@ -341,7 +362,20 @@ export async function syncHrisConnection(
       deps.pool,
       connection,
       `imported ${created} of ${pull.grants.length - skipped} grants, then stopped before finishing`,
-    ).catch(() => undefined);
+    ).catch((bookErr: unknown) => {
+      if (deps.log)
+        logSyncBookkeepingFailure(
+          deps.log,
+          bookErr,
+          {
+            family: 'hris',
+            provider: connection.provider,
+            connectionId: connection.id,
+            valuationId: connection.valuation_id,
+          },
+          'import stopped partway',
+        );
+    });
     throw err;
   }
 
@@ -379,7 +413,20 @@ export async function syncHrisConnection(
      * the honest version of that: it stops the re-pull, and it is in front of
      * the person who can look. Best-effort, like every write in a catch here.
      */
-    await recordSyncError(deps.pool, connection, SYNC_UNRECORDED).catch(() => undefined);
+    await recordSyncError(deps.pool, connection, SYNC_UNRECORDED).catch((bookErr: unknown) => {
+      if (deps.log)
+        logSyncBookkeepingFailure(
+          deps.log,
+          bookErr,
+          {
+            family: 'hris',
+            provider: connection.provider,
+            connectionId: connection.id,
+            valuationId: connection.valuation_id,
+          },
+          'sync succeeded',
+        );
+    });
     throw err;
   }
   return outcome;
@@ -408,9 +455,11 @@ export async function runDueHrisSyncs(deps: {
     due.map((connection) =>
       limit(async () => {
         try {
-          await syncHrisConnection({ pool: deps.pool, fetchFn, credentials: deps.credentials }, connection, {
-            actorId: connection.connected_by ?? connection.id,
-          });
+          await syncHrisConnection(
+            { pool: deps.pool, fetchFn, credentials: deps.credentials, log: deps.log },
+            connection,
+            { actorId: connection.connected_by ?? connection.id },
+          );
           // A connection the backoff brought back. Read off the row this tick
           // started from, because `recordSync` has just cleared it.
           if (deps.log) {
@@ -554,7 +603,7 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
     }
     try {
       return await syncHrisConnection(
-        { pool: deps.pool, fetchFn, credentials: deps.credentials },
+        { pool: deps.pool, fetchFn, credentials: deps.credentials, log: req.log },
         connection,
         { actorId: principal.id },
       );

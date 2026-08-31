@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import pLimit from 'p-limit';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems, type FailureLogger } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { signCapTableSyncState, verifyCapTableSyncState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -48,6 +48,7 @@ import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
 import {
   logConnectorSyncFailure,
   logConnectorSyncRecovered,
+  logSyncBookkeepingFailure,
   type ConnectorLogger,
 } from '../domain/connectorSyncLog.js';
 
@@ -171,6 +172,13 @@ export async function syncCapTableConnection(
     pool: pg.Pool;
     fetchFn: FetchFn;
     credentials?: Partial<Record<CapTableProvider, ProviderCredentials>>;
+    /**
+     * Where a *bookkeeping* failure goes. The pull's own failure is logged by
+     * both callers, which hold the request or the sweep's logger; the three
+     * best-effort `recordSyncError` writes below are inside this function and
+     * had nowhere to report to at all. See `logSyncBookkeepingFailure`.
+     */
+    log?: FailureLogger;
   },
   connection: CapTableConnectionRow,
   opts: { apply: boolean; actorId: string },
@@ -206,7 +214,20 @@ export async function syncCapTableConnection(
       terminal: err instanceof ReconnectRequiredError,
       // See `recordSyncError`: a provider that named a wait is waited for.
       retryAfterSeconds: retryAfterSecondsFor(err),
-    }).catch(() => undefined);
+    }).catch((bookErr: unknown) => {
+      if (deps.log)
+        logSyncBookkeepingFailure(
+          deps.log,
+          bookErr,
+          {
+            family: 'cap_table',
+            provider: connection.provider,
+            connectionId: connection.id,
+            valuationId: connection.valuation_id,
+          },
+          'provider fetch failed',
+        );
+    });
     throw err;
   }
 
@@ -236,7 +257,20 @@ export async function syncCapTableConnection(
     const message =
       `the provider returned ${pulled.entries.length} securities; at most ` +
       `${MAX_CAP_TABLE_ENTRIES} can be stored as one cap table`;
-    await recordSyncError(deps.pool, connection, message).catch(() => undefined);
+    await recordSyncError(deps.pool, connection, message).catch((bookErr: unknown) => {
+      if (deps.log)
+        logSyncBookkeepingFailure(
+          deps.log,
+          bookErr,
+          {
+            family: 'cap_table',
+            provider: connection.provider,
+            connectionId: connection.id,
+            valuationId: connection.valuation_id,
+          },
+          'provider table too large',
+        );
+    });
     throw new IntegrationError(`${CAP_TABLE_PROVIDER_LABELS[connection.provider]}: ${message}`);
   }
 
@@ -298,7 +332,20 @@ export async function syncCapTableConnection(
       deps.pool,
       connection,
       'the provider cap table was pulled but could not be saved',
-    ).catch(() => undefined);
+    ).catch((bookErr: unknown) => {
+      if (deps.log)
+        logSyncBookkeepingFailure(
+          deps.log,
+          bookErr,
+          {
+            family: 'cap_table',
+            provider: connection.provider,
+            connectionId: connection.id,
+            valuationId: connection.valuation_id,
+          },
+          'pull could not be saved',
+        );
+    });
     throw err;
   }
 
@@ -329,7 +376,20 @@ export async function syncCapTableConnection(
      * unchecked; the shape stays open for anything else that can fail one
      * UPDATE.
      */
-    await recordSyncError(deps.pool, connection, SYNC_UNRECORDED).catch(() => undefined);
+    await recordSyncError(deps.pool, connection, SYNC_UNRECORDED).catch((bookErr: unknown) => {
+      if (deps.log)
+        logSyncBookkeepingFailure(
+          deps.log,
+          bookErr,
+          {
+            family: 'cap_table',
+            provider: connection.provider,
+            connectionId: connection.id,
+            valuationId: connection.valuation_id,
+          },
+          'sync succeeded',
+        );
+    });
     throw err;
   }
 
@@ -368,7 +428,7 @@ export async function runDueCapTableSyncs(deps: {
       limit(async () => {
         try {
           await syncCapTableConnection(
-            { pool: deps.pool, fetchFn, credentials: deps.credentials },
+            { pool: deps.pool, fetchFn, credentials: deps.credentials, log: deps.log },
             connection,
             {
               apply: true,
@@ -532,7 +592,7 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       let outcome;
       try {
         outcome = await syncCapTableConnection(
-          { pool: deps.pool, fetchFn, credentials: deps.credentials },
+          { pool: deps.pool, fetchFn, credentials: deps.credentials, log: req.log },
           connection,
           { apply: body.apply, actorId: principal.id },
         );

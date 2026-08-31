@@ -103,6 +103,57 @@ export function logConnectorSyncRecovered(log: ConnectorLogger, subject: Connect
   );
 }
 
+/**
+ * The compensating write itself failed (round 267, methodology M11).
+ *
+ * Every sync in the HRIS and cap-table families ends its catch blocks with a
+ * `recordSyncError(…)` — the write that puts `status = 'error'` and a backoff on
+ * the row. It is deliberately best-effort: it is a query against the same pool
+ * that may be the reason the sync failed, and a rejection from it would replace
+ * an accurate "Gusto roster fetch failed (503)" with a 500 about something else.
+ *
+ * What it was not is *silent*. Six sites spelled it `.catch(() => undefined)`,
+ * and that discards the one outcome that decides whether anything recovers.
+ * `recordSync`/`recordSyncError` are the only writers that move `next_sync_at`,
+ * so a connection whose bookkeeping did not land keeps `status = 'connected'`
+ * and a due date already in the past: `findDueConnections` picks it up on every
+ * fifteen-minute tick and re-pulls the provider's whole roster or cap table,
+ * forever, behind a card that reads healthy — the exact state R186 and R261
+ * added these calls to remove. The failure line beside it describes the
+ * *original* error and reads as though the connection had been put on the
+ * backoff, which is the opposite of what happened.
+ *
+ * `logUnretried`, not `logFailure`: nothing comes back for this write. The next
+ * tick re-runs the pull, not the bookkeeping, and if the pull now succeeds the
+ * row is corrected by luck rather than by a retry. The cause is usually a busy
+ * pool — transient, and `warn` under the ordinary contract — but the contract's
+ * own words are that transient is `warn` *because the retry is going to handle
+ * it*, and the consequence here outlives the cause.
+ *
+ * The accounting family has logged its twin since R207 (`could not record
+ * import error`, at `warn`, on a manual route with no sweep behind it). This is
+ * the same event on the two families that are swept.
+ */
+export function logSyncBookkeepingFailure(
+  log: FailureLogger,
+  err: unknown,
+  subject: ConnectorSyncSubject,
+  recording: string,
+): void {
+  logUnretried(
+    log,
+    err,
+    {
+      connectionId: subject.connectionId,
+      valuationId: subject.valuationId,
+      family: subject.family,
+      provider: subject.provider,
+      recording,
+    },
+    `${FAMILY_LABEL[subject.family]} sync outcome could not be recorded — the connection is still due`,
+  );
+}
+
 export function logConnectorSyncFailure(
   log: FailureLogger,
   err: unknown,

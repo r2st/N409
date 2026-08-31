@@ -6,7 +6,10 @@ import {
   providerRefused,
   withDeadline,
 } from '../../src/clients/deadline.js';
-import { logConnectorSyncFailure } from '../../src/domain/connectorSyncLog.js';
+import { logConnectorSyncFailure, logSyncBookkeepingFailure } from '../../src/domain/connectorSyncLog.js';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * What the log says when a scheduled connector stops.
@@ -151,5 +154,75 @@ describe('an integration failure says what kind it is', () => {
 
   it('leaves an error with no status alone rather than guessing', () => {
     expect(new IntegrationError('Gusto returned a non-JSON response').status).toBeUndefined();
+  });
+});
+
+/**
+ * The write that was supposed to stop the loop, and what it said when it did
+ * not (round 267, methodology M11).
+ *
+ * `recordSyncError` is called from inside every catch in both swept families,
+ * and it is what puts `status = 'error'` and a backoff on the row. It is
+ * best-effort on purpose — a rejection from it would replace an accurate
+ * "Gusto roster fetch failed (503)" with a 500 about something else. It was
+ * also completely silent: six `.catch(() => undefined)`. What that discards is
+ * the outcome that decides whether anything recovers, because `recordSync` and
+ * `recordSyncError` are the only writers that move `next_sync_at` — so a
+ * connection whose bookkeeping did not land stays `connected` and already due,
+ * and `findDueConnections` re-pulls the provider's whole collection every
+ * fifteen minutes behind a card reading healthy.
+ */
+describe('a connector sync whose bookkeeping did not land (R267)', () => {
+  it('alerts, and says nothing is coming back for it', () => {
+    const log = recorder();
+    logSyncBookkeepingFailure(
+      log,
+      new Error('remaining connection slots are reserved'),
+      subject,
+      'sync succeeded',
+    );
+    expect(log.lines).toHaveLength(1);
+    const [line] = log.lines;
+    // Error, not warn. The cause is usually a busy pool — transient under the
+    // ordinary contract — but `warn` there promises the retry handles it, and
+    // the next tick re-runs the *pull*, never this write.
+    expect(line?.level).toBe('error');
+    expect(line?.fields).toMatchObject({
+      alert: true,
+      retried: false,
+      family: 'hris',
+      provider: 'gusto',
+      connectionId: '01HZCONN',
+      valuationId: '01HZVAL',
+      recording: 'sync succeeded',
+    });
+    // The consequence, not just the event: the row is still due.
+    expect(line?.message).toMatch(/still due/);
+  });
+
+  it('names which of the outcomes was lost, since they leave different rows behind', () => {
+    const log = recorder();
+    logSyncBookkeepingFailure(
+      log,
+      new Error('x'),
+      { ...subject, family: 'cap_table' },
+      'pull could not be saved',
+    );
+    expect(log.lines[0]?.fields).toMatchObject({ family: 'cap_table', recording: 'pull could not be saved' });
+    expect(log.lines[0]?.message).toMatch(/^cap-table /);
+  });
+
+  it('leaves no bookkeeping write in the two swept families still discarding its own failure', () => {
+    // The census half. Six sites spelled the swallow `.catch(() => undefined)`,
+    // and a seventh added next year would read exactly like them.
+    const src = dirname(fileURLToPath(import.meta.url));
+    for (const file of ['hris.ts', 'capTableSync.ts']) {
+      const text = readFileSync(join(src, '../../src/routes', file), 'utf8');
+      // Every `recordSyncError` in these files is inside a catch and must
+      // report its own rejection somewhere.
+      const swallows = text.match(/recordSyncError\([\s\S]*?\)\s*\.catch\(\(\)\s*=>\s*undefined\)/g) ?? [];
+      expect(swallows, `${file} discards a bookkeeping failure`).toHaveLength(0);
+      expect(text).toContain('logSyncBookkeepingFailure');
+    }
   });
 });
