@@ -59,6 +59,31 @@ const SCREEN_TIMEOUT_MS = 20_000;
  */
 const FEED_TIMEOUT_MS = 8_000;
 
+/**
+ * Tickers one refresh will fetch, however many the set holds.
+ *
+ * The comment above states the rule this number is what actually enforces. A
+ * per-ticker timeout bounds one fetch and says nothing about the request: the
+ * loop is sequential, so a set of N holds the connection for up to N x 8s while
+ * the far end is slow, and `COMPARABLE_PAGE_LIMIT` - the only ceiling there was
+ * - puts that at 500 tickers and sixty-six minutes. Node destroys the socket at
+ * five, by which time every row the loop had already committed is invisible:
+ * the analyst gets a gateway timeout and no way to know which comps carry live
+ * figures and which still carry their old ones.
+ *
+ * Comfortably above any real peer set - the screener offers at most twelve, and
+ * `ScreenBody.limit` caps a run there - so this is a ceiling on the pathological
+ * set, not a limit an analyst meets. Twenty-five worst-case fetches is 200s,
+ * which fits inside the request timeout with room for the rest of the handler.
+ *
+ * Ordered by staleness rather than the set's display order, which is
+ * `included DESC, score DESC, name ASC` and has nothing to do with when a row
+ * was last fetched. Slicing the display order would refresh the same
+ * twenty-five on every press and never reach the twenty-sixth; oldest-first
+ * means a second press picks up where the first stopped.
+ */
+const REFRESH_BATCH = 25;
+
 /** The `financials` shape of `engine/v1/market-feed` (engine market_feed.py). */
 interface MarketFeedResponse {
   /** `"yfinance"` when observed; `"fallback"` when the live source could not answer. */
@@ -570,10 +595,18 @@ export function registerComparableRoutes(
         );
       }
 
+      // Never fetched sorts first; after that, longest ago first. The column is
+      // nullable and the sentinel has to sort below every real timestamp.
+      const byStaleness = [...targets].sort(
+        (a, b) => (a.figures_as_of?.getTime() ?? -1) - (b.figures_as_of?.getTime() ?? -1),
+      );
+      const batch = byStaleness.slice(0, REFRESH_BATCH);
+      const remaining = targets.length - batch.length;
+
       const refreshed: Array<{ ticker: string; as_of: string }> = [];
       const unavailable: Array<{ ticker: string; warning: string }> = [];
 
-      for (const row of targets) {
+      for (const row of batch) {
         const ticker = row.ticker!;
         let feed: MarketFeedResponse;
         try {
@@ -641,6 +674,11 @@ export function registerComparableRoutes(
         page_limit: COMPARABLE_PAGE_LIMIT,
         refreshed,
         unavailable,
+        // What this press did not reach, so the tab can say so rather than
+        // presenting a partial refresh as a complete one. Zero on every set
+        // smaller than the batch, which is every real one.
+        remaining,
+        refresh_batch: REFRESH_BATCH,
       });
     },
   );

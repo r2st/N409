@@ -33,6 +33,8 @@ interface StubState {
   feedStatus: number | null;
   /** The `inputs` object of the last screen call. */
   lastInputs: Record<string, unknown>;
+  /** Every ticker the market feed was asked about, in order. */
+  feedCalls: string[];
 }
 
 async function startEngineStub(state: StubState) {
@@ -61,6 +63,7 @@ async function startEngineStub(state: StubState) {
       return reply.status(state.feedStatus).send({ detail: 'the market feed is down' });
     }
     const ticker = String((req.body as { ticker?: unknown })?.ticker ?? '');
+    state.feedCalls.push(ticker);
     // No `warning` on purpose: the engine is not obliged to explain itself, and
     // the route has to have something to say when it does not.
     return state.feed[ticker] ?? { source: 'fallback' };
@@ -86,6 +89,7 @@ describe.skipIf(!dbUp)('the peer set on the unhappy paths', () => {
     feed: {},
     feedStatus: null,
     lastInputs: {},
+    feedCalls: [],
   };
 
   const ABSENT_ULID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
@@ -378,6 +382,100 @@ describe.skipIf(!dbUp)('the peer set on the unhappy paths', () => {
       expect(unavailable.find((u) => u.ticker === 'FEED')?.warning).toBe(
         'the live source returned no usable figures',
       );
+    });
+  });
+
+  /**
+   * The refresh loop is sequential and leaves the process once per ticker, so
+   * the size of the set is the length of the request.
+   *
+   * `FEED_TIMEOUT_MS` bounds one fetch and its comment states the rule — "a
+   * refresh of a dozen comps must not be able to hold a request open for
+   * minutes" — but nothing bounded the loop. The only ceiling was
+   * `COMPARABLE_PAGE_LIMIT`, which is 500: five hundred tickers at eight
+   * seconds each is sixty-six minutes, and Node destroys the socket at five,
+   * with every row already committed invisible to the analyst who pressed it.
+   *
+   * The batch has to be taken oldest-first, not off the display order
+   * (`included DESC, score DESC, name ASC`), or a second press refetches the
+   * same rows and the tail is unreachable for ever.
+   */
+  describe('a peer set larger than one request should fetch', () => {
+    let bigId: string;
+    const SET = 30;
+
+    const refreshBig = () =>
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${bigId}/comparables/refresh`,
+        headers: authHeader(ops.token),
+        payload: {},
+      });
+
+    beforeAll(async () => {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: '409a', company_name: 'WideSet Inc' },
+      });
+      expect(created.statusCode, created.body).toBe(201);
+      bigId = created.json().valuation.id as string;
+
+      for (let i = 0; i < SET; i += 1) {
+        const ticker = `T${String(i).padStart(3, '0')}`;
+        const res = await app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${bigId}/comparables`,
+          headers: authHeader(ops.token),
+          payload: { ticker, name: `Wide ${ticker}`, revenue_ltm: 10, ev: 100 },
+        });
+        expect(res.statusCode, res.body).toBe(201);
+        // Analyst-entered rows are never refreshed; a screened set is what the
+        // loop actually walks, so put them on that side.
+        state.feed[ticker] = { source: 'yfinance', market_cap: 1_000, total_revenue: 100 };
+      }
+      await ctx.pool.query(
+        `UPDATE comparable_items SET figures_source = 'snapshot' WHERE valuation_id = $1`,
+        [bigId],
+      );
+    }, 60_000);
+
+    it('fetches a bounded batch and says how many it did not reach', async () => {
+      state.feedCalls = [];
+      const res = await refreshBig();
+      expect(res.statusCode, res.body).toBe(200);
+      const body = res.json() as {
+        refreshed: Array<{ ticker: string }>;
+        remaining: number;
+        refresh_batch: number;
+      };
+      expect(state.feedCalls).toHaveLength(body.refresh_batch);
+      expect(body.refreshed).toHaveLength(body.refresh_batch);
+      expect(body.remaining).toBe(SET - body.refresh_batch);
+      expect(body.refresh_batch).toBeLessThan(SET);
+    });
+
+    it('reaches the tail on a second press rather than refetching only the head', async () => {
+      const first = new Set(state.feedCalls);
+      expect(first.size).toBeGreaterThan(0);
+      // What the first press never got to. Ordering by staleness is what makes
+      // this set shrink; the display order would leave it untouched for ever.
+      const untouched = Array.from({ length: SET }, (_, i) => `T${String(i).padStart(3, '0')}`).filter(
+        (t) => !first.has(t),
+      );
+      expect(untouched.length).toBeGreaterThan(0);
+
+      state.feedCalls = [];
+      const res = await refreshBig();
+      expect(res.statusCode, res.body).toBe(200);
+      // Never-fetched rows sort ahead of every row the first press stamped, so
+      // the whole tail is inside this batch.
+      expect(untouched.every((t) => state.feedCalls.includes(t))).toBe(true);
+      // Still five, because `remaining` counts what *this press* did not reach
+      // and the set is still thirty. It is a statement about the press, not a
+      // staleness backlog — a set larger than the batch never reports zero.
+      expect(res.json().remaining).toBe(SET - (res.json().refresh_batch as number));
     });
   });
 
