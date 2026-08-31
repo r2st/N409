@@ -18,6 +18,9 @@
  * that was never buckled.
  */
 
+import { type ApiProblem, problems } from '@n409/shared';
+import { quoteForMessage } from './displayText.js';
+
 /** The `ETag` value for a row at `version`. */
 export function versionEtag(version: number): string {
   return `"${version}"`;
@@ -62,6 +65,29 @@ export function parseIfMatch(raw: string | string[] | undefined): IfMatch {
   const version = Number(value);
   if (!Number.isSafeInteger(version)) return { kind: 'invalid', raw: header };
   return { kind: 'version', version };
+}
+
+/**
+ * The refusal for an `If-Match` this cannot read, in one place.
+ *
+ * Six routes wrote this sentence, each interpolating `raw` — the header exactly
+ * as it arrived. Echoing it is the right instinct: a client hand-rolling the
+ * header needs to see what we read, and "malformed" alone leaves them guessing
+ * whether the quotes, the `W/` or the value was the problem. But `raw` is a
+ * request header, so its length is the caller's (Fastify's per-header limit,
+ * kilobytes) and so are its bytes — a `detail` is drawn by the SPA, printed by
+ * whatever terminal a curl caller is looking at, and repeated into a partner's
+ * integration log.
+ *
+ * `quoteForMessage` is the same bound the workbook readers quote their entry
+ * names through; see domain/displayText.ts. An `If-Match` worth showing back is
+ * a handful of characters, so the cut costs a legitimate caller nothing.
+ */
+export function malformedIfMatch(ifMatch: { raw: string }): ApiProblem {
+  return problems.unprocessable(
+    `Malformed If-Match header: ${quoteForMessage(ifMatch.raw, 40)}. ` +
+      'Send the ETag from the last GET of this resource, or omit the header.',
+  );
 }
 
 /**

@@ -20,7 +20,7 @@ import {
 import { decodeSheetText, SheetTextError } from '../domain/sheetText.js';
 import { buildCapTableGraph } from '../domain/capTableGraph.js';
 import { findCapTable, saveCapTable } from '../repos/capTables.js';
-import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
+import { malformedIfMatch, parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { TRANSACTION_PAGE_LIMIT, listRounds } from '../repos/transactions.js';
 import { looksLikeXlsx, readXlsx, XlsxReadError } from '../domain/xlsxRead.js';
 import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
@@ -354,7 +354,7 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // header fails the same way whatever the import contains.
     const ifMatch = parseIfMatch(req.headers['if-match']);
     if (ifMatch.kind === 'invalid') {
-      throw problems.unprocessable(`Malformed If-Match header: ${ifMatch.raw}`);
+      throw malformedIfMatch(ifMatch);
     }
     const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 

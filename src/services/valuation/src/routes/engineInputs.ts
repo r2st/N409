@@ -6,7 +6,7 @@ import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
-import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
+import { malformedIfMatch, parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import type { EventActor } from '../events/record.js';
 import { boundedNonNegative, boundedPositive, boundedSigned } from '../domain/finite.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
@@ -434,7 +434,7 @@ export function registerEngineInputsRoutes(app: FastifyInstance, deps: { pool: p
     // parses is a lost-update guard that silently is not there.
     const ifMatch = parseIfMatch(req.headers['if-match']);
     if (ifMatch.kind === 'invalid') {
-      throw problems.unprocessable(`Malformed If-Match header: ${ifMatch.raw}`);
+      throw malformedIfMatch(ifMatch);
     }
     const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 

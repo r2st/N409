@@ -117,6 +117,34 @@ describe.skipIf(!dbUp)('optimistic lock census', () => {
   });
 
   /**
+   * R277, methodology M19. Echoing the header back is right — "malformed" alone
+   * leaves a client hand-rolling it guessing whether the quotes, the `W/` or the
+   * value was the problem. But the six routes each interpolated `raw`, and a
+   * request header's length and bytes belong to the caller: this `detail` is
+   * drawn by the SPA, printed by whatever terminal a curl caller is looking at,
+   * and repeated into a partner's integration log.
+   *
+   * Probed on one route, because there is one sentence now (`malformedIfMatch`)
+   * and the census above is what proves all six reach it.
+   */
+  it('bounds and scrubs the header it quotes back', async () => {
+    const res = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${valuationId}`,
+      headers: { ...authHeader(ops.token), 'if-match': `"${'v'.repeat(2_000)}\u0007"` },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(422);
+    const detail = String(res.json().detail);
+    expect(detail).toContain('If-Match');
+    expect(detail.length).toBeLessThan(200);
+    // The bell is not something a terminal draws; it is something it does.
+    expect(detail).not.toContain('\u0007');
+    // And the refusal still says what to send instead.
+    expect(detail).toMatch(/ETag/);
+  });
+
+  /**
    * And the reverse: a well-formed `If-Match` must not be answered with the
    * malformed-header message. Without this the probe above would pass on a
    * route that rejected every If-Match it was given, which is a guard nobody

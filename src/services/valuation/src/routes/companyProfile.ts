@@ -9,7 +9,7 @@ import { isNaicsCode, isSicCode } from '../domain/companyProfile.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
-import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
+import { malformedIfMatch, parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
 /**
@@ -109,7 +109,7 @@ export function registerCompanyProfileRoutes(app: FastifyInstance, deps: { pool:
       // a seatbelt nobody buckled.
       const ifMatch = parseIfMatch(req.headers['if-match']);
       if (ifMatch.kind === 'invalid') {
-        throw problems.unprocessable(`Malformed If-Match header: ${ifMatch.raw}`);
+        throw malformedIfMatch(ifMatch);
       }
       const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 

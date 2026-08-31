@@ -23,7 +23,7 @@ import {
   type ValuationState,
 } from '../domain/valuation.js';
 import { CurrencyCode } from '../domain/currency.js';
-import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
+import { malformedIfMatch, parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import { NAMED_BUCKET_KEYS, type NamedBucketKey } from '../domain/workflow.js';
 import { isTagSlug } from '../domain/valuationTags.js';
@@ -432,7 +432,7 @@ export function registerValuationRoutes(
     // patch contains.
     const ifMatch = parseIfMatch(req.headers['if-match']);
     if (ifMatch.kind === 'invalid') {
-      throw problems.unprocessable(`Malformed If-Match header: ${ifMatch.raw}`);
+      throw malformedIfMatch(ifMatch);
     }
     const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 

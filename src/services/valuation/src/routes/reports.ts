@@ -16,7 +16,7 @@ import {
   type ReportContent,
 } from '../domain/report.js';
 import { todayLocal } from '../domain/calendarDate.js';
-import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
+import { malformedIfMatch, parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { isUniqueViolation } from '../db/pgError.js';
 import { findActiveTemplateForKind, templateLabel } from '../repos/reportTemplates.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
@@ -134,7 +134,7 @@ async function loadForEdit(pool: pg.Pool, principal: Principal, id: string): Pro
 function expectedReportVersion(raw: string | string[] | undefined): number | undefined {
   const ifMatch = parseIfMatch(raw);
   if (ifMatch.kind === 'invalid') {
-    throw problems.unprocessable(`Malformed If-Match header: ${ifMatch.raw}`);
+    throw malformedIfMatch(ifMatch);
   }
   return ifMatch.kind === 'version' ? ifMatch.version : undefined;
 }

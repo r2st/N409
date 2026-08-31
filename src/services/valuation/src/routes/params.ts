@@ -8,7 +8,7 @@ import { DLOC_METHODS, DLOM_METHODS, findParams, patchParams } from '../repos/pa
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
-import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
+import { malformedIfMatch, parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
 /**
@@ -463,7 +463,7 @@ export function registerParamsRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     // nobody parses is a lost-update guard that silently is not there.
     const ifMatch = parseIfMatch(req.headers['if-match']);
     if (ifMatch.kind === 'invalid') {
-      throw problems.unprocessable(`Malformed If-Match header: ${ifMatch.raw}`);
+      throw malformedIfMatch(ifMatch);
     }
     const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 
