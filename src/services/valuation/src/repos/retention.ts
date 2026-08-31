@@ -357,9 +357,13 @@ export interface OutboxPurgeResult {
  *
  * Returns the deleted ids so the caller can log them, and counts the frozen
  * separately so "nothing was purged" can be told from "nothing was eligible".
+ *
+ * `Queryable`, not `pg.Pool`, because the caller runs this and the log of what
+ * it deleted in one transaction: this is the irreversible half of the sweep and
+ * a delete with no record of it is the gap the log exists to close.
  */
 export async function purgeExpiredOutbox(
-  pool: pg.Pool,
+  db: Queryable,
   retentionDays: number,
   limit = OUTBOX_PURGE_BATCH,
 ): Promise<{ ids: string[]; skippedHold: number }> {
@@ -435,12 +439,12 @@ export async function purgeExpiredOutbox(
   // Counted before the delete and over the whole eligible set rather than the
   // batch, because this number is the operator-facing one: "how much is your
   // hold holding" is not a question about how far through the backlog we are.
-  const { rows: heldRows } = await pool.query<{ count: string }>(
+  const { rows: heldRows } = await db.query<{ count: string }>(
     `SELECT count(*)::text AS count FROM email_outbox e WHERE ${eligible} AND ${frozen}`,
     [String(retentionDays), EMAIL_MAX_ATTEMPTS],
   );
 
-  const { rows } = await pool.query<{ id: string }>(
+  const { rows } = await db.query<{ id: string }>(
     `DELETE FROM email_outbox
       WHERE id IN (
         SELECT e.id FROM email_outbox e

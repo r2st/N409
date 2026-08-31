@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
+import { enqueueEmail, markEmail } from '../../src/repos/emailOutbox.js';
 import { runRetentionSweep } from '../../src/routes/retention.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
@@ -109,5 +110,109 @@ describe.skipIf(!dbUp)('a retention sweep whose action log fails', () => {
     const id = rows[0]!.id;
     expect(await archivedAt(id)).not.toBeNull();
     expect(await actionsFor(id)).toContain('archived');
+  });
+  it('deletes no correspondence when the purge log refuses the write', async () => {
+    // The irreversible half. Five thousand messages can go in one pass and the
+    // INSERT naming them is the only record that they did; there is nothing to
+    // re-derive the list from once the rows are gone.
+    const put = await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/retention/policies/email_outbox',
+      headers: authHeader(admin.token),
+      payload: { archive_after_days: null, retention_days: 30, enabled: true },
+    });
+    expect(put.statusCode).toBe(200);
+
+    const row = await enqueueEmail(ctx.pool, {
+      toEmail: 'purge@test.example.com',
+      toUserId: null,
+      valuationId: null,
+      templateKey: 'test_template',
+      subject: 'Old mail',
+      body: 'Body',
+    });
+    await markEmail(ctx.pool, row.id, 'sent');
+    await ctx.pool.query(`UPDATE email_outbox SET created_at = now() - interval '90 days' WHERE id = $1`, [
+      row.id,
+    ]);
+
+    await ctx.pool.query(
+      `CREATE OR REPLACE FUNCTION test_refuse_retention_action() RETURNS trigger
+         LANGUAGE plpgsql AS $$
+         BEGIN
+           RAISE EXCEPTION 'retention_actions unavailable';
+         END $$;
+       CREATE TRIGGER test_refuse_retention_action BEFORE INSERT ON retention_actions
+         FOR EACH ROW EXECUTE FUNCTION test_refuse_retention_action()`,
+    );
+    try {
+      await expect(runRetentionSweep(ctx.pool)).rejects.toThrow(/retention_actions unavailable/);
+      const { rows } = await ctx.pool.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM email_outbox WHERE id = $1',
+        [row.id],
+      );
+      expect(rows[0]!.n).toBe(1);
+    } finally {
+      await ctx.pool.query('DROP TRIGGER IF EXISTS test_refuse_retention_action ON retention_actions');
+      await ctx.app.inject({
+        method: 'PUT',
+        url: '/api/v1/admin/retention/policies/email_outbox',
+        headers: authHeader(admin.token),
+        payload: { archive_after_days: null, retention_days: 30, enabled: false },
+      });
+    }
+  });
+
+  it('still runs the archival pass when the outbox pass fails', async () => {
+    // Two independent policies, and a throw in the first one returned before
+    // the second. An outbox policy that cannot be enforced — a batch that keeps
+    // timing out, a disk that keeps filling — therefore switched the valuation
+    // policy off too, silently, on every tick, for as long as it stayed broken.
+    const set = (enabled: boolean) =>
+      ctx.app.inject({
+        method: 'PUT',
+        url: '/api/v1/admin/retention/policies/email_outbox',
+        headers: authHeader(admin.token),
+        payload: { archive_after_days: null, retention_days: 30, enabled },
+      });
+    expect((await set(true)).statusCode).toBe(200);
+
+    const row = await enqueueEmail(ctx.pool, {
+      toEmail: 'blocked@test.example.com',
+      toUserId: null,
+      valuationId: null,
+      templateKey: 'test_template',
+      subject: 'Old mail',
+      body: 'Body',
+    });
+    await markEmail(ctx.pool, row.id, 'sent');
+    await ctx.pool.query(`UPDATE email_outbox SET created_at = now() - interval '90 days' WHERE id = $1`, [
+      row.id,
+    ]);
+    const stillLive = await agedValuation('IndependentCo', 500);
+
+    await ctx.pool.query(
+      `CREATE OR REPLACE FUNCTION test_refuse_outbox_purge() RETURNS trigger
+         LANGUAGE plpgsql AS $$
+         BEGIN
+           RAISE EXCEPTION 'outbox purge unavailable';
+         END $$;
+       CREATE TRIGGER test_refuse_outbox_purge BEFORE DELETE ON email_outbox
+         FOR EACH ROW EXECUTE FUNCTION test_refuse_outbox_purge()`,
+    );
+    try {
+      // The run still fails, and must: the pass did not do what it was asked.
+      // Held rather than swallowed, so the scheduler's alerting still fires and
+      // nothing here reports a partial success as a whole one.
+      await expect(runRetentionSweep(ctx.pool)).rejects.toThrow(/outbox purge unavailable/);
+
+      // But the other policy had its turn. This is the assertion the early
+      // return made impossible.
+      expect(await archivedAt(stillLive.id)).not.toBeNull();
+      expect(await actionsFor(stillLive.id)).toContain('archived');
+    } finally {
+      await ctx.pool.query('DROP TRIGGER IF EXISTS test_refuse_outbox_purge ON email_outbox');
+      await set(false);
+    }
   });
 });

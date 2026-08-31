@@ -121,26 +121,45 @@ async function sweepOutbox(
   if (!policy || !policy.enabled || policy.retention_days === null) {
     return { purged: 0, skippedHold: 0 };
   }
-  const { ids, skippedHold } = await purgeExpiredOutbox(pool, policy.retention_days, opts.limit);
-  await recordActions(pool, [
-    ...ids.map((id) => ({
-      dataType: 'email_outbox',
-      action: 'purged' as const,
-      referenceId: id,
-      detail: { retention_days: policy.retention_days },
-    })),
-    ...(skippedHold > 0
-      ? [
-          {
-            dataType: 'email_outbox',
-            action: 'skipped_hold' as const,
-            referenceId: null,
-            detail: { count: skippedHold, retention_days: policy.retention_days },
-          },
-        ]
-      : []),
-  ]);
-  return { purged: ids.length, skippedHold };
+  // Read out before the closure: the narrowing above is of a mutable property.
+  const retentionDays = policy.retention_days;
+  /*
+   * The delete and the record of it, in one transaction.
+   *
+   * The archival half below had the same pair on the pool and it was already
+   * bad there; here it is worse, because this half is the one the comment above
+   * calls "not reversible". Five thousand messages — recipients, subjects,
+   * bodies — went, and the INSERT that says which ones and under whose policy
+   * then failed: a statement timeout on a five-thousand-row VALUES list, a
+   * deadlock, a disk that filled. There is nothing to re-derive the list from
+   * afterwards, because the rows it named are gone.
+   *
+   * Together, both or neither. A failed pass deletes nothing and the next tick
+   * takes the same batch again, which is exactly what the batch cap already
+   * assumes: the backlog drains over successive ticks.
+   */
+  return withTransaction(pool, async (client) => {
+    const { ids, skippedHold } = await purgeExpiredOutbox(client, retentionDays, opts.limit);
+    await recordActions(client, [
+      ...ids.map((id) => ({
+        dataType: 'email_outbox',
+        action: 'purged' as const,
+        referenceId: id,
+        detail: { retention_days: retentionDays },
+      })),
+      ...(skippedHold > 0
+        ? [
+            {
+              dataType: 'email_outbox',
+              action: 'skipped_hold' as const,
+              referenceId: null,
+              detail: { count: skippedHold, retention_days: retentionDays },
+            },
+          ]
+        : []),
+    ]);
+    return { purged: ids.length, skippedHold };
+  });
 }
 
 /**
@@ -164,16 +183,41 @@ export async function runRetentionSweep(
   const result: SweepResult = { archived: 0, skipped_hold: 0, purged: 0 };
   const policies = await listPolicies(pool);
 
-  // The outbox first, and unconditionally on the valuation policy. These are
-  // two independent policies and the archival branch below returns early when
-  // its own is off — which, before this, meant an operator who enabled only
-  // `email_outbox` had enabled nothing at all, twice over.
-  const outbox = await sweepOutbox(pool, policies, opts);
+  /*
+   * The outbox first, and unconditionally on the valuation policy. These are
+   * two independent policies and the archival branch below returns early when
+   * its own is off — which, before this, meant an operator who enabled only
+   * `email_outbox` had enabled nothing at all, twice over.
+   *
+   * Independent in failure too, which they were not: a throw here returned
+   * before the archival pass, so an outbox policy that could not be enforced —
+   * a batch that keeps timing out, a disk that keeps filling — silently stopped
+   * the *valuation* policy being enforced as well, on every tick, for as long
+   * as the first one stayed broken. Two compliance obligations, one of them
+   * quietly off because the other is.
+   *
+   * Held rather than swallowed. The pass genuinely failed and the scheduler's
+   * alerting is what says so, so the error is re-raised once the second policy
+   * has had its turn: the archival lands, and the run is still reported as the
+   * failure it was. Nothing here reports partial success, which is the shape
+   * this codebase keeps finding on the other side of a catch.
+   */
+  let outboxFailure: unknown = null;
+  const outbox = await sweepOutbox(pool, policies, opts).catch((err: unknown) => {
+    outboxFailure = err;
+    return { purged: 0, skippedHold: 0 };
+  });
   result.purged = outbox.purged;
   result.skipped_hold += outbox.skippedHold;
 
+  /** Re-raise the held outbox failure, once the archival pass has run. */
+  const finish = (r: SweepResult): SweepResult => {
+    if (outboxFailure !== null) throw outboxFailure;
+    return r;
+  };
+
   const valPolicy = policies.find((p) => p.data_type === 'valuation');
-  if (!valPolicy || !valPolicy.enabled || valPolicy.archive_after_days === null) return result;
+  if (!valPolicy || !valPolicy.enabled || valPolicy.archive_after_days === null) return finish(result);
 
   const candidates = await findArchivableValuations(pool, valPolicy.archive_after_days, opts.limit ?? 500);
   const frozen = candidates.filter((c) => c.frozen);
@@ -248,7 +292,7 @@ export async function runRetentionSweep(
   // `+=`: the outbox pass above may already have counted frozen rows of its
   // own, and one sweep reports one number.
   result.skipped_hold += frozen.length;
-  return result;
+  return finish(result);
 }
 
 export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
