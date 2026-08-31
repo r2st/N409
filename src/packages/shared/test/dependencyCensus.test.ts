@@ -84,6 +84,30 @@ function filesUnder(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * The files a manifest is answerable for — its own tree, minus any nested
+ * workspace.
+ *
+ * Only `'.'` is affected, and it is affected in both directions. The repo root
+ * is a package like the others: it declares dependencies, and `tools/`, `e2e/`,
+ * `infra/` and `eslint.config.js` import them. But `filesUnder(repoRoot)`
+ * descends into `src/`, so scanning the root with it asks the wrong question
+ * twice over. Reading imports, every workspace's imports would be charged to
+ * the root manifest. Reading references, any mention *anywhere in the repo*
+ * counts, so "the root declares nothing it does not use" passed by construction
+ * — the vacuous half of a check that reads as covered.
+ *
+ * Excluding the workspace directories rather than `src/` wholesale keeps a
+ * future non-workspace tree under `src/` attributed to the root instead of to
+ * nobody.
+ */
+function ownedFilesUnder(ws: string): string[] {
+  const files = filesUnder(path.join(repoRoot, ws));
+  if (ws !== '.') return files;
+  const nested = WORKSPACES.map((w) => path.join(repoRoot, w) + path.sep);
+  return files.filter((f) => !nested.some((n) => f.startsWith(n)));
+}
+
 // ---------------------------------------------------------------------------
 // Node: what the source imports vs what the manifests declare
 // ---------------------------------------------------------------------------
@@ -156,12 +180,19 @@ const ROOT_TOOLING_ALLOWED: Record<string, string> = {
 describe('node workspaces declare every package they import', () => {
   const rootDeclared = declaredIn(manifest('.'));
 
-  for (const ws of WORKSPACES) {
-    it(`${ws}`, () => {
+  // The root is in this list because it was the one package exempt from it.
+  // `tools/`, `e2e/` and `infra/` are root-owned source that imports packages
+  // like any workspace does, and five of those files imported `pg` while the
+  // root manifest declared nothing at all. It resolved because `@n409/valuation`
+  // and `@n409/web` declare `pg` and npm hoists it — so `npm run e2e` and
+  // `tools/seed-samples.mjs` ran whatever version *valuation's* range chose,
+  // which is exactly the arrangement the rest of this file exists to refuse.
+  for (const ws of ['.', ...WORKSPACES]) {
+    it(`${ws === '.' ? 'repo root' : ws}`, () => {
       const declared = declaredIn(manifest(ws));
       const undeclared = new Map<string, string>();
 
-      for (const file of filesUnder(path.join(repoRoot, ws))) {
+      for (const file of ownedFilesUnder(ws)) {
         if (!/\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/.test(file)) continue;
         for (const spec of importSpecifiers(readFileSync(file, 'utf8'))) {
           const pkg = packageOf(spec);
@@ -173,7 +204,7 @@ describe('node workspaces declare every package they import', () => {
 
       expect(
         [...undeclared].map(([pkg, where]) => `${pkg} (first seen in ${where})`),
-        `${ws} imports these but declares none of them. They resolve today only because ` +
+        `${ws === '.' ? 'the repo root' : ws} imports these but declares none of them. They resolve today only because ` +
           `something else hoisted them into node_modules, so their version is decided by ` +
           `another package's ranges. Add them to ${ws}/package.json.`,
       ).toEqual([]);
@@ -200,7 +231,7 @@ describe('every declared dependency is actually referenced', () => {
       // package-lock.json and package.json are excluded on purpose: both list
       // every dependency by name, so including them would make this pass by
       // construction for every package that exists.
-      const text = filesUnder(path.join(repoRoot, ws))
+      const text = ownedFilesUnder(ws)
         .filter(
           (f) =>
             /\.(ts|tsx|mts|cts|js|mjs|cjs|jsx|css|html|yml|yaml|sh|Dockerfile)$/.test(f) ||
