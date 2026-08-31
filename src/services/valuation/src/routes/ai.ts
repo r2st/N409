@@ -155,6 +155,55 @@ export interface AiAnonymizeResponse {
   anonymization: Record<string, unknown>;
 }
 
+/**
+ * The payload keys `context` may not name (round 271, methodology M6).
+ *
+ * `context` is deliberately opaque — that is what lets a new agent take new
+ * context without a route change — and it was spread over the payload *last*,
+ * which made "opaque" mean "authoritative". Every key this route establishes
+ * from the engagement and the prompt registry was a key an authenticated
+ * analyst could replace on their own run:
+ *
+ *   - `prompt`. The AI tier reads `payload["prompt"]["system"]` and
+ *     `["model"]` (`_prompt_overrides`, ai/app/pipelines.py) and falls back to
+ *     the built-in only when they are absent. So `context.prompt` handed a
+ *     tenant user the system prompt — the admin-managed Bot Prompts row is
+ *     what the job's `prompt_version` then records, naming a prompt that did
+ *     not run — and the model id, which is not allow-listed downstream
+ *     (`configured_models` puts the preferred id first), so any model on the
+ *     estate's own OpenRouter key was one request away.
+ *   - `options`, which carries `anonymize` and the redaction entity lists this
+ *     route resolves from the engagement owner. Emptying them left the job row
+ *     saying `redaction_identity: 'read'` about a run that was told nothing.
+ *   - `documents`, `valuation`, `params` and the research/profile blocks: the
+ *     run's record of what it was given, contradicted by what it was sent.
+ *
+ * Refused by name rather than dropped quietly, because a caller who sent one
+ * meant something by it, and the answer to "why did my prompt not apply" must
+ * not be silence. The payload spread is ordered so the server's keys win in any
+ * case — a rule that holds even if this list is ever short of a key.
+ */
+const SERVER_OWNED_PAYLOAD_KEYS = [
+  'valuation',
+  'params',
+  'documents',
+  'prompt',
+  'narrative_sections',
+  'market_research',
+  'company_profile',
+  'tag_catalogue',
+  'options',
+  /*
+   * Not in the literal below — the route attaches it from
+   * `latestCalculationForKind` for the calculation-dependent pipelines — but
+   * server-established all the same, and the merge there put caller context
+   * over it. A QA or explain run reviewing a calculation the caller wrote is
+   * not reviewing the engagement's.
+   */
+  'calculation',
+] as const;
+const SERVER_OWNED_PAYLOAD_KEY_SET: ReadonlySet<string> = new Set(SERVER_OWNED_PAYLOAD_KEYS);
+
 const RunBody = z
   .object({
     // Cap-table anonymization (PII redaction) is on unless explicitly disabled.
@@ -163,8 +212,21 @@ const RunBody = z
     auto_apply: z.boolean().default(false),
     // Agent-specific context (comp_context, company_profile, comparables,
     // methodology, prior_valuation, new_data, ...) passed straight to the AI
-    // service. Kept opaque here so new agents don't need a route change.
-    context: z.record(z.unknown()).optional(),
+    // service. Kept opaque here so new agents don't need a route change —
+    // opaque, but not authoritative: see SERVER_OWNED_PAYLOAD_KEYS.
+    context: z
+      .record(z.unknown())
+      .superRefine((ctx, refine) => {
+        for (const key of Object.keys(ctx)) {
+          if (!SERVER_OWNED_PAYLOAD_KEY_SET.has(key)) continue;
+          refine.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `context may not set '${key}' — this run establishes it from the engagement and the prompt registry, and the job's record is written from it`,
+          });
+        }
+      })
+      .optional(),
   })
   .default({ anonymize: true, auto_apply: false });
 
@@ -455,6 +517,14 @@ export async function runAiPipeline(
     args.includeDocuments === false ? [] : await encodeDocuments(deps.documentsDir, documents, deps.log);
 
   const payload = {
+    /*
+     * Caller context first, so every key below wins over it. `context` is
+     * validated against SERVER_OWNED_PAYLOAD_KEYS at the route, and this
+     * ordering is the same rule stated where the payload is actually built:
+     * an agent-specific block may be added here, never substituted for the
+     * run's own account of what it was given.
+     */
+    ...(args.extraPayload ?? {}),
     valuation: {
       id: valuation.id,
       kind: valuation.kind,
@@ -474,7 +544,6 @@ export async function runAiPipeline(
       known_companies: knownCompanies,
       known_people: knownPeople,
     },
-    ...(args.extraPayload ?? {}),
   };
 
   const job = await createAiJob(deps.pool, {
