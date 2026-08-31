@@ -121,9 +121,6 @@ const CONSUMERS: Record<string, { renders?: string[]; why?: string }> = {
   '/api/v1/debt/instruments/:id/valuations': {
     why: 'The same page of measurements as `/debt/instruments/:id`, which is the one the page actually loads — the standalone list exists for API callers. Mapping it to the page would claim a notice is drawn for a response the page never reads.',
   },
-  '/api/v1/funds/:id/positions/:pid/rollforward': {
-    why: 'Not a list. It calls `listMarks` for the single prior mark it rolls forward from — the head of the page — and returns one new mark. The census attributes the flag here because the repo function carries it, not because the response does.',
-  },
   '/api/v1/valuations': {
     why: "A name collision in the detector, not a cap: `repos/debtInstruments.ts` exports a `listValuations` that truncates, and `repos/valuations.ts` exports a different `listValuations` that pages with `{ items, total }`. The census matches repo functions by bare name, so the debt one's flag is attributed to every handler calling the other. This endpoint's own paging is `total`, which ValuationsPage already renders.",
   },
