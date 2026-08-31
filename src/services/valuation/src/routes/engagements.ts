@@ -32,7 +32,7 @@ import {
 import { findUserById } from '../repos/users.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { isRetiredNow, refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import type { SupportEmailSource } from '../hooks/autoEmails.js';
 
@@ -306,6 +306,16 @@ export function registerEngagementRoutes(
      * that is an unassigned engagement, which the board already shows as one.
      */
     const unreachable: { valuation_id: string; analyst_id: string; reason: string }[] = [];
+    /**
+     * Engagements that were live when their page was read and withdrawn before
+     * their reminder went out. See {@link isRetiredNow}: the `archived_at IS
+     * NULL` filter in `eachActiveEngagement` is a fact about selection time,
+     * and this sweep awaits a transport per row, so for a row late in a page
+     * that is minutes of drift. Reported for the same reason `unreachable` is —
+     * an endpoint answering `reminded_count` and nothing else would report a
+     * clean run over a row it deliberately declined to act on.
+     */
+    const withdrawn: string[] = [];
     let scanned = 0;
     // Paged rather than capped: a missed reminder is the whole point of the
     // sweep going unsent, and it would report success either way.
@@ -330,6 +340,13 @@ export function registerEngagementRoutes(
             reason: block ?? 'unknown',
           });
         }
+        continue;
+      }
+      // Asked here rather than trusted from the page, and asked before the
+      // send rather than after it: mail cannot be un-sent, and the event below
+      // lands on a spine whose 0001 trigger refuses every UPDATE and DELETE.
+      if (await isRetiredNow(deps.pool, r.valuation_id)) {
+        withdrawn.push(r.valuation_id);
         continue;
       }
       await sendTransactionalEmail(
@@ -385,6 +402,8 @@ export function registerEngagementRoutes(
       reminded,
       unreachable_count: unreachable.length,
       unreachable,
+      withdrawn_count: withdrawn.length,
+      withdrawn,
       scanned,
     };
   });

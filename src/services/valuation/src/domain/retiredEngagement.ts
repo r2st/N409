@@ -223,3 +223,42 @@ export async function refuseIfSubjectRetiredIn(
   if (!live) return;
   refuseIfRetired(live, doing);
 }
+
+/**
+ * Has this engagement been withdrawn *since* the row naming it was read?
+ *
+ * For the sweeps, which are the one shape the `archived_at IS NULL` predicate
+ * in a reader's WHERE cannot protect. `eachActiveEngagement` applies that
+ * filter when it reads a page — up to `ENGAGEMENT_PAGE_LIMIT` rows — and the
+ * overdue sweep then walks that page sending one transactional email per
+ * overdue row, awaiting the transport each time. The filter is therefore true
+ * of the row when it was *selected* and says nothing about whether it is still
+ * true when the mail goes out, which for a row late in a slow page is minutes
+ * later.
+ *
+ * Which is the failure R89 named the worst of its set: "`POST
+ * /remind-documents` **sent mail** — 'we still need your cap table', to the
+ * client, about work the firm has withdrawn. Mail cannot be un-sent." Here it
+ * is the assigned analyst being told to move forward a file that no longer
+ * exists to move, and the sweep also writes an `engagement_overdue_reminded`
+ * onto that engagement's spine, where `valuation_events_immutable` means it
+ * cannot afterwards be taken back off.
+ *
+ * A boolean rather than a throw, because the caller is not a route: a sweep
+ * that raised on the first withdrawn row would abandon every row behind it.
+ * The caller skips and reports, which is the standing rule for a sweep that
+ * declines to act on something — see `unreachable` beside it.
+ *
+ * Not `findValuationById`: that reader is a 5s read-through cache, and the
+ * whole question here is whether the answer is current. A missing row counts as
+ * withdrawn — a sweep should not mail about an engagement that has been deleted
+ * out from under it either.
+ */
+export async function isRetiredNow(pool: pg.Pool, valuationId: string): Promise<boolean> {
+  const { rows } = await pool.query<{ archived_at: Date | null }>(
+    'SELECT archived_at FROM valuations WHERE id = $1',
+    [valuationId],
+  );
+  const live = rows[0];
+  return !live || live.archived_at !== null;
+}
