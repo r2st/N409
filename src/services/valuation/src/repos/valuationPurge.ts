@@ -141,22 +141,48 @@ export async function retireValuations(pool: pg.Pool, ids: readonly string[]): P
  * does not change; rewriting `entered_at` to make the durations panel agree
  * would falsify an append-only trail to tidy up a derived number. The panel
  * shows wall-clock, which is what it has always shown.
+ *
+ * REPORTED, because it is a write nobody asked for. The admin asked for a
+ * restore; this moves a second column on a second table, and the column it
+ * moves is the one the board colours by and the sweep decides who to email
+ * from. Left silent it is the shape this codebase keeps finding: an engagement
+ * whose SLA clock differs from every timestamp around it, with the retention
+ * log saying only "restored" and the stage trail — deliberately — still
+ * showing the original `entered_at`. Whoever reconciles those two has to
+ * already know this repair exists to explain the gap. So the rows it moved
+ * come back out and the caller puts them on the trail.
+ *
+ * An empty list is an answer too: it means every restored engagement had
+ * entered its stage after the withdrawal, so there was nothing owed.
  */
 async function creditEngagementsForRetirement(
   client: pg.PoolClient,
   restored: readonly { id: string; was_archived_at: Date }[],
-): Promise<void> {
-  if (restored.length === 0) return;
-  await client.query(
+): Promise<SlaCredit[]> {
+  if (restored.length === 0) return [];
+  const { rows } = await client.query<SlaCredit>(
     `UPDATE engagements e
         SET stage_entered_at = e.stage_entered_at + (now() - r.was_archived_at),
             updated_at = now()
        FROM (SELECT unnest($1::ulid[]) AS valuation_id,
                     unnest($2::timestamptz[]) AS was_archived_at) r
       WHERE e.valuation_id = r.valuation_id
-        AND e.stage_entered_at < r.was_archived_at`,
+        AND e.stage_entered_at < r.was_archived_at
+      RETURNING e.valuation_id AS "valuationId",
+                e.current_stage AS stage,
+                round(extract(epoch FROM (now() - r.was_archived_at)))::int AS "creditedSeconds"`,
     [restored.map((r) => r.id), restored.map((r) => r.was_archived_at)],
   );
+  return rows;
+}
+
+/** One engagement's SLA clock, moved forward by the span it was withdrawn. */
+export interface SlaCredit {
+  valuationId: string;
+  /** The stage whose clock was credited — the one it comes back into. */
+  stage: string;
+  /** Length of the withdrawal, in seconds. */
+  creditedSeconds: number;
 }
 
 export interface RestoreResult {
@@ -166,6 +192,11 @@ export interface RestoreResult {
   missing: string[];
   /** Ids that were already live, and so were left untouched. */
   notArchived: string[];
+  /**
+   * Engagements whose SLA clock was moved forward, and by how much. Empty
+   * when nothing was owed. See {@link creditEngagementsForRetirement}.
+   */
+  slaCredited: SlaCredit[];
 }
 
 /**
@@ -200,7 +231,7 @@ export interface RestoreResult {
  */
 export async function restoreValuations(pool: pg.Pool, ids: readonly string[]): Promise<RestoreResult> {
   const wanted = [...new Set(ids)];
-  if (wanted.length === 0) return { restored: [], missing: [], notArchived: [] };
+  if (wanted.length === 0) return { restored: [], missing: [], notArchived: [], slaCredited: [] };
 
   const client = await pool.connect();
   try {
@@ -244,7 +275,7 @@ export async function restoreValuations(pool: pg.Pool, ids: readonly string[]): 
       [found, RETIRED_SUFFIX],
     );
 
-    await creditEngagementsForRetirement(client, taken);
+    const slaCredited = await creditEngagementsForRetirement(client, taken);
     await client.query('COMMIT');
     const restored = taken.map((r) => r.id);
     for (const id of restored) invalidateValuation(id);
@@ -252,6 +283,7 @@ export async function restoreValuations(pool: pg.Pool, ids: readonly string[]): 
       restored,
       missing: wanted.filter((id) => !found.includes(id)),
       notArchived: found.filter((id) => !restored.includes(id)),
+      slaCredited,
     };
   } catch (err) {
     // swallow: ROLLBACK in a catch that is re-raising the error that caused it.

@@ -525,6 +525,20 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
       // caller wanted — so this reports the outcome rather than raising.
       const restored = result.restored.includes(id);
       if (restored) {
+        // The second write the restore makes, and the one nobody asked for:
+        // `restoreValuations` moves `engagements.stage_entered_at` forward by
+        // the length of the withdrawal, because the SLA clock ran through it
+        // and the engagement would otherwise come back instantly red. That is
+        // the column the board colours by and the overdue sweep picks its
+        // recipients from, and the stage trail beside it deliberately keeps
+        // the original `entered_at` — so without this the two disagree and
+        // the retention log says only "restored". Named on both ledgers and
+        // in the answer, so nobody has to already know the repair exists.
+        const slaCredited = result.slaCredited.map((c) => ({
+          valuation_id: c.valuationId,
+          stage: c.stage,
+          credited_seconds: c.creditedSeconds,
+        }));
         await recordActions(deps.pool, [
           {
             dataType: 'valuation',
@@ -534,15 +548,22 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
               restored_by: principal.id,
               archived_at: valuation.archived_at.toISOString(),
               acknowledged_rearchival: parsed.data.acknowledge_rearchival === true,
+              sla_credited: slaCredited,
             },
           },
         ]);
         await audit(principal.id, 'valuation_restored', 'valuation', id, valuation.company_name, {
           archived_at: valuation.archived_at.toISOString(),
           acknowledged_rearchival: parsed.data.acknowledge_rearchival === true,
+          sla_credited: slaCredited,
         });
+        return {
+          restored,
+          sla_credited: slaCredited,
+          valuation: await findValuationById(deps.pool, id),
+        };
       }
-      return { restored, valuation: await findValuationById(deps.pool, id) };
+      return { restored, sla_credited: [], valuation: await findValuationById(deps.pool, id) };
     },
   );
 

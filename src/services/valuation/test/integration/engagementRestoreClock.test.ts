@@ -23,6 +23,7 @@ describe.skipIf(!dbUp)('restoring an engagement credits back the withdrawn time'
   let app: FastifyInstance;
   let pool: pg.Pool;
   let ops: Awaited<ReturnType<typeof seedUser>>;
+  let admin: Awaited<ReturnType<typeof seedUser>>;
   let analyst: Awaited<ReturnType<typeof seedUser>>;
   let owner: Awaited<ReturnType<typeof seedUser>>;
 
@@ -77,6 +78,7 @@ describe.skipIf(!dbUp)('restoring an engagement credits back the withdrawn time'
     app = ctx.app;
     pool = ctx.pool;
     ops = await seedUser(ctx, { roles: ['reviewer'] });
+    admin = await seedUser(ctx, { roles: ['admin'] });
     analyst = await seedUser(ctx, { roles: ['data'] });
     owner = await seedUser(ctx, { roles: ['valuation_user'] });
 
@@ -160,6 +162,67 @@ describe.skipIf(!dbUp)('restoring an engagement credits back the withdrawn time'
     const age = (Date.now() - rows[0]!.entered_at.getTime()) / 3_600_000;
     // Recorded when it happened — before the backdating, so only minutes old.
     expect(age).toBeLessThan(1);
+  });
+
+  /**
+   * The repair is a write nobody asked for, so it says so.
+   *
+   * The admin asked for a restore; this also moves `stage_entered_at` on a
+   * second table — the column the board colours by and the overdue sweep picks
+   * its recipients from — while the stage trail beside it deliberately keeps
+   * the original `entered_at`. Silent, that is two timestamps disagreeing with
+   * a retention log that says only "restored", and whoever reconciles them has
+   * to already know this repair exists.
+   */
+  it('reports the credited span rather than moving the clock in silence', async () => {
+    const id = await seedEngagement('Reported Credit Co', '92 days');
+    await retireValuations(pool, [id]);
+    await pool.query(`UPDATE valuations SET archived_at = now() - interval '30 days' WHERE id = $1`, [id]);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/retention/valuations/${id}/restore`,
+      headers: authHeader(admin.token),
+      payload: {},
+    });
+    expect(res.statusCode).toBe(200);
+    const credited = res.json().sla_credited as {
+      valuation_id: string;
+      stage: string;
+      credited_seconds: number;
+    }[];
+    expect(credited).toHaveLength(1);
+    expect(credited[0]!.valuation_id).toBe(id);
+    // Named, because "the clock moved" is not an answer to which stage's.
+    expect(credited[0]!.stage).toBe('analysis');
+    const days = credited[0]!.credited_seconds / 86_400;
+    expect(days).toBeGreaterThan(29.9);
+    expect(days).toBeLessThan(30.1);
+
+    const { rows } = await pool.query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM admin_events WHERE type = 'valuation_restored' AND subject_id = $1`,
+      [id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.payload.sla_credited).toEqual([
+      { valuation_id: id, stage: 'analysis', credited_seconds: credited[0]!.credited_seconds },
+    ]);
+  });
+
+  it('reports nothing credited when the restore owed nothing', async () => {
+    const id = await seedEngagement('Nothing Owed Co', '2 days');
+    await retireValuations(pool, [id]);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/retention/valuations/${id}/restore`,
+      headers: authHeader(admin.token),
+      payload: {},
+    });
+    expect(res.statusCode).toBe(200);
+    // A sub-second withdrawal still credits a sub-second span, so the list is
+    // not empty — what matters is that it is honest about the size.
+    const credited = res.json().sla_credited as { credited_seconds: number }[];
+    for (const c of credited) expect(c.credited_seconds).toBeLessThan(2);
   });
 
   it('is a no-op for an engagement restored the same moment it was retired', async () => {
