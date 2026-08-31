@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import pLimit from 'p-limit';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems, type FailureLogger } from '@n409/shared';
+import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { signCapTableSyncState, verifyCapTableSyncState, type JwtConfig } from '../auth/jwt.js';
 import {
@@ -49,6 +49,7 @@ import {
   logConnectorSyncFailure,
   logConnectorSyncRecovered,
   logSyncBookkeepingFailure,
+  logSyncOutcomeSuperseded,
   type ConnectorLogger,
 } from '../domain/connectorSyncLog.js';
 
@@ -178,7 +179,7 @@ export async function syncCapTableConnection(
      * best-effort `recordSyncError` writes below are inside this function and
      * had nowhere to report to at all. See `logSyncBookkeepingFailure`.
      */
-    log?: FailureLogger;
+    log?: ConnectorLogger;
   },
   connection: CapTableConnectionRow,
   opts: { apply: boolean; actorId: string },
@@ -358,7 +359,15 @@ export async function syncCapTableConnection(
     as_of: pulled.as_of,
   };
   try {
-    await recordSync(deps.pool, connection, summary);
+    const landed = await recordSync(deps.pool, connection, summary);
+    if (!landed && deps.log) {
+      logSyncOutcomeSuperseded(deps.log, {
+        family: 'cap_table',
+        provider: connection.provider,
+        connectionId: connection.id,
+        valuationId: connection.valuation_id,
+      });
+    }
   } catch (err) {
     /*
      * The last unguarded statement in the sync (R261, M5).

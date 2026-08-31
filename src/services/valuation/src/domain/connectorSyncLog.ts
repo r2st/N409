@@ -154,6 +154,38 @@ export function logSyncBookkeepingFailure(
   );
 }
 
+/**
+ * A pull that ran, succeeded, and moved nothing (round 267, methodology M11).
+ *
+ * R264 pinned every writer on a connector row to the `auth_generation` it read
+ * at the top of the tick, so a sync that was in flight when the analyst
+ * reconnected cannot write its outcome over the new authorisation. That is the
+ * right answer and the write is correctly discarded — but `recordSync` returned
+ * `void`, so the discard was indistinguishable from a write that landed, in the
+ * one place that could tell.
+ *
+ * What it leaves behind reads, from every screen and every query, exactly like
+ * a broken connector: `last_synced_at` did not advance and `last_sync_summary`
+ * still describes the previous pull. An operator asked why a roster is a day
+ * old has no way to reach "because it was re-authorised mid-sync and the tick
+ * after it will fix this" except by knowing the mechanism exists.
+ *
+ * `info`, not a failure level: nothing is wrong, the next tick pulls again
+ * under the current authorisation, and the sweep's own recovery line is the
+ * neighbour this sits beside.
+ */
+export function logSyncOutcomeSuperseded(log: ConnectorLogger, subject: ConnectorSyncSubject): void {
+  log.info(
+    {
+      connectionId: subject.connectionId,
+      valuationId: subject.valuationId,
+      family: subject.family,
+      provider: subject.provider,
+    },
+    `${FAMILY_LABEL[subject.family]} sync finished under an authorisation that has since been replaced — its outcome was discarded`,
+  );
+}
+
 export function logConnectorSyncFailure(
   log: FailureLogger,
   err: unknown,

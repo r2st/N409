@@ -181,6 +181,24 @@ export async function upsertConnection(
  * which reads as something to fix rather than something deliberately ended.
  */
 /**
+ * Whether a generation-pinned write actually landed.
+ *
+ * `false` is not a failure — it is the race migration 0197 was added to lose on
+ * purpose: the analyst reconnected while this pull was in flight, the row now
+ * holds a different authorisation, and this outcome belongs to the old one. The
+ * write is correctly discarded.
+ *
+ * What it must not be is invisible (round 267, methodology M11). A discarded
+ * `recordSync` is a sync that ran, succeeded, and moved nothing:
+ * `last_synced_at` does not advance and `last_sync_summary` still describes the
+ * previous pull, which is exactly what a broken sync looks like from every
+ * screen and every query. The caller has the logger and the context to say
+ * which of the two happened, and until it did there was no record anywhere that
+ * a pull had been thrown away.
+ */
+export type PinnedWrite = boolean;
+
+/**
  * Record a successful sync and schedule the next one.
  *
  * WHY THE CADENCE IS READ HERE. This used to take the frequency as an argument,
@@ -235,8 +253,8 @@ export async function recordSync(
   pool: pg.Pool,
   connection: ConnectionGeneration,
   summary: Record<string, unknown>,
-): Promise<void> {
-  await pool.query(
+): Promise<PinnedWrite> {
+  const res = await pool.query(
     `UPDATE hris_connections
      SET last_synced_at = now(), last_sync_summary = $2, status = 'connected', last_error = NULL,
          sync_failures = 0,
@@ -249,6 +267,7 @@ export async function recordSync(
      WHERE id = $1 AND status <> 'revoked' AND auth_generation = $3`,
     [connection.id, JSON.stringify(summary), connection.auth_generation],
   );
+  return (res.rowCount ?? 0) > 0;
 }
 
 /**

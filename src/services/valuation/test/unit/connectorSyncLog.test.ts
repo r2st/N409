@@ -6,7 +6,11 @@ import {
   providerRefused,
   withDeadline,
 } from '../../src/clients/deadline.js';
-import { logConnectorSyncFailure, logSyncBookkeepingFailure } from '../../src/domain/connectorSyncLog.js';
+import {
+  logConnectorSyncFailure,
+  logSyncBookkeepingFailure,
+  logSyncOutcomeSuperseded,
+} from '../../src/domain/connectorSyncLog.js';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,16 +29,16 @@ import { fileURLToPath } from 'node:url';
  */
 
 interface Line {
-  level: 'warn' | 'error';
+  level: 'warn' | 'error' | 'info';
   fields: Record<string, unknown>;
   message: string;
 }
 
 function recorder() {
   const lines: Line[] = [];
-  const push = (level: 'warn' | 'error') => (fields: Record<string, unknown>, message: string) =>
+  const push = (level: Line['level']) => (fields: Record<string, unknown>, message: string) =>
     void lines.push({ level, fields, message });
-  return { lines, warn: push('warn'), error: push('error') };
+  return { lines, warn: push('warn'), error: push('error'), info: push('info') };
 }
 
 const subject = {
@@ -223,6 +227,45 @@ describe('a connector sync whose bookkeeping did not land (R267)', () => {
       const swallows = text.match(/recordSyncError\([\s\S]*?\)\s*\.catch\(\(\)\s*=>\s*undefined\)/g) ?? [];
       expect(swallows, `${file} discards a bookkeeping failure`).toHaveLength(0);
       expect(text).toContain('logSyncBookkeepingFailure');
+    }
+  });
+});
+
+/**
+ * The pull that ran, succeeded, and moved nothing (R267).
+ *
+ * R264 pinned every writer on these rows to the `auth_generation` read at the
+ * top of the tick, so a sync in flight when the analyst reconnects cannot write
+ * over the new authorisation. `recordSync` returned `void`, so the discard was
+ * invisible in the one place that could see it — and what it leaves behind
+ * (`last_synced_at` unmoved, the previous summary still on the row) reads from
+ * every screen exactly like a connector that is broken.
+ */
+describe('a sync whose authorisation was replaced under it (R267)', () => {
+  it('says the outcome was discarded, at the level of something that is not wrong', () => {
+    const log = recorder();
+    logSyncOutcomeSuperseded(log, subject);
+    expect(log.lines).toHaveLength(1);
+    // Not a failure: the next tick pulls again under the current authorisation.
+    expect(log.lines[0]?.level).toBe('info');
+    expect(log.lines[0]?.fields).toMatchObject({
+      connectionId: '01HZCONN',
+      valuationId: '01HZVAL',
+      family: 'hris',
+    });
+    expect(log.lines[0]?.fields).not.toHaveProperty('alert');
+    // The consequence a reader needs, not just the cause.
+    expect(log.lines[0]?.message).toMatch(/outcome was discarded/);
+  });
+
+  it('is reachable — both swept families ask `recordSync` whether it landed', () => {
+    const src = dirname(fileURLToPath(import.meta.url));
+    for (const file of ['hris.ts', 'capTableSync.ts']) {
+      const text = readFileSync(join(src, '../../src/routes', file), 'utf8');
+      // A `await recordSync(…)` whose result is dropped is the shape this
+      // round removed; the discard has to be read to be reported.
+      expect(text, `${file} drops the result of recordSync`).not.toMatch(/^\s*await recordSync\(/m);
+      expect(text).toContain('logSyncOutcomeSuperseded');
     }
   });
 });
