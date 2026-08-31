@@ -152,12 +152,15 @@ export async function findResolutionsByValuationIds(
  * THE `FOR UPDATE` IS THE POINT, and it is the same argument `recordSignoff`
  * makes below. Adding a member means the board is no longer fully signed, so
  * this ends by recomputing the aggregate — and on an approved resolution that
- * recomputation is an *un-approval*: `status` goes back to 'pending',
- * `approved_at` is cleared, and `refreshResolutionStatusTx` emits no event for
- * that direction, so the trail says a resolution was approved and never says it
- * stopped being. The route refuses it for exactly that reason ("The resolution
- * is already approved") — but that refusal is a read on the pool, and the fact
- * it reads is one the last outstanding signature changes.
+ * recomputation is an *un-approval*: `status` goes back to 'pending' and
+ * `approved_at` is cleared. The route refuses it for exactly that reason ("The
+ * resolution is already approved") — but that refusal is a read on the pool,
+ * and the fact it reads is one the last outstanding signature changes.
+ *
+ * (`refreshResolutionStatusTx` records that direction as
+ * `board_resolution_reopened` for the door — `deleteBoardMember` — that is
+ * allowed through it. This one is not: an addition that quietly withdrew an
+ * approval nobody asked to withdraw is a refusal, not an event.)
  *
  * Which is not an exotic interleaving. The window is "ops adds a director while
  * the last director is signing", and it is opened by the ordinary way this
@@ -387,7 +390,8 @@ export async function recordSignoff(
 /**
  * Recomputes board_resolutions.status from its sign-offs inside an open
  * transaction, stamping approved_at exactly once when approval is first
- * reached, and emitting an approval/rejection event on transitions.
+ * reached, and emitting an event on every transition — including the way back
+ * out of a decision, which for a while it made silently.
  */
 async function refreshResolutionStatusTx(
   client: pg.PoolClient,
@@ -426,6 +430,31 @@ async function refreshResolutionStatusTx(
       type: BOARD_EVENT_TYPES.resolutionRejected,
       actor,
       payload: { resolution_id: resolutionId },
+    });
+  } else {
+    // The third direction, which had no event at all. `next` is 'pending' and
+    // `current.status` is not — the recomputation has just taken a decided
+    // resolution back to undecided and cleared an `approved_at` that had
+    // already been stamped.
+    //
+    // R288 closed the way `addBoardMember` reached here, by refusing under this
+    // same row lock. `deleteBoardMember` reaches it too and cannot be refused
+    // the same way: removing a director is a thing ops is allowed to do, and
+    // removing the sole director of an approved resolution — or the rejecting
+    // director of a rejected one — is exactly the undoing of a decision. The
+    // `board_member_removed` row beside this one says a member went; it does
+    // not say the board's adoption of a 409A FMV went with them, and the trail
+    // has to be readable without the reader re-deriving the aggregate from the
+    // sign-off list as it stood at that instant.
+    //
+    // `from` rather than a type per direction: 'approved' and 'rejected' are
+    // the only two values it can take and the event means the same thing in
+    // both.
+    await recordEvent(client, {
+      valuationId,
+      type: BOARD_EVENT_TYPES.resolutionReopened,
+      actor,
+      payload: { resolution_id: resolutionId, from: current.status },
     });
   }
   return resolution(updated[0]!);

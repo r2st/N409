@@ -211,6 +211,24 @@ export const EVENT_CATALOG = {
   board_resolution_sent: D('Board resolution sent', 'review', 'notice', 'client'),
   board_resolution_approved: D('Board resolution approved', 'review', 'critical', 'client'),
   board_resolution_rejected: D('Board resolution rejected', 'review', 'critical', 'client'),
+  /**
+   * The aggregate going back to 'pending' from a decided state.
+   *
+   * The two rows above are emitted on the way *into* a decision and there was
+   * nothing for the way out, so a trail could say the board adopted the FMV —
+   * `approved_at` stamped, `board_resolution_approved` written — and never say
+   * that it stopped having, with the row underneath quietly back at 'pending'
+   * and `approved_at` cleared. R288 shut the door `addBoardMember` opened; the
+   * one `deleteBoardMember` opens is still there (remove the sole director from
+   * an approved resolution, or the rejecting director from a rejected one) and
+   * cannot be shut the same way, because removing a director is a thing ops is
+   * allowed to do. So the move is recorded instead of refused.
+   *
+   * `critical` and `client`-visible for the same reason its two siblings are:
+   * whoever was told the resolution was approved has to be able to see that it
+   * no longer is.
+   */
+  board_resolution_reopened: D('Board resolution reopened', 'review', 'critical', 'client'),
   board_signoff_recorded: D('Board sign-off recorded', 'review', 'critical', 'client'),
 
   // ── Output & delivery ───────────────────────────────────────────────────

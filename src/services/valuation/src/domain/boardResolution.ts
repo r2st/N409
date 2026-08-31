@@ -32,6 +32,7 @@ export const BOARD_EVENT_TYPES = {
   signoffRecorded: 'board_signoff_recorded',
   resolutionApproved: 'board_resolution_approved',
   resolutionRejected: 'board_resolution_rejected',
+  resolutionReopened: 'board_resolution_reopened',
 } as const;
 
 export interface ResolutionInput {
