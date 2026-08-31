@@ -265,17 +265,44 @@ describe.skipIf(!dbUp)('market research', () => {
   });
 
   it('refresh-all reports each topic and skips the one needing an analyst’s subject', async () => {
-    const res = await app.inject({
-      method: 'POST',
-      url: `/api/v1/valuations/${valuationId}/research/refresh-all`,
-      headers: authHeader(ops.token),
-      payload: { region: 'ca' },
-    });
+    /*
+     * The query count is asserted alongside the behaviour (R290). `publicFacts`
+     * is two reads keyed on the engagement alone — the company profile and the
+     * overwrites — and nothing it reads varies by topic. Asked inside the loop
+     * it fetched the same two rows once per topic to build five objects
+     * differing in one field, `region`, which is an input to the object and not
+     * to either query.
+     *
+     * Counted on the statement so the assertion is about how many times the
+     * question was asked rather than about how long it took.
+     */
+    let factReads = 0;
+    const original = pool.query.bind(pool);
+    (pool as unknown as { query: (...a: unknown[]) => unknown }).query = (...args: unknown[]) => {
+      const first = args[0];
+      const text = typeof first === 'string' ? first : ((first as { text?: string })?.text ?? '');
+      if (/FROM (company_profiles|overwrites)\b/.test(text)) factReads += 1;
+      return (original as (...a: unknown[]) => unknown)(...args);
+    };
+    let res;
+    try {
+      res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${valuationId}/research/refresh-all`,
+        headers: authHeader(ops.token),
+        payload: { region: 'ca' },
+      });
+    } finally {
+      (pool as unknown as { query: unknown }).query = original;
+    }
     expect(res.statusCode).toBe(200);
     const topics = (res.json().results as Array<{ topic: string }>).map((r) => r.topic);
     expect(topics).not.toContain('company_overview');
     expect(topics).toHaveLength(5);
     expect(res.json().succeeded).toBe(5);
+    // Two: the profile and the overwrites, once for the run. Five topics ran,
+    // so the per-topic form reads ten and this cannot pass vacuously.
+    expect(factReads, `read the engagement's facts ${factReads} times for 5 topics`).toBe(2);
   });
 
   it('threads grounded research into the narrative agent’s payload', async () => {

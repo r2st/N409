@@ -308,12 +308,27 @@ export function registerResearchRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const parsed = z.object({ region: z.enum(RESEARCH_REGIONS).default('un') }).safeParse(req.body ?? {});
     if (!parsed.success) throw problems.unprocessable('Invalid region');
 
+    /*
+     * The facts once, not once per topic (R290).
+     *
+     * `publicFacts` is two reads — the company profile and the engagement's
+     * overwrites — and both are keyed on the engagement alone. Nothing it reads
+     * varies by topic; the only thing that does is `region`, which is an input
+     * to the returned object and not to either query. Asked inside the loop it
+     * fetched the same two rows once per topic, four times over, to build four
+     * objects differing in one field.
+     *
+     * `region` is still decided per topic, from the same rule as before, so the
+     * question each run asks is unchanged.
+     */
+    const base = await publicFacts(deps.pool, id, {});
     const results: Array<{ topic: ResearchTopic; ok: boolean; error?: string }> = [];
     for (const def of RESEARCH_TOPIC_LIST) {
       if (def.acceptsSubject) continue;
-      const facts = await publicFacts(deps.pool, id, {
+      const facts: PublicResearchFacts = {
+        ...base,
         region: def.regionScoped ? parsed.data.region : null,
-      });
+      };
       try {
         await runOne(valuation, def.topic, facts, principal);
         results.push({ topic: def.topic, ok: true });
