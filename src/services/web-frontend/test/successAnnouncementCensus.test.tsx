@@ -72,6 +72,58 @@ const OUTCOME_FLAG =
 const ANNOUNCED = /role="status"|role="alert"|aria-live|<ErrorNote|<SuccessNote/;
 
 /**
+ * The tag a flag guards may be a wrapper component rather than the announcing
+ * element itself, and the live role then sits in that component's own body.
+ *
+ * `BillingPage` is written that way and all three of its `returnNote` sites
+ * were reported silent: the note renders `<SuccessNote>` on the success tone
+ * and a `role="status"` div on the neutral one, inside a
+ * `SubscriptionReturnNote` defined ten lines above — announced twice over, and
+ * invisible to a scan that reads only the eighty characters after the tag.
+ *
+ * So a capitalised tag is resolved to its definition in the same file and the
+ * same question is asked of that. One hop, and only within the file: following
+ * imports would mean parsing the module graph, and a wrapper worth writing in
+ * another file is a shared note component that already announces — which is
+ * what `<SuccessNote>` and `<ErrorNote>` above are.
+ */
+function wrapperBody(text: string, tag: string): string | null {
+  const name = /^<([A-Z]\w*)/.exec(tag)?.[1];
+  if (!name) return null;
+  const at = new RegExp(`function\\s+${name}\\s*\\(`).exec(text)?.index;
+  if (at === undefined) return null;
+  // Past the parameter list before looking for the body. These components take
+  // a destructured prop with an inline type, so the first `{` after the name is
+  // `({ note }: { … })` — brace counting from there returns the parameter and
+  // calls the component silent.
+  const paren = text.indexOf('(', at);
+  let parens = 0;
+  let afterParams = -1;
+  for (let i = paren; i < text.length; i += 1) {
+    if (text[i] === '(') parens += 1;
+    else if (text[i] === ')') {
+      parens -= 1;
+      if (parens === 0) {
+        afterParams = i;
+        break;
+      }
+    }
+  }
+  if (afterParams < 0) return null;
+  const open = text.indexOf('{', afterParams);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let i = open; i < text.length; i += 1) {
+    if (text[i] === '{') depth += 1;
+    else if (text[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return text.slice(open, i + 1);
+    }
+  }
+  return null;
+}
+
+/**
  * Two matches of the shape that are not confirmations, and would be wrong to
  * announce. Named rather than pattern-excluded, so a third has to be argued
  * for rather than absorbed.
@@ -86,6 +138,8 @@ const NOT_A_CONFIRMATION: Record<string, string> = {
 describe('an action that succeeded is announced', () => {
   const silent: string[] = [];
   const shapes: string[] = [];
+  /** Sites cleared only by resolving the tag to a wrapper defined in the file. */
+  const throughWrapper: string[] = [];
   for (const { file, text } of FILES) {
     for (const m of text.matchAll(OUTCOME_FLAG)) {
       const tagStart = text.indexOf('<', m.index + m[0].length - 1);
@@ -96,7 +150,11 @@ describe('an action that succeeded is announced', () => {
       const opening = text.slice(tagStart, end + 81);
       const key = `${file}:${m[1]}`;
       shapes.push(key);
-      if (!ANNOUNCED.test(tag) && !ANNOUNCED.test(opening) && !(key in NOT_A_CONFIRMATION)) {
+      const wrapper = wrapperBody(text, tag);
+      const viaWrapper = wrapper !== null && ANNOUNCED.test(wrapper);
+      if (viaWrapper) throughWrapper.push(key);
+      const announced = ANNOUNCED.test(tag) || ANNOUNCED.test(opening) || viaWrapper;
+      if (!announced && !(key in NOT_A_CONFIRMATION)) {
         silent.push(`${key} (line ${text.slice(0, m.index).split('\n').length})`);
       }
     }
@@ -106,6 +164,14 @@ describe('an action that succeeded is announced', () => {
     // The vacuity guard: a renamed flag convention would empty the scan and
     // turn the assertion below into a check that passes by asking nothing.
     expect(shapes.length).toBeGreaterThan(25);
+  });
+
+  it('resolves a wrapper component to the element that announces', () => {
+    // The second vacuity guard, for the hop rather than the scan. A wrapper
+    // resolver that quietly stops resolving does not fail anything — it makes
+    // real confirmations look silent, and the pressure is then to exempt them,
+    // which is how a census turns into a list of files.
+    expect(throughWrapper).toContain('pages/BillingPage.tsx:returnNote');
   });
 
   it('leaves no outcome note that says nothing to a screen reader', () => {
