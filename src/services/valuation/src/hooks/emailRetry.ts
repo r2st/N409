@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
-import { describeTransportFailure, flagEnabled, FLAGS } from '@n409/shared';
+import { describeTransportFailure, flagEnabled, FLAGS, logFailure } from '@n409/shared';
 import { claimRetryableEmails, retireStrandedEmails, settleClaimedEmail } from '../repos/emailOutbox.js';
 import { recordSendFailure } from '../repos/emailDelivery.js';
 import { EMAIL_MAX_ATTEMPTS } from '../domain/emailRetry.js';
@@ -76,12 +76,32 @@ export async function retryFailedEmails(deps: {
     limit: deps.limit,
     leaseMs: deps.leaseMs,
   }).catch((err: unknown) => {
-    deps.log?.error({ err }, 'could not retire stranded outbox rows');
+    // `logFailure`, not a fixed level (round 273, methodology M11). This catch
+    // is inside a retry loop — the next tick runs the retirement again — which
+    // is exactly the question that helper asks the error, and the answer went
+    // both ways here. A busy pool was `error`, which is how alerting gets
+    // muted; a broken statement was `error` *without* `alert: true`, so the one
+    // failure that only a person fixes matched no rule. The claim below is not
+    // caught at all and therefore reaches `scheduler.ts`, which classifies it
+    // — this arm existed only so a failed retirement could not cost the batch,
+    // and it took the classification with it.
+    if (deps.log) logFailure(deps.log, err, {}, 'could not retire stranded outbox rows');
     return [];
   });
   for (const email of retired) {
+    // `templateKey` and `valuationId` beyond this file's usual three, because
+    // this is the one line in it about a message that is never going out. The
+    // row's own `error` tells an operator to "retry it by hand if the transport
+    // is healthy again", and what the message was is what decides whether they
+    // should — a spent verification link is not a receipt.
     deps.log?.warn(
-      { emailId: email.id, originRequestId: email.request_id, attempts: email.attempts },
+      {
+        emailId: email.id,
+        originRequestId: email.request_id,
+        attempts: email.attempts,
+        templateKey: email.template_key,
+        valuationId: email.valuation_id,
+      },
       'outbox row stranded on queued with its attempts spent — settled as failed',
     );
   }
