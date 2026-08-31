@@ -225,6 +225,36 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings — refusals and defaults', () => 
         expect(res.statusCode).toBe(404);
       }
     });
+
+    it('says which of the two ids was wrong, since the fund one was not', async () => {
+      /*
+       * The bare 404 is right where telling "absent" from "not yours" would be
+       * an existence oracle, which is why nearly every id in this API gets one.
+       * Neither half of that applies to a holding: the surface is ops-only and
+       * the fund has already been loaded, so the caller can see the parent and
+       * the only thing left to say is which child of it is missing. R283–R285
+       * added seven of these to `funds.ts` and two to `debt.ts` — enough to put
+       * `errorMessageQuality`'s ratchet over its ceiling, which is the growth
+       * it exists to catch.
+       */
+      const fund = await createFund();
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/funds/${fund}/positions/01ARZ3NDEKTSV4RRFFQ69G5FAV/marks`,
+        headers: opsAuth(),
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json().detail).toBe('No such holding in this fund');
+
+      // …and the fund's own 404 stays bare, because that one *is* the oracle.
+      const missing = await app.inject({
+        method: 'GET',
+        url: '/api/v1/funds/01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        headers: opsAuth(),
+      });
+      expect(missing.statusCode).toBe(404);
+      expect(missing.json().detail).not.toMatch(/holding/i);
+    });
   });
 
   // ── Bodies ────────────────────────────────────────────────────────────────

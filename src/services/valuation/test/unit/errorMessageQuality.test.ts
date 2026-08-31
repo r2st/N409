@@ -222,7 +222,13 @@ describe('error messages name what failed, why, and what to do', () => {
       0,
     );
     expect(bare, 'bare problems.notFound() calls — this number may fall, never rise').toBeLessThanOrEqual(
-      323,
+      // Re-based down in R287. It had risen to 328 — above the ceiling, so the
+      // gate was red on main — as R283–R285 built out the measurement surface
+      // and gave every fund-holding sub-resource a bare 404 whose parent the
+      // caller had already loaded successfully. That is precisely the growth
+      // this ratchet is for. Ten of them now name the holding
+      // (`noSuchHolding`), which is what brought it back under.
+      319,
     );
   });
 });

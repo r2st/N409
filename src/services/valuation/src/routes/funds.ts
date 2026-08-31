@@ -267,6 +267,26 @@ function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Fund valuation is operations-only');
 }
 
+/**
+ * The holding is not in this fund.
+ *
+ * A bare `problems.notFound()` is the right answer where telling "absent" from
+ * "not yours" would be an existence oracle — which is why this API answers it
+ * to nearly every id, and why `errorMessageQuality` keeps a ratchet on the
+ * population rather than a list of exemptions. Neither half applies here: the
+ * measurement surface is ops-only and every one of these sites has already
+ * loaded the *fund* successfully, so the caller can see the parent and the
+ * only thing left to say is which child of it was not found. Saying it is the
+ * difference between an analyst re-checking their fund id and re-checking the
+ * one that is actually wrong.
+ *
+ * Nothing of the caller's is repeated: the id is in the URL they sent, so
+ * quoting it back adds nothing but a value from outside to put in the sentence.
+ */
+function noSuchHolding(): never {
+  throw problems.notFound('No such holding in this fund');
+}
+
 const n = (v: string | number): number => Number(v);
 
 /** Build an engine position payload from a stored position + its inputs. */
@@ -524,7 +544,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     requireOps(principal);
     const { id, pid } = req.params as { id: string; pid: string };
     await loadFundForWrite(id, 'accepting changes to its holdings');
-    if (!isUlid(pid) || !(await findPosition(deps.pool, id, pid))) throw problems.notFound();
+    if (!isUlid(pid) || !(await findPosition(deps.pool, id, pid))) throw noSuchHolding();
     const parsed = PositionPatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid position', parsed.error);
     const b = parsed.data;
@@ -537,7 +557,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         costBasis: b.cost_basis,
         markMethod: b.mark_method,
       });
-      if (!updated) throw problems.notFound();
+      if (!updated) throw noSuchHolding();
       await recordFundEvent(client, live, 'fund_position_updated', principal, {
         fund_id: id,
         position_id: pid,
@@ -562,14 +582,14 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     requireOps(principal);
     const { id, pid } = req.params as { id: string; pid: string };
     await loadFund(id);
-    if (!isUlid(pid)) throw problems.notFound();
+    if (!isUlid(pid)) throw noSuchHolding();
     await withTransaction(deps.pool, async (client) => {
       const live = await fundLinkIn(client, id);
       // Read before the delete, and inside the transaction that does it: the
       // row is what the event has to name, and after the cascade there is
       // nothing left to name it with.
       const position = await findPosition(client, id, pid);
-      if (!position) throw problems.notFound();
+      if (!position) throw noSuchHolding();
       // The mark trail goes too — `fund_marks` cascades from the position
       // (0086) — and the mark is the figure that actually leaves the NAV:
       // `domain/navExhibits.ts` sums the *stored* marks, not the cost bases.
@@ -579,7 +599,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       // read gone.
       const latest = (await latestMarks(client, [pid])).get(pid) ?? null;
       const marksRemoved = await countMarks(client, pid);
-      if (!(await deletePosition(client, id, pid))) throw problems.notFound();
+      if (!(await deletePosition(client, id, pid))) throw noSuchHolding();
       await recordFundEvent(client, live, 'fund_position_removed', principal, {
         fund_id: id,
         position_id: pid,
@@ -599,7 +619,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id, pid } = req.params as { id: string; pid: string };
     await loadFund(id);
     const position = await findPosition(deps.pool, id, pid);
-    if (!position) throw problems.notFound();
+    if (!position) throw noSuchHolding();
     return listMarks(deps.pool, pid);
   });
 
@@ -609,7 +629,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id, pid } = req.params as { id: string; pid: string };
     await loadFundForWrite(id, 'accepting new marks');
     const position = await findPosition(deps.pool, id, pid);
-    if (!position) throw problems.notFound();
+    if (!position) throw noSuchHolding();
     const parsed = MarkBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid mark', parsed.error);
     const b = parsed.data;
@@ -640,7 +660,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       // engine call. `fund_marks.position_id` is a foreign key, so a holding
       // deleted in that window turned the INSERT into a 500 rather than into
       // the 404 the id had earned. See `lockPosition`.
-      if (!(await lockPosition(client, id, pid))) throw problems.notFound();
+      if (!(await lockPosition(client, id, pid))) throw noSuchHolding();
       const recorded = await createMark(client, {
         positionId: pid,
         measurementDate: b.measurement_date,
@@ -678,7 +698,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       const { id, pid } = req.params as { id: string; pid: string };
       const fund = await loadFund(id);
       const position = await findPosition(deps.pool, id, pid);
-      if (!position) throw problems.notFound();
+      if (!position) throw noSuchHolding();
       const parsed = RollForwardBody.safeParse(req.body);
       if (!parsed.success) throw invalidBody('Invalid roll-forward', parsed.error);
       const b = parsed.data;
@@ -713,7 +733,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         const mark = await withTransaction(deps.pool, async (client) => {
           const live = await fundForWriteIn(client, id, 'accepting new marks');
           // The holding too, for the reason the mark route above gives.
-          if (!(await lockPosition(client, id, pid))) throw problems.notFound();
+          if (!(await lockPosition(client, id, pid))) throw noSuchHolding();
           const recorded = await createMark(client, {
             positionId: pid,
             measurementDate: b.measurement_date ?? todayLocal(),
