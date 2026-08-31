@@ -315,6 +315,20 @@ export async function reapStalePipelineRuns(
  * done — so the conflict is the correct outcome and not an error. A set-based
  * UPDATE would take the whole batch down with it.
  *
+ * TOLERATED IN BOTH OF THE TWO FORMS IT ARRIVES IN (round 268, methodology M5).
+ * The `NOT EXISTS` below is the pre-flight SELECT, and migration 0094 exists
+ * because that shape races: it is evaluated against rows committed before this
+ * statement, and an upload hook or an ops click that commits its INSERT a
+ * moment later reaches the index instead. The re-queue is the one write in this
+ * file that *enters* the partial unique index — 'failed' is outside it,
+ * 'queued' is inside — so it is the write that takes the 23505, and an
+ * unhandled one aborts the transaction: every run claimed earlier in the batch
+ * is rolled back, along with its `auto_pipeline_started` event, which is
+ * precisely the "set-based UPDATE takes the whole batch down" the paragraph
+ * above rules out. A SAVEPOINT keeps the failure to the one row, and the row is
+ * then stood down exactly as the pre-flight miss stands it down: the conflict
+ * says the same thing either way, which is that a newer run is doing this work.
+ *
  * `error` is cleared on the way out. A re-queued run that kept the previous
  * attempt's message would show a failure reason on a run that is currently
  * running, which is what the UI polls.
@@ -337,8 +351,13 @@ export async function claimRetryablePipelineRuns(
 
     const claimed: PipelineRunRow[] = [];
     for (const run of due) {
-      const { rows } = await client.query<PipelineRunRow>(
-        `UPDATE pipeline_runs r
+      // The savepoint is what makes the 23505 this write can raise a fact about
+      // one row rather than about the batch — see the note above.
+      await client.query('SAVEPOINT claim_run');
+      let requeued: PipelineRunRow | undefined;
+      try {
+        const { rows } = await client.query<PipelineRunRow>(
+          `UPDATE pipeline_runs r
             SET status = 'queued',
                 attempts = attempts + 1,
                 error = NULL,
@@ -351,9 +370,15 @@ export async function claimRetryablePipelineRuns(
                  AND a.status IN ('queued', 'extracting', 'calculating')
             )
          RETURNING *`,
-        [run.id],
-      );
-      const requeued = rows[0];
+          [run.id],
+        );
+        requeued = rows[0];
+        await client.query('RELEASE SAVEPOINT claim_run');
+      } catch (err) {
+        if (!isActiveRunConflict(err)) throw err;
+        await client.query('ROLLBACK TO SAVEPOINT claim_run');
+        requeued = undefined;
+      }
       if (!requeued) {
         // A newer run is already active for this valuation. Stand down
         // permanently rather than leaving the schedule set: otherwise this row

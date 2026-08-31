@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { newUlid } from '@n409/shared';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import {
   claimRetryablePipelineRuns,
@@ -349,5 +350,115 @@ describe.skipIf(!dbUp)('auto-pipeline run status finality', () => {
     ))!;
     await ctx.pool.query('DELETE FROM pipeline_runs WHERE id = $1', [run.id]);
     await expect(setPipelineRunStatus(ctx.pool, run, 'ready', { actor: SYSTEM })).resolves.toBeNull();
+  });
+});
+
+/**
+ * The retry sweep under the race migration 0094 exists to lose (round 268, M5).
+ *
+ * `claimRetryablePipelineRuns` re-queues row by row and stands a run down when
+ * its valuation already has an active run, and its comment says why: a set-based
+ * UPDATE "would take the whole batch down". But the check that finds the newer
+ * run is a `NOT EXISTS` — the same pre-flight SELECT shape migration 0094 was
+ * written because of — and the re-queue is the one write in this file that
+ * *enters* the partial unique index. An upload hook whose INSERT commits inside
+ * that window raises 23505 from the UPDATE, and without a savepoint that aborts
+ * the transaction: every run claimed earlier in the batch is rolled back with
+ * its start event, which is exactly the outcome the row-by-row loop is for.
+ *
+ * Reproduced by holding the conflicting INSERT open: an uncommitted row is
+ * invisible to the `NOT EXISTS` and present in the index, so the claim blocks on
+ * it and takes the violation the moment the other transaction commits.
+ */
+describe.skipIf(!dbUp)('auto-pipeline retry claim under a racing trigger', () => {
+  let ctx: TestApp;
+  let ops: Awaited<ReturnType<typeof seedUser>>;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ AUTO_PIPELINE: 'off' });
+    ops = await seedUser(ctx, { roles: ['reviewer'] });
+  });
+
+  afterAll(async () => {
+    await ctx?.teardown();
+  });
+
+  async function newValuation(company: string): Promise<string> {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(ops.token),
+      payload: { kind: '409a', company_name: company },
+    });
+    return res.json().valuation.id as string;
+  }
+
+  /** A valuation holding one failed run whose retry is `dueMinutes` overdue. */
+  async function valuationWithDueRetry(company: string, dueMinutes: number) {
+    const valuationId = await newValuation(company);
+    const run = (await createPipelineRun(
+      ctx.pool,
+      { valuationId, trigger: 'upload', triggeredBy: ops.id },
+      SYSTEM,
+    ))!;
+    await setPipelineRunStatus(ctx.pool, run, 'failed', { error: 'upstream', actor: SYSTEM });
+    await ctx.pool.query(
+      `UPDATE pipeline_runs SET next_attempt_at = now() - ($2 || ' minutes')::interval WHERE id = $1`,
+      [run.id, String(dueMinutes)],
+    );
+    return { valuationId, run };
+  }
+
+  it('keeps the rest of the batch when one re-queue loses the unique index', async () => {
+    // Claimed first: `next_attempt_at ASC` puts the older one at the front, so
+    // it is already re-queued (and its start event written) when the conflict
+    // lands on the second.
+    const quiet = await valuationWithDueRetry('QuietRetryCo', 5);
+    const raced = await valuationWithDueRetry('RacedRetryCo', 1);
+
+    // The racing trigger: an active run for the raced valuation, inserted and
+    // held. Invisible to the claim's `NOT EXISTS`, present in the index.
+    const other = await ctx.pool.connect();
+    let committed = false;
+    try {
+      await other.query('BEGIN');
+      await other.query(
+        `INSERT INTO pipeline_runs (id, valuation_id, trigger, triggered_by) VALUES ($1, $2, 'manual', $3)`,
+        [newUlid(), raced.valuationId, ops.id],
+      );
+
+      const claiming = claimRetryablePipelineRuns(ctx.pool, { actor: SYSTEM });
+      // Long enough for the claim to reach the UPDATE and block on the index.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await other.query('COMMIT');
+      committed = true;
+
+      const claimed = await claiming;
+      expect(claimed.map((r) => r.id)).toEqual([quiet.run.id]);
+    } finally {
+      if (!committed) await other.query('ROLLBACK').catch(() => undefined);
+      other.release();
+    }
+
+    // The batch survived: the first claim and its start event are committed.
+    expect(await latestPipelineRun(ctx.pool, quiet.valuationId)).toMatchObject({
+      status: 'queued',
+      attempts: quiet.run.attempts + 1,
+    });
+    const { rows: started } = await ctx.pool.query(
+      `SELECT 1 FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'auto_pipeline_started'`,
+      [quiet.valuationId],
+    );
+    expect(started).toHaveLength(2); // the original trigger, and the retry
+
+    // The loser is stood down exactly as a pre-flight miss stands it down —
+    // still failed, no schedule left, and the reason on the row.
+    const { rows } = await ctx.pool.query<{ status: string; next_attempt_at: Date | null; error: string }>(
+      'SELECT status, next_attempt_at, error FROM pipeline_runs WHERE id = $1',
+      [raced.run.id],
+    );
+    expect(rows[0]).toMatchObject({ status: 'failed', next_attempt_at: null });
+    expect(rows[0]!.error).toContain('retry abandoned');
   });
 });
