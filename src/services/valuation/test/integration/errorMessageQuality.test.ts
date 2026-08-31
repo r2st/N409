@@ -171,6 +171,68 @@ describe.skipIf(!dbUp)('error messages a caller can act on', () => {
     });
   });
 
+  describe('404 — names what it did not recognise, in words it controls', () => {
+    /*
+     * The other half of `errorBodyDisclosure`'s rule (R287, methodology M19).
+     * Naming the unknown field is right — "unknown field" without the field is
+     * a worse answer — but the value being named is by construction the one
+     * that matched nothing the server knows, so it is whatever the caller put
+     * in the URL, and a path segment carries no schema and no length of its
+     * own. `quoteForMessage` is what the workbook readers already put every
+     * untrusted name through before quoting it.
+     */
+    let valuationId: string;
+
+    beforeAll(async () => {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(opsToken),
+        payload: { kind: '409a', company_name: 'Echo Co' },
+      });
+      valuationId = created.json().valuation.id;
+    });
+
+    const put = (fieldKey: string) =>
+      app.inject({
+        method: 'PUT',
+        url: `/api/v1/valuations/${valuationId}/overwrites/${encodeURIComponent(fieldKey)}`,
+        headers: authHeader(opsToken),
+        payload: { value: 1 },
+      });
+
+    it('bounds what it quotes below what the router will hand it', async () => {
+      // fastify's `maxParamLength` is 100 and nothing here raises it, so the
+      // router answers 414 above that and the route never sees a truly
+      // unbounded segment — but 100 is not the quoting budget, and the bound
+      // the message keeps has to be its own rather than a default two layers
+      // down that this route does not set. See routes/blog.ts on what happens
+      // when one layer assumes the other's limit.
+      const res = await put('x'.repeat(100));
+      expect(res.statusCode).toBe(404);
+      expect(res.json().detail).toBe(`Unknown overwrite field "${'x'.repeat(80)}…"`);
+    });
+
+    it('strips the reordering and control characters out of what it quotes', async () => {
+      const res = await put('fee\u202Egnp.exe\u0007');
+      expect(res.statusCode).toBe(404);
+      const { detail } = res.json();
+      expect(detail).not.toContain('\u202E');
+      expect(detail).not.toContain('\u0007');
+      expect(detail).toContain('feegnp.exe?');
+    });
+
+    it('does not let the quoted value close the quoting around it', async () => {
+      const res = await put('a" and also');
+      expect(res.json().detail).toBe('Unknown overwrite field "a? and also"');
+    });
+
+    it('still names an ordinary typo, which is the reason it names anything', async () => {
+      const res = await put('industry_idd');
+      expect(res.json().detail).toBe('Unknown overwrite field "industry_idd"');
+    });
+  });
+
   describe('404 — uninformative on purpose', () => {
     it('gives a malformed id the same answer as a missing one', () => {
       // Not an oversight, and asserted so nobody "fixes" it twice. R180 tried:

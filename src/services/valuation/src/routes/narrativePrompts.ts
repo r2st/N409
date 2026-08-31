@@ -16,6 +16,7 @@ import {
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { quoteForMessage } from '../domain/displayText.js';
 
 /**
  * Narrative prompt library management (migration 0114). The sibling of the Bot
@@ -44,7 +45,7 @@ function requireOps(principal: Principal): void {
 
 function parseKind(value: string): ValuationKind {
   if (!(VALUATION_KINDS as readonly string[]).includes(value)) {
-    throw problems.notFound(`Unknown valuation kind "${value}"`);
+    throw problems.notFound(`Unknown valuation kind "${quoteForMessage(value)}"`);
   }
   return value as ValuationKind;
 }

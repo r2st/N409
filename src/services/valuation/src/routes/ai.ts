@@ -71,6 +71,7 @@ import { listValuationTags, upsertValuationTags } from '../repos/valuationTags.j
 import { presentValuationTag } from './valuationTags.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { quoteForMessage } from '../domain/displayText.js';
 
 /**
  * How long one AI pipeline call may take, end to end.
@@ -857,7 +858,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
 
     const { id, pipeline } = req.params as { id: string; pipeline: string };
     if (!(AI_PIPELINES as readonly string[]).includes(pipeline)) {
-      throw problems.notFound(`Unknown pipeline "${pipeline}"`);
+      throw problems.notFound(`Unknown pipeline "${quoteForMessage(pipeline)}"`);
     }
     if (pipeline === 'qa') {
       // QA runs through its own route so the deterministic checks and the
