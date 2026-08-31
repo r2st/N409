@@ -292,12 +292,24 @@ export interface Asc718Portfolio {
  * One amortization period's expense, divided among the calendar years its
  * months fall in.
  *
- * Compensation cost accrues ratably over the requisite service period, so a
- * month is the unit: an annual bucket running 15 July 2026 to 15 July 2027
- * puts five and a half months in 2026 and six and a half in 2027, and the
- * split is by whole months from the period's own start date. The last month
- * absorbs the residual, so the pieces sum to the period exactly and the year
- * totals still sum to `totalCompensationCost`.
+ * Compensation cost accrues ratably over the requisite service period, and the
+ * unit it accrues in is a **whole service month**, counted from the period's
+ * own start date and attributed to the calendar year that month *begins* in.
+ * An annual bucket running 15 July 2026 to 15 July 2027 is therefore six months
+ * in each year: the sixth of them runs 15 December to 15 January and goes to
+ * 2026 entire. Only a bucket starting on the first of a month divides on the
+ * year boundary itself.
+ *
+ * Whole months rather than days, and it is a choice rather than an accident —
+ * the frequency of the schedule is a disclosure granularity and not a
+ * measurement, so monthly and annual buckets have to put the same cost in the
+ * same year (`asc718Portfolio`'s own test asserts exactly that), and a monthly
+ * bucket has no smaller piece to divide. The prose here used to describe a
+ * half-month split the code has never performed, which is the kind of sentence
+ * somebody reconciles a disclosure against.
+ *
+ * The last month absorbs the residual, so the pieces sum to the period exactly
+ * and the year totals still sum to `totalCompensationCost`.
  *
  * The year is read from `addMonths`, which clamps the day of month rather than
  * overflowing it — but clamping only ever moves a date *within* its target

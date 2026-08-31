@@ -304,6 +304,71 @@ describe('asc718Portfolio', () => {
     expect(p.expenseByCalendarYear[1]!.expense).toBeCloseTo(half, 1);
   });
 
+  /*
+   * The case the suite above avoids by granting on the first of a month, and
+   * the one the module's own prose used to describe wrongly (round 269).
+   *
+   * A whole service month is the unit and it lands in the year it *begins* in,
+   * so the month running 15 December to 15 January is 2026's entire. Six and
+   * six, not five and a half and six and a half — which matters because these
+   * are the rows of a disclosure somebody reconciles against a general ledger,
+   * and "half a month of expense" is a difference that has to be explained.
+   *
+   * Pinned rather than left to the comment: nothing else in this file grants
+   * mid-month, so the convention was stated in prose and enforced nowhere.
+   */
+  it('gives a mid-month grant whole months, in the year each month begins in', () => {
+    const p = asc718Portfolio([
+      {
+        optionsGranted: 12_000,
+        grantDate: '2026-07-15',
+        vestingMonths: 12,
+        amortizationFrequencyMonths: 12,
+        assumptions: {
+          grantDateFairValue: 2,
+          exercisePrice: 2,
+          expectedTermYears: 6,
+          volatility: 0.6,
+          riskFreeRate: 0.04,
+        },
+      },
+    ]);
+    expect(p.expenseByCalendarYear.map((y) => y.year)).toEqual([2026, 2027]);
+    const half = p.totalCompensationCost / 2;
+    expect(p.expenseByCalendarYear[0]!.expense).toBeCloseTo(half, 1);
+    expect(p.expenseByCalendarYear[1]!.expense).toBeCloseTo(half, 1);
+    // And the split is still exact — the last month absorbs the residual.
+    expect(p.expenseByCalendarYear[1]!.cumulative).toBeCloseTo(p.totalCompensationCost, 2);
+  });
+
+  /**
+   * The same accrual at monthly granularity has to agree, because the mid-month
+   * boundary is exactly where a day-based split and a whole-month one diverge:
+   * a monthly bucket has no smaller piece to divide, so if the annual one split
+   * December in half the two frequencies would disclose different years.
+   */
+  it('agrees with the monthly schedule on a mid-month grant', () => {
+    const grant = (freq: number) => ({
+      optionsGranted: 12_000,
+      grantDate: '2026-07-15',
+      vestingMonths: 12,
+      amortizationFrequencyMonths: freq,
+      assumptions: {
+        grantDateFairValue: 2,
+        exercisePrice: 2,
+        expectedTermYears: 6,
+        volatility: 0.6,
+        riskFreeRate: 0.04,
+      },
+    });
+    const annual = asc718Portfolio([grant(12)]).expenseByCalendarYear;
+    const monthly = asc718Portfolio([grant(1)]).expenseByCalendarYear;
+    expect(monthly.map((y) => y.year)).toEqual(annual.map((y) => y.year));
+    for (const [i, year] of annual.entries()) {
+      expect(monthly[i]!.expense).toBeCloseTo(year.expense, 1);
+    }
+  });
+
   it('recognizes a zero-month schedule in the year of the grant', () => {
     const p = asc718Portfolio([
       {
