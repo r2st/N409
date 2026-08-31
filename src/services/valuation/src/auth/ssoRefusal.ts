@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { requestErrorContext } from '@n409/shared';
 
 /**
  * Every refusal in the two identity-provider flows is answered to a browser
@@ -61,6 +62,30 @@ export function browserNavigation(req: FastifyRequest): boolean {
  * access log, indistinguishable from the successful hand-off two lines below
  * it, so without this the only record that an identity provider's user was
  * turned away is the one this writes.
+ *
+ * WRITTEN BEFORE THE BRANCH, NOT INSIDE IT (round 273, methodology M11). Until
+ * now the line was the redirect's: `if (!browserNavigation(req)) throw problem`
+ * came first, so a refusal answered with the problem body left this function
+ * without writing anything, and `registerProblemHandler` logs 4xx nowhere —
+ * deliberately, because a 4xx "describes the request, the caller was told, and
+ * logging them is logging other people's mistakes". These are the exception that
+ * argument does not cover: nobody chose them, half of them are a setting inside
+ * a firm's own identity provider, and the reason is *ours* rather than the
+ * caller's. Twelve of the seventeen call sites have no other record at all — no
+ * spine event, no `err` line of their own — so for a caller that did not ask
+ * for HTML the refusal existed only as a status code.
+ *
+ * Which caller is not hypothetical: the ACS is a POST an identity provider's
+ * page makes, and an IdP that submits it with `fetch` rather than a form auto-
+ * submit sends no `text/html`. The record of why an assertion was turned away
+ * should not depend on how the answer happened to be rendered.
+ *
+ * `requestErrorContext` for the same reason the 5xx arm of the problem handler
+ * uses it: the codes are shared between the two flows — `not_configured` is
+ * raised by four routes across `auth.ts` and `saml.ts` — so the code alone does
+ * not say which door. That context names the route, and it is the estate's one
+ * spelling of "which request was this", so a refusal reads like every other
+ * failure line beside it.
  */
 export function refuseSso(
   req: FastifyRequest,
@@ -68,7 +93,11 @@ export function refuseSso(
   code: SsoRefusalCode,
   problem: Error,
 ): FastifyReply {
-  if (!browserNavigation(req)) throw problem;
-  req.log.warn({ ssoRefusal: code }, 'single sign-on refused — sending the browser back to sign in');
+  const browser = browserNavigation(req);
+  req.log.warn(
+    { ssoRefusal: code, ...requestErrorContext(req), answered: browser ? 'redirect' : 'problem' },
+    browser ? 'single sign-on refused — sending the browser back to sign in' : 'single sign-on refused',
+  );
+  if (!browser) throw problem;
   return reply.redirect(`/login?sso_error=${code}`, 302);
 }
