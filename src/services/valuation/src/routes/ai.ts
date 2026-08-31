@@ -19,6 +19,12 @@ import { sanitizeExtractedInputs, type RejectedInput } from './engineInputs.js';
 import { findDocumentsByIds, listDocuments, type DocumentRow } from '../repos/documents.js';
 import { findRedactionIdentity, findUserById } from '../repos/users.js';
 import {
+  isIdentityUnavailable,
+  ownerRedactionEntities,
+  redactionIdentityState,
+  type RedactionIdentityResult,
+} from '../domain/redactionIdentity.js';
+import {
   completeAiJob,
   createAiJob,
   latestSucceededJob,
@@ -416,18 +422,16 @@ export async function runAiPipeline(
    * swallowed — "redaction was applied" and "these entities were applied" are
    * different claims, and this is the one place they can come apart.
    */
-  const client = await findRedactionIdentity(deps.pool, valuation.user_id).catch((err: unknown) => {
-    deps.log.warn(
-      { err, valuationId: valuation.id, pipeline },
-      'could not read the engagement owner for prompt redaction; their name is not being struck',
-    );
-    return null;
-  });
-  const clientName = [client?.first_name, client?.last_name].filter(Boolean).join(' ').trim();
-  const knownCompanies = [...new Set(client?.company_name ? [client.company_name] : [])].filter(
-    (name) => name.trim() !== '',
+  const client: RedactionIdentityResult = await findRedactionIdentity(deps.pool, valuation.user_id).catch(
+    (err: unknown) => {
+      deps.log.warn(
+        { err, valuationId: valuation.id, pipeline },
+        'could not read the engagement owner for prompt redaction; their name is not being struck',
+      );
+      return 'unavailable' as const;
+    },
   );
-  const knownPeople = clientName ? [clientName] : [];
+  const { companies: knownCompanies, people: knownPeople } = ownerRedactionEntities(client);
 
   /*
    * What actually goes to the model, and — below — what the job row says went.
@@ -484,6 +488,24 @@ export async function runAiPipeline(
       // the log line that says which.
       documents_on_file: documents.length,
       company_name: valuation.company_name,
+      /*
+       * Whether the redactor was told who the engagement is for (round 269,
+       * methodology M2).
+       *
+       * The lookup above is best-effort by design, and its failure changes what
+       * left the building: the owner's name and the employer they named at
+       * signup go to an external model unstruck. What the run's record then
+       * said about it was `declared: {people: 0}` — the same record produced by
+       * an account with no name on file, which is an ordinary and permanent
+       * shape (`users.first_name` is nullable). So the one reading that means
+       * "redaction was short an entity it was supposed to have" was indistin-
+       * guishable from the two that do not, on the row a defensibility question
+       * is answered from, with only a log line to say otherwise.
+       *
+       * Written on every run rather than only on the failure, because absence
+       * would then be a fourth value meaning "this run predates the field".
+       */
+      redaction_identity: redactionIdentityState(client),
     },
     createdBy: args.createdBy,
     promptVersion,
@@ -1169,21 +1191,35 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     // and the only signal of it was a count on a 200 response, which is a
     // number nobody has an expectation for. `logFailure` picks the level: a
     // busy pool is a blip, a query that cannot run is not going to start.
-    const client = await findUserById(deps.pool, valuation.user_id).catch((err: unknown) => {
-      logFailure(
-        deps.log,
-        err,
-        { valuationId: valuation.id },
-        'engagement contact could not be read — their name will not be struck from the anonymized material',
-      );
-      return null;
-    });
-    const clientName = [client?.first_name, client?.last_name].filter(Boolean).join(' ').trim();
+    const client: RedactionIdentityResult = await findUserById(deps.pool, valuation.user_id).catch(
+      (err: unknown) => {
+        logFailure(
+          deps.log,
+          err,
+          { valuationId: valuation.id },
+          'engagement contact could not be read — their name will not be struck from the anonymized material',
+        );
+        return 'unavailable' as const;
+      },
+    );
+    const owner = ownerRedactionEntities(client);
+    /*
+     * Said out loud, not left to be inferred from a count (round 269, M2).
+     *
+     * The panel this answers tells the operator "the company and the client
+     * contact are already included", and on a failed lookup that sentence is
+     * false. The response carried the *counts* of what was applied, which is
+     * only a signal to a reader who knows what the number should have been —
+     * and one known person short reads as nothing at all beside a list of names
+     * the operator typed themselves. The material is about to be treated as
+     * anonymized and forwarded, so the shortfall is stated.
+     */
+    const contactUnavailable = isIdentityUnavailable(client);
 
-    const companyNames = [
-      ...new Set([valuation.company_name, ...(client?.company_name ? [client.company_name] : []), ...known]),
-    ].filter((name) => name.trim() !== '');
-    const personNames = [...new Set([...(clientName ? [clientName] : []), ...people])];
+    const companyNames = [...new Set([valuation.company_name, ...owner.companies, ...known])].filter(
+      (name) => name.trim() !== '',
+    );
+    const personNames = [...new Set([...owner.people, ...people])];
 
     let result: AiAnonymizeResponse;
     try {
@@ -1214,6 +1250,9 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
         text_chars: text.length,
         known_companies: companyNames.length,
         known_people: personNames.length,
+        // The audit record of an extract taken out of the platform says whether
+        // the extract was short the entity nobody typed in — see above.
+        contact_unavailable: contactUnavailable,
         redacted: result.anonymization?.redacted ?? {},
       },
     });
@@ -1222,7 +1261,11 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       text: result.text,
       documents: result.documents,
       anonymization: result.anonymization,
-      known_entities: { companies: companyNames.length, people: personNames.length },
+      known_entities: {
+        companies: companyNames.length,
+        people: personNames.length,
+        contact_unavailable: contactUnavailable,
+      },
     };
   });
 

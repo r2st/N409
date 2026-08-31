@@ -149,6 +149,20 @@ describe.skipIf(!dbUp)('an AI job records the documents that went', () => {
     expect(input.documents_on_file).toBe(2);
   });
 
+  /*
+   * And whether the redactor was told who the engagement is for (round 269).
+   *
+   * The owner lookup is best-effort — its failure must not cost a run — so the
+   * record it leaves behind is the only thing that can say it happened. Until
+   * this field, a failed read produced `declared: {people: 0}`, which is also
+   * what an account with no name on file produces, on a run that shipped that
+   * client's name to an external model in the clear.
+   */
+  it('says the engagement owner was read, so a run that could not read one is not this', async () => {
+    expect((await run('extract')).statusCode).toBe(201);
+    expect((await jobInput('extract')).redaction_identity).toBe('read');
+  });
+
   it('names no document for the route that sends the agent none', async () => {
     // Drafting into the report passes `includeDocuments: false` — that agent
     // narrates a finished result rather than reading sources — so the payload

@@ -1064,7 +1064,7 @@ describe('CapTableTab', () => {
       text: '[NAME],Common,2500000',
       documents: [],
       anonymization: { applied: true, enforced: false, redacted: { names: 1, emails: 2 } },
-      known_entities: { companies: 2, people: 1 },
+      known_entities: { companies: 2, people: 1, contact_unavailable: false },
     };
 
     const open = async () => {
@@ -1183,6 +1183,53 @@ describe('CapTableTab', () => {
       await user.type(screen.getByLabelText(/paste a cap table/i), 'nothing identifying here');
       await user.click(screen.getByRole('button', { name: 'Anonymize' }));
       expect(await screen.findByTestId('anonymize-summary')).toHaveTextContent('Nothing was struck.');
+    });
+
+    /*
+     * The panel's own hint promises "the company and the client contact are
+     * already included", and the server resolves that contact best-effort — a
+     * lookup that fails must not refuse the preview. What it left behind was a
+     * count one lower than it should have been, which says nothing to a reader
+     * who does not already know the number, beside a list of names the operator
+     * typed themselves. The material is about to be forwarded as anonymized.
+     */
+    it('says outright when the client contact could not be read', async () => {
+      mockApi([
+        [
+          /\/ai\/anonymize$/,
+          () =>
+            json({
+              ...RESULT,
+              known_entities: { companies: 1, people: 0, contact_unavailable: true },
+            }),
+        ],
+        documents(),
+        capTable({ cap_table: STORED, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      const user = await open();
+      await user.type(screen.getByLabelText(/paste a cap table/i), 'Ada Lovelace,Common,2500000');
+      await user.click(screen.getByRole('button', { name: 'Anonymize' }));
+
+      await screen.findByTestId('anonymize-summary');
+      expect(screen.getByText(/engagement contact could not be read/i)).toBeInTheDocument();
+    });
+
+    it('says nothing of the sort when the contact was read', async () => {
+      mockApi([
+        [/\/ai\/anonymize$/, () => json(RESULT)],
+        documents(),
+        capTable({ cap_table: STORED, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      const user = await open();
+      await user.type(screen.getByLabelText(/paste a cap table/i), 'Ada Lovelace,Common,2500000');
+      await user.click(screen.getByRole('button', { name: 'Anonymize' }));
+
+      await screen.findByTestId('anonymize-summary');
+      expect(screen.queryByText(/could not be read/i)).toBeNull();
     });
 
     it('shows both filenames for a redacted document', async () => {

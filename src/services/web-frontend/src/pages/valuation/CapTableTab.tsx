@@ -646,7 +646,17 @@ interface AnonymizeResult {
   text: string;
   documents: AnonymizedDocument[];
   anonymization: { applied: boolean; enforced?: boolean; redacted: Record<string, number> };
-  known_entities: { companies: number; people: number };
+  known_entities: {
+    companies: number;
+    people: number;
+    /**
+     * The engagement contact could not be read, so their name is not among the
+     * entities that were struck. A count one short of what it should be is not
+     * a signal to anybody who does not already know the number, and this panel
+     * promises the contact is included — so the server says it outright.
+     */
+    contact_unavailable?: boolean;
+  };
 }
 
 /**
@@ -831,6 +841,14 @@ function AnonymizePanel({ valuationId }: { valuationId: string }) {
                   {plural(result.known_entities.people, ['known person', 'known people'])}.
                 </span>
               </p>
+
+              {result.known_entities.contact_unavailable && (
+                <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                  The engagement contact could not be read, so their name and the company they named at signup
+                  were not struck. Everything below was redacted without them — add them under &ldquo;Other
+                  names to strike&rdquo; and run this again before forwarding it.
+                </p>
+              )}
 
               {result.text !== '' && (
                 <pre className="max-h-64 overflow-auto overscroll-contain rounded-md border border-paper-300 bg-paper-50 p-3 font-mono text-xs whitespace-pre-wrap text-ink-800">

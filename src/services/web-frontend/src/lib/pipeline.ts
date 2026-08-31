@@ -187,6 +187,13 @@ export interface AiJob {
   pipeline: AiPipeline;
   status: 'running' | 'succeeded' | 'failed';
   model: string | null;
+  /**
+   * The run's provenance record — which documents went in, how much of the
+   * corpus that was, and whether the redactor was told who the engagement is
+   * for (`redaction_identity`). Declared here because it was already on the
+   * wire and read by nothing: see the anonymized badge in AiPanel.
+   */
+  input: Record<string, unknown> | null;
   result: Record<string, unknown> | null;
   error: string | null;
   latency_ms: number | null;

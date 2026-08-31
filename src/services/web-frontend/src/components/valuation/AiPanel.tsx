@@ -258,14 +258,42 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
                   const anon = job.result?.anonymization as
                     { applied?: boolean; redacted?: Record<string, number> } | undefined;
                   const redactedCount = Object.values(anon?.redacted ?? {}).reduce((a, b) => a + b, 0);
-                  return anon?.applied ? (
-                    <span
-                      className="inline-flex items-center rounded-full bg-paper-200 px-2.5 py-0.5 text-xs font-semibold text-ink-600"
-                      title="The company name and PII (people, emails, phones, addresses, SSN/EIN) were redacted out of the whole prompt — documents, filenames and the business overview — before it reached the model"
-                    >
-                      anonymized{redactedCount > 0 ? ` · ${redactedCount}` : ''}
-                    </span>
-                  ) : null;
+                  if (!anon?.applied) return null;
+                  /*
+                   * The badge said "anonymized" for two runs that are not the
+                   * same run. The redactor strikes patterns *and* the entities
+                   * it is told, and the engagement owner's name — a bare name in
+                   * a holder column, which no pattern can key on — is only ever
+                   * struck because the server looked it up. That lookup is
+                   * best-effort: it fails without failing the run, and the row
+                   * then carries `declared: {people: 0}`, which is also what an
+                   * account with no name on file produces. So a run that shipped
+                   * the client's name to an external model in the clear was
+                   * indistinguishable here from one that had nothing to strike.
+                   *
+                   * `input.redaction_identity` is the server saying which
+                   * (round 269). Only 'unavailable' is drawn: 'read' and
+                   * 'missing' are both redaction working as specified.
+                   */
+                  const identity = (job.input as { redaction_identity?: unknown } | null)?.redaction_identity;
+                  return (
+                    <>
+                      <span
+                        className="inline-flex items-center rounded-full bg-paper-200 px-2.5 py-0.5 text-xs font-semibold text-ink-600"
+                        title="The company name and PII (people, emails, phones, addresses, SSN/EIN) were redacted out of the whole prompt — documents, filenames and the business overview — before it reached the model"
+                      >
+                        anonymized{redactedCount > 0 ? ` · ${redactedCount}` : ''}
+                      </span>
+                      {identity === 'unavailable' && (
+                        <span
+                          className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-200"
+                          title="The engagement owner could not be read when this run was assembled, so their name and the company they named at signup were not among the entities the redactor was told to strike. Patterns still ran. Re-run to redact against them."
+                        >
+                          owner not struck
+                        </span>
+                      )}
+                    </>
+                  );
                 })()}
                 <span className="tnum ml-auto text-xs text-ink-400">
                   {formatDateTime(job.created_at)}

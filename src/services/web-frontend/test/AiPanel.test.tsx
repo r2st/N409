@@ -30,6 +30,10 @@ const baseJob = {
   pipeline: 'extract' as const,
   status: 'succeeded' as const,
   model: 'anthropic/claude-sonnet-4',
+  input: { document_ids: [], documents_on_file: 0, redaction_identity: 'read' } as Record<
+    string,
+    unknown
+  > | null,
   result: {} as Record<string, unknown>,
   error: null as string | null,
   latency_ms: 8400,
@@ -247,6 +251,53 @@ describe('AiPanel', () => {
       renderPanel();
       await runsReady();
       expect(screen.getByText('anonymized')).toBeInTheDocument();
+    });
+
+    /*
+     * "anonymized" was one word for two runs that are not the same run. The
+     * redactor strikes what a pattern can key on and what it is *told*, and the
+     * engagement owner's bare name is only in the second half — so a failed
+     * owner lookup ships that name to an external model while the badge still
+     * reads anonymized and the count still moves. `declared: {people: 0}` could
+     * not carry the difference, because an account with no name on file
+     * produces exactly that.
+     */
+    it('warns when the run could not be told who the engagement is for', async () => {
+      mockApi({
+        jobs: jobsOf({
+          ...extractJob,
+          input: { ...(extractJob.input ?? {}), redaction_identity: 'unavailable' },
+          result: {
+            ...extractJob.result,
+            anonymization: { applied: true, redacted: { email: 3 }, declared: { companies: 0, people: 0 } },
+          },
+        }),
+      });
+      renderPanel();
+      await runsReady();
+      expect(screen.getByText('anonymized · 3')).toBeInTheDocument();
+      const warning = screen.getByText('owner not struck');
+      expect(warning).toHaveAttribute('title', expect.stringContaining('could not be read'));
+    });
+
+    it('does not warn when the owner was read but had nothing to strike', async () => {
+      // The ordinary shape for an account with no name on file: redaction did
+      // everything it was asked to. A warning here would be noise on most runs,
+      // which is how the one that matters stops being read.
+      mockApi({
+        jobs: jobsOf({
+          ...extractJob,
+          input: { ...(extractJob.input ?? {}), redaction_identity: 'read' },
+          result: {
+            ...extractJob.result,
+            anonymization: { applied: true, redacted: {}, declared: { companies: 0, people: 0 } },
+          },
+        }),
+      });
+      renderPanel();
+      await runsReady();
+      expect(screen.getByText('anonymized')).toBeInTheDocument();
+      expect(screen.queryByText('owner not struck')).not.toBeInTheDocument();
     });
 
     it('shows no badge when anonymization was not applied', async () => {

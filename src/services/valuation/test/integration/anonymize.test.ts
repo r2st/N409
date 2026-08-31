@@ -216,7 +216,9 @@ describe.skipIf(!dbUp)('cap-table anonymization', () => {
     for (const figure of ['2500000', '4200000', '1000']) {
       expect(body.text).toContain(figure);
     }
-    expect(body.known_entities).toEqual({ companies: 2, people: 1 });
+    // And says the contact was actually read, rather than leaving a count one
+    // short of what it should be to carry that on its own (round 269).
+    expect(body.known_entities).toEqual({ companies: 2, people: 1, contact_unavailable: false });
     expect(body.anonymization.applied).toBe(true);
   });
 
@@ -272,6 +274,9 @@ describe.skipIf(!dbUp)('cap-table anonymization', () => {
     expect(event.payload.text_chars).toBe(CAP_TABLE.length);
     expect(event.payload.known_companies).toBe(2);
     expect(event.payload.known_people).toBe(1);
+    // The audit record of an extract leaving the platform says whether that
+    // extract was short the one entity nobody could have typed in.
+    expect(event.payload.contact_unavailable).toBe(false);
     // An audit record about handling client text must not be a copy of it.
     expect(JSON.stringify(event.payload)).not.toContain('Ada Lovelace');
     expect(JSON.stringify(event.payload)).not.toContain('2500000');
