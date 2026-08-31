@@ -262,12 +262,39 @@ export async function listActiveEngagements(
  * difference between one lookup per analyst and one per engagement. R279 wrote
  * it as `(SELECT array_agg(…) … WHERE ur.user_id = u.id)` in the select list,
  * and Postgres has no way to cache that: a scalar SubPlan is re-executed for
- * every row of the outer plan, where a LATERAL sits in the join tree and goes
- * under a `Memoize` keyed on `u.id` exactly as the `users` join beside it
- * already does. The two spellings return the same value by construction — an
- * aggregate over an empty set is one NULL row either way, so an engagement with
- * no analyst still reads `null` — and the whole difference is how many times
- * the aggregate runs.
+ * every row of the outer plan, where a LATERAL sits in the join tree and can go
+ * under a `Memoize` as the `users` join beside it already does. The spellings
+ * return the same value by construction — an aggregate over an empty set is one
+ * NULL row either way, so an engagement with no analyst still reads `null` —
+ * and the whole difference is how many times the aggregate runs.
+ *
+ * AND IT IS KEYED ON `e.assigned_analyst_id`, NOT ON `u.id`, WHICH IS THE
+ * WHOLE OF WHETHER THE MEMOIZE APPEARS. A `Memoize` is costed from the
+ * planner's estimate of how many *distinct* values the parameter takes over the
+ * loops: cache the lookup only if the keys repeat. `u.id` is the primary key of
+ * `users`, so its `n_distinct` is -1 — unique, by definition — and the planner
+ * therefore estimates a 500-row page to carry 500 distinct analysts and builds
+ * no cache. `e.assigned_analyst_id` is the same value read off the other side
+ * of the join, and ANALYZE has measured *it*: a couple of dozen distinct
+ * values over the whole book, which is the number the decision actually turns
+ * on.
+ *
+ * The two are equal on every row the LATERAL can see —
+ * `engagements_assigned_analyst_id_fkey` means a non-null assignment always
+ * names a real user, so `u` is never the missing side of its LEFT JOIN, and
+ * where the assignment is NULL both spellings match no `user_roles` row and
+ * aggregate to `null`.
+ *
+ * R283 wrote the LATERAL keyed on `u.id` and measured a `Memoize` over it,
+ * which was true of the database it measured: `engagementRosterPlan` seeds a
+ * `users` table containing nothing but the twenty analysts, so `u.id` had
+ * twenty distinct values there too and the estimate came out right by accident.
+ * On a real book — every client contact, every board member, every deleted
+ * account in `users` beside the analysts — the estimate is the row count and
+ * the cache is not built. Measured on 60k engagements, 50k users and 30
+ * analysts, a 500-row page: 5002 buffers and 10.2–19.2 ms keyed on `u.id`
+ * against 2381 and 4.5–5.4 ms keyed on the assignment, with the roles lookup
+ * itself going 2753 blocks to 132.
  *
  * Which matters because of who reads this, and because of the one thing an
  * engagement book is guaranteed to look like: a firm's open pipeline is held by
@@ -295,7 +322,7 @@ const ACTIVE_ENGAGEMENT_SELECT = `
     LEFT JOIN LATERAL (
       SELECT array_agg(r.key) AS analyst_roles
         FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-       WHERE ur.user_id = u.id
+       WHERE ur.user_id = e.assigned_analyst_id
     ) ar ON true`;
 
 /** Applied by both readers below; see ACTIVE_ENGAGEMENT_SELECT for why. */

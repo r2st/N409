@@ -15,6 +15,30 @@ const ROWS = 20_000;
  * the same amount of work, and this file would pass over the bug.
  */
 const ANALYSTS = 20;
+/**
+ * Users who are not analysts, seeded for one reason: to make `users.id` look
+ * like a primary key to ANALYZE.
+ *
+ * WITHOUT THEM THIS FILE PASSES OVER ITS OWN BUG (R290). A `Memoize` is costed
+ * from the planner's estimate of how many distinct values the cache key takes,
+ * and R283's LATERAL was keyed on `u.id`. When `users` holds nothing but the
+ * twenty analysts, `u.id` has twenty distinct values and the estimate is right
+ * by accident — the cache is built and every assertion below is green. On a
+ * real book `users` also holds every client contact, board member and closed
+ * account, `n_distinct` for its primary key is -1, and the planner estimates a
+ * 500-row page to carry 500 distinct analysts and builds no cache at all.
+ *
+ * So the seed's *population* was the thing under test and nobody had said so.
+ *
+ * FIFTY THOUSAND, AND FIVE THOUSAND IS NOT ENOUGH — measured, not guessed. At
+ * 5k bystanders the planner still builds the cache for the `u.id` spelling and
+ * the discriminator below passes over the defect exactly as the twenty-analyst
+ * seed did. `n_distinct` reads -1 either way, so the ndistinct assertion is
+ * necessary and not sufficient; the discriminator is what actually pins this,
+ * and it is why that assertion carries the "is `users` still seeded wide?"
+ * message. Do not shrink this to make the file faster.
+ */
+const BYSTANDERS = 50_000;
 
 /**
  * The active-engagement roster must ask for an analyst's roles once per
@@ -91,8 +115,11 @@ describe.skipIf(!dbUp)('the engagement roster reads an analyst’s roles once pe
   let current = '';
   /** The R279 spelling, rebuilt from the current one by swapping the join back. */
   let previous = '';
+  /** The R283 spelling: the LATERAL keyed on `u.id`. See R290 below. */
+  let uncached = '';
   let currentPlan: PlanNode;
   let previousPlan: PlanNode;
+  let uncachedPlan: PlanNode;
 
   const explain = async (sql: string, params: unknown[]): Promise<PlanNode> => {
     const { rows } = await db.pool.query(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, params);
@@ -106,6 +133,16 @@ describe.skipIf(!dbUp)('the engagement roster reads an analyst’s roles once pe
     await q(
       `INSERT INTO users (id, email, password_digest)
        SELECT ${ULID('g', 'X')}, 'u' || g || '@x.y', 'x' FROM generate_series(1, ${ANALYSTS}) g`,
+    );
+    // Everyone else. Not assigned anything, but picked up by the roles insert
+    // below along with the analysts — every account on this platform holds at
+    // least `valuation_user`, so a `user_roles` containing only the analysts is
+    // as unrepresentative as a `users` that does, and both estimates feed the
+    // decision under test.
+    await q(
+      `INSERT INTO users (id, email, password_digest)
+       SELECT ${ULID('g', 'Y')}, 'b' || g || '@x.y', 'x'
+         FROM generate_series(1, ${BYSTANDERS}) g`,
     );
     // Two roles each, so `array_agg` has something to aggregate and the join to
     // `roles` inside the lookup is real work rather than a single index probe.
@@ -150,8 +187,16 @@ describe.skipIf(!dbUp)('the engagement roster reads an analyst’s roles once pe
     if (previous === current || /LATERAL/.test(previous))
       throw new Error('cannot rebuild the R279 spelling: the statement has changed shape');
 
+    // R283's spelling: the same LATERAL, keyed on the users PK instead of on
+    // the assignment it equals. Structurally perfect and uncacheable in
+    // practice, which is why the SubPlan discriminator above cannot stand alone.
+    uncached = current.replace('WHERE ur.user_id = e.assigned_analyst_id', 'WHERE ur.user_id = u.id');
+    if (uncached === current)
+      throw new Error('cannot rebuild the R283 spelling: the roster no longer keys on the assignment');
+
     currentPlan = await explain(current, [501]);
     previousPlan = await explain(previous, [501]);
+    uncachedPlan = await explain(uncached, [501]);
   }, 180_000);
   afterAll(async () => db?.teardown());
 
@@ -172,6 +217,18 @@ describe.skipIf(!dbUp)('the engagement roster reads an analyst’s roles once pe
     expect(rolesAreASubPlan(previousPlan)).toBe(true);
   });
 
+  it('seeds a users table whose primary key is estimated unique (R290)', async () => {
+    // The other vacuity guard, and the one this file was missing. Every
+    // assertion about the Memoize is a statement about a planner estimate, and
+    // the estimate is only the production one when `users` holds more than the
+    // analysts. -1 is how pg_stats spells "as many distinct values as rows".
+    const { rows } = await db.pool.query<{ nd: number }>(
+      `SELECT n_distinct AS nd FROM pg_stats WHERE tablename = 'users' AND attname = 'id'`,
+    );
+    expect(rows[0], 'no statistics for users.id — did ANALYZE run?').toBeDefined();
+    expect(Number(rows[0]!.nd)).toBeLessThan(0);
+  });
+
   it('caches the lookup, so it runs once per analyst and not once per row', () => {
     const memo = rolesMemoize(currentPlan);
     expect(memo, 'the roles lookup is not under a Memoize').toBeDefined();
@@ -182,6 +239,18 @@ describe.skipIf(!dbUp)('the engagement roster reads an analyst’s roles once pe
     expect(hits).toBeGreaterThan(400);
     // The discriminator again: a SubPlan cannot be cached at all.
     expect(rolesMemoize(previousPlan)).toBeUndefined();
+  });
+
+  it('keys the cache on the assignment, not on the users PK (R290)', () => {
+    // R283's spelling, which is a LATERAL in the join tree and passes both
+    // assertions above about *shape* — and gets no cache, because the planner
+    // reads `u.id`'s uniqueness as "these keys will not repeat". This is the
+    // discriminator the file needed: the defect it replaces is not a SubPlan.
+    expect(rolesAreASubPlan(uncachedPlan)).toBe(false);
+    expect(
+      rolesMemoize(uncachedPlan),
+      'the u.id spelling was cached — is `users` still seeded wide?',
+    ).toBeUndefined();
   });
 
   it('reads far fewer blocks of user_roles than the old spelling', async () => {
@@ -195,6 +264,9 @@ describe.skipIf(!dbUp)('the engagement roster reads an analyst’s roles once pe
     };
     const now = await blocks(current);
     const then = await blocks(previous);
+    // And against R283's, which is the spelling this replaced: same join tree,
+    // no cache, so the aggregate runs once per row exactly as the SubPlan did.
+    expect(now * 4).toBeLessThan(await blocks(uncached));
     // Measured ~20x on 40k engagements; asserted at 4x so the file is about the
     // shape of the plan rather than about one machine's buffer accounting.
     expect(now * 4).toBeLessThan(then);
