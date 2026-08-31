@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
+import { ApiProblem, isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { postJson, toProblem, InternalServiceError } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -168,6 +168,99 @@ interface EngineNav {
   liabilities: number;
   net_asset_value: number;
   level_breakdown: { level_1: number; level_2: number; level_3: number };
+}
+
+/**
+ * The engine's answer for the one holding a mark was asked about, checked
+ * before it becomes a stored figure.
+ *
+ * `postJson` shape-checks nothing beyond "it was JSON" — the debt route says so
+ * in as many words and guards its own figure accordingly. The two mark routes
+ * did not: this one read `nav.positions[0]!`, an assertion the compiler takes
+ * on trust, and then put `fair_value` and `level` straight into a `NOT NULL
+ * numeric` and a `CHECK (level IN (1, 2, 3))`.
+ *
+ * So an engine answering in a shape this service does not expect — an older or
+ * newer deployment on the far side of the wire, an error path that answers 200,
+ * a position list that came back empty — became one of three 500s, all of them
+ * `urn:n409:problem:internal` and all of them paging somebody with `alert:
+ * true`: a `TypeError` on `undefined.fair_value`, a 23502/22P02 from the
+ * driver, or a 23514 from the CHECK. "Internal Server Error" says this service
+ * has a bug and the catalogued advice is to retry with an idempotency key.
+ * Neither is true, and neither is what an operator needs to read.
+ *
+ * 502 is what the estate already answers when an upstream fails us — see
+ * `toProblem` — and the sentence is written in the same voice: what could not
+ * be done, and that nothing was recorded. Refused rather than stored with a
+ * hole, unlike the debt route's version: `debt_valuations.fair_value` is
+ * nullable and its run is still a record of a pricing that happened, while
+ * `fund_marks.fair_value` is the figure `domain/navExhibits.ts` sums into the
+ * NAV schedule and there is no honest row to write without it.
+ */
+function requireMarkedPosition(
+  log: { warn: (obj: Record<string, unknown>, msg: string) => void },
+  context: Record<string, unknown>,
+  nav: EngineNav,
+): EngineMarkedPosition {
+  const marked = nav?.positions?.[0] as Partial<EngineMarkedPosition> | undefined;
+  const { fair_value: fairValue, level } = marked ?? {};
+  if (
+    marked === undefined ||
+    typeof fairValue !== 'number' ||
+    !Number.isFinite(fairValue) ||
+    (level !== 1 && level !== 2 && level !== 3)
+  ) {
+    throw unreadableEngineAnswer(log, { ...context, engine_position_keys: Object.keys(marked ?? {}) });
+  }
+  return marked as EngineMarkedPosition;
+}
+
+/**
+ * The roll-forward's half of {@link requireMarkedPosition}.
+ *
+ * `/engine/v1/fund-rollforward` answers one number and the route handed it
+ * straight to `requireStorableFigure`, which reads `null` and then assumes
+ * anything else is a number: a missing key reached `value.toExponential(3)`
+ * inside the 422's own message and threw a `TypeError` from the error path,
+ * and a figure serialised as a string reached it the same way. Both landed as
+ * `urn:n409:problem:internal`, which is the wrong service and the wrong advice.
+ */
+function requireEngineFigure(
+  log: { warn: (obj: Record<string, unknown>, msg: string) => void },
+  context: Record<string, unknown>,
+  value: unknown,
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw unreadableEngineAnswer(log, { ...context, engine_figure_type: typeof value });
+  }
+  return value;
+}
+
+/**
+ * The refusal both of the above raise, and the line an operator acts on.
+ *
+ * `alert: true` here rather than leaving it to the error handler, which
+ * deliberately does not stamp it on a 5xx `ApiProblem`: those are "an upstream
+ * having a bad minute", watched by the breaker and the error-rate gauges. This
+ * is not a bad minute — it is two deployments disagreeing about a payload, and
+ * it stops only when somebody changes something.
+ */
+function unreadableEngineAnswer(
+  log: { warn: (obj: Record<string, unknown>, msg: string) => void },
+  context: Record<string, unknown>,
+): ApiProblem {
+  log.warn(
+    { ...context, alert: true },
+    'the valuation engine answered in a shape this service cannot read; nothing was recorded',
+  );
+  return new ApiProblem({
+    status: 502,
+    title: 'Bad Gateway',
+    type: 'urn:n409:problem:upstream',
+    detail:
+      'The fair value could not be recorded — the valuation engine answered in a shape this ' +
+      'service cannot read. Nothing has been recorded; try again in a few minutes.',
+  });
 }
 
 function requireOps(principal: Principal): void {
@@ -540,7 +633,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       positions: [enginePosition(position.company_name, n(position.cost_basis), b.method, inputs)],
       liabilities: 0,
     });
-    const marked = nav.positions[0]!;
+    const marked = requireMarkedPosition(req.log, { fund_id: id, position_id: pid }, nav);
     const mark = await withTransaction(deps.pool, async (client) => {
       const live = await fundForWriteIn(client, id, 'accepting new marks');
       // And the holding itself, which the copy above was read from before the
@@ -627,7 +720,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
             // A rolled mark is a model estimate → Level 3 (unless a fresh calibration).
             method: 'calibrated_opm',
             fairValue: requireStorableFigure(
-              rolled.new_fair_value,
+              requireEngineFigure(req.log, { fund_id: id, position_id: pid }, rolled.new_fair_value),
               'Rolled-forward fair value',
               FUND_MARK_FAIR_VALUE,
             )!,
