@@ -137,7 +137,13 @@ describe.skipIf(!dbUp)('narrating agents read the run their kind is reported on'
     expect(res.statusCode).toBe(422);
     // A 409A run is sitting there succeeded, so "run a calculation" against a
     // Calculations tab that plainly shows one is a refusal nobody can act on.
-    expect(res.json().detail).toMatch(/emi calculation/i);
+    // The kind is named by its label, which is what the Calculations tab shows
+    // — the assertion used to spell it `EMI calculation`, an adjacency the
+    // sentence has never had, and so failed on a refusal that says exactly what
+    // it is supposed to say.
+    const detail = res.json().detail as string;
+    expect(detail).toMatch(/EMI scheme valuation/i);
+    expect(detail).toMatch(/calculation/i);
     expect(seen['audit_defense']).toBeUndefined();
   });
 
