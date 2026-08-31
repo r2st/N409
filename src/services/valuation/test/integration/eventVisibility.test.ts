@@ -118,6 +118,28 @@ describe.skipIf(!dbUp)('event visibility', () => {
     expect(CLIENT_VISIBLE_EVENT_TYPES).not.toContain('comment_added');
   });
 
+  it('keeps the whole measurement family internal', () => {
+    // R279 and R280 put eleven types on the spine for the ASC 820 measurement
+    // surface, and their payloads are not a summary of what happened — they are
+    // the working data itself: a holding's cost basis, a mark's fair value and
+    // its level, the LP waterfall's carry, catch-up and management-fee terms, a
+    // priced instrument's fair value, and the portfolio company each figure is
+    // about. `canEditWorkingData` states the rule those fall under — "clients
+    // and partners never see the model internals" — and the only thing standing
+    // between this payload and a client's timeline is a fourth argument to `D()`
+    // that nobody passed.
+    //
+    // Named as a family rather than spot-checked, because that is the shape of
+    // the mistake: these were added eleven at a time and the next measurement
+    // subject will be too, and a default is not a decision until something
+    // fails when it changes.
+    const measurement = Object.entries(EVENT_CATALOG).filter(([type]) =>
+      /^(fund_|debt_|measurement_subject_)/.test(type),
+    );
+    expect(measurement.length).toBe(11);
+    expect(measurement.filter(([, d]) => d.visibility !== 'internal').map(([t]) => t)).toEqual([]);
+  });
+
   it('gives the owning client only client-visible events', async () => {
     const res = await events(client.token);
     expect(res.statusCode).toBe(200);
