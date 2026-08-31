@@ -1,0 +1,47 @@
+-- The measurement history of a debt instrument, read in measurement order.
+--
+-- `listValuations` is ordered `valuation_date DESC, created_at DESC`, and 0087
+-- indexed `(instrument_id, created_at DESC)`. Those are different questions.
+-- `POST /value` takes the measurement date as a parameter, so a quarter entered
+-- late, or a correction re-run, is a row whose place in the history is not its
+-- place in the insertion order — which is the whole reason the ordering is by
+-- `valuation_date` and not by `created_at`.
+--
+-- With no index leading `(instrument_id, valuation_date)`, the LIMIT bounded
+-- the answer and not the work: every stored run for the instrument was read out
+-- of the heap and top-N sorted to hand back a page of fifty. R193's shape, and
+-- this is the fifth table to have it.
+--
+-- THE ASYMMETRY IS THE TELL, which is how it was found rather than by reading
+-- the SQL: `fund_marks` — the same append-only measurement trail on the other
+-- half of the same surface, read by the same page ordering — has carried
+-- `(position_id, measurement_date DESC)` since 0086. Debt never got its
+-- counterpart. The pair of files has produced a finding a round for three
+-- rounds now (R280's `fund_updated`, R283's).
+--
+-- Measured on an instrument with 810 stored runs, warm (EXPLAIN ANALYZE,
+-- shared blocks):
+--
+--     listValuations   7.74 ms  81 blk  ->  0.06 ms  7 blk   129x
+--
+-- The ratio at 810 is not the point; the exponent is. Bitmap scan + top-N sort
+-- is O(runs ever priced for this instrument), the index scan is O(page size),
+-- and `debt_valuations` is append-only — `POST /value` with `persist` appends,
+-- a re-price appends — so an instrument held to maturity accumulates them for
+-- as long as it is held. Index size at that shape is 11 MB against a 120 MB
+-- table.
+--
+-- Direction is copied from the statement rather than chosen: DESC on both keys
+-- is a single backwards walk of the btree, while a mixed ordering costs a sort
+-- node however well the leading key is indexed (0170's rule).
+--
+-- 0087's index stays. It leads with `instrument_id` too, but `created_at` is
+-- what `debt_valuations_instrument_idx` answers for readers that want insertion
+-- order, and the FK cascade from `debt_instruments` reaches either.
+--
+-- Not CONCURRENTLY: db/migrate.ts wraps each file in BEGIN/COMMIT. Pricing an
+-- instrument is an analyst at an ops screen, so the SHARE lock while this
+-- builds is not in front of anybody waiting.
+
+CREATE INDEX IF NOT EXISTS debt_valuations_instrument_measured_idx
+    ON debt_valuations (instrument_id, valuation_date DESC, created_at DESC);

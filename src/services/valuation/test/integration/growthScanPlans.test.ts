@@ -5,6 +5,7 @@ import { listInvitations } from '../../src/repos/invitations.js';
 import { listActiveEngagements } from '../../src/repos/engagements.js';
 import { listSuppressions } from '../../src/repos/emailDelivery.js';
 import { listJobs } from '../../src/repos/jobs.js';
+import { listValuations as listDebtValuations } from '../../src/repos/debtInstruments.js';
 import { isDbAvailable, setupTestDb, type TestDb } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -105,6 +106,8 @@ interface Case {
 }
 
 const OWNER = 'AAAAAAAAAAAAAAAAAAAAAAAAAA';
+/** The one instrument whose whole pricing history the seed piles up. */
+const INSTRUMENT = 'DDDDDDDDDDDDDDDDDDDDDDDDDD';
 
 /** `upper(to_hex(n))` zero-padded is a ULID: uppercase hex ⊂ Crockford base32. */
 const ULID = (expr: string) => `upper(lpad(to_hex(${expr}), 26, '0'))`;
@@ -178,6 +181,23 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
       table: 'ai_jobs',
       index: 'ai_jobs_created_idx',
       run: captured(/ORDER BY j\.created_at DESC/, (d) => listJobs(d.pool, { page: 1, perPage: 25 })),
+    },
+    {
+      // R283. The fifth table with this shape, and found by an asymmetry rather
+      // than by a sweep: `fund_marks` — the same append-only measurement trail
+      // on the other half of the same surface, read by the same page ordering —
+      // has carried `(position_id, measurement_date DESC)` since 0086, and debt
+      // never got its counterpart. 0087 indexed `(instrument_id, created_at
+      // DESC)`, which is a different question: `POST /value` takes the
+      // measurement date as a parameter, so a quarter entered late sits
+      // somewhere other than where it was inserted, and ordering by
+      // `valuation_date` is the whole reason the report and the screen agree
+      // about which measurement is current. Measured at 810 runs on one
+      // instrument: 7.74ms/81 blocks against 0.06ms/7 with 0198.
+      name: 'listValuations (debt)',
+      table: 'debt_valuations',
+      index: 'debt_valuations_instrument_measured_idx',
+      run: captured(/FROM debt_valuations/i, (d) => listDebtValuations(d.pool, INSTRUMENT)),
     },
     {
       name: 'GET /scim/v2/Users',
@@ -260,6 +280,22 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
               CASE WHEN g % 20 = 0 THEN now() END
          FROM generate_series(1, ${ROWS}) g`,
     );
+    // One instrument priced over and over, which is what an instrument held to
+    // maturity looks like: `debt_valuations` is append-only and every re-price
+    // appends. The measurement dates deliberately do not follow the insertion
+    // order — that is the difference between 0087's index and 0198's.
+    await q(
+      `INSERT INTO debt_instruments (id, name, instrument_type, currency, params)
+       VALUES ($1, 'Ten-year note', 'bond', 'USD', '{}'::jsonb)`,
+      [INSTRUMENT],
+    );
+    await q(
+      `INSERT INTO debt_valuations (id, instrument_id, valuation_date, inputs, result, fair_value, created_at)
+       SELECT ${ULID('g')}, $1, (date '2015-01-01' + ((g * 7919) % 4000))::date,
+              '{}'::jsonb, '{}'::jsonb, 900000 + g, now() - (g || ' minutes')::interval
+         FROM generate_series(1, ${ROWS}) g`,
+      [INSTRUMENT],
+    );
     await q('ANALYZE');
 
     for (const c of CASES) {
@@ -285,7 +321,8 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
               (SELECT count(*) FROM users WHERE provisioned_by = 'scim') AS scim_users,
               (SELECT count(*) FROM ai_jobs WHERE status = 'running') AS running_jobs,
               (SELECT count(*) FROM ai_jobs) AS jobs_total,
-              (SELECT count(*) FROM email_suppressions WHERE released_at IS NULL) AS held`,
+              (SELECT count(*) FROM email_suppressions WHERE released_at IS NULL) AS held,
+              (SELECT count(*) FROM debt_valuations) AS debt_runs`,
     );
     const counts = rows[0]!;
     expect(Number(counts.invoices)).toBe(ROWS);
@@ -302,6 +339,9 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
     // The opposite of selective, and deliberately so: 0183's index is plain
     // because this predicate keeps almost everything.
     expect(Number(counts.held)).toBe(ROWS - ROWS / 20);
+    // All on one instrument: the page is fifty of them however many there are,
+    // which is what makes reading the rest of the trail waste.
+    expect(Number(counts.debt_runs)).toBe(ROWS);
   });
 
   it('matches the statement the source issues, for the two written out here', () => {
