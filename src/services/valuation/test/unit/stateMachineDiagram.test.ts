@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { VALUATION_STATES, type ValuationState } from '../../src/domain/valuation.js';
+import { VALUATION_STATES, stateLabel, type ValuationState } from '../../src/domain/valuation.js';
 import {
   AUTO_ADVANCE,
   canRestart,
@@ -11,6 +11,7 @@ import {
   REVIEW_DECISIONS,
   REVIEW_SEND_BACK,
   RESTART_STATE,
+  restartRefusal,
   WORKFLOW_TRANSITIONS,
 } from '../../src/domain/workflow.js';
 
@@ -180,6 +181,24 @@ describe('the valuation lifecycle diagram', () => {
     it('is refused exactly from published and from the state it lands on', () => {
       const forbidden = VALUATION_STATES.filter((s) => !canRestart(s));
       expect(forbidden).toEqual(['started', 'published']);
+    });
+
+    it('answers the two states it is refused from, and not with a rule about three others', () => {
+      // The sentence both doors used to share — "only one that timed out, was
+      // cancelled or was ignored can" — named three states a restart is never
+      // refused from, and described a rule under which the eleven it *is*
+      // allowed out of would be refused. Neither reachable case is in it.
+      const refusable = VALUATION_STATES.filter((s) => !canRestart(s));
+      expect(refusable).toEqual(['started', 'published']);
+      for (const state of refusable) {
+        const detail = restartRefusal(state);
+        expect(detail, `refusal from ${state}`).toContain(stateLabel(state));
+        expect(detail).not.toContain('was cancelled or was ignored');
+        // The column value never reaches a reader — the rule R255 set.
+        expect(detail).not.toContain(`“${state}”`);
+      }
+      // And they are two different situations, so they are not one sentence.
+      expect(restartRefusal('started')).not.toBe(restartRefusal('published'));
     });
 
     it('lands somewhere every other state can legally be restarted to', () => {

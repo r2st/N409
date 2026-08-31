@@ -1,4 +1,4 @@
-import { isSettled, type PaidStatus, type ValuationState } from './valuation.js';
+import { isSettled, stateLabel, type PaidStatus, type ValuationState } from './valuation.js';
 
 /**
  * Workflow engine (M4, feature-gap-analysis P1 #22). Pure state-machine layer:
@@ -72,6 +72,48 @@ export function nextState(from: ValuationState, ctx?: { paidStatus?: PaidStatus 
 
 export function canRestart(from: ValuationState): boolean {
   return !RESTART_FORBIDDEN.has(from) && from !== RESTART_STATE;
+}
+
+/**
+ * Why a restart was refused, as the sentence the operator reads.
+ *
+ * Both doors — `POST /workflow/restart` and the bulk executor's `restart` arm —
+ * answered with one hand-written sentence: "only one that timed out, was
+ * cancelled or was ignored can". That is not what `canRestart` does. A restart
+ * lands on `started` *from wherever the file is*, which is the whole point of
+ * it and what `stateMachineDiagram.test.ts` pins ("restart bypasses the table on
+ * purpose"), so the only two states it is refused from are `started` — already
+ * there — and `published`.
+ *
+ * Which made the sentence wrong in both directions at once. It named three
+ * states that are not the ones being refused, and it described a rule under
+ * which an engagement in review or drafting cannot be restarted, when it can:
+ * an operator who reads this is being talked out of the correct next action.
+ * And neither reachable case is a state the sentence mentions, so it never
+ * answers the question actually asked.
+ *
+ * Two cases, two answers, because they are two different situations. `started`
+ * is not a refusal an operator needs to do anything about — the file is already
+ * where a restart would put it, which is also what makes a repeated restart
+ * idempotent. `published` is the terminal state the table gives no way out of,
+ * and the thing to do instead is start new work from the file, which is what
+ * `POST /valuations/:id/clone` is.
+ *
+ * Derived from the predicate rather than listed beside it, and kept here rather
+ * than at the two call sites, for the reason `VALUATION_STATE_LABELS` gives: a
+ * second copy of a rule is where one of the two halves goes stale.
+ */
+export function restartRefusal(from: ValuationState): string {
+  if (from === RESTART_STATE) {
+    return (
+      `This valuation is already at “${stateLabel(RESTART_STATE)}” — a restart would not move it. ` +
+      'Advance it, or set the state you want directly.'
+    );
+  }
+  return (
+    `A valuation in “${stateLabel(from)}” cannot be restarted — publishing is final. ` +
+    'Clone it to start fresh work from the same file.'
+  );
 }
 
 // ── Named listing buckets (design §4.2) ──────────────────────────────────────

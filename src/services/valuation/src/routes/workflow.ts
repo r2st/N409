@@ -4,7 +4,14 @@ import { z } from 'zod';
 import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { VALUATION_STATES, stateLabel, type ValuationState } from '../domain/valuation.js';
-import { BULK_ACTIONS, canRestart, canTransition, nextState, RESTART_STATE } from '../domain/workflow.js';
+import {
+  BULK_ACTIONS,
+  canRestart,
+  canTransition,
+  nextState,
+  RESTART_STATE,
+  restartRefusal,
+} from '../domain/workflow.js';
 import {
   findValuationById,
   findValuationsByIds,
@@ -185,12 +192,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     const valuation = await loadValuation(deps.pool, id);
     refuseIfRetired(valuation, 'accepting workflow changes');
 
-    if (!canRestart(valuation.state)) {
-      throw problems.conflict(
-        `A valuation in “${stateLabel(valuation.state)}” cannot be restarted — only one that timed ` +
-          'out, was cancelled or was ignored can.',
-      );
-    }
+    if (!canRestart(valuation.state)) throw problems.conflict(restartRefusal(valuation.state));
     return { valuation: await applyState(valuation, RESTART_STATE, principal, 'workflow') };
   });
 
@@ -328,11 +330,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
             break;
           }
           case 'restart': {
-            if (!canRestart(valuation.state))
-              throw problems.conflict(
-                `A valuation in “${stateLabel(valuation.state)}” cannot be restarted — only one that ` +
-                  'timed out, was cancelled or was ignored can.',
-              );
+            if (!canRestart(valuation.state)) throw problems.conflict(restartRefusal(valuation.state));
             const updated = await applyState(valuation, RESTART_STATE, principal, 'bulk');
             results.push({ id, ok: true, state: updated.state });
             break;

@@ -258,8 +258,18 @@ describe.skipIf(!dbUp)('the doors into a valuation state', () => {
         const id = await engagementIn(from);
         const res = await restart(id);
         expect(res.statusCode, `restart from ${from}`).toBe(409);
-        expect(res.json().detail).toContain(`in “${stateLabel(from)}” cannot be restarted`);
-        expect(res.json().detail).not.toContain(`'${from}'`);
+        // Two states, two answers. `started` is not a refusal to act on — the
+        // file is already where a restart would put it — and `published` is the
+        // one state the table gives no way out of. The sentence they shared
+        // said neither, and described a rule ("only one that timed out, was
+        // cancelled or was ignored") under which the eleven states a restart
+        // *is* allowed out of would be refused.
+        const detail = res.json().detail as string;
+        expect(detail).toContain(stateLabel(from));
+        expect(detail).not.toContain('was cancelled or was ignored');
+        if (from === RESTART_STATE) expect(detail).toContain('would not move it');
+        else expect(detail).toContain('publishing is final');
+        expect(detail).not.toContain(`'${from}'`);
         expect(await stateOf(id)).toBe(from);
       }
     });
