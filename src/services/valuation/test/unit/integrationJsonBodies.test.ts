@@ -248,6 +248,23 @@ describe('a provider answering with more body than we agreed to hold', () => {
     await expect(readJson(res, 'Carta')).rejects.toThrow(/Carta returned a response larger than/);
   });
 
+  /*
+   * R270 — this reaches the analyst as the connection's `last_error`, on the
+   * card beside a sync that has stopped, and it was a measurement and nothing
+   * else. The two questions a reader has there are whether half of it landed
+   * and whether waiting helps; the sentence now answers both, because the
+   * answers are "no" and "no" and neither was knowable from the old one.
+   */
+  it('says what became of the body and whether waiting will help', async () => {
+    const { res } = endless();
+    const err = await readJson(res, 'Carta').catch((e: unknown) => e as Error);
+    expect(err.message).toMatch(/none of it was read/);
+    expect(err.message).toMatch(/nothing from it was saved/);
+    expect(err.message).toMatch(/will not get smaller on its own/);
+    // Not an invitation to retry: the classifier reads this door as permanent.
+    expect(err.message).not.toMatch(/try again/i);
+  });
+
   it('stops within a chunk of the cap, not whatever the provider chose to send', async () => {
     const chunkBytes = 1024 * 1024;
     const { res, pulls } = endless(chunkBytes);

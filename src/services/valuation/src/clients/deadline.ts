@@ -390,7 +390,7 @@ export function pagedPullBudget(
             limit < MAX_INTEGRATION_JSON_BYTES
               ? `${label} sent more than ${asMb(budgetBytes)} MB across the pages of one import — the ` +
                   'import was stopped rather than held in memory. Import from a file instead.'
-              : `${label} returned a response larger than ${OVERSIZE_MB} MB`,
+              : oversizeResponse(label),
           ),
           'permanent',
         );
@@ -464,11 +464,33 @@ export async function readCappedBytes(res: Response, limitBytes: number): Promis
   return Buffer.concat(chunks);
 }
 
+/**
+ * The sentence for a single answer over the per-response cap.
+ *
+ * It used to be `${label} returned a response larger than N MB` and stop there,
+ * between two refusals in this same file that both say what became of the work
+ * and what to do next (round 270, methodology M19). This one reaches the
+ * analyst through the connection's `last_error`, on the card beside a sync
+ * that has stopped, and a bare measurement leaves the two questions a reader
+ * has at that moment unanswered: whether half of it landed, and whether waiting
+ * helps. Neither: the body is dropped at the first chunk past the cap, and the
+ * same rows come back the same size on the next tick.
+ *
+ * No remedy is named because this helper's callers include OAuth token
+ * exchanges as well as imports, and a remedy that fits one of those is wrong on
+ * the other — which is the failure `n409-error-message-quality` records twice.
+ * The paged-walk refusal beside it can name one, and does.
+ */
+function oversizeResponse(label: string): string {
+  return (
+    `${label} returned a response larger than ${OVERSIZE_MB} MB, so none of it was read and ` +
+    'nothing from it was saved. A response this size will not get smaller on its own.'
+  );
+}
+
 async function readCappedText(res: Response, label: string): Promise<string> {
   const bytes = await readCappedBytes(res, MAX_INTEGRATION_JSON_BYTES);
-  if (bytes === null) {
-    throw new IntegrationError(`${label} returned a response larger than ${OVERSIZE_MB} MB`);
-  }
+  if (bytes === null) throw new IntegrationError(oversizeResponse(label));
   return new TextDecoder().decode(bytes);
 }
 
