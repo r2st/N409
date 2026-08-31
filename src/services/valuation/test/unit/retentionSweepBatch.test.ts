@@ -30,33 +30,53 @@ const POLICY = {
   enabled: true,
 };
 
+/** The three statements `withTransaction` issues around the pair it wraps. */
+const TX_KEYWORDS = new Set(['BEGIN', 'COMMIT', 'ROLLBACK']);
+
 /**
- * A pool stand-in that answers the four queries the sweep issues, routed on the
+ * A pool stand-in that records every statement and hands the same recorder to
+ * the client `withTransaction` checks out, so a query issued inside the
+ * transaction is counted exactly like one issued on the pool.
+ */
+function recordingPool(answer: (sql: string, params: unknown[]) => { rows: unknown[]; rowCount: number }): {
+  pool: pg.Pool;
+  calls: Recorded[];
+} {
+  const calls: Recorded[] = [];
+  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
+    calls.push({ sql, params });
+    if (TX_KEYWORDS.has(sql)) return { rows: [], rowCount: 0 };
+    return answer(sql, params);
+  });
+  const pool = {
+    query,
+    connect: async () => ({ query, release: () => {} }),
+  } as unknown as pg.Pool;
+  return { pool, calls };
+}
+
+/**
+ * A pool stand-in that answers the queries the sweep issues, routed on the
  * statement rather than on call order — the point of the change is that the
  * order and the count both moved.
  */
 function fakePool(candidates: Array<{ id: string; user_id: string; frozen: boolean }>) {
-  const calls: Recorded[] = [];
-  const pool = {
-    query: vi.fn(async (sql: string, params: unknown[] = []) => {
-      calls.push({ sql, params });
-      if (sql.includes('FROM retention_policies')) return { rows: [POLICY], rowCount: 1 };
-      if (sql.includes('FROM valuations v')) return { rows: candidates, rowCount: candidates.length };
-      if (sql.startsWith('UPDATE valuations')) {
-        // Mirrors `WHERE id = ANY($1) AND archived_at IS NULL RETURNING id`.
-        const wanted = params[0] as string[];
-        return { rows: wanted.map((id) => ({ id })), rowCount: wanted.length };
-      }
-      if (sql.includes('INSERT INTO retention_actions')) return { rows: [], rowCount: 0 };
-      // The retirement-webhook lookup: which of the archived rows belong to a
-      // partner. None here — the dispatch itself is covered end-to-end in
-      // `partnerRetirementWebhook.test.ts`; what this file pins is that it is
-      // one query for the batch.
-      if (sql.includes('partner_id IS NOT NULL')) return { rows: [], rowCount: 0 };
-      throw new Error(`unexpected query: ${sql}`);
-    }),
-  } as unknown as pg.Pool;
-  return { pool, calls };
+  return recordingPool((sql, params) => {
+    if (sql.includes('FROM retention_policies')) return { rows: [POLICY], rowCount: 1 };
+    if (sql.includes('FROM valuations v')) return { rows: candidates, rowCount: candidates.length };
+    if (sql.startsWith('UPDATE valuations')) {
+      // Mirrors `WHERE id = ANY($1) AND archived_at IS NULL RETURNING id`.
+      const wanted = params[0] as string[];
+      return { rows: wanted.map((id) => ({ id })), rowCount: wanted.length };
+    }
+    if (sql.includes('INSERT INTO retention_actions')) return { rows: [], rowCount: 0 };
+    // The retirement-webhook lookup: which of the archived rows belong to a
+    // partner. None here — the dispatch itself is covered end-to-end in
+    // `partnerRetirementWebhook.test.ts`; what this file pins is that it is
+    // one query for the batch.
+    if (sql.includes('partner_id IS NOT NULL')) return { rows: [], rowCount: 0 };
+    throw new Error(`unexpected query: ${sql}`);
+  });
 }
 
 const candidate = (n: number, frozen = false) => ({
@@ -94,8 +114,10 @@ describe('runRetentionSweep batching', () => {
     // than per row — the one place a new feature would have quietly undone the
     // batching this file exists to protect.
     expect(of(calls, 'partner_id IS NOT NULL')).toHaveLength(1);
-    // Three reads and two writes for 250 valuations — the whole point.
-    expect(calls).toHaveLength(5);
+    // Three reads and two writes for 250 valuations — the whole point — inside
+    // the BEGIN/COMMIT that makes the archival and its action log one thing.
+    expect(calls).toHaveLength(7);
+    expect(calls.filter((c) => TX_KEYWORDS.has(c.sql)).map((c) => c.sql)).toEqual(['BEGIN', 'COMMIT']);
   });
 
   it('logs a skip for each held candidate and archives only the rest', async () => {
@@ -121,19 +143,15 @@ describe('runRetentionSweep batching', () => {
    * double-counted nor double-logged.
    */
   it('counts what the UPDATE took, not what it asked for', async () => {
-    const calls: Recorded[] = [];
-    const pool = {
-      query: vi.fn(async (sql: string, params: unknown[] = []) => {
-        calls.push({ sql, params });
-        if (sql.includes('FROM retention_policies')) return { rows: [POLICY], rowCount: 1 };
-        if (sql.includes('FROM valuations v')) {
-          return { rows: [candidate(1), candidate(2)], rowCount: 2 };
-        }
-        // A concurrent sweep already took the second one.
-        if (sql.startsWith('UPDATE valuations')) return { rows: [{ id: candidate(1).id }], rowCount: 1 };
-        return { rows: [], rowCount: 0 };
-      }),
-    } as unknown as pg.Pool;
+    const { pool, calls } = recordingPool((sql) => {
+      if (sql.includes('FROM retention_policies')) return { rows: [POLICY], rowCount: 1 };
+      if (sql.includes('FROM valuations v')) {
+        return { rows: [candidate(1), candidate(2)], rowCount: 2 };
+      }
+      // A concurrent sweep already took the second one.
+      if (sql.startsWith('UPDATE valuations')) return { rows: [{ id: candidate(1).id }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
 
     const result = await runRetentionSweep(pool);
 
@@ -153,6 +171,9 @@ describe('runRetentionSweep batching', () => {
     expect(of(calls, 'INSERT INTO retention_actions')).toHaveLength(0);
     // Nothing was archived, so nobody is owed an event either.
     expect(of(calls, 'partner_id IS NOT NULL')).toHaveLength(0);
+    // And no transaction: a pass with nothing to write must not check a
+    // connection out of a pool of ten to write nothing in.
+    expect(calls.filter((c) => TX_KEYWORDS.has(c.sql))).toHaveLength(0);
   });
 
   it('stops before any write when the policy is off or unset', async () => {

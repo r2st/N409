@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canManageUsers } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
-import { findValuationById } from '../repos/valuations.js';
+import { findValuationById, invalidateValuation } from '../repos/valuations.js';
 import { findUserById } from '../repos/users.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import type { AdminEventType } from '../domain/auditTrail.js';
@@ -33,6 +33,7 @@ import {
   type RetentionPolicyRow,
 } from '../repos/retention.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { withTransaction } from '../db/pool.js';
 
 /**
  * Data retention + legal hold administration (feature 10). Admin-only. The
@@ -177,32 +178,66 @@ export async function runRetentionSweep(
   const candidates = await findArchivableValuations(pool, valPolicy.archive_after_days, opts.limit ?? 500);
   const frozen = candidates.filter((c) => c.frozen);
 
-  // Two statements for the whole pass, not two per candidate. `findArchivable
-  // Valuations` returns up to 500 rows with the hold flag already computed, and
-  // the old loop spent an UPDATE and an INSERT on each of them in turn — a
-  // sweep that archived a full batch cost around a thousand sequential round
-  // trips, all of them to say the same two things.
-  const archived = await markValuationsArchived(
-    pool,
-    candidates.filter((c) => !c.frozen).map((c) => c.id),
-  );
-
-  // Logged after the archival rather than beside it, so the log records what
-  // the UPDATE actually did. A candidate a concurrent sweep archived first is
-  // absent from `archived` and therefore neither counted nor logged here.
-  await recordActions(pool, [
-    ...frozen.map((c) => ({
-      dataType: 'valuation',
-      action: 'skipped_hold' as const,
-      referenceId: c.id,
-    })),
-    ...archived.map((id) => ({
-      dataType: 'valuation',
-      action: 'archived' as const,
-      referenceId: id,
-      detail: { archive_after_days: valPolicy.archive_after_days },
-    })),
-  ]);
+  /*
+   * The archival and its record of itself, in one transaction — and two
+   * statements for the whole pass, not two per candidate.
+   * `findArchivableValuations` returns up to 500 rows with the hold flag
+   * already computed, and the loop this replaced spent an UPDATE and an INSERT
+   * on each of them in turn: around a thousand sequential round trips to say
+   * the same two things.
+   *
+   * They were two statements on the pool, and the second one failing was the
+   * expensive half of the pair. `findArchivableValuations` selects on
+   * `archived_at IS NULL`, so a row this UPDATE committed is a row no later
+   * sweep will look at again: an INSERT that lost a deadlock, or ran past the
+   * statement timeout on a five-hundred-row batch, left those engagements
+   * archived for ever with nothing in `retention_actions` saying it happened —
+   * and `retention_actions` is the evidence the storage-limitation policy is
+   * being enforced, which is the whole point of writing it. The throw also
+   * skipped `firePartnerWebhooksForRetirement` below, so the partners whose
+   * engagements had just been retired were never told, on a surface where
+   * "nothing retries a retirement announcement" is already the known hazard.
+   *
+   * Together, both or neither: a failed pass leaves every candidate live and
+   * the next tick, six hours later, does the whole batch again. That is the
+   * spine's own standing rule — an event is written in the same transaction as
+   * the change it describes — applied to the one governance log that was
+   * outside it.
+   *
+   * Logged from `archived` rather than from the input list, as before: a
+   * candidate a concurrent sweep took first is absent from `RETURNING` and is
+   * therefore neither counted nor logged here.
+   *
+   * A pass with no candidate at all — the ordinary tick on a settled
+   * deployment — has nothing to say and so opens no connection to say it in.
+   */
+  const archived =
+    candidates.length === 0
+      ? []
+      : await withTransaction(pool, async (client) => {
+          const taken = await markValuationsArchived(
+            client,
+            candidates.filter((c) => !c.frozen).map((c) => c.id),
+          );
+          await recordActions(client, [
+            ...frozen.map((c) => ({
+              dataType: 'valuation',
+              action: 'skipped_hold' as const,
+              referenceId: c.id,
+            })),
+            ...taken.map((id) => ({
+              dataType: 'valuation',
+              action: 'archived' as const,
+              referenceId: id,
+              detail: { archive_after_days: valPolicy.archive_after_days },
+            })),
+          ]);
+          return taken;
+        });
+  // Again, after the COMMIT. `markValuationsArchived` invalidates as it goes,
+  // which inside a transaction is a moment before the rows actually change —
+  // long enough for a concurrent read to have put the pre-archive row back.
+  for (const id of archived) invalidateValuation(id);
 
   // After the log, and never allowed to fail the sweep: `firePartnerWebhooks`
   // swallows and logs a dispatch failure per webhook, and the batch shape is

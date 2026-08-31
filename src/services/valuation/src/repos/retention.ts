@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { likeContains } from '../db/like.js';
+import type { Queryable } from '../db/pool.js';
 import type { RetentionActionName, RetentionPolicy } from '../domain/retention.js';
 import { EMAIL_MAX_ATTEMPTS } from '../domain/emailRetry.js';
 import { invalidateValuation } from './valuations.js';
@@ -492,10 +493,19 @@ export async function findArchivableValuations(
  *
  * The cache is invalidated per returned id for the same reason: entries are
  * keyed by valuation, and a row this call did not change has not gone stale.
+ *
+ * `Queryable`, not `pg.Pool`: the sweep runs this and `recordActions` in one
+ * transaction, because the action log is the record of exactly this change and
+ * the standing rule for such a pair is that they land together. Hard-typing it
+ * to the pool is what stopped that — see the note on `Queryable` itself. A
+ * caller passing a client is also invalidating before its own COMMIT, which is
+ * the conservative direction (a rollback leaves entries that were never stale
+ * merely re-read) but leaves a commit-width window in which a concurrent read
+ * can repopulate; the sweep closes it by invalidating again afterwards.
  */
-export async function markValuationsArchived(pool: pg.Pool, ids: readonly string[]): Promise<string[]> {
+export async function markValuationsArchived(db: Queryable, ids: readonly string[]): Promise<string[]> {
   if (ids.length === 0) return [];
-  const { rows } = await pool.query<{ id: string }>(
+  const { rows } = await db.query<{ id: string }>(
     `UPDATE valuations SET archived_at = now()
       WHERE id = ANY($1) AND archived_at IS NULL
       RETURNING id`,
