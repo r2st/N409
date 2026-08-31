@@ -28,22 +28,38 @@ export function PartnerLoginPage() {
   const navigate = useNavigate();
   const [branding, setBranding] = useState<Branding | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [brandingFailed, setBrandingFailed] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /*
+   * Three answers, not two.
+   *
+   * Every non-200 used to become `notFound`, and `notFound` navigates away: a
+   * maintenance window, a database blip or a dropped connection took the person
+   * off the address their firm gave them and onto the platform's own sign-in
+   * page, with nothing said. Whether the slug is real is exactly the question a
+   * 503 does not answer, and the redirect is the one thing here that cannot be
+   * undone by the reader — the URL is gone from the bar by the time they look.
+   *
+   * So a 404 still means the slug is not a firm and still hands over to the
+   * standard page. Anything else keeps them here: their credentials work either
+   * way, and the brand is the only thing that could not be loaded.
+   */
   useEffect(() => {
     if (!slug) return;
     fetch(`/api/v1/public/branding/${encodeURIComponent(slug)}`, {
       headers: { accept: 'application/json' },
     })
-      .then((res) => {
+      .then(async (res) => {
+        if (res.status === 404) return null;
         if (!res.ok) throw new Error(String(res.status));
-        return res.json() as Promise<BrandingResponse>;
+        return (await res.json()) as BrandingResponse;
       })
-      .then((data) => setBranding(data.branding))
-      .catch(() => setNotFound(true));
+      .then((data) => (data ? setBranding(data.branding) : setNotFound(true)))
+      .catch(() => setBrandingFailed(true));
   }, [slug]);
 
   // Above the early returns: hooks cannot be called conditionally. The
@@ -80,7 +96,7 @@ export function PartnerLoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper-100 px-5 py-10">
       <div className="w-full max-w-sm">
-        {!branding ? (
+        {!branding && !brandingFailed ? (
           <Spinner />
         ) : (
           <div className="rounded-xl border border-paper-300 bg-surface p-8 shadow-card">
@@ -92,18 +108,30 @@ export function PartnerLoginPage() {
               style={{ backgroundColor: accent }}
             />
             <div className="flex flex-col items-center text-center">
-              {branding.logo_url && (
+              {branding?.logo_url && (
                 <img
                   src={branding.logo_url}
                   alt={`${branding.name} logo`}
                   className="mb-4 max-h-14 max-w-[180px] object-contain"
                 />
               )}
-              <h1 className="font-display text-2xl font-semibold text-ink-900">{branding.name}</h1>
+              <h1 className="font-display text-2xl font-semibold text-ink-900">
+                {branding?.name ?? 'Sign in'}
+              </h1>
               <p className="mt-1.5 mb-8 text-sm text-ink-400">
-                Sign in to the {branding.name} valuations portal.
+                {branding
+                  ? `Sign in to the ${branding.name} valuations portal.`
+                  : 'Sign in to your valuations portal.'}
               </p>
             </div>
+
+            {/* Said out loud, because the card they expected to be their firm's is not. */}
+            {brandingFailed && (
+              <p className="mb-6 rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900">
+                We couldn’t load your firm’s branding just now. This is still the right page — signing in
+                below works as usual.
+              </p>
+            )}
 
             <form onSubmit={submit} className="space-y-5" noValidate>
               <ErrorNote>{error}</ErrorNote>

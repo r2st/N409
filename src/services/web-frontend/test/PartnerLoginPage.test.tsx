@@ -89,4 +89,37 @@ describe('PartnerLoginPage', () => {
     renderAt('nobody');
     expect(await screen.findByText('standard login')).toBeInTheDocument();
   });
+
+  /*
+   * R270 — a slug that is not a firm and a brand we could not read were the
+   * same answer here, and the answer navigates. A 503 took the analyst off the
+   * address their firm gave them, onto the platform's own page, with nothing
+   * said and the URL already out of the bar.
+   */
+  it('keeps the analyst on their firm’s address when the brand cannot be read', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ title: 'Down' }, 503));
+    renderAt('bridge-advisors');
+
+    expect(await screen.findByLabelText('Password')).toBeInTheDocument();
+    expect(screen.queryByText('standard login')).not.toBeInTheDocument();
+    expect(screen.getByText(/couldn’t load your firm’s branding/i)).toHaveTextContent(
+      /still the right page/i,
+    );
+  });
+
+  it('does not sit on a spinner when the request never lands', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network'));
+    renderAt('bridge-advisors');
+
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+  });
+
+  it('says nothing about branding when there was nothing wrong with it', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(branding));
+    renderAt('bridge-advisors');
+
+    await screen.findByRole('heading', { name: 'Bridge Advisors' });
+    expect(screen.queryByText(/couldn’t load your firm’s branding/i)).not.toBeInTheDocument();
+  });
 });
