@@ -7,6 +7,7 @@ import { loadConfig } from '../../src/config.js';
 import { newUlid } from '@n409/shared';
 import { retireValuations } from '../../src/repos/valuationPurge.js';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
+import { mutatingMeasurementRoutes } from '../support/routeTable.js';
 
 const dbUp = await isDbAvailable();
 
@@ -42,8 +43,16 @@ describe.skipIf(!dbUp)('measurement writes against a retired engagement', () => 
   let retiredPosition: string;
   let liveInstrument: string;
   let retiredInstrument: string;
-  /** A `fund` engagement with nothing linked to it, for the link-direction test. */
+  /**
+   * Retired engagements with nothing linked to them, for the link-direction
+   * test. One per kind: both link routes check the engagement's kind *before*
+   * they check its state, so a fund engagement offered to the debt route is
+   * refused as the wrong kind and never reaches the guard under test.
+   */
   let spareRetiredFundValuation: string;
+  let spareRetiredDebtValuation: string;
+  /** `METHOD /registered/path` → the statuses this file drove out of it. */
+  const driven = new Map<string, Set<number>>();
 
   beforeAll(async () => {
     db = await setupTestDb();
@@ -93,6 +102,17 @@ describe.skipIf(!dbUp)('measurement writes against a retired engagement', () => 
       AUTO_PIPELINE: 'off',
     });
     app = buildApp({ config, pool });
+    // Which registered route each request in this file actually reached, and
+    // with what status. `req.routeOptions.url` is the pattern Fastify matched,
+    // not the concrete URL, so it joins straight onto the route table — which
+    // is what lets the census at the bottom check the sweep against the
+    // registry rather than against its own list of what it meant to send.
+    app.addHook('onResponse', async (req, reply) => {
+      const url = req.routeOptions.url;
+      if (!url) return;
+      const key = `${req.method} ${url}`;
+      driven.set(key, (driven.get(key) ?? new Set()).add(reply.statusCode));
+    });
     await app.ready();
 
     const ctx = { app, pool, teardown: async () => {} };
@@ -172,6 +192,7 @@ describe.skipIf(!dbUp)('measurement writes against a retired engagement', () => 
     const liveDebtValuation = await valuation('debt', 'Live Debt Engagement');
     const retiredDebtValuation = await valuation('debt', 'Retired Debt Engagement');
     spareRetiredFundValuation = await valuation('fund', 'Retired Unlinked Fund Engagement');
+    spareRetiredDebtValuation = await valuation('debt', 'Retired Unlinked Debt Engagement');
 
     liveFund = await fundLinkedTo(liveFundValuation, 'Live Fund I');
     retiredFund = await fundLinkedTo(retiredFundValuation, 'Retired Fund I');
@@ -192,8 +213,9 @@ describe.skipIf(!dbUp)('measurement writes against a retired engagement', () => 
       retiredFundValuation,
       retiredDebtValuation,
       spareRetiredFundValuation,
+      spareRetiredDebtValuation,
     ]);
-    if (retired.retired.length !== 3) throw new Error(`retire failed: ${JSON.stringify(retired)}`);
+    if (retired.retired.length !== 4) throw new Error(`retire failed: ${JSON.stringify(retired)}`);
   });
 
   afterAll(async () => {
@@ -351,22 +373,56 @@ describe.skipIf(!dbUp)('measurement writes against a retired engagement', () => 
     expect(rows[0]!.n).toBe(0);
   });
 
-  it('refuses attaching a measurement subject to a retired engagement', async () => {
-    const spare = await app.inject({
-      method: 'POST',
-      url: '/api/v1/funds',
-      headers: authHeader(ops.token),
-      payload: { name: 'Unattached Fund', fund_type: 'vc', currency: 'USD' },
-    });
-    const spareFund = spare.json().fund.id as string;
-    const res = await app.inject({
-      method: 'PUT',
-      url: `/api/v1/funds/${spareFund}/valuation`,
-      headers: authHeader(ops.token),
-      payload: { valuation_id: spareRetiredFundValuation },
-    });
-    expect(res.statusCode).toBe(409);
-  });
+  /**
+   * The link direction, on both subjects.
+   *
+   * This one is not `refuseIfMeasurementRetired` — there is no engagement on
+   * the subject yet to read the state off — but `refuseIfRetired` against the
+   * engagement named in the body, which is the only route on this surface
+   * where the retirement being asked about arrives in the request. Both files
+   * write it by hand, so both are driven: the debt half was guarded by R279
+   * and left untested, and the census below is what turned that up.
+   */
+  it.each([
+    [
+      'fund portfolio',
+      '/api/v1/funds',
+      { name: 'Unattached Fund', fund_type: 'vc', currency: 'USD' },
+      (body: Record<string, { id: string }>) => body.fund!.id,
+      () => spareRetiredFundValuation,
+    ],
+    [
+      'debt instrument',
+      '/api/v1/debt/instruments',
+      {
+        name: 'Unattached Note',
+        instrument_type: 'credit_spread',
+        currency: 'USD',
+        params: { face_value: 1e6 },
+      },
+      (body: Record<string, { id: string }>) => body.instrument!.id,
+      () => spareRetiredDebtValuation,
+    ],
+  ])(
+    'refuses attaching a %s to a retired engagement',
+    async (_label, collection, payload, idOf, engagement) => {
+      const spare = await app.inject({
+        method: 'POST',
+        url: collection,
+        headers: authHeader(ops.token),
+        payload,
+      });
+      expect(spare.statusCode).toBe(201);
+      const subject = idOf(spare.json());
+      const res = await app.inject({
+        method: 'PUT',
+        url: `${collection}/${subject}/valuation`,
+        headers: authHeader(ops.token),
+        payload: { valuation_id: engagement() },
+      });
+      expect(res.statusCode).toBe(409);
+    },
+  );
 
   /**
    * Detaching stays open, and deliberately: it is the step `DELETE /funds/:id`
@@ -388,5 +444,83 @@ describe.skipIf(!dbUp)('measurement writes against a retired engagement', () => 
       headers: authHeader(ops.token),
     });
     expect(deleted.statusCode).toBe(204);
+  });
+
+  /**
+   * The gate that makes everything above survive the next route.
+   *
+   * R279 put a retirement guard on all ten mutating measurement routes and
+   * R280–R281 put the same surface on the audit spine, but the sweep proving
+   * it was a hand-written list of six `it`s. The valuation-scoped census this
+   * file extends has been driven out of the route table since R89 for exactly
+   * one reason — **a route added tomorrow is swept the day it is registered**
+   * — and that property did not come across with the tests. So the eleventh
+   * fund route would have been written, shipped and left unguarded with a
+   * green measurement suite, which is the same way the first ten got there.
+   *
+   * Both halves are asserted against `printRoutes`, in both directions:
+   *
+   *   * every mutating route on the surface is classified here, so a new one
+   *     fails this until somebody decides which side it is on; and
+   *   * nothing classified here has stopped existing, so a route that is
+   *     renamed or removed does not leave a line behind that reads as
+   *     coverage.
+   *
+   * `driven` is what stops the guarded half being a declaration. It is
+   * recorded by an `onResponse` hook from the requests the suite actually
+   * sent, so a route can only be listed as guarded if this file drove a 409
+   * out of it — a list entry with no test behind it fails.
+   */
+  describe('the census behind the sweep', () => {
+    /**
+     * Refuse a write aimed at a retired engagement. Each is driven above,
+     * against a live subject and a retired twin, with an identical body.
+     */
+    const GUARDED = [
+      'PATCH /api/v1/funds/:id',
+      'POST /api/v1/funds/:id/positions',
+      'PATCH /api/v1/funds/:id/positions/:pid',
+      'POST /api/v1/funds/:id/positions/:pid/marks',
+      'POST /api/v1/funds/:id/positions/:pid/rollforward',
+      'PUT /api/v1/funds/:id/lp-terms',
+      'PUT /api/v1/funds/:id/valuation',
+      'PUT /api/v1/debt/instruments/:id',
+      'PUT /api/v1/debt/instruments/:id/credit-terms',
+      'PUT /api/v1/debt/instruments/:id/valuation',
+      'POST /api/v1/debt/instruments/:id/value',
+    ];
+
+    /**
+     * Open on a withdrawn file, each for a reason that predates this sweep.
+     *
+     * The three DELETEs are the standing cleanup exemption — `DELETE
+     * /funds/:id` tells the caller to detach first, so guarding the detach or
+     * the delete would leave a retired engagement's portfolio undeletable.
+     * The waterfall and the calibration are calculators: they read LP terms,
+     * call the engine and return the answer, persisting nothing, so they are
+     * reads by the doctrine's own definition — "what stops is anything that
+     * changes the file, produces a new artifact from it, or tells somebody
+     * about it".
+     *
+     * A route landing here needs that argument made about it. The failure mode
+     * this list has is a genuinely mutating route being parked in it to make
+     * the census pass, which is why each one carries its reason.
+     */
+    const EXEMPT = [
+      'DELETE /api/v1/funds/:id',
+      'DELETE /api/v1/funds/:id/positions/:pid',
+      'DELETE /api/v1/debt/instruments/:id',
+      'POST /api/v1/funds/:id/waterfall',
+      'POST /api/v1/funds/:id/calibrate',
+    ];
+
+    it('classifies every mutating route on the measurement surface', () => {
+      expect(mutatingMeasurementRoutes(app)).toEqual([...GUARDED, ...EXEMPT].sort());
+    });
+
+    it('drove a refusal out of every route it calls guarded', () => {
+      const undriven = GUARDED.filter((route) => !driven.get(route)?.has(409));
+      expect(undriven).toEqual([]);
+    });
   });
 });
