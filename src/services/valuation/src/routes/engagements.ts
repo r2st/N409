@@ -340,8 +340,31 @@ export function registerEngagementRoutes(
      * `pg.pool_exhausted`), and it is what `logUnretried` has already written
      * beside the error itself. The driver's own sentence stays in the log,
      * where the scrub is.
+     *
+     * Strictly the reminders that did not happen. The send and the spine write
+     * were one catch, and a row whose mail was already in the outbox landed
+     * here — see {@link unrecorded}.
      */
     const failed: { valuation_id: string; failure_reason: string }[] = [];
+    /**
+     * Engagements this run *did* chase and could not write down.
+     *
+     * The catch below used to cover the send and the spine write together, and
+     * they are not the same event. `sendTransactionalEmail` enqueues into
+     * `email_outbox` and then contains every delivery failure itself — a relay
+     * refusing the message leaves the row for the retry sweep and does not
+     * throw — so once it has returned, the reminder is going out. Only the
+     * spine INSERT is left, and losing a deadlock on it is one of the three
+     * causes {@link failed} names in as many words.
+     *
+     * Reported as a failure, that row said the analyst had not been chased
+     * about mail that was already in the outbox. It is the wrong half of the
+     * one thing this endpoint's counts exist to tell an operator: `failed`
+     * invites the re-run, and the re-run is what mails somebody twice about
+     * the same overdue engagement. See `reminded`, which these ids are also
+     * in — they were reminded; what is missing is the record of it.
+     */
+    const unrecorded: { valuation_id: string; failure_reason: string }[] = [];
     let scanned = 0;
     // Paged rather than capped: a missed reminder is the whole point of the
     // sweep going unsent, and it would report success either way.
@@ -393,6 +416,29 @@ export function registerEngagementRoutes(
             vars: { company_name: r.company_name, stage: sla.label },
           },
         );
+      } catch (err) {
+        // `logUnretried` rather than a bare `log.error`: this row's reminder is
+        // lost whatever the error's class was, and that is the condition the
+        // alerting contract in `shared/failure.ts` describes — "the transience
+        // of the cause says nothing about the durability of the consequence".
+        // It stamps `alert: true` and classifies the reason, which is the token
+        // reported below.
+        const failure = logUnretried(
+          app.log,
+          err,
+          { valuation_id: r.valuation_id, analyst_id: r.assigned_analyst_id, stage: r.current_stage },
+          'overdue reminder failed for one engagement — the rest of the run continues',
+        );
+        failed.push({ valuation_id: r.valuation_id, failure_reason: failure.reason });
+        continue;
+      }
+
+      // From here the reminder has happened: the outbox row is committed and
+      // the retry sweep owns delivery. Counted before the trail is written, so
+      // no failure below can take an id out of the list an operator reads as
+      // "already chased".
+      reminded.push(r.valuation_id);
+      try {
         await withTransaction(deps.pool, (client) =>
           recordEvent(client, {
             valuationId: r.valuation_id,
@@ -419,21 +465,19 @@ export function registerEngagementRoutes(
             payload: { stage: r.current_stage, analyst_id: r.assigned_analyst_id },
           }),
         );
-        reminded.push(r.valuation_id);
       } catch (err) {
-        // `logUnretried` rather than a bare `log.error`: this row's reminder is
-        // lost whatever the error's class was, and that is the condition the
-        // alerting contract in `shared/failure.ts` describes — "the transience
-        // of the cause says nothing about the durability of the consequence".
-        // It stamps `alert: true` and classifies the reason, which is the token
-        // reported below.
+        // `logUnretried` again, and for the sharper of the two reasons: nothing
+        // comes back for this row either, and what was lost is the spine's only
+        // record that a person was contacted about this engagement. The line
+        // says the reminder *went*, because the operator reading it must not
+        // read it as one to re-send.
         const failure = logUnretried(
           app.log,
           err,
           { valuation_id: r.valuation_id, analyst_id: r.assigned_analyst_id, stage: r.current_stage },
-          'overdue reminder failed for one engagement — the rest of the run continues',
+          'overdue reminder was sent and its audit event was not written — do not re-run for this row',
         );
-        failed.push({ valuation_id: r.valuation_id, failure_reason: failure.reason });
+        unrecorded.push({ valuation_id: r.valuation_id, failure_reason: failure.reason });
       }
     }
     if (unreachable.length > 0) {
@@ -451,6 +495,8 @@ export function registerEngagementRoutes(
       withdrawn,
       failed_count: failed.length,
       failed,
+      unrecorded_count: unrecorded.length,
+      unrecorded,
       scanned,
     };
   });

@@ -19,7 +19,7 @@ const dbUp = await isDbAvailable();
  *
  * What goes out in that gap is mail — R89's worst case, "mail cannot be
  * un-sent" — telling the assigned analyst to move forward a file the firm has
- * withdrawn, plus an `engagement_overdue_reminded` on a spine whose 0001
+ * withdrawn, plus an `engagement_overdue_reminder` on a spine whose 0001
  * trigger refuses every UPDATE and DELETE afterwards. Retirement is reversible
  * (R90), so the row comes back with the engagement.
  *
@@ -155,12 +155,20 @@ describe.skipIf(!dbUp)('an engagement withdrawn mid-sweep', () => {
       expect(await queued('Sweep Race')).toBe(1);
 
       // Nor an immutable row on the withdrawn engagement's spine.
-      const { rows: events } = await pool.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM valuation_events
-          WHERE valuation_id = $1 AND type = 'engagement_overdue_reminded'`,
-        [secondId],
-      );
-      expect(events[0]!.n).toBe(0);
+      const reminders = async (id: string): Promise<number> => {
+        const { rows } = await pool.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM valuation_events
+            WHERE valuation_id = $1 AND type = 'engagement_overdue_reminder'`,
+          [id],
+        );
+        return rows[0]!.n;
+      };
+      expect(await reminders(secondId)).toBe(0);
+      // And the control, because this assertion was written against
+      // `engagement_overdue_reminded` — a type nothing writes, so it counted
+      // zero of everything and would have passed over a sweep that wrote the
+      // row on the withdrawn engagement after all.
+      expect(await reminders(firstId)).toBe(1);
     } finally {
       await pool.query('DROP TRIGGER IF EXISTS test_retire_midsweep ON email_outbox');
     }

@@ -96,6 +96,15 @@ describe.skipIf(!dbUp)('one row failing inside the overdue sweep', () => {
 
   afterAll(async () => ctx?.teardown());
 
+  const reminders = async (id: string): Promise<number> => {
+    const { rows } = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'engagement_overdue_reminder'`,
+      [id],
+    );
+    return rows[0]!.n;
+  };
+
   const queued = async (name: string): Promise<number> => {
     const { rows } = await pool.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM email_outbox
@@ -148,12 +157,11 @@ describe.skipIf(!dbUp)('one row failing inside the overdue sweep', () => {
       // Nor a spine event claiming the analyst was chased. It is written after
       // the send for exactly this reason, and 0001's immutability trigger means
       // a wrong one could never be taken back off.
-      const { rows: events } = await pool.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM valuation_events
-          WHERE valuation_id = $1 AND type = 'engagement_overdue_reminded'`,
-        [firstId],
-      );
-      expect(events[0]!.n).toBe(0);
+      expect(await reminders(firstId)).toBe(0);
+      // The control. This assertion was written against
+      // `engagement_overdue_reminded`, which nothing writes, so it counted zero
+      // of everything — a guard that passed by having nothing left to ask.
+      expect(await reminders(secondId)).toBe(1);
     } finally {
       await pool.query('DROP TRIGGER IF EXISTS test_fail_one_reminder ON email_outbox');
     }
@@ -172,5 +180,77 @@ describe.skipIf(!dbUp)('one row failing inside the overdue sweep', () => {
     expect(body.failed).toEqual([]);
     expect(body.failed_count).toBe(0);
     expect(body.reminded).toEqual(expect.arrayContaining([firstId, secondId]));
+  });
+  it('reports a reminder whose audit event was lost as sent, not as failed', async () => {
+    /*
+     * The other half of the per-row catch, which for a while it could not tell
+     * apart from the first.
+     *
+     * `sendTransactionalEmail` enqueues into `email_outbox` and contains every
+     * delivery failure itself — a relay refusing the message leaves the row for
+     * the retry sweep and does not throw — so once it returns, the reminder is
+     * going out. The only step left is the spine INSERT, and "the spine INSERT
+     * losing a deadlock" is one of the three causes the loop's own comment
+     * names.
+     *
+     * A catch spanning both put that row in `failed`, which is the one thing
+     * this endpoint's counts exist to prevent: `failed` reads as "this analyst
+     * was not chased", the operator re-runs, and the analyst is mailed twice
+     * about the same overdue engagement. Driven by a trigger that refuses the
+     * event row, which is what a deadlock looks like from here.
+     */
+    await pool.query(
+      `CREATE OR REPLACE FUNCTION test_fail_reminder_event() RETURNS trigger
+         LANGUAGE plpgsql AS $$
+         BEGIN
+           RAISE EXCEPTION 'spine unavailable for this row';
+         END $$;
+       CREATE TRIGGER test_fail_reminder_event BEFORE INSERT ON valuation_events
+         FOR EACH ROW WHEN (NEW.type = 'engagement_overdue_reminder'
+                            AND NEW.valuation_id::text = '${firstId}')
+         EXECUTE FUNCTION test_fail_reminder_event()`,
+    );
+    const before = await queued(firstName);
+    // Cumulative across the runs above, so the assertions below are on the
+    // delta rather than on the total.
+    const eventsBefore = { first: await reminders(firstId), second: await reminders(secondId) };
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/engagements/remind-overdue',
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+
+      // Not a failure: the mail is in the outbox and the retry sweep owns it
+      // from here.
+      expect(body.failed).toEqual([]);
+      expect(await queued(firstName)).toBe(before + 1);
+
+      // Reported as chased, so the obvious re-run does not mail this analyst a
+      // second time about the same engagement...
+      expect(body.reminded).toContain(firstId);
+
+      // ...and reported separately, because the spine's only record that a
+      // person was contacted about this engagement is missing and no sweep
+      // comes back for it.
+      expect(body.unrecorded).toEqual([
+        { valuation_id: firstId, failure_reason: expect.stringMatching(/^pg\./) },
+      ]);
+      expect(body.unrecorded_count).toBe(1);
+
+      expect(await reminders(firstId)).toBe(eventsBefore.first);
+      // The control. This assertion was written against
+      // `engagement_overdue_reminded`, which nothing writes, so it counted zero
+      // of everything — a guard that passed by having nothing left to ask.
+      expect(await reminders(secondId)).toBe(eventsBefore.second + 1);
+
+      // The row behind it is untouched by any of this.
+      expect(body.reminded).toContain(secondId);
+      expect(body.unrecorded.map((u: { valuation_id: string }) => u.valuation_id)).not.toContain(secondId);
+    } finally {
+      await pool.query('DROP TRIGGER IF EXISTS test_fail_reminder_event ON valuation_events');
+    }
   });
 });

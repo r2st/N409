@@ -240,7 +240,7 @@ export async function refuseIfSubjectRetiredIn(
  * /remind-documents` **sent mail** — 'we still need your cap table', to the
  * client, about work the firm has withdrawn. Mail cannot be un-sent." Here it
  * is the assigned analyst being told to move forward a file that no longer
- * exists to move, and the sweep also writes an `engagement_overdue_reminded`
+ * exists to move, and the sweep also writes an `engagement_overdue_reminder`
  * onto that engagement's spine, where `valuation_events_immutable` means it
  * cannot afterwards be taken back off.
  *
