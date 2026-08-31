@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.observability import _EXTRA_KEYS, JsonLogFormatter, current_request_id, redact
 
+_EXTRA_KEYS_SET = set(_EXTRA_KEYS)
+
 client = TestClient(app)
 
 
@@ -59,6 +61,23 @@ def _extra_dicts(source: str) -> list[tuple[int, str]]:
     return out
 
 
+def _allowlist_of(app_dir: Path) -> set[str]:
+    """A service's own ``_EXTRA_KEYS``, read from its source.
+
+    Read rather than imported because only one of the two services is on the
+    path in any given test run, and taking this one's list as the answer for
+    both is how the census came to be checking `engine-wrapper` against `ai`'s
+    fourteen keys. The two lists are not the same: R258 added
+    ``relative_error``, ``tolerance`` and ``paths`` to the engine tier alone, so
+    a site there passing one of them was an offender by this test's reckoning
+    and a correctly logged field by the formatter's.
+    """
+    source = (app_dir / "observability.py").read_text(encoding="utf-8")
+    body = re.search(r"_EXTRA_KEYS\s*=\s*\((.*?)\)", source, re.S)
+    assert body, f"no _EXTRA_KEYS in {app_dir}"
+    return set(re.findall(r'"([^"]+)"', body.group(1)))
+
+
 def test_no_call_site_logs_a_key_the_formatter_will_drop():
     """A field the allowlist does not name is discarded in silence.
 
@@ -71,18 +90,48 @@ def test_no_call_site_logs_a_key_the_formatter_will_drop():
     completion and the one that reports the malformed value an operator typed
     into a limit — the whole diagnostic content of both, dropped.
 
-    Both services share this formatter, so both trees are walked.
+    Both services share this formatter, so both trees are walked — and walked
+    whole (round 267, methodology M11). ``glob("*.py")`` read the top level of
+    each ``app`` and stopped: 11 files under ``ai/app/agents`` and 38 under
+    ``engine-wrapper/app/engine`` were outside the population entirely, which is
+    the census blind spot this estate keeps rediscovering. Neither package
+    passes an ``extra`` today — the engine package holds no loggers at all and
+    reports by raising — so the green above was true and would have stayed true
+    through the first one that did.
     """
     offenders: list[str] = []
+    scanned = 0
     for service in ("ai", "engine-wrapper"):
         app_dir = Path(__file__).resolve().parents[3] / "services" / service / "app"
-        for path in sorted(app_dir.glob("*.py")):
+        allowed = _allowlist_of(app_dir)
+        for path in sorted(app_dir.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            scanned += 1
             source = path.read_text(encoding="utf-8")
             for line, body in _extra_dicts(source):
                 for key in re.findall(r'"([a-z_]+)"\s*:', body):
-                    if key not in _EXTRA_KEYS:
-                        offenders.append(f"{service}/app/{path.name}:{line} {key}")
+                    if key not in allowed:
+                        offenders.append(f"{service}/{path.relative_to(app_dir.parent)}:{line} {key}")
     assert offenders == []
+    # Vacuity guard: the population is the whole of both trees, not one level.
+    assert scanned > 60, scanned
+
+
+def test_the_two_services_allowlists_have_not_silently_diverged():
+    """The ai tier's list must stay a subset of the engine tier's.
+
+    Not because they must be equal — R258 gave the engine three dimensions the
+    AI service has no use for — but because the *shared* formatter is copied
+    between them byte for byte, and a key added to one tier's list and not the
+    other is a field that logs on one service and vanishes on the other, from
+    call sites that read identically.
+    """
+    root = Path(__file__).resolve().parents[3] / "services"
+    ai = _allowlist_of(root / "ai" / "app")
+    engine = _allowlist_of(root / "engine-wrapper" / "app")
+    assert ai == _EXTRA_KEYS_SET
+    assert ai - engine == set(), sorted(ai - engine)
 
 
 def test_the_allowlist_is_still_an_allowlist():
