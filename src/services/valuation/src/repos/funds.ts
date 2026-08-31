@@ -360,6 +360,21 @@ export async function latestMarks(
   return map;
 }
 
+/**
+ * How many marks a holding carries.
+ *
+ * A count rather than a page: its one caller is the `fund_position_removed`
+ * event, which has to say how much of the mark trail the cascade took with the
+ * holding, and the answer is a number rather than a list.
+ */
+export async function countMarks(db: Queryable, positionId: string): Promise<number> {
+  const { rows } = await db.query<{ n: number }>(
+    'SELECT count(*)::int AS n FROM fund_marks WHERE position_id = $1',
+    [positionId],
+  );
+  return rows[0]!.n;
+}
+
 export async function createMark(
   db: Queryable,
   input: {

@@ -18,6 +18,7 @@ import {
   findFund,
   findLpTerms,
   findPosition,
+  countMarks,
   latestMarks,
   linkFundToValuation,
   FUND_PAGE_LIMIT,
@@ -433,10 +434,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       // an amount nothing on the trail mentions, with the row it would have
       // read gone.
       const latest = (await latestMarks(client, [pid])).get(pid) ?? null;
-      const { rows: markCount } = await client.query<{ n: number }>(
-        'SELECT count(*)::int AS n FROM fund_marks WHERE position_id = $1',
-        [pid],
-      );
+      const marksRemoved = await countMarks(client, pid);
       if (!(await deletePosition(client, id, pid))) throw problems.notFound();
       await recordFundEvent(client, fund, 'fund_position_removed', principal, {
         fund_id: id,
@@ -445,7 +443,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         cost_basis: position.cost_basis,
         latest_fair_value: latest?.fair_value ?? null,
         latest_measurement_date: latest?.measurement_date ?? null,
-        marks_removed: markCount[0]!.n,
+        marks_removed: marksRemoved,
       });
     });
     return reply.status(204).send();
