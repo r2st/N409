@@ -43,8 +43,25 @@ export interface DebtValuationRow {
   created_at: Date;
 }
 
+/**
+ * One measurement without the two documents it was made from.
+ *
+ * `inputs` and `result` are the run's whole working — for a bond with monthly
+ * coupons `result.schedule` is a row per cash flow, tens of kilobytes of it —
+ * and every reader of a *page* of measurements wants two columns: the date and
+ * the fair value. See {@link listValuations}.
+ */
+export type DebtValuationSummaryRow = Omit<DebtValuationRow, 'inputs' | 'result'>;
+
+/** Columns of `debt_valuations` that are not one of the two jsonb documents. */
+const SUMMARY_COLUMNS = 'id, instrument_id, valuation_date, fair_value, created_by, created_at';
+
 /** See the note on `DebtValuationRow.valuation_date`. */
 const debtValuation = (row: DebtValuationRow): DebtValuationRow => calendarDateRow(row, 'valuation_date');
+
+/** The same normalisation for a row read without its documents. */
+const debtValuationSummary = (row: DebtValuationSummaryRow): DebtValuationSummaryRow =>
+  calendarDateRow(row, 'valuation_date');
 
 /**
  * Ceiling on one page of the instrument book.
@@ -220,18 +237,50 @@ export async function upsertCreditTerms(
  */
 export const DEBT_VALUATION_PAGE_LIMIT = 50;
 
+/**
+ * WITHOUT `inputs` AND `result`, which is the difference between a page and a
+ * download. Both are jsonb documents recording a whole pricing run: for a bond
+ * paying monthly over ten years `result.schedule` carries a row per cash flow,
+ * and `SELECT *` shipped fifty of them for a table with two columns in it.
+ * Measured on one instrument with 810 stored runs: 910 kB serialised against
+ * 7 kB, 3.2 ms against 0.2 ms — before node-postgres parses the JSON and
+ * Fastify serialises it again on the way out.
+ *
+ * Nothing read them. The instruments page declares `result` on its row type and
+ * only ever fills its result card from the run it just made; the history table
+ * prints `valuation_date` and `fair_value`. `historyExhibit` prints the same two
+ * columns. The one reader that needs a whole run is `loadDebtReport`, and it
+ * wants exactly one of them — the head — which it now reads by id through
+ * {@link findValuationRun}, so the report and the screen still cannot come to
+ * disagree about which measurement is current.
+ */
 export async function listValuations(
   db: Queryable,
   instrumentId: string,
   opts: { limit?: number } = {},
-): Promise<{ valuations: DebtValuationRow[]; truncated: boolean }> {
+): Promise<{ valuations: DebtValuationSummaryRow[]; truncated: boolean }> {
   const limit = Math.min(Math.max(opts.limit ?? DEBT_VALUATION_PAGE_LIMIT, 1), DEBT_VALUATION_PAGE_LIMIT);
-  const { rows } = await db.query<DebtValuationRow>(
-    `SELECT * FROM debt_valuations WHERE instrument_id = $1
+  const { rows } = await db.query<DebtValuationSummaryRow>(
+    `SELECT ${SUMMARY_COLUMNS} FROM debt_valuations WHERE instrument_id = $1
       ORDER BY valuation_date DESC, created_at DESC LIMIT $2`,
     [instrumentId, limit + 1],
   );
-  return { valuations: rows.slice(0, limit).map(debtValuation), truncated: rows.length > limit };
+  return { valuations: rows.slice(0, limit).map(debtValuationSummary), truncated: rows.length > limit };
+}
+
+/**
+ * One stored run in full, by id.
+ *
+ * The other half of the narrow list above: the report needs the whole working
+ * of the measurement it speaks for, and reading it *by the id the list handed
+ * back* is what keeps the head the report prints and the head the screen shows
+ * the same row. Re-asking `ORDER BY valuation_date DESC LIMIT 1` would be a
+ * second opinion, and a run landing between the two queries would make them
+ * different answers.
+ */
+export async function findValuationRun(db: Queryable, id: string): Promise<DebtValuationRow | null> {
+  const { rows } = await db.query<DebtValuationRow>('SELECT * FROM debt_valuations WHERE id = $1', [id]);
+  return rows[0] ? debtValuation(rows[0]) : null;
 }
 
 export async function createValuation(

@@ -1,7 +1,12 @@
 import type pg from 'pg';
 import type { FundReportData, DebtReportData } from '../domain/navExhibits.js';
 import { findFundByValuation, latestMarks, listPositions, findLpTerms } from './funds.js';
-import { findCreditTerms, findInstrumentByValuation, listValuations } from './debtInstruments.js';
+import {
+  findCreditTerms,
+  findInstrumentByValuation,
+  findValuationRun,
+  listValuations,
+} from './debtInstruments.js';
 import type { ValuationRow } from './valuations.js';
 
 /**
@@ -57,10 +62,18 @@ export async function loadDebtReport(pool: pg.Pool, valuation: ValuationRow): Pr
   // it was handed, and DEBT_VALUATION_PAGE_LIMIT is fifty measurements of one
   // instrument. What the report must never do is take a *different* head from
   // the one the screen shows, which is why both read the same ordered query.
+  //
+  // The head is then re-read in full, because the list no longer carries the
+  // two jsonb documents a run is made of — nothing else on this surface reads
+  // them, and shipping fifty of them for a two-column table was most of the
+  // response. By id rather than by re-asking for the newest, so "the same
+  // ordered query" above stays true of exactly one query: a run landing between
+  // the two would otherwise make them different answers.
+  const head = history.valuations[0] ?? null;
   return {
     instrument,
     creditTerms,
-    valuation: history.valuations[0] ?? null,
+    valuation: head ? await findValuationRun(pool, head.id) : null,
     history: history.valuations,
   };
 }

@@ -4,7 +4,12 @@ import type { ExhibitContext } from './reportExhibits.js';
 import { esc, P, section, table } from './exhibitHtml.js';
 import { calendarDateOf } from './calendarDate.js';
 import type { FundMarkRow, FundPositionRow, FundRow, LpTermsRow } from '../repos/funds.js';
-import type { CreditTermsRow, DebtInstrumentRow, DebtValuationRow } from '../repos/debtInstruments.js';
+import type {
+  CreditTermsRow,
+  DebtInstrumentRow,
+  DebtValuationRow,
+  DebtValuationSummaryRow,
+} from '../repos/debtInstruments.js';
 
 /**
  * Render-time schedules for the two measurement kinds — `fund` (ASC 820 fund
@@ -290,8 +295,14 @@ export interface DebtReportData {
   creditTerms: CreditTermsRow | null;
   /** The valuation the report speaks for — the most recent one. */
   valuation: DebtValuationRow | null;
-  /** Prior valuations, newest first, for the history exhibit. */
-  history: DebtValuationRow[];
+  /**
+   * Prior valuations, newest first, for the history exhibit.
+   *
+   * Summaries, not whole runs: `historyExhibit` prints the date and the fair
+   * value, and the two jsonb documents behind each measurement are tens of
+   * kilobytes each. `valuation` above is the one row read in full.
+   */
+  history: DebtValuationSummaryRow[];
 }
 
 const INSTRUMENT_LABELS: Record<string, string> = {
