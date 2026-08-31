@@ -65,10 +65,25 @@ describe.skipIf(!dbUp)('PATCH state is held to the lifecycle table', () => {
     const id = await engagementIn('pending');
     const res = await patchState(id, 'published');
     expect(res.statusCode).toBe(409);
-    // The refusal names the edge and what was legal instead, because the
-    // caller's next move is to pick one of them.
-    expect(res.json().detail).toContain('pending → published');
-    expect(res.json().detail).toContain('started');
+    /*
+     * The refusal names the edge and what was legal instead, because the
+     * caller's next move is to pick one of them.
+     *
+     * IN LABELS, NOT COLUMN VALUES (round 273, methodology M11). This asserted
+     * `pending → published` and a lowercase `started`, a spelling the guard has
+     * never produced: R255 had already established that `detail` is the only
+     * field a user sees and that eight lifecycle refusals answering with the
+     * column value was the defect, so `assertTransition` was written in
+     * `stateLabel` terms from its first line. The assertions were written
+     * against the change's own prose instead, and both have been red on main
+     * since the guard landed. The property is the same one either way — the
+     * edge, and the way out — so it is stated in the vocabulary the reader
+     * actually gets.
+     */
+    expect(res.json().detail).toContain('“Pending” to “Published”');
+    expect(res.json().detail).toContain('“Started”');
+    // And not the column values, which is the thing R255 removed.
+    expect(res.json().detail).not.toContain('pending → published');
 
     // And it is a refusal, not a warning: the row did not move.
     const after = await ctx.app.inject({
@@ -83,7 +98,9 @@ describe.skipIf(!dbUp)('PATCH state is held to the lifecycle table', () => {
     const id = await engagementIn('published');
     const res = await patchState(id, 'started');
     expect(res.statusCode).toBe(409);
-    expect(res.json().detail).toContain('terminal');
+    // `legalStatesFrom` says this in words rather than in the word "terminal",
+    // which is the vocabulary of the table and not of the person reading it.
+    expect(res.json().detail).toContain('nowhere — this is a final state');
   });
 
   it('still allows every edge the table does have', async () => {
