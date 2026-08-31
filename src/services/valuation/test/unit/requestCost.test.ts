@@ -13,6 +13,7 @@ import {
 import { WeightedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
+import { RESEARCH_TOPIC_LIST } from '../../src/domain/research.js';
 
 const VAL = '/api/v1/valuations/01JZZZZZZZZZZZZZZZZZZZZZZZ';
 
@@ -62,6 +63,85 @@ async function uploadRoutes(): Promise<Array<{ method: string; path: string; fil
       // so "nearest preceding" is exact rather than a heuristic.
       const owner = registrations.filter((r) => r.at < (consume.index ?? 0)).at(-1);
       if (owner) found.push({ method: owner.method, path: owner.path, file: entry });
+    }
+  }
+  return found;
+}
+
+/** The one call that leaves this process for the engine, the AI tier or a feed. */
+const OUTBOUND = /\bpostJson\s*[<(]/;
+/** `function name(` / `const name = (` / `const name = async (` — a local helper. */
+const HELPER_DEF =
+  /^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)|^\s*const\s+(\w+)\s*=\s*(?:async\s*)?\(/gm;
+
+/** The braced body opening at or after `from`, by brace counting. */
+function bracedBody(source: string, from: number): string {
+  const open = source.indexOf('{', from);
+  if (open < 0) return '';
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  return source.slice(open);
+}
+
+/**
+ * Every route in `src/routes` whose handler reaches a call out of the process,
+ * directly or through a helper defined in the same module.
+ *
+ * The ingress scan above has a counterpart problem on egress, and until R291 it
+ * had no counterpart test: `mustCost` is a hand-kept list of twenty routes under
+ * a docstring that says "every route that leaves the process for AI or the
+ * engine", which is the exhaustiveness trap this codebase keeps finding — a
+ * literal list is only ever a claim about what somebody remembered. Ten routes
+ * that post to the engine or the AI tier were absent from it and charged
+ * nothing, including both market-research routes and the comparable screener,
+ * which are model calls, and `research/refresh-all`, which is five of them.
+ *
+ * Transitive within the file, because that is where the misses were. A handler
+ * that reads `await runOne(...)` leaves the process just as surely as one that
+ * reads `await postJson(...)`, and `research.ts` is written the first way — a
+ * scan that only looked inside the handler body found neither of its routes.
+ * One module's helpers only: crossing files would pull in `repos/` and the
+ * shared clients, where every read would look outbound.
+ */
+async function outboundRoutes(): Promise<Array<{ method: string; path: string; file: string }>> {
+  const found: Array<{ method: string; path: string; file: string }> = [];
+  for (const entry of await readdir(ROUTES_DIR)) {
+    if (!entry.endsWith('.ts')) continue;
+    const source = await readFile(path.join(ROUTES_DIR, entry), 'utf8');
+
+    // Helpers that reach outbound, closed under "calls one that does".
+    const helpers = new Map<string, string>();
+    for (const m of source.matchAll(HELPER_DEF)) {
+      const name = m[1] ?? m[2]!;
+      helpers.set(name, bracedBody(source, (m.index ?? 0) + m[0].length - 1));
+    }
+    const reaches = new Set([...helpers].filter(([, body]) => OUTBOUND.test(body)).map(([n]) => n));
+    // A fixed number of passes rather than to-fixpoint: helper chains in these
+    // modules are one or two deep, and a bound is what keeps a cycle finite.
+    for (let pass = 0; pass < 4; pass += 1) {
+      for (const [name, body] of helpers) {
+        if (reaches.has(name)) continue;
+        if ([...reaches].some((seed) => new RegExp(`\\b${seed}\\s*\\(`).test(body))) reaches.add(name);
+      }
+    }
+
+    const registrations = [...source.matchAll(REGISTRATION)].map((m) => ({
+      at: m.index ?? 0,
+      method: m[1]!.toUpperCase(),
+      path: m[2]!,
+    }));
+    for (const [index, reg] of registrations.entries()) {
+      const end = registrations[index + 1]?.at ?? source.length;
+      const body = source.slice(reg.at, end);
+      const outbound =
+        OUTBOUND.test(body) || [...reaches].some((seed) => new RegExp(`\\b${seed}\\s*\\(`).test(body));
+      if (outbound) found.push({ method: reg.method, path: reg.path, file: entry });
     }
   }
   return found;
@@ -189,6 +269,31 @@ describe('COST_RULES', () => {
    * anyone having to notice. Cheap to ask for and expensive to serve is the
    * profile the budget exists for, and it is the profile uploads have.
    */
+  it('charges every route that leaves the process, derived from the source', async () => {
+    const outbound = await outboundRoutes();
+    // The scan finding nothing would make this test vacuously green.
+    expect(outbound.length).toBeGreaterThan(0);
+
+    const free = outbound
+      .filter((r) => costOfRequest(r.method, r.path.replace(/:[^/]+/g, 'x')) <= 0)
+      .map((r) => `${r.method} ${r.path} (${r.file})`);
+    expect(free).toEqual([]);
+  });
+
+  /**
+   * `refresh-all` is priced as a multiple of a single research run, so the
+   * multiple has to keep describing the loop. `RESEARCH_TOPIC_LIST` is a
+   * registry and topics get added to it; a sixth non-subject topic makes the
+   * route a sixth model call and leaves the number here describing five.
+   */
+  it('prices the research fan-out as the number of topics it actually runs', () => {
+    const topics = RESEARCH_TOPIC_LIST.filter((t) => !t.acceptsSubject).length;
+    expect(topics).toBe(5);
+    expect(costOfRequest('POST', `${VAL}/research/refresh-all`)).toBe(
+      topics * costOfRequest('POST', `${VAL}/research`),
+    );
+  });
+
   it('charges every route that accepts an upload', async () => {
     const uploads = await uploadRoutes();
     // The scan finding nothing would make this test vacuously green.

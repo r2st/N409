@@ -58,6 +58,27 @@ export const COST_RULES: readonly CostRule[] = [
   { pattern: /\/admin\/prompts\/[^/]+\/test$/, methods: ['POST'], cost: 25 },
   { pattern: /\/qa$/, methods: ['POST'], cost: 20 },
 
+  // Market research — the second LLM surface, and the one the table never knew
+  // about. `runOne` posts to the AI service's `/ai/v1/research`, which is a
+  // model call with a web search behind it, on the same timeout budget as a
+  // pipeline. Priced level with `/ai/:pipeline` because it is the same kind of
+  // work reached by a different door.
+  //
+  // `refresh-all` before it, because it is not one of these: it runs every
+  // non-subject topic in a loop — five of them, `RESEARCH_TOPIC_LIST` filtered
+  // on `acceptsSubject` — from a single request. Charging it as one call is the
+  // shape the budget exists to stop, so it is charged as what it is. The count
+  // is pinned by `requestCost.test.ts`, so growing the registry cannot quietly
+  // leave this number describing a smaller fan-out than the route performs.
+  { pattern: /\/research\/refresh-all$/, methods: ['POST'], cost: 125 },
+  { pattern: /\/research$/, methods: ['POST'], cost: 25 },
+  // Comparable screening is an LLM call that returns a candidate peer set.
+  { pattern: /\/comparables\/screen$/, methods: ['POST'], cost: 25 },
+  // …and the refresh beside it is a fan-out of a different kind: one market
+  // feed request per included comp carrying a ticker. No model, but a request
+  // that leaves the process once per row of a set the caller controls.
+  { pattern: /\/comparables\/refresh$/, methods: ['POST'], cost: 12 },
+
   // Ingest — the other direction, and the one the table used to miss entirely.
   //
   // Every other rule here prices work the *server* initiates on request. These
@@ -97,7 +118,20 @@ export const COST_RULES: readonly CostRule[] = [
   { pattern: /\/documents\/[^/]+\/download$/, methods: ['GET'], cost: 5 },
 
   // Engine round-trips.
+  // The validator, not the run: `/calculations/preflight` posts to the engine's
+  // `/engine/v1/validate`, which checks the inputs it would compute from
+  // without computing. Above `/calculations$` for legibility; the anchors keep
+  // them from overlapping.
+  { pattern: /\/calculations\/preflight$/, methods: ['POST'], cost: 5 },
   { pattern: /\/calculations$/, methods: ['POST'], cost: 12 },
+  { pattern: /\/specialty$/, methods: ['POST'], cost: 12 },
+  { pattern: /\/projection\/run$/, methods: ['POST'], cost: 12 },
+  // Anchored on the engagement rather than written as a bare `/rollforward$`,
+  // which would also charge `/funds/:id/positions/:pid/rollforward` — a mark
+  // carried forward in the database, which reaches nothing outside the process.
+  { pattern: /\/valuations\/[^/]+\/rollforward$/, methods: ['POST'], cost: 12 },
+  { pattern: /\/volatility\/estimate$/, methods: ['POST'], cost: 12 },
+  { pattern: /\/wacc\/preview$/, methods: ['POST'], cost: 10 },
   { pattern: /\/sensitivity(\/model)?$/, methods: ['POST'], cost: 12 },
   { pattern: /\/scenarios(\/preview)?$/, methods: ['POST'], cost: 12 },
   { pattern: /\/asc718$/, methods: ['POST'], cost: 10 },
