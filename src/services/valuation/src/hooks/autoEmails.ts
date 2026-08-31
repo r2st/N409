@@ -19,6 +19,7 @@ import {
 import { enqueueEmail, markEmail } from '../repos/emailOutbox.js';
 import { recordSendFailure } from '../repos/emailDelivery.js';
 import { withClientTransaction } from '../db/pool.js';
+import { SWEEP_LOCKS, withSweepLock } from '../db/sweepLock.js';
 import { sendAndRecord } from '../email/sendAttempt.js';
 import type { EmailTransport } from './stateChange.js';
 
@@ -32,12 +33,11 @@ import type { EmailTransport } from './stateChange.js';
  * function, an ops double-click fires it twice, and a deployment can run more
  * than one instance against this database.
  *
- * `try` rather than a blocking lock: a scanner that waits its turn would only
- * wake up to re-read a backlog the holder has just drained. Skipping is also
- * the honest answer to an ops-triggered run that collides with the interval —
- * the scan it asked for is already happening.
+ * The argument generalised, along with the lock's mechanics, into
+ * `db/sweepLock.ts` — R292 found the overdue-reminder sweep making every part
+ * of it true and holding no lock at all.
  */
-const SCAN_LOCK_KEY = 0x6e34_4145; // 'n4AE' — distinct from the migrate lock
+const SCAN_LOCK_KEY = SWEEP_LOCKS.autoEmailScan;
 
 /**
  * Just the one read the rendering needs, rather than the whole settings store,
@@ -81,57 +81,14 @@ export async function runDueAutoEmails(deps: {
    */
   pageSize?: number;
 }): Promise<{ queued: number; skipped: number; suppressed: number }> {
-  const client = await deps.pool.connect();
-  /*
-   * Set when the unlock did not happen, and the reason this connection must not
-   * go back in the pool.
-   *
-   * This is the one session-scoped advisory lock in the service — every other
-   * one is `pg_advisory_xact_lock`, released by COMMIT or ROLLBACK whatever
-   * happens. A session lock is released by the explicit unlock below or by the
-   * backend going away, and nothing else. So a swallowed unlock failure returns
-   * a *healthy* connection to the pool still holding `SCAN_LOCK_KEY`, and the
-   * lock then outlives the pass, the sweep and the deploy: every later tick
-   * takes a different connection from the pool, fails `pg_try_advisory_lock`,
-   * and logs "already in progress" — which is the line for the benign case, so
-   * the drip campaigns simply stop and the log says the healthy thing forever.
-   *
-   * `release(err)` with a truthy argument destroys the connection instead of
-   * pooling it, which ends the backend session and takes the lock with it. That
-   * is the only remedy available here: the unlock is the thing that just
-   * failed, so retrying it on the same connection is not a plan.
-   */
-  let unreleasedLock: unknown = null;
-  try {
-    const { rows } = await client.query<{ locked: boolean }>('SELECT pg_try_advisory_lock($1) AS locked', [
-      SCAN_LOCK_KEY,
-    ]);
-    if (!rows[0]!.locked) {
-      deps.log?.info('auto email scan already in progress; skipping this pass');
-      return { queued: 0, skipped: 0, suppressed: 0 };
-    }
-    try {
-      // The whole scan runs on this client: the lock is session-scoped, so work
-      // moved to another connection would not be covered by it.
-      return await scan(client, deps);
-    } finally {
-      try {
-        await client.query('SELECT pg_advisory_unlock($1)', [SCAN_LOCK_KEY]);
-      } catch (err) {
-        // Still swallowed as far as the caller is concerned — a scan that did
-        // its work must not report failure because the unlock did not answer —
-        // but recorded, because the alternative is a sweep that never runs
-        // again with nothing anywhere saying why.
-        unreleasedLock = err;
-        deps.log?.error(
-          { err },
-          'could not release the auto email scan lock; dropping the connection so the lock cannot outlive it',
-        );
-      }
-    }
-  } finally {
-    client.release(unreleasedLock ? (unreleasedLock as Error) : undefined);
+  // The whole scan runs on the locked client: the lock is session-scoped, so
+  // work moved to another connection would not be covered by it.
+  const run = await withSweepLock(deps.pool, SCAN_LOCK_KEY, deps.log, (client) => scan(client, deps));
+  if (!run.ran) {
+    deps.log?.info('auto email scan already in progress; skipping this pass');
+    return { queued: 0, skipped: 0, suppressed: 0 };
   }
+  return run.value;
 }
 
 /**

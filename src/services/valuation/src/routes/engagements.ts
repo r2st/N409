@@ -32,6 +32,7 @@ import {
 import { findUserById } from '../repos/users.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
+import { SWEEP_LOCKS, withSweepLock } from '../db/sweepLock.js';
 import { isRetiredNow, refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import type { SupportEmailSource } from '../hooks/autoEmails.js';
@@ -289,11 +290,56 @@ export function registerEngagementRoutes(
     return engagementView(deps.pool, updated, new Date());
   });
 
-  // Scan active engagements and email the assigned analyst for each overdue
-  // stage. Runnable on demand (schedulable like the auto-email drip).
+  /*
+   * Scan active engagements and email the assigned analyst for each overdue
+   * stage. Runnable on demand (schedulable like the auto-email drip).
+   *
+   * SERIALIZED AGAINST ITSELF, which it was not, and the argument is the one
+   * `hooks/autoEmails.ts` already makes about the drip scan next door: a sweep
+   * that decides whether to act by reading committed rows is a
+   * stale-read-then-write in the large, so two passes that overlap both read
+   * the same "past SLA, not yet chased" and both act on it. Nothing here
+   * records that a row has been reminded in a way a second pass consults —
+   * `slaStatus` is a function of `current_stage` and `stage_entered_at`, and
+   * neither moves because a reminder went out — so overlapping runs do not
+   * merely race, they both send the *whole* set.
+   *
+   * And overlapping is the normal case, not a rare one. This is a POST an
+   * operator presses and a scheduler can fire on an interval; the pass awaits a
+   * transport per overdue row and pages the entire active book, so it is
+   * minutes long on a real deployment, and a double-click or a tick landing on
+   * a run still going is all it takes. What it does twice is mail a named
+   * person about a named client's engagement — which is the harm this file
+   * already names three times over: "mail cannot be un-sent", and "the re-run
+   * mails somebody a second time about the same overdue engagement".
+   *
+   * A 409 rather than the drip's silent zero-run. Skipping is right for a timer
+   * tick with nobody watching; here somebody pressed the button, and a body
+   * reading `reminded_count: 0, scanned: 0` is indistinguishable from "nothing
+   * is overdue" — the collapsed empty state this codebase keeps finding. The
+   * lock is `try`, so the answer is immediate rather than a queued second pass
+   * over a book the holder is already draining.
+   *
+   * `client` is ignored: the reads here are per row on the pool and it is the
+   * mutual exclusion this needs, not a consistent snapshot.
+   */
   app.post('/api/v1/admin/engagements/remind-overdue', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     requireOps(principal);
+    const run = await withSweepLock(deps.pool, SWEEP_LOCKS.overdueReminders, app.log, () =>
+      remindOverdue(principal),
+    );
+    if (!run.ran) {
+      throw problems.conflict(
+        'An overdue-reminder sweep is already running. Wait for it to finish rather than ' +
+          'starting a second one — both would email every overdue analyst.',
+      );
+    }
+    return run.value;
+  });
+
+  /** The pass itself, run under the lock above. */
+  const remindOverdue = async (principal: Principal) => {
     const now = new Date();
     const reminded: string[] = [];
     /**
@@ -499,5 +545,5 @@ export function registerEngagementRoutes(
       unrecorded,
       scanned,
     };
-  });
+  };
 }
