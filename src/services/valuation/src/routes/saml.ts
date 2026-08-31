@@ -11,6 +11,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { EmailAddress, MAX_EMAIL_LENGTH } from '../domain/email.js';
 import type { RoleKey } from '../domain/roles.js';
 import { ROLE_KEYS } from '../domain/roles.js';
+import { refuseSso } from '../auth/ssoRefusal.js';
 
 /**
  * SAML 2.0 Service Provider (feature 9). The IdP is configured in admin
@@ -210,11 +211,12 @@ export function samlAssertionRef(profile: Record<string, unknown>): SamlAssertio
 }
 
 export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
-  const requireEnabled = async (): Promise<SamlConfigRow> => {
+  const notConfigured = () => problems.badRequest('SAML SSO is not configured');
+
+  /** The configuration, or null — the caller decides how to say no. */
+  const enabledConfig = async (): Promise<SamlConfigRow | null> => {
     const config = await getSamlConfig(deps.pool);
-    if (!config || !config.enabled || !config.idp_sso_url || !config.idp_cert) {
-      throw problems.badRequest('SAML SSO is not configured');
-    }
+    if (!config || !config.enabled || !config.idp_sso_url || !config.idp_cert) return null;
     return config;
   };
 
@@ -231,7 +233,8 @@ export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
 
   // Begin SSO — redirect the browser to the IdP.
   app.get('/api/v1/auth/saml/login', async (req, reply) => {
-    const config = await requireEnabled();
+    const config = await enabledConfig();
+    if (!config) return refuseSso(req, reply, 'not_configured', notConfigured());
     const saml = buildSaml(config, deps.publicBaseUrl);
     const url = await saml.getAuthorizeUrlAsync('', undefined, {});
     return reply.redirect(url, 302);
@@ -250,9 +253,12 @@ export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
     );
 
     scope.post('/api/v1/auth/saml/acs', async (req, reply) => {
-      const config = await requireEnabled();
+      const config = await enabledConfig();
+      if (!config) return refuseSso(req, reply, 'not_configured', notConfigured());
       const body = (req.body ?? {}) as { SAMLResponse?: string; RelayState?: string };
-      if (!body.SAMLResponse) throw problems.badRequest('Missing SAMLResponse');
+      if (!body.SAMLResponse) {
+        return refuseSso(req, reply, 'invalid_request', problems.badRequest('Missing SAMLResponse'));
+      }
 
       const saml = buildSaml(config, deps.publicBaseUrl);
       let profile: Record<string, unknown> | null;
@@ -264,9 +270,21 @@ export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
         profile = result.profile as Record<string, unknown> | null;
       } catch (err) {
         req.log.warn({ err }, 'SAML assertion validation failed');
-        throw problems.unauthorized('SAML assertion could not be validated');
+        return refuseSso(
+          req,
+          reply,
+          'assertion_rejected',
+          problems.unauthorized('SAML assertion could not be validated'),
+        );
       }
-      if (!profile) throw problems.unauthorized('SAML assertion carried no profile');
+      if (!profile) {
+        return refuseSso(
+          req,
+          reply,
+          'assertion_rejected',
+          problems.unauthorized('SAML assertion carried no profile'),
+        );
+      }
 
       // Spend the assertion before anything else looks at it. The signature and
       // Conditions checks above pass just as happily on a replay — they are
@@ -274,16 +292,35 @@ export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
       // second POST from the first, and it has to run before any of the work
       // that would issue a session.
       const ref = samlAssertionRef(profile);
-      if (!ref) throw problems.unauthorized('SAML assertion has no usable ID or expiry');
+      if (!ref) {
+        return refuseSso(
+          req,
+          reply,
+          'assertion_rejected',
+          problems.unauthorized('SAML assertion has no usable ID or expiry'),
+        );
+      }
       if (!(await consumeSamlAssertion(deps.pool, ref))) {
         req.log.warn({ assertionId: ref.assertionId }, 'SAML assertion replayed');
-        throw problems.unauthorized('SAML assertion has already been used');
+        return refuseSso(
+          req,
+          reply,
+          'assertion_reused',
+          problems.unauthorized('SAML assertion has already been used'),
+        );
       }
 
       const identity = extractIdentity(profile);
-      if (!identity.email) throw problems.unauthorized('SAML assertion has no email');
+      if (!identity.email) {
+        return refuseSso(req, reply, 'no_email', problems.unauthorized('SAML assertion has no email'));
+      }
       if (config.allowed_domain && !identity.email.endsWith(`@${config.allowed_domain.toLowerCase()}`)) {
-        throw problems.forbidden('Your email domain is not permitted for SSO');
+        return refuseSso(
+          req,
+          reply,
+          'domain_not_allowed',
+          problems.forbidden('Your email domain is not permitted for SSO'),
+        );
       }
 
       // JIT: reuse an existing account (linking it), else provision one.
@@ -314,7 +351,14 @@ export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
           payload: { method: 'saml_jit', roles: user.roles },
         });
       }
-      if (user.deleted_at) throw problems.forbidden('This account is deactivated');
+      if (user.deleted_at) {
+        return refuseSso(
+          req,
+          reply,
+          'account_deactivated',
+          problems.forbidden('This account is deactivated'),
+        );
+      }
 
       // The third sign-in door. Password and Google both wrote `user_login`
       // from the day the spine existed; this one did not, so a firm that had

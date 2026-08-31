@@ -428,6 +428,93 @@ describe.skipIf(!dbUp || !opensslAvailable())('SAML assertion consumer', () => {
     }
   });
 
+  /*
+   * R270 — the same refusals, asked for the way a browser asks.
+   *
+   * Every request above is an API caller (no Accept header), and the problem
+   * body they get is the contract. A browser is the *only* thing that reaches
+   * these two routes in production — one is a link, the other a form the IdP's
+   * own page submits — and it was getting the same body rendered as text.
+   */
+  const postAsBrowser = (SAMLResponse: string) =>
+    ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/saml/acs',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        accept: 'text/html,application/xhtml+xml',
+      },
+      payload: new URLSearchParams({ SAMLResponse }).toString(),
+    });
+
+  it('sends a browser back to sign in with a reason it can read', async () => {
+    const res = await postAsBrowser(samlResponse('mallory@example.com'));
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe('/login?sso_error=assertion_rejected');
+    // The refusal, not the body of one: nothing of the problem escapes here.
+    expect(res.body).not.toContain('urn:n409:problem');
+    expect(await findUserByEmail(ctx.pool, 'mallory@example.com')).toBeNull();
+  });
+
+  it('names the domain refusal apart from a rejected assertion', async () => {
+    await upsertSamlConfig(ctx.pool, {
+      enabled: true,
+      idpSsoUrl: 'http://idp.test/sso',
+      idpCert: idp.cert,
+      allowedDomain: 'example.com',
+      defaultRole: 'valuation_user',
+      updatedBy: adminId,
+    });
+    try {
+      const res = await postAsBrowser(samlResponse('outsider@other.com', idp));
+      expect(res.statusCode).toBe(302);
+      expect(res.headers.location).toBe('/login?sso_error=domain_not_allowed');
+    } finally {
+      await upsertSamlConfig(ctx.pool, {
+        enabled: true,
+        idpSsoUrl: 'http://idp.test/sso',
+        idpCert: idp.cert,
+        allowedDomain: null,
+        defaultRole: 'valuation_user',
+        updatedBy: adminId,
+      });
+    }
+  });
+
+  it('separates a replay from a first use, for a browser too', async () => {
+    const assertion = samlResponse('ada@example.com', idp);
+    expect((await postAsBrowser(assertion)).headers.location).toContain('/auth/google/complete');
+    const replay = await postAsBrowser(assertion);
+    expect(replay.statusCode).toBe(302);
+    expect(replay.headers.location).toBe('/login?sso_error=assertion_reused');
+  });
+
+  it('answers a browser clicking the SSO link while SSO is off', async () => {
+    await upsertSamlConfig(ctx.pool, {
+      enabled: false,
+      idpSsoUrl: 'http://idp.test/sso',
+      idpCert: idp.cert,
+      updatedBy: adminId,
+    });
+    try {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/saml/login',
+        headers: { accept: 'text/html' },
+      });
+      expect(res.statusCode).toBe(302);
+      expect(res.headers.location).toBe('/login?sso_error=not_configured');
+    } finally {
+      await upsertSamlConfig(ctx.pool, {
+        enabled: true,
+        idpSsoUrl: 'http://idp.test/sso',
+        idpCert: idp.cert,
+        defaultRole: 'valuation_user',
+        updatedBy: adminId,
+      });
+    }
+  });
+
   it('redirects to the IdP to start login, and serves SP metadata', async () => {
     const login = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/saml/login' });
     expect(login.statusCode).toBe(302);

@@ -8,6 +8,48 @@ import { AuthShell } from '../components/AuthShell';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
 import { SignedInHandoff, handOffAfterSignIn } from '../components/SignedInHandoff';
 
+/**
+ * The sentences behind `?sso_error=…`.
+ *
+ * A refusal in either identity-provider flow used to end at the API's problem
+ * body, rendered as text in the browser window the person was signing in
+ * through. `refuseSso` (`services/valuation/src/auth/ssoRefusal.ts`) now sends
+ * them back here with a code, and this is where the code becomes something to
+ * read. Keys are that module's `SSO_REFUSAL_CODES`; `ssoRefusalCodes.test.ts`
+ * holds the two lists to each other.
+ *
+ * The code is read from the URL and is therefore whatever a visitor typed, so
+ * it is looked up and never rendered: an unknown one gets the general
+ * sentence rather than being echoed back onto the page.
+ *
+ * Every sentence names what to do next, because on this screen the reader
+ * usually cannot fix the cause — half of these are settings inside their own
+ * firm's identity provider, and the remedy is a person, not a button.
+ */
+const SSO_ERROR_MESSAGES: Record<string, string> = {
+  not_configured:
+    'Single sign-on is not set up for this workspace. Sign in with your email and password, or ask your administrator to enable SSO.',
+  invalid_request:
+    'That sign-in attempt did not arrive complete — it may have been left open too long. Start again from the sign-in button below.',
+  assertion_rejected:
+    'Your identity provider’s response could not be verified. Start again below; if it keeps happening, your administrator will need to check the SSO certificate in N409.',
+  assertion_reused:
+    'That sign-in response has already been used. Start again below rather than reloading or going back.',
+  no_email:
+    'Your identity provider did not send an email address, which N409 needs to identify your account. Ask your administrator to release the email attribute.',
+  email_unverified:
+    'Google has not confirmed the email address on that account. Verify it with Google, then try again.',
+  domain_not_allowed:
+    'Single sign-on here is restricted to a different email domain. Sign in with the address your firm issued you, or ask your administrator which domain is allowed.',
+  account_deactivated: 'This account has been deactivated in N409. Your administrator can restore it.',
+  provider_error:
+    'We could not finish signing you in with that provider. Try again in a moment; if it keeps happening, contact support.',
+};
+
+/** The general sentence, for a code this build does not know. */
+const SSO_ERROR_FALLBACK =
+  'Single sign-on did not complete. Try again below, or sign in with your email and password.';
+
 function GoogleButton() {
   return (
     <a
@@ -48,6 +90,8 @@ export function LoginPage() {
   const [code, setCode] = useState('');
   const [useBackup, setUseBackup] = useState(false);
   const [rememberDevice, setRememberDevice] = useState(false);
+  const ssoErrorCode = new URLSearchParams(location.search).get('sso_error');
+  const ssoError = ssoErrorCode ? (SSO_ERROR_MESSAGES[ssoErrorCode] ?? SSO_ERROR_FALLBACK) : null;
 
   useEffect(() => {
     api<AuthProviders>('/auth/providers')
@@ -169,7 +213,7 @@ export function LoginPage() {
   return (
     <AuthShell title="Sign in" subtitle="Access your valuations workspace.">
       <form onSubmit={submit} className="space-y-5" noValidate>
-        <ErrorNote>{error}</ErrorNote>
+        <ErrorNote>{error ?? ssoError}</ErrorNote>
         <Field label="Email" error={credentials.errorFor('email')}>
           <TextInput
             type="email"

@@ -118,6 +118,56 @@ describe('LoginPage', () => {
     expect(sso).toHaveAttribute('href', '/api/v1/auth/saml/login');
   });
 
+  /*
+   * R270 — the sign-in page is where an SSO refusal lands now.
+   *
+   * Every one of them used to end at the API's problem body, drawn as text in
+   * the window the person was signing in through: no sentence, no way back.
+   */
+  describe('a refusal handed back by an identity provider flow', () => {
+    const withProviders = (entry: string) => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        if (String(url).endsWith('/auth/providers'))
+          return jsonResponse({ password: true, google: false, saml: true });
+        throw new Error(`unexpected fetch ${String(url)}`);
+      });
+      return render(
+        <MemoryRouter initialEntries={[entry]}>
+          <AuthProvider>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+            </Routes>
+          </AuthProvider>
+        </MemoryRouter>,
+      );
+    };
+
+    it('says which of the causes it was, and what to do about it', async () => {
+      withProviders('/login?sso_error=domain_not_allowed');
+      const note = await screen.findByRole('alert');
+      expect(note).toHaveTextContent(/restricted to a different email domain/);
+      expect(note).toHaveTextContent(/administrator/);
+    });
+
+    it('tells a deactivated account apart from an unverifiable assertion', async () => {
+      withProviders('/login?sso_error=account_deactivated');
+      expect(await screen.findByRole('alert')).toHaveTextContent(/deactivated/);
+    });
+
+    it('answers an unknown code with the general sentence rather than echoing it', async () => {
+      withProviders('/login?sso_error=<img src=x>');
+      const note = await screen.findByRole('alert');
+      expect(note).toHaveTextContent(/Single sign-on did not complete/);
+      expect(note.textContent).not.toContain('img src');
+    });
+
+    it('draws nothing when the visitor simply came to sign in', async () => {
+      withProviders('/login');
+      expect(await screen.findByLabelText('Password')).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+  });
+
   it('sends an already-authenticated visitor to the page they were bounced from', async () => {
     localStorage.setItem('n409.token', '1');
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {

@@ -33,6 +33,7 @@ import {
   trustDevice,
 } from '../repos/mfa.js';
 import type { GoogleOidc } from '../auth/google.js';
+import { refuseSso } from '../auth/ssoRefusal.js';
 import {
   bumpSessionEpoch,
   createUser,
@@ -569,25 +570,55 @@ export function registerAuthRoutes(
     };
   });
 
-  app.get('/api/v1/auth/google', async (_req, reply) => {
-    if (!deps.google) throw problems.badRequest('Google SSO is not configured');
+  const googleUnconfigured = () => problems.badRequest('Google SSO is not configured');
+
+  app.get('/api/v1/auth/google', async (req, reply) => {
+    if (!deps.google) return refuseSso(req, reply, 'not_configured', googleUnconfigured());
     const state = await signOidcState(deps.jwt);
     return reply.redirect(deps.google.authorizationUrl(state), 302);
   });
 
   app.get('/api/v1/auth/google/callback', async (req, reply) => {
-    if (!deps.google) throw problems.badRequest('Google SSO is not configured');
+    const google = deps.google;
+    if (!google) return refuseSso(req, reply, 'not_configured', googleUnconfigured());
     const query = z.object({ code: z.string().min(1), state: z.string().min(1) }).safeParse(req.query);
-    if (!query.success) throw problems.badRequest('Missing code/state');
+    if (!query.success) {
+      return refuseSso(req, reply, 'invalid_request', problems.badRequest('Missing code/state'));
+    }
 
     try {
       await verifyOidcState(query.data.state, deps.jwt);
     } catch {
-      throw problems.unauthorized('Invalid OIDC state');
+      return refuseSso(req, reply, 'invalid_request', problems.unauthorized('Invalid OIDC state'));
     }
-    const idToken = await deps.google.exchangeCode(query.data.code);
-    const identity = await deps.google.verifyIdToken(idToken);
-    if (!identity.emailVerified) throw problems.unauthorized('Google account email is not verified');
+    /*
+     * The exchange is the one step here that fails for reasons neither end
+     * chose — a spent or expired authorization code, Google unreachable — and
+     * it is reached only by a browser following Google's redirect. Left to the
+     * error handler it is a 500 rendered as a JSON body; `logFailure` keeps the
+     * record a 500 would have written, and the reader gets a page.
+     */
+    let identity: Awaited<ReturnType<GoogleOidc['verifyIdToken']>>;
+    try {
+      const idToken = await google.exchangeCode(query.data.code);
+      identity = await google.verifyIdToken(idToken);
+    } catch (err) {
+      logFailure(req.log, err, {}, 'Google sign-in could not be completed with the provider');
+      return refuseSso(
+        req,
+        reply,
+        'provider_error',
+        problems.unauthorized('Google sign-in could not be completed'),
+      );
+    }
+    if (!identity.emailVerified) {
+      return refuseSso(
+        req,
+        reply,
+        'email_unverified',
+        problems.unauthorized('Google account email is not verified'),
+      );
+    }
 
     const user = await upsertGoogleUser(deps.pool, identity);
     await recordAdminEvent(deps.pool, {
