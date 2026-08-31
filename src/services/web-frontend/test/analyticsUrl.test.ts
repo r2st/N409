@@ -66,6 +66,28 @@ describe('scrubAnalyticsUrl', () => {
     );
   });
 
+  it('blanks a credential carried in the fragment, which is where these links carry it', () => {
+    // The invitation, verification, reset, board-signature, client-intake and
+    // Google hand-off links all put the token *after the hash* — deliberately,
+    // because a fragment is not sent to the server and never reaches a request
+    // log. It is sent to GA4 all the same, inside `page_location`.
+    expect(scrubAnalyticsUrl('https://n409.ai/accept-invite#token=abc123def456')).toBe(
+      'https://n409.ai/accept-invite#token=REDACTED',
+    );
+    expect(scrubAnalyticsUrl('https://n409.ai/auth/google/complete#token=jwt.body.sig')).toBe(
+      'https://n409.ai/auth/google/complete#token=REDACTED',
+    );
+    expect(scrubAnalyticsUrl('https://n409.ai/verify-email?email=ada%40example.com#token=t')).toBe(
+      'https://n409.ai/verify-email?email=REDACTED#token=REDACTED',
+    );
+  });
+
+  it('leaves a fragment that is not a parameter list alone', () => {
+    for (const href of ['https://n409.ai/pricing#faq', 'https://n409.ai/blog/x#how-it-works']) {
+      expect(scrubAnalyticsUrl(href), href).toBe(href);
+    }
+  });
+
   it('leaves an ordinary marketing URL byte for byte alone', () => {
     // Returned unchanged rather than round-tripped through `URL`, so a campaign
     // URL is not silently re-encoded on its way into the report.

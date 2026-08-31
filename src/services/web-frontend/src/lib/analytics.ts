@@ -35,12 +35,18 @@
  *    containers.
  *
  * 2. **The URL a container is given is scrubbed.** The public surface holds
- *    the three credential-bearing routes — password reset, email verification,
- *    invitation acceptance — and each strips its token from the address bar on
+ *    the credential-bearing routes — password reset, email verification,
+ *    invitation acceptance, the board-signature and client-intake links, the
+ *    Google hand-off — and each strips its token from the address bar on
  *    mount. That is a race this does not need to win: {@link scrubAnalyticsUrl}
  *    blanks the same query parameters the API blanks before writing a request
  *    line (`SENSITIVE_QUERY_PARAMS` in packages/shared/src/problem.ts), so the
  *    first page view cannot carry a live token even if it is measured first.
+ *
+ *    Query *and* fragment. Those links carry the token after the hash, chosen
+ *    precisely because a fragment never reaches a server log — and a scrub
+ *    that read only the query therefore missed the one place the token is
+ *    certain to be, while passing every test written about the other one.
  */
 
 export interface AnalyticsConfig {
@@ -143,8 +149,44 @@ export function scrubAnalyticsUrl(href: string): string {
     url.searchParams.set(key, 'REDACTED');
     touched = true;
   }
+  const fragment = scrubFragment(url.hash);
+  if (fragment !== null) {
+    url.hash = fragment;
+    touched = true;
+  }
   if (!touched) return href;
   return url.toString();
+}
+
+/**
+ * The same blanking over the fragment, or `null` when there was nothing to
+ * blank.
+ *
+ * The fragment is where these links actually carry their credential. Every
+ * token-bearing route reads `window.location.hash` first — invitation
+ * acceptance, email verification, password reset, the board-signature and
+ * client-intake links, and the Google hand-off, which has *only* a fragment —
+ * and it is deliberate: a fragment is never sent to a server, so it cannot
+ * reach a request log. It reaches `page_location` all the same, and scrubbing
+ * only the query left the one place the token is guaranteed to be.
+ *
+ * Split on the first `?` so a fragment that is itself a path with a query
+ * (`#/accept?token=…`) is read as one; re-serialised only when a name matched,
+ * so `#faq` is still `#faq` and not `faq=`.
+ */
+function scrubFragment(hash: string): string | null {
+  const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+  if (!raw) return null;
+  const split = raw.indexOf('?');
+  const prefix = split === -1 ? '' : raw.slice(0, split + 1);
+  const params = new URLSearchParams(split === -1 ? raw : raw.slice(split + 1));
+  let touched = false;
+  for (const key of [...params.keys()]) {
+    if (!SENSITIVE_QUERY_PARAM_SET.has(key.toLowerCase())) continue;
+    params.set(key, 'REDACTED');
+    touched = true;
+  }
+  return touched ? `#${prefix}${params.toString()}` : null;
 }
 
 interface DataLayerWindow extends Window {
