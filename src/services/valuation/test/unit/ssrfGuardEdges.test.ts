@@ -133,7 +133,13 @@ describe('the webhook host guard reads the same addresses as the logo guard', ()
 
 describe('fetchPartnerLogo — responses it will not follow or keep', () => {
   const publicDns: HostResolver = async () => ['93.184.216.34'];
-  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  // A whole IHDR, not just its tag. R265 gave `fetchPartnerLogo` a tenth
+  // refusal — `too_many_pixels`, which reads the declared dimensions and treats
+  // an unreadable header as unmeasured rather than as small — and this fixture
+  // stopped four bytes before the width, so every test here that expects a logo
+  // back was getting `null` from the new guard instead of from the thing it was
+  // testing. 16 x 16, far inside the budget.
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d494844520000001000000010', 'hex');
 
   it('gives up on a redirect that names no destination', async () => {
     const impl = vi.fn(async () => new Response(null, { status: 302 }));
