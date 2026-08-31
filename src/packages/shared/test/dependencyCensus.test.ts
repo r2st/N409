@@ -554,6 +554,8 @@ type LockEntry = {
   extraneous?: boolean;
   hasInstallScript?: boolean;
   deprecated?: string;
+  dev?: boolean;
+  devOptional?: boolean;
 };
 
 function lockfile(): Record<string, LockEntry> {
@@ -668,6 +670,121 @@ describe('the lockfile resolves one version per package where a split would matt
       'a second copy of an OpenTelemetry package means one instrumentation is ' +
         'registering through a different core than the SDK drives. Bring the ' +
         'declared range in @n409/shared up to the line the rest of the stack is on.',
+    ).toEqual([]);
+  });
+
+  /**
+   * Splits inside the shipped closure that have been read and kept.
+   *
+   * Separate from DUPLICATE_VERSIONS_ALLOWED because the question is different.
+   * That list answers "we chose a range and something else is running a version
+   * we did not choose"; this one answers "two copies of the same code are in the
+   * deployed tree", which is true of packages no manifest of ours has ever
+   * named. The reasons are not interchangeable, so the lists are not either.
+   *
+   * Reviewed as of R286.
+   */
+  const SHIPPED_DUPLICATES_REVIEWED: Record<string, string> = {
+    '@types/pg': 'types are erased; no copy of this reaches the running tree.',
+    'p-limit':
+      'two concurrency limiters are two independent limiters, which is what ' +
+      'each caller wanted. qrcode nests the 2.x under its CLI.',
+    // qrcode ships a command-line front end and its whole argument-parsing
+    // stack with it. We import the library API; none of this is reached.
+    cliui: "qrcode's bundled CLI. We call the library, never the command.",
+    'wrap-ansi': "qrcode's bundled CLI. We call the library, never the command.",
+    y18n: "qrcode's bundled CLI. We call the library, never the command.",
+    yargs: "qrcode's bundled CLI. We call the library, never the command.",
+    'yargs-parser': "qrcode's bundled CLI. We call the library, never the command.",
+    'base64-js':
+      'pdfkit -> linebreak nests a 0.0.x. Both copies are pure encoders called ' +
+      'on bytes; no value produced by one is read by the other.',
+    cookie:
+      "fastify's light-my-request and react-router both take 1.x; @fastify/cookie " +
+      'takes 2.x. Three independent parse/serialize sites — a cookie is a string ' +
+      'at every boundary between them, never an object one copy hands another.',
+    'fastify-plugin':
+      'a per-plugin metadata wrapper, carried by each plugin rather than shared. ' +
+      '@fastify/multipart and @fastify/reply-from are still on 5.x; fastify 5 ' +
+      'reads the metadata of both.',
+    'process-warning':
+      'each copy keeps its own registry of emitted codes, so the worst a split ' +
+      'costs is one warning printed twice.',
+    xmlbuilder:
+      'xml2js serialises with its own 11.x; @node-saml/node-saml builds the ' +
+      'AuthnRequest with 15.x. Two writers, one direction, no shared state.',
+    // The one on this list that is a judgement rather than an observation.
+    //
+    // Three XPath engines are in the SAML path at once: xml-encryption pins
+    // 0.0.32 *exactly*, xml-crypto ranges at ^0.0.33, and @node-saml/node-saml
+    // brings 0.0.34 for its own selections. Each library evaluates its own
+    // expressions with its own copy, so nothing crosses a boundary the way
+    // `PgInstrumentation` crossed the OpenTelemetry seam — but node-saml
+    // *verifies* through xml-crypto's copy and then *reads* the assertion
+    // through its own, and those two engines are 410 changed lines apart.
+    //
+    // Left split deliberately. Unifying means overriding an exact pin inside
+    // xml-encryption with an engine that differs across 40 hunks of node
+    // selection, on the decryption path for encrypted assertions, which nothing
+    // in this repo's suite exercises. That is a larger and riskier change than
+    // the one it would prevent, and it is not a dependency-hygiene edit. If a
+    // signature-wrapping question is ever asked of this service, start here.
+    xpath:
+      'three engines in the SAML path (xml-encryption 0.0.32 exact, xml-crypto ' +
+      '^0.0.33, node-saml 0.0.34). Each library evaluates only its own ' +
+      'expressions. See the note above before widening or unifying.',
+  };
+
+  /**
+   * The lockfile's own answer to "would `npm ci --omit=dev` install this?".
+   *
+   * The case below is about the deployed tree, and the tree is mostly not that:
+   * of 574 resolutions, 234 ship. Reading the split over all of them buries the
+   * ones that matter under eslint's, babel's and vitest's, and a list nobody can
+   * read is a list nobody reviews.
+   */
+  function shipped(e: LockEntry): boolean {
+    return !e.dev && !e.devOptional;
+  }
+
+  /**
+   * The general case the OpenTelemetry one above is a single instance of.
+   *
+   * That case was written for one family because that is where the bug was
+   * found: an instrumentation registering through a different copy of the
+   * instrumentation core than the SDK drove, with both halves typechecking. The
+   * defect is not specific to OpenTelemetry — it is what two copies of one
+   * package in one running process can always do — and every other instance of
+   * it in the shipped tree had no case at all. Fourteen were sitting there.
+   *
+   * Scoped to the shipped closure rather than to packages we declare, because a
+   * split that matters at run time does not care whether we were the ones who
+   * named the package.
+   */
+  it('a package in the shipped closure resolves to one version', () => {
+    const byName = new Map<string, Set<string>>();
+    for (const [p, e] of Object.entries(lockfile())) {
+      const at = p.lastIndexOf('node_modules/');
+      if (at < 0 || !e.version || !shipped(e)) continue;
+      const name = p.slice(at + 'node_modules/'.length);
+      if (!byName.has(name)) byName.set(name, new Set());
+      byName.get(name)!.add(e.version);
+    }
+
+    const split = [...byName]
+      .filter(([name]) => !(name in SHIPPED_DUPLICATES_REVIEWED))
+      .filter(([, versions]) => versions.size > 1)
+      .map(([name, versions]) => `${name} @ ${[...versions].sort().join(', ')}`)
+      .sort();
+
+    expect(
+      split,
+      'the deployed tree contains two copies of this package, so two versions of ' +
+        'it are live in one process. That is benign when each copy only talks to ' +
+        'itself and a defect when a value produced by one is read by the other — ' +
+        'which is what `@opentelemetry/instrumentation-pg` did, and it typechecked. ' +
+        'Read which one it is, then either bring the copies together or add it to ' +
+        'SHIPPED_DUPLICATES_REVIEWED with the reason the split is safe.',
     ).toEqual([]);
   });
 
