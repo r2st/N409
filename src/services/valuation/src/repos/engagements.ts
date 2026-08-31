@@ -257,15 +257,46 @@ export async function listActiveEngagements(
  * worse: the assigned analyst was chased with "Overdue: … is past SLA in …"
  * over work the firm had withdrawn, once per sweep, for as long as the stage
  * stayed open — and the stage cannot close, because nobody is working it.
+ *
+ * `analyst_roles` IS A LATERAL JOIN AND NOT A SCALAR SUBQUERY, which is the
+ * difference between one lookup per analyst and one per engagement. R279 wrote
+ * it as `(SELECT array_agg(…) … WHERE ur.user_id = u.id)` in the select list,
+ * and Postgres has no way to cache that: a scalar SubPlan is re-executed for
+ * every row of the outer plan, where a LATERAL sits in the join tree and goes
+ * under a `Memoize` keyed on `u.id` exactly as the `users` join beside it
+ * already does. The two spellings return the same value by construction — an
+ * aggregate over an empty set is one NULL row either way, so an engagement with
+ * no analyst still reads `null` — and the whole difference is how many times
+ * the aggregate runs.
+ *
+ * Which matters because of who reads this, and because of the one thing an
+ * engagement book is guaranteed to look like: a firm's open pipeline is held by
+ * a couple of dozen analysts, not by a different person per file. Measured on
+ * 40k engagements with a 500-row page and twenty analysts holding it, the
+ * SubPlan ran its aggregate 500 times to answer twenty distinct questions —
+ * 1717 buffers against the LATERAL's 81, and 8.3ms against 4.9ms for the page.
+ * `eachActiveEngagement` pages the *entire* active book through this on every
+ * sweep tick, so the waste is per page and the number of pages grows with the
+ * firm.
+ *
+ * Invisible to `listQueryScaling` for the reason R193's LATERAL finding was:
+ * the endpoint issues one statement however many rows come back, so a ratio
+ * over statement counts cannot see cost *inside* one. `engagementRosterPlan`
+ * measures it instead, with the SubPlan spelling explained alongside as the
+ * discriminator.
  */
 const ACTIVE_ENGAGEMENT_SELECT = `
   SELECT e.*, v.company_name, v.state AS valuation_state, v.kind, u.email AS analyst_email,
          u.deleted_at AS analyst_deleted_at, u.partner_id AS analyst_partner_id,
-         (SELECT array_agg(r.key) FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-           WHERE ur.user_id = u.id) AS analyst_roles
+         ar.analyst_roles
     FROM engagements e
     JOIN valuations v ON v.id = e.valuation_id
-    LEFT JOIN users u ON u.id = e.assigned_analyst_id`;
+    LEFT JOIN users u ON u.id = e.assigned_analyst_id
+    LEFT JOIN LATERAL (
+      SELECT array_agg(r.key) AS analyst_roles
+        FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+       WHERE ur.user_id = u.id
+    ) ar ON true`;
 
 /** Applied by both readers below; see ACTIVE_ENGAGEMENT_SELECT for why. */
 const ACTIVE_ENGAGEMENT_WHERE = `v.archived_at IS NULL AND e.current_stage <> 'complete'`;
