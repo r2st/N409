@@ -33,7 +33,7 @@ import {
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
 import { findValuationById } from '../repos/valuations.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
-import { refuseIfMeasurementRetired, refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfSubjectRetired, refuseIfRetired } from '../domain/retiredEngagement.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import type { ValuationEventType } from '../domain/auditTrail.js';
@@ -240,11 +240,11 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
    * The portfolio is addressed by its own id, so nothing about the request
    * mentions the engagement it is measured for — which is why the retirement
    * sweep, which drives every mutating route under a valuation id, has never
-   * been able to see this file. See `refuseIfMeasurementRetired`.
+   * been able to see this file. See `refuseIfSubjectRetired`.
    */
   const loadFundForWrite = async (id: string, doing: string) => {
     const fund = await loadFund(id);
-    await refuseIfMeasurementRetired(deps.pool, fund, doing);
+    await refuseIfSubjectRetired(deps.pool, fund, doing);
     return fund;
   };
 
@@ -554,7 +554,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         // still be looked at — the rule everywhere else. Asked here rather
         // than at the top so the read stays open, and asked again rather than
         // trusting the copy above: the engine call sits in between.
-        await refuseIfMeasurementRetired(deps.pool, fund, 'accepting new marks');
+        await refuseIfSubjectRetired(deps.pool, fund, 'accepting new marks');
         const mark = await withTransaction(deps.pool, async (client) => {
           const recorded = await createMark(client, {
             positionId: pid,

@@ -376,7 +376,7 @@ describe.skipIf(!dbUp)('measurement writes against a retired engagement', () => 
   /**
    * The link direction, on both subjects.
    *
-   * This one is not `refuseIfMeasurementRetired` — there is no engagement on
+   * This one is not `refuseIfSubjectRetired` — there is no engagement on
    * the subject yet to read the state off — but `refuseIfRetired` against the
    * engagement named in the body, which is the only route on this surface
    * where the retirement being asked about arrives in the request. Both files

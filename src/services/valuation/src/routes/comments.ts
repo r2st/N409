@@ -26,7 +26,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { sliceChars } from '../domain/textSlice.js';
 import type { EventActor } from '../events/record.js';
 import type { ValuationHub } from '../realtime/hub.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfSubjectRetired } from '../domain/retiredEngagement.js';
 import { notifyCommentPosted } from '../hooks/commentNotifications.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
@@ -151,6 +151,11 @@ export function registerCommentRoutes(
     const principal = requirePrincipal(req);
     const { commentId } = req.params as { commentId: string };
     const comment = await loadEditable(deps.pool, principal, commentId);
+    // Same pair, same gap as `PATCH /tasks/:id`: posting a comment is under a
+    // valuation id and has been refused on withdrawn work since R89, while
+    // editing one is addressed by the comment's own id and was not. Deleting
+    // stays open by the standing cleanup exemption.
+    await refuseIfSubjectRetired(deps.pool, comment, 'accepting changes to its comments');
 
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);

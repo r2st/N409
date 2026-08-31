@@ -106,22 +106,24 @@ export async function refuseIfRetiredNow(pool: pg.Pool, valuationId: string, doi
 }
 
 /**
- * The same refusal, for the two measurement subjects that are not addressed by
- * their engagement's id.
+ * The same refusal, for a subject addressed by its own id rather than by its
+ * engagement's.
  *
- * WHY THIS ONE ESCAPED THE SWEEP. R89 asked the retirement question of every
+ * WHY THIS SHAPE ESCAPES THE SWEEP. R89 asked the retirement question of every
  * mutating route "under a valuation id", and `retiredEngagementWrites.test.ts`
  * still drives exactly that set out of the route table — so a route added
  * tomorrow under `/api/v1/valuations/:id/…` is swept the day it is registered.
- * A fund portfolio and a debt instrument are addressed by their own ids
- * (`/api/v1/funds/:id/…`, `/api/v1/debt/instruments/:id/…`) because migration
- * 0086/0087 built both as standalone ops tools, keyed to nothing, and 0110 gave
- * them an engagement link afterwards. So the whole measurement surface sat
- * outside the census's shape, and neither file contained a single retirement
- * check: on a withdrawn `fund` engagement ops could still add a holding, edit
- * one, record a new fair-value mark, roll a mark forward, or rewrite the LP
- * waterfall terms — and on a withdrawn `debt` one, re-price the instrument and
- * store the result.
+ * Nothing swept the routes addressed by the subject's own id, and the census
+ * structurally could not: the request does not mention the engagement, so the
+ * engagement is reached by a second read that only the handler knows to make.
+ *
+ * R279 found the first surface — a fund portfolio and a debt instrument, which
+ * migrations 0086/0087 built as standalone ops tools keyed to nothing and 0110
+ * gave an engagement link afterwards. Neither route file contained a single
+ * retirement check: on a withdrawn `fund` engagement ops could still add a
+ * holding, edit one, record a new fair-value mark, roll a mark forward, or
+ * rewrite the LP waterfall terms — and on a withdrawn `debt` one, re-price the
+ * instrument and store the result.
  *
  * A mark is not a note in the margin. `domain/navExhibits.ts` renders the NAV
  * schedule by summing the *stored* marks at render time — deliberately, so that
@@ -131,6 +133,20 @@ export async function refuseIfRetiredNow(pool: pg.Pool, valuationId: string, doi
  * when the engagement is restored. `POST /positions/:pid/marks` and `POST
  * /instruments/:id/value` also spend an engine call each on work nobody is
  * doing.
+ *
+ * R282 asked whether the measurement surface was the only one of its shape and
+ * found it was not, which is why this is no longer named after it. Two more
+ * writes reach an engagement's file without naming it in the path, and both
+ * had the guard on the create and not on the edit — the create is under a
+ * valuation id, so R89 swept it and stopped exactly where the sweep's reach
+ * did:
+ *
+ *   * `PATCH /api/v1/tasks/:id` — `POST /valuations/:id/tasks` refuses to open
+ *     a task on withdrawn work, and this then let the same task be retitled,
+ *     reassigned, given a new due date or moved to done, writing a
+ *     `review_task_updated` onto the spine of a file the firm has closed.
+ *   * `PATCH /api/v1/comments/:commentId` — same pair, same gap, over the
+ *     thread the client and the reviewer are reading.
  *
  * Reads stay open, as everywhere else: the NAV rollup, the waterfall and the
  * calibration calculators persist nothing, and a firm that has withdrawn work
@@ -143,9 +159,10 @@ export async function refuseIfRetiredNow(pool: pg.Pool, valuationId: string, doi
  * A link that reads back no valuation is not a retired engagement and is not
  * refused: 0110 chose `ON DELETE SET NULL` precisely so a deleted engagement
  * clears the link rather than leaving a dangling one, so this is a row that
- * went away between the two reads.
+ * went away between the two reads. Subjects whose link is NOT NULL never take
+ * that branch.
  */
-export async function refuseIfMeasurementRetired(
+export async function refuseIfSubjectRetired(
   pool: pg.Pool,
   subject: { valuation_id: string | null },
   doing: string,

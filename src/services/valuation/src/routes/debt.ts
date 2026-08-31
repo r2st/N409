@@ -23,7 +23,7 @@ import {
   type InstrumentType,
 } from '../repos/debtInstruments.js';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
-import { refuseIfMeasurementRetired, refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfSubjectRetired, refuseIfRetired } from '../domain/retiredEngagement.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import type { ValuationEventType } from '../domain/auditTrail.js';
@@ -149,11 +149,11 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
    * `loadInstrument` for the routes that then write something. The instrument
    * is addressed by its own id, so the retirement sweep — which drives every
    * mutating route under a valuation id — has never been able to see this
-   * file. See `refuseIfMeasurementRetired`.
+   * file. See `refuseIfSubjectRetired`.
    */
   const loadInstrumentForWrite = async (id: string, doing: string) => {
     const instrument = await loadInstrument(id);
-    await refuseIfMeasurementRetired(deps.pool, instrument, doing);
+    await refuseIfSubjectRetired(deps.pool, instrument, doing);
     return instrument;
   };
 
@@ -342,7 +342,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     // that stores nothing is a calculator, which stays open on withdrawn work
     // like every other read. Asked here rather than at the top so it is asked
     // after the engine call rather than before it.
-    await refuseIfMeasurementRetired(deps.pool, instrument, 'accepting new valuations');
+    await refuseIfSubjectRetired(deps.pool, instrument, 'accepting new valuations');
 
     const fairValue = requireStorableFigure(extractFairValue(result), 'Fair value', DEBT_FAIR_VALUE);
     if (fairValue === null) {

@@ -230,7 +230,12 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const org = await loadOwnedOrg(principal, id);
     const parsed = AssignBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid assignment', parsed.error);
-    await loadEditableValuation(principal, parsed.data.valuation_id);
+    // The same write as `PATCH /valuations/:id/entity` below, through the other
+    // door: both set the engagement's `organization_id` and `entity_type`, and
+    // only that one is under a valuation id — so only that one was swept, and
+    // only that one refused. Withdrawn work could still be added to a
+    // consolidation group and counted into a roll-up from here.
+    refuseIfRetired(await loadEditableValuation(principal, parsed.data.valuation_id), 'accepting changes');
     await assignValuationToOrg(deps.pool, parsed.data.valuation_id, org.id, parsed.data.entity_type);
     return reply.status(204).send();
   });

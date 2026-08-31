@@ -11,7 +11,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { pageParam } from '../domain/pagination.js';
 import { flagParam } from '../domain/queryFlag.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfSubjectRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
 const CreateBody = z.object({
@@ -137,6 +137,14 @@ export function registerTaskRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     if (!isUlid(id)) throw problems.notFound();
     const task = await findTaskById(deps.pool, id);
     if (!task) throw problems.notFound();
+    // The create half of this pair is `POST /valuations/:id/tasks`, which has
+    // refused to open a task on withdrawn work since R89 — because it is under
+    // a valuation id, and that is the whole set the retirement sweep can see.
+    // The edit is addressed by the task's own id, so it sat outside that shape
+    // and let the same task be retitled, reassigned, given a new due date or
+    // moved to done on a file the firm has closed, writing a
+    // `review_task_updated` onto a spine nothing can erase.
+    await refuseIfSubjectRetired(deps.pool, task, 'accepting changes to its tasks');
 
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
