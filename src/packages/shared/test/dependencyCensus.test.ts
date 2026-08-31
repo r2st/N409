@@ -357,6 +357,105 @@ describe('python services declare every package they import', () => {
   }
 });
 
+/**
+ * Requirement lines as `name` -> the whole normalised spec (`pydantic>=2.9`).
+ *
+ * Same parse as {@link requirementNames}, kept separate because the comparison
+ * below is about the *floors* as well as the names: two lists naming the same
+ * distributions at different versions is the drift this catches.
+ */
+function requirementSpecs(file: string): Map<string, string> {
+  const specs = new Map<string, string>();
+  for (const raw of readFileSync(file, 'utf8').split('\n')) {
+    const line = raw.split('#')[0]!.trim();
+    // `-r requirements.txt` — an include, not a requirement. The caller decides
+    // whether to follow it.
+    if (!line || line.startsWith('-')) continue;
+    const name = line
+      .split(/[<>=!~;[ ]/)[0]!
+      .trim()
+      .toLowerCase();
+    if (name) specs.set(name, line.replace(/\s+/g, '').toLowerCase());
+  }
+  return specs;
+}
+
+/**
+ * A `name = [ "a>=1", "b>=2" ]` array of strings out of a pyproject.
+ *
+ * Deliberately not a TOML parser: the two files this reads are ours, the two
+ * tables it wants are flat arrays of requirement strings, and a real parser
+ * would be a dependency added by a test whose subject is dependencies. It
+ * throws rather than returning empty when the shape is not what it expects, so
+ * a rewrite that moves these tables fails loudly here instead of passing by
+ * finding nothing.
+ */
+function tomlStringArray(text: string, key: string): string[] {
+  const start = new RegExp(`^${key}\\s*=\\s*\\[`, 'm').exec(text);
+  if (!start) throw new Error(`pyproject has no \`${key} = [\` array`);
+  const from = start.index + start[0].length;
+  const end = text.indexOf(']', from);
+  if (end < 0) throw new Error(`\`${key}\` array is never closed`);
+  const body = text.slice(from, end).replace(/#[^\n]*/g, '');
+  return [...body.matchAll(/["']([^"']+)["']/g)].map((m) => m[1]!.replace(/\s+/g, '').toLowerCase());
+}
+
+/**
+ * `pyproject.toml` against the requirements files, per service.
+ *
+ * Nothing installs from `pyproject.toml` — the Dockerfiles, CI's python job and
+ * infra/deploy.sh all run `pip install -r requirements.txt`, and
+ * `tools/check_installed_deps.py` checks the deployed venv against that same
+ * file. But pytest reads `[tool.pytest.ini_options]` out of it, so the file is
+ * live and looks maintained, and its `[project] dependencies` reads as a
+ * statement of what the service accepts. `pip install .` and `uv sync` believe
+ * it.
+ *
+ * Maintained by hand, one of the two lists is eventually the stale one, and
+ * both were: engine-wrapper's still filed yfinance under an optional `[market]`
+ * extra whose comment claimed the service runs fine without it, several rounds
+ * after requirements.txt made it mandatory for the opposite reason; ai's
+ * carried R195's pypdf floor but not the pydantic/starlette/anyio floors added
+ * beside it.
+ *
+ * `[project.optional-dependencies]` is out of scope by design — an extra is
+ * exactly the thing a plain install does *not* get, so it has no counterpart in
+ * requirements.txt to agree with.
+ */
+describe('pyproject.toml agrees with the requirements files that actually install', () => {
+  for (const svc of PY_SERVICES) {
+    const dir = path.join(repoRoot, svc);
+    const toml = readFileSync(path.join(dir, 'pyproject.toml'), 'utf8');
+
+    it(`${svc} runtime dependencies`, () => {
+      const declared = tomlStringArray(toml, 'dependencies');
+      const installed = [...requirementSpecs(path.join(dir, 'requirements.txt')).values()];
+      expect(
+        [...declared].sort(),
+        `${svc}/pyproject.toml and ${svc}/requirements.txt name different runtime ` +
+          `dependencies, or the same ones at different floors. requirements.txt is ` +
+          `what every real install uses; pyproject.toml is what \`pip install .\` and ` +
+          `\`uv sync\` use. Whichever is wrong, a developer's environment and CI's ` +
+          `stop being the same environment.`,
+      ).toEqual([...installed].sort());
+    });
+
+    it(`${svc} dev dependencies`, () => {
+      const declared = tomlStringArray(toml, 'dev');
+      // requirements-dev.txt opens with `-r requirements.txt`; requirementSpecs
+      // drops the include, so what is left is the dev-only half — which is
+      // exactly what `[dependency-groups] dev` is.
+      const installed = [...requirementSpecs(path.join(dir, 'requirements-dev.txt')).values()];
+      expect(
+        [...declared].sort(),
+        `${svc}/pyproject.toml's dev group and ${svc}/requirements-dev.txt disagree. ` +
+          `CI installs the latter; a contributor following the pyproject gets the ` +
+          `former, and finds out which tools are missing one failure at a time.`,
+      ).toEqual([...installed].sort());
+    });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // The lockfile
 // ---------------------------------------------------------------------------
@@ -421,6 +520,85 @@ describe('package-lock.json pins what npm ci will fetch', () => {
       .filter(([, e]) => e.extraneous)
       .map(([name]) => name);
     expect(extraneous).toEqual([]);
+  });
+});
+
+/**
+ * Declared packages that legitimately resolve to more than one version.
+ *
+ * A duplicate is normally harmless — npm nests a second copy and both callers
+ * get what they asked for. It stops being harmless when the two copies are
+ * meant to be one thing: a shared registry, a shared module-load hook, an
+ * `instanceof` across the seam. So the list is kept, and each entry says why
+ * its split does not matter.
+ */
+const DUPLICATE_VERSIONS_ALLOWED: Record<string, string> = {
+  '@types/pg':
+    '`@opentelemetry/instrumentation-pg` pins an exact `@types/pg` for its own ' +
+    'compilation. Types are erased; nothing of it reaches the running tree.',
+  'p-limit':
+    'an old 2.x nested under a transitive chain. Two concurrency limiters are ' +
+    'two independent limiters, which is what each caller wanted anyway.',
+};
+
+describe('the lockfile resolves one version per package where a split would matter', () => {
+  /** name -> every version the lockfile resolves it to. */
+  function versionsByName(): Map<string, Set<string>> {
+    const byName = new Map<string, Set<string>>();
+    for (const [p, e] of Object.entries(lockfile())) {
+      const at = p.lastIndexOf('node_modules/');
+      if (at < 0 || !e.version) continue;
+      const name = p.slice(at + 'node_modules/'.length);
+      if (!byName.has(name)) byName.set(name, new Set());
+      byName.get(name)!.add(e.version);
+    }
+    return byName;
+  }
+
+  /**
+   * OpenTelemetry ships as one versioned set — the SDK, the instrumentation
+   * core and every instrumentation are released together and expect to be
+   * installed together. `otel.ts` builds a `PgInstrumentation` and hands it to
+   * `registerInstrumentations`; if those two came from different copies of
+   * `@opentelemetry/instrumentation`, the object is crossing a seam between two
+   * versions of the class it extends, and both halves still typecheck.
+   *
+   * They did. `@opentelemetry/instrumentation-pg` was declared `^0.65.0` while
+   * the rest of the stack was on 0.221.0, and because a caret cannot cross a
+   * minor in 0.x, that range was frozen eight lines back and pulled its own
+   * nested `@opentelemetry/instrumentation@0.213.0` in beside the 0.221.0 the
+   * SDK drove. Nothing else in this file could see it: the advisory scanners
+   * had nothing to report, every package was declared, and both versions were
+   * pinned with integrity.
+   */
+  it('every @opentelemetry package resolves to exactly one version', () => {
+    const split = [...versionsByName()]
+      .filter(([name]) => name.startsWith('@opentelemetry/'))
+      .filter(([, versions]) => versions.size > 1)
+      .map(([name, versions]) => `${name} @ ${[...versions].sort().join(', ')}`);
+    expect(
+      split,
+      'a second copy of an OpenTelemetry package means one instrumentation is ' +
+        'registering through a different core than the SDK drives. Bring the ' +
+        'declared range in @n409/shared up to the line the rest of the stack is on.',
+    ).toEqual([]);
+  });
+
+  it('a package one of our manifests declares resolves to one version', () => {
+    const declared = new Set<string>();
+    for (const ws of ['.', ...WORKSPACES]) for (const d of declaredIn(manifest(ws))) declared.add(d);
+
+    const split = [...versionsByName()]
+      .filter(([name]) => declared.has(name) && !(name in DUPLICATE_VERSIONS_ALLOWED))
+      .filter(([, versions]) => versions.size > 1)
+      .map(([name, versions]) => `${name} @ ${[...versions].sort().join(', ')}`);
+    expect(
+      split,
+      'we declare a range for this package, and the tree contains a copy that is ' +
+        'not it — so some code imports a version nothing of ours chose. Either ' +
+        'move our range onto the other version, or add it to ' +
+        'DUPLICATE_VERSIONS_ALLOWED with the reason the split is safe.',
+    ).toEqual([]);
   });
 });
 
