@@ -121,6 +121,18 @@ jobs:
       - name: npm audit (report moderate)
         run: npm audit --audit-level=moderate
         continue-on-error: true
+      # The signal `npm audit` cannot carry. A maintainer deprecation is not an
+      # advisory, so the two steps above have nothing to report on one — and the
+      # offline half in dependencyCensus.test.ts reads the `deprecated` field
+      # out of package-lock.json, which npm writes at *resolve* time. A notice
+      # published after we locked leaves that field absent, so the lockfile does
+      # not change, no diff shows anything, and the census stays green.
+      #
+      # That is how `@xmldom/xmldom@0.8.13` — "this version has critical issues"
+      # — sat on the SAML response-parsing path through every gate in this file.
+      # This step is the half that asks the registry what it says today.
+      - name: deprecated dependencies (live registry)
+        run: node tools/check-deprecations.mjs
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

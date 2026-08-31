@@ -736,6 +736,16 @@ describe('install-time code execution', () => {
  *
  * Both survivors are transitive, dev-only, and have no fixed version to move to
  * — the direct dependency above each is already current.
+ *
+ * Note what this case cannot see, and where the other half lives. npm writes
+ * `deprecated` into the lockfile when it *resolves* a version, so a notice
+ * published after we locked leaves the field absent — nothing in the lockfile
+ * changes when a maintainer deprecates, which is the whole difficulty. This
+ * case therefore only reports deprecations that were already published when the
+ * entry was written. `tools/check-deprecations.mjs`, run by CI beside
+ * `npm audit`, asks the registry what it says today; that is what found
+ * `@xmldom/xmldom@0.8.13` sitting on the SAML response-parsing path with this
+ * case green. Keep the two allowlists in step.
  */
 const DEPRECATED_ALLOWED: Record<string, string> = {
   'node_modules/test-exclude/node_modules/glob':
