@@ -344,13 +344,32 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     // after the engine call rather than before it.
     await refuseIfMeasurementRetired(deps.pool, instrument, 'accepting new valuations');
 
+    const fairValue = requireStorableFigure(extractFairValue(result), 'Fair value', DEBT_FAIR_VALUE);
+    if (fairValue === null) {
+      // A priced run with no price. `extractFairValue` reads two keys and the
+      // five instrument types all produce one of them, so this is the engine
+      // answering in a shape the service does not recognise — and `postJson`
+      // shape-checks nothing beyond "it was JSON". The row still stores (the
+      // column is nullable) and the caller still gets a 200, so without this
+      // the whole trace of it is a NULL column and an em dash in the valuation
+      // history exhibit, found by whoever reads the deliverable.
+      app.log.warn(
+        {
+          instrument_id: id,
+          instrument_type: instrument.instrument_type,
+          result_keys: Object.keys(result),
+          alert: true,
+        },
+        'debt pricing run stored with no fair value — the engine answer carried neither fair_value nor dirty_price',
+      );
+    }
     const valuation = await withTransaction(deps.pool, async (client) => {
       const priced = await createValuation(client, {
         instrumentId: id,
         valuationDate: parsed.data.valuation_date ?? todayLocal(),
         inputs: { instrument_type: instrument.instrument_type, params },
         result,
-        fairValue: requireStorableFigure(extractFairValue(result), 'Fair value', DEBT_FAIR_VALUE),
+        fairValue,
         createdBy: principal.id,
       });
       await recordInstrumentEvent(client, instrument, 'debt_valuation_recorded', principal.id, {

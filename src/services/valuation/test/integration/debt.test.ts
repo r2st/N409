@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../../src/db/migrate.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
@@ -13,6 +13,8 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
   let app: FastifyInstance;
   let pool: pg.Pool;
   let engineStub: FastifyInstance;
+  /** Makes the engine answer with neither `fair_value` nor `dirty_price`. */
+  let shapelessResult = false;
   let ops: Awaited<ReturnType<typeof seedUser>>;
   let client: Awaited<ReturnType<typeof seedUser>>;
   /**
@@ -35,6 +37,10 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
     engineStub = Fastify({ logger: false });
     engineStub.post('/engine/v1/debt-valuation', async (req) => {
       lastPayload = req.body as DebtEngineRequest;
+      // One test asks what happens when the engine answers in a shape this
+      // service does not recognise — `postJson` checks nothing beyond "it was
+      // JSON", so the answer is a stored row with no price.
+      if (shapelessResult) return { note: 'priced', currency: 'USD' };
       // Return a plausible shape depending on type.
       if (lastPayload.instrument_type === 'safe')
         return { fair_value: 400000, conversion_price: 0.5, converted_via: 'cap' };
@@ -555,5 +561,57 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
       headers: authHeader(ops.token),
     });
     expect(detail.json()).toMatchObject({ valuations: [], truncated: false });
+  });
+
+  /**
+   * A priced run with no price.
+   *
+   * `extractFairValue` reads two keys off the engine's answer and the column is
+   * nullable, so a result carrying neither stores a `debt_valuations` row with
+   * `fair_value` NULL and answers the caller 200. Nothing about that is visible
+   * afterwards except an em dash in the valuation-history exhibit, found by
+   * whoever reads the deliverable — which is the wrong person and the wrong
+   * time. It is a degraded write, so it says so.
+   */
+  it('says so when it stores a pricing run the engine gave no fair value for', async () => {
+    const id = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/v1/debt/instruments',
+        headers: authHeader(ops.token),
+        payload: {
+          name: 'Shapeless Note',
+          instrument_type: 'bond',
+          currency: 'USD',
+          params: { face: 1000, coupon_rate: 0.05, maturity_years: 5, market_yield: 0.06 },
+        },
+      })
+    ).json().instrument.id as string;
+
+    const warn = vi.spyOn(app.log, 'warn');
+    shapelessResult = true;
+    let lines: Record<string, unknown>[] = [];
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/debt/instruments/${id}/value`,
+        headers: authHeader(ops.token),
+        payload: { persist: true },
+      });
+      expect(res.statusCode).toBeLessThan(300);
+      expect(res.json().valuation.fair_value).toBeNull();
+    } finally {
+      shapelessResult = false;
+      // Read before restoring: `mockRestore` clears the recorded calls too.
+      lines = warn.mock.calls.map((c) => c[0] as Record<string, unknown>);
+      warn.mockRestore();
+    }
+
+    const line = lines.find((f) => f?.instrument_id === id);
+    expect(line, 'no warn line named the instrument').toBeDefined();
+    expect(line).toMatchObject({ alert: true, instrument_type: 'bond' });
+    // The keys it did get, so the next reader can see what the engine sent
+    // instead of guessing at it from the absence.
+    expect(line!.result_keys).toEqual(['note', 'currency']);
   });
 });
