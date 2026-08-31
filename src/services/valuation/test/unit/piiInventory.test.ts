@@ -163,6 +163,16 @@ const DISPOSITION: Record<string, Disposition> = {
       'discovered — a marketing enquiry is correspondence operations may need to produce, and choosing ' +
       'a destruction schedule for it is a policy call for the business, not a default.',
   },
+  admin_events: {
+    how: 'kept',
+    why:
+      'The identity spine, labelled by address. Kept for the reason `RETENTION_ENFORCEMENT` gives for ' +
+      '`audit_event`: it is what answers "who did this" about every other retention decision, including ' +
+      'the ones that delete things, so a policy able to age it out would be the one setting able to ' +
+      'erase the evidence that it ran. The consequence is recorded rather than assumed — a failed login ' +
+      'writes the address it was attempted against whether or not an account exists behind it, so this ' +
+      'holds addresses of people who are not users and cannot ask for them.',
+  },
   option_grants: {
     how: 'cascade',
     from: 'valuations',
@@ -216,10 +226,132 @@ const NON_PERSONAL_CONTACT = new Set(['marketing_email', 'support_email', 'auto_
 const CONTACT_COLUMN = /(^|_)(email|phone)$/;
 
 const columns = tableColumns();
-const contactTables = [...columns.entries()]
+const namedContactTables = [...columns.entries()]
   .filter(([, cols]) => [...cols].some((c) => CONTACT_COLUMN.test(c) && !NON_PERSONAL_CONTACT.has(c)))
   .map(([table]) => table)
   .sort();
+
+/**
+ * The second half: a column that holds an address under a name that does not
+ * say so.
+ *
+ * `CONTACT_COLUMN` derives the whole inventory from column *names*, which is
+ * the one direction it fails in — and it is the same failure
+ * `loggedFieldRenames.test.ts` was written for on the log sites, one layer
+ * down. There, "the redact list protects a key, and the log site can rename
+ * it"; here, the inventory protects a column, and the write site can rename it.
+ * `personalDataCensus` learned the equivalent lesson in R159 about tables
+ * ("every table that is about a person" meant "every table with a foreign
+ * key"), and this is the column-level version of it.
+ *
+ * `admin_events.subject_label` is the column. Twenty-odd sites write a user's
+ * address into it — every authentication event, every SCIM and SAML
+ * provisioning event, every account change — and one of them is on an
+ * *unauthenticated* route, writing the address a failed login was attempted
+ * against whether or not an account exists behind it. Nothing about the name
+ * `subject_label` says any of that, so the table was outside this inventory
+ * entirely while being one of the largest stores of addresses in the schema
+ * and one nothing ever removes.
+ *
+ * Derived from the writers rather than declared, so the next renamed sink fails
+ * here: the scan finds every object property whose value is an address-shaped
+ * expression and whose key is not itself contact-shaped, and every key it finds
+ * has to be accounted for below — as a column of a named table, which then owes
+ * a disposition, or as a destination that is not a column at all, with a
+ * reason.
+ */
+const SERVICE_SRC = path.resolve(HERE, '../../src');
+
+/** Sources with comments and string literals blanked, line structure kept. */
+function code(src: string): string {
+  const blank = (m: string) => m.replace(/[^\n]/g, ' ');
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, blank)
+    .replace(/([^:"'`\\])\/\/[^\n]*/g, (m, p1: string) => p1 + blank(m.slice(1)))
+    .replace(/'[^'\n]*'|"[^"\n]*"/g, blank);
+}
+
+function serviceSources(dir: string = SERVICE_SRC): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...serviceSources(full));
+    else if (entry.name.endsWith('.ts')) out.push(full);
+  }
+  return out;
+}
+
+/**
+ * `key: <address expression>` where the key does not say "address".
+ *
+ * The bare `email`/`phone` identifier is required not to be followed by a dot,
+ * because `email` names the *outbox row* in this codebase at least as often as
+ * it names an address — `body: email.body` is not a disclosure, and counting it
+ * would bury the ones that are.
+ */
+const ADDRESS_SINK =
+  /([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z_][A-Za-z0-9_.?]*\.(?:email|phone)\b(?!\.)|(?:email|phone)\b(?!\.))/g;
+
+function addressSinks(): Map<string, string[]> {
+  const found = new Map<string, string[]>();
+  for (const file of serviceSources()) {
+    code(readFileSync(file, 'utf8'))
+      .split('\n')
+      .forEach((line, i) => {
+        for (const m of line.matchAll(ADDRESS_SINK)) {
+          const key = m[1]!;
+          if (/email|phone|address|recipient/i.test(key) || key === 'to') continue;
+          if (!found.has(key)) found.set(key, []);
+          found.get(key)!.push(`${path.relative(SERVICE_SRC, file)}:${i + 1}`);
+        }
+      });
+  }
+  return found;
+}
+
+/**
+ * Where each renamed address sink ends up. `table` names the table the value is
+ * stored in — which then owes a disposition like any other contact-bearing
+ * table — or is null for a destination that is not a column, with the reason.
+ */
+const ADDRESS_SINKS: Record<string, { table: string | null; why: string }> = {
+  subjectLabel: {
+    table: 'admin_events',
+    why: '`recordAdminEvent`’s label column: the identity spine, stored and kept.',
+  },
+  label: {
+    table: 'admin_events',
+    why: 'The billing routes’ own wrapper around `recordAdminEvent`, forwarded to `subjectLabel`.',
+  },
+  userName: {
+    table: null,
+    why:
+      "SCIM's wire shape, not a column: RFC 7643 makes `userName` the unique identifier of a provisioned " +
+      'user and every IdP sends the address in it. Served to the employer’s own IdP over a token-scoped ' +
+      'route, which is where the address came from.',
+  },
+  value: {
+    table: null,
+    why: 'The element of SCIM’s `emails: [{ value }]` array — the same response shape, one level in.',
+  },
+  reminded: {
+    table: null,
+    why:
+      'A field of the ops-only `remind-documents` response, echoing which address the reminder went to. ' +
+      'The route is refused to anyone but operations, and the reader is the person who pressed the ' +
+      'button.',
+  },
+};
+
+const renamedContactTables = [
+  ...new Set(
+    Object.values(ADDRESS_SINKS)
+      .map((s) => s.table)
+      .filter((t): t is string => t !== null),
+  ),
+].sort();
+
+const contactTables = [...new Set([...namedContactTables, ...renamedContactTables])].sort();
 
 describe('the personal data inventory', () => {
   it('parses a schema at all', () => {
@@ -295,14 +427,63 @@ describe('the personal data inventory', () => {
     expect(thin.map(([t]) => t)).toEqual([]);
   });
 
-  it('records the one table nothing removes as a decision', () => {
-    // Stated positively so it cannot be lost in a diff. `contact_submissions`
-    // is the only unbounded store of contact details in the schema; if that
-    // ever stops being true in either direction, this says so.
+  it('records every table nothing removes as a decision', () => {
+    // Stated positively so it cannot be lost in a diff: these are the schema's
+    // unbounded stores of contact details, and if the set changes in either
+    // direction this says so. `admin_events` joined it when the derivation
+    // below learned to see a renamed column — it had been unbounded and
+    // unrecorded the whole time.
     const kept = Object.entries(DISPOSITION)
       .filter(([, d]) => d.how === 'kept')
       .map(([t]) => t)
       .sort();
-    expect(kept).toEqual(['contact_submissions', 'email_suppressions', 'users']);
+    expect(kept).toEqual(['admin_events', 'contact_submissions', 'email_suppressions', 'users']);
+  });
+});
+
+describe('the columns that hold an address under another name', () => {
+  const sinks = addressSinks();
+
+  it('finds the write sites at all — the vacuity guard', () => {
+    // Without this, a regex that stopped matching would make every check below
+    // pass against an empty map, and the inventory would read as complete for
+    // the same reason it was incomplete before: nobody asked the column what it
+    // held.
+    const sites = [...sinks.values()].flat();
+    expect(sites.length).toBeGreaterThanOrEqual(20);
+    expect(sinks.get('subjectLabel')?.length ?? 0).toBeGreaterThanOrEqual(15);
+  });
+
+  it('accounts for every key an address is written under', () => {
+    const undeclared = [...sinks.keys()].filter((key) => !(key in ADDRESS_SINKS)).sort();
+    // A new one is a decision: either it is a column, and the table it belongs
+    // to owes a disposition, or it is not, and the reason belongs beside it.
+    expect(undeclared, 'object keys carrying an address that nothing has classified').toEqual([]);
+  });
+
+  it('keeps no entry for a sink that no longer exists', () => {
+    expect(
+      Object.keys(ADDRESS_SINKS)
+        .filter((key) => !sinks.has(key))
+        .sort(),
+    ).toEqual([]);
+  });
+
+  it('gives every renamed sink a reason, and every named table a disposition', () => {
+    for (const [key, sink] of Object.entries(ADDRESS_SINKS)) {
+      expect(sink.why.trim().length, key).toBeGreaterThan(40);
+      if (sink.table !== null) {
+        expect(columns.has(sink.table), `${key} names a table that is not in the schema`).toBe(true);
+        expect(DISPOSITION[sink.table], `${sink.table} holds addresses and has no disposition`).toBeDefined();
+      }
+    }
+  });
+
+  it('is the reason `admin_events` is in the inventory at all', () => {
+    // The founding case, pinned so the derivation cannot quietly stop covering
+    // it: nothing about the *name* `subject_label` is address-shaped, so the
+    // name-based half above cannot see this table and never could.
+    expect(namedContactTables).not.toContain('admin_events');
+    expect(contactTables).toContain('admin_events');
   });
 });
