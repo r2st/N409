@@ -547,6 +547,46 @@ export function storableRevenueCents(cents: number | null): boolean {
   return cents === null || (Number.isSafeInteger(cents) && cents >= 0 && cents <= MAX_REVENUE_CENTS);
 }
 
+/**
+ * Whether a parsed balance-sheet figure is one the asset approach can be run on
+ * (round 265, methodology M6).
+ *
+ * Round 259 bounded the two revenue figures because they land in `bigint`
+ * columns the params form already held to a rule. `total_assets_cents` and
+ * `total_liabilities_cents` land somewhere with no rule at all — divided by a
+ * hundred into `engine_inputs.asset`, a `jsonb` document — and they are not a
+ * lesser figure for it: `approaches.asset_value` refuses to run NAV without
+ * both, so these two *are* the asset approach, the same way revenue is the
+ * market approach's multiplicand.
+ *
+ * `toCents` does not bound them, and cannot be read as if it does. It tests
+ * `Number.isFinite` on the parsed cell and then multiplies by a hundred, so the
+ * check is on the input and the overflow is in the output: a Total Assets of
+ * `1e307` — finite, and a string a provider or an ingress rewriting one can put
+ * in a cell — comes back `Infinity`. Two different wrong answers follow from
+ * where the figure then goes, and neither says anything:
+ *
+ *   - `Infinity` is not representable in JSON, so `JSON.stringify` writes it as
+ *     `null`. `inputs.asset.total_assets` is then *present and null*, the
+ *     engine's `_require_number` reports "total_assets is required", and the
+ *     analyst is told the ledger supplied no balance sheet by the import that
+ *     read one.
+ *   - a merely enormous figure — `1e300` parses to `1e302` cents and stores
+ *     fine — is finite the whole way through. `_finite_result` guards the
+ *     subtraction and passes, so NAV concludes an equity value of `1e300`,
+ *     which is weighted into the conclusion with nothing anywhere calling it
+ *     out of range.
+ *
+ * Refused rather than clamped, for the reason round 259 gives on revenue: a
+ * clamped asset base is a number nobody chose sitting under a concluded value.
+ * Sign is deliberately not part of the rule — the engine already reasons about
+ * liabilities exceeding assets, and refusing a negative here would be this
+ * module inventing a bound the approach does not have.
+ */
+export function storableLedgerCents(cents: number | null): boolean {
+  return cents === null || Number.isSafeInteger(cents);
+}
+
 /** Did the parse find anything worth keeping? */
 function hasAnyBalance(sheet: ImportedBalanceSheet): boolean {
   return (Object.keys(EMPTY_BALANCE_SHEET) as Array<keyof ImportedBalanceSheet>)

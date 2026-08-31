@@ -12,6 +12,7 @@ import {
   exchangeCode,
   fetchFinancials,
   refreshTokens,
+  storableLedgerCents,
   storableRevenueCents,
   type AccountingProvider,
   type FetchFn,
@@ -339,6 +340,40 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
           `the revenue ${PROVIDER_LABELS[provider]} reported for ${which} — ` +
           `${(cents as number) / 100} — is not a figure this engagement can store. ` +
           'Revenue must be a whole amount of at least zero; enter it by hand if the ledger is right.';
+        await recordImportError(deps.pool, connection.id, message).catch((bookErr: unknown) => {
+          req.log.warn({ err: bookErr, connectionId: connection.id }, 'could not record import error');
+        });
+        throw problems.unprocessable(`Import failed: ${message}`);
+      }
+
+      /*
+       * The same rule on the balance sheet, which round 259 left out (round
+       * 265, methodology M6).
+       *
+       * Revenue was bounded because it lands in a `bigint` column the params
+       * form already held to a rule. These two land in a `jsonb` document,
+       * which has no rule — and that is an argument for checking them here, not
+       * against it: `approaches.asset_value` refuses to run NAV without both,
+       * so they *are* the asset approach. See `storableLedgerCents` for the two
+       * ways an unbounded one arrives, one of which tells the analyst the
+       * ledger supplied no balance sheet at all.
+       *
+       * Only the two that become engine inputs. The rest of the sheet is
+       * reported and displayed rather than valued on, and refusing the whole
+       * import over a cash line nothing computes with would be a bound wider
+       * than the harm.
+       */
+      const sheetOutOfRange = (
+        [
+          ['total assets', financials.balance_sheet?.total_assets_cents ?? null],
+          ['total liabilities', financials.balance_sheet?.total_liabilities_cents ?? null],
+        ] as const
+      ).find(([, cents]) => !storableLedgerCents(cents));
+      if (sheetOutOfRange) {
+        const [which, cents] = sheetOutOfRange;
+        const message =
+          `the ${which} ${PROVIDER_LABELS[provider]} reported — ${cents} cents — is not a figure ` +
+          'this engagement can value on. Enter the balance sheet by hand if the ledger is right.';
         await recordImportError(deps.pool, connection.id, message).catch((bookErr: unknown) => {
           req.log.warn({ err: bookErr, connectionId: connection.id }, 'could not record import error');
         });

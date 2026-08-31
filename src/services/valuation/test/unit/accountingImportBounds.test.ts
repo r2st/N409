@@ -5,6 +5,7 @@ import {
   parseQuickBooksProfitAndLoss,
   parseXeroBalanceSheet,
   parseXeroProfitAndLoss,
+  storableLedgerCents,
   storableRevenueCents,
 } from '../../src/clients/accounting.js';
 
@@ -48,6 +49,71 @@ describe('storableRevenueCents', () => {
 
   it('refuses a figure that is not whole', () => {
     expect(storableRevenueCents(1.5)).toBe(false);
+  });
+});
+
+/**
+ * The bound round 259 did not put on the balance sheet (round 265, M6).
+ *
+ * `total_assets_cents` and `total_liabilities_cents` are the asset approach's
+ * two required inputs — `approaches.asset_value` refuses NAV without them — and
+ * they went into `engine_inputs.asset` through a `jsonb` column that has no
+ * rule to be held to. `toCents` is not that rule: it tests `Number.isFinite` on
+ * the parsed cell and *then* multiplies by a hundred, so the check is on the
+ * input and the overflow is in the output.
+ */
+describe('storableLedgerCents', () => {
+  it('accepts an ordinary balance sheet and an absent one', () => {
+    expect(storableLedgerCents(0)).toBe(true);
+    expect(storableLedgerCents(4_500_000_00)).toBe(true);
+    expect(storableLedgerCents(null)).toBe(true);
+  });
+
+  it('refuses the figure that reaches the engine as no figure at all', () => {
+    // `Infinity` is not representable in JSON, so `JSON.stringify` writes it as
+    // `null` and `inputs.asset.total_assets` arrives present-and-null. The
+    // engine then reports "total_assets is required", telling the analyst the
+    // ledger supplied no balance sheet by way of the import that read one.
+    expect(storableLedgerCents(Number.POSITIVE_INFINITY)).toBe(false);
+    expect(storableLedgerCents(Number.NEGATIVE_INFINITY)).toBe(false);
+    expect(storableLedgerCents(Number.NaN)).toBe(false);
+  });
+
+  it('refuses a figure that stores fine and values to nonsense', () => {
+    // Finite the whole way through, so `_finite_result` guards the subtraction
+    // and passes: NAV concludes an equity value of 1e300 and it is weighted
+    // into the conclusion with nothing calling it out of range.
+    expect(storableLedgerCents(1e302)).toBe(false);
+    expect(storableLedgerCents(Number.MAX_SAFE_INTEGER + 2)).toBe(false);
+  });
+
+  it('does not make sign part of the rule', () => {
+    // The engine already reasons about liabilities exceeding assets; refusing a
+    // negative here would be a bound the approach itself does not have.
+    expect(storableLedgerCents(-250_000_00)).toBe(true);
+  });
+});
+
+describe('the parsed cell an unbounded balance sheet comes from', () => {
+  it('turns a finite provider cell into a figure that is not finite', () => {
+    // The demonstration that `toCents`'s own check cannot stand in for this
+    // one: `1e307` is a finite string a provider — or an ingress rewriting one
+    // — can put in a Total Assets cell, and it comes back `Infinity`.
+    const sheet = parseXeroBalanceSheet({
+      Reports: [{ Rows: [{ Rows: [{ Cells: [{ Value: 'Total Assets' }, { Value: '1e307' }] }] }] }],
+    });
+    expect(Number.isFinite(sheet.total_assets_cents)).toBe(false);
+    expect(storableLedgerCents(sheet.total_assets_cents)).toBe(false);
+  });
+
+  it('turns a large provider cell into one that stores and cannot be valued on', () => {
+    const sheet = parseQuickBooksBalanceSheet({
+      Rows: {
+        Row: [{ Summary: { ColData: [{ value: 'Total Liabilities' }, { value: '1e300' }] } }],
+      },
+    });
+    expect(Number.isFinite(sheet.total_liabilities_cents)).toBe(true);
+    expect(storableLedgerCents(sheet.total_liabilities_cents)).toBe(false);
   });
 });
 
