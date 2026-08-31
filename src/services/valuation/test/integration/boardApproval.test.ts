@@ -114,6 +114,19 @@ describe.skipIf(!dbUp)('feature 5 — board approval workflow', () => {
     expect(res.statusCode).toBe(403);
   });
 
+  it('refuses a board member whose name is only whitespace', async () => {
+    // The name is printed on the resolution the member signs, and `min(2)` is
+    // a character count that two spaces satisfy.
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/board/members`,
+      headers: authHeader(ops.token),
+      payload: { name: '  ', email: 'blank@board.example' },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().detail).toMatch(/whitespace/i);
+  });
+
   it('collects sign-offs and approves once every member has signed', async () => {
     const addA = await app.inject({
       method: 'POST',

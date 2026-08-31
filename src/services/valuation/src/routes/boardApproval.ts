@@ -12,6 +12,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { todayLocal } from '../domain/calendarDate.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 import { DEFAULT_APPRAISER_QUALIFICATIONS, renderBoardResolution } from '../domain/boardResolution.js';
 import {
   addBoardMember,
@@ -56,7 +57,7 @@ const GenerateBody = z.object({
 });
 
 const MemberBody = z.object({
-  name: z.string().min(2).max(200),
+  name: nonBlankText(2, 200),
   email: z.string().email().max(320),
   title: z.string().max(200).nullable().optional(),
 });

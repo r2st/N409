@@ -124,6 +124,39 @@ describe.skipIf(!dbUp)('P0 features API', () => {
       expect(del.statusCode).toBe(204);
     });
 
+    it('refuses a signature that is only whitespace', async () => {
+      /*
+       * `min(2)` is a character count and two spaces are two characters, so a
+       * blank signature was a 201. `hasMainSignature` is the publish gate and
+       * asks only whether a row exists, and `reportSignatures` draws both
+       * fields onto the certification page — so the engagement published, and
+       * the section of the 409A whose whole purpose is to say who stands
+       * behind the conclusion printed `/s/` with nothing after it.
+       */
+      const vid = await createValuation('Blank Sig Co');
+      for (const payload of [
+        { role: 'main', signer_name: '   ', signature_text: '/s/ Ada' },
+        { role: 'main', signer_name: 'Ada', signature_text: '  ' },
+      ]) {
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${vid}/signatures`,
+          headers: authHeader(ops.token),
+          payload,
+        });
+        expect(res.statusCode).toBe(422);
+        expect(res.json().detail).toMatch(/whitespace/i);
+      }
+
+      // Nothing was written, so the publish gate still has nothing to see.
+      const list = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/signatures`,
+        headers: authHeader(ops.token),
+      });
+      expect(list.json().signatures).toHaveLength(0);
+    });
+
     it('gates the workflow advance into published', async () => {
       const vid = await createValuation('Gate Co');
       // Walk the happy path to draft_accepted.

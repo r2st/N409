@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { nonBlankText } from './nonBlankText.js';
 
 /**
  * A template field that has to say something.
@@ -24,9 +25,5 @@ import { z } from 'zod';
  * `nulBytes` declines for the same reason.
  */
 export function templateText(max: number): z.ZodEffects<z.ZodString, string, string> {
-  return z
-    .string()
-    .min(1)
-    .max(max)
-    .refine((v) => v.trim().length > 0, 'cannot be only whitespace');
+  return nonBlankText(1, max);
 }

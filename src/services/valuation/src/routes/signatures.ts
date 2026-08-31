@@ -8,6 +8,7 @@ import { deleteSignature, listSignatures, upsertSignature } from '../repos/signa
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 
 /**
  * Signature workflow (remaining-gaps §3 #3): 409.ai gates publish behind
@@ -18,9 +19,9 @@ import { invalidBody } from '../domain/validationProblem.js';
 
 const SignBody = z.object({
   role: z.enum(['main', 'second']),
-  signer_name: z.string().min(2).max(200),
+  signer_name: nonBlankText(2, 200),
   signer_title: z.string().max(200).nullable().optional(),
-  signature_text: z.string().min(2).max(500),
+  signature_text: nonBlankText(2, 500),
 });
 
 function requireOps(principal: Principal): void {
