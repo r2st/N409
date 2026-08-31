@@ -224,6 +224,24 @@ async function settle(
   return next === null ? 'failed' : 'retrying';
 }
 
+/**
+ * What one delivery did, for the caller that has to tell somebody about it.
+ *
+ * `deliverToWebhook` answers with the outcome alone, which is all the fan-out
+ * wants. The test ping is the other kind of caller: a partner asked it to prove
+ * their receiver works, and "no" is only half an answer — the half that sends
+ * them to us. Both facts they need are already written to the row this call
+ * inserts, so this hands back what was put there rather than making the route
+ * go looking for a row it has no id for.
+ */
+export interface DeliveryAttempt {
+  outcome: AttemptOutcome;
+  /** The row in the partner's own delivery log, so they can go read the rest. */
+  deliveryId: string;
+  /** Exactly the string written to `last_error`; null when it was delivered. */
+  error: string | null;
+}
+
 /** Deliver one event to one webhook: record, sign, POST, settle. */
 export async function deliverToWebhook(
   deps: WebhookDeps,
@@ -232,6 +250,17 @@ export async function deliverToWebhook(
   payload: Record<string, unknown>,
   valuationId?: string | null,
 ): Promise<AttemptOutcome> {
+  return (await attemptDelivery(deps, webhook, event, payload, valuationId)).outcome;
+}
+
+/** `deliverToWebhook`, keeping the delivery id and the reason it failed. */
+export async function attemptDelivery(
+  deps: WebhookDeps,
+  webhook: PartnerWebhookRow,
+  event: WebhookEventType,
+  payload: Record<string, unknown>,
+  valuationId?: string | null,
+): Promise<DeliveryAttempt> {
   const delivery = await recordDelivery(deps.pool, {
     webhookId: webhook.id,
     eventType: event,
@@ -276,7 +305,7 @@ export async function deliverToWebhook(
       'partner webhook delivery outcome discarded: the row was claimed by another sweeper',
     );
   }
-  return outcome;
+  return { outcome, deliveryId: delivery.id, error: result.ok ? null : result.error };
 }
 
 /**

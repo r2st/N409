@@ -325,9 +325,28 @@ export const RetryDeliveryResponse = z
 
 export const TestWebhookResponse = z
   .object({
-    delivered: z
-      .boolean()
-      .describe('Whether your endpoint accepted the test event. False is a failure to reach it, not a 4xx.'),
+    delivered: z.boolean().describe('Whether your endpoint accepted the test event.'),
+    /**
+     * The two fields that make a `false` actionable. The row is written before
+     * the attempt either way, so the id is here on a success too — it is where
+     * the rest of the attempt (timing, status, retries) can be read.
+     *
+     * The old `delivered` description said a false was "a failure to reach it,
+     * not a 4xx", which was not true of the code beneath it: a 404 or a 403
+     * from the receiver is a failed delivery like any other. Saying what the
+     * failure *was* is better than a rule about what it is not.
+     */
+    delivery_id: z
+      .string()
+      .describe('The delivery this ping was recorded as, in GET /webhooks/{id}/deliveries.'),
+    error: z
+      .string()
+      .nullable()
+      .describe(
+        'Null when delivered. Otherwise the reason, in the same words the delivery log uses — ' +
+          'the status your receiver answered with, the redirect it sent, or the transport ' +
+          'condition that stopped the request reaching it.',
+      ),
   })
   .strict();
 

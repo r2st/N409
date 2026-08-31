@@ -9,7 +9,7 @@ import {
   newWebhookSecret,
   WEBHOOK_EVENT_TYPES,
 } from '../domain/partnerWebhooks.js';
-import { deliverToWebhook } from '../hooks/partnerWebhooks.js';
+import { attemptDelivery } from '../hooks/partnerWebhooks.js';
 import {
   claimIdempotencyKey,
   completeIdempotentResponse,
@@ -1379,7 +1379,9 @@ export function registerPartnerApiRoutes(
       summary: 'Send a signed webhook.test ping so you can verify your receiver end-to-end.',
       auth: 'api_key',
       ...idempotencyDoc('sending a second ping'),
-      response: '{ delivered: boolean }',
+      response:
+        '{ delivered, delivery_id, error } — on a failure, `error` is the same line the ' +
+        'delivery log shows and `delivery_id` is the row it is on',
     },
     async (req, reply) => {
       const { token } = requireToken(req);
@@ -1389,13 +1391,26 @@ export function registerPartnerApiRoutes(
       if (!webhook) throw problems.notFound();
       return withIdempotency(req, reply, token, async () => {
         const payload = buildWebhookPayload('webhook.test', null, { webhook_id: webhook.id });
-        const outcome = await deliverToWebhook(
+        // `attemptDelivery` rather than `deliverToWebhook`: this is the one
+        // caller whose whole purpose is to report the attempt to a person.
+        // `delivered: false` alone named no condition and pointed nowhere — the
+        // reason was already written to the delivery row, but finding it meant
+        // listing the log and guessing which row was this ping. Both come back
+        // here now, and `error` is character-for-character what the log shows.
+        const attempt = await attemptDelivery(
           { pool: deps.pool, log: req.log },
           webhook,
           'webhook.test',
           payload,
         );
-        return { status: 200, body: { delivered: outcome === 'delivered' } };
+        return {
+          status: 200,
+          body: {
+            delivered: attempt.outcome === 'delivered',
+            delivery_id: attempt.deliveryId,
+            error: attempt.error,
+          },
+        };
       });
     },
     { schemas: { response: TestWebhookResponse } },

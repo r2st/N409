@@ -137,6 +137,9 @@ describe.skipIf(!dbUp)('partner webhooks & idempotency', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().delivered).toBe(true);
+    // Delivered carries no reason, and still carries the row it was recorded on.
+    expect(res.json().error).toBeNull();
+    expect(res.json().delivery_id).toEqual(expect.any(String));
     expect(received).toHaveLength(1);
     const hit = received[0]!;
     expect(hit.body.event).toBe('webhook.test');
@@ -203,6 +206,15 @@ describe.skipIf(!dbUp)('partner webhooks & idempotency', () => {
     });
     receiverStatus = 200;
     expect(res.json().delivered).toBe(false);
+    /*
+     * R277, methodology M19. A ping exists to prove a receiver works, so the
+     * answer to "it doesn't" has to say what happened: `delivered: false` on
+     * its own named no condition and pointed at nothing, and the reason — which
+     * was written to the row before the response was composed — could only be
+     * found by listing the delivery log and guessing which row was this ping.
+     */
+    expect(res.json().error).toMatch(/500/);
+    expect(res.json().delivery_id).toEqual(expect.any(String));
 
     const log = await app.inject({
       method: 'GET',
