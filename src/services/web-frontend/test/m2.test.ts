@@ -19,7 +19,7 @@ describe('sanitizeHtml (client mirror)', () => {
   });
 
   it('leaves an unterminated comment or raw-text element where it stands', () => {
-    expect(sanitizeHtml('a<!--b<p>c')).toBe('a<!--b<p>c');
+    expect(sanitizeHtml('a<!--b<p>c')).toBe('a&lt;!--b<p>c');
     expect(sanitizeHtml('<p>ok</p><script>alert(1)')).toBe('<p>ok</p>alert(1)');
     expect(sanitizeHtml('<script>a<style>b</style>c')).toBe('ac');
   });
@@ -81,32 +81,65 @@ describe('sanitizeHtml on input with no closing bracket', () => {
   });
 
   it('sanitizes a section-sized run of junk leads in linear time', () => {
-    // `"<3"` exercises the second regex, the junk-tag sweep, which was
-    // quadratic in exactly the same way and by exactly the same amount.
+    // `"<3"` exercises the second regex, the junk-tag sweep — quadratic in
+    // exactly the same way and by exactly the same amount. The sweep is gone
+    // (see `escapeText`); the shape it choked on is kept as an input here.
     expectSubQuadratic({ input: (n) => '<3'.repeat(n / 2), run: sanitizeHtml, size: 25_000 });
   });
 
   it('keeps the text of an unterminated tag rather than eating the rest', () => {
-    expect(sanitizeHtml('<p>kept</p><p')).toBe('<p>kept</p><p');
-    expect(sanitizeHtml('5 < 6')).toBe('5 < 6');
+    expect(sanitizeHtml('<p>kept</p><p')).toBe('<p>kept</p>&lt;p');
+    expect(sanitizeHtml('5 < 6')).toBe('5 &lt; 6');
   });
 
-  it('leaves a bare "<>" alone — it was never a junk tag', () => {
-    expect(sanitizeHtml('text<><')).toBe('text<><');
-    expect(sanitizeHtml('><>')).toBe('><>');
+  it('leaves a bare "<>" alone — it was never a tag', () => {
+    expect(sanitizeHtml('text<><')).toBe('text&lt;>&lt;');
+    expect(sanitizeHtml('><>')).toBe('>&lt;>');
   });
 
   it('keeps text in front of a dropped tag when the "<" before it never closed', () => {
-    // The junk sweep runs over what the whitelist pass *left*: the `>` that
-    // would have closed `<3` was consumed with the `<img>`, so `<3` is text.
-    expect(sanitizeHtml('<3<img src=x onerror=y>')).toBe('<3');
-    expect(sanitizeHtml('<3<svg>')).toBe('<3');
+    // The `>` that would have closed `<3` was consumed with the `<img>`, so
+    // `<3` is text — and escaped, so it cannot fuse with the text the dropped
+    // tag used to separate it from. See the fusion test below.
+    expect(sanitizeHtml('<3<img src=x onerror=y>')).toBe('&lt;3');
+    expect(sanitizeHtml('<3<svg>')).toBe('&lt;3');
+  });
+
+  /**
+   * The same case the server copy asserts, kept here because this copy is the
+   * one that runs on every keystroke and on every render of a report section,
+   * a board resolution, an auditor note and a blog post.
+   *
+   *     <<z>img src=x onerror=alert(1)>   →   <img src=x onerror=alert(1)>
+   *
+   * The leading `<` started no tag, `<z>` was dropped and took the `>` that
+   * separated the two text runs with it, and the pair became markup on the way
+   * out. The junk sweep could not see it: by then the character after the `<`
+   * was a letter.
+   */
+  it('cannot be made to assemble a tag out of two text runs', () => {
+    expect(sanitizeHtml('<<z>img src=x onerror=alert(1)>')).toBe('&lt;img src=x onerror=alert(1)>');
+    expect(sanitizeHtml('<<z>script>alert(1)</script>')).toBe('&lt;script>alert(1)');
+    expect(sanitizeHtml('<<z>iframe src=javascript:alert(1)>')).toBe('&lt;iframe src=javascript:alert(1)>');
+  });
+
+  /** Run on every keystroke and again on every render — so it must not grow. */
+  it('is idempotent', () => {
+    for (const input of [
+      '<<z>img src=x onerror=alert(1)>',
+      '<a href="https://ok.example/?a=1&b=2">x</a>',
+      '<a href="https://ok.example/?q=a<b">x</a>',
+      '5 < 6',
+    ]) {
+      const once = sanitizeHtml(input);
+      expect(sanitizeHtml(once), input).toBe(once);
+    }
   });
 
   it('still strips everything it stripped before', () => {
     expect(sanitizeHtml('<p>ok</p><script>alert(1)</script>')).toBe('<p>ok</p>');
     expect(sanitizeHtml('<img src=x onerror=alert(1)>text')).toBe('text');
-    expect(sanitizeHtml('<3 onerror=alert(1)>text')).toBe('text');
+    expect(sanitizeHtml('<3 onerror=alert(1)>text')).toBe('&lt;3 onerror=alert(1)>text');
     expect(sanitizeHtml('<a href="javascript:alert(1)">x</a>')).toBe('<a>x</a>');
     expect(sanitizeHtml('<a href="https://ok.example">x</a>')).toBe('<a href="https://ok.example">x</a>');
     expect(sanitizeHtml('<p onclick="boom()">x</p>')).toBe('<p>x</p>');

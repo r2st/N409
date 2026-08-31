@@ -293,15 +293,42 @@ function safeHref(raw: string): string | null {
  * for this `<` is not there for any `<` after it either — and both regexes
  * required one, so once there is no `>` left the rest of the input is text.
  *
- * Still two passes, deliberately. They are not interchangeable with one: the
- * junk sweep runs over what the tag filter *left*, so a `<3` in front of a
- * dropped `<img …>` keeps its text ("<3") because the `>` that would have
- * closed it went with the img. Folding the two together silently ate that text
- * — caught by differentially testing the scan against the regexes it replaces
- * over every ordered pair and triple of a tag alphabet.
+ * There was a second pass here — a "junk sweep" that deleted `<` followed by
+ * anything that cannot begin a tag, through to its `>` — and it was doing the
+ * job of the escape below badly enough to be a hole rather than a guard. The
+ * tag filter emits the text in front of a tag verbatim, so a `<` that started
+ * no tag reached the output as a raw `<`; the junk sweep then only deleted it
+ * when the character after it was still not a letter *in the output*. Dropping
+ * a tag closes that gap between them:
+ *
+ *     <<z>img src=x onerror=alert(1)>   →   <img src=x onerror=alert(1)>
+ *
+ * The leading `<` is text (the character after it is `<`, so no tag head
+ * matches). `<z>` is a tag, dropped, and it takes the `>` with it. What is left
+ * of the source — `img src=x onerror=alert(1)>` — is text too, and it lands
+ * directly behind the leaked `<`. Neither half was a tag in the input and the
+ * pair is one in the output, with attributes chosen by whoever wrote the
+ * section: `<script>`, an `onerror`, an `<iframe src=javascript:…>`. The junk
+ * sweep waved it through because by then the character after the `<` was `i`.
+ *
+ * So the text between tags is escaped instead of swept. Every `<` in it is, by
+ * construction, one this function built no tag from, and `&lt;` is what it
+ * meant: `5 < 6` and `<3` still read as themselves, and no two text runs can
+ * fuse into markup across a tag that was dropped between them. That subsumes
+ * the sweep — after it there is no `<` left in the output that this function
+ * did not write itself — so the sweep is gone rather than kept as a pass that
+ * can no longer match anything.
  */
 export function sanitizeHtml(html: string): string {
-  return dropJunkTags(filterTags(stripComments(stripRawText(html))));
+  return filterTags(stripComments(stripRawText(html)));
+}
+
+/**
+ * Text between tags, as text. See the note on `sanitizeHtml`: a `<` that
+ * reaches here started no tag, and must not be able to start one downstream.
+ */
+function escapeText(text: string): string {
+  return text.replaceAll('<', '&lt;');
 }
 
 /** Whitelist pass: allowed tags kept (bare), everything else dropped. */
@@ -318,10 +345,10 @@ function filterTags(source: string): string {
     TAG_HEAD.lastIndex = lt;
     const m = TAG_HEAD.exec(source);
     if (m === null) {
-      at = lt + 1; // a `<` that starts no tag; the junk sweep decides its fate
+      at = lt + 1; // a `<` that starts no tag; `escapeText` renders it as one
       continue;
     }
-    out += source.slice(last, lt);
+    out += escapeText(source.slice(last, lt));
     const close = m[1]!;
     const tag = m[2]!.toLowerCase();
     const attrsFrom = TAG_HEAD.lastIndex;
@@ -335,44 +362,34 @@ function filterTags(source: string): string {
       // Bounded by this tag's own length, and tags do not overlap.
       const href = HREF.exec(source.slice(attrsFrom, gt));
       const url = safeHref(href?.[1] ?? href?.[2] ?? href?.[3] ?? '');
-      out += url === null ? '<a>' : `<a href="${url.replace(/"/g, '&quot;')}">`;
+      out += url === null ? '<a>' : `<a href="${attrValue(url)}">`;
       continue;
     }
     out += `<${close}${tag}>`;
   }
-  return out + source.slice(last);
+  return out + escapeText(source.slice(last));
 }
 
 /**
- * Junk sweep: `<` followed by anything that cannot begin a tag, through to its
- * `>`. `/` and `!` stay excluded as they were — a stray `</>` or a `<!` left by
- * an unterminated comment is text, not a tag.
+ * A validated URL as a double-quoted attribute value.
  *
- * The closing `>` is searched from `lt + 2`, not `lt + 1`, because the regex
- * this replaces spent a character on the junk lead before looking for it: in
- * `/<[^a-zA-Z\/!][^>]*>/`, the `[^a-zA-Z\/!]` consumes `lt + 1`. So a bare `<>`
- * is not a junk tag and survives as text, which is the answer the old regex
- * gave and the differential test insisted on.
+ * `"` is what closes the value, and was the only character escaped. `<` and
+ * `>` cannot close it — a browser reads both literally inside quotes — but
+ * leaving them raw means the one place this function emits caller text
+ * unescaped is also the one place its output stops being a string every HTML
+ * consumer agrees about. The entities decode back to the same URL, so this
+ * costs the link nothing.
+ *
+ * `&` is deliberately *not* escaped, here or in `escapeText`. This function is
+ * run over its own output — the editor sanitizes on every keystroke, the route
+ * sanitizes on save, the reader sanitizes on render — and escaping the
+ * ampersand is the one substitution that is not idempotent: `&amp;` would
+ * become `&amp;amp;` on the next pass, and a query string would grow an
+ * `amp;` per save. None of the three characters below can appear in the
+ * output of this function, so each survives a second pass unchanged.
  */
-function dropJunkTags(source: string): string {
-  let out = '';
-  let last = 0;
-  let at = 0;
-  let gt = -1;
-  for (;;) {
-    const lt = source.indexOf('<', at);
-    if (lt === -1) break;
-    if (gt < lt + 2) gt = source.indexOf('>', lt + 2);
-    if (gt === -1) break;
-    const next = source[lt + 1]!;
-    if (next === '/' || next === '!' || (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z')) {
-      at = lt + 1;
-      continue;
-    }
-    out += source.slice(last, lt);
-    last = at = gt + 1;
-  }
-  return out + source.slice(last);
+function attrValue(url: string): string {
+  return url.replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 export function sanitizeContent(content: ReportContent): ReportContent {

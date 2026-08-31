@@ -299,15 +299,37 @@ export function externalHref(raw: string | null | undefined): string | null {
  * keystroke at a time — and it can arrive by paste, which is one event that
  * produces the whole 100k at once.
  *
- * Kept as two passes on purpose: the junk sweep runs over what the tag filter
- * *left*, so a `<3` in front of a dropped `<img …>` keeps its text, because the
- * `>` that would have closed it went with the img. Output is byte-identical to
- * the regexes for every input — checked differentially over every ordered pair
- * and triple of a tag alphabet, and mirrored in the server copy in
- * valuation/src/domain/report.ts.
+ * There was a second pass — a junk sweep deleting `<` followed by anything that
+ * cannot begin a tag, through to its `>` — and it let markup through rather
+ * than stopping it. The tag filter emits the text in front of a tag verbatim,
+ * so a `<` that started no tag reached the output raw, and the sweep then only
+ * removed it while the character after it was *still* not a letter. Dropping a
+ * tag closes that gap:
+ *
+ *     <<z>img src=x onerror=alert(1)>   →   <img src=x onerror=alert(1)>
+ *
+ * Neither half is a tag in the input — the leading `<` is text because the
+ * character after it is `<`, and `img src=…>` is text because its `>` went with
+ * the dropped `<z>` — and the pair is one in the output. So the text between
+ * tags is escaped instead of swept: every `<` in it is one no tag was built
+ * from, `&lt;` is what it meant, and two text runs can no longer fuse into
+ * markup across a tag dropped between them. Mirrored in the server copy in
+ * valuation/src/domain/report.ts, which carries the same reasoning.
  */
 export function sanitizeHtml(html: string): string {
-  return dropJunkTags(filterTags(stripComments(stripRawText(html))));
+  return filterTags(stripComments(stripRawText(html)));
+}
+
+/**
+ * Text between tags, as text. See the note on `sanitizeHtml`.
+ *
+ * `&` is deliberately not escaped, here or in `attrValue`: this function runs
+ * over its own output — the editor sanitizes every keystroke, the server on
+ * save, the reader on render — and `&amp;` is the one substitution that would
+ * grow on each pass.
+ */
+function escapeText(text: string): string {
+  return text.replaceAll('<', '&lt;');
 }
 
 /** Whitelist pass: allowed tags kept (bare), everything else dropped. */
@@ -324,10 +346,10 @@ function filterTags(source: string): string {
     TAG_HEAD.lastIndex = lt;
     const m = TAG_HEAD.exec(source);
     if (m === null) {
-      at = lt + 1; // a `<` that starts no tag; the junk sweep decides its fate
+      at = lt + 1; // a `<` that starts no tag; `escapeText` renders it as one
       continue;
     }
-    out += source.slice(last, lt);
+    out += escapeText(source.slice(last, lt));
     const close = m[1]!;
     const tag = m[2]!.toLowerCase();
     const attrsFrom = TAG_HEAD.lastIndex;
@@ -341,41 +363,24 @@ function filterTags(source: string): string {
       // Bounded by this tag's own length, and tags do not overlap.
       const href = HREF.exec(source.slice(attrsFrom, gt));
       const url = safeHref(href?.[1] ?? href?.[2] ?? href?.[3] ?? '');
-      out += url === null ? '<a>' : `<a href="${url.replace(/"/g, '&quot;')}">`;
+      out += url === null ? '<a>' : `<a href="${attrValue(url)}">`;
       continue;
     }
     out += `<${close}${tag}>`;
   }
-  return out + source.slice(last);
+  return out + escapeText(source.slice(last));
 }
 
 /**
- * Junk sweep: `<` followed by anything that cannot begin a tag, through to its
- * `>`. `/` and `!` stay excluded as they were — a stray `</>` or a `<!` left by
- * an unterminated comment is text, not a tag.
+ * A validated URL as a double-quoted attribute value.
  *
- * The closing `>` is searched from `lt + 2`, not `lt + 1`: in the regex this
- * replaces, `/<[^a-zA-Z\/!][^>]*>/`, the `[^a-zA-Z\/!]` spends `lt + 1` on the
- * junk lead before looking for it. So a bare `<>` is not a junk tag and survives
- * as text.
+ * `"` is what closes the value and was the only character escaped; `<` and `>`
+ * cannot close it, but leaving them raw means the one place this function
+ * emits caller text unescaped is also the one place its output stops being a
+ * string every HTML consumer agrees about. All three decode back to the same
+ * URL, and none of them can appear in this function's output, so a second pass
+ * over it changes nothing.
  */
-function dropJunkTags(source: string): string {
-  let out = '';
-  let last = 0;
-  let at = 0;
-  let gt = -1;
-  for (;;) {
-    const lt = source.indexOf('<', at);
-    if (lt === -1) break;
-    if (gt < lt + 2) gt = source.indexOf('>', lt + 2);
-    if (gt === -1) break;
-    const next = source[lt + 1]!;
-    if (next === '/' || next === '!' || (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z')) {
-      at = lt + 1;
-      continue;
-    }
-    out += source.slice(last, lt);
-    last = at = gt + 1;
-  }
-  return out + source.slice(last);
+function attrValue(url: string): string {
+  return url.replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }

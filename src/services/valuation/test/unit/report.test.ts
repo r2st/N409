@@ -128,7 +128,7 @@ describe('sanitizeHtml, continued', () => {
   it('leaves an unterminated comment or raw-text element where it stands', () => {
     // No `-->` to be found: the marker is text from there on, and the tags
     // after it still face the whitelist.
-    expect(sanitizeHtml('a<!--b<p>c')).toBe('a<!--b<p>c');
+    expect(sanitizeHtml('a<!--b<p>c')).toBe('a&lt;!--b<p>c');
     // `<script>` with no `</script>`: the body is not a raw-text span, so the
     // open tag is dropped as a non-whitelisted tag and its text survives.
     expect(sanitizeHtml('<p>ok</p><script>alert(1)')).toBe('<p>ok</p>alert(1)');
@@ -615,29 +615,100 @@ describe('sanitizeHtml on input with no closing bracket', () => {
   });
 
   it('keeps the text of an unterminated tag rather than eating the rest', () => {
-    expect(sanitizeHtml('<p>kept</p><p')).toBe('<p>kept</p><p');
-    expect(sanitizeHtml('5 < 6')).toBe('5 < 6');
+    expect(sanitizeHtml('<p>kept</p><p')).toBe('<p>kept</p>&lt;p');
+    expect(sanitizeHtml('5 < 6')).toBe('5 &lt; 6');
   });
 
-  it('leaves a bare "<>" alone — it was never a junk tag', () => {
-    expect(sanitizeHtml('text<><')).toBe('text<><');
-    expect(sanitizeHtml('><>')).toBe('><>');
+  it('leaves a bare "<>" alone — it was never a tag', () => {
+    expect(sanitizeHtml('text<><')).toBe('text&lt;>&lt;');
+    expect(sanitizeHtml('><>')).toBe('>&lt;>');
   });
 
   it('keeps text in front of a dropped tag when the "<" before it never closed', () => {
-    // The junk sweep runs over what the whitelist pass *left*: the `>` that
-    // would have closed `<3` was consumed with the `<img>`, so `<3` is text.
-    expect(sanitizeHtml('<3<img src=x onerror=y>')).toBe('<3');
-    expect(sanitizeHtml('<3<svg>')).toBe('<3');
+    // The `>` that would have closed `<3` was consumed with the `<img>`, so
+    // `<3` is text — and escaped, because a `<` this pass built no tag from
+    // must not be able to start one once the tag between them is gone.
+    expect(sanitizeHtml('<3<img src=x onerror=y>')).toBe('&lt;3');
+    expect(sanitizeHtml('<3<svg>')).toBe('&lt;3');
   });
 
   it('still strips everything it stripped before', () => {
     expect(sanitizeHtml('<p>ok</p><script>alert(1)</script>')).toBe('<p>ok</p>');
     expect(sanitizeHtml('<img src=x onerror=alert(1)>text')).toBe('text');
-    expect(sanitizeHtml('<3 onerror=alert(1)>text')).toBe('text');
+    expect(sanitizeHtml('<3 onerror=alert(1)>text')).toBe('&lt;3 onerror=alert(1)>text');
     expect(sanitizeHtml('<a href="javascript:alert(1)">x</a>')).toBe('<a>x</a>');
     expect(sanitizeHtml('<a href="https://ok.example">x</a>')).toBe('<a href="https://ok.example">x</a>');
     expect(sanitizeHtml('<p onclick="boom()">x</p>')).toBe('<p>x</p>');
+  });
+});
+
+/**
+ * Two text runs that were not markup, fused into markup by the tag dropped
+ * between them.
+ *
+ * The whitelist pass emits the text in front of a tag verbatim, so a `<` that
+ * started no tag used to reach the output as a raw `<`. Dropping the tag after
+ * it deletes everything up to and including that tag's `>` — so whatever
+ * followed in the source moves up and lands directly behind the leaked `<`.
+ * Neither half is a tag on its own; the pair is, with attributes chosen by
+ * whoever wrote the section:
+ *
+ *     <<z>img src=x onerror=alert(1)>   →   <img src=x onerror=alert(1)>
+ *
+ * The junk sweep that used to run afterwards could not see it, because by then
+ * the character after the `<` was `i` — a letter, which is exactly the case it
+ * was written to leave alone.
+ *
+ * Every path this sanitiser guards renders its output with
+ * `dangerouslySetInnerHTML`, and three of them render it for somebody outside
+ * the firm: the auditor portal, the board-signature page, and the published
+ * blog. So the assertion is the one that matters at the point of use — the
+ * output, parsed as HTML, contains no element the whitelist does not name.
+ */
+describe('sanitizeHtml cannot be made to assemble a tag out of two text runs', () => {
+  const FUSED = [
+    '<<z>img src=x onerror=alert(1)>',
+    '<<img>img src=x onerror=alert(1)>',
+    '<<z>script>alert(1)</script>',
+    '<<z>iframe src=javascript:alert(1)>',
+    'hello <<z>a href=javascript:alert(1)>click</a>',
+    '<<svg</xmpjavascript:alert(1)-->https://x-->',
+    '<!<z>img src=x onerror=alert(1)>',
+    '<3<z>img src=x onerror=alert(1)>',
+  ];
+
+  it('leaves no "<" in the output that it did not write itself', () => {
+    for (const input of FUSED) {
+      const out = sanitizeHtml(input);
+      // Every `<` the sanitiser emits opens a tag it chose: an allowed name,
+      // or the `</` of one. Anything else is a run of text that has become
+      // markup on the way out.
+      const written = out.replace(/<\/?[a-z][a-z0-9]*(?: href="[^"]*")?>/g, '');
+      expect(written, `assembled a tag from ${JSON.stringify(input)}: ${out}`).not.toContain('<');
+    }
+  });
+
+  it('escapes the fused example rather than emitting an <img>', () => {
+    expect(sanitizeHtml('<<z>img src=x onerror=alert(1)>')).toBe('&lt;img src=x onerror=alert(1)>');
+  });
+
+  /**
+   * The editor sanitises on every keystroke, the route on save, and the reader
+   * on render, so this function runs over its own output routinely. `&amp;`
+   * would be the one substitution that grows on each pass — which is why the
+   * ampersand is left alone and why this is asserted rather than assumed.
+   */
+  it('is idempotent, so a saved section does not grow entities', () => {
+    for (const input of [
+      ...FUSED,
+      '<a href="https://ok.example/?a=1&b=2">x</a>',
+      '<a href="https://ok.example/?q=a<b">x</a>',
+      '<p>plain &amp; simple</p>',
+      '5 < 6',
+    ]) {
+      const once = sanitizeHtml(input);
+      expect(sanitizeHtml(once), `not idempotent for ${JSON.stringify(input)}`).toBe(once);
+    }
   });
 });
 
