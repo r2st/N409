@@ -123,6 +123,37 @@ describe('zipReader', () => {
     zip.writeUInt16LE(14, centralOffset + 10); // LZMA
     expect(() => readZip(zip)).toThrow(/unsupported compression method 14/i);
   });
+
+  /*
+   * R277, methodology M19. Naming the entry is the point of these messages —
+   * "this part of the workbook" beats "this workbook" — but the name is read
+   * out of the uploaded archive, and the message does not stay here: `readXlsx`
+   * wraps it and the cap-table upload answers a 422 whose `detail` is this
+   * string, drawn by the SPA and printed by a terminal.
+   *
+   * A ZIP entry name is a uint16 of length, so all three of these are what the
+   * caller says they are: 65,535 bytes long, a quote that closes the quoting
+   * around it, and a right-to-left override that reverses the sentence after it.
+   */
+  it('bounds and scrubs the entry name it quotes back', () => {
+    const hostile = (name: string) => {
+      const zip = Buffer.from(buildZip([{ name, data: 'x' }]));
+      const centralOffset = zip.readUInt32LE(zip.length - 22 + 16);
+      zip.writeUInt16LE(0x0001, centralOffset + 8);
+      try {
+        readZip(zip);
+      } catch (err) {
+        return (err as Error).message;
+      }
+      throw new Error('expected a refusal');
+    };
+
+    expect(hostile(`${'n'.repeat(4_000)}.xml`).length).toBeLessThan(200);
+    expect(hostile('sheet\u202Elmx.exe')).not.toContain('\u202E');
+    // The quote cannot end the quoting the message puts around the name.
+    expect(hostile('a".xml')).toContain('a?.xml');
+    expect(hostile('a\u0007b.xml')).toContain('a?b.xml');
+  });
 });
 
 /**

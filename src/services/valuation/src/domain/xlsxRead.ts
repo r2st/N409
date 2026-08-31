@@ -15,6 +15,7 @@
 
 import { nameColumns, rowByColumn } from './sheetColumns.js';
 import { readZip, ZipReadError } from './zipReader.js';
+import { quoteForMessage } from './displayText.js';
 
 export class XlsxReadError extends Error {}
 
@@ -489,7 +490,11 @@ function parseSheetGrid(
       // that lost precision — it is a file that was never one.
       if (column > MAX_COLUMN) {
         throw new XlsxReadError(
-          `Cell reference "${ref}" is past column XFD, the last column a worksheet has`,
+          // Quoted through the same bound the ZIP entry names use: `ref` is an
+          // attribute value out of the uploaded XML, so its length and its
+          // characters are the caller's, and this sentence becomes a 422
+          // `detail` a person reads.
+          `Cell reference "${quoteForMessage(ref ?? '')}" is past column XFD, the last column a worksheet has`,
         );
       }
 

@@ -7,9 +7,18 @@
  * Scope is deliberately narrow — stored (method 0) and deflate (method 8) only,
  * no ZIP64, no encryption. Anything else raises so the caller can reject the
  * upload with a clear message rather than silently reading a truncated sheet.
+ *
+ * Every refusal that names the entry it refused names it through
+ * `quoteForMessage`. The name is read out of the archive the caller uploaded —
+ * a uint16 of length, so up to 65,535 bytes of anything at all — and these
+ * messages do not stay here: `readXlsx` wraps them as "Could not read the
+ * workbook: …" and the cap-table upload route answers a 422 whose `detail` is
+ * that string, drawn by the SPA and printed by whatever terminal a curl caller
+ * is looking at.
  */
 
 import { inflateRawSync } from 'node:zlib';
+import { quoteForMessage } from './displayText.js';
 
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
@@ -73,7 +82,7 @@ export function readZip(buf: Buffer, opts: { maxInflatedBytes?: number } = {}): 
   let remaining = budget;
   const overBudget = (name: string) =>
     new ZipReadError(
-      `Entry "${name}" expands past the ${Math.round(budget / (1024 * 1024))} MB decompression limit ` +
+      `Entry "${quoteForMessage(name)}" expands past the ${Math.round(budget / (1024 * 1024))} MB decompression limit ` +
         'for an archive this size',
     );
 
@@ -104,14 +113,14 @@ export function readZip(buf: Buffer, opts: { maxInflatedBytes?: number } = {}): 
     cursor += 46 + nameLen + extraLen + commentLen;
 
     // Bit 0 is the "encrypted" flag; we cannot read those bytes at all.
-    if (flags & 0x0001) throw new ZipReadError(`Entry "${name}" is encrypted`);
+    if (flags & 0x0001) throw new ZipReadError(`Entry "${quoteForMessage(name)}" is encrypted`);
     if (compressedSize === ZIP64_SENTINEL || uncompressedSize === ZIP64_SENTINEL) {
       throw new ZipReadError('ZIP64 archives are not supported');
     }
     if (name.endsWith('/')) continue; // directory marker
 
     if (localOffset + 30 > buf.length || buf.readUInt32LE(localOffset) !== LOCAL_SIGNATURE) {
-      throw new ZipReadError(`Malformed local header for "${name}"`);
+      throw new ZipReadError(`Malformed local header for "${quoteForMessage(name)}"`);
     }
     // The local header's extra field can differ in length from the central
     // one, so the data offset must be computed from the local record.
@@ -119,7 +128,8 @@ export function readZip(buf: Buffer, opts: { maxInflatedBytes?: number } = {}): 
     const localExtraLen = buf.readUInt16LE(localOffset + 28);
     const start = localOffset + 30 + localNameLen + localExtraLen;
     const end = start + compressedSize;
-    if (end > buf.length) throw new ZipReadError(`Entry "${name}" runs past the end of the archive`);
+    if (end > buf.length)
+      throw new ZipReadError(`Entry "${quoteForMessage(name)}" runs past the end of the archive`);
 
     // The declared size is the cheap rejection — it costs no allocation — but
     // it is a number the archive chose, so it can lie in either direction. It
@@ -138,12 +148,14 @@ export function readZip(buf: Buffer, opts: { maxInflatedBytes?: number } = {}): 
         inflated = inflateRawSync(raw, { maxOutputLength: remaining });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ERR_BUFFER_TOO_LARGE') throw overBudget(name);
-        throw new ZipReadError(`Entry "${name}" could not be decompressed`);
+        throw new ZipReadError(`Entry "${quoteForMessage(name)}" could not be decompressed`);
       }
       entries.set(name, inflated);
       remaining -= inflated.length;
     } else {
-      throw new ZipReadError(`Entry "${name}" uses unsupported compression method ${method}`);
+      throw new ZipReadError(
+        `Entry "${quoteForMessage(name)}" uses unsupported compression method ${method}`,
+      );
     }
   }
 
