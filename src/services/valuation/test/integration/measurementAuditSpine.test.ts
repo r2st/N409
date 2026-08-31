@@ -254,6 +254,14 @@ describe.skipIf(!dbUp)('measurement changes land on the engagement audit trail',
     // went. "A holding was removed" is not an answer to which one.
     expect(rows[0]!.payload.company_name).toBe('PortCo');
     expect(rows[0]!.payload.position_id).toBe(positionId);
+    // And the figure that actually left the schedule. `navExhibits.ts` sums
+    // the stored marks, so the cost basis alone leaves the NAV moving by an
+    // amount nothing on the trail names — and `fund_marks` cascades from the
+    // position, so the row that would have answered is gone.
+    expect(Number(rows[0]!.payload.latest_fair_value)).toBe(1000);
+    expect(rows[0]!.payload.marks_removed).toBe(1);
+    const marks = await pool.query('SELECT id FROM fund_marks WHERE position_id = $1', [positionId]);
+    expect(marks.rowCount).toBe(0);
   });
 
   it('records the debt instrument’s terms and its stored prices', async () => {

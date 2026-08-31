@@ -424,12 +424,28 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       // row is what the event has to name, and after the cascade there is
       // nothing left to name it with.
       const position = await findPosition(client, id, pid);
-      if (!position || !(await deletePosition(client, id, pid))) throw problems.notFound();
+      if (!position) throw problems.notFound();
+      // The mark trail goes too — `fund_marks` cascades from the position
+      // (0086) — and the mark is the figure that actually leaves the NAV:
+      // `domain/navExhibits.ts` sums the *stored* marks, not the cost bases.
+      // An event naming only the cost basis of a holding whose latest mark was
+      // a different number leaves an auditor asking why the schedule moved by
+      // an amount nothing on the trail mentions, with the row it would have
+      // read gone.
+      const latest = (await latestMarks(client, [pid])).get(pid) ?? null;
+      const { rows: markCount } = await client.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM fund_marks WHERE position_id = $1',
+        [pid],
+      );
+      if (!(await deletePosition(client, id, pid))) throw problems.notFound();
       await recordFundEvent(client, fund, 'fund_position_removed', principal, {
         fund_id: id,
         position_id: pid,
         company_name: position.company_name,
         cost_basis: position.cost_basis,
+        latest_fair_value: latest?.fair_value ?? null,
+        latest_measurement_date: latest?.measurement_date ?? null,
+        marks_removed: markCount[0]!.n,
       });
     });
     return reply.status(204).send();
