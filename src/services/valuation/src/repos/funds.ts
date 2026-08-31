@@ -342,6 +342,33 @@ export async function listMarks(
  * ones past `FUND_POSITION_PAGE_LIMIT`, whose marks were loaded and dropped.
  * The bound now comes from the page, which is where the caller's bound already
  * was; nothing about which mark answers for a position changes.
+ *
+ * A LATERAL AND NOT A `DISTINCT ON`, because the two read different amounts of
+ * the table to give the same answer. `DISTINCT ON` is a sort with a filter on
+ * top: it cannot stop at the first row of each group, so it reads and sorts
+ * every mark ever taken on every position of the page to keep the newest two
+ * hundred. `fund_marks` is append-only and quarterly at minimum, so that set is
+ * the *history* of the fund, and it grows for as long as the fund is held while
+ * the answer stays two hundred rows wide.
+ *
+ * The lateral is one index scan per position that stops at its first row —
+ * `fund_marks_position_idx` is `(position_id, measurement_date DESC)`, so the
+ * head of each trail is where the scan starts. Measured on a 200-holding fund
+ * inside a 1.6M-mark database: at 50 marks per holding, 37ms/5103 blocks
+ * against 7.5ms/1025; at 100, 101ms/10176 against 2.5ms/1025. The old shape
+ * doubles with the trail and the new one does not move, which is the whole
+ * point — this sits on the fund page, on `GET /funds/:id/nav`, and on the
+ * report render, and the NAV exhibit is a sum over exactly these rows.
+ *
+ * The *level* of that win is a property of the corpus rather than of the query:
+ * on a database where the page's holdings are most of `fund_marks`, `DISTINCT
+ * ON` reads the table end to end in one pass and touches fewer buffers while
+ * still reading fifty times the rows. What changes unconditionally is that the
+ * rows read stop being a function of how long the fund has been marked.
+ *
+ * Invisible to `listQueryScaling` for R193's reason: the endpoint issues one
+ * statement however deep the trail gets, so a ratio over statement counts
+ * cannot see cost inside one. `fundMarkRollupPlan` measures it instead.
  */
 export async function latestMarks(
   db: Queryable,
@@ -349,10 +376,14 @@ export async function latestMarks(
 ): Promise<Map<string, FundMarkRow>> {
   if (positionIds.length === 0) return new Map();
   const { rows } = await db.query<FundMarkRow>(
-    `SELECT DISTINCT ON (m.position_id) m.*
-       FROM fund_marks m
-      WHERE m.position_id = ANY($1::ulid[])
-      ORDER BY m.position_id, m.measurement_date DESC, m.created_at DESC`,
+    `SELECT m.*
+       FROM unnest($1::ulid[]) AS p(position_id)
+       CROSS JOIN LATERAL (
+         SELECT * FROM fund_marks fm
+          WHERE fm.position_id = p.position_id
+          ORDER BY fm.measurement_date DESC, fm.created_at DESC
+          LIMIT 1
+       ) m`,
     [[...new Set(positionIds)]],
   );
   const map = new Map<string, FundMarkRow>();

@@ -532,8 +532,13 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       const parsed = RollForwardBody.safeParse(req.body);
       if (!parsed.success) throw invalidBody('Invalid roll-forward', parsed.error);
       const b = parsed.data;
-      const { marks } = await listMarks(deps.pool, pid);
-      const prior = marks[0];
+      // The head of the trail, read as the head rather than as the first row of
+      // a page. This asked `listMarks` for two hundred marks and used one of
+      // them — 216 blocks against 21 on a holding with four hundred marks — and
+      // reading it through `latestMarks` also makes it the same row the NAV
+      // rollup and the report call this holding's current mark, by construction
+      // rather than because two orderings happen to agree.
+      const prior = (await latestMarks(deps.pool, [pid])).get(pid);
       if (!prior) throw problems.unprocessable('No prior mark to roll forward — record a mark first');
 
       const rolled = await engine<{ new_fair_value: number; change: number; method: string }>(
