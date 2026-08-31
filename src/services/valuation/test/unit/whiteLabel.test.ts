@@ -128,8 +128,20 @@ describe('sniffImageKind', () => {
   });
 });
 
+/** A PNG that a header reader can measure: magic + a real IHDR. */
+function pngOf(width: number, height: number): Buffer {
+  const ihdr = Buffer.alloc(21);
+  ihdr.writeUInt32BE(13, 0);
+  ihdr.write('IHDR', 4, 'latin1');
+  ihdr.writeUInt32BE(width, 8);
+  ihdr.writeUInt32BE(height, 12);
+  ihdr[16] = 8;
+  ihdr[17] = 6;
+  return Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), ihdr]);
+}
+
 describe('fetchPartnerLogo', () => {
-  const png = Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), Buffer.alloc(16)]);
+  const png = pngOf(64, 64);
 
   const fetchReturning = (body: Buffer, headers: Record<string, string> = {}) =>
     vi.fn(async () => new Response(new Uint8Array(body), { status: 200, headers }));
@@ -181,7 +193,7 @@ describe('fetchPartnerLogo', () => {
  * from inside the estate. Every one of these used to be a live request.
  */
 describe('partner logo SSRF guard', () => {
-  const png = Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), Buffer.alloc(16)]);
+  const png = pngOf(64, 64);
   const ok = () => vi.fn(async () => new Response(new Uint8Array(png), { status: 200 }));
   const publicDns: HostResolver = async () => ['93.184.216.34'];
 

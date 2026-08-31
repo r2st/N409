@@ -15,10 +15,23 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
+import { MAX_IMAGE_PIXELS } from '@n409/shared';
 import { fetchPartnerLogo, type HostResolver, type LogoFailure } from '../../src/clients/partnerLogo.js';
 import { fetchPartnerLogoCached } from '../../src/clients/partnerLogoCache.js';
 
-const png = Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), Buffer.alloc(16)]);
+/** A PNG that a header reader can measure: magic + a real IHDR. */
+function pngOf(width: number, height: number): Buffer {
+  const ihdr = Buffer.alloc(21);
+  ihdr.writeUInt32BE(13, 0);
+  ihdr.write('IHDR', 4, 'latin1');
+  ihdr.writeUInt32BE(width, 8);
+  ihdr.writeUInt32BE(height, 12);
+  ihdr[16] = 8;
+  ihdr[17] = 6;
+  return Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), ihdr]);
+}
+
+const png = pngOf(64, 64);
 const publicDns: HostResolver = async () => ['93.184.216.34'];
 const privateDns: HostResolver = async () => ['10.0.0.5'];
 
@@ -51,6 +64,52 @@ describe('why a partner logo did not load', () => {
     const { log, warns } = recorder();
     const logo = await fetchPartnerLogo('https://cdn.example/logo.png', fetchReturning(png), publicDns, log);
     expect(logo).not.toBeNull();
+    expect(warns).toEqual([]);
+  });
+
+  /*
+   * The tenth reason (round 265, methodology M6). `MAX_LOGO_BYTES` bounds what
+   * comes off the socket, and a PNG deflates its pixels, so it says nothing
+   * about what decoding costs: a 995 KB file inside that cap can declare
+   * 16000 x 16000 RGBA and take `doc.image` past 1.2 GB in one call. The render
+   * catches a bad image; it cannot catch an OOM kill.
+   */
+  it('refuses a small file that declares an enormous image', async () => {
+    const bomb = pngOf(16_000, 16_000);
+    expect(bomb.length).toBeLessThan(1024 * 1024);
+    expect(await reasonFor('https://cdn.example/logo.png', fetchReturning(bomb))).toBe('too_many_pixels');
+  });
+
+  it('says how big it claimed to be, since that is the thing to go look at', async () => {
+    const { log, warns } = recorder();
+    await fetchPartnerLogo(
+      'https://cdn.example/logo.png',
+      fetchReturning(pngOf(30_000, 30_000)),
+      publicDns,
+      log,
+    );
+    expect(warns[0]!.obj).toMatchObject({ width: 30_000, height: 30_000, maxPixels: MAX_IMAGE_PIXELS });
+  });
+
+  it('refuses a header it cannot measure rather than passing it through', async () => {
+    // `null` from the reader means unmeasured, not small. A file whose first
+    // eight bytes are a good PNG header and whose IHDR is not there is exactly
+    // the shape the render's own catch was left holding.
+    const headerOnly = Buffer.from('\x89PNG\r\n\x1a\nnot-an-ihdr', 'latin1');
+    expect(await reasonFor('https://cdn.example/logo.png', fetchReturning(headerOnly))).toBe(
+      'too_many_pixels',
+    );
+  });
+
+  it('still accepts a JPEG, which declares its size somewhere else entirely', async () => {
+    // SOF0 after a JFIF APP0: 8 x 8, one component.
+    const jpeg = Buffer.from([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x02, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x08, 0x00, 0x08, 0x01, 0x01,
+      0x11, 0x00,
+    ]);
+    const { log, warns } = recorder();
+    const got = await fetchPartnerLogo('https://cdn.example/mark.jpg', fetchReturning(jpeg), publicDns, log);
+    expect(got).not.toBeNull();
     expect(warns).toEqual([]);
   });
 

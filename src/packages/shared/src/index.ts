@@ -231,3 +231,9 @@ export {
   type DependencyCheck,
   type DependencyOutcome,
 } from './startup.js';
+export {
+  declaredImageSize,
+  MAX_IMAGE_PIXELS,
+  withinImagePixelBudget,
+  type ImageSize,
+} from './imageBounds.js';

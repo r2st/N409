@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import * as fontkit from 'fontkit';
 import PDFDocument from 'pdfkit';
+import { MAX_IMAGE_PIXELS, declaredImageSize } from '@n409/shared';
 
 /**
  * Report PDF renderer (M2). Consumes the sanitized HTML subset produced by
@@ -2498,48 +2499,90 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   // two covers in a set sat at the same height.
   const COVER_TITLE_TOP = 250;
   if (input.branding?.logo) {
-    try {
-      // Centered partner logo above the title, capped to a 140×56pt box. The
-      // firm's name is set in words directly below, so the mark itself carries
-      // no information a reader would otherwise miss — an artifact, not a
-      // figure needing alternative text that would only repeat the next line.
-      artifact(doc, () => {
-        doc.image(input.branding!.logo!, doc.page.width / 2 - 70, COVER_TITLE_TOP - 110, {
-          fit: [140, 56],
-          align: 'center',
-          valign: 'center',
-        });
-      });
-    } catch (err) {
-      /*
-       * Undecodable image bytes — render the cover without the logo, and say
-       * so, because nothing downstream of here can.
-       *
-       * This is the last of the ways a white-labelled report comes out with no
-       * mark on it. R155 named the other nine, all of them in
-       * `clients/partnerLogo.ts` where the bytes are fetched, for exactly the
-       * reason this one needs naming too: the URL is stored and looks fine,
-       * the render succeeds, and the PDF is simply missing the logo, so
-       * support has nothing to look at. The fetch sniffs the format before it
-       * stores anything, which is what makes the remaining case narrow — a
-       * truncated or malformed file whose first bytes are a good PNG header —
-       * and narrow is not the same as never, and a partner is watching every
-       * report they ship go out unbranded either way.
-       *
-       * A `warn` and not an `error`: the report is correct, complete and
-       * delivered. What it is missing is the firm's mark, which is a
-       * conversation with that firm rather than a page.
-       */
+    /*
+     * What the mark claims to be, before anything decodes it (round 265, M6).
+     *
+     * The catch below cannot be the guard for this. Every bound in front of the
+     * logo is a bound on its *compressed* size — `MAX_LOGO_BYTES` on the fetch,
+     * `logo_base64` on this service's contract, a sniff of the first eight
+     * bytes — and a PNG deflates its pixels, so none of them says what decoding
+     * it costs. A 995 KB file declaring 16000 × 16000 RGBA, inside every one of
+     * those caps, takes `doc.image` to over 1.2 GB of resident memory in a
+     * single call, allocated off the JS heap where `--max-old-space-size` does
+     * not reach. On this estate's host that is an OOM kill of whichever process
+     * is rendering — this service, or the API when the offload falls back in
+     * process — and there is no `catch` for a process that is gone: no status
+     * code, no issue line, no log.
+     *
+     * So the declaration is read from the header and refused before the
+     * allocation, and refused in the same way an undecodable file is: the cover
+     * is drawn without the mark and the reason is logged, because the report is
+     * correct, complete and deliverable without it. An unreadable header is
+     * refused too — `null` means unmeasured, not small, and passing it through
+     * would make the bound optional to anything that can produce one.
+     *
+     * The pixels are wasted even when honest: the mark is drawn into a
+     * 140 × 56 pt box, which nothing above a few hundred thousand pixels can
+     * reach a reader through.
+     */
+    const declared = declaredImageSize(input.branding.logo);
+    const drawable = declared !== null && declared.width * declared.height <= MAX_IMAGE_PIXELS;
+    if (!drawable) {
       issueLog?.warn(
         {
-          reason: 'undecodable_image',
+          reason: declared === null ? 'unreadable_image_header' : 'image_too_many_pixels',
           partner: input.branding?.partner_name ?? null,
-          bytes: input.branding?.logo?.length ?? 0,
-          err,
+          bytes: input.branding.logo.length,
+          width: declared?.width ?? null,
+          height: declared?.height ?? null,
+          max_pixels: MAX_IMAGE_PIXELS,
         },
-        'partner logo could not be drawn — rendering the cover without it',
+        'partner logo was not drawn — rendering the cover without it',
       );
     }
+    if (drawable)
+      try {
+        // Centered partner logo above the title, capped to a 140×56pt box. The
+        // firm's name is set in words directly below, so the mark itself carries
+        // no information a reader would otherwise miss — an artifact, not a
+        // figure needing alternative text that would only repeat the next line.
+        artifact(doc, () => {
+          doc.image(input.branding!.logo!, doc.page.width / 2 - 70, COVER_TITLE_TOP - 110, {
+            fit: [140, 56],
+            align: 'center',
+            valign: 'center',
+          });
+        });
+      } catch (err) {
+        /*
+         * Undecodable image bytes — render the cover without the logo, and say
+         * so, because nothing downstream of here can.
+         *
+         * This is the last of the ways a white-labelled report comes out with no
+         * mark on it. R155 named the other nine, all of them in
+         * `clients/partnerLogo.ts` where the bytes are fetched, for exactly the
+         * reason this one needs naming too: the URL is stored and looks fine,
+         * the render succeeds, and the PDF is simply missing the logo, so
+         * support has nothing to look at. The fetch sniffs the format before it
+         * stores anything, which is what makes the remaining case narrow — a
+         * truncated or malformed file whose first bytes are a good PNG header —
+         * and narrow is not the same as never, and a partner is watching every
+         * report they ship go out unbranded either way.
+         *
+         * A `warn` and not an `error`: the report is correct, complete and
+         * delivered. What it is missing is the firm's mark, which is a
+         * conversation with that firm rather than a page.
+         */
+        issueLog?.warn(
+          {
+            reason: 'undecodable_image',
+            partner: input.branding?.partner_name ?? null,
+            bytes: input.branding?.logo?.length ?? 0,
+            err,
+          },
+          'partner logo could not be drawn — rendering the cover without it',
+        );
+      }
   }
   doc.y = COVER_TITLE_TOP;
   // The document title proper. `Title` rather than `H1`: the section headings

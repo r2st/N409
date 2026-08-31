@@ -23,6 +23,7 @@
 import { isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
 import { isPrivateAddress, isPrivateIpv4, isPrivateIpv6 } from '../domain/privateAddress.js';
+import { MAX_IMAGE_PIXELS, declaredImageSize } from '@n409/shared';
 import { readCappedBytes } from './deadline.js';
 
 /*
@@ -129,6 +130,7 @@ export type LogoFailure =
   | 'too_large'
   | 'empty_body'
   | 'unsupported_format'
+  | 'too_many_pixels'
   | 'transport_error';
 
 export async function fetchPartnerLogo(
@@ -190,7 +192,35 @@ export async function fetchPartnerLogo(
     if (buf.length === 0) return give('empty_body');
     // PNG and JPEG are the only formats PDFKit can embed, so an SVG or a WebP
     // is a partner who needs telling rather than a fault.
-    return sniffImageKind(buf) ? buf : give('unsupported_format', { bytes: buf.length });
+    if (!sniffImageKind(buf)) return give('unsupported_format', { bytes: buf.length });
+    /*
+     * The tenth reason, and the only one that is not about the fetch (round
+     * 265, methodology M6).
+     *
+     * `MAX_LOGO_BYTES` above bounds what comes off the socket, and a PNG
+     * deflates its pixels, so it says nothing about what decoding this costs:
+     * a 995 KB file — inside that cap — can declare 16000 × 16000 RGBA and take
+     * `doc.image` to over 1.2 GB in one call. `renderReportPdf` catches a bad
+     * image; it cannot catch an OOM kill, which is what that is on this host.
+     *
+     * The render refuses the same bytes for the same reason, and both ends are
+     * deliberate rather than duplicated. This one is where the diagnosis lives:
+     * the nine reasons above exist because a partner watching their mark
+     * silently stop appearing had nothing for support to look at, and a logo
+     * refused at render time leaves a line in a different service's log. It is
+     * also the earlier refusal — the bytes never cross the wire, so a fallback
+     * render in the API's own process never sees them.
+     */
+    const size = declaredImageSize(buf);
+    if (!size || size.width * size.height > MAX_IMAGE_PIXELS) {
+      return give('too_many_pixels', {
+        bytes: buf.length,
+        width: size?.width ?? null,
+        height: size?.height ?? null,
+        maxPixels: MAX_IMAGE_PIXELS,
+      });
+    }
+    return buf;
   } catch (err) {
     return give('transport_error', { err });
   }
