@@ -940,6 +940,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         await sendTransactionalEmail(
           { pool: deps.pool, transport: deps.transport, log, settings: deps.settings },
           {
+            valuationId: valuation.id,
             toUserId: valuation.user_id,
             toEmail: owner.email,
             recipientName: owner.first_name,

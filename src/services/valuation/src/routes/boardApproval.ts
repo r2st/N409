@@ -366,6 +366,7 @@ export function registerBoardApprovalRoutes(
       await sendTransactionalEmail(
         { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
         {
+          valuationId: valuation.id,
           toEmail: member.member_email,
           recipientName: member.member_name,
           templateKey: 'board_resolution_signoff',

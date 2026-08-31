@@ -430,6 +430,7 @@ export function registerMonitoringRoutes(
             await sendTransactionalEmail(
               { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
               {
+                valuationId: m.valuation_id,
                 toUserId: reviewer.id,
                 toEmail: reviewer.email,
                 recipientName: reviewer.first_name,

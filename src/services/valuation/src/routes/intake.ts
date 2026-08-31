@@ -195,6 +195,7 @@ export function registerIntakeRoutes(
     await sendTransactionalEmail(
       { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
       {
+        valuationId: valuation.id,
         toUserId: owner.id,
         toEmail: owner.email,
         recipientName: owner.first_name,

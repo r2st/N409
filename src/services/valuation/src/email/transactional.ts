@@ -40,6 +40,29 @@ export async function sendTransactionalEmail(
     settings?: SupportEmailSource;
   },
   input: {
+    /**
+     * The engagement this message is about, where there is one.
+     *
+     * Not decoration. `email_outbox.valuation_id` is a predicate, not just a
+     * column: `purgeOutbox`'s legal-hold clause reads `h.scope = 'valuation'
+     * AND h.reference_id = e.valuation_id`, so a hold placed over an
+     * engagement freezes exactly the outbox rows that name it. This function
+     * could not set the column — the field was absent from the type while
+     * `enqueueEmail` beneath it accepted one — so *every* transactional
+     * message the platform sends carried NULL, and a valuation-scoped hold
+     * froze none of them while the age sweep went on deleting them. That is
+     * the failure the comment above `frozen` calls "the one failure a legal
+     * hold exists to prevent", found once already on the user scope and left
+     * standing on this one.
+     *
+     * It is also the join key `buildPersonalDataExport` projects, so an Art.
+     * 15 export said `valuation_id: null` against every message a person had
+     * been sent about their own engagement.
+     *
+     * Omitted by the sends that genuinely are not about an engagement — a
+     * password reset, an invitation, a firm's invoice receipt.
+     */
+    valuationId?: string | null;
     toUserId?: string | null;
     toEmail: string;
     templateKey: string;

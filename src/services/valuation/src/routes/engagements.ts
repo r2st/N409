@@ -352,6 +352,7 @@ export function registerEngagementRoutes(
       await sendTransactionalEmail(
         { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
         {
+          valuationId: r.valuation_id,
           toUserId: r.assigned_analyst_id,
           toEmail: r.analyst_email,
           templateKey: 'engagement_overdue',
