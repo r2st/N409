@@ -31,7 +31,7 @@ import {
   type ResearchRegion,
   type ResearchTopic,
 } from '../domain/research.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { isRetiredNow, refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
 /**
@@ -174,6 +174,18 @@ export function registerResearchRoutes(app: FastifyInstance, deps: { pool: pg.Po
         record: { valuationId: valuation.id, name: `ai research (${def.label})` },
       },
     );
+
+    // `RESEARCH_TIMEOUT_MS` is 150 seconds, and the engagement `loadOps` read
+    // is that much older by the time this line runs — which is the window
+    // `refuseIfRetiredNow` was written for, in its own words: "a run is exactly
+    // the length of time in which a decision about a file gets made". Its doc
+    // names the two AI routes that write something of their own and were left
+    // on the old reading; market research is the third, reached by a different
+    // door. A row written past a withdrawal is not incidental to the request —
+    // the research tab renders it, the report's market section cites it, and
+    // retirement is reversible (R90), so it comes back with the engagement
+    // carrying an `ai` actor and nothing saying the file had been closed.
+    await refuseIfRetiredNow(deps.pool, valuation.id, 'accepting research runs');
 
     const row = await recordMarketResearch(deps.pool, {
       valuationId: valuation.id,
@@ -325,6 +337,17 @@ export function registerResearchRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const results: Array<{ topic: ResearchTopic; ok: boolean; error?: string }> = [];
     for (const def of RESEARCH_TOPIC_LIST) {
       if (def.acceptsSubject) continue;
+      // Asked per topic, and before the call rather than only inside it. Each
+      // `runOne` spends up to `RESEARCH_TIMEOUT_MS` — five topics is twelve
+      // minutes of one request — so a withdrawal landing partway through is the
+      // ordinary case here even more than on a single run. The guard inside
+      // `runOne` closes the window on a call already in flight; this one stops
+      // the remaining topics being spent on a file the firm has closed, and
+      // stops that refusal being flattened into a per-topic `ok: false` by the
+      // catch below. Every topic that did complete has already written its own
+      // `market_research_run` to the admin trail, so nothing is lost with the
+      // response body.
+      if (await isRetiredNow(deps.pool, id)) break;
       const facts: PublicResearchFacts = {
         ...base,
         region: def.regionScoped ? parsed.data.region : null,
@@ -347,6 +370,9 @@ export function registerResearchRoutes(app: FastifyInstance, deps: { pool: pg.Po
         results.push({ topic: def.topic, ok: false, error: message });
       }
     }
+    // The loop's break, raised as the refusal it is. A no-op on every run that
+    // reached the end.
+    await refuseIfRetiredNow(deps.pool, id, 'accepting research runs');
     return {
       results,
       succeeded: results.filter((r) => r.ok).length,

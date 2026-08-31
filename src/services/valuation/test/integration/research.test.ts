@@ -1,11 +1,12 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { migrate } from '../../src/db/migrate.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { newUlid } from '@n409/shared';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
+import { invalidateValuation } from '../../src/repos/valuations.js';
 
 const dbUp = await isDbAvailable();
 
@@ -19,6 +20,12 @@ interface StubState {
    */
   failWith: number | null;
   citations: Array<{ url: string; title?: string }>;
+  /**
+   * Run before the stub answers. The routes await this call, so it is the
+   * interleaving point: whatever it does has committed by the time the handler
+   * reaches the write.
+   */
+  onRequest: (() => Promise<void>) | null;
 }
 
 /** Stands in for POST /ai/v1/research so no test reaches a search provider. */
@@ -26,6 +33,7 @@ async function startAiStub(state: StubState) {
   const stub = Fastify({ logger: false });
   stub.post('/ai/v1/research', async (req, reply) => {
     state.requests.push(req.body as Record<string, unknown>);
+    if (state.onRequest) await state.onRequest();
     if (state.failWith !== null) {
       return reply.status(state.failWith).send({ detail: 'stubbed research outage' });
     }
@@ -64,6 +72,7 @@ describe.skipIf(!dbUp)('market research', () => {
     requests: [],
     failWith: null,
     citations: [{ url: 'https://example.com/sector-report', title: 'Sector report 2026' }],
+    onRequest: null,
   };
   let ops: Awaited<ReturnType<typeof seedUser>>;
   let client: Awaited<ReturnType<typeof seedUser>>;
@@ -303,6 +312,100 @@ describe.skipIf(!dbUp)('market research', () => {
     // Two: the profile and the overwrites, once for the run. Five topics ran,
     // so the per-topic form reads ten and this cannot pass vacuously.
     expect(factReads, `read the engagement's facts ${factReads} times for 5 topics`).toBe(2);
+  });
+
+  /**
+   * A withdrawal landing while the research call is out.
+   *
+   * `RESEARCH_TIMEOUT_MS` is 150 seconds and `refresh-all` spends it once per
+   * topic, so one press is up to twelve minutes of one request — which is the
+   * window `refuseIfRetiredNow` was written for, in its own words: "a run is
+   * exactly the length of time in which a decision about a file gets made". Its
+   * doc names the two AI routes that write something of their own and were left
+   * on the old reading; market research is the third, reached by a different
+   * door and guarded only at the top of the handler.
+   *
+   * A row written past the withdrawal is not incidental to the request: the
+   * research tab renders it and the report's market section cites it, and
+   * retirement is reversible (R90), so it comes back with the engagement.
+   *
+   * Driven through the AI stub, which archives the engagement while answering,
+   * so the ordering is enforced rather than slept on.
+   */
+  describe('an engagement withdrawn mid-run', () => {
+    let withdrawnId: string;
+
+    const rowsFor = async (id: string): Promise<number> => {
+      const { rows } = await pool.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM market_research WHERE valuation_id = $1',
+        [id],
+      );
+      return rows[0]!.n;
+    };
+
+    const archiveOnce = (id: string) => {
+      let done = false;
+      return async () => {
+        if (done) return;
+        done = true;
+        await pool.query('UPDATE valuations SET archived_at = now() WHERE id = $1', [id]);
+        // What every archive writer in the service does beside the UPDATE.
+        // Without it this drives the 5s read-through cache, not the guard.
+        invalidateValuation(id);
+      };
+    };
+
+    beforeEach(async () => {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: '409a', company_name: 'Withdrawn Research Co' },
+      });
+      expect(created.statusCode, created.body).toBe(201);
+      withdrawnId = created.json().valuation.id as string;
+      // The public fact every topic's question is built from.
+      const profile = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${withdrawnId}/company-profile`,
+        headers: authHeader(ops.token),
+        payload: { industry: 'industrial robotics' },
+      });
+      expect(profile.statusCode, profile.body).toBe(200);
+    });
+
+    afterEach(() => {
+      state.onRequest = null;
+    });
+
+    it('refuses the single run rather than storing research against a closed file', async () => {
+      state.onRequest = archiveOnce(withdrawnId);
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${withdrawnId}/research`,
+        headers: authHeader(ops.token),
+        payload: { topic: 'industry_overview' },
+      });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(await rowsFor(withdrawnId)).toBe(0);
+    });
+
+    it('stops refresh-all instead of spending the remaining topics on it', async () => {
+      state.onRequest = archiveOnce(withdrawnId);
+      const before = state.requests.length;
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${withdrawnId}/research/refresh-all`,
+        headers: authHeader(ops.token),
+        payload: { region: 'un' },
+      });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(await rowsFor(withdrawnId)).toBe(0);
+      // One AI call spent — the one already in flight when the withdrawal
+      // landed — and not the four behind it.
+      const asked = state.requests.slice(before).filter((r) => typeof r.query === 'string').length;
+      expect(asked).toBe(1);
+    });
   });
 
   it('threads grounded research into the narrative agent’s payload', async () => {
