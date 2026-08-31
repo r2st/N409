@@ -24,6 +24,9 @@ import {
 } from '../repos/debtInstruments.js';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
 import { refuseIfMeasurementRetired, refuseIfRetired } from '../domain/retiredEngagement.js';
+import { recordEvent } from '../events/record.js';
+import { withTransaction } from '../db/pool.js';
+import type { ValuationEventType } from '../domain/auditTrail.js';
 import { findValuationById } from '../repos/valuations.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
@@ -121,6 +124,28 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   };
 
   /**
+   * Put a measurement change on the engagement's audit spine. The fund side's
+   * `recordFundEvent` twin — see it for why this surface had none.
+   */
+  const recordInstrumentEvent = async (
+    instrument: { valuation_id: string | null },
+    type: ValuationEventType,
+    principalId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> => {
+    if (instrument.valuation_id === null) return;
+    const valuationId = instrument.valuation_id;
+    await withTransaction(deps.pool, (client) =>
+      recordEvent(client, {
+        valuationId,
+        type,
+        actor: { actorType: 'human', actorId: principalId, source: 'api' },
+        payload,
+      }),
+    );
+  };
+
+  /**
    * `loadInstrument` for the routes that then write something. The instrument
    * is addressed by its own id, so the retirement sweep — which drives every
    * mutating route under a valuation id — has never been able to see this
@@ -188,14 +213,19 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   });
 
   app.put('/api/v1/debt/instruments/:id', { preHandler: app.authenticate }, async (req) => {
-    requireOps(requirePrincipal(req));
+    const principal = requirePrincipal(req);
+    requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadInstrumentForWrite(id, 'accepting changes');
+    const existing = await loadInstrumentForWrite(id, 'accepting changes');
     const parsed = UpdateBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid update', parsed.error);
     const instrument = await updateInstrument(deps.pool, id, {
       name: parsed.data.name,
       params: parsed.data.params,
+    });
+    await recordInstrumentEvent(existing, 'debt_instrument_updated', principal.id, {
+      instrument_id: id,
+      changes: parsed.data,
     });
     return { instrument };
   });
@@ -205,9 +235,10 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
    * report renderer can find it (0109). Detach with `valuation_id: null`.
    */
   app.put('/api/v1/debt/instruments/:id/valuation', { preHandler: app.authenticate }, async (req) => {
-    requireOps(requirePrincipal(req));
+    const principal = requirePrincipal(req);
+    requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadInstrument(id);
+    const existing = await loadInstrument(id);
     const parsed = LinkBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid link', parsed.error);
 
@@ -227,6 +258,26 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
 
     try {
       const instrument = await linkInstrumentToValuation(deps.pool, id, valuationId);
+      // Both ends of the move, each on its own engagement's trail — see the
+      // fund link for why the detach is the sharper of the two.
+      if (existing.valuation_id !== null && existing.valuation_id !== valuationId) {
+        await recordInstrumentEvent(existing, 'measurement_subject_unlinked', principal.id, {
+          subject: 'debt',
+          instrument_id: id,
+          instrument_name: existing.name,
+        });
+      }
+      if (
+        instrument &&
+        instrument.valuation_id !== null &&
+        instrument.valuation_id !== existing.valuation_id
+      ) {
+        await recordInstrumentEvent(instrument, 'measurement_subject_linked', principal.id, {
+          subject: 'debt',
+          instrument_id: id,
+          instrument_name: instrument.name,
+        });
+      }
       return { instrument };
     } catch (err) {
       if (err instanceof MeasurementLinkConflict) throw problems.conflict(err.message);
@@ -235,9 +286,10 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   });
 
   app.put('/api/v1/debt/instruments/:id/credit-terms', { preHandler: app.authenticate }, async (req) => {
-    requireOps(requirePrincipal(req));
+    const principal = requirePrincipal(req);
+    requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadInstrumentForWrite(id, 'accepting changes to its credit terms');
+    const existing = await loadInstrumentForWrite(id, 'accepting changes to its credit terms');
     const parsed = CreditTermsBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid credit terms', parsed.error);
     const b = parsed.data;
@@ -247,6 +299,10 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       spread: b.spread ?? null,
       seniority: b.seniority,
       secured: b.secured,
+    });
+    await recordInstrumentEvent(existing, 'debt_credit_terms_updated', principal.id, {
+      instrument_id: id,
+      changes: b,
     });
     return { credit_terms: creditTerms };
   });
@@ -290,6 +346,12 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       result,
       fairValue: requireStorableFigure(extractFairValue(result), 'Fair value', DEBT_FAIR_VALUE),
       createdBy: principal.id,
+    });
+    await recordInstrumentEvent(instrument, 'debt_valuation_recorded', principal.id, {
+      instrument_id: id,
+      valuation_id: valuation.id,
+      valuation_date: valuation.valuation_date,
+      fair_value: valuation.fair_value,
     });
     return { valuation, result };
   });

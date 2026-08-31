@@ -33,6 +33,9 @@ import { MeasurementLinkConflict } from '../domain/measurementLink.js';
 import { findValuationById } from '../repos/valuations.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { refuseIfMeasurementRetired, refuseIfRetired } from '../domain/retiredEngagement.js';
+import { recordEvent } from '../events/record.js';
+import { withTransaction } from '../db/pool.js';
+import type { ValuationEventType } from '../domain/auditTrail.js';
 
 /**
  * ASC 820 fund-holdings valuation (feature: ASC 820 Fund Holdings).
@@ -193,6 +196,34 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   };
 
   /**
+   * Put a measurement change on the engagement's audit spine.
+   *
+   * Only when the portfolio is linked: an unlinked one is an ops sketch with no
+   * engagement to write to, and `valuation_events.valuation_id` is NOT NULL.
+   * Every one of these moves the NAV `domain/navExhibits.ts` prints — it sums
+   * the *stored* marks at render time — so the deliverable's figure could
+   * change with nothing on the trail saying who changed it. The route surface
+   * is keyed by fund id, which is why the spine never saw any of it.
+   */
+  const recordFundEvent = async (
+    fund: { valuation_id: string | null },
+    type: ValuationEventType,
+    principal: Principal,
+    payload: Record<string, unknown>,
+  ): Promise<void> => {
+    if (fund.valuation_id === null) return;
+    const valuationId = fund.valuation_id;
+    await withTransaction(deps.pool, (client) =>
+      recordEvent(client, {
+        valuationId,
+        type,
+        actor: { actorType: 'human', actorId: principal.id, source: 'api' },
+        payload,
+      }),
+    );
+  };
+
+  /**
    * `loadFund` for the routes that then write something.
    *
    * The portfolio is addressed by its own id, so nothing about the request
@@ -292,9 +323,10 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
 
   // ── Positions ────────────────────────────────────────────────────────────
   app.post('/api/v1/funds/:id/positions', { preHandler: app.authenticate }, async (req, reply) => {
-    requireOps(requirePrincipal(req));
+    const principal = requirePrincipal(req);
+    requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadFundForWrite(id, 'accepting new holdings');
+    const fund = await loadFundForWrite(id, 'accepting new holdings');
     const parsed = PositionBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid position', parsed.error);
     const b = parsed.data;
@@ -306,13 +338,21 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       costBasis: b.cost_basis,
       markMethod: b.mark_method,
     });
+    await recordFundEvent(fund, 'fund_position_added', principal, {
+      fund_id: id,
+      position_id: position.id,
+      company_name: position.company_name,
+      quantity: position.quantity,
+      cost_basis: position.cost_basis,
+    });
     return reply.status(201).send({ position });
   });
 
   app.patch('/api/v1/funds/:id/positions/:pid', { preHandler: app.authenticate }, async (req) => {
-    requireOps(requirePrincipal(req));
+    const principal = requirePrincipal(req);
+    requireOps(principal);
     const { id, pid } = req.params as { id: string; pid: string };
-    await loadFundForWrite(id, 'accepting changes to its holdings');
+    const fund = await loadFundForWrite(id, 'accepting changes to its holdings');
     if (!isUlid(pid) || !(await findPosition(deps.pool, id, pid))) throw problems.notFound();
     const parsed = PositionPatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid position', parsed.error);
@@ -325,6 +365,11 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       markMethod: b.mark_method,
     });
     if (!position) throw problems.notFound();
+    await recordFundEvent(fund, 'fund_position_updated', principal, {
+      fund_id: id,
+      position_id: pid,
+      changes: b,
+    });
     return { position };
   });
 
@@ -340,8 +385,17 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   app.delete('/api/v1/funds/:id/positions/:pid', { preHandler: app.authenticate }, async (req, reply) => {
     requireOps(requirePrincipal(req));
     const { id, pid } = req.params as { id: string; pid: string };
-    await loadFund(id);
-    if (!isUlid(pid) || !(await deletePosition(deps.pool, id, pid))) throw problems.notFound();
+    const fund = await loadFund(id);
+    // Read before the delete: the row is what the event has to name, and after
+    // the cascade there is nothing left to name it with.
+    const position = isUlid(pid) ? await findPosition(deps.pool, id, pid) : null;
+    if (!position || !(await deletePosition(deps.pool, id, pid))) throw problems.notFound();
+    await recordFundEvent(fund, 'fund_position_removed', requirePrincipal(req), {
+      fund_id: id,
+      position_id: pid,
+      company_name: position.company_name,
+      cost_basis: position.cost_basis,
+    });
     return reply.status(204).send();
   });
 
@@ -359,7 +413,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id, pid } = req.params as { id: string; pid: string };
-    await loadFundForWrite(id, 'accepting new marks');
+    const fund = await loadFundForWrite(id, 'accepting new marks');
     const position = await findPosition(deps.pool, id, pid);
     if (!position) throw problems.notFound();
     const parsed = MarkBody.safeParse(req.body);
@@ -394,6 +448,15 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       level: marked.level,
       inputs,
       createdBy: principal.id,
+    });
+    await recordFundEvent(fund, 'fund_mark_recorded', principal, {
+      fund_id: id,
+      position_id: pid,
+      company_name: position.company_name,
+      measurement_date: mark.measurement_date,
+      method: mark.method,
+      level: mark.level,
+      fair_value: mark.fair_value,
     });
     return reply.status(201).send({ mark });
   });
@@ -448,6 +511,17 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
           inputs: { model_value: rolled.new_fair_value, rolled_from: prior.id, roll_method: b.method },
           createdBy: principal.id,
         });
+        await recordFundEvent(fund, 'fund_mark_recorded', principal, {
+          fund_id: id,
+          position_id: pid,
+          company_name: position.company_name,
+          measurement_date: mark.measurement_date,
+          method: mark.method,
+          level: mark.level,
+          fair_value: mark.fair_value,
+          rolled_from: prior.id,
+          roll_method: b.method,
+        });
         return reply.status(201).send({ rollforward: rolled, mark });
       }
       return { rollforward: rolled };
@@ -488,9 +562,10 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
    * report renderer can find it (0109). Detach with `valuation_id: null`.
    */
   app.put('/api/v1/funds/:id/valuation', { preHandler: app.authenticate }, async (req) => {
-    requireOps(requirePrincipal(req));
+    const principal = requirePrincipal(req);
+    requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadFund(id);
+    const existing = await loadFund(id);
     const parsed = LinkBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid link', parsed.error);
 
@@ -516,6 +591,24 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
 
     try {
       const fund = await linkFundToValuation(deps.pool, id, valuationId);
+      // Both ends of the move, and each on its own engagement's trail. A
+      // detach is the sharper of the two: it takes away the whole data source
+      // the report renders its NAV schedule from, and it is the step `DELETE
+      // /funds/:id` tells a caller to take before discarding the marks.
+      if (existing.valuation_id !== null && existing.valuation_id !== valuationId) {
+        await recordFundEvent(existing, 'measurement_subject_unlinked', principal, {
+          subject: 'fund',
+          fund_id: id,
+          fund_name: existing.name,
+        });
+      }
+      if (fund && fund.valuation_id !== null && fund.valuation_id !== existing.valuation_id) {
+        await recordFundEvent(fund, 'measurement_subject_linked', principal, {
+          subject: 'fund',
+          fund_id: id,
+          fund_name: fund.name,
+        });
+      }
       return { fund };
     } catch (err) {
       if (err instanceof MeasurementLinkConflict) throw problems.conflict(err.message);
@@ -532,9 +625,10 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   });
 
   app.put('/api/v1/funds/:id/lp-terms', { preHandler: app.authenticate }, async (req) => {
-    requireOps(requirePrincipal(req));
+    const principal = requirePrincipal(req);
+    requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadFundForWrite(id, 'accepting changes to its LP terms');
+    const fund = await loadFundForWrite(id, 'accepting changes to its LP terms');
     const parsed = LpTermsBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid LP terms', parsed.error);
     const b = parsed.data;
@@ -548,6 +642,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       managementFeesPaid: b.management_fees_paid,
       gpDistributionsToDate: b.gp_distributions_to_date,
     });
+    await recordFundEvent(fund, 'fund_lp_terms_updated', principal, { fund_id: id, changes: b });
     return { lp_terms: lpTerms };
   });
 

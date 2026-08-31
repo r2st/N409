@@ -135,6 +135,42 @@ export const EVENT_CATALOG = {
   revenue_change: D('Revenue changed materially', 'data', 'critical'),
   workbook_updated: D('Workbook edited', 'data', 'notice'),
 
+  /*
+   * The ASC 820 measurement surface (round 279, methodology M3).
+   *
+   * `fund` and `debt` are two of the fifteen valuation kinds, and their whole
+   * working record lived off the spine. A fund portfolio and a debt instrument
+   * are addressed by their own ids — 0086/0087 built both as standalone ops
+   * tools, 0110 linked them to an engagement afterwards — so neither route file
+   * ever wrote a `valuation_events` row, and the engagement panel's activity
+   * feed for a fund engagement was empty of everything the analyst had done to
+   * it. `domain/navExhibits.ts` renders the NAV schedule by summing the stored
+   * marks at render time, so every one of these changes the figure the
+   * deliverable prints, with nothing on the trail to say who changed it or when.
+   *
+   * `critical`, alongside `cap_table_change` and `transaction_updated`, for the
+   * reason the severity is defined: these are the events an auditor must be
+   * able to explain, because they move the concluded value. `internal` like the
+   * rest of the working data — the client is shown the report, not the marks.
+   *
+   * Written only when the subject is linked to an engagement. An unlinked
+   * portfolio is an ops sketch with no engagement to write to, and
+   * `valuation_events.valuation_id` is NOT NULL.
+   */
+  fund_position_added: D('Fund holding added', 'data', 'critical'),
+  fund_position_updated: D('Fund holding updated', 'data', 'critical'),
+  fund_position_removed: D('Fund holding removed', 'data', 'critical'),
+  fund_mark_recorded: D('Fund holding marked to fair value', 'data', 'critical'),
+  fund_lp_terms_updated: D('LP economic terms updated', 'data', 'critical'),
+  debt_instrument_updated: D('Debt instrument terms updated', 'data', 'critical'),
+  debt_credit_terms_updated: D('Credit terms updated', 'data', 'critical'),
+  debt_valuation_recorded: D('Debt instrument priced', 'data', 'critical'),
+  // The link is the sharpest of the set in one direction: detaching removes the
+  // whole data source the report renders its schedule from, and it is the step
+  // `DELETE /funds/:id` tells a caller to take before discarding the marks.
+  measurement_subject_linked: D('Measurement subject linked', 'data', 'critical'),
+  measurement_subject_unlinked: D('Measurement subject detached', 'data', 'critical'),
+
   // ── Analysis & automation ───────────────────────────────────────────────
   calculation_completed: D('Calculation completed', 'analysis', 'critical', 'client'),
   ai_job_completed: D('AI job completed', 'analysis', 'info'),
