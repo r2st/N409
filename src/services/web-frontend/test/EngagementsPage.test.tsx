@@ -106,6 +106,31 @@ describe('EngagementsPage', () => {
     expect(screen.queryByTestId('list-truncated')).not.toBeInTheDocument();
   });
 
+  /**
+   * An assignment is checked once, when it is made, and can go bad afterwards:
+   * the account is closed, suspended or moved off the operations team. The
+   * overdue sweep then chases nobody about the engagement, and until R279 the
+   * board still printed the address as though somebody were on it. Nulling the
+   * email out of the join would have read as "Unassigned" and hidden the
+   * reassignment that needs doing, so the card names the analyst and says the
+   * assignment is dead.
+   */
+  it('marks an assignment the overdue sweep will not act on', async () => {
+    mockApi([{ ...onTrack, analyst_active: false }]);
+    renderPage();
+    await screen.findByText('Acme Robotics');
+    expect(within(column('Intake')).getByText('ana@n409.example (inactive)')).toBeInTheDocument();
+  });
+
+  it('leaves a live assignment unmarked', async () => {
+    mockApi([{ ...onTrack, analyst_active: true }]);
+    renderPage();
+    await screen.findByText('Acme Robotics');
+    const card = within(column('Intake'));
+    expect(card.getByText('ana@n409.example')).toBeInTheDocument();
+    expect(card.queryByText(/inactive/)).not.toBeInTheDocument();
+  });
+
   it('files each engagement under its current stage', async () => {
     mockApi([onTrack, late]);
     renderPage();
