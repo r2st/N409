@@ -106,6 +106,59 @@ export async function retireValuations(pool: pg.Pool, ids: readonly string[]): P
   }
 }
 
+/**
+ * Give a restored engagement back the SLA clock it did not spend.
+ *
+ * `engagements.stage_entered_at` is when the current stage began, and it is
+ * read by three things: the pipeline board's colour, `stageDurations`, and the
+ * overdue sweep that emails the assigned analyst. Retirement stops none of
+ * them — it moves `archived_at` and nothing else, which is the same fact that
+ * produced the "board and sweep drop retired engagements" filter: the readers
+ * are filtered, the clock is not.
+ *
+ * So the clock ran for the whole withdrawal. An engagement retired in Analysis
+ * and restored three months later — which is exactly what R90 built restore
+ * for, a retention policy set too aggressively or a mistyped id — comes back
+ * instantly red, and the next sweep tells its analyst the stage "has been in
+ * the Analysis stage for 2160h, past its 72h SLA". That sentence is false in
+ * the way that matters: no work was owed for any of those hours, because the
+ * firm had withdrawn the file and every write to it was refused.
+ *
+ * Shifting the start forward by the length of the withdrawal is the whole fix.
+ * It is not a reset: an engagement that was already two days into a three-day
+ * stage when it was retired comes back two days in, which is true. Elapsed
+ * after the restore works out to `archived_at - stage_entered_at`, the time the
+ * stage was actually open for business.
+ *
+ * `stage_entered_at < archived_at` skips a stage entered after the withdrawal,
+ * which nothing should now be able to produce — the advance route refuses a
+ * retired engagement, and since R89 so does the panel view that creates one —
+ * and which would otherwise be pushed into the future by a repair meant to be
+ * neutral.
+ *
+ * The stage trail is deliberately left alone. `engagement_stage_history` records
+ * when a stage was entered, and that is a fact about the past that a restore
+ * does not change; rewriting `entered_at` to make the durations panel agree
+ * would falsify an append-only trail to tidy up a derived number. The panel
+ * shows wall-clock, which is what it has always shown.
+ */
+async function creditEngagementsForRetirement(
+  client: pg.PoolClient,
+  restored: readonly { id: string; was_archived_at: Date }[],
+): Promise<void> {
+  if (restored.length === 0) return;
+  await client.query(
+    `UPDATE engagements e
+        SET stage_entered_at = e.stage_entered_at + (now() - r.was_archived_at),
+            updated_at = now()
+       FROM (SELECT unnest($1::ulid[]) AS valuation_id,
+                    unnest($2::timestamptz[]) AS was_archived_at) r
+      WHERE e.valuation_id = r.valuation_id
+        AND e.stage_entered_at < r.was_archived_at`,
+    [restored.map((r) => r.id), restored.map((r) => r.was_archived_at)],
+  );
+}
+
 export interface RestoreResult {
   /** Ids that existed, were archived, and are now live again. */
   restored: string[];
@@ -167,19 +220,31 @@ export async function restoreValuations(pool: pg.Pool, ids: readonly string[]): 
     // open on a retired engagement, so somebody can be sitting on the form
     // while an admin restores it, and their next save would have gone through
     // on a matching ETag against a name they never saw change.
-    const { rows: taken } = await client.query<{ id: string }>(
-      `UPDATE valuations
+    // The CTE carries the *old* `archived_at` out of the statement that clears
+    // it — RETURNING sees the new row, and the SLA repair below needs to know
+    // how long the engagement was withdrawn. `FOR UPDATE` makes the pair
+    // atomic against a second restore of the same id.
+    const { rows: taken } = await client.query<{ id: string; was_archived_at: Date }>(
+      `WITH picked AS (
+         SELECT id, archived_at FROM valuations
+          WHERE id = ANY($1::ulid[]) AND archived_at IS NOT NULL
+          FOR UPDATE
+       )
+       UPDATE valuations v
           SET archived_at = NULL,
               version = version + 1,
               company_name = CASE
-                WHEN company_name LIKE ('%' || $2::text)
-                  THEN left(company_name, length(company_name) - length($2::text))
-                ELSE company_name
+                WHEN v.company_name LIKE ('%' || $2::text)
+                  THEN left(v.company_name, length(v.company_name) - length($2::text))
+                ELSE v.company_name
               END
-        WHERE id = ANY($1::ulid[]) AND archived_at IS NOT NULL
-        RETURNING id`,
+         FROM picked p
+        WHERE v.id = p.id
+        RETURNING v.id, p.archived_at AS was_archived_at`,
       [found, RETIRED_SUFFIX],
     );
+
+    await creditEngagementsForRetirement(client, taken);
     await client.query('COMMIT');
     const restored = taken.map((r) => r.id);
     for (const id of restored) invalidateValuation(id);
