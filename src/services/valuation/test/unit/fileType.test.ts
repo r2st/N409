@@ -118,3 +118,52 @@ describe('every upload rejection says what to do next', () => {
     expect(check.reason).toMatch(/\.xlsx/);
   });
 });
+
+/**
+ * The extension that is checked has to be the extension that is stored.
+ *
+ * `safeFilename` drops the bidi controls and collapses C0/C1 on the way to
+ * storage, so any of them placed inside the extension names a type that exists
+ * for exactly the length of this check and then evaporates. The name the
+ * analyst reads, the name the download header carries, and — the one that
+ * matters — the name `EXTRACTABLE_EXTENSIONS` reads to decide whether a
+ * document's bytes are shipped to the AI service are all the *stored* one.
+ */
+describe('an extension that only exists before the name is stored', () => {
+  // U+200E, a left-to-right mark: no width, no glyph, and it used to make
+  // `csv` a type nothing had an opinion about.
+  const LRM = '\u200E';
+  // U+202E, the override; the classic spoof, here inside the extension.
+  const RLO = '\u202E';
+
+  it.each([
+    ['a zip', ZIP, `cap-table.cs${LRM}v`],
+    ['a PDF', PDF, `cap-table.c${RLO}sv`],
+    ['a NUL-carrying binary', buf([0x00, 0x01, 0x02, 0x03]), `cap-table.csv${LRM}`],
+  ])('refuses %s hiding behind a .csv spelled with a control', (_label, bytes, name) => {
+    const check = checkUploadType(name, bytes);
+    expect(check.ok).toBe(false);
+    // The reason names `.csv` — the extension the file is stored under — and
+    // not the unspellable one that arrived.
+    expect(check.reason).toContain('.csv');
+    for (const control of [LRM, RLO]) expect(check.reason).not.toContain(control);
+  });
+
+  // The C0 half of the same scrub: a control is replaced with '_', so
+  // `report.pd\x01f` is stored as `report.pd_f` — still not `pdf`, and still
+  // not a name whose bytes were ever checked against one.
+  it('refuses a web page behind a .txt spelled with a control', () => {
+    const check = checkUploadType(`notes.tx${LRM}t`, HTML);
+    expect(check.ok).toBe(false);
+    expect(check.sniffed).toBe('html');
+  });
+
+  // The other direction: the scrub must not invent a mismatch. A name whose
+  // controls sit outside the extension keeps the extension it always had.
+  it('leaves an honest upload alone', () => {
+    expect(checkUploadType(`Q3${LRM} notes.csv`, CSV).ok).toBe(true);
+    expect(checkUploadType(`${RLO}cap table.xlsx`, ZIP).ok).toBe(true);
+    // A path from an old Windows client: `basename` first, same as storage.
+    expect(checkUploadType('C:\\Users\\me\\cap table.xlsx', ZIP).ok).toBe(true);
+  });
+});

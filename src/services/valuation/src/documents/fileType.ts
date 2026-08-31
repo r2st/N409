@@ -7,6 +7,8 @@
  * It is not antivirus; it closes the "declared type is a lie" gap cheaply.
  */
 
+import { safeFilename } from './filename.js';
+
 export type SniffedCategory =
   'pdf' | 'png' | 'jpeg' | 'gif' | 'zip' | 'html' | 'executable' | 'text' | 'unknown';
 
@@ -139,9 +141,38 @@ export const EXTENSION_CATEGORIES: Record<string, SniffedCategory[]> = {
   json: ['text'],
 };
 
+/**
+ * The extension of the name this file will be *stored* under.
+ *
+ * `safeFilename` rather than the string that arrived, and that is the whole
+ * point: the two differ, and every check below is written about the first
+ * while the upload routes used to hand it the second.
+ *
+ * A filename's invisible characters are dropped on the way to storage — the
+ * bidi controls outright, C0/C1 collapsed to `_` — so a control placed *inside
+ * the extension* is an extension that exists only for the length of this
+ * check:
+ *
+ *     "cap-table.cs\u200Ev"  →  extension "cs\u200ev", which is in no table
+ *                               →  unknown, and unknown admits any content
+ *                                  that is not a program or a web page
+ *                            →  stored as "cap-table.csv"
+ *
+ * and a `.csv` is one of the eight extensions `EXTRACTABLE_EXTENSIONS` ships
+ * to the AI service, chosen off the stored name. So the arrangement sent a
+ * zip, a PDF or a NUL-carrying binary down the one path whose gate exists to
+ * say that a `.csv` must contain text. The same trick reaches `.pdf`, `.xlsx`
+ * and the rest of the table from the other direction, since an unknown
+ * extension is the weakest answer this function gives.
+ *
+ * Scrubbing here rather than at the two call sites so a third way to upload a
+ * file cannot reintroduce it, and so the `reason` strings name the extension
+ * the analyst will see in the document list.
+ */
 function extensionOf(filename: string): string {
-  const dot = filename.lastIndexOf('.');
-  return dot >= 0 ? filename.slice(dot + 1).toLowerCase() : '';
+  const stored = safeFilename(filename);
+  const dot = stored.lastIndexOf('.');
+  return dot >= 0 ? stored.slice(dot + 1).toLowerCase() : '';
 }
 
 export interface UploadTypeCheck {

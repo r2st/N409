@@ -53,6 +53,7 @@ import { deliverablePdf } from './reports.js';
 import { MAX_DOCUMENT_BYTES, rethrowRejectedUpload, storeDocument } from './documents.js';
 import type { ScanPolicy } from '../documents/virusScan.js';
 import { checkUploadType } from '../documents/fileType.js';
+import { safeFilename } from '../documents/filename.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import { cursorParam, decodeCursor, pageParam } from '../domain/pagination.js';
@@ -1000,7 +1001,7 @@ export function registerPartnerApiRoutes(
       const typeCheck = checkUploadType(parsed.data.filename, buffer);
       if (!typeCheck.ok) {
         throw problems.unprocessable(`Rejected upload: ${typeCheck.reason}`, {
-          filename: parsed.data.filename,
+          filename: safeFilename(parsed.data.filename),
           sniffed: typeCheck.sniffed,
         });
       }
