@@ -256,7 +256,23 @@ async function deliverTransitionMessages(
             [valuation.id],
           )
           .then((r) => r.rows[0]?.valuation_date ?? null)
-          .catch(() => null),
+          /*
+           * Swallowed on purpose — a template variable is not worth failing a
+           * state transition's mail over — but not silently (round 267, M11).
+           * `null` here and "this engagement has no valuation date on file"
+           * are the same value, and the consequence reaches a client: a
+           * white-label template naming `{{valuation_date}}` goes out with a
+           * blank where the date should be, and the send itself succeeds, so
+           * nothing downstream has a reason to look. The store beside this read
+           * logs its own failures; this raw query had nobody.
+           */
+          .catch((err: unknown) => {
+            deps.log?.warn(
+              { err, valuationId: valuation.id },
+              'valuation date could not be read — email templates naming it render blank',
+            );
+            return null;
+          }),
         deps.settings?.get('support_email').catch(() => null) ?? null,
       ])
     : [null, null];

@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isUlid, logFailure, problems } from '@n409/shared';
 import { canReadReport, canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import {
   AI_PIPELINES,
@@ -1162,7 +1162,22 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     // request over — the issuer name and the operator's own list still travel —
     // but it does change what gets struck, so the response says how many
     // entities were actually applied rather than letting the caller assume.
-    const client = await findUserById(deps.pool, valuation.user_id).catch(() => null);
+    //
+    // And it is logged (round 267, methodology M11). The redactor strikes only
+    // what it is told, so a lookup that failed leaves the engagement owner's
+    // name standing in material an operator is about to treat as anonymized —
+    // and the only signal of it was a count on a 200 response, which is a
+    // number nobody has an expectation for. `logFailure` picks the level: a
+    // busy pool is a blip, a query that cannot run is not going to start.
+    const client = await findUserById(deps.pool, valuation.user_id).catch((err: unknown) => {
+      logFailure(
+        deps.log,
+        err,
+        { valuationId: valuation.id },
+        'engagement contact could not be read — their name will not be struck from the anonymized material',
+      );
+      return null;
+    });
     const clientName = [client?.first_name, client?.last_name].filter(Boolean).join(' ').trim();
 
     const companyNames = [

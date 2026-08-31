@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { logUnretried, problems } from '@n409/shared';
+import { logFailure, logUnretried, problems } from '@n409/shared';
 import { randomBytes } from 'node:crypto';
 import { hashPassword, verifyPasswordOrDecoy } from '../auth/password.js';
 import { verifyReauthPassword } from '../auth/reauth.js';
@@ -533,8 +533,35 @@ export function registerAuthRoutes(
   });
 
   // Public: lets the SPA know which login methods to offer.
-  app.get('/api/v1/auth/providers', async () => {
-    const saml = await getSamlConfig(deps.pool).catch(() => null);
+  app.get('/api/v1/auth/providers', async (req) => {
+    /*
+     * A read that failed and a tenant with no SSO are the same answer here
+     * (round 267, methodology M11).
+     *
+     * The catch is right: this route is the login screen's first call, and a
+     * 500 from it leaves a visitor with no form at all rather than with the
+     * password box that still works. What it must not be is unrecorded.
+     * `saml: false` is not "we could not tell" — the SPA reads it as a fact and
+     * draws no SSO button, so an organisation whose people sign in *only*
+     * through their IdP is shown a password field for a password they were
+     * never issued, and every one of them lands in support instead. Every other
+     * trace of that is absent by construction: nothing throws, the request is a
+     * 200, and the access log records a successful call.
+     *
+     * `logFailure` rather than a hand-picked level, because the two causes
+     * differ in exactly the way it splits on: a busy pool is a blip the next
+     * poll clears, and a broken query or a missing column is not going to fix
+     * itself and is worth waking somebody for.
+     */
+    const saml = await getSamlConfig(deps.pool).catch((err: unknown) => {
+      logFailure(
+        req.log,
+        err,
+        {},
+        'could not read the SAML configuration — SSO omitted from the login options',
+      );
+      return null;
+    });
     return {
       password: true,
       google: Boolean(deps.google),
