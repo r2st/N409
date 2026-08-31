@@ -26,6 +26,7 @@ import {
   listMarks,
   listPositions,
   lockFund,
+  lockPosition,
   updateFund,
   updatePosition,
   upsertLpTerms,
@@ -542,6 +543,11 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const marked = nav.positions[0]!;
     const mark = await withTransaction(deps.pool, async (client) => {
       const live = await fundForWriteIn(client, id, 'accepting new marks');
+      // And the holding itself, which the copy above was read from before the
+      // engine call. `fund_marks.position_id` is a foreign key, so a holding
+      // deleted in that window turned the INSERT into a 500 rather than into
+      // the 404 the id had earned. See `lockPosition`.
+      if (!(await lockPosition(client, id, pid))) throw problems.notFound();
       const recorded = await createMark(client, {
         positionId: pid,
         measurementDate: b.measurement_date,
@@ -613,6 +619,8 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
         await refuseIfSubjectRetired(deps.pool, fund, 'accepting new marks');
         const mark = await withTransaction(deps.pool, async (client) => {
           const live = await fundForWriteIn(client, id, 'accepting new marks');
+          // The holding too, for the reason the mark route above gives.
+          if (!(await lockPosition(client, id, pid))) throw problems.notFound();
           const recorded = await createMark(client, {
             positionId: pid,
             measurementDate: b.measurement_date ?? todayLocal(),

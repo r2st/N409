@@ -243,6 +243,42 @@ export async function findPosition(
   return rows[0] ?? null;
 }
 
+/**
+ * The holding, held against deletion for the rest of the transaction.
+ *
+ * For the two routes that write a `fund_marks` row after an engine round trip.
+ * `fund_marks.position_id` is a NOT NULL foreign key (0086) and the value they
+ * INSERT comes from a copy read on the pool *before* the call — so a `DELETE
+ * /funds/:id/positions/:pid` landing inside the call left the INSERT raising
+ * 23503. That is not a SQLSTATE `databaseUnavailableReason` recognises, so it
+ * reached the caller as `urn:n409:problem:internal`: a 500 telling somebody the
+ * server is broken, with catalogued advice to retry a request that can never
+ * succeed, and an `alert: true` page for two people editing one portfolio.
+ *
+ * `FOR KEY SHARE` rather than `FOR SHARE` or `FOR UPDATE`, and the difference
+ * matters here: it is the lock the foreign-key check itself takes, so it says
+ * exactly what this needs — the key must not disappear — while leaving two
+ * concurrent marks on the same holding free to proceed. It conflicts with the
+ * `FOR UPDATE` a DELETE takes, which is what makes the two orders the only two
+ * orders: either this transaction holds the row and the delete waits (the mark
+ * lands, then the holding goes and cascades it, and the removal event counts
+ * it), or the delete commits first and this reads back nothing and 404s.
+ *
+ * Scoped by `fund_id` like every other position query here, for the reason
+ * `deletePosition` gives.
+ */
+export async function lockPosition(
+  db: Queryable,
+  fundId: string,
+  positionId: string,
+): Promise<FundPositionRow | null> {
+  const { rows } = await db.query<FundPositionRow>(
+    'SELECT * FROM fund_positions WHERE id = $1 AND fund_id = $2 FOR KEY SHARE',
+    [positionId, fundId],
+  );
+  return rows[0] ?? null;
+}
+
 export async function createPosition(
   db: Queryable,
   input: {
