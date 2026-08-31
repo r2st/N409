@@ -122,24 +122,80 @@ describe.skipIf(!dbUp)('partner management API', () => {
     });
   });
 
+  describe('the name a tenant is known by', () => {
+    it('refuses a partner name that is only whitespace, on create and on patch', async () => {
+      /*
+       * The patch body two lines below `name` already carried this rule for the
+       * white-label email overrides, with a comment explaining it:
+       * `applyPartnerEmailTemplates` gates on `override.subject && override.body`,
+       * which a string of spaces passes. `name` is the label those emails are
+       * signed with — `publicPartnerName` resolves to it whenever white label is
+       * off or `brand_name` is blank — and it was `min(1)`, a character count.
+       * A firm saved that way had no name in the console, in the client-facing
+       * header, or on its mail.
+       */
+      const blank = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/partners',
+        headers: authHeader(admin.token),
+        payload: { name: '   ', key: 'blank-name-org' },
+      });
+      expect(blank.statusCode).toBe(422);
+      expect(blank.json().detail).toMatch(/whitespace/i);
+
+      const partner = await createPartner('Named Org', 'named-org');
+      const patched = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/partners/${partner.id}`,
+        headers: authHeader(admin.token),
+        payload: { name: '\t ' },
+      });
+      expect(patched.statusCode).toBe(422);
+    });
+  });
+
   describe('GET /partners/mine', () => {
     it('gives a partner user their own branding and nothing more', async () => {
+      /*
+       * The colour and the mark wait for the switch, and the name does not —
+       * `liveBrand`, which this route resolves through, returns
+       * `{ name: source.name, accent: null, logo_url: null }` while
+       * `white_label_enabled` is false. This test asserted the pre-`liveBrand`
+       * behaviour and had been failing on main; it now pins both sides of the
+       * switch, which is the part that was never covered.
+       */
       const partner = await createPartner('Mine Org', 'mine-org');
-      await ctx.app.inject({
+      const brand = await ctx.app.inject({
         method: 'PATCH',
         url: `/api/v1/partners/${partner.id}`,
         headers: authHeader(admin.token),
         payload: { brand_color: '#1f6f54', logo_url: 'https://mine.example/logo.png' },
       });
+      expect(brand.statusCode).toBe(200);
       const member = await seedUser(ctx, { roles: ['member'], partnerId: partner.id });
 
-      const res = await ctx.app.inject({
-        method: 'GET',
-        url: '/api/v1/partners/mine',
-        headers: authHeader(member.token),
+      const mine = () =>
+        ctx.app.inject({
+          method: 'GET',
+          url: '/api/v1/partners/mine',
+          headers: authHeader(member.token),
+        });
+
+      const staged = await mine();
+      expect(staged.statusCode).toBe(200);
+      expect(staged.json().partner).toEqual({
+        id: partner.id,
+        name: 'Mine Org',
+        key: 'mine-org',
+        brand_color: null,
+        logo_url: null,
       });
-      expect(res.statusCode).toBe(200);
-      expect(res.json().partner).toEqual({
+
+      // Live: the same two fields, now that the firm has turned white label on.
+      await ctx.pool.query(`UPDATE partners SET white_label_enabled = true WHERE id = $1`, [
+        partner.id,
+      ]);
+      expect((await mine()).json().partner).toEqual({
         id: partner.id,
         name: 'Mine Org',
         key: 'mine-org',

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { httpsUrl } from './externalUrl.js';
+import { nonBlankText } from './nonBlankText.js';
 
 /**
  * White-label branding — the identity a valuation firm puts in front of its own
@@ -314,7 +315,15 @@ const HEX_COLOR = z
 export const BRANDING_PATCH_SCHEMA = z
   .object({
     subdomain: SUBDOMAIN,
-    brand_name: z.string().min(1).max(200).nullable(),
+    /*
+     * Trim-checked for the reason the ops-side partner name is: `min(1)`
+     * counts characters, so `'   '` saved with a 200 and then resolved to
+     * nothing — `publicPartnerName` falls through a blank `brand_name`, and
+     * `/branding/tenants` reads it as `nullif(btrim(brand_name), '')`. Both
+     * readers were already working around a value the save should not have
+     * taken, and the firm administrator who typed it was told it was live.
+     */
+    brand_name: nonBlankText(1, 200).nullable(),
     brand_tagline: z.string().max(200).nullable(),
     brand_color: HEX_COLOR,
     accent_color_dark: HEX_COLOR,

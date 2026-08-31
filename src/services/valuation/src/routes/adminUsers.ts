@@ -65,6 +65,7 @@ import { flagParam } from '../domain/queryFlag.js';
 import { isUniqueViolation } from '../db/pgError.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { templateText } from '../domain/templateText.js';
+import { nonBlankText } from '../domain/nonBlankText.js';
 import { forbidden } from '../domain/accessProblem.js';
 
 const ListQuery = z.object({
@@ -785,7 +786,7 @@ export function registerAdminUserRoutes(
     const principal = requireUserAdmin(req);
     const parsed = z
       .object({
-        name: z.string().min(1).max(200),
+        name: nonBlankText(1, 200),
         key: z
           .string()
           .min(1)
@@ -811,7 +812,14 @@ export function registerAdminUserRoutes(
     if (!isUlid(id)) throw problems.notFound();
     const parsed = z
       .object({
-        name: z.string().min(1).max(200),
+        /*
+         * The tenant's own name, held to the rule the email overrides below
+         * already carry. `publicPartnerName` resolves to it whenever white
+         * label is off or `brand_name` is blank, so a partner saved as `'  '`
+         * is a firm with no name in the console, in the client-facing header
+         * and on the mail those overrides sign (R287).
+         */
+        name: nonBlankText(1, 200),
         archived: z.boolean(),
         brand_color: z
           .string()
