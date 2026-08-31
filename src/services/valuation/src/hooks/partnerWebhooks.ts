@@ -446,20 +446,48 @@ export async function firePartnerWebhooks(
   valuation: WebhookValuationView | null,
   extra: Record<string, unknown> = {},
 ): Promise<void> {
-  let hooks: PartnerWebhookRow[];
+  const hooks = await readEnabledWebhooks(deps, partnerId, event, valuation?.id ?? null);
+  if (hooks === null) return;
+  await dispatchToWebhooks(deps, hooks, partnerId, event, valuation, extra);
+}
+
+/**
+ * The hooks half of the door above, split out so a fan-out can read once.
+ *
+ * `null` means the read failed and has been logged; the caller returns. An
+ * empty array means the partner has no enabled webhook, which is the ordinary
+ * case and not a failure.
+ */
+async function readEnabledWebhooks(
+  deps: WebhookDeps,
+  partnerId: string,
+  event: WebhookEventType,
+  valuationId: string | null,
+): Promise<PartnerWebhookRow[] | null> {
   try {
-    hooks = await enabledWebhooks(deps.pool, partnerId);
+    return await enabledWebhooks(deps.pool, partnerId);
   } catch (err) {
     if (deps.log) {
       logUnretried(
         deps.log,
         err,
-        { partnerId, event, valuationId: valuation?.id ?? null },
+        { partnerId, event, valuationId },
         'could not read a partner’s webhooks; the event was owed and no delivery row exists',
       );
     }
-    return;
+    return null;
   }
+}
+
+/** The dispatch half: filter to the subscribers, build the body, deliver. */
+async function dispatchToWebhooks(
+  deps: WebhookDeps,
+  hooks: readonly PartnerWebhookRow[],
+  partnerId: string,
+  event: WebhookEventType,
+  valuation: WebhookValuationView | null,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
   const wanted = hooks.filter((h) => webhookWantsEvent(h.events, event));
   if (wanted.length === 0) return;
   const payload = buildWebhookPayload(event, valuation, extra);
@@ -497,6 +525,16 @@ export async function firePartnerWebhooks(
  * webhook, never raised. A partner whose receiver is down must not be able to
  * fail somebody's retirement.
  */
+/** The columns the retirement announcement reads, per archived engagement. */
+interface RetiredValuationRow {
+  id: string;
+  number: string | number | null;
+  kind: string;
+  state: string;
+  company_name: string;
+  partner_id: string;
+}
+
 export async function firePartnerWebhooksForRetirement(
   deps: WebhookDeps,
   valuationIds: readonly string[],
@@ -506,15 +544,8 @@ export async function firePartnerWebhooksForRetirement(
   // Contained, like the transition entry point above. The sweep call site's
   // comment — "never allowed to fail the sweep" — was a statement about
   // `deliverToWebhook` and not about this read.
-  const rows = await deps.pool
-    .query<{
-      id: string;
-      number: string | number | null;
-      kind: string;
-      state: string;
-      company_name: string;
-      partner_id: string;
-    }>(
+  const rows: RetiredValuationRow[] = await deps.pool
+    .query<RetiredValuationRow>(
       `SELECT id, number, kind, state, company_name, partner_id
        FROM valuations WHERE id = ANY($1::ulid[]) AND partner_id IS NOT NULL`,
       [ids],
@@ -531,14 +562,42 @@ export async function firePartnerWebhooksForRetirement(
       }
       return [];
     });
+  /*
+   * ONE HOOKS READ PER PARTNER, NOT PER ENGAGEMENT (R290).
+   *
+   * `firePartnerWebhooks` reads the partner's enabled webhooks itself, which is
+   * right for its three single-row callers and wrong here: this is the only
+   * caller that fans out over a *batch*, and a batch of retirements is the one
+   * thing guaranteed to repeat its partner. The retention sweep archives up to
+   * 500 engagements a pass and a firm's book ages out together, so 500 rows
+   * asked `partner_webhooks` the same handful of questions 500 times — and
+   * `enabledWebhooks` decrypts every secret it returns (`openWebhookSecret`),
+   * so the repeated work was an AES open per hook per row, not just a round
+   * trip.
+   *
+   * Grouped rather than memoised so the failure story is unchanged: the read is
+   * still per partner, still caught by `readEnabledWebhooks`, and a partner
+   * whose read fails still loses only its own events. `null` skips that
+   * partner's rows exactly as the unbatched form skipped that row.
+   */
+  const byPartner = new Map<string, RetiredValuationRow[]>();
   for (const row of rows) {
-    await firePartnerWebhooks(deps, row.partner_id, 'valuation.retired', {
-      id: row.id,
-      number: row.number,
-      kind: row.kind,
-      state: row.state,
-      company_name: row.company_name,
-    });
+    const bucket = byPartner.get(row.partner_id);
+    if (bucket) bucket.push(row);
+    else byPartner.set(row.partner_id, [row]);
+  }
+  for (const [partnerId, partnerRows] of byPartner) {
+    const hooks = await readEnabledWebhooks(deps, partnerId, 'valuation.retired', null);
+    if (hooks === null) continue;
+    for (const row of partnerRows) {
+      await dispatchToWebhooks(deps, hooks, partnerId, 'valuation.retired', {
+        id: row.id,
+        number: row.number,
+        kind: row.kind,
+        state: row.state,
+        company_name: row.company_name,
+      });
+    }
   }
 }
 

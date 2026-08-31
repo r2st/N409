@@ -151,6 +151,67 @@ describe.skipIf(!dbUp)('the retirement webhook', () => {
     });
   });
 
+  it('reads the partner’s webhooks once for the batch, not once per engagement (R290)', async () => {
+    /*
+     * The batch fan-out's own N+1. `firePartnerWebhooks` reads the partner's
+     * enabled webhooks itself, which is right for its three single-row callers
+     * and wrong for the one that fans out over a batch: a batch of retirements
+     * is the one thing guaranteed to repeat its partner, because a firm's book
+     * ages out together. The sweep takes up to 500 engagements a pass, so 500
+     * rows asked `partner_webhooks` the same question 500 times — and
+     * `enabledWebhooks` decrypts every secret it returns, so the repeated work
+     * was an AES open per hook per row and not merely a round trip.
+     *
+     * Counted rather than timed, and counted on the statement rather than on
+     * the wire: the claim is "once per distinct partner", which is a number.
+     */
+    received.length = 0;
+    const ids = [
+      await createPartnerValuation('Batched One'),
+      await createPartnerValuation('Batched Two'),
+      await createPartnerValuation('Batched Three'),
+      await createPartnerValuation('Batched Four'),
+    ];
+    await ctx.pool.query(
+      `UPDATE valuations SET created_at = now() - interval '400 days' WHERE id = ANY($1::ulid[])`,
+      [ids],
+    );
+    for (const id of ids) invalidateValuation(id);
+    await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/retention/policies/valuation',
+      headers: authHeader(adminToken),
+      payload: { archive_after_days: 30, retention_days: null, enabled: true },
+    });
+
+    let hookReads = 0;
+    const original = ctx.pool.query.bind(ctx.pool);
+    (ctx.pool as unknown as { query: (...a: unknown[]) => unknown }).query = (...args: unknown[]) => {
+      const first = args[0];
+      const text = typeof first === 'string' ? first : ((first as { text?: string })?.text ?? '');
+      if (/FROM partner_webhooks\b/.test(text) && /enabled/.test(text)) hookReads += 1;
+      return (original as (...a: unknown[]) => unknown)(...args);
+    };
+    try {
+      await runRetentionSweep(ctx.pool);
+    } finally {
+      (ctx.pool as unknown as { query: unknown }).query = original;
+    }
+
+    // Every one of them still got its event — the point is the reads, not the
+    // sends, and a fan-out that reads once and delivers nothing is worse.
+    for (const id of ids) expect(retirements(id)).toHaveLength(1);
+    expect(ids.length).toBeGreaterThan(1);
+    expect(hookReads, `read partner_webhooks ${hookReads} times for one partner`).toBe(1);
+
+    await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/retention/policies/valuation',
+      headers: authHeader(adminToken),
+      payload: { archive_after_days: null, retention_days: null, enabled: false },
+    });
+  });
+
   it('is not sent for an engagement no partner owns', async () => {
     received.length = 0;
     const direct = await app.inject({
