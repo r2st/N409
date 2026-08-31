@@ -606,6 +606,19 @@ def chat(
     except _BudgetExhausted as exc:
         raise TokenBudgetExceeded(str(exc)) from exc
 
+    # A pinned id that is not the configured one is refused rather than
+    # invoked. `configured_models` offers exactly one entry and the picker
+    # shows exactly that entry, but `ai_prompts.model` is a free string — so
+    # without this, any model this AWS account can invoke was one prompt edit
+    # away, billed to the operator, on a provider chosen by a text field. IAM
+    # is the other boundary and a better one, but it is not one this service
+    # can see, and an installation that granted `bedrock:InvokeModel` broadly
+    # has none.
+    if model and model not in configured_models():
+        raise BedrockRequestRejected(
+            f"model '{model}' is not one this service may call — "
+            f"allowed: {', '.join(configured_models())}"
+        )
     model_id = strip_prefix(model) if model else default_model()
     owns_client = client is None
     http = client or new_client(timeout=KEY_CHECK_TIMEOUT_S)

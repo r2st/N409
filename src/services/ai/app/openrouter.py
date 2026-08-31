@@ -221,6 +221,65 @@ def configured_models(preferred: str | None = None) -> list[str]:
     return models
 
 
+#: Env vars that name an OpenRouter model. Both are set on the box, by the
+#: operator who owns the key: `OPENROUTER_MODEL` heads the fallback chain, and
+#: `RESEARCH_SYNTHESIS_MODEL` writes up the research fallback's answer
+#: (`research.synthesis_model`, which reaches `chat` through this module rather
+#: than through `llm_router`). Neither is caller data, so both are allowed.
+_MODEL_ENV_VARS = ("OPENROUTER_MODEL", "RESEARCH_SYNTHESIS_MODEL")
+
+
+def allowed_models() -> list[str]:
+    """Every OpenRouter model id this service will send a prompt to.
+
+    The fallback chain plus the env vars above — which is exactly the set an
+    operator picking from the Bot Prompts dropdown is offered, since the picker
+    is served from `configured_models()`.
+
+    It exists because `ai_prompts.model` is a free string. The route that
+    writes it validates a length and nothing else, and `chat` used to hoist
+    whatever it found straight to the head of the chain — so the picker was a
+    suggestion and the estate's own OpenRouter key would answer for any of the
+    catalogue's several hundred ids. Two things follow from that, and the
+    second is the one that matters:
+
+    * cost. The chain is free-tier on purpose; one pinned paid id bills every
+      run of that pipeline, with nothing between the edit and the invoice.
+    * disclosure. OpenRouter is a router. The model id chooses *which upstream
+      provider* receives the prompt, and the prompt is a redacted but real
+      chunk of a client's cap table. Which third parties process client data is
+      a decision a valuation firm makes once, writes down, and does not leave
+      to a text field.
+
+    `RESEARCH_SYNTHESIS_MODEL` is not in the picker's list, deliberately: it
+    binds one path rather than a prompt, and the picker is per-prompt.
+    """
+    models = list(DEFAULT_MODELS)
+    for var in _MODEL_ENV_VARS:
+        value = os.environ.get(var, "").strip()
+        if value and value not in models:
+            models.append(value)
+    return models
+
+
+def assert_allowed(model: str) -> None:
+    """Refuse a model id that is not on the allow-list, before anything is sent.
+
+    `RequestRejected` rather than the base error because that is exactly what
+    this is: a request no retry and no second candidate can turn into an
+    answer, and `main` answers 422 for it — pointing at the request, which is
+    where the fix is. The message names the id it refused and the ids it would
+    have taken, because the operator reading it is looking at a dropdown that
+    accepted the value.
+    """
+    if model in allowed_models():
+        return
+    raise RequestRejected(
+        f"model '{model}' is not one this service may call — "
+        f"allowed: {', '.join(allowed_models())}"
+    )
+
+
 def _headers() -> dict[str, str]:
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key:
@@ -517,6 +576,9 @@ def chat(
     """
     # Fail fast before spending anything if the budget is already exhausted.
     _check_budget()
+    # …and before spending anything on a model nobody chose. See `allowed_models`.
+    if model:
+        assert_allowed(model)
     owns_client = client is None
     http = client or new_client(timeout=TIMEOUT_S)
     deadline = _Deadline(call_budget_s())
