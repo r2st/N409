@@ -43,12 +43,22 @@ export interface HrisConnectionRow {
    * case. See migration 0196.
    */
   reconnect_required: boolean;
+  /** Bumped by each reconnect; see migration 0197. */
+  auth_generation: number;
 }
 
-export type PublicHrisConnection = Omit<HrisConnectionRow, 'access_token' | 'refresh_token'>;
+/**
+ * `auth_generation` is dropped alongside the tokens: it is bookkeeping about
+ * which authorisation a write belongs to, and nothing outside this module has
+ * a use for it. Leaking it would widen the public shape for no reader.
+ */
+export type PublicHrisConnection = Omit<
+  HrisConnectionRow,
+  'access_token' | 'refresh_token' | 'auth_generation'
+>;
 
 export function toPublic(row: HrisConnectionRow): PublicHrisConnection {
-  const { access_token: _a, refresh_token: _r, ...rest } = row;
+  const { access_token: _a, refresh_token: _r, auth_generation: _g, ...rest } = row;
   return rest;
 }
 
@@ -57,6 +67,15 @@ const FREQ_INTERVAL: Record<SyncFrequency, string | null> = {
   daily: '1 day',
   weekly: '7 days',
 };
+
+/**
+ * The identity of a connection *and* of the authorisation it is currently on.
+ * See `recordSync` for why the second half is part of the identity.
+ */
+export interface ConnectionGeneration {
+  id: string;
+  auth_generation: number;
+}
 
 export async function listConnections(pool: pg.Pool, valuationId: string): Promise<HrisConnectionRow[]> {
   const { rows } = await pool.query<HrisConnectionRow>(
@@ -104,6 +123,9 @@ export async function upsertConnection(
        external_company_name = COALESCE(EXCLUDED.external_company_name, hris_connections.external_company_name),
        connected_by = EXCLUDED.connected_by,
        connected_at = now(),
+       -- A new authorisation, so any pull still in flight against the old one
+       -- no longer owns this row. See migration 0197.
+       auth_generation = hris_connections.auth_generation + 1,
        last_error = NULL,
        -- Reconnecting is what the authorisation failures ask a person to do,
        -- and what they ask it for is the schedule. A terminal failure clears
@@ -181,8 +203,39 @@ export async function upsertConnection(
  * the value used is the one committed at this instant rather than one carried
  * in from a caller who read it minutes ago. `setSyncFrequency` writes both
  * columns together, so whichever of the two lands last leaves them agreeing.
+
+ *
+ * PINNED TO THE AUTHORISATION THE SYNC STARTED UNDER. `status <> 'revoked'`
+ * asks whether the connection has ended; it cannot ask whether this is still
+ * the same connection. A pull is a long round trip against a third party, and
+ * the analyst reconnecting is a thing that happens *during* one — often
+ * because the sync is what looked wrong. `upsertConnection` then installs new
+ * tokens, clears `sync_failures` and `reconnect_required`, and puts the
+ * schedule back; and the in-flight pull, still holding the superseded
+ * credential, lands afterwards and writes its outcome over all of it.
+ *
+ * The worst version is not hypothetical, it is the *likely* one: many providers
+ * invalidate the old refresh token when a user re-authorises, so the credential
+ * the old pull is carrying is refused precisely because of the reconnect. That
+ * is a `ReconnectRequiredError`, which is terminal — `reconnect_required = true`
+ * and `next_sync_at = NULL` on a connection with a working authorisation
+ * installed seconds earlier. The card reads "Reconnect required" over a healthy
+ * connection, the schedule is dead, and reconnecting again can lose the same
+ * race again.
+ *
+ * `auth_generation` (migration 0197) is bumped by `upsertConnection` and by
+ * nothing else — a token refresh does not, because refreshing is the same
+ * authorisation continuing. It is counted rather than timed because
+ * `connected_at` cannot be the pin: a `timestamptz` holds microseconds and a JS
+ * Date holds milliseconds, so a value read out and sent back never compares
+ * equal. Taking the whole row rather than the id is what makes a new call site
+ * say which generation it is writing for instead of being able to forget.
  */
-export async function recordSync(pool: pg.Pool, id: string, summary: Record<string, unknown>): Promise<void> {
+export async function recordSync(
+  pool: pg.Pool,
+  connection: ConnectionGeneration,
+  summary: Record<string, unknown>,
+): Promise<void> {
   await pool.query(
     `UPDATE hris_connections
      SET last_synced_at = now(), last_sync_summary = $2, status = 'connected', last_error = NULL,
@@ -193,8 +246,8 @@ export async function recordSync(pool: pg.Pool, id: string, summary: Record<stri
            WHEN 'weekly' THEN now() + interval '7 days'
            ELSE NULL
          END
-     WHERE id = $1 AND status <> 'revoked'`,
-    [id, JSON.stringify(summary)],
+     WHERE id = $1 AND status <> 'revoked' AND auth_generation = $3`,
+    [connection.id, JSON.stringify(summary), connection.auth_generation],
   );
 }
 
@@ -235,7 +288,7 @@ export async function recordSync(pool: pg.Pool, id: string, summary: Record<stri
  */
 export async function recordSyncError(
   pool: pg.Pool,
-  id: string,
+  connection: ConnectionGeneration,
   error: string,
   opts: { terminal?: boolean; retryAfterSeconds?: number | null } = {},
 ): Promise<void> {
@@ -260,8 +313,14 @@ export async function recordSyncError(
                 now() + make_interval(secs => $4::double precision)
               )
             END
-      WHERE id = $1 AND status <> 'revoked'`,
-    [id, error.slice(0, 500), opts.terminal ?? false, opts.retryAfterSeconds ?? null],
+      WHERE id = $1 AND status <> 'revoked' AND auth_generation = $5`,
+    [
+      connection.id,
+      error.slice(0, 500),
+      opts.terminal ?? false,
+      opts.retryAfterSeconds ?? null,
+      connection.auth_generation,
+    ],
   );
 }
 

@@ -202,7 +202,7 @@ export async function syncCapTableConnection(
     // and an authorisation that has ended: the first is worth another tick on
     // a backoff, the second will be refused identically forever and its
     // message asks for a reconnect instead.
-    await recordSyncError(deps.pool, connection.id, message, {
+    await recordSyncError(deps.pool, connection, message, {
       terminal: err instanceof ReconnectRequiredError,
       // See `recordSyncError`: a provider that named a wait is waited for.
       retryAfterSeconds: retryAfterSecondsFor(err),
@@ -236,7 +236,7 @@ export async function syncCapTableConnection(
     const message =
       `the provider returned ${pulled.entries.length} securities; at most ` +
       `${MAX_CAP_TABLE_ENTRIES} can be stored as one cap table`;
-    await recordSyncError(deps.pool, connection.id, message).catch(() => undefined);
+    await recordSyncError(deps.pool, connection, message).catch(() => undefined);
     throw new IntegrationError(`${CAP_TABLE_PROVIDER_LABELS[connection.provider]}: ${message}`);
   }
 
@@ -296,7 +296,7 @@ export async function syncCapTableConnection(
      */
     await recordSyncError(
       deps.pool,
-      connection.id,
+      connection,
       'the provider cap table was pulled but could not be saved',
     ).catch(() => undefined);
     throw err;
@@ -311,7 +311,7 @@ export async function syncCapTableConnection(
     as_of: pulled.as_of,
   };
   try {
-    await recordSync(deps.pool, connection.id, summary);
+    await recordSync(deps.pool, connection, summary);
   } catch (err) {
     /*
      * The last unguarded statement in the sync (R261, M5).
@@ -329,7 +329,7 @@ export async function syncCapTableConnection(
      * unchecked; the shape stays open for anything else that can fail one
      * UPDATE.
      */
-    await recordSyncError(deps.pool, connection.id, SYNC_UNRECORDED).catch(() => undefined);
+    await recordSyncError(deps.pool, connection, SYNC_UNRECORDED).catch(() => undefined);
     throw err;
   }
 

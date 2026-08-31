@@ -213,7 +213,7 @@ export async function syncHrisConnection(
     // `describeTransportFailure` would put the driver's wording — constraint
     // names, column names, refused values — into the column `toPublic` serves
     // the client verbatim. See `describeConnectorFailure`.
-    await recordSyncError(deps.pool, connection.id, describeConnectorFailure(err, OUR_SYNC_FAILURE), {
+    await recordSyncError(deps.pool, connection, describeConnectorFailure(err, OUR_SYNC_FAILURE), {
       terminal: err instanceof ReconnectRequiredError,
       // When the provider named a time, the schedule waits at least that long
       // — the sentence has said "try again in about 120s" since R255 while the
@@ -339,7 +339,7 @@ export async function syncHrisConnection(
     // is logged in full by both callers.
     await recordSyncError(
       deps.pool,
-      connection.id,
+      connection,
       `imported ${created} of ${pull.grants.length - skipped} grants, then stopped before finishing`,
     ).catch(() => undefined);
     throw err;
@@ -354,7 +354,7 @@ export async function syncHrisConnection(
     external_company_name: pull.external_company_name,
   };
   try {
-    await recordSync(deps.pool, connection.id, { ...outcome, provider: connection.provider });
+    await recordSync(deps.pool, connection, { ...outcome, provider: connection.provider });
   } catch (err) {
     /*
      * The last unguarded statement in the sync (R261, M5).
@@ -379,7 +379,7 @@ export async function syncHrisConnection(
      * the honest version of that: it stops the re-pull, and it is in front of
      * the person who can look. Best-effort, like every write in a catch here.
      */
-    await recordSyncError(deps.pool, connection.id, SYNC_UNRECORDED).catch(() => undefined);
+    await recordSyncError(deps.pool, connection, SYNC_UNRECORDED).catch(() => undefined);
     throw err;
   }
   return outcome;

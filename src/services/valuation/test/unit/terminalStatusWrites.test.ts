@@ -60,7 +60,10 @@ const DECIDED: Record<string, Verdict> = {
       'member added or removed is meant to move it',
   },
   'repos/capTableConnections.ts :: cap_table_connections': {
-    guard: "status <> 'revoked' on the sync bookkeeping and on the cadence write",
+    guard:
+      "status <> 'revoked' on the sync bookkeeping and on the cadence write, and the sync " +
+      'bookkeeping also pins `auth_generation` — a reconnect during a pull supersedes it, and ' +
+      "'revoked' cannot say that (migration 0197)",
   },
   'repos/contactSubmissions.ts :: contact_submissions': {
     unguarded: 'new → handled, by one operator, on a form nothing else writes',
@@ -72,7 +75,10 @@ const DECIDED: Record<string, Verdict> = {
     guard: "status = 'active' — a grant is cancelled once, and the event dates the forfeiture",
   },
   'repos/hrisConnections.ts :: hris_connections': {
-    guard: "status <> 'revoked' on the sync bookkeeping and on the cadence write",
+    guard:
+      "status <> 'revoked' on the sync bookkeeping and on the cadence write, and the sync " +
+      'bookkeeping also pins `auth_generation` — a reconnect during a pull supersedes it, and ' +
+      "'revoked' cannot say that (migration 0197)",
   },
   'repos/partnerWebhooks.ts :: partner_webhook_deliveries': {
     guard: "status = 'pending' AND attempts = the claim's, and a replay may reopen a delivered row",
