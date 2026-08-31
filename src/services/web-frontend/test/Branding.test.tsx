@@ -283,6 +283,47 @@ describe('BrandingPage', () => {
     expect(screen.getByRole('button', { name: 'Save branding' })).toBeEnabled();
   });
 
+  /*
+   * R270 — the field's own guidance named the one format that half-works.
+   *
+   * `logo_url` feeds the sidebar, where an `<img>` draws an SVG happily, and
+   * report covers, where `fetchPartnerLogo` sniffs the first eight bytes and
+   * keeps png or jpeg only. An SVG there is refused, the cover comes out with
+   * the platform mark on it, and the reason goes to a log the firm's
+   * administrator will never see — while the help text beside the box said
+   * "SVG or PNG".
+   */
+  it('says an SVG will not reach report covers, without refusing the save', async () => {
+    const calls = mockApi();
+    renderPage();
+    await screen.findByLabelText(/^Logo URL$/);
+
+    await userEvent.type(screen.getByLabelText(/^Logo URL$/), 'https://cdn.example.com/mark.svg');
+    const note = await screen.findByText(/only draw a PNG or JPEG/i);
+    expect(note).toHaveTextContent(/fall back to the N409 mark/i);
+
+    // A hint, not a rule: a firm that puts no mark on covers is entitled to
+    // an SVG, and the save goes through.
+    await userEvent.click(screen.getByRole('button', { name: 'Save branding' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
+  });
+
+  it('says nothing about covers for a PNG, or for a query string that mentions one', async () => {
+    mockApi();
+    renderPage();
+    await screen.findByLabelText(/^Logo URL$/);
+
+    await userEvent.type(screen.getByLabelText(/^Logo URL$/), 'https://cdn.example.com/mark.png?v=svg');
+    await waitFor(() => expect(screen.queryByText(/only draw a PNG or JPEG/i)).not.toBeInTheDocument());
+  });
+
+  it('tells the administrator which formats reach a cover before they type', async () => {
+    mockApi();
+    renderPage();
+    const hint = await screen.findByText(/HTTPS URL to a PNG or JPEG/);
+    expect(hint).toHaveTextContent(/report covers/);
+  });
+
   it('refuses an http logo before the round trip, beside the box it means', async () => {
     const calls = mockApi();
     renderPage();

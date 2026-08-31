@@ -72,7 +72,9 @@ const TEXT_FIELDS: { key: TextKey; label: string; help: string; type?: string }[
   {
     key: 'logo_url',
     label: 'Logo URL',
-    help: 'HTTPS URL to an SVG or PNG. Used on light backgrounds; replaces the default mark.',
+    help:
+      'HTTPS URL to a PNG or JPEG. Used on light backgrounds and on report covers; replaces the ' +
+      'default mark.',
   },
   {
     key: 'logo_dark_url',
@@ -112,6 +114,30 @@ const COLOR_FIELDS: { key: 'brand_color' | 'accent_color_dark'; label: string; h
  * rather than imported for the same reason `httpsUrl` is.
  */
 const HEX = /#[0-9a-fA-F]{6}/;
+
+/**
+ * The one thing this form can say about a mark it cannot fetch.
+ *
+ * `logo_url` feeds two places and they do not accept the same files. The
+ * application draws it in an `<img>`, where an SVG is fine; report covers go
+ * through `fetchPartnerLogo`, which sniffs the first eight bytes and keeps
+ * **png or jpeg only** — so an SVG is refused there, the cover is drawn without
+ * the mark, and the reason is written to a log this reader will never see. The
+ * help text used to name SVG first, so the form was recommending the one format
+ * that half-works.
+ *
+ * A hint rather than a validation error: an SVG is a legitimate answer for a
+ * firm that does not put its mark on covers, and refusing the save would be
+ * wrong. It is keyed off the extension, which is a guess — hence a sentence
+ * about what happens rather than a claim about the file — and a URL with no
+ * extension says nothing, which is why the help text carries the rule too.
+ */
+function coverFormatWarning(url: string | null): string | null {
+  if (!url) return null;
+  const path = url.split(/[?#]/)[0]!.toLowerCase();
+  if (!path.endsWith('.svg') && !path.endsWith('.svgz')) return null;
+  return 'Report covers can only draw a PNG or JPEG, so an SVG will appear in the app but not on your reports — those will fall back to the N409 mark. Point this at a PNG to brand both.';
+}
 
 /** Read by the validator on the renders before the settings have loaded. */
 const EMPTY_SETTINGS: BrandingSettings = {
@@ -281,17 +307,27 @@ export function BrandingPage() {
         <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="overline mb-4 text-ink-400">Identity</h2>
           <div className="space-y-5">
-            {TEXT_FIELDS.map((field) => (
-              <Field key={field.key} label={field.label} hint={field.help} error={errorFor(field.key)}>
-                <TextInput
-                  type={field.key === 'support_email' ? 'email' : 'text'}
-                  value={draft[field.key] ?? ''}
-                  placeholder={field.key === 'brand_name' ? data.settings.name : undefined}
-                  onChange={(e) => set(field.key, e.target.value)}
-                  onBlur={blurHandler(field.key)}
-                />
-              </Field>
-            ))}
+            {TEXT_FIELDS.map((field) => {
+              const coverWarning = field.key === 'logo_url' ? coverFormatWarning(draft.logo_url) : null;
+              return (
+                <div key={field.key}>
+                  <Field label={field.label} hint={field.help} error={errorFor(field.key)}>
+                    <TextInput
+                      type={field.key === 'support_email' ? 'email' : 'text'}
+                      value={draft[field.key] ?? ''}
+                      placeholder={field.key === 'brand_name' ? data.settings.name : undefined}
+                      onChange={(e) => set(field.key, e.target.value)}
+                      onBlur={blurHandler(field.key)}
+                    />
+                  </Field>
+                  {coverWarning && (
+                    <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2 text-sm text-amber-900">
+                      {coverWarning}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
 
