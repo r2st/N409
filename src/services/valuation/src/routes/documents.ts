@@ -319,9 +319,20 @@ export function registerDocumentRoutes(
       // usually a failed export or a placeholder somebody has not filled in
       // yet, and re-uploading it changes nothing, so say that rather than
       // inviting a retry.
+      //
+      // Named through `safeFilename`, for the reason the two refusals below it
+      // already are: the name in this sentence is the one the browser sent, and
+      // this is the earliest branch it reaches — before `storeDocument` scrubs
+      // it — so it was the one place an upload's own name was quoted back raw.
+      // A bidi control in it reorders the sentence a person reads (see
+      // BIDI_CONTROLS), a C0 control is acted on by the terminal a curl caller
+      // is looking at, and nothing bounds its length, so a 200 KB name is a
+      // 200 KB problem body.
+      const named = safeFilename(file.filename);
       throw problems.unprocessable(
-        `“${file.filename}” contains no data — it is zero bytes, so there is nothing to store. ` +
+        `“${named}” contains no data — it is zero bytes, so there is nothing to store. ` +
           'Open it to check it saved correctly, then upload it again.',
+        { filename: named },
       );
     }
 

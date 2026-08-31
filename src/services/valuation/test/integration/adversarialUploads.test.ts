@@ -201,6 +201,40 @@ describe.skipIf(!dbUp)('adversarial document uploads', () => {
   });
 
   /**
+   * R277, methodology M19. Every refusal on this route names the file through
+   * `safeFilename` — except the earliest one, which quoted the raw part header
+   * back into a sentence a person reads. The upload never reaches storage, so
+   * the scrub that every *stored* name goes through never ran, and the refusal
+   * body was the one place the name survived exactly as sent.
+   *
+   * A right-to-left override in it reorders the whole sentence around it, which
+   * on a refusal is the same extension-spoof `filenameDisplay.test.ts` guards on
+   * the stored name; the length is worse here, because a name has no bound on
+   * the wire and the refusal repeats it.
+   */
+  it('names a refused empty upload by its scrubbed name, not the one that arrived', async () => {
+    const res = await send(
+      // The override written as its UTF-8 bytes: the body is assembled as
+      // `binary`, so a `\u202E` in the source would be truncated to '.' rather
+      // than reaching busboy as the control it is testing.
+      upload(part('kind', 'income_statement'), file('memo\xe2\x80\xaegnp.exe', 'text/csv', '')),
+    );
+    expect(res.statusCode).toBe(422);
+    const body = res.json();
+    expect(body.detail).toMatch(/zero bytes/i);
+    // Drawn as it is written: no override left to reverse what follows it.
+    expect(body.detail).not.toContain('\u202E');
+    expect(body.filename).toBe('memognp.exe');
+
+    const long = await send(
+      upload(part('kind', 'income_statement'), file(`${'x'.repeat(5_000)}.csv`, 'text/csv', '')),
+    );
+    expect(long.statusCode).toBe(422);
+    expect((long.json().filename as string).length).toBeLessThanOrEqual(200);
+    expect((long.json().detail as string).length).toBeLessThan(500);
+  });
+
+  /**
    * Two uploads of the same bytes under the same name land on one storage path
    * by construction (`<sha-prefix>__<filename>`), so the concurrent case must be
    * two rows over one blob rather than a write racing itself to a truncated

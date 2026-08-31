@@ -498,6 +498,40 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
       expect(body.filename).toBe('empty.csv');
     });
 
+    /**
+     * R277, methodology M19. Naming the file was the right instinct; naming it
+     * with the string the browser sent was not. Nothing on this route stores
+     * the name — it exists only to be quoted back — so it was the one upload
+     * name in the estate that never met `safeFilename`, and both places it is
+     * quoted are read by a person: the sentence, and the problem's `filename`
+     * member that the SPA draws beside it.
+     *
+     * The override is the same extension spoof `filenameDisplay.test.ts`
+     * guards on a stored name, here reordering a refusal instead of a list row.
+     */
+    it('names a refused upload by its scrubbed name, not the one that arrived', async () => {
+      const res = await uploadFile(app, uploadUrl(), client.token, {
+        filename: 'q3 memo\u202Evsc.exe',
+        content: '',
+        contentType: 'text/csv',
+      });
+      expect(res.statusCode).toBe(422);
+      const body = res.json();
+      expect(body.filename).toBe('q3 memovsc.exe');
+      expect(body.detail).not.toContain('\u202E');
+    });
+
+    it('bounds the name it quotes back, however long the one that arrived', async () => {
+      const res = await uploadFile(app, uploadUrl(), client.token, {
+        filename: `${'x'.repeat(5_000)}.csv`,
+        content: '',
+        contentType: 'text/csv',
+      });
+      expect(res.statusCode).toBe(422);
+      expect((res.json().filename as string).length).toBeLessThanOrEqual(200);
+      expect((res.json().detail as string).length).toBeLessThan(500);
+    });
+
     it('says a workbook whose sheet parts are missing is damaged, not unreadable', async () => {
       /*
        * `xl/workbook.xml` names a sheet and the part it names is not in the

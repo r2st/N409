@@ -24,6 +24,7 @@ import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { TRANSACTION_PAGE_LIMIT, listRounds } from '../repos/transactions.js';
 import { looksLikeXlsx, readXlsx, XlsxReadError } from '../domain/xlsxRead.js';
 import { bufferUpload, UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
+import { safeFilename } from '../documents/filename.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
@@ -220,7 +221,14 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (!file) throw problems.badRequest('Expected a multipart file field named "file"');
 
     const buffer = await bufferUpload(file, MAX_CAP_TABLE_UPLOAD_BYTES);
-    const filename = file.filename ?? 'upload';
+    // Scrubbed once, here, because every use of it below is a sentence somebody
+    // reads: the zero-byte refusal quotes it, and `asUnreadableFile` puts it in
+    // the problem's `filename` member. Nothing on this path stores it, so this
+    // was the one upload route where the name a browser sent was echoed back
+    // exactly — bidi controls, C0 controls and all, at whatever length it came
+    // in at. `safeFilename` is what the document upload passes the same value
+    // through; see documents/filename.ts.
+    const filename = safeFilename(file.filename ?? 'upload');
     if (buffer.length === 0) {
       // The same condition the document upload answers, on the sibling path
       // that was left saying "Uploaded file is empty" — three words that name
