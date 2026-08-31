@@ -4,8 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   SENSITIVE_QUERY_PARAMS,
+  injectAnalytics,
   injectGa4,
   scrubAnalyticsUrl,
+  urlCarriesCredential,
   type AnalyticsConfig,
 } from '../src/lib/analytics';
 
@@ -124,5 +126,88 @@ describe('injectGa4', () => {
     expect((configCall as unknown[])[2]).toEqual({
       page_location: 'https://n409.ai/reset-password?token=REDACTED',
     });
+  });
+});
+
+describe('urlCarriesCredential — the containers the scrub cannot reach', () => {
+  /*
+   * `scrubAnalyticsUrl` covers exactly one thing: GA4's `page_location`, the
+   * only URL field a container lets this code set. GTM and the Meta Pixel read
+   * `document.location` themselves — GTM through `{{Page URL}}` and whatever
+   * tags its container holds, the Pixel through the `dl` on every event — and
+   * neither takes a value from here. Whatever those vendors' scripts currently
+   * do with a fragment is not a contract, which is the argument for asking the
+   * question before they load rather than hoping about it afterwards.
+   *
+   * And the address bar really is still holding the token when they load.
+   * AcceptInvite, VerifyEmail, ResetPassword and GoogleComplete drop it on
+   * mount; ClientIntake, BoardSign and AuditorPortal do not, and cannot — their
+   * token is how a reload resumes the page, so it stays in `window.location`
+   * for as long as the tab is open. All seven are public routes, which is
+   * precisely where `<Analytics>` is allowed to inject.
+   */
+  it('sees a credential in the query', () => {
+    expect(urlCarriesCredential('https://n409.ai/reset-password?token=live-secret')).toBe(true);
+  });
+
+  it('sees a credential in the fragment, which is where these links carry it', () => {
+    expect(urlCarriesCredential('https://n409.ai/intake#token=live-secret')).toBe(true);
+    expect(urlCarriesCredential('https://n409.ai/board/sign#/x?token=live-secret')).toBe(true);
+  });
+
+  it('leaves an ordinary marketing URL alone', () => {
+    for (const href of [
+      'https://n409.ai/pricing',
+      'https://n409.ai/blog/what-is-a-409a?utm_source=news&utm_medium=email',
+      'https://n409.ai/faq#pricing',
+    ]) {
+      expect(urlCarriesCredential(href), href).toBe(false);
+    }
+  });
+
+  it('does not treat an already-blanked parameter as a credential', () => {
+    // `?token=` with no value is what a scrub leaves behind. Reading it as a
+    // credential would switch analytics off for a URL that has been cleaned.
+    expect(urlCarriesCredential('https://n409.ai/reset-password?token=')).toBe(false);
+  });
+
+  it('assumes the worst about a URL it cannot parse', () => {
+    // The scrub answers this with `/` because it has to return a string.
+    // Here there is a safe answer and this is it.
+    expect(urlCarriesCredential('not a url ?token=live')).toBe(true);
+  });
+});
+
+describe('injectAnalytics on a credential-bearing page', () => {
+  const config: AnalyticsConfig = {
+    gtmId: 'GTM-TEST',
+    ga4Id: 'G-TEST',
+    fbPixelId: '111122223333',
+  };
+
+  function fixtures(href: string) {
+    const doc = document.implementation.createHTMLDocument('t');
+    const win = { location: { href } } as unknown as Window;
+    return { win, doc };
+  }
+
+  it('loads no container at all while the token is in the address bar', () => {
+    const { win, doc } = fixtures('https://n409.ai/intake#token=live-secret');
+    injectAnalytics(config, win, doc);
+    expect(doc.querySelector('#n409-gtm')).toBeNull();
+    expect(doc.querySelector('#n409-ga4')).toBeNull();
+    expect(doc.querySelector('#n409-fbq')).toBeNull();
+  });
+
+  it('is a deferral, not a decision: the next clean URL still gets them', () => {
+    // No loaded flag is set by the refusal, so the same window can load later —
+    // which is what `<Analytics>` re-running on navigation depends on.
+    const { win, doc } = fixtures('https://n409.ai/intake#token=live-secret');
+    injectAnalytics(config, win, doc);
+    (win as unknown as { location: { href: string } }).location.href = 'https://n409.ai/pricing';
+    injectAnalytics(config, win, doc);
+    expect(doc.querySelector('#n409-gtm')).not.toBeNull();
+    expect(doc.querySelector('#n409-ga4')).not.toBeNull();
+    expect(doc.querySelector('#n409-fbq')).not.toBeNull();
   });
 });

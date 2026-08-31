@@ -189,6 +189,56 @@ function scrubFragment(hash: string): string | null {
   return touched ? `#${prefix}${params.toString()}` : null;
 }
 
+/**
+ * Whether this address bar is currently holding a live credential.
+ *
+ * The scrub above is the answer for the one field a container lets us set —
+ * GA4's `page_location`. GTM and the Meta Pixel have no such field: both read
+ * `document.location` themselves, GTM through `{{Page URL}}` and whatever tags
+ * the container is configured with, the Pixel through the `dl` it attaches to
+ * every event it sends. Neither is a value this code can hand them, and what
+ * each vendor does with the fragment is a detail of their script that changes
+ * without notice — which is precisely why the containment must not rest on it.
+ *
+ * So the question is asked before anything loads, and a credential-bearing URL
+ * means no container loads at all. That is a measurement lost on a handful of
+ * page views, against a token handed to two third parties.
+ *
+ * It is not a hypothetical race, either. Four of the seven token-bearing public
+ * routes drop the token from the address bar on mount — but `ClientIntakePage`,
+ * `BoardSignPage` and `AuditorPortalPage` deliberately do not: their token is
+ * how a reload resumes the form, so it stays in `window.location` for as long
+ * as the page is open. On those three the credential is not gone by the time an
+ * injector runs; it is still there, and stays there.
+ *
+ * A parameter with an empty value is not a credential — `?token=` is what the
+ * server's own scrub leaves behind, and treating it as one would switch
+ * analytics off for a URL that has already been cleaned.
+ */
+export function urlCarriesCredential(href: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    // Unreadable is not the same as clean. The scrub answers an unparseable URL
+    // with `/` because it must produce *something*; here there is a safe
+    // answer, and it is "assume the worst and load nothing".
+    return true;
+  }
+  if (hasCredential(url.searchParams)) return true;
+  const raw = url.hash.startsWith('#') ? url.hash.slice(1) : url.hash;
+  if (!raw) return false;
+  const split = raw.indexOf('?');
+  return hasCredential(new URLSearchParams(split === -1 ? raw : raw.slice(split + 1)));
+}
+
+function hasCredential(params: URLSearchParams): boolean {
+  for (const [key, value] of params) {
+    if (value && SENSITIVE_QUERY_PARAM_SET.has(key.toLowerCase())) return true;
+  }
+  return false;
+}
+
 interface DataLayerWindow extends Window {
   dataLayer?: unknown[];
   __n409AnalyticsLoaded?: Partial<Record<'gtm' | 'ga4' | 'fbq', boolean>>;
@@ -304,12 +354,18 @@ export function analyticsLoadedIn(win: Window = window): boolean {
 /**
  * Load every configured provider. Idempotent: safe to call on mount and again
  * whenever consent flips to granted.
+ *
+ * Nothing loads while the address bar holds a credential — see
+ * {@link urlCarriesCredential}. The refusal sets no loaded flag, so it is a
+ * deferral rather than a decision: `<Analytics>` re-runs on navigation, and the
+ * first URL that is not carrying a token gets its containers.
  */
 export function injectAnalytics(
   config: AnalyticsConfig,
   win: Window = window,
   doc: Document = document,
 ): void {
+  if (urlCarriesCredential(win.location?.href ?? '')) return;
   injectGtm(config, win as DataLayerWindow, doc);
   injectGa4(config, win as DataLayerWindow, doc);
   injectFbPixel(config, win as FbqWindow, doc);

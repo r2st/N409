@@ -15,10 +15,20 @@ const FULL: AnalyticsConfig = {
   fbPixelId: '111122223333',
 };
 
-/** Fresh, isolated document + window so injection never touches the test globals. */
-function fixtures(): { win: Window & Record<string, unknown>; doc: Document } {
+/** Fresh, isolated document + window so injection never touches the test globals.
+ *
+ * The stub carries a `location`, because `injectAnalytics` now asks what the
+ * address bar holds before it loads anything and answers "cannot tell" with
+ * "load nothing" (see `urlCarriesCredential`). A window without one is not a
+ * browser this code ever runs in, and a fixture that pretends otherwise would
+ * be exercising the refusal path while claiming to test the loading one.
+ */
+function fixtures(href = 'https://n409.ai/pricing'): {
+  win: Window & Record<string, unknown>;
+  doc: Document;
+} {
   const doc = document.implementation.createHTMLDocument('t');
-  const win = {} as Window & Record<string, unknown>;
+  const win = { location: { href } } as unknown as Window & Record<string, unknown>;
   return { win, doc };
 }
 

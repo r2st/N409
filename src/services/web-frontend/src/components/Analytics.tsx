@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   analyticsConfigFromEnv,
   hasAnyAnalytics,
@@ -38,6 +39,7 @@ export interface AnalyticsProps {
 export function Analytics({ config }: AnalyticsProps): null {
   const { consent } = useConsent();
   const { status } = useAuth();
+  const location = useLocation();
   const resolved = config ?? analyticsConfigFromEnv();
 
   useEffect(() => {
@@ -45,7 +47,14 @@ export function Analytics({ config }: AnalyticsProps): null {
     if (status !== 'anonymous') return;
     if (!hasAnyAnalytics(resolved)) return;
     injectAnalytics(resolved);
-  }, [consent, status, resolved]);
+    // `location` is in the deps but not read: `injectAnalytics` reads the
+    // address bar itself, and refuses while it holds a credential
+    // (`urlCarriesCredential`). That refusal has to be re-askable or it would
+    // switch analytics off for the rest of a document that happened to open on
+    // a token link — so the effect re-runs per navigation, and the first URL
+    // that is not carrying one gets the containers. Injection is idempotent,
+    // so the repeat costs nothing on every other route.
+  }, [consent, status, resolved, location]);
 
   return null;
 }

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { Analytics } from '../src/components/Analytics';
 import { CONSENT_STORAGE_KEY, ConsentProvider, type ConsentValue } from '../src/lib/consent';
 import type { AnalyticsConfig } from '../src/lib/analytics';
@@ -28,10 +29,15 @@ function renderWithConsent(
 ) {
   authStatus = status;
   if (stored) localStorage.setItem(CONSENT_STORAGE_KEY, stored);
+  // Inside a router, as it is in `main.tsx`: the component re-runs its
+  // injection per navigation so that a refusal on a token-bearing URL is a
+  // deferral rather than the end of analytics for that document.
   return render(
-    <ConsentProvider>
-      <Analytics config={CONFIG} />
-    </ConsentProvider>,
+    <MemoryRouter>
+      <ConsentProvider>
+        <Analytics config={CONFIG} />
+      </ConsentProvider>
+    </MemoryRouter>,
   );
 }
 
