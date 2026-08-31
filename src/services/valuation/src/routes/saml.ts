@@ -352,6 +352,19 @@ export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
         });
       }
       if (user.deleted_at) {
+        // On the spine, with the `reason` the password door uses (round 272,
+        // methodology M3). A closed account is the one refusal here that is
+        // about *this platform's* state rather than the IdP's, so it is the one
+        // an operator asks about — and it wrote nothing, while the same account
+        // tried at the password door wrote `closed_account`.
+        await recordAdminEvent(deps.pool, {
+          type: 'user_login_failed',
+          actor: { actorType: 'human', actorId: user.id },
+          subjectType: 'user',
+          subjectId: user.id,
+          subjectLabel: user.email,
+          payload: { method: 'saml', reason: 'closed_account', provisioned },
+        });
         return refuseSso(
           req,
           reply,

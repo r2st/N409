@@ -355,13 +355,25 @@ export async function assignRoles(client: pg.PoolClient, userId: string, roles: 
   );
 }
 
-/** First Google sign-in creates the account; later sign-ins link/refresh it. */
+/**
+ * First Google sign-in creates the account; later sign-ins link/refresh it.
+ *
+ * A closed account is returned untouched (round 272, methodology M3). `deleted_at`
+ * is the terminal state of this row — the password door refuses it and the SAML
+ * ACS refuses it — and the caller refuses it here too, so the link/refresh below
+ * would be a write made on behalf of a sign-in that is about to be turned away.
+ * It is not a harmless one: it moves `sso_provider` to 'google' and sets
+ * `verified`, which is a closed account changing shape because somebody outside
+ * the firm pressed a button, and it changes which door the account is described
+ * as using after it is reopened.
+ */
 export async function upsertGoogleUser(
   pool: pg.Pool,
   identity: { email: string; givenName?: string; familyName?: string },
 ): Promise<UserWithRoles> {
   const existing = await findUserByEmail(pool, identity.email);
   if (existing) {
+    if (existing.deleted_at) return existing;
     if (existing.sso_provider !== 'google') {
       await pool.query(`UPDATE users SET sso_provider = 'google', verified = true WHERE id = $1`, [
         existing.id,

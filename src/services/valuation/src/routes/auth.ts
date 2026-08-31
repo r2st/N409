@@ -621,6 +621,35 @@ export function registerAuthRoutes(
     }
 
     const user = await upsertGoogleUser(deps.pool, identity);
+    /*
+     * The third door onto a closed account (round 272, methodology M3).
+     *
+     * `deleted_at` is terminal: the password route refuses it above and the SAML
+     * ACS refuses it with `account_deactivated`. This one did not check, so a
+     * closed account signing in with Google was handed a session token and a
+     * redirect into the SPA — and then every call it made was answered 401 "The
+     * account this sign-in belongs to has been closed" by the authenticate
+     * plugin. Not an authorization hole, but the same state reached through
+     * three doors and answered three different ways, and the one that answers
+     * with a token is the one that cannot say why.
+     *
+     * `user_login` was written before the plugin got a say, so the spine also
+     * recorded a sign-in for an account nobody can sign into. It is a
+     * `user_login_failed` with the same `reason` vocabulary the password door
+     * uses, so a closed account being tried at any door reads the same way to
+     * the operator looking at it.
+     */
+    if (user.deleted_at) {
+      await recordAdminEvent(deps.pool, {
+        type: 'user_login_failed',
+        actor: { actorType: 'human', actorId: user.id },
+        subjectType: 'user',
+        subjectId: user.id,
+        subjectLabel: user.email,
+        payload: { method: 'google', reason: 'closed_account', ip: req.ip },
+      });
+      return refuseSso(req, reply, 'account_deactivated', problems.forbidden('This account is deactivated'));
+    }
     await recordAdminEvent(deps.pool, {
       type: 'user_login',
       actor: { actorType: 'human', actorId: user.id },

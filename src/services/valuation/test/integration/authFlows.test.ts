@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newUlid } from '@n409/shared';
-import { createUser } from '../../src/repos/users.js';
+import type { GoogleOidc } from '../../src/auth/google.js';
+import { createProvisionedUser, createUser } from '../../src/repos/users.js';
 import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -400,5 +401,94 @@ describe.skipIf(!dbUp)('password reset + invitations (P0 #3 / feature #9)', () =
       });
       expect(forbidden.statusCode).toBe(403);
     });
+  });
+});
+
+/**
+ * The closed account, tried at the Google door (round 272, methodology M3).
+ *
+ * `deleted_at` is the terminal state of a `users` row: the password route
+ * refuses it with the same body an unknown address gets, and the SAML ACS
+ * refuses it with `account_deactivated`. The Google callback did not ask. It
+ * ran `upsertGoogleUser` — which relinked `sso_provider` and set `verified` on
+ * the closed row — wrote `user_login` to the spine, minted a session and
+ * redirected the browser into the SPA with the token in the fragment. Every
+ * call that token then made was answered 401 by the authenticate plugin, so the
+ * person was signed in to a page that could not load, and the audit trail said
+ * a closed account had signed in.
+ */
+describe.skipIf(!dbUp)('Google SSO — a closed account is refused at the door', () => {
+  let ctx: TestApp;
+  const identity = { sub: 'google-oidc-sub-1', email: '', emailVerified: true };
+
+  /** Enough of `GoogleOidc` for the callback: state round-trip, code, id_token. */
+  const stubGoogle = {
+    authorizationUrl: (state: string) =>
+      `https://accounts.example.test/o/oauth2?state=${encodeURIComponent(state)}`,
+    exchangeCode: async () => 'stub-id-token',
+    verifyIdToken: async () => ({ ...identity }),
+  } as unknown as GoogleOidc;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({}, { google: stubGoogle });
+  });
+  afterAll(async () => ctx?.teardown());
+
+  /** A signed OIDC state, taken from the leg that mints one. */
+  async function freshState(): Promise<string> {
+    const start = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/google' });
+    expect(start.statusCode).toBe(302);
+    const state = new URL(start.headers.location as string).searchParams.get('state');
+    if (!state) throw new Error(`no state in ${start.headers.location as string}`);
+    return state;
+  }
+
+  const callback = async () =>
+    ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/auth/google/callback?code=stub-code&state=${encodeURIComponent(await freshState())}`,
+      headers: { accept: 'text/html' },
+    });
+
+  it('sends a deactivated account back to the sign-in page instead of issuing a session', async () => {
+    identity.email = `${newUlid().toLowerCase()}@closed.example.com`;
+    const user = await createProvisionedUser(ctx.pool, {
+      email: identity.email,
+      provisionedBy: 'saml',
+      roles: ['valuation_user'],
+    });
+    await ctx.pool.query('UPDATE users SET deleted_at = now() WHERE id = $1', [user.id]);
+
+    const res = await callback();
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe('/login?sso_error=account_deactivated');
+    // No token, by either route out: the fragment convention or the cookie.
+    expect(res.headers.location).not.toContain('#token=');
+    expect(res.headers['set-cookie']).toBeUndefined();
+
+    // The closed row is not relinked or re-verified by a sign-in that is
+    // refused — it looks the same afterwards as before.
+    const { rows } = await ctx.pool.query<{ sso_provider: string | null; provisioned_by: string | null }>(
+      'SELECT sso_provider, provisioned_by FROM users WHERE id = $1',
+      [user.id],
+    );
+    expect(rows[0]).toMatchObject({ sso_provider: null, provisioned_by: 'saml' });
+  });
+
+  it('records the refusal as a failed sign-in, not as a sign-in', async () => {
+    const { rows } = await ctx.pool.query<{ type: string; payload: Record<string, unknown> }>(
+      `SELECT type, payload FROM admin_events
+        WHERE subject_label = $1 ORDER BY occurred_at ASC`,
+      [identity.email],
+    );
+    expect(rows.map((r) => r.type)).toEqual(['user_login_failed']);
+    expect(rows[0]!.payload).toMatchObject({ method: 'google', reason: 'closed_account' });
+  });
+
+  it('still signs in an account that is open', async () => {
+    identity.email = `${newUlid().toLowerCase()}@open.example.com`;
+    const res = await callback();
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toMatch(/^\/auth\/google\/complete#token=/);
   });
 });
