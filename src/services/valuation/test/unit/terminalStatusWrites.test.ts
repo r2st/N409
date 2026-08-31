@@ -69,7 +69,10 @@ const DECIDED: Record<string, Verdict> = {
     unguarded: 'new → handled, by one operator, on a form nothing else writes',
   },
   'repos/emailOutbox.ts :: email_outbox': {
-    guard: 'the settle pins `attempts` to the value the claim stamped; markEmail is the unclaimed path',
+    guard:
+      'the settle pins `attempts` to the value the claim stamped; markEmail is the unclaimed path; ' +
+      "R272's retirement writes only `status = 'queued'` rows whose lease has expired and whose " +
+      'attempts are spent, which is the one queued state no claim can reach',
   },
   'repos/grants.ts :: option_grants': {
     guard: "status = 'active' — a grant is cancelled once, and the event dates the forfeiture",
@@ -152,7 +155,17 @@ function statusWriters(): Set<string> {
     const text = readFileSync(file, 'utf8');
     const key = relative(SRC, file);
     // Bounded at the closing backtick so one statement cannot run into the next.
-    for (const match of text.matchAll(/(?:INSERT\s+INTO|UPDATE)\s+(\w+)[^`]*/g)) {
+    //
+    // `(?<!FOR )` because `FOR UPDATE SKIP LOCKED` is not a statement start
+    // (round 272, methodology M3). The lock clause reads as `UPDATE SKIP`, and
+    // the match then runs on to the closing backtick — so a CTE that takes rows
+    // `FOR UPDATE SKIP LOCKED` and settles a status in the outer UPDATE was
+    // reported twice: once correctly, against its table, and once as a writer of
+    // a table called `SKIP`. Only a statement whose SET names `status` reaches
+    // the roster at all, which is why the claim-shaped statements already here
+    // never showed it. `NOWAIT` and `FOR UPDATE OF d` are the same clause and
+    // the same fix.
+    for (const match of text.matchAll(/(?:INSERT\s+INTO|(?<!FOR )UPDATE)\s+(\w+)[^`]*/g)) {
       const statement = match[0];
       const literal = /\bSET\b[\s\S]*?\bstatus\s*=/i.test(statement);
       // A SET clause assembled from a column allow-list writes whatever the

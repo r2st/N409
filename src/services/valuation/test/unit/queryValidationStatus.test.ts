@@ -133,9 +133,21 @@ function parses(): { found: Parse[]; unresolved: string[] } {
       // A census that a refactor can quietly blind is the shape this codebase
       // keeps a register of, so the helpers are named here rather than the
       // scan being loosened to "the next throw".
+      //
+      // Three spellings now, and the third is R270's. The two SSO flows are the
+      // only routes here whose caller is a browser doing a top-level
+      // navigation, so their refusals became `return refuseSso(req, reply,
+      // '<code>', problems.<kind>(…))` — a 302 to the sign-in page for a
+      // reader, and the problem unchanged for everybody else. That is the same
+      // blinding R180 caused: the `!success` guard still matched, the window
+      // walked past a refusal it did not recognise, and the Google callback's
+      // query parse has been reported as unresolved since. The problem the
+      // refusal carries *is* the status this census audits, so it is read from
+      // there — named, like the helpers, rather than loosening the scan.
       const guard = new RegExp(
         `!${name}\\.success\\)?\\s*(?:\\{\\s*)?[\\s\\S]{0,120}?` +
-          `throw (?:problems\\.([a-zA-Z]+)|(${[...VALIDATION_HELPERS.keys()].join('|')}))\\(([^)\n]*)`,
+          `(?:throw|return refuseSso\\(\\s*req,\\s*reply,\\s*'[a-z_]+',)\\s*` +
+          `(?:problems\\.([a-zA-Z]+)|(${[...VALIDATION_HELPERS.keys()].join('|')}))\\(([^)\n]*)`,
       ).exec(window);
       if (!guard) {
         unresolved.push(`${at} (no !${name}.success branch)`);

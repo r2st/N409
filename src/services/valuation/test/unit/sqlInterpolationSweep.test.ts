@@ -267,6 +267,9 @@ const REVIEWED: Record<string, string[]> = {
     'alias',
     'exemptTemplates',
     "emailWithheldSql('email_outbox', '$5::text[]')",
+    // R272's `retireStrandedEmails`, which is the same predicate against the
+    // same table, with its exemption list bound at a different index.
+    "emailWithheldSql('email_outbox', '$4::text[]')",
   ],
 
   // `column` indexes NOTIFIED_COLUMN with a two-member union type.
