@@ -139,10 +139,12 @@ describe.skipIf(!dbUp)('analyst agent wiring', () => {
      * `context` is opaque so a new agent needs no route change, and it used to
      * be spread over the payload last — so the opaque field was the
      * authoritative one. The AI tier honours `payload.prompt.system` and
-     * `.model` over its built-ins, and nothing downstream allow-lists a model
-     * id, so this was an analyst choosing the system prompt and the model on
-     * the estate's own provider key, on a job whose `prompt_version` records
-     * the registry row that did not run.
+     * `.model` over its built-ins, and nothing downstream allow-listed a model
+     * id at the time, so this was an analyst choosing the system prompt and the
+     * model on the estate's own provider key, on a job whose `prompt_version`
+     * records the registry row that did not run. R275 added the allow-list at
+     * the AI tier; the system prompt has no equivalent, and the job record's
+     * honesty never did — so this door stays the load-bearing one.
      */
     for (const key of ['prompt', 'options', 'documents', 'valuation', 'params']) {
       const res = await runAgent('comp_selection', ops.token, {

@@ -169,9 +169,12 @@ export interface AiAnonymizeResponse {
  *     the built-in only when they are absent. So `context.prompt` handed a
  *     tenant user the system prompt — the admin-managed Bot Prompts row is
  *     what the job's `prompt_version` then records, naming a prompt that did
- *     not run — and the model id, which is not allow-listed downstream
- *     (`configured_models` puts the preferred id first), so any model on the
- *     estate's own OpenRouter key was one request away.
+ *     not run — and the model id, which at the time was not allow-listed
+ *     downstream either (`configured_models` put the preferred id first), so
+ *     any model on the estate's own OpenRouter key was one request away. Round
+ *     275 closed that second half at the tier that holds the key
+ *     (`openrouter.assert_allowed`); this refusal is still the first door, and
+ *     the one that keeps the job record honest about what ran.
  *   - `options`, which carries `anonymize` and the redaction entity lists this
  *     route resolves from the engagement owner. Emptying them left the job row
  *     saying `redaction_identity: 'read'` about a run that was told nothing.
