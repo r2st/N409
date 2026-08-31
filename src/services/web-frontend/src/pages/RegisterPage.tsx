@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { api, describeActionFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { AuthShell } from '../components/AuthShell';
@@ -8,6 +8,7 @@ import type { PublicSystemSettings } from '../lib/types';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
 import { email, password as passwordRule, useFormValidation } from '../lib/useFormValidation';
 import { PASSWORD_HINT } from '../lib/passwordPolicy';
+import { SignedInHandoff } from '../components/SignedInHandoff';
 
 /** The onboarding funnel is per-valuation; company name collected here seeds the first one. */
 export const COMPANY_HINT_KEY = 'n409.company_hint';
@@ -52,7 +53,7 @@ export function RegisterPage() {
       .catch(() => setOpenToSignup(true));
   }, []);
 
-  if (status === 'authenticated') return <Navigate to={destination} replace />;
+  if (status === 'authenticated') return <SignedInHandoff to={destination} />;
 
   if (openToSignup === false) {
     return (

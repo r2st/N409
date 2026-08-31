@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { Spinner } from '../components/ui';
+import { handOffAfterSignIn } from '../components/SignedInHandoff';
 
 /** Landing page for the Google OIDC redirect: /auth/google/complete#token=… */
 export function GoogleCompletePage() {
@@ -21,7 +22,7 @@ export function GoogleCompletePage() {
     // Drop the token from the URL before anything else can observe it.
     window.history.replaceState(null, '', '/auth/google/complete');
     adoptToken(token)
-      .then(() => navigate('/', { replace: true }))
+      .then(() => handOffAfterSignIn('/', navigate))
       .catch(() => setFailed(true));
   }, [adoptToken, navigate]);
 

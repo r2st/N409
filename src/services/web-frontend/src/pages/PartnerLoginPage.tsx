@@ -5,6 +5,7 @@ import { describeActionFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
 import type { Branding, BrandingResponse } from '../lib/branding';
+import { handOffAfterSignIn } from '../components/SignedInHandoff';
 
 /**
  * Improvement 8 — white-label partner login at /partner/:slug. Branding comes
@@ -68,7 +69,7 @@ export function PartnerLoginPage() {
     setBusy(true);
     try {
       await login(email, password);
-      navigate('/', { replace: true });
+      handOffAfterSignIn('/', navigate);
     } catch (err) {
       setError(describeActionFailure(err, 'Unable to sign in — please try again.'));
     } finally {

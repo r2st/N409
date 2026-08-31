@@ -1,0 +1,106 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import {
+  SENSITIVE_QUERY_PARAMS,
+  injectGa4,
+  scrubAnalyticsUrl,
+  type AnalyticsConfig,
+} from '../src/lib/analytics';
+
+/**
+ * What a third-party container is allowed to be told about a URL.
+ *
+ * The API has blanked these parameters out of every request line it writes
+ * since the round that found the one-click unsubscribe token and the four OAuth
+ * authorization codes sitting in the logs (`scrubUrl` /
+ * `SENSITIVE_QUERY_PARAMS`, packages/shared/src/problem.ts). The browser had no
+ * counterpart, and the browser is the half that hands the URL to Google and
+ * Meta.
+ *
+ * Three public routes land with a live credential in the query — password
+ * reset, email verification, invitation acceptance — and each strips it on
+ * mount. That strip is a race with an async script, not a guarantee, so the one
+ * field a container lets us set is set explicitly instead.
+ */
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const SERVER_PROBLEM = path.resolve(HERE, '../../../packages/shared/src/problem.ts');
+
+/** The server's list, read out of its source — there is no import path here. */
+function serverParams(): string[] {
+  const src = readFileSync(SERVER_PROBLEM, 'utf8');
+  const block = src.slice(
+    src.indexOf('export const SENSITIVE_QUERY_PARAMS'),
+    src.indexOf('SENSITIVE_QUERY_PARAM_SET'),
+  );
+  return [...block.matchAll(/^\s*'([a-z_]+)',$/gm)].map((m) => m[1]!);
+}
+
+describe('the browser copy of the sensitive query parameters', () => {
+  it('parses the server list at all — the vacuity guard', () => {
+    expect(serverParams().length).toBeGreaterThanOrEqual(15);
+  });
+
+  it('says exactly what the server says', () => {
+    // web-frontend has no `@n409/shared` dependency, so this vocabulary is
+    // duplicated by construction and pinned by test — the same arrangement as
+    // every other rule this browser restates about the server's own.
+    expect([...SENSITIVE_QUERY_PARAMS].sort()).toEqual(serverParams().sort());
+  });
+});
+
+describe('scrubAnalyticsUrl', () => {
+  it('blanks a live credential without losing the fact that one was there', () => {
+    expect(scrubAnalyticsUrl('https://n409.ai/reset-password?token=abc123def456')).toBe(
+      'https://n409.ai/reset-password?token=REDACTED',
+    );
+    expect(scrubAnalyticsUrl('https://n409.ai/auth/google/complete?code=4%2F0Ab&state=xyz')).toBe(
+      'https://n409.ai/auth/google/complete?code=REDACTED&state=REDACTED',
+    );
+  });
+
+  it('blanks an address handed over in a query string', () => {
+    expect(scrubAnalyticsUrl('https://n409.ai/accept-invite?email=ada%40example.com')).toBe(
+      'https://n409.ai/accept-invite?email=REDACTED',
+    );
+  });
+
+  it('leaves an ordinary marketing URL byte for byte alone', () => {
+    // Returned unchanged rather than round-tripped through `URL`, so a campaign
+    // URL is not silently re-encoded on its way into the report.
+    for (const href of [
+      'https://n409.ai/pricing',
+      'https://n409.ai/blog/what-is-a-409a?utm_source=news&utm_medium=email',
+      'https://n409.ai/compare/carta',
+    ]) {
+      expect(scrubAnalyticsUrl(href), href).toBe(href);
+    }
+  });
+
+  it('answers a URL it cannot parse with a path and nothing else', () => {
+    expect(scrubAnalyticsUrl('not a url ?token=live')).toBe('/');
+  });
+});
+
+describe('injectGa4', () => {
+  const config: AnalyticsConfig = { gtmId: '', ga4Id: 'G-TEST', fbPixelId: '' };
+
+  it('configures the measurement id with the scrubbed location, not the address bar', () => {
+    const dataLayer: unknown[] = [];
+    const win = {
+      dataLayer,
+      location: { href: 'https://n409.ai/reset-password?token=live-secret' },
+    } as unknown as Window;
+    const doc = document.implementation.createHTMLDocument('t');
+    injectGa4(config, win as never, doc);
+    const configCall = dataLayer.find(
+      (entry): entry is unknown[] => Array.isArray(entry) && entry[0] === 'config',
+    );
+    expect(configCall).toBeDefined();
+    expect(JSON.stringify(configCall)).not.toContain('live-secret');
+    expect((configCall as unknown[])[2]).toEqual({
+      page_location: 'https://n409.ai/reset-password?token=REDACTED',
+    });
+  });
+});

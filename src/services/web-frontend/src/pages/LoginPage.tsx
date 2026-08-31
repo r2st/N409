@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { email as emailRule, required, useFormValidation } from '../lib/useFormValidation';
 import { api, describeActionFailure } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import type { AuthProviders } from '../lib/types';
 import { AuthShell } from '../components/AuthShell';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
+import { SignedInHandoff, handOffAfterSignIn } from '../components/SignedInHandoff';
 
 function GoogleButton() {
   return (
@@ -75,10 +76,11 @@ export function LoginPage() {
   if (status === 'authenticated') {
     const from = (location.state as { from?: string } | null)?.from;
     // "/" is the role-aware landing (partners → /partner, others → /dashboard).
-    return <Navigate to={from ?? '/'} replace />;
+    return <SignedInHandoff to={from ?? '/'} />;
   }
 
-  const goHome = () => navigate((location.state as { from?: string } | null)?.from ?? '/', { replace: true });
+  const goHome = () =>
+    handOffAfterSignIn((location.state as { from?: string } | null)?.from ?? '/', navigate);
 
   const submit = credentials.handleSubmit(async () => {
     setError(null);

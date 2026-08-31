@@ -13,6 +13,7 @@ import { useAuth } from '../lib/auth';
 import type { User } from '../lib/types';
 import { AuthShell } from '../components/AuthShell';
 import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+import { handOffAfterSignIn } from '../components/SignedInHandoff';
 
 /**
  * Feature #9 — accept an admin invitation: the link's fragment carries the
@@ -80,7 +81,7 @@ export function AcceptInvitePage() {
         },
       });
       await adoptToken(res.token);
-      navigate('/', { replace: true });
+      handOffAfterSignIn('/', navigate);
     } catch (err) {
       setError(describeRequestFailure(err));
       setBusy(false);
