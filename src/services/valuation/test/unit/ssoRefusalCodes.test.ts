@@ -62,8 +62,21 @@ describe('SSO refusal vocabulary', () => {
   it('never renders the code itself — an unknown one gets the general sentence', () => {
     const source = readFileSync(LOGIN_PAGE, 'utf8');
     expect(source).toContain('SSO_ERROR_FALLBACK');
-    // The lookup, not the value: `?sso_error=` is whatever a visitor typed.
-    expect(source).toMatch(/SSO_ERROR_MESSAGES\[\w+\]\s*\?\?\s*SSO_ERROR_FALLBACK/);
+    /*
+     * The guard, not the coalesce (round 272, methodology M3).
+     *
+     * R270 pinned the spelling it had written, `SSO_ERROR_MESSAGES[code] ??
+     * SSO_ERROR_FALLBACK`, and R271 replaced it — because that spelling is the
+     * bug: `??` only reaches the fallback for `undefined`, and every object
+     * answers to `__proto__`, `constructor` and `toString`, so
+     * `/login?sso_error=__proto__` handed React an object and took the sign-in
+     * page down. The census was left asserting the vulnerable form and has been
+     * red on main since; asserting `Object.hasOwn` states the rule the page
+     * actually has to follow, and refusing the bare coalesce keeps R271's fix
+     * from being spelled back out.
+     */
+    expect(source).toMatch(/Object\.hasOwn\(SSO_ERROR_MESSAGES,\s*\w+\)/);
+    expect(source).not.toMatch(/SSO_ERROR_MESSAGES\[\w+\]\s*\?\?/);
     expect(source).not.toMatch(/\{\s*ssoErrorCode\s*\}/);
   });
 
