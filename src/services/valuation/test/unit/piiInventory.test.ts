@@ -587,7 +587,9 @@ describe('the contact details that never become a column', () => {
     // repeated from a comment: if the trigger is ever relaxed, the reason
     // `valuation_events` is `kept` changes and this says so.
     const sql = readFileSync(path.join(MIGRATIONS, '0001_core.sql'), 'utf8');
-    expect(sql).toMatch(/CREATE TRIGGER valuation_events_immutable\s+BEFORE UPDATE OR DELETE ON valuation_events/);
+    expect(sql).toMatch(
+      /CREATE TRIGGER valuation_events_immutable\s+BEFORE UPDATE OR DELETE ON valuation_events/,
+    );
   });
 });
 
