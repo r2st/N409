@@ -460,5 +460,72 @@ describe.skipIf(!dbUp)('auto-pipeline retry claim under a racing trigger', () =>
     );
     expect(rows[0]).toMatchObject({ status: 'failed', next_attempt_at: null });
     expect(rows[0]!.error).toContain('retry abandoned');
+    // …and the withdrawal is on the spine, by this road as much as the other.
+    expect(await abandonedEvents(raced.valuationId)).toHaveLength(1);
+  });
+
+  /** `auto_pipeline_retry_abandoned` rows for a valuation, newest last. */
+  async function abandonedEvents(valuationId: string) {
+    const { rows } = await ctx.pool.query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'auto_pipeline_retry_abandoned'
+        ORDER BY occurred_at ASC`,
+      [valuationId],
+    );
+    return rows;
+  }
+
+  /**
+   * The retry that was promised and will not happen (round 272, M3).
+   *
+   * A reaped run's `auto_pipeline_failed` carries `retry_scheduled: true`,
+   * deliberately — "reaped alone reads as an ending either way". Standing the
+   * run down withdraws that promise, and the withdrawal used to live only as a
+   * suffix on `error`: nothing reads that column for this, and the next
+   * re-queue clears it. So the trail said a retry was owed for a run that would
+   * never be taken again, and nothing said otherwise.
+   */
+  it('records the abandonment when the pre-flight check finds the newer run', async () => {
+    const superseded = await valuationWithDueRetry('SupersededCo', 3);
+    // Committed before the claim, so the `NOT EXISTS` sees it — the ordinary
+    // road into the stand-down, not R268's index conflict.
+    await createPipelineRun(
+      ctx.pool,
+      { valuationId: superseded.valuationId, trigger: 'manual', triggeredBy: ops.id },
+      SYSTEM,
+    );
+
+    const claimed = await claimRetryablePipelineRuns(ctx.pool, { actor: SYSTEM });
+    expect(claimed.map((r) => r.id)).not.toContain(superseded.run.id);
+
+    const events = await abandonedEvents(superseded.valuationId);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.payload).toMatchObject({
+      run_id: superseded.run.id,
+      reason: 'newer_run_active',
+    });
+
+    // The row is stood down once and stays that way: nothing re-selects it, so
+    // the event is not written again by the next sweep either.
+    await claimRetryablePipelineRuns(ctx.pool, { actor: SYSTEM });
+    expect(await abandonedEvents(superseded.valuationId)).toHaveLength(1);
+  });
+
+  /** A run with no message of its own is not given one that starts with a space. */
+  it('does not prefix the abandonment note with a space on a run that failed silently', async () => {
+    const silent = await valuationWithDueRetry('SilentFailureCo', 4);
+    await ctx.pool.query('UPDATE pipeline_runs SET error = NULL WHERE id = $1', [silent.run.id]);
+    await createPipelineRun(
+      ctx.pool,
+      { valuationId: silent.valuationId, trigger: 'manual', triggeredBy: ops.id },
+      SYSTEM,
+    );
+
+    await claimRetryablePipelineRuns(ctx.pool, { actor: SYSTEM });
+    const { rows } = await ctx.pool.query<{ error: string }>(
+      'SELECT error FROM pipeline_runs WHERE id = $1',
+      [silent.run.id],
+    );
+    expect(rows[0]!.error).toBe('(retry abandoned: a newer run is active)');
   });
 });

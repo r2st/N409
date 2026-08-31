@@ -401,14 +401,42 @@ export async function claimRetryablePipelineRuns(
         // permanently rather than leaving the schedule set: otherwise this row
         // is re-examined by every sweep forever, and the log fills with a
         // retry that is never taken.
+        //
+        // `concat_ws` rather than `COALESCE(error, '') || …`, so a run with no
+        // message recorded is not given one that begins with a space.
         await client.query(
           `UPDATE pipeline_runs
               SET next_attempt_at = NULL,
-                  error = COALESCE(error, '') || ' (retry abandoned: a newer run is active)',
+                  error = concat_ws(' ', error, '(retry abandoned: a newer run is active)'),
                   updated_at = now()
             WHERE id = $1`,
           [run.id],
         );
+        /*
+         * And on the spine (round 272, methodology M3).
+         *
+         * This is a state transition — "a retry is owed" to "no retry is
+         * coming" — and it was the only one in this file that wrote nothing.
+         * The reaper immediately above puts `retry_scheduled` on its
+         * `auto_pipeline_failed` event *because* "reaped alone reads as an
+         * ending either way", so the trail says a retry is owed for this run;
+         * standing it down withdrew that and left the withdrawal in a suffix
+         * on `error`, which nothing reads and the next re-queue clears.
+         *
+         * Written on both roads into this branch, because they are the same
+         * fact arriving twice — the pre-flight `NOT EXISTS` missing, and the
+         * 23505 the savepoint above keeps to this one row (R268).
+         */
+        await recordEvent(client, {
+          valuationId: run.valuation_id,
+          type: 'auto_pipeline_retry_abandoned',
+          actor: opts.actor,
+          payload: {
+            run_id: run.id,
+            reason: 'newer_run_active',
+            attempts: run.attempts,
+          },
+        });
         continue;
       }
       await recordEvent(client, {

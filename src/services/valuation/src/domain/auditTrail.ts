@@ -144,6 +144,14 @@ export const EVENT_CATALOG = {
   // and what it produced is recorded separately as `calculation_completed`.
   auto_pipeline_completed: D('Automated pipeline completed', 'analysis', 'info'),
   auto_pipeline_failed: D('Automated pipeline failed', 'analysis', 'notice'),
+  // The retry that was promised and will not happen (round 272, methodology
+  // M3). `auto_pipeline_failed` carries `retry_scheduled`, so a reaped run says
+  // on the spine that something is coming back for it; when the retry sweep
+  // then stands the run down — a newer run supersedes it — that promise is
+  // withdrawn, and until R272 the withdrawal appeared nowhere but as a suffix
+  // on the `error` column. `notice` like `failed`, because it is the sentence
+  // that finishes it.
+  auto_pipeline_retry_abandoned: D('Automated pipeline retry abandoned', 'analysis', 'notice'),
   auto_pipeline_toggled: D('Automated pipeline toggled', 'analysis', 'info'),
   health_checks_run: D('Health checks run', 'analysis', 'info'),
 
