@@ -815,6 +815,19 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       const fund = await withTransaction(deps.pool, async (client) => {
         const existing = await lockFund(client, id);
         if (!existing) throw problems.notFound();
+        // Asked again, inside the transaction and with the engagement's row
+        // held. The check above ran on the pool and this UPDATE runs in a
+        // transaction opened afterwards, which is the gap R284 closed for the
+        // mark and left open here: a `retireValuations` committing in it
+        // attached a NAV schedule to work the firm had just withdrawn, wrote a
+        // `measurement_subject_linked` onto its immutable spine, and reported
+        // 200. `FOR SHARE` conflicts with the `FOR NO KEY UPDATE` the archival
+        // takes, so the two orders are the only two orders.
+        await refuseIfSubjectRetiredIn(
+          client,
+          { valuation_id: valuationId },
+          'accepting a measurement subject',
+        );
         const linked = await linkFundToValuation(client, id, valuationId);
         // Both ends of the move, and each on its own engagement's trail. A
         // detach is the sharper of the two: it takes away the whole data

@@ -290,6 +290,14 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       const instrument = await withTransaction(deps.pool, async (client) => {
         const existing = await lockInstrument(client, id);
         if (!existing) throw problems.notFound();
+        // Re-asked with the engagement's row held, for the reason the fund link
+        // gives: the pool check above and this UPDATE are two statements with a
+        // retirement-sized gap between them.
+        await refuseIfSubjectRetiredIn(
+          client,
+          { valuation_id: valuationId },
+          'accepting a measurement subject',
+        );
         const linked = await linkInstrumentToValuation(client, id, valuationId);
         // Both ends of the move, each on its own engagement's trail — see the
         // fund link for why the detach is the sharper of the two.
