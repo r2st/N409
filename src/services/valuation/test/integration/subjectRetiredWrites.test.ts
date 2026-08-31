@@ -62,6 +62,8 @@ describe.skipIf(!dbUp)('subject-addressed writes against a retired engagement', 
   let liveValuation: string;
   let retiredValuation: string;
   let organization: string;
+  /** The registered route patterns this file drove a 409 out of. */
+  const refused = new Set<string>();
 
   beforeAll(async () => {
     ctx = await setupTestApp({ AUTO_PIPELINE: 'off', EMAIL_MODE: 'off' });
@@ -129,8 +131,16 @@ describe.skipIf(!dbUp)('subject-addressed writes against a retired engagement', 
     await ctx?.teardown();
   });
 
-  /** Drive one request against both subjects. `live` is the control. */
+  /**
+   * Drive one request against both subjects. `live` is the control.
+   *
+   * `route` is the registered pattern the concrete URL below stands for, and a
+   * retired 409 records it. The census at the bottom then checks its guarded
+   * list against what this file actually refused, so a route cannot be listed
+   * as guarded on the strength of the list saying so.
+   */
   async function pair(
+    route: string,
     method: 'POST' | 'PUT' | 'PATCH',
     url: (subject: string) => string,
     payload: (subject: string) => unknown,
@@ -139,11 +149,15 @@ describe.skipIf(!dbUp)('subject-addressed writes against a retired engagement', 
     const send = async (s: string) =>
       (await app.inject({ method, url: url(s), headers: authHeader(ops.token), payload: payload(s) }))
         .statusCode;
-    return { live: await send(subjects.live), retired: await send(subjects.retired) };
+    const live = await send(subjects.live);
+    const retired = await send(subjects.retired);
+    if (retired === 409) refused.add(`${method} ${route}`);
+    return { live, retired };
   }
 
   it('refuses editing a task on a retired engagement', async () => {
     const { live, retired } = await pair(
+      '/api/v1/tasks/:id',
       'PATCH',
       (t) => `/api/v1/tasks/${t}`,
       () => ({ status: 'done' }),
@@ -155,6 +169,7 @@ describe.skipIf(!dbUp)('subject-addressed writes against a retired engagement', 
 
   it('refuses editing a comment on a retired engagement', async () => {
     const { live, retired } = await pair(
+      '/api/v1/comments/:commentId',
       'PATCH',
       (c) => `/api/v1/comments/${c}`,
       () => ({ body: 'Client says the financials are coming Friday.' }),
@@ -166,6 +181,7 @@ describe.skipIf(!dbUp)('subject-addressed writes against a retired engagement', 
 
   it('refuses adding a retired engagement to a consolidation group', async () => {
     const { live, retired } = await pair(
+      '/api/v1/organizations/:id/entities',
       'POST',
       () => `/api/v1/organizations/${organization}/entities`,
       (v) => ({ valuation_id: v, entity_type: 'subsidiary' }),
@@ -192,13 +208,21 @@ describe.skipIf(!dbUp)('subject-addressed writes against a retired engagement', 
    * rename cannot leave a line behind that reads as coverage.
    */
   describe('the census behind the sweep', () => {
-    /** Refuses a write aimed at a retired engagement. */
-    const GUARDED = [
+    /** Refuses a write aimed at a retired engagement, and is driven above. */
+    const OWNED = [
       'PATCH /api/v1/comments/:commentId',
       'PATCH /api/v1/tasks/:id',
       'POST /api/v1/organizations/:id/entities',
-      // The measurement surface, driven by `measurementRetiredWrites.test.ts`,
-      // which owns its own copy of this census against the route table.
+    ];
+
+    /**
+     * Guarded, and driven by `measurementRetiredWrites.test.ts` — which owns
+     * its own census of this surface, taken against the route table rather
+     * than against source, and proves its own guarded list the same way.
+     * Listed here so this census stays exhaustive over its population; a guard
+     * removed from one of these fails there, not here.
+     */
+    const CROSS_REFERENCED = [
       'PATCH /api/v1/funds/:id',
       'PATCH /api/v1/funds/:id/positions/:pid',
       'POST /api/v1/funds/:id/positions',
@@ -280,7 +304,13 @@ describe.skipIf(!dbUp)('subject-addressed writes against a retired engagement', 
     });
 
     it('classifies every subject-addressed write in a retirement-aware file', () => {
-      expect(subjectAddressedWrites()).toEqual([...GUARDED, ...Object.keys(EXEMPT)].sort());
+      expect(subjectAddressedWrites()).toEqual(
+        [...OWNED, ...CROSS_REFERENCED, ...Object.keys(EXEMPT)].sort(),
+      );
+    });
+
+    it('drove a refusal out of every route it calls its own', () => {
+      expect(OWNED.filter((route) => !refused.has(route))).toEqual([]);
     });
   });
 });
