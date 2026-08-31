@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
 import type { PipelineRunRow } from '../../src/repos/pipelineRuns.js';
 import type { ValuationRow } from '../../src/repos/valuations.js';
+import type * as AutoPipeline from '../../src/pipeline/autoPipeline.js';
 
 /**
  * What the reaper is told this process is still holding (round 268, M5).
@@ -20,7 +21,7 @@ import type { ValuationRow } from '../../src/repos/valuations.js';
  * looks like from here.
  */
 describe('runs the auto-pipeline has queued but not started', () => {
-  let mod: typeof import('../../src/pipeline/autoPipeline.js');
+  let mod: typeof AutoPipeline;
 
   beforeAll(async () => {
     vi.resetModules();
