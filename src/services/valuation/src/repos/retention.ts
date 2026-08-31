@@ -330,7 +330,11 @@ export interface OutboxPurgeResult {
  * its attempts is a message the retry sweep is going to try again — deleting
  * that is losing mail, not ageing it out. A 'queued' row is not eligible at
  * all, whatever its age: it is either about to be sent or already stranded, and
- * the stranded case is what `claimRetryableEmails` exists to pick up.
+ * the stranded case is what the retry sweep exists to pick up —
+ * `claimRetryableEmails` while it still has attempts, and
+ * `retireStrandedEmails` once it does not. Before R272 the second half of that
+ * sentence was not true of anything, so a 'queued' row past the ceiling was
+ * ineligible here and unclaimable there, and stayed in the table for ever.
  *
  * The age is `created_at`, not `sent_at`, so a row that never went anywhere
  * ages on the same clock as one that did — otherwise a permanently-failed

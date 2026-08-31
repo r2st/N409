@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import { describeTransportFailure, flagEnabled, FLAGS } from '@n409/shared';
-import { claimRetryableEmails, settleClaimedEmail } from '../repos/emailOutbox.js';
+import { claimRetryableEmails, retireStrandedEmails, settleClaimedEmail } from '../repos/emailOutbox.js';
 import { recordSendFailure } from '../repos/emailDelivery.js';
 import { EMAIL_MAX_ATTEMPTS } from '../domain/emailRetry.js';
 import { sendAndRecord } from '../email/sendAttempt.js';
@@ -21,7 +21,9 @@ import type { EmailTransport } from './stateChange.js';
  * Rows that have already failed `maxAttempts` times are left alone: past
  * that point a transient-failure retry is unlikely to help, and retrying
  * forever would mask a real, permanent problem (bad address, disabled
- * account) behind an ever-growing attempts counter.
+ * account) behind an ever-growing attempts counter. A row that reached the
+ * ceiling while still on 'queued' is *settled* rather than left alone — see
+ * `retireStrandedEmails`; the ceiling has to end a row, not abandon it.
  *
  * *When* a failed row comes back is the ladder in domain/emailRetry.ts, stamped
  * on the row as `next_attempt_at` (0159). Before that this sweep had a ceiling
@@ -62,6 +64,28 @@ export async function retryFailedEmails(deps: {
   // fact rather than two that can disagree — a schedule stamped past the
   // ceiling would be a row waiting for a sweep that will never take it.
   const maxAttempts = deps.maxAttempts ?? EMAIL_MAX_ATTEMPTS;
+
+  // The ceiling ends a 'failed' row and used to abandon a 'queued' one where it
+  // stood — claimable by nothing, purgeable by nothing, and counted as a queue
+  // running later every minute. `retireStrandedEmails` gives it the same ending
+  // the ladder gives everything else. Before the claim, so a sweep that then
+  // takes a full batch does not leave the retirement a batch behind; its own
+  // failure must not cost the batch, for the reason the settle catch gives.
+  const retired = await retireStrandedEmails(deps.pool, {
+    maxAttempts,
+    limit: deps.limit,
+    leaseMs: deps.leaseMs,
+  }).catch((err: unknown) => {
+    deps.log?.error({ err }, 'could not retire stranded outbox rows');
+    return [];
+  });
+  for (const email of retired) {
+    deps.log?.warn(
+      { emailId: email.id, originRequestId: email.request_id, attempts: email.attempts },
+      'outbox row stranded on queued with its attempts spent — settled as failed',
+    );
+  }
+
   const claimed = await claimRetryableEmails(deps.pool, {
     channels,
     maxAttempts,

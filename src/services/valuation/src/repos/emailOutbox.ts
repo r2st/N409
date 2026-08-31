@@ -435,6 +435,89 @@ export async function claimRetryableEmails(
 }
 
 /**
+ * The stranded rows the ladder can no longer reach, given the ending it owes
+ * them (round 272, methodology M3).
+ *
+ * `claimRetryableEmails` takes two kinds of row: a 'failed' one whose schedule
+ * is due, and a 'queued' one whose lease has run out — the crash between the
+ * INSERT and the transport call. Both are refused past `attempts < maxAttempts`,
+ * and for a 'failed' row that is the ladder ending exactly as
+ * `domain/emailRetry.ts` describes it: "a genuinely undeliverable address
+ * exhausts the ladder and settles". A 'queued' row does not settle. Nothing
+ * writes a status over it, so the ceiling leaves it where it was:
+ *
+ *   - the claim will not take it — `attempts < maxAttempts` is false;
+ *   - `purgeExpiredOutbox` will not remove it — `status <> 'queued'` is false,
+ *     on the stated ground that "a 'queued' row is either about to be sent or
+ *     already stranded, and the stranded case is what `claimRetryableEmails`
+ *     exists to pick up", which is the sentence this row disproves;
+ *   - `oldestActiveJobs` counts it, at `due_at = created_at`, getting older
+ *     every minute — and an open alert is keyed `(source, kind)` and announced
+ *     once, so it holds `email/stalled` open forever and the next real outage
+ *     announces nothing. That is R228's finding about withheld rows, reached by
+ *     the one door R228 did not close;
+ *   - the jobs page draws it 'queued' for as long as the table exists.
+ *
+ * Reached by attempts that never report an outcome, which the lease exists
+ * because of: a sweeper holding a transport call past fifteen minutes is
+ * re-claimed by the next one, `attempts` goes up, and the late settle is refused
+ * by its own `attempts` pin. `EMAIL_MAX_ATTEMPTS` of those and the row is out of
+ * the ladder while still wearing the status of work about to be done.
+ *
+ * So it is settled here, on the same terms the ladder settles everything else:
+ * 'failed', no schedule, lease released, and a message saying what happened —
+ * the row is then a failure an operator can see on the queue page and retry by
+ * hand, instead of a queue that reads as permanently behind.
+ *
+ * Withheld rows are left alone, which is not an omission: they are already out
+ * of the stall count (`emailWithheldSql`), they are held by a fact that can
+ * change back, and a 'failed' stamp is the one thing a restore or a released
+ * suppression could not undo.
+ *
+ * The lease test is the claim's, so no in-flight send can still be holding a
+ * row this settles — the same argument `failExhaustedDeliveries` makes next
+ * door, which is this function for webhook deliveries and has been there since
+ * R224. The two subsystems answer the same question about the same kind of
+ * upstream and had the same wedge; only one of them had the reaper.
+ */
+export async function retireStrandedEmails(
+  pool: pg.Pool,
+  opts: { maxAttempts?: number; leaseMs?: number; limit?: number } = {},
+): Promise<EmailOutboxRow[]> {
+  const maxAttempts = opts.maxAttempts ?? EMAIL_MAX_ATTEMPTS;
+  const leaseSeconds = Math.max(1, Math.floor((opts.leaseMs ?? CLAIM_LEASE_MS) / 1000));
+  const { rows } = await pool.query<EmailOutboxRow>(
+    `WITH stranded AS (
+       SELECT id FROM email_outbox
+        WHERE status = 'queued'
+          AND attempts >= $1
+          AND (claimed_at IS NULL OR claimed_at < now() - ($2 || ' seconds')::interval)
+          AND NOT ${emailWithheldSql('email_outbox', '$4::text[]')}
+        ORDER BY created_at ASC
+        LIMIT $3
+        FOR UPDATE SKIP LOCKED
+     )
+     UPDATE email_outbox e
+        SET status = 'failed',
+            claimed_at = NULL,
+            next_attempt_at = NULL,
+            error = $5
+       FROM stranded s
+      WHERE e.id = s.id
+      RETURNING e.*`,
+    [
+      maxAttempts,
+      String(leaseSeconds),
+      Math.min(opts.limit ?? 100, 500),
+      [...SUPPRESSION_EXEMPT_TEMPLATES],
+      `no delivery attempt reported an outcome, and the row is out of attempts ` +
+        `(${maxAttempts}) — retry it by hand if the transport is healthy again`,
+    ],
+  );
+  return rows;
+}
+
+/**
  * Settles a row taken by claimRetryableEmails, while the claim still stands.
  *
  * Unlike markEmail this does not count an attempt — the claim already did — and

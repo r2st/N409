@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { retryFailedEmails } from '../../src/hooks/emailRetry.js';
+import { oldestActiveJobs } from '../../src/repos/jobs.js';
 import { enqueueEmail, listOutbox, markEmail, type EmailOutboxRow } from '../../src/repos/emailOutbox.js';
 import type { EmailTransport } from '../../src/hooks/stateChange.js';
 
@@ -341,6 +342,52 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
 
     expect(deliveredIds).not.toContain(email.id);
     expect((await outboxRow(ctx, email.id)).attempts).toBe(3);
+  });
+
+  /**
+   * The ceiling has to *end* a row, not abandon it (round 272, methodology M3).
+   *
+   * A 'failed' row past `maxAttempts` is finished, and every reader agrees it is
+   * — that is what "a genuinely undeliverable address exhausts the ladder and
+   * settles" means in domain/emailRetry.ts. A 'queued' row reaching the same
+   * ceiling was left wearing the status of work about to be done: the claim
+   * refuses it on `attempts < maxAttempts`, `purgeExpiredOutbox` refuses it on
+   * `status <> 'queued'` — on the stated ground that a stranded queued row is
+   * what the retry sweep picks up — and `oldestActiveJobs` counts it, at
+   * `due_at = created_at`, getting older every minute. An open alert is keyed
+   * `(source, kind)` and announced once, so one such row holds `email/stalled`
+   * open for ever and the next real outage announces nothing: R228's finding
+   * about withheld rows, through the one door R228 did not close.
+   */
+  it('settles a stranded queued row whose attempts are spent, rather than leaving it queued for ever', async () => {
+    const email = await seedStrandedQueuedEmail(ctx, 'stranded-terminal@test.example.com');
+    await ctx.pool.query(`UPDATE email_outbox SET attempts = 3 WHERE id = $1`, [email.id]);
+
+    const emailQueue = async () =>
+      (await oldestActiveJobs(ctx.pool)).find((r) => r.source === 'email')?.active ?? 0;
+    // It is counted as a queue running late, and nothing will ever take it.
+    expect(await emailQueue()).toBeGreaterThan(0);
+
+    const deliveredIds: string[] = [];
+    await retryFailedEmails({
+      pool: ctx.pool,
+      maxAttempts: 3,
+      transport: {
+        async send(e) {
+          deliveredIds.push(e.id);
+        },
+      },
+    });
+
+    // Settled, not sent: the ladder is spent, so the ending is a failure with a
+    // reason on it — visible on the queue page, retryable by hand.
+    expect(deliveredIds).not.toContain(email.id);
+    const row = await outboxRow(ctx, email.id);
+    expect(row.status).toBe('failed');
+    expect(row.attempts).toBe(3);
+    expect(row.next_attempt_at).toBeNull();
+    expect(row.error).toMatch(/out of attempts/);
+    expect(await emailQueue()).toBe(0);
   });
 });
 
