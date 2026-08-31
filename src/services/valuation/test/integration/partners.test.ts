@@ -192,9 +192,7 @@ describe.skipIf(!dbUp)('partner management API', () => {
       });
 
       // Live: the same two fields, now that the firm has turned white label on.
-      await ctx.pool.query(`UPDATE partners SET white_label_enabled = true WHERE id = $1`, [
-        partner.id,
-      ]);
+      await ctx.pool.query(`UPDATE partners SET white_label_enabled = true WHERE id = $1`, [partner.id]);
       expect((await mine()).json().partner).toEqual({
         id: partner.id,
         name: 'Mine Org',
