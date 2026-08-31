@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type pg from 'pg';
-import { newUlid } from '@n409/shared';
+import { newUlid, problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { calendarDateRow } from '../domain/calendarDate.js';
 import { recordEvent, type EventActor } from '../events/record.js';
@@ -146,6 +146,35 @@ export async function findResolutionsByValuationIds(
   return new Map(rows.map((row) => [row.valuation_id, resolution(row)]));
 }
 
+/**
+ * Put a director on the sign-off list.
+ *
+ * THE `FOR UPDATE` IS THE POINT, and it is the same argument `recordSignoff`
+ * makes below. Adding a member means the board is no longer fully signed, so
+ * this ends by recomputing the aggregate — and on an approved resolution that
+ * recomputation is an *un-approval*: `status` goes back to 'pending',
+ * `approved_at` is cleared, and `refreshResolutionStatusTx` emits no event for
+ * that direction, so the trail says a resolution was approved and never says it
+ * stopped being. The route refuses it for exactly that reason ("The resolution
+ * is already approved") — but that refusal is a read on the pool, and the fact
+ * it reads is one the last outstanding signature changes.
+ *
+ * Which is not an exotic interleaving. The window is "ops adds a director while
+ * the last director is signing", and it is opened by the ordinary way this
+ * feature is used: the members screen is what ops has open while the links are
+ * out. The read said 'pending', the final `POST /board/sign` committed, and
+ * this transaction then took an approved resolution back to pending with an
+ * `approved_at` that had already been stamped — on the governance record
+ * adopting a 409A FMV, which is the one document whose approval has to be able
+ * to say when it happened.
+ *
+ * Asked again here, under the row lock `refreshResolutionStatusTx` takes
+ * anyway, the question is settled against a row nothing can move until this
+ * transaction ends: either the signature commits first and this is refused, or
+ * this commits first and the signature's own recomputation sees the new pending
+ * member and does not approve. The pool-side check in the route stays — it is
+ * what answers the ordinary, uncontended case before a transaction is opened.
+ */
 export async function addBoardMember(
   pool: pg.Pool,
   input: {
@@ -159,6 +188,17 @@ export async function addBoardMember(
   actor: EventActor,
 ): Promise<BoardSignoffRow> {
   return withTransaction(pool, async (client) => {
+    const { rows: locked } = await client.query<{ status: BoardResolutionStatus }>(
+      'SELECT status FROM board_resolutions WHERE id = $1 FOR UPDATE',
+      [input.resolutionId],
+    );
+    // No row is unreachable through the route, which loads the resolution to
+    // get here, and nothing deletes one — `upsertResolution` replaces it in
+    // place. Left to the INSERT's foreign key rather than given a message of
+    // its own, so this reads as the one refusal it is here to make.
+    if (locked[0]?.status === 'approved') {
+      throw problems.conflict('The resolution is already approved');
+    }
     const { rows } = await client.query<BoardSignoffRow>(
       `INSERT INTO board_signoffs
          (id, resolution_id, valuation_id, member_name, member_email, member_title,

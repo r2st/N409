@@ -126,4 +126,91 @@ describe.skipIf(!dbUp)('board sign-off under concurrency', () => {
     expect(rows[0]!.status).toBe('signed');
     expect(rows[0]!.comment).toBeNull();
   });
+
+  /**
+   * The other direction into the same row, and the one nothing was watching.
+   *
+   * `POST /valuations/:id/board/members` refuses to add a director to an
+   * approved resolution, because adding one un-approves it: `addBoardMember`
+   * ends by recomputing the aggregate, and the recomputation of an approved
+   * resolution with a fresh pending member is 'pending' with `approved_at`
+   * cleared — a direction `refreshResolutionStatusTx` emits no event for, so
+   * the trail records the approval and never records it being taken away.
+   *
+   * That refusal was a read on the pool, and the fact it read is the one the
+   * last outstanding signature changes. The window is "ops adds a director
+   * while the last director is signing", which is not exotic: the members
+   * screen is what ops has open while the links are out.
+   */
+  describe('adding a member while the last signature lands', () => {
+    /**
+     * Somebody is stopped on a row lock. Borrowed from
+     * `measurementLinkRace.test.ts`, for the same reason it exists there: it
+     * makes "the request reached the write and waited" an assertion rather
+     * than a sleep long enough to be probably true.
+     */
+    const waitForABlockedBackend = async (): Promise<void> => {
+      const deadline = Date.now() + 5000;
+      for (;;) {
+        const { rows } = await ctx.pool.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'
+              AND pid <> pg_backend_pid()`,
+        );
+        if ((rows[0]?.n ?? 0) > 0) return;
+        if (Date.now() >= deadline) throw new Error('no backend ever blocked on the resolution row');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    };
+
+    it('refuses the addition rather than un-approving the resolution', async () => {
+      const { valuationId, token } = await newSignableMember('LateAddCo');
+      const resolutionBefore = await findResolutionByValuation(ctx.pool, valuationId);
+      expect(resolutionBefore!.status).toBe('pending');
+
+      const holder = await ctx.pool.connect();
+      let inFlight: ReturnType<typeof ctx.app.inject> | null = null;
+      try {
+        // The final signature, in flight and not yet committed. The route's own
+        // read below cannot see it, which is the whole point: it sees the same
+        // 'pending' an operator's screen is showing.
+        await holder.query('BEGIN');
+        await holder.query(
+          `UPDATE board_signoffs SET status = 'signed', signed_at = now() WHERE resolution_id = $1`,
+          [resolutionBefore!.id],
+        );
+        await holder.query(
+          `UPDATE board_resolutions SET status = 'approved', approved_at = now() WHERE id = $1`,
+          [resolutionBefore!.id],
+        );
+
+        inFlight = ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${valuationId}/board/members`,
+          headers: authHeader(ops.token),
+          payload: { name: 'Late Arrival', email: 'late@board.example' },
+        });
+        await waitForABlockedBackend();
+        await holder.query('COMMIT');
+      } finally {
+        holder.release();
+      }
+
+      const added = await inFlight!;
+      expect(added.statusCode).toBe(409);
+
+      const resolution = await findResolutionByValuation(ctx.pool, valuationId);
+      expect(resolution!.status).toBe('approved');
+      // The stamp is the half a re-approval could not put back: it says when
+      // the board adopted the FMV, and `refreshResolutionStatusTx` writes NULL
+      // on every move out of 'approved'.
+      expect(resolution!.approved_at).not.toBeNull();
+      const rows = await listBoardMembers(ctx.pool, resolution!.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.status).toBe('signed');
+      // Unused, so the token minted for the refused member is not left live.
+      expect(added.json().sign_token).toBeUndefined();
+      expect(token).toBeTruthy();
+    });
+  });
 });
