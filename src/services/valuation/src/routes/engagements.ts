@@ -351,7 +351,25 @@ export function registerEngagementRoutes(
           valuationId: r.valuation_id,
           type: ENGAGEMENT_EVENT_TYPES.overdueReminded,
           actor: { actorType: 'human', actorId: principal.id },
-          payload: { stage: r.current_stage, analyst_email: r.analyst_email },
+          // The analyst by id, not by address. `valuation_events` carries
+          // `valuation_events_immutable`, a BEFORE UPDATE OR DELETE trigger
+          // from 0001 whose whole body is `RAISE EXCEPTION`, so a row written
+          // here cannot afterwards be edited or removed by anything — not the
+          // retention engine, which declares `valuation` as archive-only, and
+          // not `DELETE /api/v1/me`, which soft-deletes the account and leaves
+          // the spine alone by design.
+          //
+          // This sweep is schedulable and runs over every overdue engagement,
+          // so it was the platform's highest-volume writer of a staff member's
+          // address into the one table nothing can erase — a new copy per
+          // overdue engagement per run, indefinitely, for a person whose
+          // account deactivation R279 had just taught it to respect. The id is
+          // what every other payload on this spine names a person by, it is
+          // the column the board and the assign route already key on, and
+          // `users` holds the address behind it for as long as the account
+          // does. Nothing read the old key: see `eventPayloadContactKeys` in
+          // `piiInventory.test.ts`, which now refuses a new one.
+          payload: { stage: r.current_stage, analyst_id: r.assigned_analyst_id },
         }),
       );
       reminded.push(r.valuation_id);

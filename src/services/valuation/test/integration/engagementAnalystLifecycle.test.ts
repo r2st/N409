@@ -171,6 +171,36 @@ describe.skipIf(!dbUp)('overdue sweep re-checks the assigned analyst', () => {
     }
   });
 
+  it('names the analyst it chased by id, not by address', async () => {
+    // `valuation_events` carries 0001's `valuation_events_immutable` trigger —
+    // RAISE EXCEPTION on UPDATE and on DELETE — so anything this sweep puts in
+    // a payload is there for good: the retention engine declares `valuation`
+    // archive-only, `DELETE FROM valuations` is blocked by the same trigger,
+    // and closing an account is a soft delete that leaves the spine alone. The
+    // sweep is schedulable and writes one row per overdue engagement per run,
+    // which made it the platform's largest writer of a staff address into the
+    // one table nothing can erase — and R279 had just taught it to stop
+    // *mailing* a closed account. The id answers "who was chased" and the
+    // address is behind it in `users` for as long as the account is.
+    const { rows } = await pool.query<{ payload: Record<string, unknown> }>(
+      `SELECT payload FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'engagement_overdue_reminder'
+        ORDER BY occurred_at DESC LIMIT 1`,
+      [liveId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.payload.analyst_id).toBe(liveAnalyst.id);
+    expect(Object.keys(rows[0]!.payload)).not.toContain('analyst_email');
+    // And no payload on this engagement's spine holds the address in any key:
+    // the point is the value, not the spelling.
+    const { rows: leaked } = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM valuation_events
+        WHERE valuation_id = $1 AND payload::text ILIKE '%' || $2 || '%'`,
+      [liveId, liveAnalyst.email],
+    );
+    expect(leaked[0]!.n).toBe(0);
+  });
+
   it('reports the un-chased engagements rather than passing over them in silence', async () => {
     const res = await app.inject({
       method: 'POST',

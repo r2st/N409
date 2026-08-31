@@ -197,6 +197,60 @@ describe.skipIf(!dbUp)('feature 5 — board approval workflow', () => {
     expect(rows.length).toBe(1);
   });
 
+  it('keeps a director’s address off the spine except where the row is going away', async () => {
+    // `valuation_events` carries 0001's `valuation_events_immutable` trigger —
+    // RAISE EXCEPTION on UPDATE and on DELETE, with a TRUNCATE twin and no
+    // session flag — so a payload written here has no erasure path at all:
+    // not the retention engine, which declares `valuation` archive-only; not a
+    // cascade, since `DELETE FROM valuations` is blocked by the same trigger.
+    // `board_signoffs` is declared in the PII inventory as cascading from the
+    // engagement, and that was true of the row and false of the three copies
+    // of the address the spine was taking beside it.
+    const spine = async (type: string) => {
+      const { rows } = await pool.query<{ payload: Record<string, unknown> }>(
+        'SELECT payload FROM valuation_events WHERE valuation_id = $1 AND type = $2 ORDER BY occurred_at',
+        [valuationId, type],
+      );
+      return rows.map((r) => r.payload);
+    };
+
+    // Two events whose `signoff_id` names a row that still exists — so the
+    // address is a second copy of something one join away, and is not taken.
+    const added = await spine('board_member_added');
+    expect(added.length).toBeGreaterThan(0);
+    for (const p of added) {
+      expect(p.signoff_id).toBeTruthy();
+      expect(p.member_email).toBeUndefined();
+    }
+    const signed = await spine('board_signoff_recorded');
+    expect(signed.length).toBeGreaterThan(0);
+    for (const p of signed) {
+      expect(p.signoff_id).toBeTruthy();
+      expect(p.member_email).toBeUndefined();
+    }
+
+    // And the exception, which is the declared one: removal deletes the row in
+    // the same transaction, so after it `signoff_id` resolves to nothing and
+    // the event is the last record of who was on the board.
+    const board = await app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${valuationId}/board`,
+      headers: authHeader(ops.token),
+    });
+    const victim = (board.json().members as { id: string; member_email: string }[])[0]!;
+    const removed = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/valuations/${valuationId}/board/members/${victim.id}`,
+      headers: authHeader(ops.token),
+    });
+    expect(removed.statusCode).toBe(204);
+    const removals = await spine('board_member_removed');
+    expect(removals).toHaveLength(1);
+    expect(removals[0]!.member_email).toBe(victim.member_email);
+    const { rows: gone } = await pool.query('SELECT id FROM board_signoffs WHERE id = $1', [victim.id]);
+    expect(gone).toHaveLength(0);
+  });
+
   it('a rejection rejects the whole resolution', async () => {
     const created = await app.inject({
       method: 'POST',

@@ -180,7 +180,16 @@ export async function addBoardMember(
       valuationId: input.valuationId,
       type: BOARD_EVENT_TYPES.memberAdded,
       actor,
-      payload: { signoff_id: rows[0]!.id, member_email: input.email.toLowerCase() },
+      // The row, not the address. `board_signoffs` is declared in the PII
+      // inventory as cascading from the engagement, and that disposition is
+      // true of the row and false of a copy made here: `valuation_events`
+      // carries 0001's `valuation_events_immutable` trigger, so a director's
+      // address written into a payload cannot afterwards be edited or removed
+      // by anything at all. `signoff_id` names the row while it exists, and
+      // `board_member_removed` below is where the address is kept for the one
+      // case in which it does not — so an auditor can still resolve this id,
+      // and only one copy of the address is made instead of three.
+      payload: { signoff_id: rows[0]!.id },
     });
     // Adding a member means the board is no longer fully signed.
     await refreshResolutionStatusTx(client, input.resolutionId, input.valuationId, actor);
@@ -269,6 +278,14 @@ export async function deleteBoardMember(
       valuationId: signoff.valuation_id,
       type: BOARD_EVENT_TYPES.memberRemoved,
       actor,
+      // The one place on this spine that keeps a director's address, and the
+      // reason is that the row it names is being deleted in the same
+      // transaction: after this statement `signoff_id` resolves to nothing,
+      // and an event saying only that some member was removed from the board
+      // resolution adopting a 409A FMV does not answer the question the trail
+      // exists for. Declared as such in `piiInventory.test.ts` — the copy
+      // outlives every mechanism this schema has for removing it, which is a
+      // decision rather than an oversight.
       payload: { signoff_id: signoff.id, member_email: signoff.member_email },
     });
     await refreshResolutionStatusTx(client, signoff.resolution_id, signoff.valuation_id, actor);
@@ -317,7 +334,7 @@ export async function recordSignoff(
       valuationId: signoff.valuation_id,
       type: BOARD_EVENT_TYPES.signoffRecorded,
       actor: { actorType: 'human', source: 'board-member' },
-      payload: { signoff_id: signoff.id, member_email: signoff.member_email, decision: decision.status },
+      payload: { signoff_id: signoff.id, decision: decision.status },
     });
     const resolution = await refreshResolutionStatusTx(client, signoff.resolution_id, signoff.valuation_id, {
       actorType: 'system',

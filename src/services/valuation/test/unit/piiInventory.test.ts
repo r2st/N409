@@ -163,6 +163,17 @@ const DISPOSITION: Record<string, Disposition> = {
       'discovered — a marketing enquiry is correspondence operations may need to produce, and choosing ' +
       'a destruction schedule for it is a policy call for the business, not a default.',
   },
+  valuation_events: {
+    how: 'kept',
+    why:
+      'The engagement spine, and the only store in this schema with no erasure path at all: ' +
+      "migration 0001's `valuation_events_immutable` trigger raises on UPDATE and on DELETE, with a " +
+      'TRUNCATE twin beside it and no session flag, which is also why `DELETE FROM valuations` fails ' +
+      'and why the retention engine declares `valuation` archive-only. It holds one contact detail ' +
+      "on purpose — the address on `board_member_removed`, written as the deleted row's last record " +
+      'of who was on the board — and that copy outlives the `board_signoffs` row it was taken from, ' +
+      'so it is recorded here rather than left to be inferred from that table’s cascade disposition.',
+  },
   admin_events: {
     how: 'kept',
     why:
@@ -343,6 +354,98 @@ const ADDRESS_SINKS: Record<string, { table: string | null; why: string }> = {
   },
 };
 
+/**
+ * The third half: an address written under a contact-shaped name into
+ * something that is not a column.
+ *
+ * The two scans above divide the problem between them and leave a gap exactly
+ * where they meet. `namedContactTables` derives the inventory from *columns*
+ * whose name says "address", so it cannot see a value that never becomes a
+ * column. `ADDRESS_SINKS` derives it from *keys* whose name does not say
+ * "address" — and its first act is to skip every key that matches
+ * `/email|phone|address|recipient/i`, because a key that says so is assumed to
+ * be a column already covered by the first scan.
+ *
+ * A key called `member_email` inside a JSONB payload is in neither. It is not
+ * a column, so the first scan is blind to it; it is honestly named, so the
+ * second scan skips it. Four sites sat in that gap, and the table they wrote
+ * to is the worst one in the schema to have missed: `valuation_events` carries
+ * `valuation_events_immutable` from migration 0001, a `BEFORE UPDATE OR DELETE`
+ * trigger whose whole body is `RAISE EXCEPTION`, with a `BEFORE TRUNCATE` twin
+ * beside it and no session flag to disable either. A row written there cannot
+ * be edited or removed by anything — not the retention engine, which declares
+ * `valuation` archive-only for reasons of its own; not a cascade, because
+ * `DELETE FROM valuations` is itself blocked by this trigger; not
+ * `DELETE /api/v1/me`, which soft-deletes the account. It is the one store in
+ * this schema with no erasure path at all, and the two inventories that exist
+ * to find unbounded stores of contact details could not see into it.
+ *
+ * That matters most where a disposition elsewhere reads as covering it.
+ * `board_signoffs` is declared `cascade from valuations` — "it goes when the
+ * engagement is purged" — and `deleteBoardMember` does delete the row; the copy
+ * of the address in the payload of the event recording that deletion does not
+ * go anywhere, ever. The disposition was true of the row and false of the copy.
+ *
+ * Declared rather than banned, for the same reason `admin_events` is: this is
+ * the audit spine, and there is one act on it whose whole content is a person's
+ * identity. What the census enforces is that each such key is a decision
+ * somebody wrote down, and that the table it lands in owes a disposition like
+ * any other.
+ */
+const PAYLOAD_CONTACT_SINKS: Record<string, { table: string | null; why: string }> = {
+  member_email: {
+    table: 'valuation_events',
+    why:
+      '`board_member_removed`, written in the transaction that deletes the `board_signoffs` row: ' +
+      'after it, `signoff_id` resolves to nothing, and "some member was removed from the resolution ' +
+      'adopting this FMV" is not an answer to the question the trail exists for. The other two board ' +
+      'events name the live row instead.',
+  },
+};
+
+/**
+ * Contact-shaped keys inside an event `payload:` object literal.
+ *
+ * Read from `code()`-blanked sources, so a key named in a comment or inside a
+ * string is not a write site, and brace-matched from the literal's own opening
+ * brace so a nested object belongs to the payload it is nested in.
+ */
+function payloadContactKeys(): Map<string, string[]> {
+  const found = new Map<string, string[]>();
+  for (const file of serviceSources()) {
+    const src = code(readFileSync(file, 'utf8'));
+    for (const m of src.matchAll(/payload\s*:\s*\{/g)) {
+      const open = src.indexOf('{', m.index!);
+      let depth = 0;
+      for (let i = open; i < src.length; i += 1) {
+        if (src[i] === '{') depth += 1;
+        else if (src[i] === '}') {
+          depth -= 1;
+          if (depth > 0) continue;
+          const body = src.slice(open, i + 1);
+          for (const k of body.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*:/g)) {
+            const key = k[1]!;
+            if (!CONTACT_COLUMN.test(key) || NON_PERSONAL_CONTACT.has(key)) continue;
+            const line = src.slice(0, open + (k.index ?? 0)).split('\n').length;
+            if (!found.has(key)) found.set(key, []);
+            found.get(key)!.push(`${path.relative(SERVICE_SRC, file)}:${line}`);
+          }
+          break;
+        }
+      }
+    }
+  }
+  return found;
+}
+
+const payloadContactTables = [
+  ...new Set(
+    Object.values(PAYLOAD_CONTACT_SINKS)
+      .map((s) => s.table)
+      .filter((t): t is string => t !== null),
+  ),
+].sort();
+
 const renamedContactTables = [
   ...new Set(
     Object.values(ADDRESS_SINKS)
@@ -351,7 +454,9 @@ const renamedContactTables = [
   ),
 ].sort();
 
-const contactTables = [...new Set([...namedContactTables, ...renamedContactTables])].sort();
+const contactTables = [
+  ...new Set([...namedContactTables, ...renamedContactTables, ...payloadContactTables]),
+].sort();
 
 describe('the personal data inventory', () => {
   it('parses a schema at all', () => {
@@ -437,7 +542,52 @@ describe('the personal data inventory', () => {
       .filter(([, d]) => d.how === 'kept')
       .map(([t]) => t)
       .sort();
-    expect(kept).toEqual(['admin_events', 'contact_submissions', 'email_suppressions', 'users']);
+    expect(kept).toEqual([
+      'admin_events',
+      'contact_submissions',
+      'email_suppressions',
+      'users',
+      'valuation_events',
+    ]);
+  });
+});
+
+describe('the contact details that never become a column', () => {
+  const sinks = payloadContactKeys();
+
+  it('finds the payload write sites at all — the vacuity guard', () => {
+    // Without this, a regex that stopped matching would make the check below
+    // pass over an empty map, which is exactly how this gap survived two
+    // inventories: a scan that finds nothing and a schema that holds nothing
+    // are indistinguishable from the outside.
+    const literals = serviceSources()
+      .map((f) => [...code(readFileSync(f, 'utf8')).matchAll(/payload\s*:\s*\{/g)].length)
+      .reduce((a, b) => a + b, 0);
+    expect(literals).toBeGreaterThan(30);
+    expect(sinks.get('member_email')?.length ?? 0).toBe(1);
+  });
+
+  it('accounts for every contact detail written into an event payload', () => {
+    const undeclared = [...sinks.keys()].filter((key) => !(key in PAYLOAD_CONTACT_SINKS)).sort();
+    // A JSONB payload is not a column, so neither inventory above can see this.
+    // A new key here is a decision: the address goes into a table whose rows
+    // this schema has no mechanism to remove, so either the id will do — which
+    // it did at three of the four sites that were here — or the reason it will
+    // not belongs beside it.
+    expect(undeclared, 'contact details written into an event payload with no stated reason').toEqual([]);
+  });
+
+  it('keeps no declaration for a payload key nothing writes', () => {
+    const stale = Object.keys(PAYLOAD_CONTACT_SINKS).filter((key) => !sinks.has(key));
+    expect(stale, 'declared payload contact keys with no write site').toEqual([]);
+  });
+
+  it('pins the immutability that makes these copies permanent', () => {
+    // The claim the disposition rests on, read from the migration rather than
+    // repeated from a comment: if the trigger is ever relaxed, the reason
+    // `valuation_events` is `kept` changes and this says so.
+    const sql = readFileSync(path.join(MIGRATIONS, '0001_core.sql'), 'utf8');
+    expect(sql).toMatch(/CREATE TRIGGER valuation_events_immutable\s+BEFORE UPDATE OR DELETE ON valuation_events/);
   });
 });
 
