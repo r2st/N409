@@ -99,6 +99,18 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "[EMAIL]"),
     (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[SSN]"),
     (re.compile(r"\b\d{2}-\d{7}\b"), "[EIN]"),
+    # The one form this platform *stores*: `domain/phone.ts` normalizes every
+    # accepted number to canonical E.164 on the way into `users.phone` and
+    # `contact_submissions.phone`, and the rule below cannot match it — it
+    # requires a separator between the groups, and E.164 has none. So the shape
+    # a document excerpt or an error quotes back from the database was the one
+    # shape the phone rule could not see.
+    #
+    # The leading `+` is what makes this safe beside a valuation's own numbers:
+    # a share count, a cent amount and an epoch are all long runs of digits and
+    # none is written with a plus, and a leading zero is not a country code,
+    # which keeps a `+0530` offset out of it.
+    (re.compile(r"(?<![\d+.,])\+[1-9]\d{6,14}(?!\d)"), "[PHONE]"),
     # Phone-shaped only: an area code in parentheses or followed by a
     # separator, so a 10-digit share count is untouched.
     (

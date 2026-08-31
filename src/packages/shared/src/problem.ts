@@ -2,11 +2,20 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { databaseUnavailableReason } from './failure.js';
 
 /**
- * Scrubs secrets/PII that can slip into a free-text error `message` or `stack`
- * (audit B-1 P3). Pino's `redact` paths only cover structured fields, so a
- * thrown `Error("... postgres://user:pw@host ...")` would otherwise reach the
- * logs verbatim. Applied only to the 5xx log line; the client body never
- * includes the message.
+ * Scrubs secrets/PII that can slip into a free text (audit B-1 P3). Pino's
+ * `redact` paths only cover structured fields, so a thrown
+ * `Error("... postgres://user:pw@host ...")` would otherwise reach the logs
+ * verbatim.
+ *
+ * It began as the 5xx log line's scrub and is no longer only that: `logger.ts`
+ * runs it over *every* string a serialized error carries (`serializeError`),
+ * `scrubUrl` runs it over every request URL, and `health.ts` runs it over a
+ * failed check's reason. So the rules below are the whole of this tier's
+ * shape-matched net, and their counterpart is `_REDACTIONS` in
+ * `services/{ai,engine-wrapper}/app/observability.py` — which is the Python
+ * tier's whole net for the same reason. `redactionParity.test.ts` holds the two
+ * to the same list of kinds; they drifted apart once already, and the tier
+ * missing a rule was the one that owns the columns.
  */
 export function scrubSensitive(text: string): string {
   if (!text) return text;
@@ -20,11 +29,45 @@ export function scrubSensitive(text: string): string {
       .replace(/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}/g, '[REDACTED-JWT]')
       // common API-key shapes (sk-..., AKIA..., long hex/base64 secrets)
       .replace(/\b(?:sk|rk|pk)[-_][A-Za-z0-9]{16,}\b/g, '[REDACTED-KEY]')
-      .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED-KEY]')
+      // `ASIA` beside `AKIA`: an STS session key id is the one a role-assuming
+      // deployment actually presents, and it was outside a rule written for the
+      // long-lived form. The Python tier took both in R241.
+      .replace(/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, '[REDACTED-KEY]')
       // email addresses
       .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '[REDACTED-EMAIL]')
       // US SSN
       .replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[REDACTED-SSN]')
+      // US EIN. Nothing in this schema holds one — `piiInventory.test.ts` pins
+      // that — which is the reason it belongs here rather than nowhere: an EIN
+      // reaches this tier as something a person *typed*, into a company note or
+      // a document the AI tier read back, and a shape no column is declared for
+      // is a shape no field-name redaction can be told about.
+      .replace(/\b\d{2}-\d{7}\b/g, '[REDACTED-EIN]')
+      // Phone numbers, in the one form this platform stores and the several a
+      // person types.
+      //
+      // `domain/phone.ts` normalizes every accepted number to canonical E.164
+      // (`+15551234567`) on the way into `users.phone` and
+      // `contact_submissions.phone`, so that is the shape a driver error quotes
+      // back. Postgres puts the whole offending row in a CHECK violation's
+      // `detail` — `Failing row contains (…, Ada Lovelace, +442079460000, …)` —
+      // and `serializeError` scrubs every string a pg error carries, which is
+      // how an address in that same sentence is already caught. The number
+      // beside it was not: this function had no phone rule of any kind, in the
+      // tier that owns both columns.
+      //
+      // The `+` is what makes the first rule safe. A share count, a cent
+      // amount and an epoch are all long runs of digits and none of them is
+      // written with a leading plus; a leading zero is not an E.164 country
+      // code, which is what keeps a `+0530` timezone offset out of it.
+      .replace(/(?<![\d+.,])\+[1-9]\d{6,14}(?!\d)/g, '[REDACTED-PHONE]')
+      // The separated forms, matching `services/{ai,engine-wrapper}/app/
+      // observability.py` rule for rule — an area code in parentheses or
+      // followed by a separator, so a ten-digit share count is untouched.
+      .replace(
+        /(?<![\d.,$-])(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)[\s.-]?|\d{3}[\s.-])\d{3}[\s.-]\d{4}(?!\d)(?![.,]\d)/g,
+        '[REDACTED-PHONE]',
+      )
   );
 }
 

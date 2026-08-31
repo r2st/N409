@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.observability import _EXTRA_KEYS, JsonLogFormatter, current_request_id
+from app.observability import _EXTRA_KEYS, JsonLogFormatter, current_request_id, redact
 
 client = TestClient(app)
 
@@ -117,6 +117,39 @@ def test_a_string_dimension_is_redacted_like_the_message():
     record.detail = "contact analyst@example.com"
     parsed = json.loads(JsonLogFormatter().format(record))
     assert parsed["detail"] == "contact [EMAIL]"
+
+
+def test_a_canonical_e164_number_is_redacted():
+    """The one phone shape this platform stores, and the one the rule missed.
+
+    ``domain/phone.ts`` normalizes every accepted number to canonical E.164 on
+    the way into ``users.phone`` and ``contact_submissions.phone``, so E.164 is
+    what a document excerpt or a quoted-back row carries. The separated rule
+    beside this one requires a separator between the groups and therefore could
+    not match it: the phone net existed and could not see the platform's own
+    format.
+    """
+    assert redact("call +15551234567 back") == "call [PHONE] back"
+    assert redact("+442079460000 rang") == "[PHONE] rang"
+    # The form a person types is still caught by the rule that was already here.
+    assert redact("rang (415) 555-0143 twice") == "rang [PHONE] twice"
+
+
+def test_a_valuations_own_figures_are_not_phone_numbers():
+    """The leading ``+`` is what keeps this rule off the numbers this tier prints.
+
+    A share count, a cent amount and an epoch are all long digit runs, and a
+    timezone offset is a plus followed by digits — but it begins with a zero,
+    which is not an E.164 country code.
+    """
+    for benign in (
+        "fully diluted 12345678901 shares",
+        "total 5,000,000 cents",
+        "at 1756612800000",
+        "stamped +0530",
+        "offset +05:30",
+    ):
+        assert redact(benign) == benign, benign
 
 
 def test_an_absurd_inbound_request_id_is_not_adopted():
