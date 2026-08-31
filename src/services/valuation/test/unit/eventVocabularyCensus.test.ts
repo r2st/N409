@@ -67,6 +67,44 @@ export function recordedTypes(text: string, recorder: string): string[] {
   return found;
 }
 
+/**
+ * The event types a SQL string in a test *reads* — the `type = '…'`,
+ * `type IN (…)` and `type = ANY(ARRAY[…])` literals inside a query against
+ * `table`.
+ *
+ * {@link recordedTypes} covers the fixtures that write the spine. It says
+ * nothing about the assertions that read it, and those are where a misspelling
+ * is silent rather than loud: a test that counts rows of a type nothing writes
+ * counts zero of everything and passes. R284's overdue-retirement race and
+ * R285's row-failure test each asserted "no `engagement_overdue_reminded` on
+ * this engagement's spine" against a spelling of `engagement_overdue_reminder`
+ * that does not exist, and the load-bearing half of both — that a withdrawn
+ * engagement got no immutable row saying its analyst was chased — was asking a
+ * question with no possible answer.
+ *
+ * A window rather than a parse: whitespace is collapsed, and each mention of
+ * the table takes the text that follows it up to the next `FROM` of a
+ * different table or the end of the literal, which is where its own predicates
+ * live.
+ */
+export function assertedTypes(text: string, table: string): string[] {
+  const flat = text.replace(/\s+/g, ' ');
+  const found: string[] = [];
+  const tableRe = new RegExp(`\\b${table}\\b`, 'g');
+  let match: RegExpExecArray | null;
+  while ((match = tableRe.exec(flat))) {
+    const rest = flat.slice(match.index + table.length, match.index + table.length + 400);
+    const window = rest.split(/`|FROM [a-z_]+/)[0] ?? '';
+    for (const m of window.matchAll(
+      /(?<!SET )\btype (?:=|IN|= ANY ?\(ARRAY)\s*\(?\s*'([a-z0-9_]+)'((?:\s*,\s*'[a-z0-9_]+')*)/g,
+    )) {
+      found.push(m[1]!);
+      for (const more of (m[2] ?? '').matchAll(/'([a-z0-9_]+)'/g)) found.push(more[1]!);
+    }
+  }
+  return found;
+}
+
 const collect = (files: typeof SRC, recorder: string) =>
   files.flatMap(({ file, text }) => recordedTypes(text, recorder).map((type) => ({ file, type })));
 
@@ -89,6 +127,73 @@ describe('event vocabulary', () => {
       .filter(({ type }) => !(type in ADMIN_EVENT_CATALOG))
       .map(({ file, type }) => `${file} writes ${type}`);
     expect(unknown).toEqual([]);
+  });
+
+  it('has every assertion reading a valuation event the catalog carries', () => {
+    /*
+     * The other half of the vocabulary, and the half a misspelling is silent
+     * in. A fixture that writes an unknown type is loud — the row is there
+     * under the wrong name and something downstream reads it. An *assertion*
+     * that reads one is not: `count(*) WHERE type = 'engagement_overdue_reminded'`
+     * is zero however the sweep behaved, so the guard passes by having nothing
+     * left to ask.
+     */
+    const unknown = TESTS.flatMap(({ file, text }) =>
+      assertedTypes(text, 'valuation_events')
+        .filter((type) => !(type in EVENT_CATALOG))
+        .map((type) => `${file} asserts on ${type}`),
+    );
+    expect(unknown).toEqual([]);
+  });
+
+  it('has every assertion reading an admin event the catalog carries', () => {
+    const unknown = TESTS.flatMap(({ file, text }) =>
+      assertedTypes(text, 'admin_events')
+        .filter((type) => !(type in ADMIN_EVENT_CATALOG))
+        .map((type) => `${file} asserts on ${type}`),
+    );
+    expect(unknown).toEqual([]);
+  });
+
+  it('reads the shapes those assertions are actually written in', () => {
+    // The vacuity guard for the guard. `engagement_overdue_reminded` is the
+    // spelling R284 and R285 both asserted on; the catalog has never carried it.
+    expect(
+      assertedTypes(
+        "`SELECT count(*)::int AS n FROM valuation_events WHERE valuation_id = $1 AND type = 'engagement_overdue_reminded'`",
+        'valuation_events',
+      ),
+    ).toEqual(['engagement_overdue_reminded']);
+    expect('engagement_overdue_reminded' in EVENT_CATALOG).toBe(false);
+
+    // A list, and a query the formatter broke across lines.
+    expect(
+      assertedTypes(
+        "`SELECT 1 FROM valuation_events WHERE type IN ('auto_pipeline_started', 'auto_pipeline_completed')`",
+        'valuation_events',
+      ),
+    ).toEqual(['auto_pipeline_started', 'auto_pipeline_completed']);
+    expect(
+      assertedTypes(
+        "`SELECT type FROM valuation_events\n         WHERE valuation_id = $1\n           AND type = 'state_changed'`",
+        'valuation_events',
+      ),
+    ).toEqual(['state_changed']);
+
+    // `SET type = '…'` is a write, and the two that exist are deliberate
+    // nonsense: the append-only triggers are proved by an UPDATE that has to be
+    // refused, and refusing it is the assertion.
+    expect(
+      assertedTypes("`UPDATE valuation_events SET type = 'tampered' WHERE id = $1`", 'valuation_events'),
+    ).toEqual([]);
+
+    // And it does not reach past its own table into the next query's predicate.
+    expect(
+      assertedTypes(
+        "`SELECT 1 FROM valuation_events WHERE valuation_id = $1` + `SELECT 1 FROM admin_events WHERE type = 'user_login'`",
+        'valuation_events',
+      ),
+    ).toEqual([]);
   });
 
   it('has no admin descriptor for a type nothing writes', () => {
