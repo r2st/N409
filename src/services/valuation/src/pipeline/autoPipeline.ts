@@ -129,11 +129,22 @@ export async function startPipelineRun(
 }
 
 /**
- * A run only keeps going while its row is still active. It can be settled out
- * from under the worker — reaped as stale, or cascade-deleted with its
- * valuation — while the worker waits for a concurrency slot or sits on an
- * upstream call. Carrying on then spends two upstream calls on an orchestration
- * nobody is watching and ends by writing 'ready' over a closed audit trail.
+ * A run only keeps going while its row is still active *and still this worker's
+ * attempt*. It can be settled out from under the worker — reaped as stale, or
+ * cascade-deleted with its valuation — while the worker waits for a concurrency
+ * slot or sits on an upstream call. Carrying on then spends two upstream calls
+ * on an orchestration nobody is watching and ends by writing 'ready' over a
+ * closed audit trail.
+ *
+ * The second half of the question is what "active" alone cannot answer. A
+ * reaped run is re-queued in place by the retry ladder — same row, `attempts`
+ * incremented, a new worker on it — so a wedged worker that returns after the
+ * reap finds a row that is active again and reads that as permission to carry
+ * on. Two orchestrations then run the same valuation, and the one that finishes
+ * first writes the other's ending. `setPipelineRunStatus` refuses the write on
+ * the `attempts` pin, but it hands back the *current* row either way, so this
+ * has to compare generations rather than trust that a returned row means the
+ * write landed.
  */
 async function advance(
   deps: AutoPipelineDeps,
@@ -141,13 +152,18 @@ async function advance(
   status: PipelineRunStatus,
 ): Promise<PipelineRunRow | null> {
   const next = await setPipelineRunStatus(deps.pool, run, status);
-  if (next !== null && ACTIVE_RUN_STATUSES.has(next.status)) return next;
+  const mine = next !== null && next.attempts === run.attempts;
+  if (mine && ACTIVE_RUN_STATUSES.has(next.status)) return next;
   deps.log.info(
     {
       runId: run.id,
       valuationId: run.valuation_id,
       attempted: status,
       status: next?.status ?? 'deleted',
+      attempt: run.attempts,
+      // Names which of the two abandonments this is: the run ended, or it was
+      // handed to a later attempt while this worker was away.
+      live_attempt: next?.attempts ?? null,
     },
     'auto-pipeline run settled out from under its worker; abandoning',
   );

@@ -82,7 +82,9 @@ const DECIDED: Record<string, Verdict> = {
   },
   'repos/pipelineRuns.ts :: pipeline_runs': {
     guard:
-      "status NOT IN ('ready','failed'); the reaper and the retry claim run under FOR UPDATE SKIP LOCKED",
+      "status NOT IN ('ready','failed') AND attempts = the caller's — the second is what stops a " +
+      'reaped worker writing over the attempt the retry ladder started in its place; the reaper and ' +
+      'the retry claim run under FOR UPDATE SKIP LOCKED',
   },
   'repos/reportTemplates.ts :: report_templates': {
     unguarded:

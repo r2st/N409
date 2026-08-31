@@ -99,6 +99,19 @@ export async function createPipelineRun(
  * migration 0094 an active status is exclusive, so resurrecting a settled run
  * would collide with whatever run has started since. The caller sees the
  * unchanged terminal row back and can stop.
+ *
+ * `attempts` IS PINNED TOO, AND THAT IS A SECOND GUARD, NOT THE SAME ONE. The
+ * terminal check asks "has this run ended"; it cannot ask "is this still *my*
+ * run". The retry ladder re-queues the failed row in place — same id, `attempts`
+ * incremented — so a run the reaper gave up on comes back to an *active* status
+ * with a different worker on it. The wedged worker that finally returns then
+ * finds a non-terminal row and every guard above lets it through: it walks the
+ * new attempt's row to its own stale hop, or ends it 'ready' while the live
+ * attempt is still mid-extraction, and puts a terminal event on the spine for
+ * work the run has not done. Pinning `attempts` to the value the caller is
+ * holding makes the row's generation part of the write, so a settle from a
+ * previous attempt matches nothing — the same shape as `settleClaimedEmail`
+ * pinning the outbox row's attempts to the claim's (R224).
  */
 export async function setPipelineRunStatus(
   pool: pg.Pool,
@@ -131,7 +144,7 @@ export async function setPipelineRunStatus(
                 ELSE NULL
               END,
               updated_at = now()
-        WHERE id = $3 AND status NOT IN ('ready', 'failed')
+        WHERE id = $3 AND status NOT IN ('ready', 'failed') AND attempts = $7
        RETURNING *`,
       [
         status,
@@ -140,11 +153,14 @@ export async function setPipelineRunStatus(
         status === 'failed' ? (opts.failure?.kind ?? null) : null,
         delayMinutes,
         PIPELINE_MAX_ATTEMPTS,
+        run.attempts,
       ],
     );
     const updated = rows[0];
     if (!updated) {
-      // Already settled (or deleted) — report the current row, change nothing.
+      // Already settled, re-queued under a later attempt, or deleted — report
+      // the current row, change nothing. The caller decides from `attempts`
+      // whether the row it gets back is still the one it was working on.
       const { rows: current } = await client.query<PipelineRunRow>(
         'SELECT * FROM pipeline_runs WHERE id = $1',
         [run.id],
@@ -204,6 +220,28 @@ export async function setValuationAutoPipeline(
  *   - a run wedged on an upstream call that never returns.
  * Runs the sweep once at boot and on an interval. Returns the reaped rows so the
  * caller can log/alert. Each reap lands a 'failed' event on the audit spine.
+ *
+ * THE REAP IS A TRANSIENT FAILURE AND IS SCHEDULED LIKE ONE. This used to write
+ * `status = 'failed'` and nothing else, so a reaped run carried no
+ * `failure_kind` and no `next_attempt_at` — and `claimRetryablePipelineRuns`
+ * selects on `next_attempt_at IS NOT NULL`. The ladder migration 0161 exists for
+ * is "an AI outage overnight is every upload in it arriving as an empty
+ * valuation, with no record that anything is owed", and both cases above are
+ * exactly that outage: a restart mid-run and a call that never returns are the
+ * two most transient things this subsystem can suffer. A run that failed *fast*
+ * against a down service got four retries; the one that hung against the same
+ * service got none. Nothing distinguished them but how long the failure took to
+ * arrive.
+ *
+ * The schedule is stamped by the statement that records the failure, for the
+ * reason `setPipelineRunStatus` gives: two UPDATEs can be interrupted between
+ * them, and the interrupted half is owed work nothing comes back for. The
+ * ceiling is the same `PIPELINE_MAX_ATTEMPTS`, so a run that hangs every time
+ * still stops after the ladder rather than wedging a worker forever.
+ *
+ * What makes this safe is the `attempts` pin on `setPipelineRunStatus`: a
+ * re-queue moves the row to a new generation, and the wedged worker this reap
+ * gave up on can no longer write to it if it ever does return.
  */
 export async function reapStalePipelineRuns(
   pool: pg.Pool,
@@ -225,18 +263,37 @@ export async function reapStalePipelineRuns(
     );
     const reaped: PipelineRunRow[] = [];
     for (const run of stale) {
+      // Read off the locked row, so the step is the one this attempt has earned.
+      const delayMinutes = pipelineRetryDelayMinutes(run.attempts);
       const { rows } = await client.query<PipelineRunRow>(
-        `UPDATE pipeline_runs SET status = 'failed', error = $1, updated_at = now()
-         WHERE id = $2 RETURNING *`,
-        [reason, run.id],
+        `UPDATE pipeline_runs
+            SET status = 'failed',
+                error = $1,
+                failure_kind = 'transient',
+                next_attempt_at = CASE
+                  WHEN $3::numeric IS NOT NULL AND attempts < $4
+                    THEN now() + (($3::numeric * (0.5 + random() * 0.5)) || ' minutes')::interval
+                  ELSE NULL
+                END,
+                updated_at = now()
+          WHERE id = $2 RETURNING *`,
+        [reason, run.id, delayMinutes, PIPELINE_MAX_ATTEMPTS],
       );
+      const settled = rows[0]!;
       await recordEvent(client, {
         valuationId: run.valuation_id,
         type: 'auto_pipeline_failed',
         actor: opts.actor,
-        payload: { run_id: run.id, error: reason, reaped: true },
+        payload: {
+          run_id: run.id,
+          error: reason,
+          reaped: true,
+          // Whether anything is coming back for it, on the spine rather than
+          // only in a column: "reaped" alone reads as an ending either way.
+          retry_scheduled: settled.next_attempt_at !== null,
+        },
       });
-      reaped.push(rows[0]!);
+      reaped.push(settled);
     }
     return reaped;
   });

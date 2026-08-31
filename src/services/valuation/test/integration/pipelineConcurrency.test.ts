@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import {
+  claimRetryablePipelineRuns,
   createPipelineRun,
   latestPipelineRun,
   reapStalePipelineRuns,
@@ -216,6 +217,58 @@ describe.skipIf(!dbUp)('auto-pipeline run status finality', () => {
     expect(settled?.status).toBe('failed');
     expect(await latestPipelineRun(ctx.pool, valuationId)).toMatchObject({ status: 'failed' });
     expect(await terminalEvents(valuationId)).toEqual(['auto_pipeline_failed']);
+  });
+
+  it('does not let a reaped worker write over the attempt that replaced it', async () => {
+    /*
+     * The gap the reaped-run guard above cannot see. That one asks "has this run
+     * ended"; it cannot ask "is this still *my* run". The retry ladder re-queues
+     * a failed run in place — same row id, `attempts` incremented, a new worker
+     * on it — so the row the wedged worker is holding becomes active again under
+     * somebody else. Every guard then passes and the old worker ends the *new*
+     * attempt: 'ready' on the spine for an extraction that is still running.
+     */
+    const valuationId = await newValuation('CrossGenerationCo');
+    const stale = (await createPipelineRun(
+      ctx.pool,
+      { valuationId, trigger: 'upload', triggeredBy: ops.id },
+      SYSTEM,
+    ))!;
+    await ctx.pool.query(`UPDATE pipeline_runs SET updated_at = now() - interval '2 hours' WHERE id = $1`, [
+      stale.id,
+    ]);
+    await reapStalePipelineRuns(ctx.pool, { olderThanMs: 60_000, actor: SYSTEM });
+
+    // The ladder brings the same row back for a second attempt.
+    await ctx.pool.query(
+      `UPDATE pipeline_runs SET next_attempt_at = now() - interval '1 minute'
+                          WHERE id = $1`,
+      [stale.id],
+    );
+    const [live] = await claimRetryablePipelineRuns(ctx.pool, { actor: SYSTEM });
+    expect(live!.status).toBe('queued');
+    expect(live!.attempts).toBe(stale.attempts + 1);
+
+    // Now the worker from the first attempt finally returns. Its row is stale in
+    // a way `status` alone cannot express — the row is genuinely active.
+    const hop = await setPipelineRunStatus(ctx.pool, stale, 'calculating');
+    expect(hop?.status).toBe('queued');
+    expect(hop?.attempts).toBe(live!.attempts);
+
+    const ended = await setPipelineRunStatus(ctx.pool, stale, 'ready', { actor: SYSTEM });
+    expect(ended?.status).toBe('queued');
+
+    // The second attempt is untouched and still owns the row, and the only
+    // terminal event on the spine is the reap that ended the first attempt.
+    expect(await latestPipelineRun(ctx.pool, valuationId)).toMatchObject({
+      status: 'queued',
+      attempts: live!.attempts,
+    });
+    expect(await terminalEvents(valuationId)).toEqual(['auto_pipeline_failed']);
+
+    // And the worker that *does* own the row is not caught by the pin.
+    const owned = await setPipelineRunStatus(ctx.pool, live!, 'extracting');
+    expect(owned?.status).toBe('extracting');
   });
 
   it('emits exactly one terminal event when a run settles twice', async () => {
