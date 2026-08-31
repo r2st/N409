@@ -35,6 +35,12 @@ interface StubState {
   lastInputs: Record<string, unknown>;
   /** Every ticker the market feed was asked about, in order. */
   feedCalls: string[];
+  /**
+   * Run before the feed answers for a ticker. The refresh loop is sequential
+   * and awaits each fetch, so this is the interleaving point: whatever this
+   * does has committed by the time the route reaches the write for that row.
+   */
+  onFeed: ((ticker: string) => Promise<void>) | null;
 }
 
 async function startEngineStub(state: StubState) {
@@ -64,6 +70,7 @@ async function startEngineStub(state: StubState) {
     }
     const ticker = String((req.body as { ticker?: unknown })?.ticker ?? '');
     state.feedCalls.push(ticker);
+    if (state.onFeed) await state.onFeed(ticker);
     // No `warning` on purpose: the engine is not obliged to explain itself, and
     // the route has to have something to say when it does not.
     return state.feed[ticker] ?? { source: 'fallback' };
@@ -90,6 +97,7 @@ describe.skipIf(!dbUp)('the peer set on the unhappy paths', () => {
     feedStatus: null,
     lastInputs: {},
     feedCalls: [],
+    onFeed: null,
   };
 
   const ABSENT_ULID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
@@ -382,6 +390,64 @@ describe.skipIf(!dbUp)('the peer set on the unhappy paths', () => {
       expect(unavailable.find((u) => u.ticker === 'FEED')?.warning).toBe(
         'the live source returned no usable figures',
       );
+    });
+
+    /**
+     * A comp removed while the refresh is in flight.
+     *
+     * The loop is sequential and leaves the process once per ticker with an
+     * eight-second budget each, so minutes can separate the read that built the
+     * batch from the write aimed at a row in it. Both ways a comp goes away are
+     * ops actions taken from this same screen — `DELETE /comparables/:itemId`,
+     * and a re-screen, which replaces every machine row with new ids at once —
+     * so this is the ordinary way the tab is used, not an exotic interleaving.
+     *
+     * The write was issued and its result thrown away, so the ticker went into
+     * `refreshed` with an `as_of` of seconds ago, and onto the admin trail as
+     * `comparables_refreshed`, while `comparables` in the very same body did
+     * not hold the row at all. Driven through the stub rather than a sleep, so
+     * "the delete committed before the write" is an ordering the test enforces.
+     */
+    it('does not report a comp deleted mid-refresh as one it refreshed', async () => {
+      const seeded = await add({ ticker: 'GONE', name: 'Gone Co', revenue_ltm: 10, ev: 100 });
+      expect(seeded.statusCode, seeded.body).toBe(201);
+      const goneId = seeded.json().comparable.id as string;
+      await ctx.pool.query(`UPDATE comparable_items SET figures_source = 'snapshot' WHERE id = $1`, [goneId]);
+      state.feed.GONE = { source: 'yfinance', market_cap: 5_000, total_revenue: 500, ebitda: 90 };
+      // Deleted after the fetch is issued and before the update runs, which is
+      // exactly the window the batch snapshot opens.
+      state.onFeed = async (ticker) => {
+        if (ticker !== 'GONE') return;
+        await ctx.pool.query('DELETE FROM comparable_items WHERE id = $1', [goneId]);
+      };
+
+      let res;
+      try {
+        res = await refresh();
+      } finally {
+        state.onFeed = null;
+        delete state.feed.GONE;
+      }
+      expect(res.statusCode, res.body).toBe(200);
+      const body = res.json() as {
+        refreshed: Array<{ ticker: string }>;
+        dropped: string[];
+        comparables: Array<{ ticker: string }>;
+      };
+      expect(body.refreshed.some((r) => r.ticker === 'GONE')).toBe(false);
+      expect(body.dropped).toContain('GONE');
+      // The two halves of the body agree: the set it returns is the set its
+      // note describes.
+      expect(body.comparables.some((c) => c.ticker === 'GONE')).toBe(false);
+
+      // And the claim is not made on the admin trail either, where it would
+      // outlive the request.
+      const { rows } = await ctx.pool.query<{ payload: { refreshed: string[]; dropped: string[] } }>(
+        `SELECT payload FROM admin_events
+          WHERE type = 'comparables_refreshed' ORDER BY occurred_at DESC LIMIT 1`,
+      );
+      expect(rows[0]?.payload.refreshed).not.toContain('GONE');
+      expect(rows[0]?.payload.dropped).toContain('GONE');
     });
   });
 

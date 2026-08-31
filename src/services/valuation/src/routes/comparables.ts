@@ -605,6 +605,9 @@ export function registerComparableRoutes(
 
       const refreshed: Array<{ ticker: string; as_of: string }> = [];
       const unavailable: Array<{ ticker: string; warning: string }> = [];
+      // Comps that stopped existing between the read that built this batch and
+      // the write that was meant to land on them. See the `dropped` push below.
+      const dropped: string[] = [];
 
       for (const row of batch) {
         const ticker = row.ticker!;
@@ -651,19 +654,56 @@ export function registerComparableRoutes(
         }
 
         const asOf = new Date();
-        await updateComparableItem(deps.pool, valuation.id, row.id, {
+        const written = await updateComparableItem(deps.pool, valuation.id, row.id, {
           ev: marketCap,
           revenueLtm: revenue,
           ebitdaLtm: ebitda,
           figuresSource: 'live',
           figuresAsOf: asOf,
         });
+        // THE UPDATE'S OUTCOME IS THE ONLY EVIDENCE THIS ROW WAS WRITTEN, and
+        // the loop it sits in is long enough for the answer to be "it was
+        // not". `batch` is a snapshot taken before the first fetch, and this
+        // handler then leaves the process once per ticker with an eight-second
+        // budget each — up to `REFRESH_BATCH` of them — so minutes separate the
+        // read that named `row.id` from the write aimed at it. `id` is a ULID
+        // and nothing reissues one, so a statement that matches no row means
+        // the comp is gone, and both ways of removing one are ops actions
+        // taken from the same screen: `DELETE /comparables/:itemId`, and a
+        // re-screen, which is worse because `replaceMachineComparables` drops
+        // *every* machine row and inserts new ids in their place. One
+        // re-screen landing mid-refresh therefore invalidates the whole rest of
+        // the batch at once.
+        //
+        // Pushed to `refreshed` regardless, this was a response that contradicted
+        // itself in the same body: `refreshed` naming a ticker with an `as_of`
+        // of seconds ago, `comparables` — re-read after the loop — either not
+        // holding that row at all or holding a new one still carrying snapshot
+        // figures, and `comparables_refreshed` recording the claim on the admin
+        // trail where it outlives the request. An analyst reading "refreshed
+        // AAA" and a peer set whose AAA is stale has no way to tell which half
+        // is true, and the multiples struck from that set go into a filed 409A.
+        //
+        // Reported rather than skipped, for the reason `unavailable` is: a row
+        // this press was asked to update and did not is exactly what the note
+        // above the table exists to say. A bucket of its own because the two
+        // are not the same fact — `unavailable` means the row kept the figures
+        // it had, and there is no row here to have kept anything.
+        if (!written) {
+          req.log.warn(
+            { ticker, itemId: row.id, valuationId: valuation.id },
+            'comparable row disappeared mid-refresh',
+          );
+          dropped.push(ticker);
+          continue;
+        }
         refreshed.push({ ticker, as_of: asOf.toISOString() });
       }
 
       await audit(valuation, principal, 'comparables_refreshed', {
         refreshed: refreshed.map((r) => r.ticker),
         unavailable: unavailable.map((r) => r.ticker),
+        dropped,
       });
 
       const { items: after, truncated } = await listComparableItems(deps.pool, valuation.id);
@@ -674,6 +714,7 @@ export function registerComparableRoutes(
         page_limit: COMPARABLE_PAGE_LIMIT,
         refreshed,
         unavailable,
+        dropped,
         // What this press did not reach, so the tab can say so rather than
         // presenting a partial refresh as a complete one. Zero on every set
         // smaller than the batch, which is every real one.

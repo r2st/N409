@@ -351,6 +351,32 @@ describe('ComparablesTab', () => {
     expect(await screen.findByText('Refreshed 1 company from observed market data.')).toBeInTheDocument();
   });
 
+  /**
+   * A comp that left the set while the refresh was in flight is neither
+   * refreshed nor "keeping the figures it had" — it is not there. Counting it
+   * with either group describes a table the analyst is looking at and cannot
+   * find the row in.
+   */
+  it('names the comps that left the set mid-refresh rather than counting them', async () => {
+    mockApi({}, (path) => {
+      if (path.includes('/refresh')) {
+        return jsonResponse({
+          refreshed: [{ ticker: 'AAA', as_of: '2026-08-01' }],
+          unavailable: [],
+          dropped: ['CCC'],
+        });
+      }
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh from market' }));
+    expect(
+      await screen.findByText(/CCC left the set while the refresh was running, so it was not updated\./),
+    ).toBeInTheDocument();
+  });
+
   it('names the tickers a refresh could not reach, and says their figures stand', async () => {
     mockApi({}, (path) => {
       if (path.includes('/refresh')) {
