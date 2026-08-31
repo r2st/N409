@@ -104,3 +104,54 @@ export async function refuseIfRetiredNow(pool: pg.Pool, valuationId: string, doi
   if (!live) throw problems.notFound();
   refuseIfRetired(live, doing);
 }
+
+/**
+ * The same refusal, for the two measurement subjects that are not addressed by
+ * their engagement's id.
+ *
+ * WHY THIS ONE ESCAPED THE SWEEP. R89 asked the retirement question of every
+ * mutating route "under a valuation id", and `retiredEngagementWrites.test.ts`
+ * still drives exactly that set out of the route table — so a route added
+ * tomorrow under `/api/v1/valuations/:id/…` is swept the day it is registered.
+ * A fund portfolio and a debt instrument are addressed by their own ids
+ * (`/api/v1/funds/:id/…`, `/api/v1/debt/instruments/:id/…`) because migration
+ * 0086/0087 built both as standalone ops tools, keyed to nothing, and 0110 gave
+ * them an engagement link afterwards. So the whole measurement surface sat
+ * outside the census's shape, and neither file contained a single retirement
+ * check: on a withdrawn `fund` engagement ops could still add a holding, edit
+ * one, record a new fair-value mark, roll a mark forward, or rewrite the LP
+ * waterfall terms — and on a withdrawn `debt` one, re-price the instrument and
+ * store the result.
+ *
+ * A mark is not a note in the margin. `domain/navExhibits.ts` renders the NAV
+ * schedule by summing the *stored* marks at render time — deliberately, so that
+ * re-rendering an opinion cannot silently restate it at today's prices — which
+ * means a mark written after retirement changes the NAV of a report the firm
+ * has already issued, and retirement is reversible (R90), so it is still there
+ * when the engagement is restored. `POST /positions/:pid/marks` and `POST
+ * /instruments/:id/value` also spend an engine call each on work nobody is
+ * doing.
+ *
+ * Reads stay open, as everywhere else: the NAV rollup, the waterfall and the
+ * calibration calculators persist nothing, and a firm that has withdrawn work
+ * still has to be able to look at it. The DELETEs stay open too, by the
+ * exemption the board flow made before there was a rule — cleaning up rows on a
+ * withdrawn file is the one thing that should still work, and it is what the
+ * "detach it from the engagement before deleting" refusal on `DELETE /funds/:id`
+ * assumes is available.
+ *
+ * A link that reads back no valuation is not a retired engagement and is not
+ * refused: 0110 chose `ON DELETE SET NULL` precisely so a deleted engagement
+ * clears the link rather than leaving a dangling one, so this is a row that
+ * went away between the two reads.
+ */
+export async function refuseIfMeasurementRetired(
+  pool: pg.Pool,
+  subject: { valuation_id: string | null },
+  doing: string,
+): Promise<void> {
+  if (subject.valuation_id === null) return;
+  const valuation = await findValuationById(pool, subject.valuation_id);
+  if (!valuation) return;
+  refuseIfRetired(valuation, doing);
+}

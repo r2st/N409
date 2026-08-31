@@ -471,8 +471,11 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings — refusals and defaults', () => 
         payload: { valuation_id: valuationId },
       });
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toMatch(/only be linked to a 'fund' engagement/);
-      expect(res.json().detail).toContain("'409a'");
+      // Both kinds by their display name, not their column value — R262 moved
+      // five refusals onto `kindLabel` and this assertion was left on the old
+      // wording, so it has been failing since.
+      expect(res.json().detail).toContain('Fund portfolio valuation');
+      expect(res.json().detail).toContain('IRC 409A valuation');
     });
 
     it('links, unlinks, and refuses a second portfolio on one engagement', async () => {

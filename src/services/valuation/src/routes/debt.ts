@@ -23,6 +23,7 @@ import {
   type InstrumentType,
 } from '../repos/debtInstruments.js';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
+import { refuseIfMeasurementRetired, refuseIfRetired } from '../domain/retiredEngagement.js';
 import { findValuationById } from '../repos/valuations.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
@@ -119,6 +120,18 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     return instrument;
   };
 
+  /**
+   * `loadInstrument` for the routes that then write something. The instrument
+   * is addressed by its own id, so the retirement sweep — which drives every
+   * mutating route under a valuation id — has never been able to see this
+   * file. See `refuseIfMeasurementRetired`.
+   */
+  const loadInstrumentForWrite = async (id: string, doing: string) => {
+    const instrument = await loadInstrument(id);
+    await refuseIfMeasurementRetired(deps.pool, instrument, doing);
+    return instrument;
+  };
+
   app.post('/api/v1/debt/instruments', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     requireOps(principal);
@@ -177,7 +190,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   app.put('/api/v1/debt/instruments/:id', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
-    await loadInstrument(id);
+    await loadInstrumentForWrite(id, 'accepting changes');
     const parsed = UpdateBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid update', parsed.error);
     const instrument = await updateInstrument(deps.pool, id, {
@@ -207,6 +220,9 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
           `A debt instrument can only be linked to a “${kindLabel('debt')}”; ${valuationId} is a ` +
             `“${kindLabel(valuation.kind)}”. Link the instrument to a debt engagement, or create one.`,
         );
+      // Same rule as the fund link: attaching a measurement subject to
+      // withdrawn work is a write to it. Detaching (`null`) stays open.
+      refuseIfRetired(valuation, 'accepting a measurement subject');
     }
 
     try {
@@ -221,7 +237,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   app.put('/api/v1/debt/instruments/:id/credit-terms', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
-    await loadInstrument(id);
+    await loadInstrumentForWrite(id, 'accepting changes to its credit terms');
     const parsed = CreditTermsBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid credit terms', parsed.error);
     const b = parsed.data;
@@ -260,6 +276,12 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     });
 
     if (!parsed.data.persist) return { valuation: null, result };
+
+    // Only the persisting half: `persist` defaults false and a pricing run
+    // that stores nothing is a calculator, which stays open on withdrawn work
+    // like every other read. Asked here rather than at the top so it is asked
+    // after the engine call rather than before it.
+    await refuseIfMeasurementRetired(deps.pool, instrument, 'accepting new valuations');
 
     const valuation = await createValuation(deps.pool, {
       instrumentId: id,

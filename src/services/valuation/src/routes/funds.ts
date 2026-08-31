@@ -32,6 +32,7 @@ import {
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
 import { findValuationById } from '../repos/valuations.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { refuseIfMeasurementRetired, refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * ASC 820 fund-holdings valuation (feature: ASC 820 Fund Holdings).
@@ -191,6 +192,20 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     return fund;
   };
 
+  /**
+   * `loadFund` for the routes that then write something.
+   *
+   * The portfolio is addressed by its own id, so nothing about the request
+   * mentions the engagement it is measured for — which is why the retirement
+   * sweep, which drives every mutating route under a valuation id, has never
+   * been able to see this file. See `refuseIfMeasurementRetired`.
+   */
+  const loadFundForWrite = async (id: string, doing: string) => {
+    const fund = await loadFund(id);
+    await refuseIfMeasurementRetired(deps.pool, fund, doing);
+    return fund;
+  };
+
   // ── Funds ────────────────────────────────────────────────────────────────
   app.post('/api/v1/funds', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
@@ -238,7 +253,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   app.patch('/api/v1/funds/:id', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
-    await loadFund(id);
+    await loadFundForWrite(id, 'accepting changes');
     const parsed = FundPatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid fund', parsed.error);
     const b = parsed.data;
@@ -279,7 +294,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   app.post('/api/v1/funds/:id/positions', { preHandler: app.authenticate }, async (req, reply) => {
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
-    await loadFund(id);
+    await loadFundForWrite(id, 'accepting new holdings');
     const parsed = PositionBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid position', parsed.error);
     const b = parsed.data;
@@ -297,7 +312,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   app.patch('/api/v1/funds/:id/positions/:pid', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
     const { id, pid } = req.params as { id: string; pid: string };
-    await loadFund(id);
+    await loadFundForWrite(id, 'accepting changes to its holdings');
     if (!isUlid(pid) || !(await findPosition(deps.pool, id, pid))) throw problems.notFound();
     const parsed = PositionPatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid position', parsed.error);
@@ -344,7 +359,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id, pid } = req.params as { id: string; pid: string };
-    await loadFund(id);
+    await loadFundForWrite(id, 'accepting new marks');
     const position = await findPosition(deps.pool, id, pid);
     if (!position) throw problems.notFound();
     const parsed = MarkBody.safeParse(req.body);
@@ -390,7 +405,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       const principal = requirePrincipal(req);
       requireOps(principal);
       const { id, pid } = req.params as { id: string; pid: string };
-      await loadFund(id);
+      const fund = await loadFund(id);
       const position = await findPosition(deps.pool, id, pid);
       if (!position) throw problems.notFound();
       const parsed = RollForwardBody.safeParse(req.body);
@@ -413,6 +428,12 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       );
 
       if (b.record) {
+        // Only the recording half. `record` defaults false and the preview is
+        // a calculator that persists nothing, so a withdrawn engagement can
+        // still be looked at — the rule everywhere else. Asked here rather
+        // than at the top so the read stays open, and asked again rather than
+        // trusting the copy above: the engine call sits in between.
+        await refuseIfMeasurementRetired(deps.pool, fund, 'accepting new marks');
         const mark = await createMark(deps.pool, {
           positionId: pid,
           measurementDate: b.measurement_date ?? todayLocal(),
@@ -486,6 +507,11 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
           `A fund portfolio can only be linked to a “${kindLabel('fund')}”; ${valuationId} is a ` +
             `“${kindLabel(valuation.kind)}”. Link the portfolio to a fund engagement, or create one.`,
         );
+      // Attaching a measurement subject to withdrawn work gives a retired
+      // engagement a NAV schedule it did not have. Detaching (`null`) stays
+      // open: it is the step `DELETE /funds/:id` tells the caller to take, and
+      // cleanup on a withdrawn file is the standing exemption.
+      refuseIfRetired(valuation, 'accepting a measurement subject');
     }
 
     try {
@@ -508,7 +534,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
   app.put('/api/v1/funds/:id/lp-terms', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
-    await loadFund(id);
+    await loadFundForWrite(id, 'accepting changes to its LP terms');
     const parsed = LpTermsBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid LP terms', parsed.error);
     const b = parsed.data;

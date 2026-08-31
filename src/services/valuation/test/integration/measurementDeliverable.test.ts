@@ -259,7 +259,11 @@ describe.skipIf(!dbUp)('the fund and debt deliverables', () => {
       });
       // A NAV schedule inside a common-stock opinion is the failure this stops.
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toContain("'409a'");
+      // Both kinds by their display name, not their column value — R262 moved
+      // five refusals onto `kindLabel` and these assertions were left on the
+      // old wording, so they have been failing since.
+      expect(res.json().detail).toContain('Fund portfolio valuation');
+      expect(res.json().detail).toContain('IRC 409A valuation');
     });
 
     it('refuses a second portfolio on an engagement that already has one', async () => {

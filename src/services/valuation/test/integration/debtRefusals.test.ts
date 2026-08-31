@@ -286,8 +286,11 @@ describe.skipIf(!dbUp)('Debt valuation — refusals and the credit-terms merge',
         payload: { valuation_id: valuationId },
       });
       expect(res.statusCode).toBe(422);
-      expect(res.json().detail).toMatch(/only be linked to a 'debt' engagement/);
-      expect(res.json().detail).toContain("'409a'");
+      // Both kinds by their display name, not their column value — R262 moved
+      // five refusals onto `kindLabel` and these assertions were left on the
+      // old wording, so they have been failing since.
+      expect(res.json().detail).toContain('Debt instrument valuation');
+      expect(res.json().detail).toContain('IRC 409A valuation');
     });
 
     it('409s a second instrument on one engagement, and frees it on detach', async () => {
