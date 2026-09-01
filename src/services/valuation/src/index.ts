@@ -722,7 +722,12 @@ let housekeepingTimer: NodeJS.Timeout | undefined;
 {
   const sweep = scheduleSweep('housekeeping', async () => {
     const r = await runHousekeepingSweep({ pool, log: app.log });
-    if (r.total > 0) app.log.info(r, 'housekeeping sweep');
+    // Gated on either, not on `total` alone — the same correction the
+    // cap-table scan above got. A pass in which every one of the five deletes
+    // was refused removes nothing, and "removed nothing" is what a healthy
+    // pass with nothing to do also reports, so the line was written on exactly
+    // the ticks that had nothing to say and skipped on the ones that did.
+    if (r.total > 0 || r.failed > 0) app.log.info(r, 'housekeeping sweep');
     return r;
   });
   housekeepingTimer = setInterval(() => sweep.run(), 60 * 60_000);

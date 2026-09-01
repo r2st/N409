@@ -13,6 +13,25 @@ export interface HousekeepingResult {
   total: number;
   /** Tables that filled the batch and have more waiting for the next pass. */
   capped: string[];
+  /**
+   * Targets whose delete was refused this pass (R332, methodology M5).
+   *
+   * The containment below is right and stays. What it did not have was a way
+   * to say it had happened to anything but the journal: this tick returns
+   * normally when every one of its five statements is refused, so
+   * `background_sweep_failures_total` does not move, and the tally it *did*
+   * return — `{ removed: {}, total: 0, capped: [] }` — is byte-for-byte what a
+   * healthy sweep with nothing to delete returns.
+   *
+   * `sweepTally` names the outcome after the field, so this is the number
+   * `background_sweep_items_total{sweep="housekeeping",outcome="failed"}`
+   * carries and `SweepWorkFailing` reads. It is the field every other
+   * containing sweep on this platform already had — `failed` on the two email
+   * ladders and the two connector scans, `stranded` on the pipeline retry,
+   * `unsettled` on the webhook deliveries — and the one this sweep was missing,
+   * which is precisely the blind spot `sweepTally` was built to close.
+   */
+  failed: number;
 }
 
 /**
@@ -35,16 +54,25 @@ export async function runHousekeepingSweep(deps: {
 }): Promise<HousekeepingResult> {
   const retention = deps.retention ?? HOUSEKEEPING_RETENTION;
   const batch = deps.batch ?? HOUSEKEEPING_BATCH;
-  const result: HousekeepingResult = { removed: {}, total: 0, capped: [] };
+  const result: HousekeepingResult = { removed: {}, total: 0, capped: [], failed: 0 };
 
   for (const target of HOUSEKEEPING_TARGETS) {
     const removed = await sweepOne(deps.pool, target, retention, batch).catch((err: unknown) => {
       // One table's failure is contained. The tables are unrelated, and a sweep
       // that gives up on the first error is a sweep that stops running entirely
       // the day one of them is locked by a migration.
+      //
+      // Counted as well as logged — see `failed` above. `null` rather than 0 so
+      // the two ways a target contributes nothing stay apart: a table with
+      // nothing left to delete and a table whose delete was refused are the
+      // same zero, and it was the only thing this pass reported.
       deps.log?.error({ err, table: target.table }, 'housekeeping sweep failed for table');
-      return 0;
+      return null;
     });
+    if (removed === null) {
+      result.failed += 1;
+      continue;
+    }
     if (removed === 0) continue;
     result.removed[target.table] = removed;
     result.total += removed;
