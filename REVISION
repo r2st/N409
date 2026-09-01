@@ -5783,3 +5783,91 @@
 #            Excel implementation, so the first formula shape that outgrows it
 #            will fail loudly rather than be scored as agreeing — which is the
 #            right failure, but it is a failure someone has to then implement.
+#
+# R315 — Compliance & data governance (M16). The read side of the audit spine.
+#
+#            Every mutation on this platform is on a spine; the spine looks
+#            complete for that reason. What it did not hold was *reads that
+#            hand over a copy*. R215 found one of those (a published report
+#            served from stored bytes left one event, dated the day it was
+#            made, however many times it was pulled) and fixed it route by
+#            route. Five more were still silent, and they are the disclosures,
+#            not the edits:
+#
+#            - `GET /users/export`: a CSV of every matching account's email,
+#              phone, name, job title, employer and SSO provider. Nothing.
+#              Meanwhile `user_data_exported` is `critical` and is written from
+#              *both* routes that copy one person's record. The trail named the
+#              administrators who exported one row and not the one who took the
+#              directory. `user_directory_exported`, under `system` (the email
+#              suppression precedent: no one row is the subject), carrying the
+#              filters, the row count and `truncated`.
+#            - `GET /valuations/export`: scoped by `valuationScope(principal)`,
+#              so the same URL is the caller's own book from a client seat and
+#              every client the firm has from an operations one — and the
+#              projection carries `owner_email`. `engagement_list_exported`, on
+#              all three format exits, because the PDF branch fetches through a
+#              different repo call and returns from its own.
+#            - `GET /valuations/:id/workbook.xlsx`: the auditor workbook —
+#              assumption register, model sheets, cap table, grants, the
+#              flattened engine results, and every value an analyst overrode
+#              with the reason they typed. More of the engagement in one file
+#              than the deliverable is, on a URL the UI never shows.
+#              `workbook_exported`.
+#            - `GET /valuations/:id/documents/:documentId/download`: a document
+#              arriving, being re-filed and being deleted each wrote a row; the
+#              bytes going back out did not. `document_downloaded`, `client`-
+#              visible like its three siblings, recorded after `readStoredBlob`
+#              so an undecryptable blob refuses and leaves no row for a
+#              download that did not happen.
+#            - `POST /admin/retention/run`: the only action on that surface
+#              that destroys anything, and the only one that wrote nothing. Its
+#              five neighbours — policy, hold, release, retire, restore — are
+#              each `critical` on the spine. `retention_actions` is not the
+#              answer: it has no actor column at all, because it was written
+#              for the six-hourly tick, so a sweep somebody ran and a sweep the
+#              clock ran left identical rows. `retention_sweep_run` carries the
+#              counts, and is written on the *failure* path too — a deliberate
+#              departure from fire-after-success, because the two passes commit
+#              independently and a run that threw partway is the one a reviewer
+#              is asking about.
+#
+#            The rule is now stated instead of rediscovered.
+#            `exportAuditCensus.test.ts` holds every handler that sets
+#            `content-disposition` to recording-or-a-written-reason. Five
+#            exemptions, one sentence each: the trail exporting itself, the
+#            compare CSV (a rendering of the JSON the same call returns), the
+#            invoice and receipt PDFs (money is audited on the billing spine,
+#            which answers the questions anyone actually asks of an invoice),
+#            and the fixture-built sample report. Three things it had to get
+#            right: `maxBodyLines: 600`, because the evidence bundle's header
+#            sits past the shared scan's 250-line default and the route that
+#            *named* this rule would otherwise drop out of its own census; a
+#            vacuity guard, since a changed header spelling makes it pass by
+#            having nothing left to ask; and a staleness check, because an
+#            exemption for a route that now records is a reason nobody
+#            re-reads. The partner API's report download is registered from
+#            `PARTNER_API_ENDPOINTS` and is structurally invisible to any
+#            `app.get(` scan, so it is named and asserted separately rather
+#            than being silence.
+#
+#            Deliberate break, each: removing either `recordEvent` fails
+#            `workingPaperExportAudit.test.ts`; removing `recordListExport`
+#            fails both `bulkExportAudit.test.ts` and the census's
+#            written-reason assertion; removing the sweep's failure-path write
+#            fails the interceptor test in `retention.test.ts`. Each suite also
+#            asserts the refusal paths (403, unreadable blob) leave nothing
+#            behind, so a row cannot come to mean "somebody asked".
+#
+# gap:       `retention_actions` still has no actor column. The new spine row
+#            says who triggered a sweep; it does not attach an actor to the
+#            individual archival and purge rows, so a manual run interleaved
+#            with a scheduled one is separated by timestamp and nothing else.
+#
+#            There is no erasure path. `buildPersonalDataExport` answers Art.
+#            15 thoroughly and has four censuses behind it; nothing answers
+#            Art. 17. `valuation_events` cannot be deleted at all (migration
+#            0001's trigger), which is a considered position for working
+#            papers and is not one anybody has written down for the personal
+#            data reachable from them. Not opened here — it is a feature, not
+#            a fix.
