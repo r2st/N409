@@ -12,7 +12,7 @@ import {
   updatePrompt,
   type AiPromptRow,
 } from '../repos/aiPrompts.js';
-import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
+import { InternalServiceError, internalAuthHeaders, postJson, toProblem } from '../clients/internal.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { int4Version } from '../domain/int4.js';
@@ -91,6 +91,24 @@ export function registerPromptRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     requireOps(requirePrincipal(req));
     try {
       const res = await fetch(`${deps.aiUrl}/ai/v1/models`, {
+        // The shared secret every other outbound call to the AI and engine
+        // tiers carries, and the one call that did not (R308, methodology M5).
+        //
+        // `/ai/v1/models` is not in the Python side's `_PUBLIC_PATHS` — only
+        // `/`, `/health` and `/ready` are — so wherever `INTERNAL_SERVICE_TOKEN`
+        // is set, which is every deployment (`enforce_token_configured` refuses
+        // to start production without it), this request was answered `401` and
+        // the picker was empty. Not intermittently: always, and only in the
+        // environments that matter, because a developer machine with no secret
+        // configured skips the check and the route works there.
+        //
+        // What made it survive is the fall-through below. A refusal and an
+        // unreachable service both end in `{ models: [] }`, which the picker
+        // draws as "the AI service offers no models" — so the symptom of our
+        // own missing credential was indistinguishable from the AI service
+        // having nothing to offer, and the warn line said `status: 401` to a
+        // log nobody reads until somebody complains.
+        headers: internalAuthHeaders(),
         signal: AbortSignal.timeout(10_000),
       });
       if (res.ok) return (await res.json()) as AiModelsResponse;
