@@ -522,7 +522,16 @@ if (config.JOB_ALERT_SCAN_MINUTES > 0) {
     if (r.opened.length > 0 || r.resolved.length > 0) {
       app.log.info({ opened: r.opened.length, resolved: r.resolved.length }, 'job alert sweep');
     }
-    return { opened: r.opened.length, resolved: r.resolved.length };
+    // Flattened, because `sweepTally` is deliberately shallow and the number
+    // that matters most in this sweep is a level down: `notified.failed` is
+    // announcements still owed after the pass — an operator who has not been
+    // told that a queue is stalled. This is the alerting subsystem reporting
+    // its own failure, and it was reaching a scraper through nothing at all.
+    return {
+      opened: r.opened.length,
+      resolved: r.resolved.length,
+      announcements_failed: r.notified.failed,
+    };
   });
   sweep.run();
   jobAlertTimer = setInterval(() => sweep.run(), config.JOB_ALERT_SCAN_MINUTES * 60_000);

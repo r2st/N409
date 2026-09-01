@@ -227,6 +227,20 @@ groups:
         annotations:
           summary: 'the {{ $labels.sweep }} sweep has given up on rows nothing else will take'
 
+      # The alerting subsystem failing to report. `announceJobAlerts` retries
+      # an announcement until it lands, so one failure is a database blip and
+      # not news — but a count that keeps rising is an operator who has not been
+      # told a queue is stalled, which is the one failure the job monitor exists
+      # to prevent, and it reaches nothing else here.
+      - alert: JobAlertAnnouncementsFailing
+        expr: |
+          rate(background_sweep_items_total{sweep="job-alerts",outcome="announcements_failed"}[30m]) > 0
+        for: 30m
+        labels: { severity: page }
+        annotations:
+          summary: 'job queue alerts have been failing to reach an operator for half an hour'
+          runbook: "journalctl -u n409-valuation | grep 'job queue alert announcement failed'"
+
       - alert: AutoPipelineBacklog
         expr: auto_pipeline_runs_pending > 0
         for: 30m
