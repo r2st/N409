@@ -477,6 +477,22 @@ describe('CapTableSyncPanel (feature 4)', () => {
       expect(note).not.toHaveTextContent(/Press Connect to try again/);
     });
 
+    it('names an access change rather than offering the button again', async () => {
+      // The reader's own access to the engagement ended while they were on the
+      // consent screen — closed, suspended, or out of scope. Like `retired`,
+      // pressing Connect again is not the remedy, so it is not offered.
+      mockApi();
+      renderPanel(
+        <CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />,
+        '/?sync=unauthorized&provider=carta',
+      );
+      const note = await screen.findByRole('alert');
+      expect(note).toHaveTextContent(
+        /Your access to this engagement ended while you were connecting to Carta/,
+      );
+      expect(note).not.toHaveTextContent(/Press Connect to try again/);
+    });
+
     it('says a success out loud, in the success voice', async () => {
       mockApi();
       renderPanel(

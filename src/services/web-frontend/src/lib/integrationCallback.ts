@@ -34,7 +34,7 @@
  */
 
 /** The result codes the three callbacks redirect with. */
-export type IntegrationCallbackOutcome = 'connected' | 'denied' | 'error' | 'retired';
+export type IntegrationCallbackOutcome = 'connected' | 'denied' | 'error' | 'retired' | 'unauthorized';
 
 /** A provider label the page is willing to print, or the neutral stand-in. */
 export function providerLabel(labels: Record<string, string>, named: string | null): string {
@@ -84,6 +84,18 @@ export function describeCallbackOutcome(
           `This engagement was retired while you were connecting to ${provider}, so nothing was ` +
           'connected and no access was granted. An admin has to restore it before it can accept ' +
           'integration changes.',
+      };
+    case 'unauthorized':
+      // The reader's own access to this engagement ended while they were on the
+      // provider's consent screen — the account was closed or suspended, the
+      // role was taken away, or the engagement moved out of their scope. Like
+      // `retired`, retrying is not the remedy, so the button is not offered.
+      return {
+        ok: false,
+        message:
+          `Your access to this engagement ended while you were connecting to ${provider}, so ` +
+          'nothing was connected and no access was granted. Ask an administrator to check your ' +
+          'account, or have a colleague who can open this engagement connect it.',
       };
     default:
       return {

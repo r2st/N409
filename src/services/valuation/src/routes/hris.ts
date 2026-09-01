@@ -43,6 +43,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { isRetiredNow, refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
+import { integrationActorStillAuthorized } from '../domain/integrationActor.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
 import {
@@ -643,6 +644,21 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
      * has to land somewhere they can read the reason.
      */
     if (await isRetiredNow(deps.pool, state.valuationId)) return back('retired');
+    /*
+     * And whether the person who started the hop may still finish it.
+     *
+     * The check above re-asks about the engagement; this one re-asks about the
+     * actor, and it is the same argument applied to the other half of the
+     * token. See `integrationActorStillAuthorized`: a callback carries no
+     * session, its whole authority is a thirty-minute JWT that nothing can
+     * withdraw, and every way an operator's access can end in that window —
+     * closed, suspended, the ops role taken away, the partner scope changed —
+     * left the connection completing anyway, with a third party's refresh token
+     * stored and a standing pull armed in the name of an account that can no
+     * longer open the file.
+     */
+    if (!(await integrationActorStillAuthorized(deps.pool, state.userId, state.valuationId)))
+      return back('unauthorized');
 
     const creds = deps.credentials[provider];
     if (!creds) throw providerUnavailable(provider);
