@@ -656,8 +656,14 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
      * left the connection completing anyway, with a third party's refresh token
      * stored and a standing pull armed in the name of an account that can no
      * longer open the file.
+     *
+     * `'ops'`, and it is the only one of the three callbacks that passes it:
+     * `/connect` here calls `requireOps` where accounting and cap-table sync do
+     * not, because what this connects pulls a client's employee roster and
+     * payroll. Until R340 the re-check asked `canReadValuation` on all three,
+     * so on this door the one case it did not close was the demotion.
      */
-    if (!(await integrationActorStillAuthorized(deps.pool, state.userId, state.valuationId)))
+    if (!(await integrationActorStillAuthorized(deps.pool, state.userId, state.valuationId, 'ops')))
       return back('unauthorized');
 
     const creds = deps.credentials[provider];

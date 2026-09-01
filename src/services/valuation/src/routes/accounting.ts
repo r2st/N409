@@ -248,7 +248,7 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
      * stored and a standing pull armed in the name of an account that can no
      * longer open the file.
      */
-    if (!(await integrationActorStillAuthorized(deps.pool, state.userId, state.valuationId)))
+    if (!(await integrationActorStillAuthorized(deps.pool, state.userId, state.valuationId, 'read')))
       return back('unauthorized');
 
     const creds = deps.credentials[provider];

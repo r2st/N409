@@ -135,6 +135,57 @@ describe.skipIf(!dbUp)('integration OAuth callbacks — the actor’s access end
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  /**
+   * R340, methodology M5. The three doors are not the same door: HRIS
+   * `/connect` calls `requireOps` where accounting and cap-table sync do not,
+   * because what it connects pulls a client's employee roster and payroll. The
+   * callback's re-check asked `canReadValuation` for all three, so of the four
+   * ways this file's own note says an actor's access can end, the demotion was
+   * the one it did not close — on the one door where it applies.
+   */
+  it('HRIS: an operator demoted out of ops mid-hop connects nothing', async () => {
+    const user = await seedUser(ctx, { roles: ['admin'] });
+    const v = await engagementFor(user.id, 'Demoted Payroll Inc');
+    const state = await signHrisState({ valuationId: v.id, provider: 'rippling', userId: user.id }, JWT);
+    // Still able to read the engagement — they own it — but no longer ops, so
+    // `/connect` would refuse to start this hop now.
+    await adminPatchUser(ctx.pool, user.id, { roles: ['valuation_user'] });
+    fetchFn.mockClear();
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/hris/callback?state=${encodeURIComponent(state)}&code=abc`,
+    });
+
+    expect(res.headers.location).toContain('hris=unauthorized');
+    expect(fetchFn).not.toHaveBeenCalled();
+    const { rows } = await ctx.pool.query('SELECT id FROM hris_connections WHERE valuation_id = $1', [v.id]);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('HRIS: an operator who is still ops connects', async () => {
+    // The other side of the same parameter — `'ops'` must not refuse the door's
+    // own legitimate caller.
+    const user = await seedUser(ctx, { roles: ['admin'] });
+    const v = await engagementFor(user.id, 'Still Ops Payroll Inc');
+    const state = await signHrisState({ valuationId: v.id, provider: 'rippling', userId: user.id }, JWT);
+    fetchFn.mockClear();
+    fetchFn.mockImplementationOnce(
+      async () =>
+        new Response(JSON.stringify({ access_token: 'tok', refresh_token: 'ref', expires_in: 3600 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }) as never,
+    );
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/hris/callback?state=${encodeURIComponent(state)}&code=abc`,
+    });
+
+    expect(res.headers.location).toContain('hris=connected');
+  });
+
   it('a live actor still connects through the same door', async () => {
     const user = await seedUser(ctx, { roles: ['valuation_user'] });
     const v = await engagementFor(user.id, 'Still Here Inc');

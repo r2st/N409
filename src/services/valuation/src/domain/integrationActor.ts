@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { canReadValuation } from '../auth/rbac.js';
+import { canReadValuation, isOps } from '../auth/rbac.js';
 import { findAuthPrincipal } from '../repos/users.js';
 
 /**
@@ -39,6 +39,20 @@ import { findAuthPrincipal } from '../repos/users.js';
  * `ignored` through `valuationScope`, so a suspension answers `none` here
  * without this file having to know what a suspension is.
  *
+ * WHICH PREDICATE, THOUGH — `needs` (round 340, methodology M5). The three
+ * doors are not the same door. Accounting and cap-table `/connect` ask only
+ * `loadAuthorized`, so `canReadValuation` is exactly what they applied. HRIS
+ * `/connect` also calls `requireOps`, because what it connects pulls a client's
+ * *employee roster and payroll* — and this function did not re-ask that half,
+ * so "the ops role taken away", named above as one of the four cases it closes,
+ * was the one case it did not close on the one callback where it applies. An
+ * operator demoted to a plain reader mid-hop finished the connection.
+ *
+ * A parameter rather than a default because the two answers are one word apart
+ * and the wrong one is silent both ways: too strict refuses a legitimate
+ * accounting connection, too loose is this bug. Every caller states which door
+ * it is behind.
+ *
  * Not `findValuationById`: that reader is a five-second read-through cache and
  * the whole question is whether the answer is current — the same note
  * `isRetiredNow` carries beside it. A valuation that has gone counts as no
@@ -49,17 +63,21 @@ export async function integrationActorStillAuthorized(
   pool: pg.Pool,
   userId: string,
   valuationId: string,
+  /** What the `/connect` that minted this token required: reading it, or ops. */
+  needs: 'read' | 'ops',
 ): Promise<boolean> {
   const principal = await findAuthPrincipal(pool, userId);
   if (!principal || principal.deleted_at !== null) return false;
+  const actor = { id: principal.id, roles: principal.roles, partnerId: principal.partner_id };
+  // Before the row read, because it needs no row: `isOps` subtracts a
+  // suspension itself, so this answers a demoted or suspended operator without
+  // asking the database a second question about an engagement they may not see.
+  if (needs === 'ops' && !isOps(actor)) return false;
   const { rows } = await pool.query<{ user_id: string; partner_id: string | null }>(
     'SELECT user_id, partner_id FROM valuations WHERE id = $1',
     [valuationId],
   );
   const valuation = rows[0];
   if (!valuation) return false;
-  return canReadValuation(
-    { id: principal.id, roles: principal.roles, partnerId: principal.partner_id },
-    { userId: valuation.user_id, partnerId: valuation.partner_id },
-  );
+  return canReadValuation(actor, { userId: valuation.user_id, partnerId: valuation.partner_id });
 }
