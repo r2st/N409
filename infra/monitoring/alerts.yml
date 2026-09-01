@@ -527,6 +527,46 @@ groups:
         annotations:
           summary: '{{ $labels.flow }} assertions are being rejected or the provider is not answering'
 
+      # The third door whose authority is a shared secret, and the one whose
+      # silence lasts longest. A SCIM bearer is rotated in the admin console or
+      # retyped wrong in Okta / Entra / OneLogin, and `requireToken` answers 401
+      # to every create, every `PATCH active:false` and every `DELETE` — with no
+      # log line, in a status class this box has no rule on, against a route
+      # whose only other reader is the IdP's connector log inside somebody
+      # else's tenant.
+      #
+      # What that costs is the automated half of offboarding: since R336 the
+      # directory's deprovision is what drops a departing employee's roles and
+      # releases their engagements and review tasks. A refused token stops all
+      # of it, and the account stays live.
+      #
+      # A ratio against `accepted`, and `unauthenticated` excluded from the
+      # numerator, for the reason `InboundWebhookSecretDrifted` gives: this
+      # prefix is on the open internet, a bearer-guarded URL refusing a request
+      # that carries no bearer is the endpoint working, and a scanner must not
+      # be able to page anybody.
+      - alert: ScimTokenDrifted
+        expr: |
+          sum(rate(scim_requests_total{outcome="bad_token"}[30m]))
+            / sum(rate(scim_requests_total{outcome!="unauthenticated"}[30m])) > 0.5
+        for: 30m
+        labels: { severity: page }
+        annotations:
+          summary: "the directory connector is being refused — its SCIM token and this deployment's have drifted"
+          runbook: "journalctl -u n409-valuation | grep 'SCIM request refused' — then re-issue the token in the admin console and paste it into the IdP"
+
+      # The other way provisioning stops without anybody being told. The per-IP
+      # throttle is sized for a real IdP (600 in five minutes, a few hundred
+      # users resyncing comfortably inside one window), so sustained 429s mean
+      # a directory larger than that assumption or a connector in a retry loop
+      # — and either way the tail of the resync is not being applied.
+      - alert: ScimThrottled
+        expr: rate(scim_requests_total{outcome="rate_limited"}[15m]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the directory connector is being throttled; the tail of its resync is not being applied'
+
   - name: n409-browser
     rules:
       # A release that blanks a route for every user leaves the access log full

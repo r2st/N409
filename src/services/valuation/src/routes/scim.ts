@@ -7,6 +7,7 @@ import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import type { RoleKey } from '../domain/roles.js';
 import { ROLE_KEYS } from '../domain/roles.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
+import { recordScimRequest, refuseScimRequest } from '../observability/scimRequests.js';
 import {
   activeFromPatch,
   isScimRejection,
@@ -187,6 +188,10 @@ export function registerScimRoutes(
         void reply.header('x-ratelimit-limit', limit);
         void reply.header('x-ratelimit-remaining', remaining);
         if (!allowed) {
+          // Counted before the token is read, because it is refused before the
+          // token is read — and a resync throttled to a stop is a directory
+          // that has silently stopped provisioning. See `ScimOutcome`.
+          refuseScimRequest(req.log, 'rate_limited');
           void reply.header('retry-after', Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)));
           return reply
             .status(429)
@@ -197,15 +202,36 @@ export function registerScimRoutes(
       /** Route options shared by every /scim/v2/* route. */
       const limited = { onRequest: rateLimit };
 
-      /** The id of the SCIM token that authenticated the request, or null (401 sent). */
+      /**
+       * The id of the SCIM token that authenticated the request, or null (401 sent).
+       *
+       * The one chokepoint every authenticated route goes through, which is why
+       * it is also where `scim_requests_total` is written (R337, methodology
+       * M11). Until then this 401 was the quietest refusal on the platform: no
+       * log line, no metric, and a status class shared with every mistyped
+       * password — so a rotated or revoked token stopped the firm's whole
+       * deprovisioning pipeline and the only record of it was in the IdP's own
+       * connector log, inside somebody else's tenant. See
+       * `observability/scimRequests.ts`.
+       *
+       * `unauthenticated` and `bad_token` are separated here rather than at the
+       * counter: only this function can tell "a stranger with no bearer" from
+       * "the directory, holding a key we do not have", and the difference is
+       * what keeps a scanner off the page.
+       */
       const requireToken = async (req: FastifyRequest, reply: FastifyReply): Promise<string | null> => {
         const header = req.headers.authorization;
         const token = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) : null;
         const tokenId = token ? await verifyScimToken(deps.pool, token) : null;
         if (!tokenId) {
+          refuseScimRequest(req.log, token ? 'bad_token' : 'unauthenticated');
           void reply.status(401).header('content-type', CT).send(scimError(401, 'Invalid SCIM token'));
           return null;
         }
+        // The denominator, recorded on the token verifying rather than on the
+        // handler finishing: the question is whether the connector is getting
+        // in, and a 404 for an account it may not manage is the guard working.
+        recordScimRequest('accepted');
         return tokenId;
       };
 

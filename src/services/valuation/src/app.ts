@@ -164,6 +164,7 @@ import { configureReportRenderer, registerReportRenderMetrics } from './clients/
 import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
 import { registerInboundWebhookMetrics } from './observability/inboundWebhooks.js';
 import { registerSsoMetrics } from './observability/ssoOutcomes.js';
+import { registerScimMetrics } from './observability/scimRequests.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 import {
@@ -834,6 +835,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // sign-in at a firm while `http_requests_total` counts each one beside the
   // ordinary redirects. There is no other symptom on this box at all.
   registerSsoMetrics(metricsRegistry);
+  // And the third door onto this platform whose authority is a shared secret
+  // held on two machines: the directory connector. A rotated SCIM token refuses
+  // every provision and every deprovision as a 401 that nothing logs and no
+  // rule watches, so the automated path that takes a departing employee's
+  // access away stops and the platform's own instruments read green.
+  registerScimMetrics(metricsRegistry);
   // Whether we are still dialling the engine, the AI service and the report
   // unit at all. The breaker's own view was reachable only from the ops
   // incident endpoint, which is a page somebody visits once they already
