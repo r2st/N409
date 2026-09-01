@@ -536,6 +536,55 @@ def test_a_doctype_is_refused_wherever_it_leads_a_part():
     assert not _has_doctype(b"<sst/>")
 
 
+def _bomb_xlsx_in(encoding: str, *, bom: bytes = b"", levels: int = 6) -> bytes:
+    """The same bomb, with its shared-strings part written in a wide encoding."""
+    part = bom + _entity_bomb_shared_strings(levels).encode(encoding)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", _CONTENT_TYPES)
+        zf.writestr("xl/workbook.xml", _WORKBOOK)
+        zf.writestr("xl/sharedStrings.xml", part)
+        zf.writestr("xl/worksheets/sheet1.xml", _SHEET1)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("encoding", "bom"),
+    [
+        ("utf-16-le", codecs.BOM_UTF16_LE),
+        ("utf-16-be", codecs.BOM_UTF16_BE),
+        ("utf-16-le", b""),
+        ("utf-16-be", b""),
+        ("utf-32-le", codecs.BOM_UTF32_LE),
+        ("utf-32-be", codecs.BOM_UTF32_BE),
+        ("utf-32-le", b""),
+        ("utf-32-be", b""),
+    ],
+)
+def test_a_doctype_is_refused_in_every_encoding_expat_detects(encoding: str, bom: bytes):
+    """The refusal has to read the bytes the way the parser behind it does.
+
+    expat resolves the encoding from the document's first bytes — the XML 1.0
+    autodetection table — so a part whose markup is spelled two or four bytes to
+    the character is still a part whose entities it will expand. The scan looked
+    for `<!DOCTYPE` spelled in single bytes and found none in any of these.
+    """
+    raw = _bomb_xlsx_in(encoding, bom=bom)
+    [doc] = extract_texts([_doc(raw)])
+    assert doc.text.startswith("[could not extract text:")
+    assert "document type declaration" in doc.text
+    assert "aaaaaaaaaa" not in doc.text
+
+
+def test_a_wide_part_with_no_declaration_is_still_read():
+    """The transcode is a reading, not a refusal — an ordinary UTF-16 part parses."""
+    from app.documents import _has_doctype
+
+    clean = '<?xml version="1.0"?><sst><si><t>hi</t></si></sst>'
+    assert not _has_doctype(codecs.BOM_UTF16_LE + clean.encode("utf-16-le"))
+    assert not _has_doctype(clean.encode("utf-16-be"))
+
+
 def test_an_ordinary_workbook_still_parses():
     [doc] = extract_texts([_doc(_xlsx_bytes())])
     assert "Series A\t2000000" in doc.text

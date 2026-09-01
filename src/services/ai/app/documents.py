@@ -156,6 +156,55 @@ def _parse_xml_part(data: bytes) -> ElementTree.Element:
     return ElementTree.fromstring(data)
 
 
+#: The encodings an XML processor resolves from the first bytes of a document,
+#: as the XML 1.0 autodetection table gives them (Appendix F.1). expat reads a
+#: document in whichever of these its bytes announce — before, and regardless
+#: of, what the encoding *declaration* inside then says — so this is the reading
+#: the scan below has to share with it.
+#:
+#: Ordered longest signature first: a UTF-32LE BOM begins with a UTF-16LE BOM,
+#: and asking in the other order calls the one the other.
+_XML_BOMS: tuple[tuple[bytes, str], ...] = (
+    (codecs.BOM_UTF32_LE, "utf-32"),
+    (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+)
+
+#: The same table for a document with no BOM, keyed on how its first character —
+#: which XML requires to be `<` — is spelled in each width.
+_XML_SIGNATURES: tuple[tuple[bytes, str], ...] = (
+    (b"\x00\x00\x00<", "utf-32-be"),
+    (b"<\x00\x00\x00", "utf-32-le"),
+    (b"\x00<", "utf-16-be"),
+    (b"<\x00", "utf-16-le"),
+)
+
+
+def _ascii_compatible(data: bytes) -> bytes:
+    """This part with its markup spelled in single bytes, for the scan below.
+
+    Returns `data` itself for everything whose first bytes do not announce a
+    wide encoding, which is every workbook any writer in existence produces —
+    the common path allocates nothing and scans exactly the bytes it was given.
+
+    A wide part is transcoded whole. That is safe to do and is only ever paid
+    for here: `_BoundedZip` has already metered these bytes against the
+    archive's inflation budget, so the copy is bounded, and it is bought by
+    hostile or exotic input alone. `errors="replace"` rather than a raise —
+    bytes that do not decode are bytes expat will refuse too, and a mangled
+    prolog must still be *asked* the question below rather than skipping it on
+    the way out through an exception.
+    """
+    for bom, encoding in _XML_BOMS:
+        if data.startswith(bom):
+            return data.decode(encoding, errors="replace").encode("utf-8", errors="replace")
+    for signature, encoding in _XML_SIGNATURES:
+        if data.startswith(signature):
+            return data.decode(encoding, errors="replace").encode("utf-8", errors="replace")
+    return data
+
+
 def _has_doctype(data: bytes) -> bool:
     """Whether a document type declaration leads this XML part.
 
@@ -165,8 +214,19 @@ def _has_doctype(data: bytes) -> bool:
     may legitimately precede it is whitespace, the XML declaration, processing
     instructions, and comments; each is skipped, and anything else ends the
     scan.
+
+    ## The bytes have to be read the way expat reads them
+
+    This scanned for markup spelled in single bytes, and a UTF-16 part does not
+    spell it that way: `<!DOCTYPE` is `<\x00!\x00D\x00…`, which begins with
+    none of the three markers, so the scan fell out at its first test and
+    answered "no document type declaration" — while expat, auto-detecting
+    UTF-16 from the BOM exactly as the specification tells it to, read the
+    declaration and expanded every entity in it. The 427-byte bomb the
+    docstring above measures, re-encoded to UTF-16, walked through the refusal
+    this function *is*. See `_ascii_compatible`.
     """
-    rest = data.lstrip(codecs.BOM_UTF8).lstrip()
+    rest = _ascii_compatible(data).lstrip(codecs.BOM_UTF8).lstrip()
     while True:
         if rest.startswith(b"<!DOCTYPE"):
             return True
