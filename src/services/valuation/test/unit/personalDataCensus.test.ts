@@ -266,6 +266,11 @@ const CONTACT_EXEMPT: Record<string, string> = {
   email_verification_tokens:
     'A single-use capability to prove an address, in the same family as the reset token — the copy ' +
     'would be the harm (Art. 15(4)), and the address it names is already in the account section.',
+  password_reset_tokens:
+    'The reset token itself, which grew an address column in 0204 so a link cannot be redeemed after ' +
+    'the login email moved. Exactly the line above, and the stronger case of it: a live capability to ' +
+    'take the account, whose copy would be the harm (Art. 15(4)), naming an address the account ' +
+    'section already carries.',
 };
 
 const schema = tablesReferencingUsers();

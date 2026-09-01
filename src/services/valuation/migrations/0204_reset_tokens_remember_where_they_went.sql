@@ -1,0 +1,35 @@
+-- R342 — which address a password reset link was sent to.
+--
+-- A reset token is bound to a `user_id` and to nothing else, and the link is
+-- delivered to whatever address was on the account when it was minted. Three
+-- doors change that address: the self-service profile PATCH, the admin console's
+-- `ADMIN_PATCH_COLUMNS` (which includes `email` and demands no password from the
+-- subject), and SCIM provisioning. None of them touches this table.
+--
+-- So a link sitting in the old mailbox went on working. `resetPasswordWithToken`
+-- sets `password_digest` and bumps `session_epoch`, so redeeming it takes the
+-- account and signs the owner out of it — and the ordinary reason to move a
+-- login address in a hurry is that the old mailbox is the thing that was
+-- compromised. The remediation left the exploit live for the rest of the hour.
+--
+-- `email_verification_tokens` (0058) solved this problem the round it was
+-- created, and its own comment states the rule: "stored so a since-changed
+-- email can't be verified by an old link — the token is bound to the address it
+-- was sent to". The higher-value credential next to it was never given the same
+-- column. This is that column.
+--
+-- Bound rather than swept, deliberately. Retiring outstanding tokens inside
+-- each of the three email-change doors is the same rule written three times,
+-- and the fourth door somebody adds will not have it; a token that carries its
+-- own destination is refused by a change nobody remembered to tell it about.
+--
+-- NULLABLE, and NULL means "not bound" rather than "matches nothing". Rows that
+-- predate this migration were minted by a release that neither reads nor writes
+-- the column, and refusing them would invalidate every reset link in flight at
+-- deploy. The exposure that leaves is bounded by `RESET_TOKEN_TTL`, which is one
+-- hour: every legacy row is expired an hour after the migration lands, and from
+-- then on every row carries its address. Additive and defaulted, per the
+-- estate's rollback rule — the previous release ignores it entirely.
+
+ALTER TABLE password_reset_tokens
+    ADD COLUMN IF NOT EXISTS email text;

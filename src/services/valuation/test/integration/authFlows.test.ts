@@ -165,6 +165,68 @@ describe.skipIf(!dbUp)('password reset + invitations (P0 #3 / feature #9)', () =
       expect((await reset(ctx, second, 'second-token-password-1')).statusCode).toBe(200);
     });
 
+    /**
+     * The link goes to an address, and the address can move (round 342,
+     * methodology M3).
+     *
+     * A reset token named a `user_id` and nothing else. Three doors change
+     * `users.email` — the self-service profile PATCH, the admin console's
+     * `ADMIN_PATCH_COLUMNS`, SCIM — and none of them touched the token table,
+     * so a link already delivered to the old mailbox still set the password and
+     * bumped `session_epoch`: it took the account and signed the owner out of
+     * it. Moving a login address in a hurry is what somebody does when the old
+     * mailbox is the thing that was compromised.
+     *
+     * `email_verification_tokens` was born with this rule; migration 0204 gives
+     * `password_reset_tokens` the same column, and the token carries its
+     * destination rather than each email-change door remembering to sweep.
+     */
+    it('refuses a link issued before the login address moved', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await forgot(ctx, user.email);
+      const [email] = await waitForOutbox(ctx, user.email, 'password_reset');
+      const token = tokenFrom(email!.body, '/reset-password');
+
+      // The admin console's door, which is the one that asks the subject for
+      // nothing at all.
+      const moved = `${newUlid().toLowerCase()}@elsewhere.example.com`;
+      const patched = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/users/${user.id}`,
+        headers: authHeader(admin.token),
+        payload: { email: moved },
+      });
+      expect(patched.statusCode).toBe(200);
+
+      expect((await reset(ctx, token, 'taken-by-the-old-inbox-1')).statusCode).toBe(400);
+      // And the account is untouched: the old password still works, so nothing
+      // about the refusal left it half-reset.
+      expect((await login(ctx, moved, 'test-password-123')).statusCode).toBe(200);
+    });
+
+    it('still works when the address has not moved', async () => {
+      // The discriminator. Without it the assertion above passes for a binding
+      // that refuses every link.
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await forgot(ctx, user.email);
+      const [email] = await waitForOutbox(ctx, user.email, 'password_reset');
+      const token = tokenFrom(email!.body, '/reset-password');
+      expect((await reset(ctx, token, 'ordinary-reset-password-1')).statusCode).toBe(200);
+    });
+
+    it('honours a link minted before the column existed', async () => {
+      // NULL means "not bound", not "matches nothing": rows written by the
+      // previous release carry no address, and refusing them would have
+      // invalidated every link in flight at deploy. `RESET_TOKEN_TTL` closes
+      // that window an hour later without help.
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await forgot(ctx, user.email);
+      const [email] = await waitForOutbox(ctx, user.email, 'password_reset');
+      const token = tokenFrom(email!.body, '/reset-password');
+      await ctx.pool.query('UPDATE password_reset_tokens SET email = NULL WHERE user_id = $1', [user.id]);
+      expect((await reset(ctx, token, 'legacy-row-password-1')).statusCode).toBe(200);
+    });
+
     it('enforces the 10-char password minimum', async () => {
       const res = await reset(ctx, 'irrelevant', 'short');
       expect(res.statusCode).toBe(422);
