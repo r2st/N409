@@ -6,6 +6,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { reportCrash } from '../lib/crashReport';
 import { SkipLink, mainContentTargetProps } from './SkipLink';
 import { api } from '../lib/api';
+import { usePoll } from '../lib/usePoll';
 import { useAuth } from '../lib/auth';
 import { canManageUsers, effectiveUser, isFirmAdmin, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, initials } from '../lib/format';
@@ -152,10 +153,14 @@ function useBadgePoll<T>(path: string, enabled: boolean): T | null {
   // Per hook instance rather than module-level: this is "has *this* badge
   // asked recently", and a remount is a badge that has never asked.
   const lastPolledAt = useRef(0);
+  // Held in a ref so the timer below can call the same fetch without taking
+  // `cancelled` — an unmount clears the timer, and a poll already in flight
+  // resolves into a `setValue` React discards.
+  const poll = useRef<() => void>(() => {});
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    const poll = () => {
+    poll.current = () => {
       lastPolledAt.current = Date.now();
       api<T>(path)
         .then((d) => {
@@ -163,13 +168,15 @@ function useBadgePoll<T>(path: string, enabled: boolean): T | null {
         })
         .catch(() => {});
     };
-    if (Date.now() - lastPolledAt.current >= BADGE_MIN_REFETCH_MS) poll();
-    const timer = setInterval(poll, BADGE_POLL_MS);
+    if (Date.now() - lastPolledAt.current >= BADGE_MIN_REFETCH_MS) poll.current();
     return () => {
       cancelled = true;
-      clearInterval(timer);
     };
   }, [location.pathname, enabled, path]);
+  // The clock, stopped while nobody is looking at the tab. See `usePoll`: three
+  // of these are mounted on every authenticated page, so a backgrounded window
+  // was three requests a minute for as long as it stayed open.
+  usePoll(() => poll.current(), BADGE_POLL_MS, enabled);
   return value;
 }
 

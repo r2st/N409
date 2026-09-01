@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { useLatestOnly } from '../lib/useLatestOnly';
 import { useClearOnChange } from '../lib/useClearOnChange';
+import { usePoll } from '../lib/usePoll';
 import { formatDateTime } from '../lib/format';
 import {
   Button,
@@ -395,10 +396,13 @@ export function AdminJobsPage() {
 
   // A job page that does not move is indistinguishable from a queue that has
   // stopped, which is the one thing it exists to tell you apart.
-  useEffect(() => {
-    const timer = setInterval(() => void load(), 15_000);
-    return () => clearInterval(timer);
-  }, [load]);
+  //
+  // Only while somebody is looking at it, though. This is the screen an
+  // operator parks on a second monitor, and three endpoints every fifteen
+  // seconds is 5,760 requests across an eight-hour day for a tab that has been
+  // behind another window since the morning — see `usePoll`, which polls on
+  // return instead, so coming back to it is fresher and costs less.
+  usePoll(() => void load(), 15_000);
 
   /*
    * Keyed on the question rather than folded into `load`, because `load` is
