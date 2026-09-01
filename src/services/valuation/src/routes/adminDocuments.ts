@@ -175,15 +175,50 @@ export function registerAdminDocumentRoutes(app: FastifyInstance, deps: { pool: 
         continue;
       }
       const target = refileTarget(doc.kind, assignment.category);
-      const moved = await refileDocument(deps.pool, doc, target, actorFor(principal));
-      // Write the moved row back over the snapshot. The batch is read once, so
-      // without this a list that names the same document twice would file it
-      // twice — both assignments reading the pre-batch `uploads` state, the
-      // second silently overwriting the first's bucket. Re-reading per row is
-      // what used to prevent that; keeping the map current does the same
-      // without giving back the query.
-      documents.set(id, moved);
-      results.push({ document_id: id, ok: true, category: target.category });
+      try {
+        const moved = await refileDocument(deps.pool, doc, target, actorFor(principal));
+        // Write the moved row back over the snapshot. The batch is read once,
+        // so without this a list that names the same document twice would file
+        // it twice — both assignments reading the pre-batch `uploads` state,
+        // the second silently overwriting the first's bucket. Re-reading per
+        // row is what used to prevent that; keeping the map current does the
+        // same without giving back the query.
+        documents.set(id, moved);
+        results.push({ document_id: id, ok: true, category: target.category });
+      } catch (err) {
+        /*
+         * ONE REFUSED WRITE IS ONE ROW, NOT THE BATCH (R301, methodology M6).
+         *
+         * Every refusal above this line is reported per row — that is the
+         * doc-comment's whole promise, and the sibling bulk route in
+         * `dataRemediation.ts` keeps it on its write too. This one did not: a
+         * `refileDocument` that threw on row five of two hundred escaped the
+         * loop, and what it took with it was not five decisions but all two
+         * hundred.
+         *
+         * Each refile is its own transaction, so the four before it are
+         * committed and stay committed. What is lost is the *answer*: the
+         * route 500s with no `results` array, so the operator is told nothing
+         * about which rows landed, the rows that never ran are indistinguishable
+         * from the rows that failed, and the `documents_refiled` admin event
+         * below — the only record that any of this happened — is skipped
+         * entirely. The queue page reloads, four documents have moved, and
+         * nothing says why or by whom.
+         *
+         * Contained, the run finishes: the remaining rows get their chance, the
+         * admin event records the true tally, and the failure is one line in
+         * the results the operator is already reading.
+         */
+        req.log.warn({ err, documentId: id, category: assignment.category }, 'document re-file failed');
+        // Not the driver's wording. This string is served straight back to the
+        // operator, and what fails here is Postgres refusing a write — constraint
+        // names, column names and the values it rejected.
+        results.push({
+          document_id: id,
+          ok: false,
+          error: 'Could not be re-filed — the reason is in the service log.',
+        });
+      }
     }
 
     const succeeded = results.filter((r) => r.ok).length;

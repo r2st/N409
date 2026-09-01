@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  interceptPoolQueries,
+  isDbAvailable,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -266,6 +273,75 @@ describe.skipIf(!dbUp)('document triage queue', () => {
 
     const { rows } = await ctx.pool.query('SELECT category FROM documents WHERE id = $1', [doc.id]);
     expect(rows[0].category).toBe('corporate_documents');
+  });
+
+  /**
+   * One refused write is one row, not the batch (R301, methodology M6).
+   *
+   * Every other refusal in this route is already reported per row — that is
+   * what `results` is for. The write itself was not: a `refileDocument` that
+   * threw on the second of three escaped the loop, and the operator got a 500
+   * with no `results` at all. The first document was already committed by its
+   * own transaction, the third never ran, and nothing in the answer
+   * distinguished the two — nor did the `documents_refiled` admin event, which
+   * the throw skipped entirely.
+   *
+   * Staged through the pooled client rather than `pool.query`, because the
+   * refile is a transaction: see `interceptPoolQueries`.
+   */
+  it('contains a failed re-file to its own row and finishes the batch', async () => {
+    const first = await upload('contained-first.pdf');
+    const second = await upload('contained-second.pdf');
+    const third = await upload('contained-third.pdf');
+
+    let seen = 0;
+    const restore = interceptPoolQueries(ctx.pool, (sql, phase) => {
+      if (phase !== 'before' || !sql.includes('UPDATE documents SET category')) return undefined;
+      seen += 1;
+      if (seen === 2) throw new Error('deadlock detected on relation "documents"');
+      return undefined;
+    });
+    let res;
+    try {
+      res = await file([
+        { document_id: first.id, category: 'corporate_documents' },
+        { document_id: second.id, category: 'corporate_documents' },
+        { document_id: third.id, category: 'corporate_documents' },
+      ]);
+    } finally {
+      restore();
+    }
+
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json() as {
+      succeeded: number;
+      failed: number;
+      results: Array<{ document_id: string; ok: boolean; error?: string }>;
+    };
+    expect(body).toMatchObject({ succeeded: 2, failed: 1 });
+    expect(body.results.map((r) => r.ok)).toEqual([true, false, true]);
+    // Not the driver's wording: `deadlock`, the relation name and the values it
+    // refused are all in the log line, and none of them in the operator's body.
+    expect(body.results[1]!.error).toBe('Could not be re-filed — the reason is in the service log.');
+    expect(body.results[1]!.error).not.toMatch(/deadlock|relation/i);
+
+    // The row after the failure was filed, which is the half the throw took.
+    const { rows } = await ctx.pool.query<{ id: string; category: string }>(
+      'SELECT id, category FROM documents WHERE id = ANY($1::ulid[]) ORDER BY id',
+      [[first.id, second.id, third.id]],
+    );
+    const byId = new Map(rows.map((r) => [r.id, r.category]));
+    expect(byId.get(first.id)).toBe('corporate_documents');
+    expect(byId.get(second.id)).toBe('uploads');
+    expect(byId.get(third.id)).toBe('corporate_documents');
+
+    // And the batch is on the admin trail with the true tally, which a throw
+    // past `recordAdminEvent` left off it entirely.
+    const events = await ctx.pool.query<{ payload: { requested: number; succeeded: number; failed: number } }>(
+      `SELECT payload FROM admin_events
+        WHERE type = 'documents_refiled' ORDER BY occurred_at DESC, id DESC LIMIT 1`,
+    );
+    expect(events.rows[0]!.payload).toMatchObject({ requested: 3, succeeded: 2, failed: 1 });
   });
 
   it('is operations-only', async () => {
