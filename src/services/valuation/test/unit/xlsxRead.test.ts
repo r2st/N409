@@ -563,7 +563,19 @@ describe('xlsxRead', () => {
     it('spends the budget on rows too, so sheets of them cannot add up', () => {
       // Each sheet here is inside the per-worksheet row bound; together they are
       // not, and the grids are held in memory together.
-      const sheet = { data: sheetWith('<row/>'.repeat(1_000_000)) };
+      //
+      // The rows carry their `r` index, as a real worksheet's do, and that is
+      // load-bearing for this fixture rather than decoration: since R330 the
+      // writer deflates, and three sheets of a literal repeated `<row/>` come
+      // back as an archive of a few kilobytes claiming eighteen megabytes —
+      // which is a decompression bomb, and `inflatedBudgetFor` refuses it
+      // before any XML is parsed. That refusal is correct and has its own
+      // coverage in `zipReader.test.ts`; this test is about the *row* budget,
+      // so the fixture has to be compressible the way a real workbook is
+      // rather than the way a bomb is.
+      const rows = (n: number) =>
+        Array.from({ length: n }, (_, i) => `<row r="${i + 1}"/>`).join('');
+      const sheet = { data: sheetWith(rows(900_000)) };
       expect(() =>
         readXlsx(
           buildWorkbook({ sheets: Array.from({ length: 3 }, (_, i) => ({ name: `S${i}`, ...sheet })) }),

@@ -1,5 +1,7 @@
+import { inflateRawSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { buildZip, crc32 } from '../../src/export/zip.js';
+import { readZip } from '../../src/domain/zipReader.js';
 
 /** Reads the archive back with a tiny independent parser (appnote layout). */
 function parseZip(buf: Buffer) {
@@ -9,7 +11,14 @@ function parseZip(buf: Buffer) {
   const count = eocd.readUInt16LE(10);
   const cdOffset = eocd.readUInt32LE(16);
 
-  const entries: Array<{ name: string; crc: number; size: number; offset: number }> = [];
+  const entries: Array<{
+    name: string;
+    crc: number;
+    method: number;
+    compressedSize: number;
+    size: number;
+    offset: number;
+  }> = [];
   let p = cdOffset;
   for (let i = 0; i < count; i++) {
     expect(buf.readUInt32LE(p)).toBe(0x02014b50);
@@ -19,6 +28,8 @@ function parseZip(buf: Buffer) {
     entries.push({
       name: buf.subarray(p + 46, p + 46 + nameLen).toString('utf8'),
       crc: buf.readUInt32LE(p + 16),
+      method: buf.readUInt16LE(p + 10),
+      compressedSize: buf.readUInt32LE(p + 20),
       size: buf.readUInt32LE(p + 24),
       offset: buf.readUInt32LE(p + 42),
     });
@@ -29,8 +40,14 @@ function parseZip(buf: Buffer) {
     expect(buf.readUInt32LE(e.offset)).toBe(0x04034b50);
     const nameLen = buf.readUInt16LE(e.offset + 26);
     const extraLen = buf.readUInt16LE(e.offset + 28);
+    // Both headers agree about the method and both sizes; slicing by the
+    // compressed one is what makes a deflated entry readable at all.
+    expect(buf.readUInt16LE(e.offset + 8)).toBe(e.method);
+    expect(buf.readUInt32LE(e.offset + 18)).toBe(e.compressedSize);
+    expect(buf.readUInt32LE(e.offset + 22)).toBe(e.size);
     const start = e.offset + 30 + nameLen + extraLen;
-    return { ...e, data: buf.subarray(start, start + e.size) };
+    const raw = buf.subarray(start, start + e.compressedSize);
+    return { ...e, data: e.method === 8 ? inflateRawSync(raw) : raw };
   });
 }
 
@@ -56,6 +73,55 @@ describe('buildZip', () => {
     expect(entries[0]!.data.toString('utf8')).toBe('{"format":"n409-evidence-bundle/1"}');
     expect(Buffer.compare(entries[1]!.data, Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff]))).toBe(0);
     for (const e of entries) expect(crc32(Buffer.from(e.data))).toBe(e.crc);
+  });
+
+  /*
+   * R330 (M8). The bundle was shipped stored, on the grounds that it is "mostly
+   * JSON + already compressed PDFs" — which is the argument for deflating it.
+   * These pin the two halves of the per-entry decision so a later change cannot
+   * quietly go back to storing everything or start inflating the PDF.
+   */
+  it('deflates a compressible entry and stores an incompressible one', () => {
+    const json = JSON.stringify(
+      Array.from({ length: 400 }, (_, i) => ({ id: i, class: `class_${i % 12}`, shares: 1000 + i })),
+      null,
+      2,
+    );
+    // Incompressible bytes — a deflated PDF stream is what this stands in for.
+    // Deterministic xorshift so the assertion below is not a coin flip.
+    let x = 0x9e3779b9;
+    const noise = Buffer.from(
+      Array.from({ length: 4096 }, () => {
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
+        return (x >>> 0) & 0xff;
+      }),
+    );
+    const zip = buildZip([
+      { name: 'calculations.json', data: json },
+      { name: 'report-v3.pdf', data: noise },
+    ]);
+    const entries = parseZip(zip);
+
+    expect(entries[0]!.method).toBe(8);
+    expect(entries[0]!.compressedSize).toBeLessThan(entries[0]!.size / 4);
+    expect(entries[0]!.data.toString('utf8')).toBe(json);
+
+    expect(entries[1]!.method).toBe(0);
+    expect(entries[1]!.compressedSize).toBe(noise.length);
+    expect(Buffer.compare(entries[1]!.data, noise)).toBe(0);
+
+    // The archive is smaller than the bytes that went into it, which is the
+    // whole point, and every checksum still describes the original.
+    expect(zip.length).toBeLessThan(Buffer.byteLength(json) + noise.length);
+    for (const e of entries) expect(crc32(Buffer.from(e.data))).toBe(e.crc);
+  });
+
+  it("round-trips through the platform’s own zip reader", () => {
+    const xml = `<?xml version="1.0"?><sheetData>${'<row><c><v>12345</v></c></row>'.repeat(300)}</sheetData>`;
+    const read = readZip(buildZip([{ name: 'xl/worksheets/sheet1.xml', data: xml }]));
+    expect(read.get('xl/worksheets/sheet1.xml')?.toString('utf8')).toBe(xml);
   });
 
   it('handles an empty archive', () => {
