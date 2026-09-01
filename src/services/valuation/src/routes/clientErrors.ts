@@ -52,6 +52,18 @@ const CLIENT_ERROR_WINDOW_MS = 5 * 60 * 1000;
 const MAX_MESSAGE = 500;
 const MAX_STACK = 4_000;
 const MAX_URL = 500;
+/**
+ * And the one field on the log line that does not come out of the schema.
+ *
+ * Every string in the body is bounded here rather than trusted to the client,
+ * on the stated ground that the client is the untrusted party in this exchange
+ * — and then the line wrote `user-agent` straight through, which the same
+ * untrusted party sets and which Node will carry up to its whole header
+ * allowance. A real one is under 200 characters; anything past this is not a
+ * browser identifying itself, and the first 200 bytes of it still say which
+ * one it claims to be.
+ */
+const MAX_USER_AGENT = 200;
 
 /**
  * Which of the three doors the error came through.
@@ -75,6 +87,17 @@ const ReportBody = z.object({
   /** The bundle the browser was running, so a stale tab is distinguishable. */
   release: z.string().trim().max(100).optional(),
 });
+
+/** The caller's `user-agent`, trimmed to something a log line can hold. */
+export function boundedUserAgent(header: string | string[] | undefined): string | null {
+  // Node keeps the first `user-agent` and discards repeats, so the array form
+  // is not reachable here; it is answered rather than cast away, because the
+  // header type says it is possible and a `as string` would be the assumption
+  // this file exists to avoid making about a caller's input.
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (typeof raw !== 'string' || raw === '') return null;
+  return raw.length > MAX_USER_AGENT ? raw.slice(0, MAX_USER_AGENT) : raw;
+}
 
 export function registerClientErrorRoutes(
   app: FastifyInstance,
@@ -133,7 +156,7 @@ export function registerClientErrorRoutes(
         component_stack: report.component_stack ?? null,
         page: report.url ?? null,
         release: report.release ?? null,
-        user_agent: req.headers['user-agent'] ?? null,
+        user_agent: boundedUserAgent(req.headers['user-agent']),
       },
       'client error reported',
     );

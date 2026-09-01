@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { MetricsRegistry, registerProblemHandler } from '@n409/shared';
-import { registerClientErrorRoutes } from '../../src/routes/clientErrors.js';
+import { boundedUserAgent, registerClientErrorRoutes } from '../../src/routes/clientErrors.js';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 
 /**
@@ -48,6 +48,23 @@ async function buildBare(opts: { limiter?: FixedWindowRateLimiter } = {}): Promi
   return { app, registry, lines };
 }
 
+describe('boundedUserAgent', () => {
+  // The one field on the log line that does not come out of the schema, set by
+  // the same untrusted caller as every field that is bounded.
+  it('trims a header longer than a browser would ever send', () => {
+    expect(boundedUserAgent('x'.repeat(5_000))).toHaveLength(200);
+    expect(boundedUserAgent('Mozilla/5.0')).toBe('Mozilla/5.0');
+  });
+
+  it('answers null for the shapes a header can arrive in and a log line cannot hold', () => {
+    expect(boundedUserAgent(undefined)).toBeNull();
+    expect(boundedUserAgent('')).toBeNull();
+    // Not reachable through Node, which keeps the first `user-agent` — answered
+    // rather than cast away, because the header type says it is possible.
+    expect(boundedUserAgent(['Mozilla/5.0', 'other'])).toBe('Mozilla/5.0');
+  });
+});
+
 describe('POST /api/v1/client-errors', () => {
   it('counts the crash and writes it down', async () => {
     const { app, registry, lines } = await buildBare();
@@ -67,6 +84,22 @@ describe('POST /api/v1/client-errors', () => {
         page: '/valuations/01J/workspace',
       });
       expect(String(lines[0]!.obj.stack)).toContain('at Workspace');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('bounds the user-agent it writes down, which no schema cap covers', async () => {
+    const { app, lines } = await buildBare();
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/client-errors',
+        payload: report,
+        headers: { 'user-agent': 'M'.repeat(9_000) },
+      });
+      expect(res.statusCode).toBe(204);
+      expect(String(lines[0]!.obj.user_agent)).toHaveLength(200);
     } finally {
       await app.close();
     }
