@@ -227,3 +227,31 @@ export async function recordAlert(
   );
   return (rowCount ?? 0) > 0;
 }
+
+/**
+ * Take back an alert this pass had just recorded and could not announce.
+ *
+ * The row is the suppressor: `notifiedSignaturesFor` reads exactly this table,
+ * and `recordAlert`'s `ON CONFLICT DO NOTHING` means the second scan to see the
+ * same signature reports `inserted: false` and skips it. So a scan that
+ * committed the row and then failed before the reviewer was told suppressed
+ * that alert for ever — which is the one failure a revaluation monitor exists
+ * to prevent, and it is silent.
+ *
+ * Only safe for the caller's *own* insert, and only before anything is queued.
+ * `sendTransactionalEmail` writes the outbox row as its first database write
+ * and contains every failure after it, so a throw out of that call means
+ * nothing was enqueued and nobody has been told; the scan's per-trigger catch
+ * is the only caller and it holds both facts. Undoing anything else would be
+ * deleting an announcement that had happened.
+ */
+export async function unrecordAlert(
+  pool: pg.Pool,
+  input: { monitorId: string; signature: string },
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    'DELETE FROM monitor_alerts WHERE monitor_id = $1 AND signature = $2',
+    [input.monitorId, input.signature],
+  );
+  return (rowCount ?? 0) > 0;
+}

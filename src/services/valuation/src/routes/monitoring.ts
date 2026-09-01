@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isUlid, logFailure, logUnretried, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import {
   cloneValuation,
@@ -42,6 +42,7 @@ import {
   MONITOR_PAGE_LIMIT,
   notifiedSignaturesFor,
   recordAlert,
+  unrecordAlert,
   type MonitorRow,
 } from '../repos/monitors.js';
 import { recordEvent } from '../events/record.js';
@@ -351,6 +352,16 @@ export function registerMonitoringRoutes(
     const now = new Date();
     let alertsSent = 0;
     let scanned = 0;
+    /**
+     * Triggers that fired and whose reviewer was not told, because something
+     * threw while this pass was telling them.
+     *
+     * Reported rather than counted away, for the reason the overdue sweep
+     * reports its own: `alerts_sent` on its own is indistinguishable from a
+     * scan on which nothing fired, and this is the endpoint whose entire job is
+     * that a trigger which fires is announced.
+     */
+    const unsent: Array<{ valuation_id: string; trigger: string; failure_reason: string }> = [];
     // Paged, not capped: a trigger that fires and is never emailed is the
     // failure the monitor exists to prevent, and a capped scan would still
     // report a healthy-looking count.
@@ -410,42 +421,115 @@ export function registerMonitoringRoutes(
           : null;
 
         for (const t of fresh) {
-          const inserted = await recordAlert(deps.pool, {
-            monitorId: m.id,
-            valuationId: m.valuation_id,
-            triggerType: t.type,
-            level: t.level,
-            signature: t.signature,
-          });
-          if (!inserted) continue;
-          await withTransaction(deps.pool, (client) =>
-            recordEvent(client, {
+          /*
+           * THE ALERT ROW IS THE SUPPRESSOR, and it was committed before
+           * anybody was told. `notifiedSignaturesFor` reads exactly this table
+           * and `recordAlert` is `ON CONFLICT DO NOTHING`, so the row this
+           * INSERT commits is what makes every later scan report the signature
+           * as already handled. Everything after it — the spine event, and the
+           * outbox write inside `sendTransactionalEmail` — is a separate
+           * statement on a pool this scan has been paging through for minutes,
+           * and any one of them losing a deadlock left the alert recorded, the
+           * reviewer never told, and no scan willing to look at it again.
+           *
+           * That is the one failure a revaluation monitor exists to prevent,
+           * arrived at silently: `alerts_sent` counts the sends that happened
+           * and this one simply is not in it.
+           *
+           * Undone rather than reported, because it can be. `enqueueEmail` is
+           * the first database write `sendTransactionalEmail` makes and every
+           * failure after it is contained there, so a throw out of that call
+           * means nothing was queued and nobody has been told — and this scan
+           * knows it inserted the row itself, because `inserted` says so. So
+           * the suppressor comes back off and the next scan owes the alert
+           * again. `unrecordAlert` states both preconditions.
+           *
+           * Contained per trigger for the reason the overdue sweep's loop is:
+           * one row's bad minute must not cost the rows behind it, and this
+           * scan pages the entire enabled book.
+           */
+          let inserted: boolean;
+          try {
+            inserted = await recordAlert(deps.pool, {
+              monitorId: m.id,
               valuationId: m.valuation_id,
-              type: MONITOR_EVENT_TYPES.triggerFired,
-              actor: { actorType: 'human', actorId: principal.id },
-              payload: { trigger: t.type, level: t.level, signature: t.signature },
-            }),
-          );
-          if (reviewer) {
-            await sendTransactionalEmail(
-              { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
-              {
-                valuationId: m.valuation_id,
-                toUserId: reviewer.id,
-                toEmail: reviewer.email,
-                recipientName: reviewer.first_name,
-                templateKey: 'monitoring_alert',
-                subject: `Revaluation trigger: ${m.company_name}`,
-                body: `A monitoring trigger fired for ${m.company_name}:\n\n${t.message}\n\nConsider a fresh valuation.`,
-                vars: { company_name: m.company_name, message: t.message },
-              },
+              triggerType: t.type,
+              level: t.level,
+              signature: t.signature,
+            });
+          } catch (err) {
+            // Nothing committed, so nothing to undo: the next scan sees the
+            // trigger still firing and records it then.
+            const failure = logFailure(
+              app.log,
+              err,
+              { monitorId: m.id, valuationId: m.valuation_id, trigger: t.type },
+              'monitor alert could not be recorded; the rest of the scan continues',
             );
-            alertsSent++;
+            unsent.push({ valuation_id: m.valuation_id, trigger: t.type, failure_reason: failure.reason });
+            continue;
+          }
+          if (!inserted) continue;
+          try {
+            await withTransaction(deps.pool, (client) =>
+              recordEvent(client, {
+                valuationId: m.valuation_id,
+                type: MONITOR_EVENT_TYPES.triggerFired,
+                actor: { actorType: 'human', actorId: principal.id },
+                payload: { trigger: t.type, level: t.level, signature: t.signature },
+              }),
+            );
+            if (reviewer) {
+              await sendTransactionalEmail(
+                { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
+                {
+                  valuationId: m.valuation_id,
+                  toUserId: reviewer.id,
+                  toEmail: reviewer.email,
+                  recipientName: reviewer.first_name,
+                  templateKey: 'monitoring_alert',
+                  subject: `Revaluation trigger: ${m.company_name}`,
+                  body: `A monitoring trigger fired for ${m.company_name}:\n\n${t.message}\n\nConsider a fresh valuation.`,
+                  vars: { company_name: m.company_name, message: t.message },
+                },
+              );
+              alertsSent++;
+            }
+          } catch (err) {
+            // `logUnretried` only if the suppressor could not be taken back
+            // off: with the row gone this alert is owed again and the next scan
+            // pays it, which is a delay rather than a loss. With the row still
+            // there it is a loss, and nothing else will ever say so.
+            const undone = await unrecordAlert(deps.pool, {
+              monitorId: m.id,
+              signature: t.signature,
+            }).catch((undoErr: unknown) => {
+              app.log.error(
+                { err: undoErr, monitorId: m.id, signature: t.signature },
+                'could not take back an unannounced monitor alert',
+              );
+              return false;
+            });
+            const context = { monitorId: m.id, valuationId: m.valuation_id, trigger: t.type };
+            const failure = undone
+              ? logFailure(
+                  app.log,
+                  err,
+                  context,
+                  'monitor alert was not announced; the record of it has been taken back so the next scan re-fires it',
+                )
+              : logUnretried(
+                  app.log,
+                  err,
+                  context,
+                  'monitor alert was recorded and never announced, and the record could not be taken back — no scan will fire it again',
+                );
+            unsent.push({ valuation_id: m.valuation_id, trigger: t.type, failure_reason: failure.reason });
           }
         }
       }
     }
-    return { scanned, alerts_sent: alertsSent };
+    return { scanned, alerts_sent: alertsSent, unsent_count: unsent.length, unsent };
   });
 
   // One-click roll-forward into a fresh valuation pre-populated from this one.
