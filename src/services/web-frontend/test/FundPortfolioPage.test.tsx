@@ -562,6 +562,70 @@ describe('FundPortfolioPage', () => {
       preferred_return_rate: 0.08,
       carry_pct: 0.2,
       gp_catch_up: true,
+      management_fee_pct: 0.02,
+      management_fees_paid: 0,
+      gp_distributions_to_date: 0,
+    });
+  });
+
+  /**
+   * The save writes the whole `lp_terms` row, so the card has to carry the
+   * whole row.
+   *
+   * It carried five of the eight columns. The route's body schema defaults the
+   * other three and the repo upserts all of them, so saving a changed carry
+   * also reset the management fee to 2%, and the fees paid and GP
+   * distributions to zero — figures the waterfall nets off the GP's share and
+   * the NAV exhibit prints. Nothing else writes them, so the reset was
+   * permanent and invisible.
+   */
+  it('carries the LP terms it does not change through a save', async () => {
+    const sent = mockApi({
+      detail: {
+        fund,
+        positions: [position],
+        lp_terms: {
+          committed_capital: '100000000',
+          contributed_capital: '75000000',
+          preferred_return_rate: '0.06',
+          carry_pct: '0.25',
+          gp_catch_up: false,
+          management_fee_pct: '0.015',
+          management_fees_paid: '4200000',
+          gp_distributions_to_date: '9000000',
+        },
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('LP waterfall calculator');
+
+    await user.click(screen.getByRole('button', { name: 'Save LP terms' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.body).toMatchObject({
+      management_fee_pct: 0.015,
+      management_fees_paid: 4200000,
+      gp_distributions_to_date: 9000000,
+    });
+  });
+
+  it('lets an operator edit the fee and distribution terms', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('LP waterfall calculator');
+
+    await user.clear(screen.getByLabelText('Fees paid', { selector: 'input' }));
+    await user.type(screen.getByLabelText('Fees paid', { selector: 'input' }), '1250000');
+    await user.clear(screen.getByLabelText('GP distributions', { selector: 'input' }));
+    await user.type(screen.getByLabelText('GP distributions', { selector: 'input' }), '3000000');
+    await user.click(screen.getByRole('button', { name: 'Save LP terms' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.body).toMatchObject({
+      management_fees_paid: 1250000,
+      gp_distributions_to_date: 3000000,
     });
   });
 

@@ -59,12 +59,21 @@ interface Position {
   mark_method: string;
   latest_mark: Mark | null;
 }
+/**
+ * Every column `PUT /funds/:id/lp-terms` writes, not only the ones the card
+ * used to show. The route takes a whole record and upserts it, so a field the
+ * form does not carry is not left alone — it is written back as the body
+ * schema's default. See `WaterfallCard`.
+ */
 interface LpTerms {
   committed_capital: string;
   contributed_capital: string;
   preferred_return_rate: string;
   carry_pct: string;
   gp_catch_up: boolean;
+  management_fee_pct: string;
+  management_fees_paid: string;
+  gp_distributions_to_date: string;
 }
 interface FundDetail {
   fund: Fund;
@@ -836,12 +845,27 @@ function WaterfallCard({
   currency: string;
   onSaved: () => void;
 }) {
+  /**
+   * All eight LP terms, because the save writes all eight.
+   *
+   * The card carried five and sent five. The route's body schema defaults the
+   * rest — management fee 2%, fees paid 0, GP distributions 0 — and the repo
+   * upserts the whole row, so every "Save LP terms" click silently reset the
+   * three the form did not carry. They are not decorative: the waterfall
+   * subtracts `management_fees_paid` and `gp_distributions_to_date` when it
+   * works out what the GP has already taken, and all three print on the NAV
+   * exhibit in the fund report. Nothing else in the product writes them, so a
+   * fund could not hold a non-default value for them at all.
+   */
   const [terms, setTerms] = useState({
     committed_capital: lpTerms?.committed_capital ?? '0',
     contributed_capital: lpTerms?.contributed_capital ?? '0',
     preferred_return_rate: lpTerms?.preferred_return_rate ?? '0.08',
     carry_pct: lpTerms?.carry_pct ?? '0.2',
     gp_catch_up: lpTerms?.gp_catch_up ?? true,
+    management_fee_pct: lpTerms?.management_fee_pct ?? '0.02',
+    management_fees_paid: lpTerms?.management_fees_paid ?? '0',
+    gp_distributions_to_date: lpTerms?.gp_distributions_to_date ?? '0',
   });
   const [distributable, setDistributable] = useState('0');
   const [years, setYears] = useState('1');
@@ -867,6 +891,9 @@ function WaterfallCard({
           preferred_return_rate: Number(terms.preferred_return_rate),
           carry_pct: Number(terms.carry_pct),
           gp_catch_up: terms.gp_catch_up,
+          management_fee_pct: Number(terms.management_fee_pct),
+          management_fees_paid: Number(terms.management_fees_paid),
+          gp_distributions_to_date: Number(terms.gp_distributions_to_date),
         },
       });
       onSaved();
@@ -933,6 +960,33 @@ function WaterfallCard({
           <TextInput
             value={terms.carry_pct}
             onChange={(e) => setTerms({ ...terms, carry_pct: e.target.value })}
+          />
+        </Field>
+        <Field
+          label="Mgmt fee"
+          tooltip="The annual management fee charged on committed capital (e.g. 0.02 = 2%, the ‘2’ in a 2-and-20 fund)."
+        >
+          <TextInput
+            value={terms.management_fee_pct}
+            onChange={(e) => setTerms({ ...terms, management_fee_pct: e.target.value })}
+          />
+        </Field>
+        <Field
+          label="Fees paid"
+          tooltip="Management fees the fund has paid the GP to date. Deducted alongside contributed capital before the LPs' preferred return is worked out."
+        >
+          <TextInput
+            value={terms.management_fees_paid}
+            onChange={(e) => setTerms({ ...terms, management_fees_paid: e.target.value })}
+          />
+        </Field>
+        <Field
+          label="GP distributions"
+          tooltip="Carry already distributed to the GP across the fund's life. Netted off this run's GP share, and what a clawback is measured against."
+        >
+          <TextInput
+            value={terms.gp_distributions_to_date}
+            onChange={(e) => setTerms({ ...terms, gp_distributions_to_date: e.target.value })}
           />
         </Field>
       </div>
