@@ -10,10 +10,11 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from .agents import AGENT_PIPELINES, PipelineInputError
 from .anonymize import AnonymizeInputError, Redactor, anonymization_enforced
@@ -188,9 +189,30 @@ class PipelineResponse(BaseModel):
     result: dict
 
 
+#: Ceiling on the two free-text fields of `/ai/v1/test`.
+#:
+#: This service's request models bound almost everything they take — a research
+#: query at 4,000, an anonymize body at 200,000, its document list at 20 — and
+#: these two were the exception, so the only ceiling on them was the 32 MiB
+#: request cap. That is the cross-tier shape: the valuation service caps a
+#: stored system prompt at 20,000 characters and the sample input at 20,000,
+#: and this side simply took whatever arrived, which means the receiver's
+#: maximum is whatever the *sender* currently happens to enforce.
+#:
+#: The cost is not hypothetical: both fields are redacted before they are sent
+#: (~0.42 s per 3.4 MB, under the GIL) and then posted to the provider in full,
+#: which answers a context-length refusal *after* the transfer. So a body no
+#: caller of ours can produce buys seconds of CPU and a large outbound request
+#: to be told no.
+#:
+#: 40,000 is double what the valuation service will send, so it bounds the wire
+#: without being a second, tighter opinion about prompt length.
+MAX_TEST_PROMPT_CHARS = 40_000
+
+
 class TestRequest(BaseModel):
-    system: str
-    user: str
+    system: str = Field(max_length=MAX_TEST_PROMPT_CHARS)
+    user: str = Field(max_length=MAX_TEST_PROMPT_CHARS)
     model: str | None = None
     # Same escape hatch the pipelines expose, and ignored in production for the
     # same reason. Nested under `options` so one shape means one thing across
@@ -220,7 +242,12 @@ class ResearchRequest(BaseModel):
     # no multiple when the question is what a sector trades at today.
     recency: str | None = None
     # Restrict to trusted publishers (SEC, exchanges, a firm's own sources).
-    domains: list[str] = Field(default_factory=list, max_length=10)
+    # Bounded per entry as well as in count: each one is a hostname on its way
+    # into a search query, and `max_length` on the list says nothing about what
+    # is in it. 253 is the longest name DNS will carry.
+    domains: list[Annotated[str, StringConstraints(max_length=253)]] = Field(
+        default_factory=list, max_length=10
+    )
 
 
 class ResearchResponse(BaseModel):
