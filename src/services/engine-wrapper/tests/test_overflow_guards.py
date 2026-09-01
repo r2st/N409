@@ -32,7 +32,7 @@ from fastapi.testclient import TestClient
 
 from app.engine.approaches import asset_value, income_dcf, market_multiples
 from app.engine.bs import bs_call, bs_call_delta, bs_call_terms, discount_factor
-from app.engine.compute import compute
+from app.engine.compute import _assert_finite_results, compute
 from app.engine.dlom import (
     chaffee_dlom,
     finnerty_dlom,
@@ -138,6 +138,31 @@ def test_a_waterfall_breakpoint_that_overflows_is_refused():
             ),
         )
     assert "non-finite" in str(err.value)
+
+
+def test_the_sweep_names_the_exact_node_it_refused():
+    """The path is built from a stack now, not composed on the way down.
+
+    The old walk carried the path as a string and rebuilt it at every node —
+    24,600 discarded strings on a 199-class result document, to name the one
+    node that fails. The stack form appends the key and joins only where the
+    refusal is raised, so what has to be checked is that it still spells the
+    same path: a dict key after a list index after a dict key, which is the
+    shape every allocation and schedule in the document has and which none of
+    the tests above reach (they all fail on a top-level key).
+    """
+    doc = {"allocation": {"breakpoints": [{"from": 0.0}, {"from": float("inf")}]}}
+    with pytest.raises(EngineInputError) as err:
+        _assert_finite_results(doc)
+    assert "at results.allocation.breakpoints[1].from " in str(err.value)
+
+    # And the root is still the root when the very first node is the bad one.
+    with pytest.raises(EngineInputError) as err:
+        _assert_finite_results(float("nan"))
+    assert "at results " in str(err.value)
+
+    # A document with nothing wrong in it raises nothing, however deep.
+    _assert_finite_results({"a": [{"b": [1.0, 2.0, {"c": 3.0}]}], "d": 4.0, "e": "text"})
 
 
 def test_a_healthy_calculation_still_returns_a_full_document():

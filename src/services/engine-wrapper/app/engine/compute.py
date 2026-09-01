@@ -1969,20 +1969,43 @@ def _assert_finite_results(node, path: str = "results") -> None:
     nothing at all. One sweep over the finished document is the narrowest place
     that covers every path into it, including ones added later.
     """
+    _walk_finite(node, path, [])
+
+
+def _walk_finite(node, root: str, trail: list) -> None:
+    """The walk, carrying the path as a stack rather than as a string.
+
+    It used to compose ``f"{path}.{key}"`` on the way *down*, so every node in
+    the document paid for a string naming it and every node but the one that
+    fails throws that string away. A 199-class cap table's result document is
+    24,600 nodes; the message is needed for at most one of them. The stack is
+    appended and popped instead, and joined only where the refusal is raised.
+
+    A ``str`` on the trail is a dict key and an ``int`` is a list index, which is
+    all ``_finite_path`` needs to spell the same path the old form did.
+    """
     if isinstance(node, float):
         if not math.isfinite(node):
             raise EngineInputError(
-                f"the calculation produced a non-finite value at {path} — check the input "
-                "magnitudes (very large figures, or a share count near zero, overflow the "
-                "arithmetic)"
+                f"the calculation produced a non-finite value at {_finite_path(root, trail)} — "
+                "check the input magnitudes (very large figures, or a share count near zero, "
+                "overflow the arithmetic)"
             )
         return
     if isinstance(node, dict):
         for key, value in node.items():
-            _assert_finite_results(value, f"{path}.{key}")
+            trail.append(key)
+            _walk_finite(value, root, trail)
+            trail.pop()
     elif isinstance(node, (list, tuple)):
         for i, value in enumerate(node):
-            _assert_finite_results(value, f"{path}[{i}]")
+            trail.append(i)
+            _walk_finite(value, root, trail)
+            trail.pop()
+
+
+def _finite_path(root: str, trail: list) -> str:
+    return root + "".join(f".{p}" if isinstance(p, str) else f"[{p}]" for p in trail)
 
 
 def compute(
