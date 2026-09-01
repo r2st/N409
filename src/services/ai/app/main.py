@@ -20,7 +20,7 @@ from .agents import AGENT_PIPELINES, PipelineInputError
 from .anonymize import AnonymizeInputError, Redactor, anonymization_enforced
 from .build_info import build_info
 from .config_check import enforce_env_valid
-from .documents import extract_texts
+from .documents import UNREAD_NOTE, extract_texts
 from .errors import install_error_handlers, make_unhandled_error_middleware
 from .internal_auth import enforce_token_configured, internal_token_middleware, is_internal_caller
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
@@ -639,6 +639,35 @@ def anonymize(request: AnonymizeRequest) -> AnonymizeResponse:
         )
         for doc in docs
     ]
+    # One entry per document submitted (R332, methodology M5).
+    #
+    # `extract_texts` stops extracting once `MAX_TOTAL_CHARS` is spent, and
+    # three ordinary spreadsheets spend it. The documents after that point came
+    # back missing from this list entirely — so an operator who selected four
+    # got three, with nothing saying which was left or why, and the valuation
+    # service's `cap_table_anonymized` audit record named all four as material
+    # that had been through the anonymizer.
+    #
+    # The extractor's own convention answers this: a document it could not read
+    # comes back carrying a note in place of its text rather than vanishing.
+    # A document it never opened is the same kind of fact and gets the same
+    # treatment, so the response is one-to-one with the request and says which.
+    # By position rather than by id: the budget is spent monotonically, so the
+    # documents that came back are a prefix of the ones sent, and `id` is a
+    # caller-supplied field that may be blank or repeated on more than one of
+    # them — which a set would silently collapse.
+    for submitted in request.documents[len(docs) :]:
+        name = str(submitted.get("filename") or "document")
+        out.append(
+            AnonymizedDocument(
+                id=str(submitted.get("id") or ""),
+                original_filename=name,
+                filename=red.text(name),
+                kind=str(submitted.get("kind") or "other"),
+                text=UNREAD_NOTE,
+                chars=0,
+            )
+        )
     return AnonymizeResponse(text=red.text(request.text), documents=out, anonymization=red.report())
 
 

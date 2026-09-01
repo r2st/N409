@@ -24,6 +24,18 @@ _log = logging.getLogger("documents")
 
 MAX_CHARS_PER_DOC = 20_000
 MAX_TOTAL_CHARS = 60_000
+
+#: What stands in for a document `MAX_TOTAL_CHARS` stopped the extractor before.
+#:
+#: The same convention the extraction failures use: a document that could not
+#: be read comes back carrying a note where its text would be, because a reader
+#: acting on this material has to be able to tell "there was nothing in it" from
+#: "we did not read it". A budget spent is the second of those, and the only one
+#: of the two that was silent.
+UNREAD_NOTE = (
+    "[not read: the extraction budget was already spent on the documents above, "
+    "so this one was not opened]"
+)
 MAX_XLSX_SHEETS = 20
 MAX_XLSX_ROWS_PER_SHEET = 2_000
 
@@ -565,9 +577,23 @@ def extract_texts(documents: list[dict]) -> list[DocText]:
     out: list[DocText] = []
     total = 0
     failed = 0
+    dropped = 0
     for doc in documents:
         if total >= MAX_TOTAL_CHARS:
-            break
+            # `MAX_TOTAL_CHARS` is reached by three ordinary spreadsheets, so
+            # this arm is the common case on a real upload rather than a
+            # theoretical ceiling — and until R332 it left no trace anywhere.
+            # The documents after it are not extracted, not returned, and not
+            # counted, which makes every denominator downstream a count of the
+            # survivors: `corpus_truncated` reports `total=len(docs)` over a
+            # list this loop has already shortened, and `/ai/v1/anonymize`
+            # answers with fewer documents than it was sent while the valuation
+            # service's `cap_table_anonymized` record names all of them.
+            #
+            # Counted rather than broken on, so the line below can carry the
+            # denominator the same way `documents_unreadable` does.
+            dropped += 1
+            continue
         name = str(doc.get("filename") or "document")
         kind = str(doc.get("kind") or "other")
         try:
@@ -635,6 +661,16 @@ def extract_texts(documents: list[dict]) -> list[DocText]:
         _log.warning(
             "documents could not be read",
             extra={"event": "documents_unreadable", "count": failed, "total": len(documents)},
+        )
+    if dropped:
+        # Its own line, and its own event, because it is a different incident
+        # from the one above: nothing failed, an internal budget was spent, and
+        # the documents past it were never opened. `corpus_truncated` is the
+        # matching line one layer up and reports only what this loop handed it,
+        # so this is the only place the whole shortfall can be stated.
+        _log.warning(
+            "documents left unread: the extraction budget was already spent",
+            extra={"event": "documents_dropped", "count": dropped, "total": len(documents)},
         )
     return out
 
