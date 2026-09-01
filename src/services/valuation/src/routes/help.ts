@@ -26,12 +26,23 @@ import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
  * same policy as report content.
  */
 
+/**
+ * What an article slug may be — used both to validate an author's input and to
+ * reject a reader's, which is why it is a constant rather than an inline shape.
+ *
+ * The read guard must never be stricter than the write rule, or an article that
+ * was legitimately created becomes unreachable at its own URL; deriving both
+ * from this one schema is what makes that true by construction. The 100 is also
+ * `maxParamLength`, which is what fastify's router will match at all.
+ */
+const Slug = z
+  .string()
+  .min(1)
+  .max(100)
+  .regex(/^[a-z0-9-]+$/, 'lowercase letters, digits and dashes only');
+
 const ArticleBody = z.object({
-  slug: z
-    .string()
-    .min(1)
-    .max(100)
-    .regex(/^[a-z0-9-]+$/, 'lowercase letters, digits and dashes only'),
+  slug: Slug,
   title: z.string().min(1).max(200),
   category: z.string().min(1).max(100).default('General'),
   keywords: z.string().max(500).default(''),
@@ -82,6 +93,16 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
   app.get('/api/v1/help/articles/:slug', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { slug } = req.params as { slug: string };
+    // A slug that could not name an article does not get to ask the database
+    // whether it does — and, more to the point, does not get to put its own
+    // string in the cache. Every other path parameter in this service is shape-
+    // checked or enum-checked before it is used (`/blog/posts/:slug` and
+    // `/public/branding/:key` carry the same guard for the same reason); this
+    // one was the exception, so any signed-in caller could spend a query and a
+    // cache slot per made-up path. A 404 rather than a 422, because the caller
+    // asked for a URL that names nothing, which is not a malformed request but
+    // a missing page.
+    if (!Slug.safeParse(slug).success) throw problems.notFound();
     const article = (await cache.getOrLoad(
       `slug:${slug}`,
       async () =>

@@ -140,6 +140,33 @@ describe.skipIf(!dbUp)('help articles', () => {
     expect(opsList.find((a) => a.slug === 'draft-only')?.published).toBe(false);
   });
 
+  /**
+   * A path parameter that cannot name an article is refused on its shape, before
+   * the query and before the cache takes the caller's own string as a key — the
+   * guard `/blog/posts/:slug` and `/public/branding/:key` have always had, and
+   * this route did not.
+   */
+  it('refuses a slug that could not name an article, without querying', async () => {
+    // Length is fastify's own refusal — `maxParamLength` is 100, which is where
+    // the schema's cap comes from — so what is asserted here is the shape.
+    for (const slug of ['Not A Slug', '__proto__', 'has_underscore', 'UPPER']) {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/help/articles/${encodeURIComponent(slug)}`,
+        headers: authHeader(client.token),
+      });
+      expect(res.statusCode).toBe(404);
+    }
+    // The rule is not stricter than the write rule: a slug the create schema
+    // accepts still reaches the lookup and 404s on the row, not on the shape.
+    const real = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/help/articles/getting-started',
+      headers: authHeader(client.token),
+    });
+    expect(real.statusCode).toBe(200);
+  });
+
   it('deletes an article and audits the change', async () => {
     const created = await ctx.app.inject({
       method: 'POST',
