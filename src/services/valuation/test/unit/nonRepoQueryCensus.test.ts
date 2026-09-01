@@ -95,15 +95,7 @@ const BOUNDED: Record<string, Bound> = {
   },
   'hooks/autoEmails.ts:-': {
     bound: 'scalar',
-    why: 'The sweep’s advisory lock acquisition, which is how one tick of the auto-email scan excludes another. One row.',
-  },
-  'hooks/autoEmails.ts:-#2': {
-    bound: 'scalar',
-    why: 'The release half of the same advisory lock. `pg_advisory_unlock` returns exactly one row.',
-  },
-  'hooks/autoEmails.ts:-#3': {
-    bound: 'scalar',
-    why: 'The sweep’s clock, `SELECT now()`, read from the database so every row it writes shares one instant. One row.',
+    why: 'The sweep’s clock, `SELECT now()`, read from the database so every row it writes shares one instant. One row. The two advisory-lock statements that used to sit above it moved to `db/sweepLock.ts` (R292), which this census does not scan — see OUT_OF_SCOPE.',
   },
   'hooks/partnerWebhooks.ts:valuations': {
     bound: 'key',
