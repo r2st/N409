@@ -707,10 +707,19 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
     try {
       result = await runRetentionSweep(deps.pool, { log: app.log });
     } catch (err) {
-      await audit(principal.id, 'retention_sweep_run', 'system', null, 'Retention sweep', {
-        manual: true,
-        outcome: 'failed',
-      });
+      // Contained, the way billing's `auditRequest` is. Everywhere else on this
+      // surface a failed audit insert failing the request is merely rude; here
+      // it would *replace* the sweep's error with the audit's, so the operator
+      // and the log would be told the wrong thing about a run that destroyed
+      // rows. The record is worth trying for and never worth the exception.
+      try {
+        await audit(principal.id, 'retention_sweep_run', 'system', null, 'Retention sweep', {
+          manual: true,
+          outcome: 'failed',
+        });
+      } catch (auditErr) {
+        app.log.warn({ err: auditErr }, 'retention sweep failure not recorded on the audit spine');
+      }
       throw err;
     }
     await audit(principal.id, 'retention_sweep_run', 'system', null, 'Retention sweep', {

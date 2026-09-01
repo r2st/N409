@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { problems } from '@n409/shared';
 import { createValuation } from '../../src/repos/valuations.js';
 import { runRetentionSweep } from '../../src/routes/retention.js';
 import {
@@ -388,6 +389,36 @@ describe.skipIf(!dbUp)('data retention + legal hold (feature 10)', () => {
       expect(rows).toHaveLength(before + 1);
       expect(rows.at(-1)!.payload.outcome).toBe('failed');
       expect(rows.at(-1)!.actor_id).toBe(admin.id);
+    });
+
+    it('reports the sweep\'s failure, not the audit insert\'s, when both fail', async () => {
+      // The failure-path audit is the one write in this route that runs while
+      // an exception is already in flight. Unguarded, an unwritable spine
+      // replaces the sweep's error with its own, and the operator staring at a
+      // run that destroyed rows is told the wrong thing about why it stopped.
+      const before = (await sweepEvents()).length;
+      const restore = interceptPoolQueries(ctx.pool, (sql, phase) => {
+        if (phase !== 'before') return undefined;
+        if (sql.includes('FROM retention_policies')) {
+          throw problems.serviceUnavailable('retention policies unreadable');
+        }
+        if (sql.includes('INSERT INTO admin_events')) throw new Error('audit spine unwritable');
+        return undefined;
+      });
+      let res;
+      try {
+        res = await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/admin/retention/run',
+          headers: authHeader(admin.token),
+        });
+      } finally {
+        restore();
+      }
+      expect(res.statusCode).toBe(503);
+      expect(JSON.parse(res.body).detail).toContain('retention policies unreadable');
+      // And the audit that could not be written did not invent a row either.
+      expect(await sweepEvents()).toHaveLength(before);
     });
 
     it('is refused, and records nothing, for a non-admin', async () => {
