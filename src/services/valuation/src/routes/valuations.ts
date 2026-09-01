@@ -40,6 +40,7 @@ import {
   type ValuationRow,
 } from '../repos/valuations.js';
 import { userExists } from '../repos/users.js';
+import { findPartnerById } from '../repos/adminUsers.js';
 import { onStateChanged, type EmailTransport, type TransitionRenderDeps } from '../hooks/stateChange.js';
 import { assertPublishGate, assertPublishGateForWrite } from '../domain/publishGate.js';
 import { assertTransition, assertTransitionForWrite } from '../domain/transitionGuard.js';
@@ -54,6 +55,7 @@ import { loadValuationCounters } from '../repos/valuationCounters.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
+import { UlidParam } from '../plugins/params.js';
 
 const CreateBody = z.object({
   kind: z.enum(VALUATION_KINDS),
@@ -63,9 +65,22 @@ const CreateBody = z.object({
   service_countries: z.array(z.string().length(2)).max(50).optional(),
   source: z.enum(VALUATION_SOURCES).optional(),
   gclid: z.string().max(200).optional(),
-  // ops may create on behalf of a client / attach a partner
-  user_id: z.string().optional(),
-  partner_id: z.string().optional(),
+  /*
+   * Ops may create on behalf of a client / attach a partner.
+   *
+   * Both columns are the `ulid` domain, and a domain check is enforced on
+   * assignment: a string that is not one reaches the INSERT and comes back as
+   * `value for domain ulid violates check constraint` — a 500 for a body field
+   * this schema is supposed to describe. That is the same thing `PatchBody`
+   * says below about `assigned_reviewer_id`, which was fixed there and left
+   * here, on the door that creates the row rather than the one that edits it.
+   *
+   * Shape here, existence in the handler below: an id that is well-formed and
+   * names nobody is a different answer (`Unknown user`) from an id that is not
+   * one, and both were the same 500 before.
+   */
+  user_id: UlidParam.optional(),
+  partner_id: UlidParam.optional(),
 });
 
 const PatchBody = z
@@ -253,6 +268,26 @@ export function registerValuationRoutes(
     const ops = isOps(principal);
     const userId = ops && body.user_id ? body.user_id : principal.id;
     const partnerId = ops && body.partner_id !== undefined ? body.partner_id : principal.partnerId;
+
+    /*
+     * The other half of the schema's shape check, in the shape the admin
+     * console already uses for the same two columns (`assertAssignablePartner`
+     * in routes/adminUsers.ts): a well-formed id naming nobody is a foreign key
+     * violation on the INSERT below, which arrives as a 500 for a body field
+     * that was simply wrong. Only on the ops path — everywhere else these are
+     * the principal's own ids and exist by construction.
+     *
+     * `userExists` rather than `findUserById`, which is `SELECT u.*` and a join
+     * to build a role array nobody here reads. Both are `unprocessable` rather
+     * than `notFound`: the valuation route was reached, and it is a field of the
+     * body that names nothing.
+     */
+    if (ops && body.user_id && !(await userExists(deps.pool, body.user_id))) {
+      throw problems.unprocessable('Unknown user', { errors: [{ path: ['user_id'] }] });
+    }
+    if (ops && body.partner_id && !(await findPartnerById(deps.pool, body.partner_id))) {
+      throw problems.unprocessable('Unknown partner', { errors: [{ path: ['partner_id'] }] });
+    }
 
     // Feature 7: subscribers consume against their plan limit; a user with no
     // active subscription is on the one-time per-valuation flow and unaffected.
