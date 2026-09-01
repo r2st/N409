@@ -391,7 +391,92 @@ describe.skipIf(!dbUp)('data retention + legal hold (feature 10)', () => {
       expect(rows.at(-1)!.actor_id).toBe(admin.id);
     });
 
-    it('reports the sweep\'s failure, not the audit insert\'s, when both fail', async () => {
+    it('records what the purge destroyed when the archival pass then throws', async () => {
+      // The two passes commit independently, so an archival throw comes out of
+      // a run that has already irreversibly deleted correspondence. Before
+      // this, the failure row said `outcome: 'failed'` and nothing else — so
+      // the one question `retention_sweep_run` was added to answer, who purged
+      // this, was unanswerable on exactly the runs that purged something and
+      // then fell over.
+      await ctx.app.inject({
+        method: 'PUT',
+        url: '/api/v1/admin/retention/policies/email_outbox',
+        headers: authHeader(admin.token),
+        payload: { archive_after_days: null, retention_days: 30, enabled: true },
+      });
+      await ctx.app.inject({
+        method: 'PUT',
+        url: '/api/v1/admin/retention/policies/valuation',
+        headers: authHeader(admin.token),
+        payload: { archive_after_days: 365, retention_days: 730, enabled: true },
+      });
+      await ctx.pool.query(
+        `INSERT INTO email_outbox (id, to_email, template_key, subject, body, status, attempts, created_at, sent_at)
+         SELECT 'R316' || upper(lpad(to_hex(g), 22, '0')), 'r316-' || g || '@example.test',
+                'test_template', 'S', 'B', 'sent', 1,
+                now() - interval '400 days', now() - interval '400 days'
+           FROM generate_series(1, 3) g`,
+      );
+      await agedValuation('PartialCo', 500);
+
+      const before = (await sweepEvents()).length;
+      const restore = interceptPoolQueries(ctx.pool, (sql, phase) => {
+        // After the outbox transaction has committed, before the archival one.
+        // Matched on the archival candidate query's own ORDER BY: `FROM
+        // valuations v` alone also appears inside the outbox purge's hold
+        // check, and would fail the pass this test needs to succeed.
+        if (phase === 'before' && sql.includes('ORDER BY v.created_at ASC')) {
+          throw new Error('archival candidates unreadable');
+        }
+        return undefined;
+      });
+      try {
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/admin/retention/run',
+          headers: authHeader(admin.token),
+        });
+        expect(res.statusCode).toBe(500);
+      } finally {
+        restore();
+      }
+
+      const row = (await sweepEvents()).at(-1)!;
+      expect((await sweepEvents()).length).toBe(before + 1);
+      expect(row.payload.outcome).toBe('failed');
+      // The messages are gone, and the row says how many and by whose hand.
+      expect((row.payload.partial as { purged: number }).purged).toBe(3);
+      expect(row.actor_id).toBe(admin.id);
+      expect((await ctx.pool.query(`SELECT 1 FROM email_outbox WHERE id LIKE 'R316%'`)).rowCount).toBe(0);
+    });
+
+    it('says the counts are unknown when the first pass is the one that threw', async () => {
+      // `partial: null` rather than zeros: both passes are transactional, so a
+      // run that threw before either committed destroyed nothing — but a row
+      // asserting `purged: 0` would be a claim this route is not in a position
+      // to make about the pass it never reached.
+      const before = (await sweepEvents()).length;
+      const restore = interceptPoolQueries(ctx.pool, (sql, phase) => {
+        if (phase === 'before' && sql.includes('FROM retention_policies')) {
+          throw new Error('retention policies unreadable');
+        }
+        return undefined;
+      });
+      try {
+        await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/admin/retention/run',
+          headers: authHeader(admin.token),
+        });
+      } finally {
+        restore();
+      }
+      const row = (await sweepEvents()).at(-1)!;
+      expect((await sweepEvents()).length).toBe(before + 1);
+      expect(row.payload.partial).toBeNull();
+    });
+
+    it("reports the sweep's failure, not the audit insert's, when both fail", async () => {
       // The failure-path audit is the one write in this route that runs while
       // an exception is already in flight. Unguarded, an unwritable spine
       // replaces the sweep's error with its own, and the operator staring at a

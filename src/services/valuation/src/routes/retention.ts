@@ -178,9 +178,38 @@ async function sweepOutbox(
  */
 export async function runRetentionSweep(
   pool: pg.Pool,
-  opts: { limit?: number; log?: FastifyBaseLogger } = {},
+  opts: {
+    limit?: number;
+    log?: FastifyBaseLogger;
+    /**
+     * What the passes that finished did, told as they finish.
+     *
+     * The two passes commit independently and either can throw after the other
+     * has already committed, so the exception that leaves this function is not
+     * a statement that nothing happened: an archival throw comes out of a run
+     * that may have irreversibly purged five thousand messages a moment
+     * earlier, and a re-raised outbox failure comes out of a run that archived
+     * forty engagements. The return value is the only thing that carried those
+     * counts, and on both of those paths there is no return value.
+     *
+     * The manual route needs them for its audit row — a purge with no record of
+     * who ran it is the gap `retention_sweep_run` exists to close, and it is
+     * open precisely on the runs that failed. The scheduler passes nothing.
+     *
+     * Called with a snapshot; a callback that throws is logged and ignored,
+     * because it is invoked on paths where an error is already in flight.
+     */
+    onProgress?: (progress: SweepResult) => void;
+  } = {},
 ): Promise<SweepResult> {
   const result: SweepResult = { archived: 0, skipped_hold: 0, purged: 0 };
+  const report = () => {
+    try {
+      opts.onProgress?.({ ...result });
+    } catch (err) {
+      opts.log?.warn({ err }, 'retention sweep progress callback threw');
+    }
+  };
   const policies = await listPolicies(pool);
 
   /*
@@ -212,6 +241,9 @@ export async function runRetentionSweep(
   });
   result.purged = outbox.purged;
   result.skipped_hold += outbox.skippedHold;
+  // The purge is the irreversible half. Said now, while it is still true that
+  // this is all that has happened, because everything below can throw.
+  report();
 
   /** Re-raise the held outbox failure, once the archival pass has run. */
   const finish = (r: SweepResult): SweepResult => {
@@ -319,6 +351,9 @@ export async function runRetentionSweep(
     // `+=`: the outbox pass above may already have counted frozen rows of its
     // own, and one sweep reports one number.
     result.skipped_hold += frozen.length;
+    // Before `finish`, which re-raises the held outbox failure: on that path
+    // the archival committed and the caller still gets an exception.
+    report();
     return finish(result);
   } catch (err) {
     if (opts.log && outboxFailure !== null && err !== outboxFailure) {
@@ -704,8 +739,18 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
   app.post('/api/v1/admin/retention/run', { preHandler: app.authenticate }, async (req) => {
     const principal = requireAdmin(req);
     let result: SweepResult;
+    // What the passes that finished did, for the failure row below. The sweep's
+    // two passes commit independently, so the run that throws is very often a
+    // run that already purged — and `outcome: 'failed'` with no counts said the
+    // opposite of what had happened to a reviewer asking who destroyed what.
+    let progress: SweepResult | null = null;
     try {
-      result = await runRetentionSweep(deps.pool, { log: app.log });
+      result = await runRetentionSweep(deps.pool, {
+        log: app.log,
+        onProgress: (p) => {
+          progress = p;
+        },
+      });
     } catch (err) {
       // Contained, the way billing's `auditRequest` is. Everywhere else on this
       // surface a failed audit insert failing the request is merely rude; here
@@ -716,6 +761,11 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
         await audit(principal.id, 'retention_sweep_run', 'system', null, 'Retention sweep', {
           manual: true,
           outcome: 'failed',
+          // Nested rather than spread flat beside the success path's counts:
+          // these are what the passes that completed reported, not the run's
+          // totals. `null` is the honest answer when the first pass threw —
+          // both passes are transactional, so nothing was destroyed then.
+          partial: progress,
         });
       } catch (auditErr) {
         app.log.warn({ err: auditErr }, 'retention sweep failure not recorded on the audit spine');
