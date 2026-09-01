@@ -7152,6 +7152,22 @@
 #            appendix warrants on its own. The right time is when a second
 #            exhibit needs it.
 #
+#            gap: `test/swallowedFailureCensus.test.ts` could not see either of
+#            the two frontend findings above, and the reason is the matcher's
+#            population rather than its allowlist — which is empty of both files.
+#            `SWALLOW` is a regex over `.catch(() => …)`, the promise-callback
+#            spelling. Both bugs are `try { … } catch { … }` statement blocks,
+#            which that regex cannot match at all, so the whole statement form of
+#            this shape is outside the census. A scan of the frontend for catch
+#            blocks that set no error state finds ~39 sites; most are legitimate
+#            (clipboard, localStorage, unload-time saves) but classifying them is
+#            a round's work on its own, and parking them unclassified would make
+#            the census the rubber stamp its own header refuses to be. Worth
+#            doing next: the two found here were both real, and both were the
+#            second fetch inside a first one's `try`, which is the sub-shape to
+#            start from — a *nested* load whose failure the outer error state
+#            does not describe.
+#
 #            gap: `useBadgePoll`'s `.catch(() => {})` with `?? 0` at every call
 #            site means the three navigation badges render "0" for a failing
 #            endpoint as well as for an empty one. Deliberate and documented — a
