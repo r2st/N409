@@ -42,6 +42,8 @@ const SSO_ERROR_MESSAGES: Record<string, string> = {
   domain_not_allowed:
     'Single sign-on here is restricted to a different email domain. Sign in with the address your firm issued you, or ask your administrator which domain is allowed.',
   account_deactivated: 'This account has been deactivated in N409. Your administrator can restore it.',
+  registration_closed:
+    'There is no N409 account for that address, and this platform is invitation-only — signing in with Google does not create one. Ask an administrator to invite you.',
   provider_error:
     'We could not finish signing you in with that provider. Try again in a moment; if it keeps happening, contact support.',
 };

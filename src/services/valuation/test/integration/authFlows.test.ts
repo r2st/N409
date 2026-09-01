@@ -491,4 +491,50 @@ describe.skipIf(!dbUp)('Google SSO — a closed account is refused at the door',
     expect(res.statusCode).toBe(302);
     expect(res.headers.location).toMatch(/^\/auth\/google\/complete#token=/);
   });
+
+  /*
+   * The second door onto account creation (R325, methodology M6).
+   *
+   * `registration_enabled` off means "new accounts can only be created by
+   * invitation", and it was read by `POST /auth/register` and nowhere else — so
+   * the Google button on the public sign-in page went on minting a seat for any
+   * identity that had never signed in here.
+   */
+  describe('with self-service registration closed', () => {
+    async function setRegistration(enabled: boolean): Promise<void> {
+      const admin = await seedUser(ctx, { roles: ['admin'] });
+      const res = await ctx.app.inject({
+        method: 'PUT',
+        url: '/api/v1/admin/settings',
+        headers: authHeader(admin.token),
+        payload: { registration_enabled: enabled },
+      });
+      expect(res.statusCode).toBe(200);
+    }
+
+    afterAll(async () => setRegistration(true));
+
+    it('refuses an address it has never seen instead of provisioning one', async () => {
+      await setRegistration(false);
+      identity.email = `${newUlid().toLowerCase()}@stranger.example.com`;
+      const res = await callback();
+      expect(res.statusCode).toBe(302);
+      expect(res.headers.location).toBe('/login?sso_error=registration_closed');
+      expect(res.headers['set-cookie']).toBeUndefined();
+      const { rowCount } = await ctx.pool.query('SELECT 1 FROM users WHERE lower(email) = $1', [
+        identity.email,
+      ]);
+      expect(rowCount).toBe(0);
+    });
+
+    it('still signs in an account that already exists', async () => {
+      // The other half of the same sentence: closing registration must not sign
+      // the firm out of the product.
+      identity.email = `${newUlid().toLowerCase()}@member.example.com`;
+      await setRegistration(true);
+      expect((await callback()).headers.location).toMatch(/^\/auth\/google\/complete#token=/);
+      await setRegistration(false);
+      expect((await callback()).headers.location).toMatch(/^\/auth\/google\/complete#token=/);
+    });
+  });
 });

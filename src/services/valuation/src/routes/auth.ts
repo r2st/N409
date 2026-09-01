@@ -663,7 +663,40 @@ export function registerAuthRoutes(
       );
     }
 
-    const user = await upsertGoogleUser(deps.pool, identity);
+    /*
+     * The second door onto account creation.
+     *
+     * `registration_enabled` was read by `POST /auth/register` and nowhere
+     * else, so a platform with self-service registration closed — "new accounts
+     * can only be created by invitation", which is what the admin console says
+     * the switch does — went on minting a seat for any Google identity that had
+     * never signed in here before. The sign-in button is on the public page, so
+     * the invitation-only rule held for exactly the door people were being sent
+     * away from and not for the one beside it.
+     *
+     * Creation only. An account that already exists signs in as normal, which
+     * is the other half of the same sentence and the reason this is not simply
+     * "hide the Google button": closing registration must not sign out the firm.
+     *
+     * The SAML ACS is deliberately not gated the same way. An IdP there is
+     * configured by an administrator of this platform, optionally pinned to one
+     * email domain, and JIT provisioning from it *is* the firm's invitation
+     * mechanism — turning it off would be a different setting, and one nobody
+     * asked for.
+     */
+    const allowCreate = deps.settings ? await deps.settings.get('registration_enabled') : true;
+    const user = await upsertGoogleUser(deps.pool, identity, { allowCreate });
+    if (!user) {
+      return refuseSso(
+        req,
+        reply,
+        'registration_closed',
+        problems.forbidden(
+          'This platform is invitation-only — there is no account for this address. ' +
+            'Ask an administrator to invite you.',
+        ),
+      );
+    }
     /*
      * The third door onto a closed account (round 272, methodology M3).
      *

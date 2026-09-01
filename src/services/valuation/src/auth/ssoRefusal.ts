@@ -43,6 +43,11 @@ export const SSO_REFUSAL_CODES = [
   'domain_not_allowed',
   /** The account exists and has been deactivated here. */
   'account_deactivated',
+  /**
+   * Authenticated, but there is no account here and the platform is not
+   * creating any. `registration_enabled` is off, so a seat comes by invitation.
+   */
+  'registration_closed',
   /** The provider itself did not answer, or answered with something unusable. */
   'provider_error',
 ] as const;

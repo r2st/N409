@@ -394,11 +394,21 @@ export async function assignRoles(client: pg.PoolClient, userId: string, roles: 
  * `verified`, which is a closed account changing shape because somebody outside
  * the firm pressed a button, and it changes which door the account is described
  * as using after it is reopened.
+ *
+ * `allowCreate: false` is the second door onto account creation, closed. With
+ * `registration_enabled` off — "new accounts can only be created by invitation",
+ * as the admin console puts it — this route went on minting a seat for any
+ * Google identity that had never signed in before, because the setting was only
+ * ever read by `POST /auth/register`. An *existing* account still signs in, so
+ * closing registration does what it says rather than turning the Google button
+ * off. Returns null instead of creating, and the caller turns the sign-in away
+ * with a reason.
  */
 export async function upsertGoogleUser(
   pool: pg.Pool,
   identity: { email: string; givenName?: string; familyName?: string },
-): Promise<UserWithRoles> {
+  options: { allowCreate?: boolean } = {},
+): Promise<UserWithRoles | null> {
   const existing = await findUserByEmail(pool, identity.email);
   if (existing) {
     if (existing.deleted_at) return existing;
@@ -409,6 +419,7 @@ export async function upsertGoogleUser(
     }
     return { ...existing, sso_provider: 'google', verified: true };
   }
+  if (options.allowCreate === false) return null;
   return createUser(pool, {
     email: identity.email,
     ssoProvider: 'google',
