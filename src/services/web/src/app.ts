@@ -105,9 +105,13 @@ const defaultStaticRoot = path.resolve(
  * marketing documents carry dozens — are data, never executed, and so are not
  * subject to `script-src`; hashing them would bloat the header for nothing.
  */
-export function inlineScriptHashes(staticRoot: string): string[] {
+export function inlineScriptHashes(
+  staticRoot: string,
+  log?: { warn: (fields: Record<string, unknown>, message: string) => void },
+): string[] {
   const hashes = new Set<string>();
-  for (const file of htmlFilesUnder(staticRoot)) {
+  const documents = htmlFilesUnder(staticRoot);
+  for (const file of documents) {
     let html: string;
     try {
       html = readFileSync(file, 'utf8');
@@ -128,6 +132,35 @@ export function inlineScriptHashes(staticRoot: string): string[] {
           .digest('base64')}'`,
       );
     }
+  }
+  /*
+   * A CSP with no hashes in it, over documents that carry an inline script, is
+   * the exact state this directive was written to end — and it is invisible
+   * (R305, methodology M11).
+   *
+   * The header is served either way. Every inline script in the built documents
+   * is then blocked by the browser, which reports it as a console message on the
+   * visitor's machine and nowhere else: the site works, the theme resolver does
+   * not run, and the flash of the wrong theme this whole mechanism exists to
+   * prevent is back on every cold load. Nothing on the server ever learns it.
+   *
+   * Two causes, said apart, because they are different faults. No documents at
+   * all means the static root is missing, unreadable or empty — the build did
+   * not land, and every other thing served from that directory is broken too.
+   * Documents with no inline script in them is a frontend change: the resolver
+   * was renamed, moved to a `src` bundle, or dropped.
+   *
+   * Warned rather than refused. A deployment that genuinely has no inline
+   * script is legitimate, and failing to boot the public site over a cosmetic
+   * regression is the wrong trade — but it must not be silent.
+   */
+  if (hashes.size === 0) {
+    log?.warn(
+      { staticRoot, documents: documents.length },
+      documents.length === 0
+        ? 'no HTML documents under the static root — nothing to hash for the CSP, and nothing to serve'
+        : 'no inline script hashes for the CSP — any inline script in the built documents will be blocked',
+    );
   }
   // Sorted so the header is byte-stable across boots — it is compared in tests
   // and cached by intermediaries.
@@ -166,17 +199,50 @@ function htmlFilesUnder(dir: string): string[] {
  * the build chose. Nothing derived from the request reaches the filesystem, so
  * there is no traversal surface here.
  */
-export function loadPrerenderManifest(staticRoot: string): Map<string, string> {
+export function loadPrerenderManifest(
+  staticRoot: string,
+  log?: { warn: (fields: Record<string, unknown>, message: string) => void },
+): Map<string, string> {
   const manifestPath = path.join(staticRoot, 'prerender-manifest.json');
+  /*
+   * THREE CAUSES, ONE EMPTY MAP (R305, methodology M11).
+   *
+   * A build that did not prerender, a manifest that will not parse, and a
+   * manifest whose `routes` is not an object all left here as `new Map()`, and
+   * the caller's one warning says "no prerender manifest" for each. Two of the
+   * three are a file sitting on disk that this process read and rejected, which
+   * is a build or deploy fault with a fix — and the line an operator would see
+   * tells them the opposite, that nothing was produced.
+   *
+   * The consequence is the same either way and is why any of this is worth a
+   * line: every marketing route falls back to the generic SPA shell, so Slack,
+   * LinkedIn, X and every crawler that does not run JavaScript unfurls a blank
+   * preview. There is no other symptom — the pages render correctly to a human
+   * — so nothing surfaces this until somebody pastes a link.
+   *
+   * The logger is optional because the four unit tests here call this directly
+   * with a temporary directory and have no app; the caller in `buildApp` passes
+   * `app.log`.
+   */
   if (!existsSync(manifestPath)) return new Map();
   try {
     const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
     const routes = (parsed as { routes?: Record<string, unknown> }).routes;
-    if (!routes || typeof routes !== 'object') return new Map();
+    if (!routes || typeof routes !== 'object') {
+      log?.warn(
+        { manifestPath },
+        'prerender manifest has no routes object — marketing routes will serve the generic shell',
+      );
+      return new Map();
+    }
     return new Map(
       Object.entries(routes).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
     );
-  } catch {
+  } catch (err) {
+    log?.warn(
+      { err, manifestPath },
+      'prerender manifest is present but could not be read — marketing routes will serve the generic shell',
+    );
     return new Map();
   }
 }
@@ -344,7 +410,10 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
   // inlineScriptHashes. Analytics needs no such treatment: gtm.js and gtag.js
   // are injected as `src` scripts (web-frontend/src/lib/analytics.ts), so the
   // host allowances above cover them.
-  const scriptHashes = hasStatic ? inlineScriptHashes(staticRoot) : [];
+  // `hasStatic` is false in every unit test that builds the app without a
+  // frontend, and the absence is already the operator's own choice there — the
+  // warning inside belongs to a root that exists and yielded nothing.
+  const scriptHashes = hasStatic ? inlineScriptHashes(staticRoot, app.log) : [];
   void app.register(helmet, {
     contentSecurityPolicy: {
       useDefaults: false,
@@ -510,7 +579,9 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
       },
     });
 
-    const prerendered = loadPrerenderManifest(staticRoot);
+    // The loader names the cause when there is a file it could not use; this
+    // covers the remaining one, which is that the build produced none at all.
+    const prerendered = loadPrerenderManifest(staticRoot, app.log);
     if (prerendered.size === 0) {
       app.log.warn(
         { staticRoot },

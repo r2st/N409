@@ -36,6 +36,56 @@ function rootWith(files: Record<string, string>): string {
 }
 
 describe('inlineScriptHashes', () => {
+  /**
+   * An empty hash set is served, and until R305 nothing said so (M11).
+   *
+   * The CSP goes out either way. Every inline script in the built documents is
+   * then blocked by the browser, which reports it as a console message on the
+   * visitor's machine and nowhere else — the site works, the theme resolver
+   * does not run, and the flash of the wrong theme this directive exists to
+   * prevent is back on every cold load, silently.
+   *
+   * The two causes are said apart because they are different faults: no
+   * documents at all means the static root is missing or the build did not
+   * land, and everything else served from that directory is broken too;
+   * documents with no inline script is a frontend change.
+   */
+  const capture = () => {
+    const lines: Array<{ fields: Record<string, unknown>; message: string }> = [];
+    return {
+      lines,
+      log: {
+        warn: (fields: Record<string, unknown>, message: string) => lines.push({ fields, message }),
+      },
+    };
+  };
+
+  it('says so when a static root that exists yields no hashes', () => {
+    const { lines, log } = capture();
+    const root = rootWith({ 'index.html': '<!doctype html><script src="/assets/main.js"></script>' });
+    expect(inlineScriptHashes(root, log)).toEqual([]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.message).toMatch(/any inline script in the built documents will be blocked/);
+    expect(lines[0]!.fields.documents).toBe(1);
+  });
+
+  it('says a different thing when there are no documents at all', () => {
+    const { lines, log } = capture();
+    const root = rootWith({});
+    expect(inlineScriptHashes(root, log)).toEqual([]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.message).toMatch(/nothing to serve/);
+    expect(lines[0]!.fields.documents).toBe(0);
+  });
+
+  it('says nothing when it found hashes', () => {
+    // The vacuity guard. A warning on every boot is a warning nobody reads.
+    const { lines, log } = capture();
+    const root = rootWith({ 'index.html': '<!doctype html><script>var t = 1;</script>' });
+    expect(inlineScriptHashes(root, log)).toHaveLength(1);
+    expect(lines).toEqual([]);
+  });
+
   it('hashes an executable inline script', () => {
     const script = 'document.documentElement.setAttribute("data-theme","dark");';
     const root = rootWith({ 'index.html': `<!doctype html><head><script>${script}</script></head>` });

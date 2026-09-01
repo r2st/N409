@@ -82,6 +82,59 @@ describe('loadPrerenderManifest', () => {
     writeFileSync(path.join(root, 'prerender-manifest.json'), '{"routes":{"/a":42}}');
     expect(loadPrerenderManifest(root).size).toBe(0);
   });
+
+  /**
+   * Three causes, one empty map (R305, methodology M11).
+   *
+   * A build that did not prerender, a manifest that will not parse, and a
+   * manifest whose `routes` is not an object were all `new Map()`, and the
+   * caller's one line said "no prerender manifest" for each. Two of the three
+   * are a file this process read and rejected — a build or deploy fault with a
+   * fix — and the operator was told the opposite, that nothing was produced.
+   *
+   * The consequence is why it is worth a line at all: every marketing route
+   * falls back to the generic shell, so every unfurler that does not run
+   * JavaScript shows a blank preview, and the pages themselves look perfect to
+   * a human. Nothing surfaces it until somebody pastes a link.
+   */
+  it('says which of the two unusable manifests it found, rather than "none"', () => {
+    const lines: Array<{ fields: Record<string, unknown>; message: string }> = [];
+    const log = {
+      warn: (fields: Record<string, unknown>, message: string) => lines.push({ fields, message }),
+    };
+    const root = mkdtempSync(path.join(tmpdir(), 'n409-badmanifest-log-'));
+    writeFileSync(path.join(root, 'index.html'), 'SPA-SHELL');
+
+    writeFileSync(path.join(root, 'prerender-manifest.json'), '{ not json');
+    expect(loadPrerenderManifest(root, log).size).toBe(0);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.message).toMatch(/present but could not be read/);
+    expect(lines[0]!.fields.err).toBeInstanceOf(Error);
+
+    writeFileSync(path.join(root, 'prerender-manifest.json'), '{"routes":42}');
+    expect(loadPrerenderManifest(root, log).size).toBe(0);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]!.message).toMatch(/no routes object/);
+  });
+
+  it('says nothing when the manifest is simply absent — that line is the caller\u2019s', () => {
+    // The vacuity guard's other half: a loader that warned on every empty
+    // answer would double the "no prerender manifest" line on the ordinary
+    // build-predates-prerendering case and say nothing new.
+    const lines: string[] = [];
+    const log = { warn: (_f: Record<string, unknown>, message: string) => lines.push(message) };
+    const root = mkdtempSync(path.join(tmpdir(), 'n409-noprerender-log-'));
+    writeFileSync(path.join(root, 'index.html'), 'SPA-SHELL');
+    expect(loadPrerenderManifest(root, log).size).toBe(0);
+    expect(lines).toEqual([]);
+  });
+
+  it('says nothing on a manifest it could use', () => {
+    const lines: string[] = [];
+    const log = { warn: (_f: Record<string, unknown>, message: string) => lines.push(message) };
+    expect(loadPrerenderManifest(buildStaticRoot(), log).size).toBe(3);
+    expect(lines).toEqual([]);
+  });
 });
 
 describe('serving prerendered marketing routes', () => {
