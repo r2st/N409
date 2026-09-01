@@ -455,6 +455,33 @@ def purchase_price_allocation(
     ``assumed_liabilities`` is therefore the acquiree's liabilities as its books
     carry them, deferred revenue included; the haircut is the one remeasurement
     this schedule takes as an input rather than deriving.
+
+    ## Why the haircut is bounded on both sides (round 343, methodology M19)
+
+    It was the one balance-sheet figure on this signature taken with no band at
+    all, and the two ways past it are the two the field's own questionnaire hint
+    warns about, in the two directions.
+
+    *Below zero.* A write-down is not a number that can be negative: the sign is
+    already in the arithmetic, which *adds* the haircut back to net assets. So
+    an analyst who reads "the write-down" as a reduction and types ``-650000``
+    does not get the same schedule — they get one where goodwill is
+    ``2 × 650,000`` larger than the standard makes it, because the correction
+    lands on the wrong side of the allocation *and* the right one is missing.
+    That is twice the error ASC 805-30 sequencing exists to avoid, on the
+    residual this whole schedule is a derivation of, and nothing on the exhibit
+    says which of the two figures was meant. ``intakeKinds`` already writes
+    ``rules: { min: 0 }`` on this field; those rules are enforced by the intake
+    submit and not by the specialty run route, so the engine had no floor.
+
+    *Above the liabilities assumed.* The haircut relieves deferred revenue, and
+    deferred revenue is part of ``assumed_liabilities`` by the paragraph above —
+    so a haircut larger than the liabilities is writing down more than was taken
+    on. That is exactly the "wrong one of the pair" the hint names: the
+    *remaining* fair-valued obligation typed where the write-down goes. Both
+    figures are the same order of magnitude, so the slip does not look wrong,
+    and it moves goodwill by their difference with nothing on the schedule to
+    show it.
     """
     consideration = _num(consideration_transferred, "ppa.consideration_transferred", minimum=0.0)
     if consideration <= 0:
@@ -463,7 +490,12 @@ def purchase_price_allocation(
     fixed = _num(fixed_assets, "ppa.fixed_assets")
     other = _num(other_tangible_assets, "ppa.other_tangible_assets")
     liabilities = _num(assumed_liabilities, "ppa.assumed_liabilities", minimum=0.0)
-    haircut = _num(deferred_revenue_haircut, "ppa.deferred_revenue_haircut")
+    haircut = _num(
+        deferred_revenue_haircut,
+        "ppa.deferred_revenue_haircut",
+        minimum=0.0,
+        maximum=liabilities,
+    )
     if not isinstance(intangibles, list) or not intangibles:
         raise EngineInputError("ppa.intangibles must be a non-empty list")
     if len(intangibles) > 50:

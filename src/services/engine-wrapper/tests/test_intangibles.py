@@ -320,6 +320,43 @@ def test_ppa_deferred_revenue_haircut_relieves_a_liability():
     )
 
 
+def test_ppa_negative_deferred_revenue_haircut_rejected():
+    """A write-down typed with the minus sign already in it (R343, M19).
+
+    The engine adds the haircut back to net assets, so the sign is in the
+    arithmetic and not in the figure. `-650,000` therefore does not produce the
+    same schedule with the correction spelled the other way — it moves goodwill
+    by twice the haircut, because the relief is missing and a liability of the
+    same size has been invented in its place.
+    """
+    with pytest.raises(EngineInputError, match=r"deferred_revenue_haircut must be >= 0"):
+        purchase_price_allocation(**_ppa_inputs(deferred_revenue_haircut=-200_000.0))
+
+
+def test_ppa_deferred_revenue_haircut_cannot_exceed_liabilities_assumed():
+    """The remaining obligation typed where the write-down goes (R343, M19).
+
+    The haircut relieves deferred revenue and deferred revenue is part of
+    `assumed_liabilities`, so a haircut above the liabilities is writing down
+    more than was taken on. Both figures are the same order of magnitude, which
+    is why the field's questionnaire hint names the confusion and why the
+    schedule cannot tell the two apart on its own.
+    """
+    with pytest.raises(EngineInputError, match=r"deferred_revenue_haircut must be <= 300000"):
+        purchase_price_allocation(
+            **_ppa_inputs(assumed_liabilities=300_000.0, deferred_revenue_haircut=310_000.0)
+        )
+
+
+def test_ppa_haircut_equal_to_liabilities_is_accepted():
+    """The boundary itself stands: every liability assumed was deferred revenue."""
+    out = purchase_price_allocation(
+        **_ppa_inputs(assumed_liabilities=300_000.0, deferred_revenue_haircut=300_000.0)
+    )
+    base = purchase_price_allocation(**_ppa_inputs(assumed_liabilities=300_000.0))
+    assert out["tangible_net_assets"] == pytest.approx(base["tangible_net_assets"] + 300_000.0)
+
+
 def test_ppa_empty_intangibles_rejected():
     with pytest.raises(EngineInputError, match="non-empty"):
         purchase_price_allocation(**_ppa_inputs(intangibles=[]))
