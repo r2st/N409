@@ -121,25 +121,36 @@ function isMarkup(text: string): boolean {
  * the one whose bytes were never checked against what the file claimed to be,
  * while the `.xlsx` beside it had to be a ZIP. `extractableFileTypes.test.ts`
  * holds the two lists together so the next format added to one is added to both.
+ *
+ * Null-prototyped, and read through `Object.hasOwn`, because the key is an
+ * extension off a filename the caller chose. On a plain object literal
+ * `report.constructor` and `report.__proto__` both resolved to a truthy value
+ * from `Object.prototype` — so the upload skipped the unknown-extension branch
+ * and then asked a function whether it `.includes('text')`, which is a
+ * TypeError out of a route that had already accepted the bytes: a 500 on both
+ * the SPA upload and the partner API's, from a filename alone.
  */
-export const EXTENSION_CATEGORIES: Record<string, SniffedCategory[]> = {
-  pdf: ['pdf'],
-  png: ['png'],
-  jpg: ['jpeg'],
-  jpeg: ['jpeg'],
-  gif: ['gif'],
-  xlsx: ['zip'],
-  // Macro-enabled, and an OOXML package like any other: still a ZIP.
-  xlsm: ['zip'],
-  docx: ['zip'],
-  zip: ['zip'],
-  // Text/extractable formats have no signature; they must sniff as plain text.
-  csv: ['text'],
-  tsv: ['text'],
-  txt: ['text'],
-  md: ['text'],
-  json: ['text'],
-};
+export const EXTENSION_CATEGORIES: Record<string, SniffedCategory[]> = Object.assign(
+  Object.create(null) as Record<string, SniffedCategory[]>,
+  {
+    pdf: ['pdf'],
+    png: ['png'],
+    jpg: ['jpeg'],
+    jpeg: ['jpeg'],
+    gif: ['gif'],
+    xlsx: ['zip'],
+    // Macro-enabled, and an OOXML package like any other: still a ZIP.
+    xlsm: ['zip'],
+    docx: ['zip'],
+    zip: ['zip'],
+    // Text/extractable formats have no signature; they must sniff as plain text.
+    csv: ['text'],
+    tsv: ['text'],
+    txt: ['text'],
+    md: ['text'],
+    json: ['text'],
+  },
+);
 
 /**
  * The extension of the name this file will be *stored* under.
@@ -229,7 +240,7 @@ export function checkUploadType(filename: string, buffer: Buffer): UploadTypeChe
   }
 
   const ext = extensionOf(filename);
-  const expected = EXTENSION_CATEGORIES[ext];
+  const expected = Object.hasOwn(EXTENSION_CATEGORIES, ext) ? EXTENSION_CATEGORIES[ext] : undefined;
 
   if (!expected) {
     // Unknown/absent extension: allow anything that isn't executable, but block

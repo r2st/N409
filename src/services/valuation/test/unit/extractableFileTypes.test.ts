@@ -38,6 +38,24 @@ describe('every extractable extension has a content category', () => {
     expect(checkUploadType('notes.log', binary).ok).toBe(true);
   });
 
+  /**
+   * The table is read with a key off the caller's own filename. On a plain
+   * object literal `report.constructor` resolved to `Object` — truthy, so the
+   * unknown-extension branch was skipped, and the next line asked a function
+   * whether it `.includes('text')`. That TypeError left both upload routes
+   * answering 500 to a filename, with the bytes already accepted.
+   */
+  it('treats an extension named after an Object.prototype member as unknown', () => {
+    const text = Buffer.from('holder,shares\nA,1\n');
+    for (const name of ['report.constructor', 'report.__proto__', 'report.toString']) {
+      expect(() => checkUploadType(name, text), name).not.toThrow();
+      expect(checkUploadType(name, text).ok, name).toBe(true);
+    }
+    // And the fallback is genuinely the unknown one: HTML is still refused.
+    const html = Buffer.from('<!DOCTYPE html><html><body>hi</body></html>');
+    expect(checkUploadType('report.constructor', html).ok).toBe(false);
+  });
+
   it('reads a macro-enabled workbook as the OOXML package it is', () => {
     expect(EXTENSION_CATEGORIES.xlsm).toEqual(['zip']);
     const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]);
