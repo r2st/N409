@@ -313,8 +313,8 @@ function returnsMany(ret: string): boolean {
  * Multi-row reads with no `LIMIT` of any kind — literal or parameterised.
  *
  * KNOWN BLIND SPOT, and the reason neither `funds.ts:latestMarks` nor
- * `calculations.ts:latestSucceededCalculationsByValuationIds` is accounted for
- * below. The test is `\bLIMIT\b` over the whole body, so a `LIMIT` anywhere
+ * `calculations.ts:latestSucceededCalculationHeadsByValuationIds` is accounted
+ * for below. The test is `\bLIMIT\b` over the whole body, so a `LIMIT` anywhere
  * in the statement takes the read out of the population — including one that
  * bounds a *subquery* and says nothing about the outer result. R283 rewrote
  * `latestMarks` as `unnest($1::ulid[]) CROSS JOIN LATERAL (SELECT … LIMIT 1)`,
