@@ -45,6 +45,50 @@ function hydrate(row: RawValuationTagRow): ValuationTagRow {
 }
 
 /**
+ * Lock class for the exclusivity invariant, keyed on the engagement.
+ *
+ * Distinct from `PUBLISH_GATE_LOCK`, `OVERWRITE_CELL_LOCK`, `TEMPLATE_NAME_LOCK`
+ * and `SCENARIO_CAP_LOCK` — `pg_advisory_xact_lock(key1, key2)` shares one
+ * namespace across the database, so two unrelated subsystems picking the same
+ * pair would block each other for no reason.
+ */
+const TAG_CATEGORY_LOCK = 0x7461_6773; // 'tags'
+
+/**
+ * Serialises "at most one accepted tag from an exclusive category" against
+ * itself.
+ *
+ * The rule is enforced by reading the engagement's tags, demoting whichever
+ * accepted row shares the incoming tag's category, and then writing the new
+ * one. Those are three statements, and until this lock they ran on the pool
+ * with nothing holding the list still between them: two accepts of mutually
+ * exclusive tags arriving together — a double-click on two rows, or a client
+ * sending both — each read a list in which the other had not landed yet, each
+ * found nothing to demote, and the engagement ended up carrying `seed` and
+ * `series_a` at once. That is the exact state the demotion exists to prevent,
+ * and every reader downstream (the list filter, the precedent query,
+ * `acceptedTagSlugs`) is written as if it cannot happen.
+ *
+ * Advisory rather than a row lock, for `lockPublishGate`'s reason: the rows
+ * that decide the answer may not exist yet. Both racers are *inserting* the tag
+ * they want accepted, so there is nothing to lock in the direction that
+ * matters; an advisory lock keyed on the engagement is held whether or not the
+ * rows it protects exist.
+ *
+ * Keyed on the valuation rather than on the category: a lock per category would
+ * be correct for this invariant alone, but categories are catalogue data and
+ * the engagement is the unit every other tag write already names. The
+ * contention it costs is two operators tagging the same engagement in the same
+ * instant.
+ *
+ * Transaction-scoped, so COMMIT or ROLLBACK releases it and no failure path can
+ * leak it — which also means it must be taken on a client inside a transaction.
+ */
+export async function lockTagCategories(client: pg.PoolClient, valuationId: string): Promise<void> {
+  await client.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [TAG_CATEGORY_LOCK, valuationId]);
+}
+
+/**
  * Every tag on one engagement, decided ones first.
  *
  * Accepted, then suggested, then rejected — the order an analyst works the list

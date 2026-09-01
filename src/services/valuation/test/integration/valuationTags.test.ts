@@ -7,6 +7,7 @@ import {
   deleteValuationTag,
   findValuationTag,
   listValuationTags,
+  lockTagCategories,
   tagUsageCounts,
   upsertValuationTag,
   upsertValuationTags,
@@ -634,6 +635,51 @@ describe.skipIf(!dbUp)('engagement tags', () => {
       );
       await addTag(id, { slug: 'series_b' });
       expect((await getTags(id)).json().accepted).toEqual(['series_b']);
+    });
+
+    it('serialises an accept behind the engagement tag lock', async () => {
+      // The demotion reads the tag list and the write lands after it. On the
+      // pool those were three statements with nothing holding the list still:
+      // two accepts of one exclusive category arriving together each read a
+      // list the other had not landed in, each found nothing to demote, and
+      // both committed — the engagement carrying two stages at once, which is
+      // the exact state the demotion exists to prevent and one every reader of
+      // `accepted` is written as if it cannot see.
+      //
+      // Asserted by holding the lock rather than by racing two requests: a
+      // `Promise.all` of two injects reproduces the old bug only on the
+      // interleavings the driver happens to give, so as a regression test it
+      // passes for the wrong reason more often than it fails for the right one.
+      // Taking `lockTagCategories` here and watching the accept wait for it
+      // pins the guarantee itself, and fails deterministically without it.
+      const id = await newEngagement('Race Ladder Co');
+      await addTag(id, { slug: 'seed' });
+
+      const holder = await ctx.pool.connect();
+      let settled = false;
+      try {
+        await holder.query('BEGIN');
+        await lockTagCategories(holder, id);
+
+        const pending = addTag(id, { slug: 'series_a' }).then((res) => {
+          settled = true;
+          return res;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(settled).toBe(false);
+
+        await holder.query('COMMIT');
+        expect((await pending).statusCode).toBe(200);
+      } finally {
+        holder.release();
+      }
+
+      const body = (await getTags(id)).json();
+      expect(body.accepted).toEqual(['series_a']);
+      // The loser is on file as rejected, not missing: the history still shows
+      // what the engagement was classified as on the way through.
+      expect(body.tags.find((t: { slug: string }) => t.slug === 'seed').status).toBe('rejected');
+      expect(await acceptedTagSlugs(ctx.pool, id)).toEqual(['series_a']);
     });
 
     it('leaves a multi-valued category alone', async () => {

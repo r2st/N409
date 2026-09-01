@@ -8,7 +8,9 @@ import {
   deleteValuationTag,
   findValuationTag,
   listValuationTags,
+  lockTagCategories,
   upsertValuationTag,
+  type TagUpsert,
   type ValuationTagRow,
 } from '../repos/valuationTags.js';
 import {
@@ -21,6 +23,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { withTransaction } from '../db/pool.js';
 
 /**
  * Engagement tags — 409.ai parity gap #23.
@@ -146,13 +149,10 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
       });
     }
 
-    await enforceExclusivity(deps.pool, id, def.slug, principal);
-
-    const row = await upsertValuationTag(
-      deps.pool,
+    const row = await writeTag(
       id,
       { slug: def.slug, source: 'manual', status: 'accepted', rationale: body.data.rationale ?? null },
-      principal.id,
+      principal,
     );
     await recordAdminEvent(deps.pool, {
       type: 'valuation_tagged',
@@ -191,10 +191,7 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     if (!existing) throw problems.notFound();
 
     const status: TagStatus = body.data.status;
-    if (status === 'accepted') await enforceExclusivity(deps.pool, id, existing.slug, principal);
-
-    const row = await upsertValuationTag(
-      deps.pool,
+    const row = await writeTag(
       id,
       {
         slug: existing.slug,
@@ -208,7 +205,7 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
         rationale: existing.rationale,
         evidence: existing.evidence,
       },
-      principal.id,
+      principal,
     );
     await recordAdminEvent(deps.pool, {
       type: 'valuation_tag_decided',
@@ -259,6 +256,39 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
   });
 
   /**
+   * Write one tag, holding the exclusivity invariant while it lands.
+   *
+   * The demotion and the write are one transaction under
+   * {@link lockTagCategories}, because "at most one accepted tag from an
+   * exclusive category" is a claim about a *set* and it was being enforced by
+   * three statements on the pool. Two accepts arriving together — a
+   * double-click across two rows of the same category, or a client sending both
+   * — each read a list the other had not landed in, each found nothing to
+   * demote, and both committed: `seed` and `series_a` accepted at once, which
+   * every reader of `acceptedTagSlugs` is written as if it cannot see.
+   *
+   * Both accept doors go through here, and so does a rejection: a `rejected`
+   * write demotes nothing and takes no lock, but routing it through the same
+   * function is what stops the next door being added on the pool by mistake.
+   */
+  async function writeTag(
+    valuationId: string,
+    tag: TagUpsert,
+    principal: Principal,
+  ): Promise<ValuationTagRow> {
+    const def = TAGS_BY_SLUG.get(tag.slug);
+    const exclusive =
+      tag.status === 'accepted' && def !== undefined && EXCLUSIVE_TAG_CATEGORIES.has(def.category);
+    if (!exclusive) return upsertValuationTag(deps.pool, valuationId, tag, principal.id);
+
+    return withTransaction(deps.pool, async (client) => {
+      await lockTagCategories(client, valuationId);
+      await enforceExclusivity(client, valuationId, tag.slug, principal);
+      return upsertValuationTag(client, valuationId, tag, principal.id);
+    });
+  }
+
+  /**
    * At most one accepted tag from an exclusive category.
    *
    * Applied by demoting the incumbent to `rejected` rather than by refusing the
@@ -266,9 +296,12 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
    * made an error, and an API that made them delete the old tag first would
    * have every caller implement this dance. The demotion is recorded, so the
    * history still shows what the engagement used to be classified as.
+   *
+   * Takes the client rather than the pool: the read below and the write that
+   * follows it in {@link writeTag} only mean anything together, under the lock.
    */
   async function enforceExclusivity(
-    pool: pg.Pool,
+    client: pg.PoolClient,
     valuationId: string,
     slug: string,
     principal: Principal,
@@ -276,12 +309,12 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     const def = TAGS_BY_SLUG.get(slug);
     if (!def || !EXCLUSIVE_TAG_CATEGORIES.has(def.category)) return;
 
-    const rows = await listValuationTags(pool, valuationId);
+    const rows = await listValuationTags(client, valuationId);
     for (const row of rows) {
       if (row.slug === slug || row.status !== 'accepted') continue;
       if (TAGS_BY_SLUG.get(row.slug)?.category !== def.category) continue;
       await upsertValuationTag(
-        pool,
+        client,
         valuationId,
         {
           slug: row.slug,
