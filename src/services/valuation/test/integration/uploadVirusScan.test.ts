@@ -112,6 +112,19 @@ describe.skipIf(!dbUp)('upload virus scanning', () => {
     const { upload } = await appWith({ ...SCANNER_ENV, VIRUS_SCAN_FAIL_CLOSED: 'false' });
     const res = await upload('report.csv', '<!doctype html><script>alert(1)</script>');
     expect(res.statusCode, res.body).toBe(422);
-    expect(res.json().detail).toContain('HTML');
+    /*
+     * R303. This asserted the word "HTML", which R222 replaced — the reader is
+     * whoever just tried to upload their cap table, and a refusal naming the
+     * finding in the format's own jargon tells them what we detected rather
+     * than what to do. Red on main since.
+     *
+     * Asserting the substance instead: what they named the file, what it
+     * actually holds in words they used themselves, and the remedy — which is
+     * the half that was missing and the reason the sentence was rewritten.
+     */
+    const { detail } = res.json();
+    expect(detail).toContain('.csv');
+    expect(detail).toContain('web page');
+    expect(detail).toMatch(/download or print-to-PDF/i);
   });
 });

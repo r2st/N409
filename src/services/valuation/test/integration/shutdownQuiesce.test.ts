@@ -100,8 +100,12 @@ describe.skipIf(!dbUp)('shutdown with a background sweep in flight', () => {
       const { transport, sent, releaseFirst, firstStarted } = gatedTransport();
 
       let sweepError: unknown;
+      // Capturing rather than `silent`: since R228 the loss is announced
+      // through this logger instead of thrown, so the log line is the evidence.
+      const errors: Array<Record<string, unknown>> = [];
+      const capturing = { ...silent, error: (o: Record<string, unknown>) => void errors.push(o) };
       const sweep = nonOverlapping(
-        () => retryFailedEmails({ pool: db.pool, transport, log: silent }),
+        () => retryFailedEmails({ pool: db.pool, transport, log: capturing }),
         (err) => {
           sweepError = err;
         },
@@ -122,9 +126,36 @@ describe.skipIf(!dbUp)('shutdown with a background sweep in flight', () => {
 
       // `end()` did not wait: a sweep between two queries holds no client.
       expect(endTookMs).toBeLessThan(200);
-      expect(sent).toEqual(['first@test.example.com']);
-      expect(sweepError).toBeInstanceOf(Error);
-      expect((sweepError as Error).message).toContain('Cannot use a pool after calling end');
+      /*
+       * R303. This asserted only the first message went out, which was true of
+       * the loop as it stood and stopped being true at R228 — red on main
+       * since. `claimRetryableEmails` claims the whole batch in one query
+       * before the loop starts, so neither send needs the pool; what used to
+       * stop the second was the first message's settle throwing straight out of
+       * the loop. R228 gave `sendAndRecord` a catch around that settle
+       * (`'unrecorded'`), which is right — one row's bookkeeping failure must
+       * not strand the rest of a claim of up to five hundred.
+       *
+       * It does mean the hazard this test exists to motivate is bigger than it
+       * was, not smaller: ending the pool under a running sweep now delivers
+       * every remaining claimed message and records none of them. So that is
+       * what the assertion says. Both are on the wire, both are unrecorded, and
+       * the outbox cannot even be read back to find out — the pool it would be
+       * read through is the one that was ended.
+       */
+      expect(sent).toEqual(['first@test.example.com', 'second@test.example.com']);
+      // And the tick itself reports success, because every settle failure in it
+      // was contained. Nothing is raised for the scheduler to classify.
+      expect(sweepError).toBeUndefined();
+      // What does say so is one `alert: true` line per delivered-and-unrecorded
+      // message, naming the pool as the cause. That is the whole record that
+      // these two went out.
+      expect(errors).toHaveLength(2);
+      for (const line of errors) {
+        expect(line.alert).toBe(true);
+        expect(line.retried).toBe(false);
+        expect(String((line.err as Error).message)).toContain('Cannot use a pool after calling end');
+      }
     } finally {
       // The pool is already ended; drop the database directly.
       const drop = new pg.Client({
