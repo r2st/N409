@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AppLayout } from '../src/components/AppLayout';
 
@@ -66,6 +67,9 @@ const renderLayout = () =>
       <Routes>
         <Route element={<AppLayout />}>
           <Route path="/dashboard" element={<div>dash</div>} />
+          {/* The bucket links point at the listing; the shell is what these
+              tests are about, so any of them renders a stand-in. */}
+          <Route path="*" element={<div>page</div>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -73,6 +77,12 @@ const renderLayout = () =>
 
 /** The desktop sidebar; the mobile drawer renders the same links. */
 const sidebar = () => screen.getAllByRole('navigation', { name: 'Main' })[0]!;
+
+/** Requests to the three nav-badge endpoints, across every rendered shell. */
+const badgeCalls = () =>
+  vi
+    .mocked(globalThis.fetch)
+    .mock.calls.filter(([url]) => /unread-count|valuations\/counts/.test(String(url))).length;
 
 describe('sidebar bucket counts', () => {
   it('shows a bucket row per named tab with its count', async () => {
@@ -123,5 +133,41 @@ describe('sidebar bucket counts', () => {
     renderLayout();
     const link = await within(sidebar()).findByRole('link', { name: /All valuations/ });
     expect(link.textContent).toBe('All valuations');
+  });
+
+  /**
+   * R330 (M8). All three badge hooks carried `location.pathname`, so every
+   * client-side navigation re-fired all three immediately: clicking through the
+   * six sidebar buckets was eighteen requests in a couple of seconds, each one
+   * returning what the last one returned. The endpoints sit behind 15s TTL
+   * caches server-side, so inside that window the answer provably cannot have
+   * changed — see `BADGE_MIN_REFETCH_MS`.
+   */
+  it('does not re-poll the badges on every navigation', async () => {
+    const user = userEvent.setup();
+    renderLayout();
+    await within(sidebar()).findByRole('link', { name: /All valuations/ });
+    await waitFor(() => expect(badgeCalls()).toBe(3));
+
+    // Four navigations onto four distinct paths. Before, each was three more
+    // requests; the floor makes them all free.
+    for (const label of ['Portfolio', 'Search', 'New valuation', 'Dashboard'] as const) {
+      await user.click(await within(sidebar()).findByRole('link', { name: new RegExp(`^${label}$`) }));
+    }
+    expect(badgeCalls()).toBe(3);
+    // Still showing the counts it already had, which is the point — the value
+    // is at most one cache TTL old rather than absent.
+    expect(
+      (await within(sidebar()).findByRole('link', { name: /All valuations/ })).textContent,
+    ).toContain('979');
+  });
+
+  it('polls on a fresh mount, which has never asked', async () => {
+    renderLayout();
+    await waitFor(() => expect(badgeCalls()).toBe(3));
+    // A reload, a sign-in or a first render of the shell must not inherit
+    // another instance's clock; the floor is per hook instance.
+    renderLayout();
+    await waitFor(() => expect(badgeCalls()).toBe(6));
   });
 });

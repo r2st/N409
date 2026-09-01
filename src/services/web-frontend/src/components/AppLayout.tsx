@@ -103,6 +103,77 @@ function NavGroup({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /**
+ * How often a nav badge re-reads its count on a timer.
+ */
+const BADGE_POLL_MS = 60_000;
+
+/**
+ * The floor under how often a *navigation* may re-ask.
+ *
+ * WHY THIS EXISTS (round 330, methodology M8). The three badge hooks below all
+ * carried `location.pathname` in their dependency list, which is the right
+ * intent — a state change made on the workspace should show up in the sidebar
+ * without a reload — implemented as "fire all three again, immediately, on
+ * every client-side navigation". Clicking through the six sidebar buckets is
+ * eighteen requests in a couple of seconds, every one of them returning the
+ * numbers the last one returned.
+ *
+ * Fifteen seconds is not a guess: it is `UNREAD_COUNT_CACHE_TTL_MS` and
+ * `COUNTS_CACHE_TTL_MS`, the TTL caches all three of these endpoints sit
+ * behind server-side. Inside that window the server *cannot* answer
+ * differently, so a re-poll is guaranteed to spend a round trip to be told
+ * what this tab already knows. Those caches were added (see `routes/inbox.ts`)
+ * to absorb exactly this storm — but a cache absorbs the query, not the
+ * request: each one still costs a JWT verification, the `findAuthPrincipal`
+ * join every authenticated route makes, and a charge against the caller's rate
+ * limit. This is the other half of that fix, on the side that is doing the
+ * asking.
+ *
+ * The floor applies to navigation only. A freshly mounted hook has never
+ * asked and always polls, so a reload, a sign-in, or a route that mounts the
+ * shell for the first time is unaffected — and the timer above is untouched,
+ * so a tab left open still refreshes on its own cadence.
+ */
+const BADGE_MIN_REFETCH_MS = 15_000;
+
+/**
+ * One nav badge: fetched on mount, re-fetched on navigation and on a timer.
+ *
+ * Shared by the three below because they had three copies of this effect and
+ * the copies are what let the navigation storm go unnoticed in all of them.
+ *
+ * Silent on failure, which every caller relied on: a client user's scope
+ * answers zero rather than erroring, and a stale session should not put an
+ * error banner in the navigation.
+ */
+function useBadgePoll<T>(path: string, enabled: boolean): T | null {
+  const [value, setValue] = useState<T | null>(null);
+  const location = useLocation();
+  // Per hook instance rather than module-level: this is "has *this* badge
+  // asked recently", and a remount is a badge that has never asked.
+  const lastPolledAt = useRef(0);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    const poll = () => {
+      lastPolledAt.current = Date.now();
+      api<T>(path)
+        .then((d) => {
+          if (!cancelled) setValue(d);
+        })
+        .catch(() => {});
+    };
+    if (Date.now() - lastPolledAt.current >= BADGE_MIN_REFETCH_MS) poll();
+    const timer = setInterval(poll, BADGE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [location.pathname, enabled, path]);
+  return value;
+}
+
+/**
  * Polls the unread *thread* count for the shared inbox — engagements whose
  * conversation has moved since this reader last opened them.
  *
@@ -115,35 +186,16 @@ function NavGroup({ label, children }: { label: string; children: ReactNode }) {
  * error banner from a badge.
  */
 function useInboxUnread(enabled: boolean): number {
-  const [count, setCount] = useState(0);
-  const location = useLocation();
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    const poll = () => {
-      api<{ unread_threads: number }>('/inbox/unread-count')
-        .then((d) => {
-          if (!cancelled) setCount(d.unread_threads);
-        })
-        .catch(() => {});
-    };
-    poll();
-    const timer = setInterval(poll, 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [location.pathname, enabled]);
-  return count;
+  return useBadgePoll<{ unread_threads: number }>('/inbox/unread-count', enabled)?.unread_threads ?? 0;
 }
 
 /**
  * Live counts for the nine named listing buckets (design §3.2/§4.2).
  *
  * The nav has carried static labels while the counts existed server-side the
- * whole time. Polled on the same 60s cadence as the other two badges and
- * re-read on navigation, so a state change made on the workspace shows up in
- * the sidebar without a reload.
+ * whole time. Polled on the same cadence as the other two badges and re-read on
+ * navigation, so a state change made on the workspace shows up in the sidebar
+ * without a reload — see {@link useBadgePoll}.
  *
  * Silent on failure, like the other badges: a client user's scope answers zero
  * rather than erroring, and a stale session should not put an error banner in
@@ -162,26 +214,9 @@ export interface BucketCounts {
 }
 
 function useBucketCounts(enabled: boolean): BucketCounts | null {
-  const [counts, setCounts] = useState<BucketCounts | null>(null);
-  const location = useLocation();
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    const poll = () => {
-      api<{ counts: BucketCounts }>('/valuations/counts?buckets=named')
-        .then((d) => {
-          if (!cancelled) setCounts(d.counts);
-        })
-        .catch(() => {});
-    };
-    poll();
-    const timer = setInterval(poll, 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [location.pathname, enabled]);
-  return counts;
+  return (
+    useBadgePoll<{ counts: BucketCounts }>('/valuations/counts?buckets=named', enabled)?.counts ?? null
+  );
 }
 
 /**
@@ -222,27 +257,9 @@ function BucketNav({ counts, onNavigate }: { counts: BucketCounts | null; onNavi
   );
 }
 
-/** Polls the unread notification count (M4) — on route change and every 60s. */
+/** Polls the unread notification count (M4) — see {@link useBadgePoll} for the cadence. */
 function useUnreadCount(): number {
-  const [count, setCount] = useState(0);
-  const location = useLocation();
-  useEffect(() => {
-    let cancelled = false;
-    const poll = () => {
-      api<{ unread_count: number }>('/notifications/unread-count')
-        .then((d) => {
-          if (!cancelled) setCount(d.unread_count);
-        })
-        .catch(() => {});
-    };
-    poll();
-    const timer = setInterval(poll, 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [location.pathname]);
-  return count;
+  return useBadgePoll<{ unread_count: number }>('/notifications/unread-count', true)?.unread_count ?? 0;
 }
 
 const icons = {
