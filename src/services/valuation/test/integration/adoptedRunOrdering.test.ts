@@ -4,7 +4,9 @@ import { newUlid } from '@n409/shared';
 import {
   findCurrentVolatilityEstimate,
   insertVolatilityEstimate,
+  listVolatilityEstimates,
   markVolatilityEstimateApplied,
+  VOLATILITY_ESTIMATE_PAGE_LIMIT,
 } from '../../src/repos/volatilityEstimates.js';
 import {
   findCurrentProjection,
@@ -132,6 +134,34 @@ describe.skipIf(!dbUp)('the adopted run a report describes', () => {
 
     const current = await findCurrentVolatilityEstimate(pool, valuationId);
     expect(current?.id).toBe(adopted.id);
+  });
+
+  /**
+   * The other half of the same question: the panel that answers "where did the
+   * applied figure come from" is a page, and the run it names can be anywhere
+   * in the history — so the page has to say when it stopped short.
+   *
+   * Twenty was a default argument rather than a number in the SQL, which is why
+   * `silentCapCensus` never saw it: the statement reads `LIMIT $2` and the one
+   * caller passed nothing.
+   */
+  it('says when the derivation history stopped short', async () => {
+    const valuationId = await newValuation('Twenty-One Runs Ltd');
+    for (let i = 0; i < VOLATILITY_ESTIMATE_PAGE_LIMIT + 1; i++) {
+      await newEstimate(valuationId, 0.3 + i / 100);
+    }
+    const page = await listVolatilityEstimates(pool, valuationId);
+    expect(page.estimates).toHaveLength(VOLATILITY_ESTIMATE_PAGE_LIMIT);
+    expect(page.truncated).toBe(true);
+  });
+
+  it('does not claim truncation on a history that fits', async () => {
+    const valuationId = await newValuation('Two Runs Ltd');
+    await newEstimate(valuationId, 0.4);
+    await newEstimate(valuationId, 0.5);
+    const page = await listVolatilityEstimates(pool, valuationId);
+    expect(page.estimates).toHaveLength(2);
+    expect(page.truncated).toBe(false);
   });
 
   async function newForecast(valuationId: string, flows: number[]) {

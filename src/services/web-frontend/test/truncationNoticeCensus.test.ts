@@ -194,6 +194,20 @@ const CONSUMERS: Record<string, { renders?: string[]; why?: string }> = {
   '/api/v1/valuations/:id/evidence-bundle': {
     why: 'Not a screen. The bundle carries its caps as a `truncated` object inside the manifest written into the archive, which is the artefact an auditor reads; there is no rendered list to annotate.',
   },
+
+  // ── R304: two adoption histories whose caps were default parameters ─────
+  // Neither endpoint was in this map because neither response had a flag to
+  // map, and neither repo query had a literal cap for `silentCapCensus` to
+  // find: twenty was a TypeScript default argument, so the SQL read `LIMIT $2`.
+  // Both panels then derived a claim from the page — "no run has been adopted",
+  // "a stream no projection here produced" — about a history that stopped
+  // short of the run in question.
+  '/api/v1/valuations/:id/projection': {
+    renders: ['src/components/valuation/ProjectionPanel.tsx'],
+  },
+  '/api/v1/valuations/:id/rollforward': {
+    renders: ['src/components/valuation/RollforwardPanel.tsx'],
+  },
 };
 
 /** Anything a client would read as "there is more than this". */

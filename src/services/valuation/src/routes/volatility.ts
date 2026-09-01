@@ -16,6 +16,7 @@ import {
   findVolatilityEstimate,
   insertVolatilityEstimate,
   listVolatilityEstimates,
+  VOLATILITY_ESTIMATE_PAGE_LIMIT,
   markVolatilityEstimateApplied,
   type VolatilityEstimateRow,
   type VolatilityExclusion,
@@ -215,14 +216,19 @@ export function registerVolatilityRoutes(
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(id, principal);
 
-    const [estimates, paramsRow, peerPage] = await Promise.all([
+    const [estimatePage, paramsRow, peerPage] = await Promise.all([
       listVolatilityEstimates(deps.pool, valuation.id),
       findParams(deps.pool, valuation.id),
       listComparableItems(deps.pool, valuation.id),
     ]);
 
     return {
-      estimates: estimates.map(present),
+      estimates: estimatePage.estimates.map(present),
+      // The derivation history is a page. The adopted run can be anywhere in
+      // it — adopting is a POST on any run by id — so a capped list is one
+      // that can be missing the row `applied_volatility` came from.
+      estimates_truncated: estimatePage.truncated,
+      estimates_page_limit: VOLATILITY_ESTIMATE_PAGE_LIMIT,
       applied_volatility: appliedVolatility(paramsRow),
       // What an estimate would be struck on if one were run now. A set with no
       // tickers in it is the reason the button cannot work, and saying so here

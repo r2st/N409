@@ -71,20 +71,41 @@ function hydrate(row: RawProjectionRow): ProjectionRow {
   };
 }
 
-/** Every run for one engagement, newest first — the order the panel reads in. */
+/**
+ * The page of runs this panel reads, and whether there are more.
+ *
+ * THE CAP HAD NO WAY TO BE SEEN (R304). Twenty was a TypeScript default
+ * parameter rather than a number in the SQL, so the statement said `LIMIT $2`
+ * and `silentCapCensus` — which reads repo SQL for a literal cap with no flag
+ * beside it — had nothing to match on. Every caller took the default, so the
+ * cap was as hard as one written into the query and invisible to the test
+ * written to find exactly this.
+ *
+ * What it hides is the answer to the question the panel exists for. These runs
+ * are a history an analyst adopts *from*, and the one the calculation is
+ * carrying can sit anywhere in it: adopting is a POST on any run by id, so an
+ * engagement whose analyst went back to an early window has its adopted run at
+ * the bottom of the list. Past twenty runs the panel then showed an applied
+ * figure with no row behind it — the reviewer asking where the discounted stream
+ * came from gets a list that does not contain the answer, and no sign that anything
+ * was left out.
+ */
+export const PROJECTION_PAGE_LIMIT = 20;
+
 export async function listProjections(
   pool: pg.Pool,
   valuationId: string,
-  limit = 20,
-): Promise<ProjectionRow[]> {
+  opts: { limit?: number } = {},
+): Promise<{ runs: ProjectionRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? PROJECTION_PAGE_LIMIT, 1), PROJECTION_PAGE_LIMIT);
   const { rows } = await pool.query<RawProjectionRow>(
     `SELECT * FROM valuation_projections
       WHERE valuation_id = $1
       ORDER BY created_at DESC, id DESC
       LIMIT $2`,
-    [valuationId, limit],
+    [valuationId, limit + 1],
   );
-  return rows.map(hydrate);
+  return { runs: rows.slice(0, limit).map(hydrate), truncated: rows.length > limit };
 }
 
 /**

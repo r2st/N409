@@ -94,6 +94,8 @@ interface VolatilityResponse {
   can_edit: boolean;
   /** True when the peer set behind `eligible_tickers` ran past its page. */
   peers_truncated: boolean;
+  /** The derivation history is a page; see the note under the table. */
+  estimates_truncated: boolean;
 }
 
 const pct = (v: number | null | undefined, digits = 1): string =>
@@ -424,6 +426,15 @@ export function VolatilityPanel({ valuationId }: { valuationId: string }) {
               </tbody>
             </table>
           </div>
+          {/* The adopted run can be anywhere in this history — adopting is a
+              button on any row — so a page that stops short is one that can be
+              missing the run the applied figure came from. */}
+          <ListTruncationNote
+            truncated={data.estimates_truncated}
+            shown={data.estimates.length}
+            noun="derivation runs"
+            hint="older runs are not listed, and the adopted one may be among them"
+          />
         </>
       )}
     </section>

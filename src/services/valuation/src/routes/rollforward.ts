@@ -24,6 +24,7 @@ import {
   findRollforwardRun,
   insertRollforwardRun,
   listRollforwardRuns,
+  ROLLFORWARD_RUN_PAGE_LIMIT,
   markRollforwardRunApplied,
   type RollforwardRunRow,
 } from '../repos/rollforwardRuns.js';
@@ -210,14 +211,19 @@ export function registerRollforwardRoutes(
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(id, principal);
 
-    const [runs, paramsRow] = await Promise.all([
+    const [runPage, paramsRow] = await Promise.all([
       listRollforwardRuns(deps.pool, valuation.id),
       findParams(deps.pool, valuation.id),
     ]);
     const inputs = engineInputs(paramsRow);
 
     return {
-      runs: runs.map(present),
+      runs: runPage.runs.map(present),
+      // The bridge history is a page, and the applied run can be anywhere in
+      // it — adopting is a POST on any run by id — so a capped list is one that
+      // can be missing the row `applied_anchor` came from.
+      runs_truncated: runPage.truncated,
+      runs_page_limit: ROLLFORWARD_RUN_PAGE_LIMIT,
       applied_anchor: appliedAnchor(inputs),
       // What a run would be struck *to* if one were started now. An engagement
       // with no valuation date is the reason the button cannot work, and saying

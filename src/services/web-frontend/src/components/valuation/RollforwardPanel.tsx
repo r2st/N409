@@ -7,6 +7,7 @@ import {
   ErrorNote,
   Field,
   InfoTooltip,
+  ListTruncationNote,
   LoadError,
   Select,
   Spinner,
@@ -79,6 +80,8 @@ interface RollforwardRun {
 
 interface RollforwardResponse {
   runs: RollforwardRun[];
+  /** The bridge history is a page; see the note under the table. */
+  runs_truncated: boolean;
   applied_anchor: number | null;
   new_valuation_date: string | null;
   rolling_forward: boolean;
@@ -660,7 +663,18 @@ export function RollforwardPanel({
             </table>
           </div>
 
-          {adopted === null && (
+          {/* The adopted run can be anywhere in this history — adopting is a
+              button on any row — so a page that stops short is one that can be
+              missing the run `applied_anchor` came from, and the sentence below
+              is derived from this same page. */}
+          <ListTruncationNote
+            truncated={data.runs_truncated}
+            shown={data.runs.length}
+            noun="bridge runs"
+            hint="older runs are not listed, and the adopted one may be among them"
+          />
+
+          {adopted === null && !data.runs_truncated && (
             <p className="mt-3 text-sm text-ink-400">
               No run has been adopted, so the engagement is not calculating on a rolled anchor and Exhibit B-2
               will not print.

@@ -7,6 +7,7 @@ import {
   ErrorNote,
   Field,
   InfoTooltip,
+  ListTruncationNote,
   LoadError,
   Select,
   Spinner,
@@ -95,8 +96,17 @@ interface Projection {
 
 interface ProjectionResponse {
   projections: Projection[];
+  /** The forecast history is a page; see the note under the table. */
+  projections_truncated: boolean;
   applied_free_cash_flows: number[] | null;
-  applied_matches_run: boolean;
+  /**
+   * Whether the discounted stream is one of the runs listed.
+   *
+   * `null` is the server saying it cannot tell, because the history it answered
+   * from is capped — not a no. Drawing the "entered by hand" banner on it would
+   * accuse an engagement whose adopted run is simply older than the page.
+   */
+  applied_matches_run: boolean | null;
 }
 
 /** A percentage field → a fraction; blank stays blank (the engine defaults it). */
@@ -321,7 +331,7 @@ export function ProjectionPanel({
   const applied = data.applied_free_cash_flows;
   // The disagreement the panel exists to surface: the engagement is discounting
   // a stream that is not one of these runs.
-  const untraced = applied !== null && applied.length > 0 && !data.applied_matches_run;
+  const untraced = applied !== null && applied.length > 0 && data.applied_matches_run === false;
 
   const field = (
     label: string,
@@ -642,6 +652,16 @@ export function ProjectionPanel({
               </tbody>
             </table>
           </div>
+          {/* The adopted run can be anywhere in this history — adopting is a
+              button on any row — so a page that stops short is one that can be
+              missing the run the discounted stream came from, which is also why
+              `applied_matches_run` goes quiet rather than saying no. */}
+          <ListTruncationNote
+            truncated={data.projections_truncated}
+            shown={data.projections.length}
+            noun="forecast runs"
+            hint="older runs are not listed, and the adopted one may be among them"
+          />
         </>
       )}
     </section>

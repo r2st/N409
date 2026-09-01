@@ -13,6 +13,7 @@ import {
   findProjection,
   insertProjection,
   listProjections,
+  PROJECTION_PAGE_LIMIT,
   markProjectionApplied,
   type ProjectionRow,
   type ProjectionYear,
@@ -296,19 +297,35 @@ export function registerProjectionRoutes(
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(id, principal);
 
-    const [runs, params] = await Promise.all([
+    const [runPage, params] = await Promise.all([
       listProjections(deps.pool, valuation.id),
       findParams(deps.pool, valuation.id),
     ]);
+    const { runs, truncated } = runPage;
     const applied = appliedFlows(params?.engine_inputs);
+    const matched = runs.some((r) => sameFlows(applied, r.free_cash_flows));
 
     return {
       projections: runs.map(present),
+      // The forecast history is a page, and the adopted run can be anywhere in
+      // it — adopting is a POST on any run by id.
+      projections_truncated: truncated,
+      projections_page_limit: PROJECTION_PAGE_LIMIT,
       applied_free_cash_flows: applied,
-      // Whether the stream the calculation reads is one of these runs. A
-      // hand-typed column is the state this feature exists to replace, and a
-      // panel that could not say which one it was looking at would not.
-      applied_matches_run: runs.some((r) => sameFlows(applied, r.free_cash_flows)) ? true : false,
+      /*
+       * Whether the stream the calculation reads is one of these runs. A
+       * hand-typed column is the state this feature exists to replace, and a
+       * panel that could not say which one it was looking at would not.
+       *
+       * Three-valued since R304, because it was derived from a page and stated
+       * as a fact. `runs.some(...)` over twenty rows answers "not one of these
+       * runs" for a stream adopted from the twenty-first, and the panel draws
+       * that as the disagreement it exists to surface — "the engagement is
+       * discounting a stream that is not one of these runs" — about an
+       * engagement where nothing is wrong. `null` is "the history is capped and
+       * this cannot be answered from it", which is the honest third state.
+       */
+      applied_matches_run: matched ? true : truncated ? null : false,
     };
   });
 
