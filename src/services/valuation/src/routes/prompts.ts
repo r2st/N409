@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isUlid, problems, requestIdHeaders } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import {
   findPromptById,
@@ -108,7 +108,10 @@ export function registerPromptRoutes(app: FastifyInstance, deps: { pool: pg.Pool
         // own missing credential was indistinguishable from the AI service
         // having nothing to offer, and the warn line said `status: 401` to a
         // log nobody reads until somebody complains.
-        headers: internalAuthHeaders(),
+        // And the request id, for the same reason `postJson` and the report
+        // render both send one: without it the AI tier's line for this call
+        // joins to nothing on our side.
+        headers: { ...internalAuthHeaders(), ...requestIdHeaders() },
         signal: AbortSignal.timeout(10_000),
       });
       if (res.ok) return (await res.json()) as AiModelsResponse;
