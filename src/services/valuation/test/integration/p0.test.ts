@@ -43,7 +43,22 @@ describe.skipIf(!dbUp)('P0 features API', () => {
         payload: {},
       });
       expect(res.statusCode).toBe(503);
-      expect(res.json().detail).toMatch(/STRIPE_SECRET_KEY/);
+      /*
+       * R303. This asserted the body named `STRIPE_SECRET_KEY`, which is what
+       * R247 removed — the reader of a checkout refusal is the client being
+       * asked to pay, and telling them which of our secrets is unset is both a
+       * disclosure and useless to the only person who can act on it.
+       *
+       * Inverted, so the assertion now holds the fix rather than the bug: no
+       * variable name, and the three things the sentence has to say — nothing
+       * was charged, this is our fault and not theirs, and here is what happens
+       * instead of the payment.
+       */
+      const { detail } = res.json();
+      expect(detail).not.toMatch(/STRIPE|SECRET_KEY/i);
+      expect(detail).toMatch(/nothing has been charged/i);
+      expect(detail).toMatch(/on our side/i);
+      expect(detail).toMatch(/invoice you instead/i);
     });
 
     it('lists payments (empty) with valuation-scoped auth', async () => {
