@@ -14,6 +14,7 @@ import {
 import { createNotifications } from '../repos/notifications.js';
 import { listUserIdsWithRoles } from '../repos/users.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
+import { SWEEP_LOCKS, withSweepLock } from '../db/sweepLock.js';
 import { JOB_ALERT_ROLES } from '../domain/roles.js';
 
 /**
@@ -90,7 +91,62 @@ function rememberOpen(result: ReconcileResult): void {
   openAlerts = [...result.opened, ...result.ongoing].map((a) => ({ source: a.source, kind: a.kind }));
 }
 
+/**
+ * The scan, with the pass serialized against itself.
+ *
+ * `reconcileJobAlerts` holds a transaction-scoped advisory lock, and the route
+ * that presses this used to cite it as the reason a double-press was safe. It
+ * is the reason the *ledger* stays consistent; it is not the reason the scan's
+ * conclusions do. Every input to those conclusions — `jobStats`,
+ * `oldestActiveJobs`, the clock — is read **before** that lock is taken, so two
+ * overlapping passes each reconcile a picture of the queues taken at a
+ * different moment, and the later-committing one is not necessarily the one
+ * holding the newer picture.
+ *
+ * What that does, on a queue that recovers between the two reads: the pass that
+ * looked after the recovery finds nothing, resolves the open alert and
+ * announces the recovery; the pass that looked before it then finds the stall
+ * still there, cannot see the alert it just closed, opens a *new* one and
+ * announces that. An operator is told a queue recovered and then immediately
+ * that it is stalled, about a queue that is fine, and the next tick resolves it
+ * and announces the recovery a second time. `ongoing` — the silence that keeps
+ * a day-long stall from sending 288 messages — is bypassed entirely, because
+ * the alert the second pass opened is genuinely new.
+ *
+ * Overlapping is ordinary here rather than exotic, and for the same two reasons
+ * the overdue sweep gives: `POST /admin/jobs/alerts/scan` is a button, and the
+ * five-minute tick can land on a pass still reading five unioned tables.
+ * `scheduleSweep` keeps the *timer* from overlapping itself; the route goes
+ * nowhere near it.
+ *
+ * So the whole pass — observe, reconcile, announce — takes
+ * `SWEEP_LOCKS.jobAlertScan`, and a pass that arrives while one is running
+ * declines rather than queueing, which is `withSweepLock`'s standing argument:
+ * waiting only earns the right to re-read a picture the holder has already
+ * acted on. `skipped` says so, so "the scan you asked for is already happening"
+ * is something the operator is told rather than an empty result that reads as
+ * "nothing is wrong". Nothing is lost by declining: announcements are owed by
+ * the ledger, not by the pass, so the holder delivers what this one would have.
+ */
 export async function runJobAlertScan(deps: {
+  pool: pg.Pool;
+  log?: FastifyBaseLogger;
+  now?: Date;
+}): Promise<ReconcileResult & { evaluated: number; notified: AnnouncementTally; skipped: boolean }> {
+  const run = await withSweepLock(deps.pool, SWEEP_LOCKS.jobAlertScan, deps.log, () => scanUnderLock(deps));
+  if (run.ran) return { ...run.value, skipped: false };
+  deps.log?.info({ event: 'job_alert_scan_skipped' }, 'job alert scan already in progress; skipped');
+  return {
+    opened: [],
+    resolved: [],
+    ongoing: [],
+    evaluated: 0,
+    notified: { opened: 0, resolved: 0, failed: 0 },
+    skipped: true,
+  };
+}
+
+async function scanUnderLock(deps: {
   pool: pg.Pool;
   log?: FastifyBaseLogger;
   now?: Date;

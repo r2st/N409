@@ -177,14 +177,22 @@ export function registerJobRoutes(app: FastifyInstance, deps: { pool: pg.Pool })
    * Run the sweep now.
    *
    * Same function the interval runs, so an operator who has just restarted a
-   * worker sees the alert close rather than waiting out the tick. Safe to press
-   * twice — the reconciler serializes on an advisory lock and a still-open
-   * alert is bumped rather than re-notified.
+   * worker sees the alert close rather than waiting out the tick.
+   *
+   * Safe to press twice, and `skipped` is what makes that honest: the second
+   * press finds `SWEEP_LOCKS.jobAlertScan` held and declines the whole pass
+   * rather than reconciling a second, differently-aged picture of the queues
+   * over the first. See `runJobAlertScan` for what the two used to do to each
+   * other. An answer with `skipped: true` reports nothing opened or resolved
+   * because this call did nothing — not because nothing is wrong.
    */
   app.post('/api/v1/admin/jobs/alerts/scan', { preHandler: app.authenticate }, async (req) => {
     requireOps(req);
     const result = await runJobAlertScan({ pool: deps.pool, log: req.log });
     return {
+      // "A scan was already running, so this press did nothing" — the one thing
+      // an empty result cannot say for itself.
+      skipped: result.skipped,
       opened: result.opened,
       resolved: result.resolved,
       ongoing: result.ongoing.length,

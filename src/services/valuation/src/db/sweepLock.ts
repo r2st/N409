@@ -15,6 +15,8 @@ export const SWEEP_LOCKS = {
   autoEmailScan: 0x6e34_4145, // 'n4AE'
   /** The overdue-engagement reminder sweep (`routes/engagements.ts`). */
   overdueReminders: 0x6e34_4f52, // 'n4OR'
+  /** The job-queue alert scan (`hooks/jobAlerts.ts`). */
+  jobAlertScan: 0x6e34_4a41, // 'n4JA'
 } as const;
 
 /**

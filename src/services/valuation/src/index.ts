@@ -618,6 +618,10 @@ if (config.JOB_ALERT_SCAN_MINUTES > 0) {
       opened: r.opened.length,
       resolved: r.resolved.length,
       announcements_failed: r.notified.failed,
+      // A tick that declined because an ops-triggered scan was already running
+      // reports zeros for everything above, and a zero tick is exactly what a
+      // healthy platform looks like. This is the one field that separates them.
+      skipped: r.skipped ? 1 : 0,
     };
   });
   sweep.run();
