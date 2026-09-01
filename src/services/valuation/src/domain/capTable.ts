@@ -164,6 +164,23 @@ export function presetByKey(key: string): FormatPreset | undefined {
   return FORMAT_PRESETS.find((p) => p.key === key);
 }
 
+/**
+ * The preset keys, as a tuple a schema can be built from.
+ *
+ * `format` on the import and preview bodies names a member of this set, and
+ * `presetByKey` answers a key outside it with `undefined` — which
+ * `resolveMapping` reads as "no preset", leaving the import to run on the
+ * caller's own column overrides alone. A Carta export sent under `'Carta'`
+ * therefore parsed with no `Security` column, no `Shares` column and no error:
+ * every entry came back empty rather than the request coming back refused.
+ *
+ * A vocabulary a body names is checked against it, the same rule
+ * `pathParamValidationCensus.test.ts` states for the ones that travel in the
+ * path. Derived from `FORMAT_PRESETS` rather than written out, so a fourth
+ * preset is in the schema the moment it exists.
+ */
+export const FORMAT_PRESET_KEYS = FORMAT_PRESETS.map((p) => p.key) as unknown as [string, ...string[]];
+
 /** Digits grouped in threes by commas — `1,234`, `12,345,678`. US thousands. */
 const COMMA_GROUPED = /^\d{1,3}(?:,\d{3})+$/;
 

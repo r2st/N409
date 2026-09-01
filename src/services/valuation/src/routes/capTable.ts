@@ -9,6 +9,7 @@ import {
   CAP_TABLE_FIELDS,
   CsvReadError,
   MAX_CAP_TABLE_ENTRIES,
+  FORMAT_PRESET_KEYS,
   FORMAT_PRESETS,
   parseCapTableSheet,
   parseCsvSheet,
@@ -58,8 +59,8 @@ export const MAX_CAP_TABLE_UPLOAD_BYTES = 10 * 1024 * 1024;
  */
 const MAX_UPLOAD_ROWS = MAX_CAP_TABLE_ENTRIES;
 
-const ImportBody = z.object({
-  format: z.string().max(40).default('generic'),
+export const ImportBody = z.object({
+  format: z.enum(FORMAT_PRESET_KEYS).default('generic'),
   /** Raw CSV text, OR pre-parsed rows from a client-side parser. */
   csv: z.string().max(2_000_000).optional(),
   rows: z.array(z.record(z.string(), z.unknown())).max(MAX_CAP_TABLE_ENTRIES).optional(),

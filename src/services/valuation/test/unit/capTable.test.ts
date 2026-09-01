@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { ImportBody } from '../../src/routes/capTable.js';
 import {
+  FORMAT_PRESET_KEYS,
+  FORMAT_PRESETS,
   inferClassType,
   parseCapTable,
   parseCsv,
@@ -678,5 +681,51 @@ describe('capTable', () => {
         seniority: 1,
       });
     });
+  });
+});
+
+/**
+ * `format` names one of exactly three column presets, and named it as a free
+ * string.
+ *
+ * `presetByKey` answers a key outside the set with `undefined`, and
+ * `resolveMapping` reads that as "no preset" — so an import under `'Carta'`
+ * rather than `'carta'` ran with no `Security` column, no `Shares` column and
+ * nothing at all to say so. The rows parsed, every field came back empty, and
+ * the request was a 200. That is the failure a vocabulary check exists to turn
+ * into a refusal, and it is the same rule `pathParamValidationCensus.test.ts`
+ * already states for the vocabularies that travel in the path.
+ */
+describe('the import format is a vocabulary, not a string', () => {
+  it('lists exactly the presets that exist', () => {
+    expect([...FORMAT_PRESET_KEYS].sort()).toEqual(FORMAT_PRESETS.map((p) => p.key).sort());
+    // Derived, not written out: a fourth preset is in the schema on the day it
+    // is added rather than on the day someone remembers this line.
+    for (const key of FORMAT_PRESET_KEYS) expect(presetByKey(key)).toBeDefined();
+  });
+
+  it('every listed key resolves to a preset with a real mapping', () => {
+    for (const key of FORMAT_PRESET_KEYS) {
+      expect(Object.keys(presetByKey(key)!.mapping).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('is what the import body parses against, not just a list beside it', () => {
+    expect(ImportBody.safeParse({ csv: 'a,b' }).success).toBe(true);
+    expect(ImportBody.parse({ csv: 'a,b' }).format).toBe('generic');
+    for (const key of FORMAT_PRESET_KEYS) {
+      expect(ImportBody.safeParse({ format: key, csv: 'a,b' }).success).toBe(true);
+    }
+    const wrong = ImportBody.safeParse({ format: 'Carta', csv: 'a,b' });
+    expect(wrong.success).toBe(false);
+    expect(wrong.error?.issues[0]?.path).toEqual(['format']);
+  });
+
+  it('a key outside the set resolves to no preset at all — which is the bug', () => {
+    // The behaviour the schema now stands in front of, asserted so the reason
+    // for the enum stays visible.
+    expect(presetByKey('Carta')).toBeUndefined();
+    expect(presetByKey('carta ')).toBeUndefined();
+    expect(presetByKey('')).toBeUndefined();
   });
 });
