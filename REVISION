@@ -6225,3 +6225,103 @@
 #            implies a sweep for engagements whose client never came back; there
 #            is none, and the SLA query at `repos/valuations.ts` excludes the
 #            state it would produce.
+#
+# R320 — State machine & transition analysis (M3). Four findings, one shape.
+#            Every one is a precondition the product does state — in TypeScript,
+#            against a row read one statement earlier on another connection —
+#            under an UPDATE that names no state at all. The refusal is real and
+#            the write is unconditional, so the window between them is where the
+#            invariant lives.
+#
+#            **Two accepts of one exclusive tag category both stuck.**
+#            `enforceExclusivity` (routes/valuationTags.ts) held "at most one
+#            accepted tag from an exclusive category" with three statements on
+#            the pool: read the engagement's tags, demote whichever accepted row
+#            shares the incoming category, write the new one. Two accepts
+#            arriving together — a double-click across two rows, a client
+#            sending both, or the two doors at once, since POST creates its tag
+#            accepted and PATCH promotes a suggestion — each read a list the
+#            other had not landed in, each found nothing to demote, and both
+#            committed. `seed` and `series_a` accepted on one file, which the
+#            list filter, the precedent query and `acceptedTagSlugs` are all
+#            written as if they cannot see. Demotion and write are now one
+#            transaction under `lockTagCategories`, a new lock class keyed on
+#            the engagement; advisory rather than a row lock for
+#            `lockPublishGate`'s reason, because both racers are *inserting* the
+#            row they want accepted and there is nothing to lock in the
+#            direction that matters. Both doors go through one `writeTag`.
+#            Pinned by holding the lock and watching an accept queue on it: a
+#            `Promise.all` of two injects reproduced the old bug only on the
+#            interleavings the driver happened to give, and passed for the wrong
+#            reason more often than it failed for the right one.
+#
+#            **A triage re-file overwrote the filing another operator had just
+#            made.** The queue's rule is that a document is filed once — the
+#            route refuses a row that is no longer `uploads`/`other`, "it may
+#            have been triaged since this list was loaded" — decided against a
+#            batch read one statement earlier, over `UPDATE documents SET
+#            category = $2, kind = $3 WHERE id = $1`. Two operators on the same
+#            "select all" both passed the check and both wrote; the second
+#            overwrote the first and put a `document_refiled` on the spine
+#            saying it came *from* `uploads`, when it came from wherever the
+#            first had just put it — and that payload is what the trail offers
+#            as the way to reverse the move. The same window was open against
+#            the delete: `findDocumentsByIds` filters tombstones, so the loop
+#            only ever sees a live row, and a delete landing in between got the
+#            file re-filed with a refile event after the deletion event.
+#            `refileDocument` now pins the row as read (`deleted_at IS NULL AND
+#            category = $4 AND kind = $5`) and returns null, which the route
+#            reports as the per-row refusal it already had wording for.
+#
+#            **Starting a 2FA enrolment could switch the second factor back
+#            off.** `POST /account/mfa/setup` refuses a re-enrolment, and the
+#            staging write under that refusal cleared `totp_enabled` and
+#            `totp_confirmed_at` for whatever the row held. A `/setup` overtaken
+#            by the `/confirm` that finishes an enrolment saw an un-enrolled
+#            account and then turned the factor off: silently, with no
+#            `user_mfa_disabled` on the admin trail, nothing said to the user,
+#            and the backup codes `/confirm` had just issued attached to
+#            nothing. Every other way 2FA leaves an account goes through
+#            `/disable`, which re-authenticates with the password, refuses when
+#            an administrator requires 2FA, and records the event.
+#            `stageTotpSecret` now carries `AND totp_enabled = false` and
+#            reports whether it wrote. Re-staging over an *unconfirmed* secret
+#            is untouched — that is what re-opening the setup page does.
+#
+#            **A template archive could retire the version an activation was
+#            promoting.** `activateTemplate` is two writes under
+#            `TEMPLATE_NAME_LOCK` so the pair is indivisible; `archiveTemplate`
+#            is the other half of the same invariant and took no lock at all. It
+#            could land between them — incumbent archived, promotion not yet
+#            written — and the activation then set active the very version the
+#            operator had just retired, over their 200. R312's test already
+#            models the other ordering, and models it by staging an archive that
+#            *takes the name lock*, which the real route never did. Archiving is
+#            now a transaction under the same lock; nothing new is refused,
+#            since leaving a kind with no active version is a thing ops may ask
+#            for. Also `AND status <> 'archived'` with `changed` reported: the
+#            admin screen lists archived versions with the control still on
+#            them, and a second press moved `updated_at` and put a second
+#            `template_archived` on the trail for one retirement.
+#
+# gap:       `POST /valuations/:id/board/members/:memberId/send` looks at no
+#            status. It re-mints the signing token and emails a "please sign"
+#            link to a director who has already signed or rejected, and to every
+#            member of a resolution that is already `approved`. The link is not
+#            dangerous — `recordSignoff` refuses a non-pending row and the
+#            public read reports `member.status` — so what it is, is a dead
+#            control posted to a board member, and `sent_at` moves for a request
+#            that cannot be acted on. Left alone: which of those the product
+#            wants refused (a decided member, an approved resolution, or
+#            neither) is a policy question, not a defect in the guard.
+#
+# gap:       `maybeStartAutoPipeline` and `executeRun` gate on `archived_at` and
+#            on the per-valuation opt-out, and on no workflow state. A document
+#            uploaded to a `cancelled` or `ignored` engagement therefore spends
+#            an AI extraction and an engine run on work the firm has stopped,
+#            and one uploaded to a `published` engagement auto-applies extracted
+#            parameters and records a fresh calculation against a delivered
+#            409A. The second is arguably the same deliberate escape hatch as
+#            post-publication amendment (R212) and the first is arguably just
+#            waste, which is why neither was closed here — but the two states
+#            differ, and nothing in the pipeline distinguishes them.
