@@ -20,7 +20,7 @@ import { createUser } from '../../src/repos/users.js';
 import { createPasswordResetToken } from '../../src/repos/passwordResets.js';
 import { hashPassword } from '../../src/auth/password.js';
 import { totp } from '../../src/auth/totp.js';
-import { authHeader, isDbAvailable, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, interceptPoolQueries, isDbAvailable, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 const PASSWORD = 'identity-audit-password-1';
@@ -81,6 +81,80 @@ describe.skipIf(!dbUp)('identity and credential events reach the audit spine', (
     const rows = await eventsFor(user.id, 'user_logout');
     expect(rows).toHaveLength(1);
     expect(rows[0]!.actor_id).toBe(user.id);
+  });
+
+  /**
+   * One catch, three failures (R305, methodology M11).
+   *
+   * The swallow around this handler is written for a token that is expired,
+   * missing or malformed — the ordinary case the endpoint is public for, and
+   * genuinely nothing to say. It sat around the epoch bump and the spine write
+   * as well, so a failure in either was caught by a handler that was never
+   * about it: `bumpSessionEpoch` throwing means every other session and token
+   * the user holds stays valid on the devices they pressed this button *about*,
+   * answered `200 Signed out.`; the spine write throwing silently restores the
+   * gap R159 added it to close.
+   *
+   * Asserted through the row rather than through the log, because a Fastify
+   * child logger writes to the parent's stream and not its methods, so
+   * `app.log` cannot be spied on. The row is the observable half of the same
+   * split: with the two calls sharing a catch, a failed epoch bump skipped the
+   * event entirely, and the trail lost the sign-out along with the revocation.
+   */
+  it('still records the sign-out when the session revocation fails', async () => {
+    const user = await seedAccount();
+    const restore = interceptPoolQueries(ctx.pool, (sql, phase) => {
+      if (phase !== 'before' || !sql.includes('SET session_epoch = session_epoch + 1')) return undefined;
+      throw new Error('deadlock detected on relation "users"');
+    });
+    let res;
+    try {
+      res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/logout',
+        headers: authHeader(user.token),
+      });
+    } finally {
+      restore();
+    }
+
+    // Unchanged, and deliberately: the cookie is cleared before any of this, so
+    // a 5xx would tell the caller they are still signed in on the one device
+    // they are actually signed out of.
+    expect(res.statusCode).toBe(200);
+    const rows = await eventsFor(user.id, 'user_logout');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.actor_id).toBe(user.id);
+  });
+
+  it('answers a sign-out whose spine write fails, rather than 500ing', async () => {
+    // The other half of the same split. Nothing comes back for this write —
+    // no retry, no sweep — so it is `logUnretried`, and the request still
+    // succeeds because the sign-out itself did.
+    const user = await seedAccount();
+    const restore = interceptPoolQueries(ctx.pool, (sql, phase) => {
+      if (phase !== 'before' || !sql.includes('INSERT INTO admin_events')) return undefined;
+      throw new Error('deadlock detected on relation "admin_events"');
+    });
+    let res;
+    try {
+      res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/logout',
+        headers: authHeader(user.token),
+      });
+    } finally {
+      restore();
+    }
+
+    expect(res.statusCode).toBe(200);
+    // The revocation is the half that must not be lost with it: the user's
+    // other sessions are gone even though the trail could not say so.
+    const { rows } = await ctx.pool.query<{ session_epoch: number }>(
+      'SELECT session_epoch FROM users WHERE id = $1',
+      [user.id],
+    );
+    expect(rows[0]!.session_epoch).toBeGreaterThan(0);
   });
 
   it('writes nothing for a sign-out with no readable session', async () => {

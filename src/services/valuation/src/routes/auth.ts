@@ -508,27 +508,69 @@ export function registerAuthRoutes(
     // Bump session_epoch so outstanding JWTs for this user are immediately
     // invalidated, not just the one in the cleared cookie. The endpoint is
     // public (must work with an expired/missing token), so parse best-effort.
+    /*
+     * ONE CATCH, THREE FAILURES, TWO OF THEM NOT BENIGN (R305, methodology M11).
+     *
+     * The swallow below is written for exactly one of them — a token that is
+     * expired, missing or malformed, which is the ordinary case this endpoint
+     * is public *for*, and which is genuinely nothing to say. It sat around all
+     * three, so the two that are not that were swallowed by a handler that was
+     * never about them:
+     *
+     *   * `bumpSessionEpoch` is the whole of "sign out everywhere". When it
+     *     throws, this request clears one cookie and every other session and
+     *     JWT the user holds stays valid — on the other devices they pressed
+     *     this button *about* — and the answer is still `200 Signed out.` The
+     *     user is told the opposite of what happened and no line anywhere says
+     *     so.
+     *   * `recordAdminEvent` is the sign-out half of the identity spine, added
+     *     precisely because the trail could say when a session began and never
+     *     when it ended. A throw here silently restores that gap for this
+     *     session, which is the state an incident reconstruction is done from.
+     *
+     * Split, so the parse stays silent and the other two are `logUnretried`:
+     * nothing comes back for either — no retry, no sweep, no ladder — which is
+     * the condition that helper's `alert: true` exists for.
+     *
+     * The status does not change. The cookie is cleared before any of this and
+     * a 5xx would leave the caller believing they are still signed in on the
+     * device they are actually signed out of, which is the worse of the two
+     * false answers. What the failure needs is a reader, and it now has one.
+     */
+    let claims: Awaited<ReturnType<typeof verifySession>> | null = null;
     try {
       const header = req.headers.authorization;
       const bearer =
         (header?.startsWith('Bearer ') ? header.slice(7).trim() : '') || req.cookies?.[SESSION_COOKIE] || '';
-      if (bearer && !bearer.startsWith('n409_pat_')) {
-        const claims = await verifySession(bearer, deps.jwt);
+      if (bearer && !bearer.startsWith('n409_pat_')) claims = await verifySession(bearer, deps.jwt);
+    } catch {
+      /* expired / missing / invalid — cookie is still cleared */
+    }
+    if (claims) {
+      try {
         await bumpSessionEpoch(deps.pool, claims.sub);
-        // Inside the try on purpose: a logout with no readable session bumps
-        // no epoch and names no subject, and a row that says "somebody signed
-        // out" is not a record of anything. Sign-in was audited from the day
-        // the spine existed and its counterpart never was, which leaves the
-        // trail able to say when a session began and never when it ended.
+      } catch (err) {
+        logUnretried(
+          req.log,
+          err,
+          { userId: claims.sub },
+          'could not invalidate the user\u2019s outstanding sessions on logout; their other tokens are still valid',
+        );
+      }
+      // Attempted whichever way the epoch bump went: the sign-out request
+      // happened and the trail is answering "when did this session end".
+      // Sign-in was audited from the day the spine existed and its counterpart
+      // never was.
+      try {
         await recordAdminEvent(deps.pool, {
           type: 'user_logout',
           actor: { actorType: 'human', actorId: claims.sub },
           subjectType: 'user',
           subjectId: claims.sub,
         });
+      } catch (err) {
+        logUnretried(req.log, err, { userId: claims.sub }, 'could not record a logout on the audit spine');
       }
-    } catch {
-      /* expired / missing / invalid — cookie is still cleared */
     }
     return reply.status(200).send({ message: 'Signed out.' });
   });
