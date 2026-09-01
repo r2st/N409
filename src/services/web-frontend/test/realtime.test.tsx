@@ -173,6 +173,90 @@ describe('useValuationStream', () => {
     }
   });
 
+  it('waits the retry-after a 429 sends instead of re-asking in three seconds', async () => {
+    // The hub refuses a caller with too many streams open with `retry-after:
+    // 30`. Coming back at three seconds is the reconnect loop amplifying the
+    // saturation it is being told about — and every attempt costs the
+    // authorization read and the user lookup that run before the capacity check.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const live = sseResponse();
+      const fetchMock = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(live.res)
+        .mockResolvedValue(new Response(null, { status: 429, headers: { 'retry-after': '30' } }));
+
+      renderHook(() => useValuationStream('v1'));
+      await act(async () => live.push(presence('Ana')));
+      await act(async () => live.end());
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+      });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+      // The refusal is not terminal — the tab does come back — but not yet.
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+      });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('widens the wait while the server keeps failing, and closes it again on a connect', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const live = sseResponse();
+      const back = sseResponse();
+      const fetchMock = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(live.res)
+        .mockResolvedValueOnce(new Response(null, { status: 500 }))
+        .mockResolvedValueOnce(new Response(null, { status: 500 }))
+        .mockResolvedValueOnce(back.res);
+
+      renderHook(() => useValuationStream('v1'));
+      await act(async () => live.push(presence('Ana')));
+      await act(async () => live.end());
+
+      // First failure after an open stream: the flat wait, unchanged.
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+      });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+      // Second: doubled. Three seconds is no longer enough.
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+      });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+
+      // The third attempt opens, so the next drop starts from the flat wait
+      // again rather than from where the outage left off.
+      await act(async () => {
+        vi.advanceTimersByTime(12_000);
+      });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+      await act(async () => back.end());
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+      });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('bumps the comment tick on a reconnect but not on the first connect', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

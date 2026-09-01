@@ -4,8 +4,45 @@ import { getToken } from './api';
 /**
  * Improvement 4 — client side of the per-valuation SSE stream. A fetch-based
  * reader (not EventSource) so the normal bearer header authenticates the
- * stream — no token in the URL. Reconnects with a flat 3s backoff.
+ * stream — no token in the URL. Reconnects on a backoff that widens while the
+ * server keeps refusing, and honours a `retry-after` when it sends one.
  */
+
+/** First wait after a stream ends, and the step the backoff doubles from. */
+const BASE_RETRY_MS = 3_000;
+/** The widest the backoff opens. A tab is expected to come back on its own. */
+const MAX_RETRY_MS = 30_000;
+/** Ceiling on a server-supplied wait, so a bad header cannot park a tab. */
+const MAX_RETRY_AFTER_MS = 5 * 60_000;
+
+/**
+ * How long to wait after the `n`th consecutive failed attempt.
+ *
+ * Flat 3s was right for the case it was written for — a socket the server
+ * restarted under, which comes back within one wait — and wrong for the case
+ * below it: a refusal that will still be a refusal in three seconds.
+ */
+export function streamBackoffMs(consecutiveFailures: number): number {
+  const n = Math.max(1, consecutiveFailures);
+  return Math.min(MAX_RETRY_MS, BASE_RETRY_MS * 2 ** (n - 1));
+}
+
+/**
+ * A `retry-after` in milliseconds, or null when there is nothing usable to read.
+ *
+ * Seconds only. The header's HTTP-date form is legal and this platform never
+ * sends it — `problems.tooManyRequests` takes a number of seconds and the
+ * helper writes exactly that — so parsing a date here would be answering a
+ * question no server on the other end asks. Anything unusable falls back to the
+ * backoff, which is the safe direction: too long a wait is a tab that reconnects
+ * late, too short is the loop this exists to stop.
+ */
+export function retryAfterMs(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header.trim());
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+  return Math.min(MAX_RETRY_AFTER_MS, Math.round(seconds * 1000));
+}
 
 export interface Viewer {
   user_id: string;
@@ -65,11 +102,21 @@ export function useValuationStream(valuationId: string): ValuationStream {
      * different things — see the tick bump below.
      */
     let everConnected = false;
+    /**
+     * Attempts since the last stream that actually opened, for the backoff.
+     *
+     * Reset on a 200 rather than on a clean read: a socket the server restarted
+     * under is the case the flat wait was written for and is not what the
+     * widening is about.
+     */
+    let failures = 0;
 
     const connect = async () => {
       controller = new AbortController();
       /** A status that says not to come back, as opposed to a dropped socket. */
       let terminal = false;
+      /** What the server asked us to wait, when it said anything about it. */
+      let serverWaitMs: number | null = null;
       try {
         const headers = new Headers({ accept: 'text/event-stream' });
         const token = getToken();
@@ -81,7 +128,22 @@ export function useValuationStream(valuationId: string): ValuationStream {
         if (res.status === 401 || res.status === 403 || res.status === 404) {
           terminal = true;
         } else {
-          if (!res.ok || !res.body) throw new Error(`stream failed (${res.status})`);
+          if (!res.ok || !res.body) {
+            /*
+             * A refusal, as opposed to a socket that went away.
+             *
+             * The hub refuses a caller with too many streams open with a 429
+             * and `retry-after: 30`, which is the one condition where coming
+             * back in three seconds makes things worse: every tab that caused
+             * the saturation re-asks twenty times a minute, and each attempt
+             * costs the authorization read and the user lookup that run before
+             * the capacity check. The refusal says how long to wait, and it was
+             * being thrown away with the rest of the response.
+             */
+            serverWaitMs = retryAfterMs(res.headers.get('retry-after'));
+            throw new Error(`stream failed (${res.status})`);
+          }
+          failures = 0;
 
           // A reconnect means the gap it just closed swallowed every `comment`
           // push the server sent while the socket was down, and the hub replays
@@ -131,7 +193,10 @@ export function useValuationStream(valuationId: string): ValuationStream {
       // clear those badges. Clearing costs at most a few seconds of an empty
       // list, because the reconnect's own join broadcasts the room back.
       setViewers([]);
-      if (!terminal) retry = setTimeout(() => void connect(), 3000);
+      if (!terminal) {
+        failures += 1;
+        retry = setTimeout(() => void connect(), serverWaitMs ?? streamBackoffMs(failures));
+      }
     };
 
     void connect();
