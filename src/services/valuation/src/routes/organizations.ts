@@ -23,6 +23,7 @@ import { buildEntityTree, consolidate, labelEntities } from '../domain/portfolio
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 import { flagParam } from '../domain/queryFlag.js';
 
 /**
@@ -34,23 +35,33 @@ import { flagParam } from '../domain/queryFlag.js';
 const OrgTypeEnum = z.enum(['holding_company', 'fund', 'operating_group']);
 const EntityTypeEnum = z.enum(['standalone', 'parent', 'subsidiary', 'portfolio_company']);
 
+/*
+ * Every id on these four bodies is `ulidField()` rather than `z.string()`.
+ *
+ * Both re-parenting routes guard the parent with `if (body.parent_…_id)` and
+ * then hand the same field to the write, and `''` is falsy — so a blank id
+ * skipped the ownership check, the self-parent check and (on the entity route)
+ * the "a standalone entity has no parent" refusal, and was then written into a
+ * `ulid` column, whose CHECK answered 23514 and the caller "Internal Server
+ * Error". See domain/ulidField.ts.
+ */
 const CreateOrgBody = z.object({
   name: z.string().trim().min(1).max(200),
   entity_type: OrgTypeEnum.default('holding_company'),
-  parent_org_id: z.string().optional(),
+  parent_org_id: ulidField().optional(),
 });
 const UpdateOrgBody = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   entity_type: OrgTypeEnum.optional(),
-  parent_org_id: z.string().nullable().optional(),
+  parent_org_id: ulidField().nullable().optional(),
 });
 const AssignBody = z.object({
-  valuation_id: z.string(),
+  valuation_id: ulidField(),
   entity_type: EntityTypeEnum.optional(),
 });
 const EntityBody = z.object({
   entity_type: EntityTypeEnum,
-  parent_valuation_id: z.string().nullable().optional(),
+  parent_valuation_id: ulidField().nullable().optional(),
 });
 /**
  * `?detach=true` on the delete: the acknowledgement that this is dissolving a

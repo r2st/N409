@@ -14,12 +14,22 @@ import { flagParam } from '../domain/queryFlag.js';
 import { refuseIfRetired, refuseIfSubjectRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { nonBlankText } from '../domain/nonBlankText.js';
+import { ulidField } from '../domain/ulidField.js';
 
 const CreateBody = z.object({
   kind: z.enum(REVIEW_TASK_KINDS),
   title: nonBlankText(1, 300),
   description: z.string().max(5000).nullable().optional(),
-  assignee_id: z.string().nullable().optional(),
+  /*
+   * `ulidField()`, not `z.string()`. `assertAssigneeExists` returns early on a
+   * falsy id and the write is `parsed.data.assignee_id ?? null`, which keeps
+   * `''` — so a blank assignee skipped the existence check and reached
+   * `review_tasks.assignee_id ulid`, whose CHECK answered 23514 and the caller
+   * "Internal Server Error". The SPA never saw it because `TasksPage` converts
+   * its own blank option (`e.target.value || null`); no other client does. See
+   * domain/ulidField.ts.
+   */
+  assignee_id: ulidField().nullable().optional(),
   sla_hours: z
     .number()
     .int()
@@ -36,7 +46,7 @@ const PatchBody = z
     title: nonBlankText(1, 300),
     description: z.string().max(5000).nullable(),
     status: z.enum(REVIEW_TASK_STATUSES),
-    assignee_id: z.string().nullable(),
+    assignee_id: ulidField().nullable(),
     sla_hours: z
       .number()
       .int()

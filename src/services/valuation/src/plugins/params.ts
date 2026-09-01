@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { problems } from '@n409/shared';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * Route-parameter validation.
@@ -21,10 +21,14 @@ import { isUlid, problems } from '@n409/shared';
  * Validating them as UUIDs would reject every id the platform has ever issued.
  */
 
-/** A single id-shaped route parameter. */
-export const UlidParam = z
-  .string()
-  .refine(isUlid, { message: 'must be a 26-character Crockford-base32 ULID' });
+/**
+ * A single id-shaped route parameter.
+ *
+ * The same rule `domain/ulidField.ts` applies to an id carried in a body, and
+ * deliberately the same definition: two spellings of "is this an id" that could
+ * drift is how one door ends up stricter than the one beside it.
+ */
+export const UlidParam = ulidField();
 
 /**
  * Parameter names carrying an id. Named explicitly rather than pattern-matched
