@@ -6526,3 +6526,123 @@
 # gap:       R154's AppLayout badge-poll churn is still open, still for the
 #            reason R314 restated: the refetch-on-navigation is the point, and
 #            bounding it needs a min-interval rather than a dependency change.
+
+# R329 — Observability & monitoring (M11). Four findings, and one shape running
+#            through three of them: a failure whose *answer* is a success. R321
+#            found the sweeps that fail by returning normally; this round found
+#            the doors that fail by answering 4xx, 302, and 0.
+#
+#            **A rotated webhook secret refused every delivery, silently.** The
+#            three inbound webhook doors are deliberately unauthenticated and
+#            deliberately trusted; the whole of the authority behind each is a
+#            signature, checked against a secret held on two machines neither of
+#            which tells the other when it changes. `webhookSignatureCensus`
+#            proved the check exists. Nothing proved its failure was visible. A
+#            rotation in the Stripe dashboard that misses this deployment
+#            refuses every delivery with `400 Invalid Stripe signature`; Stripe
+#            retries for days and gives up; no payment is fulfilled, no refund
+#            recorded, no subscription changes state, and a customer who has
+#            been charged has an engagement that is still unpaid. The mail
+#            provider's door drops every bounce and complaint the same way.
+#            `registerProblemHandler` leaves 4xx unlogged on purpose — "those
+#            describe the request, the caller was told, and logging them is
+#            logging other people's mistakes" — which is right for a browser and
+#            wrong for the one caller that is a machine, where the 4xx is ours
+#            and the caller is the only party that can see it.
+#            `inbound_webhook_deliveries_total{source,outcome}` counts every
+#            delivery, `accepted` included, because a refusal count with no
+#            denominator cannot separate a scanner from a secret that has been
+#            wrong since Tuesday. `unsigned` and `bad_signature` are separate
+#            labels and only the second is logged or alerted on: these URLs are
+#            in `PUBLIC_ROUTES` and the internet scans them, and a scanner must
+#            not be able to page somebody. The census that finds these doors by
+#            their raw-buffer parser now requires each to count what it refused
+#            and what it accepted.
+#
+#            **Five rules grouped by a label their metrics do not carry.** The
+#            third direction of `alertRulesCensus`: it held every rule to a
+#            metric this repo exports (R313) and to a label *value* something
+#            sets (R321), and never to a label *name*. Five rules grouped and
+#            annotated by `service` — which lives on `upstream_*`, where it names
+#            the dependency being *called*, and on `n409_build_info`, and on
+#            none of the process or HTTP instruments those five are written
+#            against. `sum by (service) (rate(http_request_errors_total[5m]))`
+#            drops `job` and `instance` and groups by a label that is not there,
+#            so `HighServerErrorRate` — a page — fired on one series holding the
+#            whole estate: the report unit is low-volume by design and could
+#            fail every request it received while the web service's healthy
+#            traffic held the quotient under five per cent. `SlowRequests` was
+#            one p95 across the estate for the same reason. And
+#            `{{ $labels.service }}` on a series without one renders empty, so
+#            the three pages that could still fire named nobody — "  has
+#            restarted repeatedly in the last ten minutes", on an estate of five
+#            units. `job` is what the scraper attaches and the only label that
+#            says which unit emitted a series; `ServiceDown` already relied on
+#            it. The census now holds every label a rule groups by, selects on
+#            or interpolates to one the metrics in that expression carry, or one
+#            of the three the scraper and PromQL supply.
+#
+#            **A queue nobody was watching reported a confident zero.**
+#            `evaluateJobAlerts` skips a source whose rule is disabled or
+#            missing, and `reconcileJobAlerts` then resolves whatever was open
+#            for it — so an unwatched queue produced no findings and published
+#            the same row of zeros a healthy watched one does, and
+#            `JobQueueAlertOpen` could never fire for it again. Worse than the
+#            missing series R321 fixed: an absent series at least cannot be
+#            mistaken for an answer. Not a corner, either — the comment on
+#            `auto_pipeline_runs_pending` sends every DB-backed backlog to this
+#            sweep, so for the outbox and the webhook deliveries that zero was
+#            the whole of the monitoring. The scan keeps the rule state per
+#            source beside the open set, `job_queue_alert_open` publishes only
+#            for queues something is watching, and `job_queue_alert_rule
+#            {source,state}` explains the absence — which is what makes leaving
+#            a series out honest. Three states: `disabled` is an operator's
+#            choice and has no rule, the way `background_sweep_enabled == 0` has
+#            none; `unconfigured` is a source in `JOB_SOURCES` with no row in
+#            `job_alert_rules`, which nobody chose. Recorded before the
+#            all-rules-disabled early return, which is the one deployment where
+#            it matters most.
+#
+#            **An identity provider refusing everyone answered 302.** R273 said
+#            it in as many words — "a refusal that becomes a 302 is a 302 in the
+#            access log, indistinguishable from the successful hand-off two
+#            lines below it" — and gave it a log line. The half left is that the
+#            log is not the alerting channel on this box. So an expired IdP
+#            signing certificate, a rotated Google client secret or a narrowed
+#            domain rule refuses every sign-in at a firm, each refusal counted by
+#            `http_requests_total` in the 3xx class beside the ordinary
+#            redirects. No 5xx, no slow request, no circuit — the IdP is not one
+#            of ours. Nobody can sign in and every instrument reads green.
+#            `sso_outcomes_total{flow,outcome}` is recorded inside `refuseSso`,
+#            the one place all seventeen call sites go through and the same place
+#            the log line is written, so a refusal cannot reach one channel and
+#            not the other. The outcome is the refusal *code*, because the ten
+#            divide into two groups an operator treats differently.
+#            `signed_in` on both success paths is what makes it a rule rather
+#            than a dashboard.
+#
+# gap:       `/ready` is not probed by anything at runtime. Caddy proxies
+#            without a health check, the units carry no watchdog, and the only
+#            caller outside a deploy is the web service's own fan-out — which
+#            itself runs only when somebody probes web. So the estate's explicit
+#            verdict "I cannot do my job", and the name of the check that
+#            failed, reach a `warn` line nothing consumes. Left open because
+#            closing it means adding a prober: either a timer per service (new
+#            periodic load on the AI and engine tiers, and a handle to leak in
+#            every suite that builds an app) or refreshing the snapshot from
+#            inside the scrape, which contradicts the stated rule that a scrape
+#            must not query the database. The consequences are also largely
+#            double-covered — a dead upstream is `upstream_circuit_state`, a
+#            dead Postgres is `HighServerErrorRate` — so what is actually
+#            missing is the diagnosis, not the detection.
+#
+# gap:       `db_pool_checkouts_leaked_total` only advances when the pool
+#            sampler runs, and `DB_POOL_SAMPLE_SECONDS` accepts 0. Setting it
+#            there leaves the gauge reporting a false zero for ever and
+#            `PoolCheckoutLeaked` — a page — watching nothing. Left alone
+#            because `db_pool_checkout_oldest_seconds` is computed by `peek()`
+#            and is unaffected, and `PoolCheckoutHeldTooLong` fires at 60s
+#            against a `DB_LEAK_AFTER_MS` of exactly 60s: the same condition is
+#            still caught, one severity down. Adding a second gauge for it would
+#            be two instruments answering one question, which is the drift this
+#            file keeps arguing against.
