@@ -1192,10 +1192,36 @@ def _weighted_equity(
         # `market_movement`. The unadjusted figure is kept beside the adjusted
         # one, because "what the round said" and "what we concluded it implies
         # today" are two different assertions and a reviewer checks both.
+        #
+        # `equity_value` on a *reused* entry is already adjusted — the run it was
+        # copied from wrote the adjusted figure into the field the next run
+        # reads. Applying this run's factor to it again multiplied the round
+        # indication by the factor once per recalculation: a +30% benchmark move
+        # took a $100M round to $130M, then $169M, then $219.7M, one step per
+        # press of "recalculate the income approach", with the adjustment
+        # disclosure beside it naming $130M as the *unadjusted* round. Nothing in
+        # the response says the figure grew; it is a plain 200 with a larger
+        # conclusion, and the movement block that produced it is the same one the
+        # reviewer already approved.
+        #
+        # So the factor is struck against the indication itself. A reused entry
+        # carries the indication in `unadjusted_equity_value`, which is what that
+        # field is for; a fresh one has no such field and its `equity_value` *is*
+        # the indication. This also makes an edited benchmark behave: the new
+        # factor replaces the old one rather than compounding with it.
         movement_in = inputs.get("market_movement")
+        prior_unadjusted = _num(
+            approaches.get("opm_backsolve", {}).get("unadjusted_equity_value"),
+            "prior_approaches.opm_backsolve.unadjusted_equity_value",
+            positive=True,
+        )
         if isinstance(movement_in, dict) and movement_in:
             movement = market_movement(movement_in)
-            unadjusted = approaches["opm_backsolve"]["equity_value"]
+            unadjusted = (
+                prior_unadjusted
+                if prior_unadjusted is not None
+                else approaches["opm_backsolve"]["equity_value"]
+            )
             adjusted = apply_movement(unadjusted, movement)
             approaches["opm_backsolve"] = {
                 **approaches["opm_backsolve"],
@@ -1214,6 +1240,18 @@ def _weighted_equity(
                     f"benchmark at beta {movement['beta']:g}"
                 ),
             )
+        elif prior_unadjusted is not None:
+            # The reused entry was adjusted by a run whose inputs carried a
+            # benchmark; this run's do not. Leaving the adjusted figure in place
+            # would keep applying a movement the analyst has since removed, and
+            # would leave `market_movement` on `results.approaches` for the
+            # report to print beside a valuation that claims no such adjustment.
+            approaches["opm_backsolve"] = {
+                k: v
+                for k, v in approaches["opm_backsolve"].items()
+                if k not in ("unadjusted_equity_value", "market_movement")
+            }
+            approaches["opm_backsolve"]["equity_value"] = prior_unadjusted
 
     if weights["weight_income"] > 0:
         if _fresh("income"):

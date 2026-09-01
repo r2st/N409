@@ -174,3 +174,75 @@ class TestThroughCompute:
     def test_a_bad_benchmark_fails_the_run_rather_than_being_ignored(self):
         with pytest.raises(EngineInputError):
             run(inputs_extra={"market_movement": {"index_start": 1.0, "index_end": 100.0}})
+
+
+class TestReusedAcrossARecalculation:
+    """A per-approach recalculation quotes the OPM approach from the prior run.
+
+    `routes/calculations.ts` ships that run's `results.approaches` to the engine
+    as `prior_approaches` whenever the analyst recalculates one approach, and
+    the OPM entry it quotes already carries the adjustment. Re-striking this
+    run's factor against it compounds the benchmark move once per press.
+    """
+
+    RECALC_PARAMS = {**BASE_PARAMS, "weight_opm": 0.6, "weight_income": 0.4}
+    INCOME = {"free_cash_flows": [1_000_000.0, 2_000_000.0, 3_000_000.0], "discount_rate": 0.25}
+
+    def _full(self, movement):
+        inputs = {**BASE_INPUTS, "income": self.INCOME}
+        if movement is not None:
+            inputs["market_movement"] = movement
+        return compute(dict(self.RECALC_PARAMS), inputs)["results"]
+
+    def _recalc(self, prior, movement):
+        inputs = {**BASE_INPUTS, "income": self.INCOME}
+        if movement is not None:
+            inputs["market_movement"] = movement
+        return compute(
+            dict(self.RECALC_PARAMS),
+            inputs,
+            recompute=["income"],
+            prior_approaches=prior["approaches"],
+        )["results"]
+
+    def test_recalculating_another_approach_does_not_move_the_round_again(self):
+        movement = {"index_start": 100.0, "index_end": 130.0}
+        first = self._full(movement)
+        second = self._recalc(first, movement)
+        third = self._recalc(second, movement)
+        for res in (second, third):
+            opm = res["approaches"]["opm_backsolve"]
+            assert opm["equity_value"] == pytest.approx(
+                first["approaches"]["opm_backsolve"]["equity_value"]
+            )
+            assert opm["unadjusted_equity_value"] == pytest.approx(
+                first["approaches"]["opm_backsolve"]["unadjusted_equity_value"]
+            )
+        assert third["equity_value"] == pytest.approx(first["equity_value"])
+        assert third["fmv_per_share"] == pytest.approx(first["fmv_per_share"])
+
+    def test_an_edited_benchmark_replaces_the_old_factor(self):
+        first = self._full({"index_start": 100.0, "index_end": 130.0})
+        indication = first["approaches"]["opm_backsolve"]["unadjusted_equity_value"]
+        again = self._recalc(first, {"index_start": 100.0, "index_end": 110.0})
+        opm = again["approaches"]["opm_backsolve"]
+        assert opm["market_movement"]["factor"] == pytest.approx(1.1)
+        assert opm["equity_value"] == pytest.approx(indication * 1.1)
+
+    def test_a_removed_benchmark_restores_the_round_indication(self):
+        first = self._full({"index_start": 100.0, "index_end": 130.0})
+        indication = first["approaches"]["opm_backsolve"]["unadjusted_equity_value"]
+        again = self._recalc(first, None)
+        opm = again["approaches"]["opm_backsolve"]
+        assert opm["equity_value"] == pytest.approx(indication)
+        assert "market_movement" not in opm
+        assert "unadjusted_equity_value" not in opm
+        assert "market_movement" not in again
+
+    def test_an_unadjusted_run_reused_is_untouched(self):
+        first = self._full(None)
+        again = self._recalc(first, None)
+        assert again["approaches"]["opm_backsolve"]["equity_value"] == pytest.approx(
+            first["approaches"]["opm_backsolve"]["equity_value"]
+        )
+        assert again["equity_value"] == pytest.approx(first["equity_value"])
