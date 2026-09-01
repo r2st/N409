@@ -12,12 +12,15 @@ from __future__ import annotations
 import base64
 import codecs
 import io
+import logging
 import re
 import zipfile
 from dataclasses import dataclass
 from xml.etree import ElementTree
 
 from pypdf import PdfReader
+
+_log = logging.getLogger("documents")
 
 MAX_CHARS_PER_DOC = 20_000
 MAX_TOTAL_CHARS = 60_000
@@ -474,17 +477,52 @@ def decode_text(raw: bytes) -> str:
 
 
 def extract_texts(documents: list[dict]) -> list[DocText]:
+    """Every document as text, with each failure declared and counted.
+
+    ## Why a degraded extraction is also a log line (R301, methodology M6)
+
+    The degrade is right and stays: one unreadable file must not sink a run,
+    and the note goes into the corpus because the model is the reader who can
+    act on it — a cap table replaced by "[could not extract text: …]" reads
+    very differently from a cap table with no rows.
+
+    But the note was the *only* place any of it was recorded. Nothing in this
+    module logged, so a failure here reached exactly two audiences: the model,
+    inside a prompt, and the analyst, as a per-document summary that says
+    nothing came out. The one audience it never reached was us. A pypdf that
+    stops reading a whole class of PDFs, an `.xlsx` export whose shape changed,
+    a deployment where the extractor is failing on every upload — all of that
+    is a healthy 200 with a full corpus of apologies, and the only way to see
+    it is to read the prompts.
+
+    So each failure is warned with its reason, and a run with any failures ends
+    on a `count`/`total` line, which is the pair an alert can group on. Neither
+    carries the filename: it is the client's own — conventionally the company
+    name and the document type — and this log is written to disk on a host the
+    corpus never touches. `kind` says what it was meant to be, which is the
+    part a diagnosis needs.
+    """
     out: list[DocText] = []
     total = 0
+    failed = 0
     for doc in documents:
         if total >= MAX_TOTAL_CHARS:
             break
-        try:
-            raw = base64.b64decode(doc.get("content_base64") or "")
-        except Exception:
-            raw = b""
         name = str(doc.get("filename") or "document")
+        kind = str(doc.get("kind") or "other")
         try:
+            try:
+                raw = base64.b64decode(doc.get("content_base64") or "")
+            except Exception as exc:
+                # Inside the degrade, not beside it. This used to fall back to
+                # `raw = b""`, which decodes to the empty string — so a document
+                # whose bytes did not survive the wire arrived as a document
+                # that was empty, with no note in the corpus and nothing said
+                # anywhere. Of the two, "this file did not arrive intact" is the
+                # one a reader can act on, and it is also the true one.
+                raise ValueError(
+                    "this file did not arrive intact — its content was not valid base64"
+                ) from exc
             # Routed by content first, then by name. A workbook or a PDF
             # attached under the wrong extension is an ordinary mistake and
             # both extractors are right here; reading one as text is not.
@@ -515,15 +553,28 @@ def extract_texts(documents: list[dict]) -> list[DocText]:
                 text = decode_text(raw)
         except Exception as exc:  # noqa: BLE001 — degrade, don't fail the run
             text = f"[could not extract text: {exc}]"
+            failed += 1
+            _log.warning(
+                "document text extraction failed",
+                extra={
+                    "event": "document_extract_failed",
+                    # `detail` is the one free-text extra the formatter keeps,
+                    # and it is redacted on the way to disk like the message is.
+                    "detail": f"{kind}: {exc}",
+                },
+            )
         text = text.strip()[:MAX_CHARS_PER_DOC]
         total += len(text)
-        out.append(
-            DocText(
-                id=str(doc.get("id") or ""),
-                filename=name,
-                kind=str(doc.get("kind") or "other"),
-                text=text,
-            )
+        out.append(DocText(id=str(doc.get("id") or ""), filename=name, kind=kind, text=text))
+    if failed:
+        # The summary an alert groups on: one line per run, with the
+        # denominator, so "one scanned PDF was unreadable" and "the extractor
+        # is failing on everything" are different lines rather than the same
+        # line repeated. `corpus_truncated` reports the same pair for the same
+        # reason — see the note on `total` in observability.py's allowlist.
+        _log.warning(
+            "documents could not be read",
+            extra={"event": "documents_unreadable", "count": failed, "total": len(documents)},
         )
     return out
 

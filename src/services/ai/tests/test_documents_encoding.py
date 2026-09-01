@@ -135,3 +135,66 @@ class TestRoutingByContentRatherThanName:
         # The ZIP branch must not swallow ordinary text: only bytes that are a
         # ZIP take it, and these are not.
         assert _text(CSV.encode("utf-8"), "captable.csv") == CSV.strip()
+
+
+# ── a failed extraction is also a log line (R301, methodology M6) ────────────
+#
+# The corpus note is the model's copy of the bad news. Until R301 it was the
+# only copy: nothing in `app/documents.py` logged, so an extractor failing
+# across every upload was a healthy 200 with a full corpus of apologies, and
+# the only way to see it was to read the prompts.
+def test_extraction_failure_is_warned_with_its_reason(caplog):
+    with caplog.at_level("WARNING", logger="documents"):
+        [doc] = extract_texts(
+            [
+                {
+                    "id": "d1",
+                    "filename": "Acme Robotics Cap Table.xlsx",
+                    "kind": "cap_table",
+                    # OLE2: a password-protected or legacy workbook.
+                    "content_base64": base64.b64encode(
+                        b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1rest"
+                    ).decode(),
+                }
+            ]
+        )
+    assert doc.text.startswith("[could not extract text:")
+    events = [r for r in caplog.records if getattr(r, "event", None) == "document_extract_failed"]
+    assert len(events) == 1
+    # The reason, and the kind that says what the file was meant to be.
+    assert "password-protected" in events[0].detail
+    assert events[0].detail.startswith("cap_table:")
+    # Never the filename: it is the client's own — conventionally the company
+    # name — and this log lands on a host the corpus never touches.
+    assert "Acme" not in events[0].detail
+    assert "Acme" not in caplog.text
+
+    tally = [r for r in caplog.records if getattr(r, "event", None) == "documents_unreadable"]
+    assert (tally[0].count, tally[0].total) == (1, 1)
+
+
+def test_a_run_with_no_failures_says_nothing(caplog):
+    with caplog.at_level("WARNING", logger="documents"):
+        extract_texts([_doc(CSV.encode())])
+    assert caplog.records == []
+
+
+# Bytes that did not survive the wire used to decode to `b""`, which is the
+# empty string — so a truncated upload arrived as a document that was empty,
+# with no note in the corpus and no line anywhere. Of the two readings, "this
+# did not arrive intact" is the one a reader can act on, and the true one.
+def test_undecodable_content_is_declared_rather_than_read_as_empty(caplog):
+    with caplog.at_level("WARNING", logger="documents"):
+        [doc] = extract_texts(
+            [
+                {
+                    "id": "d1",
+                    "filename": "captable.csv",
+                    "kind": "cap_table",
+                    "content_base64": "!!!not-base64!!!",
+                }
+            ]
+        )
+    assert "did not arrive intact" in doc.text
+    assert doc.text != ""
+    assert any(getattr(r, "event", None) == "document_extract_failed" for r in caplog.records)
