@@ -19,11 +19,28 @@ const HEADER_SIZE = 9;
 const TITLE_SIZE = 14;
 const ROW_H = 14;
 
+/**
+ * Anything the escape leaves behind is one Latin-1 byte, which is what makes
+ * `.length` a byte count everywhere below. Nothing else in the file is
+ * non-ASCII, so a code unit is a byte for the whole document.
+ */
+const ESCAPE_OR_WIDE = /[\\()]|[^\u0000-\u00FF]/gu;
+
 function escapePdfText(s: string): string {
   // Helvetica/WinAnsi only — replace anything outside Latin-1 to keep the
-  // content stream valid without embedding fonts.
-  const latin = [...s].map((ch) => (ch.codePointAt(0)! > 255 ? '?' : ch)).join('');
-  return latin.replaceAll('\\', '\\\\').replaceAll('(', '\\(').replaceAll(')', '\\)');
+  // content stream valid without embedding fonts, and escape the three
+  // characters a PDF literal string reserves.
+  //
+  // One pass, replacing only what matches: this used to spread the string into
+  // a per-code-point array, map, join, and then walk the result three more
+  // times with `replaceAll`. It is called once per *cell* — 70,000 of them on a
+  // 10,000-row export — and the overwhelming majority of cells contain none of
+  // these characters, so the four passes were building garbage to discover
+  // there was nothing to change. `u` keeps an astral character one match, so a
+  // surrogate pair still collapses to a single '?' the way the spread did.
+  return s.replace(ESCAPE_OR_WIDE, (ch) =>
+    ch === '\\' ? '\\\\' : ch === '(' ? '\\(' : ch === ')' ? '\\)' : '?',
+  );
 }
 
 /** Rough Helvetica width: ~0.5em average. Truncates with an ellipsis. */
@@ -98,18 +115,41 @@ export function tablePdf(title: string, columns: PdfColumn[], rows: string[][]):
         `/Resources << /Font << /F1 3 0 R >> >> /Contents ${streamId} 0 R >>`,
     );
     const content = pageContent(title, columns, pageRows, i + 1, pages.length);
-    objects.push(`<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`);
+    // `.length`, not `Buffer.byteLength`: the stream is written as latin1. See below.
+    objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
   });
 
-  let out = '%PDF-1.4\n';
+  // The cross-reference table is a list of byte offsets into the file, so the
+  // offsets have to be counted in the encoding the file is written in. They
+  // were counted with `Buffer.byteLength`, which is UTF-8, over a document
+  // emitted as `latin1` — so every character in U+0080..U+00FF was counted
+  // twice and every offset after the first accented cell pointed past where it
+  // meant to. `Société` in a company name is enough: the declared `/Length` of
+  // that page's content stream overruns `endstream`, and `startxref` lands in
+  // the middle of the `xref` keyword. Strict readers reject the file; forgiving
+  // ones rebuild the table and open it, which is why this survived a test that
+  // puts `Ünïcode` through the escape and reads the output back as latin1.
+  //
+  // Post-escape every character is a single Latin-1 byte (see `escapePdfText`)
+  // and the rest of the file is ASCII, so `.length` is the byte count — and it
+  // is O(1), which is the other half of this. `Buffer.byteLength(out)` inside
+  // the loop re-encoded the whole document once per object: 611 objects on a
+  // 10,000-row export, each flattening and scanning a rope that ends up 2.8 MB
+  // long. Quadratic, on the event loop of the service every other request is
+  // waiting on.
+  const chunks: string[] = ['%PDF-1.4\n'];
+  let length = chunks[0]!.length;
   const offsets: number[] = [];
   objects.forEach((body, i) => {
-    offsets.push(Buffer.byteLength(out));
-    out += `${i + 1} 0 obj\n${body}\nendobj\n`;
+    offsets.push(length);
+    const chunk = `${i + 1} 0 obj\n${body}\nendobj\n`;
+    chunks.push(chunk);
+    length += chunk.length;
   });
-  const xrefStart = Buffer.byteLength(out);
-  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const off of offsets) out += `${String(off).padStart(10, '0')} 00000 n \n`;
-  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
-  return Buffer.from(out, 'latin1');
+  const xrefStart = length;
+  let tail = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) tail += `${String(off).padStart(10, '0')} 00000 n \n`;
+  tail += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  chunks.push(tail);
+  return Buffer.from(chunks.join(''), 'latin1');
 }
