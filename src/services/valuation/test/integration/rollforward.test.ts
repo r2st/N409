@@ -214,7 +214,11 @@ describe.skipIf(!dbUp)('roll-forward', () => {
     // readable *by ops* — which is why what is exercised here is the id that
     // resolves to nothing.
     expect((await run({ prior_valuation_id: newUlid() })).statusCode).toBe(404);
-    expect((await run({ prior_valuation_id: 'not-a-ulid' })).statusCode).toBe(404);
+    // A *malformed* id is 422 since round 331: `prior_valuation_id` is
+    // `ulidField()`, so the schema names the field rather than letting the
+    // string reach a lookup. That leaks nothing the 404 above protects —
+    // "this is not an id" is not an answer about whether one exists.
+    expect((await run({ prior_valuation_id: 'not-a-ulid' })).statusCode).toBe(422);
     // And an ops caller may legitimately bridge from an engagement they do not
     // own, which is the case that would break if this were scoped by owner.
     expect((await run({ prior_valuation_id: foreignId })).statusCode).toBe(201);

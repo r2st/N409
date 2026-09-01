@@ -8,6 +8,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
 import { checkWindowOrder, dateWindowFields } from '../domain/dateWindow.js';
 import { invalidQuery } from '../domain/validationProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * Global activity audit viewer (P2 #12): one ops-only feed over
@@ -18,8 +19,8 @@ import { invalidQuery } from '../domain/validationProblem.js';
 const ListQuery = z
   .object({
     scope: z.enum(['valuations', 'admin', 'all']).default('all'),
-    valuation_id: z.string().optional(),
-    actor_id: z.string().optional(),
+    valuation_id: ulidField().optional(),
+    actor_id: ulidField().optional(),
     actor_type: z.enum(['human', 'ai', 'engine', 'system']).optional(),
     type: z.string().max(100).optional(),
     source: z.string().max(100).optional(),

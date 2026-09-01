@@ -30,6 +30,7 @@ import { refuseIfRetired, refuseIfSubjectRetired } from '../domain/retiredEngage
 import { notifyCommentPosted } from '../hooks/commentNotifications.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 
 const PostBody = z.object({
   kind: z.enum(['chat', 'note']),
@@ -51,7 +52,7 @@ const InboxBody = z.object({
   body: z.string().min(1).max(100_000),
   message_id: z.string().max(500).optional(),
   /** Explicit routing wins over subject/sender matching. */
-  valuation_id: z.string().optional(),
+  valuation_id: ulidField().optional(),
 });
 
 function actorFor(principal: Principal): EventActor {

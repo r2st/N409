@@ -26,6 +26,7 @@ import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { describeForUser, InternalServiceError } from '../clients/internal.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * Workflow engine routes (M4, P1 #22) + bulk actions (P1 #23). All mutations
@@ -33,13 +34,13 @@ import { invalidBody } from '../domain/validationProblem.js';
  * hook then fires the auto email workflows / notifications.
  */
 
-const ReassignBody = z.object({ reviewer_id: z.string().nullable() });
+const ReassignBody = z.object({ reviewer_id: ulidField().nullable() });
 
 const BulkBody = z.object({
   ids: z.array(z.string()).min(1).max(200),
   action: z.enum(BULK_ACTIONS),
   state: z.enum(VALUATION_STATES).optional(),
-  reviewer_id: z.string().nullable().optional(),
+  reviewer_id: ulidField().nullable().optional(),
 });
 
 /**
@@ -53,7 +54,7 @@ export const BulkActionBody = z.object({
   params: z
     .object({
       state: z.enum(VALUATION_STATES).optional(),
-      reviewer_id: z.string().nullable().optional(),
+      reviewer_id: ulidField().nullable().optional(),
     })
     .optional(),
 });

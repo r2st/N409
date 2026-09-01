@@ -72,7 +72,7 @@ import { forbidden } from '../domain/accessProblem.js';
 const ListQuery = z.object({
   q: z.string().max(200).optional(),
   role: z.enum(ROLE_KEYS).optional(),
-  partner_id: z.string().optional(),
+  partner_id: ulidField().optional(),
   include_deleted: flagParam(false),
   page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(100).default(25),

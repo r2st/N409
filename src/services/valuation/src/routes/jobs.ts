@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import {
   JOB_SOURCES,
@@ -18,6 +18,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * The background job monitor (409.ai's Published Tasks page).
@@ -41,7 +42,7 @@ export function registerJobRoutes(app: FastifyInstance, deps: { pool: pg.Pool })
   const ListQuery = z.object({
     source: z.enum(JOB_SOURCES).optional(),
     status: z.enum(JOB_STATUSES).optional(),
-    valuation_id: z.string().optional(),
+    valuation_id: ulidField().optional(),
     page: pageParam(),
     per_page: z.coerce.number().int().min(1).max(100).default(25),
   });
@@ -51,7 +52,6 @@ export function registerJobRoutes(app: FastifyInstance, deps: { pool: pg.Pool })
     const parsed = ListQuery.safeParse(req.query);
     if (!parsed.success) throw invalidQuery(parsed.error);
     const q = parsed.data;
-    if (q.valuation_id && !isUlid(q.valuation_id)) throw problems.badRequest('Invalid valuation_id');
 
     const { items, total } = await listJobs(deps.pool, {
       source: q.source,

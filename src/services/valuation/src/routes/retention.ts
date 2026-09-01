@@ -37,6 +37,7 @@ import {
 } from '../repos/retention.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { withTransaction } from '../db/pool.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * Data retention + legal hold administration (feature 10). Admin-only. The
@@ -51,7 +52,7 @@ const PolicyBody = z.object({
 });
 const HoldBody = z.object({
   scope: z.enum(['global', 'valuation', 'user']),
-  reference_id: z.string().nullable().optional(),
+  reference_id: ulidField().nullable().optional(),
   reason: z.string().trim().min(1).max(1000),
 });
 

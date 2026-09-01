@@ -31,6 +31,7 @@ import {
 import { requirePrincipal } from '../plugins/auth.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * Delivery reporting, the suppression list, and provider event ingest (0163).
@@ -75,7 +76,7 @@ const SuppressBody = z.object({
  */
 const WebhookEvent = z.object({
   /** The outbox row this is about. */
-  message_id: z.string().refine(isUlid, 'Not a message id'),
+  message_id: ulidField(),
   kind: z.enum(['delivered', 'bounced', 'complained', 'deferred', 'opened']),
   /** ISO 8601. Defaults to now when a provider does not date its events. */
   occurred_at: z.string().datetime().optional(),

@@ -56,6 +56,7 @@ import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
 import { UlidParam } from '../plugins/params.js';
+import { ulidField } from '../domain/ulidField.js';
 
 const CreateBody = z.object({
   kind: z.enum(VALUATION_KINDS),
@@ -93,7 +94,7 @@ const PatchBody = z
     // was checked here, so both halves of getting it wrong — a string that is
     // not an id, and an id that is not a user — reached the driver and came
     // back as a 500. Shape here, existence in the handler.
-    assigned_reviewer_id: z.string().refine(isUlid, 'Not a valid id').nullable(),
+    assigned_reviewer_id: ulidField().nullable(),
     due_date: z.string().datetime().nullable(),
     delivery_days: int4Positive().nullable(),
     paid_status: z.enum(['unpaid', 'paid', 'paid_by_partner']),
@@ -134,9 +135,9 @@ export const ValuationFilterQuery = z.object({
         .slice(0, 200),
     )
     .optional(),
-  reviewer_id: z.string().optional(),
-  partner_id: z.string().optional(),
-  user_id: z.string().optional(),
+  reviewer_id: ulidField().optional(),
+  partner_id: ulidField().optional(),
+  user_id: ulidField().optional(),
   source: z.enum(VALUATION_SOURCES).optional(),
   paid_status: z.enum(['unpaid', 'paid', 'paid_by_partner']).optional(),
   waiting_on_client: flagParam(),

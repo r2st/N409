@@ -59,7 +59,7 @@ const PatchBody = z
   .strict();
 
 const ListQuery = z.object({
-  valuation_id: z.string().optional(),
+  valuation_id: ulidField().optional(),
   assignee: z.string().optional(), // 'me' or a user id
   status: z.enum(REVIEW_TASK_STATUSES).optional(),
   overdue: flagParam(),

@@ -30,6 +30,7 @@ import {
 } from '../repos/rollforwardRuns.js';
 import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * Roll-forward — the bridge from the prior 409A to this one.
@@ -79,7 +80,7 @@ const Adjustment = z
 
 const RunBody = z
   .object({
-    prior_valuation_id: z.string(),
+    prior_valuation_id: ulidField(),
     /**
      * Appreciation applied over the gap. Omitted is the ordinary case: the
      * prior engagement's own concluded cost of capital is used where it has

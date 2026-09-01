@@ -39,6 +39,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { isUniqueViolation } from '../db/pgError.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { templateText } from '../domain/templateText.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * Communication templates + auto email campaigns (409.ai §15.5/§15.6).
@@ -272,7 +273,7 @@ export function registerCommunicationRoutes(
 
       const parsed = z
         .object({
-          valuation_id: z.string().optional(),
+          valuation_id: ulidField().optional(),
           // Bounded on all three axes — how many substitutions, how long each
           // one is, and whether a number is a number. The preview renders these
           // into the template body, so an unbounded map is an unbounded email.

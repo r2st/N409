@@ -33,6 +33,7 @@ import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { optionalCapabilities, type CapabilityConfig } from '../domain/optionalCapabilities.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 
 const DateOnly = z
   .string()
@@ -279,7 +280,7 @@ export function registerOperationsRoutes(
     const query = z
       .object({
         limit: z.coerce.number().int().min(1).max(500).optional(),
-        partner_id: z.string().min(1).max(64).optional(),
+        partner_id: ulidField().optional(),
       })
       .safeParse(req.query ?? {});
     if (!query.success) throw invalidQuery(query.error);
@@ -311,7 +312,7 @@ export function registerOperationsRoutes(
     const body = z
       .object({
         ids: z.array(z.string().min(1).max(64)).max(1000).optional(),
-        partner_id: z.string().min(1).max(64).optional(),
+        partner_id: ulidField().optional(),
       })
       .safeParse(req.body ?? {});
     if (!body.success) throw invalidBody('Invalid body', body.error);

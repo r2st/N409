@@ -11,6 +11,7 @@ import { deliveryStateOf } from '../domain/emailDelivery.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * In-app notifications (M4, P2 #27). Strictly per-user: every query is scoped
@@ -38,7 +39,7 @@ const PreferencesBody = z.object({
 
 const OutboxQuery = z.object({
   status: z.enum(['queued', 'sent', 'failed', 'skipped']).optional(),
-  valuation_id: z.string().optional(),
+  valuation_id: ulidField().optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
 });
 
