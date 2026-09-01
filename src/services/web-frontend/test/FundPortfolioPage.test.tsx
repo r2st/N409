@@ -65,6 +65,8 @@ interface Overrides {
   funds?: unknown[];
   detail?: unknown;
   marks?: unknown[];
+  /** Engagements of kind `fund` the link picker may offer. */
+  engagements?: { id: string; company_name: string }[];
   /** Return a Response to answer a write yourself; undefined falls through. */
   onWrite?: (path: string, body: Record<string, unknown>) => Response | undefined;
 }
@@ -86,6 +88,7 @@ function mockApi(over: Overrides = {}) {
     if (path.includes('/positions/') && path.endsWith('/marks')) {
       return jsonResponse({ marks: over.marks ?? [] });
     }
+    if (path.includes('/valuations?')) return jsonResponse({ valuations: over.engagements ?? [] });
     if (path.endsWith('/nav')) return jsonResponse({ nav });
     if (/\/funds\/[^/]+$/.test(path)) return jsonResponse(over.detail ?? detail);
     return jsonResponse({ funds: over.funds ?? [fund] });
@@ -801,6 +804,71 @@ describe('FundPortfolioPage', () => {
 
       release();
       await screen.findByRole('button', { name: 'Save LP terms' });
+    });
+  });
+
+  /**
+   * The engagement link.
+   *
+   * `PUT /funds/:id/valuation` is what makes `loadFundReport` able to find the
+   * portfolio at all — it looks the fund up *by* `valuation_id` and returns
+   * null otherwise, at which point the deliverable renders with no NAV
+   * schedule and nothing on the page or in the report says why. The route has
+   * existed since 0109 and no client ever called it, so the link could not be
+   * made from the product.
+   */
+  describe('linking the portfolio to an engagement', () => {
+    it('offers the fund engagements and saves the chosen one', async () => {
+      const sent = mockApi({
+        engagements: [
+          { id: 'V1', company_name: 'Growth Fund I LP' },
+          { id: 'V2', company_name: 'Credit Fund II LP' },
+        ],
+      });
+      const user = userEvent.setup();
+      renderPage();
+
+      const select = await screen.findByRole('combobox', { name: 'Linked engagement' });
+      expect(within(select).getByRole('option', { name: 'Credit Fund II LP' })).toBeInTheDocument();
+
+      await user.selectOptions(select, 'V2');
+
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0]!.method).toBe('PUT');
+      expect(sent[0]!.path).toContain('/funds/f1/valuation');
+      expect(sent[0]!.body).toEqual({ valuation_id: 'V2' });
+    });
+
+    it('detaches with the empty choice rather than sending an empty string', async () => {
+      const sent = mockApi({
+        detail: { ...detail, fund: { ...fund, valuation_id: 'V1' } },
+        engagements: [{ id: 'V1', company_name: 'Growth Fund I LP' }],
+      });
+      const user = userEvent.setup();
+      renderPage();
+
+      const select = await screen.findByRole('combobox', { name: 'Linked engagement' });
+      expect(select).toHaveValue('V1');
+      await user.selectOptions(select, '');
+
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0]!.body).toEqual({ valuation_id: null });
+    });
+
+    /**
+     * A picker that could not load its list must not offer to detach what is
+     * already attached — the select's value has to stay the stored link, not
+     * fall back to "not linked" because the option is missing.
+     */
+    it('keeps the current link selectable when the engagement list fails', async () => {
+      mockApi({
+        detail: { ...detail, fund: { ...fund, valuation_id: 'V9' } },
+        engagements: [],
+      });
+      renderPage();
+
+      const select = await screen.findByRole('combobox', { name: 'Linked engagement' });
+      expect(select).toHaveValue('V9');
     });
   });
 });

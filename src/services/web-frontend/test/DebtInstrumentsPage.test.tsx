@@ -11,14 +11,40 @@ function instrument(instrument_type: string) {
   return { id: 'i1', name: 'Note A', instrument_type, currency: 'USD', params: {} };
 }
 
-function mockApi(instrument_type: string) {
-  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+/** Every write the page made, in order — the engagement link is one. */
+interface Sent {
+  path: string;
+  method: string;
+  body: Record<string, unknown>;
+}
+
+function mockApi(
+  instrument_type: string,
+  over: { engagements?: { id: string; company_name: string }[]; valuation_id?: string | null } = {},
+) {
+  const sent: Sent[] = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
-    if (/\/debt\/instruments\/[^/]+$/.test(path)) {
-      return jsonResponse({ instrument: instrument(instrument_type), credit_terms: null, valuations: [] });
+    const method = init?.method ?? 'GET';
+    if (method !== 'GET') {
+      sent.push({
+        path,
+        method,
+        body: init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {},
+      });
+      return jsonResponse({});
+    }
+    if (path.includes('/valuations?')) return jsonResponse({ valuations: over.engagements ?? [] });
+    if (/\/debt\/instruments\/[^/?]+$/.test(path)) {
+      return jsonResponse({
+        instrument: { ...instrument(instrument_type), valuation_id: over.valuation_id ?? null },
+        credit_terms: null,
+        valuations: [],
+      });
     }
     return jsonResponse({ instruments: [instrument(instrument_type)] });
   });
+  return sent;
 }
 
 function renderPage() {
@@ -38,7 +64,7 @@ describe('DebtInstrumentsPage', () => {
    * instrument's currency column.
    */
   it('refuses a nameless instrument, and says which box', async () => {
-    const fetchSpy = mockApi('bond');
+    const sent = mockApi('bond');
     const user = userEvent.setup();
     renderPage();
 
@@ -46,11 +72,11 @@ describe('DebtInstrumentsPage', () => {
     await user.click(screen.getByRole('button', { name: 'Create' }));
 
     expect(await screen.findByText('Name is required.')).toBeInTheDocument();
-    expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+    expect(sent.filter((r) => r.method === 'POST')).toHaveLength(0);
   });
 
   it('refuses a currency that is not a three-letter code', async () => {
-    const fetchSpy = mockApi('bond');
+    const sent = mockApi('bond');
     const user = userEvent.setup();
     renderPage();
 
@@ -63,7 +89,7 @@ describe('DebtInstrumentsPage', () => {
     expect(
       await screen.findByText('Currency must be a three-letter ISO 4217 code, like USD.'),
     ).toBeInTheDocument();
-    expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+    expect(sent.filter((r) => r.method === 'POST')).toHaveLength(0);
   });
 
   it('renders a contextual HelpIcon that opens the debt-valuation article', async () => {
@@ -144,5 +170,27 @@ describe('DebtInstrumentsPage', () => {
 
     open();
     await screen.findByRole('button', { name: 'Save credit terms' });
+  });
+
+  /**
+   * `PUT /debt/instruments/:id/valuation` is what lets `loadDebtReport` find
+   * the instrument — it looks it up *by* `valuation_id` and returns null
+   * otherwise, so the deliverable renders with no instrument pack in it. The
+   * route has existed since 0109 and no client ever called it, so the link
+   * could not be made from the product.
+   */
+  it('links the instrument to a debt engagement', async () => {
+    const sent = mockApi('term_loan', { engagements: [{ id: 'V7', company_name: 'Acme Note' }] });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Note A/ }));
+    const select = await screen.findByRole('combobox', { name: 'Linked engagement' });
+    await user.selectOptions(select, 'V7');
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.method).toBe('PUT');
+    expect(sent[0]!.path).toContain('/debt/instruments/i1/valuation');
+    expect(sent[0]!.body).toEqual({ valuation_id: 'V7' });
   });
 });

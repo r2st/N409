@@ -26,6 +26,7 @@ import {
   useRetry,
 } from '../components/ui';
 import { HelpIcon } from '../components/HelpIcon';
+import { MeasurementSubjectLink } from '../components/MeasurementSubjectLink';
 
 /**
  * ASC 820 Fund Portfolio (feature: ASC 820 Fund Holdings). Distinct from the
@@ -42,6 +43,8 @@ interface Fund {
   fund_type: string;
   currency: string;
   vintage_year: number | null;
+  /** The engagement whose report prints this portfolio — see MeasurementSubjectLink. */
+  valuation_id: string | null;
 }
 interface Mark {
   id: string;
@@ -437,6 +440,12 @@ function FundDetailView({
               <div className="overline text-ink-400">Portfolio</div>
               <div className="truncate text-sm font-semibold text-ink-900">{fund.name}</div>
             </div>
+            <MeasurementSubjectLink
+              endpoint={`/funds/${fundId}/valuation`}
+              kind="fund"
+              linkedId={fund.valuation_id}
+              onChanged={() => void load()}
+            />
             <div className="ml-auto flex gap-2">
               <Button
                 variant="secondary"

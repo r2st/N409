@@ -15,6 +15,7 @@ import {
   useRetry,
 } from '../components/ui';
 import { HelpIcon } from '../components/HelpIcon';
+import { MeasurementSubjectLink } from '../components/MeasurementSubjectLink';
 
 /**
  * Debt Instruments (feature: Debt Valuation Engine). Bonds, term loans,
@@ -154,6 +155,8 @@ interface Instrument {
   instrument_type: InstrumentType;
   currency: string;
   params: Record<string, unknown>;
+  /** The engagement whose report prints this instrument — see MeasurementSubjectLink. */
+  valuation_id: string | null;
 }
 interface CreditTerms {
   rating: string | null;
@@ -573,6 +576,12 @@ function InstrumentDetail({
               <div className="overline text-ink-400">Instrument</div>
               <div className="truncate text-sm font-semibold text-ink-900">{instrument.name}</div>
             </div>
+            <MeasurementSubjectLink
+              endpoint={`/debt/instruments/${instrumentId}/valuation`}
+              kind="debt"
+              linkedId={instrument.valuation_id}
+              onChanged={() => void load()}
+            />
             <div className="ml-auto flex gap-2">
               <Button
                 variant="secondary"
