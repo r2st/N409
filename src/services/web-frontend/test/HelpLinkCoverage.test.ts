@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { articleById } from '../src/data/helpContent';
-import { TAB_HELP } from '../src/pages/valuation/ValuationWorkspace';
+import { helpArticleFor, TAB_HELP } from '../src/pages/valuation/ValuationWorkspace';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, '..', 'src');
@@ -46,6 +46,23 @@ describe('help link coverage', () => {
     for (const [tab, article] of Object.entries(TAB_HELP)) {
       expect(articleById(article), `TAB_HELP["${tab}"] → "${article}" does not exist`).toBeTruthy();
     }
+  });
+
+  /**
+   * `activeTab` is the path segment after the workspace base, so it is whatever
+   * the address bar says. A bare `TAB_HELP[activeTab]` was answered from
+   * `Object.prototype` for `constructor`, `toString` and friends — none of them
+   * nullish, so the `?? 'valuations-overview'` fallback never ran and the help
+   * icon pointed at an article named after a function's source text.
+   */
+  it('falls back to the overview for a tab segment named after a prototype member', () => {
+    for (const segment of ['constructor', 'toString', 'valueOf', '__proto__', 'hasOwnProperty']) {
+      const article = helpArticleFor(segment);
+      expect(article, segment).toBe('valuations-overview');
+      expect(articleById(article), segment).toBeTruthy();
+    }
+    // The real tabs still resolve to their own article.
+    expect(helpArticleFor('progress')).toBe(TAB_HELP.progress);
   });
 
   it('covers every workspace tab route in TAB_HELP', () => {

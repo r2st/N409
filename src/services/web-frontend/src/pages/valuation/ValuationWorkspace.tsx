@@ -60,6 +60,19 @@ export const TAB_HELP: Record<string, string> = {
 };
 
 /**
+ * The help article for a workspace tab, defaulting to the overview.
+ *
+ * `Object.hasOwn` rather than a bare lookup, because the argument is a path
+ * segment — whatever follows the workspace base in the address bar.
+ * `/valuations/:id/constructor` was answered from `Object.prototype` with a
+ * value that is not nullish, so the fallback never ran and the help icon linked
+ * at an article named after a function's source text.
+ */
+export function helpArticleFor(tab: string): string {
+  return Object.hasOwn(TAB_HELP, tab) ? TAB_HELP[tab]! : 'valuations-overview';
+}
+
+/**
  * Report types with a dedicated specialty engine (domain/specialty.ts
  * SPECIALTY_KINDS). Mirrored here only to decide whether to *show* the tab —
  * the tab itself reads the engine definition from the server, so this list can
@@ -413,7 +426,7 @@ export function ValuationWorkspace() {
 
   // Active tab = first path segment after the workspace base ('' on Overview).
   const activeTab = location.pathname.slice(base.length).replace(/^\//, '').split('/')[0] ?? '';
-  const helpArticle = TAB_HELP[activeTab] ?? 'valuations-overview';
+  const helpArticle = helpArticleFor(activeTab);
 
   return (
     <div>
