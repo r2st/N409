@@ -228,7 +228,17 @@ export interface Calculation {
   valuation_id: string;
   engine_version: string;
   status: 'succeeded' | 'failed';
-  inputs: Record<string, unknown>;
+  /**
+   * The engine request document, on the surfaces that serve it.
+   *
+   * Optional because the run *history* does not carry it and never needed to:
+   * `GET /valuations/:id/calculations` used to ship twenty of these — the whole
+   * cap table, every comparable, the full params document, per run — to draw a
+   * list of dates and figures, and nothing here read one. The inspector's
+   * detail route serves the same document under `request`, which is the field
+   * anyone reproducing a run copies from.
+   */
+  inputs?: Record<string, unknown>;
   results: Record<string, unknown> | null;
   equity_value: string | null;
   fmv_per_share: string | null;

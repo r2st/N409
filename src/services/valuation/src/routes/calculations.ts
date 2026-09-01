@@ -12,7 +12,7 @@ import {
   createCalculation,
   findCalculationWithTrace,
   latestApproachBaseline,
-  listCalculations,
+  listCalculationHistory,
   type CalculationRow,
   type CalculationStep,
 } from '../repos/calculations.js';
@@ -622,7 +622,7 @@ export function registerCalculationRoutes(
     if (!isOps(principal)) throw problems.forbidden('Calculations are operations-only');
     const { id } = req.params as { id: string };
     await loadValuation(id);
-    return listCalculations(deps.pool, id);
+    return listCalculationHistory(deps.pool, id);
   });
 
   /**

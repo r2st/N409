@@ -400,6 +400,57 @@ export async function listCalculations(
   return { calculations: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
+/** One run of the history, as the panel that draws it needs it: no `inputs`. */
+export type CalculationHistoryRow = Omit<CalculationRow, 'inputs'> & { has_trace: boolean };
+
+/**
+ * The same window as {@link listCalculations}, minus the engine request.
+ *
+ * ## Why the request document is not in the history (R338, methodology M8)
+ *
+ * `inputs` is the exact payload posted to the engine: the whole cap table, every
+ * comparable, the full params document. It is the largest column on the row and
+ * on a big engagement it is larger than `results` — and `GET
+ * /valuations/:id/calculations` shipped twenty of them to draw a list of dates,
+ * statuses and per-share figures.
+ *
+ * Nothing on the receiving end has ever read it. `CalculationPanel` takes
+ * `results.approaches` / `discounts` / `assumptions` off the newest run that has
+ * them, `results.recomputed` off each row, and the typed scalar columns for the
+ * rest; `inputs` appears nowhere in it. The one surface that does want the
+ * request already has its own door — `GET …/calculations/:calculationId` returns
+ * it under `request`, named for what it is, which is where somebody reproducing
+ * a run by hand copies it from. So the column was read out of the table, sent
+ * over the socket, parsed into a JS object by the driver and serialised back
+ * into JSON, twenty times per page view, for no reader.
+ *
+ * The same argument `listCalculationSummaries` was written for, and the same
+ * measurements: 11 kB per document on a ten-class cap table, 67 kB at fifty,
+ * 613 kB at the 200-class cap. That reader narrowed all the way to seven scalars
+ * because its two callers wanted nothing else. This one cannot — the panel does
+ * read `results` — so it drops the half nobody reads and keeps the half
+ * somebody does.
+ *
+ * `listCalculations` stays exactly as it is for the evidence bundle, which is
+ * the caller that genuinely wants both documents for every run: the bundle is an
+ * archive of what was computed and from what.
+ */
+export async function listCalculationHistory(
+  pool: pg.Pool,
+  valuationId: string,
+  opts: { limit?: number } = {},
+): Promise<{ calculations: CalculationHistoryRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? CALCULATION_PAGE_LIMIT, 1), CALCULATION_PAGE_LIMIT);
+  const { rows } = await pool.query<CalculationHistoryRow>(
+    `SELECT id, valuation_id, engine_version, status, results,
+            equity_value, fmv_per_share, error, diagnostics, created_by, created_at,
+            trace IS NOT NULL AS has_trace
+       FROM calculations WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [valuationId, limit + 1],
+  );
+  return { calculations: rows.slice(0, limit), truncated: rows.length > limit };
+}
+
 /**
  * The same window, for the two surfaces that read a run's *headline* and throw
  * the documents away.
