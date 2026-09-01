@@ -27,11 +27,14 @@ and ``info``; the default is the yfinance-backed one, and tests inject a stub.
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from collections.abc import Mapping
 
 __all__ = ["MarketFeedClient", "YFinanceProvider", "default_provider", "UNSET"]
+
+_log = logging.getLogger("market_feed")
 
 # Multiples we know how to read off a yfinance ``info`` dict.
 _INFO_MULTIPLE_KEYS = {
@@ -141,7 +144,50 @@ class MarketFeedClient:
         self._clock = clock
 
     # ── internals ─────────────────────────────────────────────────────────────
-    def _fallback(self, reason: str, fallback) -> dict:
+    def _fallback(self, reason: str, fallback, *, kind: str = "unknown", ticker=None) -> dict:
+        """The caller's own figures, labelled as such — and a log line saying so.
+
+        WHY IT LOGS (R305, methodology M11). Every failure this module can have
+        is converted here into a 200 carrying ``source: "fallback"``: the
+        provider missing, a network error, a parse error, a ticker the source
+        does not carry. That is the right answer to give the caller — a
+        valuation must not hard-fail because Yahoo is having an afternoon — but
+        until this line it was also the *only* record that anything had gone
+        wrong. Nothing was logged here, the HTTP layer saw a 200 and recorded a
+        success, and on the Node side a fallback payload is dropped into a
+        per-ticker ``excluded``/``unavailable`` list that only ever reaches the
+        analyst's screen.
+
+        So a market-data outage — yfinance unreachable, credentials expired,
+        the package gone from an image — presented as: every volatility
+        estimate refusing with "no comparable had usable price history", every
+        comparables refresh reporting each row unavailable, and not one line in
+        any log at any tier. The first question of M11 is how quickly you know;
+        the answer was that somebody phones an analyst.
+
+        `warning` rather than `info`: ``yfinance`` is a declared requirement
+        (requirements.txt), so a deployment reaching the provider-absent branch
+        is misbuilt rather than configured that way, and the fetch-failure
+        branch is an upstream that is down. Per call rather than once, because
+        the rate is the diagnosis — one ticker the source does not carry looks
+        nothing like every ticker failing.
+
+        The reason string is where the provider's own words are, and it goes
+        both into this line and into the payload the caller already surfaces.
+        """
+        _log.warning(
+            "market feed fell back to caller-supplied figures",
+            extra={
+                "event": "market_feed_fallback",
+                "feed_kind": kind,
+                "ticker": ticker,
+                # `detail` rather than a key of its own: this string quotes the
+                # provider's exception, which is free text an input can reach,
+                # and `detail` is the field the formatter redacts like the
+                # message. See `_EXTRA_KEYS` in app/observability.py.
+                "detail": reason,
+            },
+        )
         payload: dict = {"source": "fallback", "warning": reason}
         if isinstance(fallback, Mapping):
             payload.update(dict(fallback))
@@ -163,14 +209,24 @@ class MarketFeedClient:
             if self._clock() < expires_at:
                 return result
             del self.cache[key]  # stale — re-fetch below, or fall back
+        # `key` is ("prices", ticker, …) / ("financials", ticker) / ("info", …)
+        # for every caller, so it carries the two labels a reader of the log
+        # line needs to tell one dead ticker from a dead source.
+        kind = str(key[0]) if key else "unknown"
+        ticker = key[1] if len(key) > 1 else None
         if self.provider is None:
             return self._fallback(
-                "no market-data provider available (yfinance not installed)", fallback
+                "no market-data provider available (yfinance not installed)",
+                fallback,
+                kind=kind,
+                ticker=ticker,
             )
         try:
             result = produce(self.provider)
         except Exception as exc:  # network/parse/library errors → fallback, never raise
-            return self._fallback(f"market-data fetch failed: {exc}", fallback)
+            return self._fallback(
+                f"market-data fetch failed: {exc}", fallback, kind=kind, ticker=ticker
+            )
         self._store(key, result)
         return result
 
@@ -242,7 +298,9 @@ class MarketFeedClient:
         unknown = [m for m in wanted if m not in _INFO_MULTIPLE_KEYS]
         if unknown:
             # Not a hard input error — surface via the fallback channel.
-            return self._fallback(f"unknown multiples requested: {unknown}", fallback)
+            return self._fallback(
+                f"unknown multiples requested: {unknown}", fallback, kind="multiples"
+            )
 
         companies: dict[str, dict] = {}
         any_live = False
@@ -258,7 +316,9 @@ class MarketFeedClient:
                 companies[ticker] = {"warning": entry.get("warning")}
 
         if not any_live:
-            return self._fallback("no live multiples available for any ticker", fallback)
+            return self._fallback(
+                "no live multiples available for any ticker", fallback, kind="multiples"
+            )
 
         # Median per metric across the tickers that returned a usable value.
         summary: dict[str, float] = {}

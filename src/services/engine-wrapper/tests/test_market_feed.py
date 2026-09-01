@@ -113,6 +113,75 @@ def test_unknown_metric_falls_back():
     assert out["source"] == "fallback"
 
 
+def test_a_fallback_says_so_in_the_log_not_only_in_the_payload(caplog):
+    """A market-data outage has to be visible to somebody who is not an analyst.
+
+    R305, methodology M11. Every failure this module can have becomes a 200
+    carrying ``source: "fallback"`` — which is the right answer to give a
+    valuation, and was until now the only record that anything had gone wrong.
+    The HTTP layer sees a success, the Node caller drops the payload into a
+    per-ticker "unavailable" list, and that list is read by an analyst on a
+    screen. Nothing at any tier logged, so yfinance being unreachable looked
+    exactly like a peer set of tickers nobody carries prices for.
+    """
+    c = MarketFeedClient(provider=BoomProvider())
+    with caplog.at_level("WARNING", logger="market_feed"):
+        out = c.get_historical_prices("DDOG", "2026-01-01", "2026-02-01")
+
+    assert out["source"] == "fallback"
+    records = [r for r in caplog.records if getattr(r, "event", None) == "market_feed_fallback"]
+    assert len(records) == 1
+    # The two labels that separate one dead ticker from a dead source, and the
+    # provider's own words — which belong here rather than only on a screen.
+    # `detail` because the formatter's allowlist names it and redacts it; a
+    # key it does not name is dropped in silence.
+    assert records[0].feed_kind == "prices"
+    assert records[0].ticker == "DDOG"
+    assert "network down" in records[0].detail
+
+
+def test_a_missing_provider_is_logged_too(caplog):
+    """The other branch, and the one a misbuilt image reaches on every call.
+
+    ``yfinance`` is a declared requirement, so a deployment with no provider is
+    broken rather than configured that way — and it degrades every volatility
+    estimate and every comparables refresh on the box, silently.
+    """
+    c = MarketFeedClient(provider=None)
+    with caplog.at_level("WARNING", logger="market_feed"):
+        c.get_company_financials("DDOG", fallback={"beta": 1.3})
+
+    records = [r for r in caplog.records if getattr(r, "event", None) == "market_feed_fallback"]
+    assert len(records) == 1
+    assert records[0].feed_kind == "financials"
+    assert records[0].ticker == "DDOG"
+    assert "yfinance not installed" in records[0].detail
+
+
+def test_a_served_answer_logs_nothing():
+    """The vacuity guard: a client that logged on every call would be noise.
+
+    The rate is the diagnosis — one ticker the source does not carry has to
+    look different from every ticker failing — which only holds if a healthy
+    fetch is silent.
+    """
+    import logging
+
+    c = MarketFeedClient(provider=StubProvider())
+    seen = []
+    handler = logging.Handler()
+    handler.emit = seen.append
+    log = logging.getLogger("market_feed")
+    log.addHandler(handler)
+    try:
+        out = c.get_historical_prices("DDOG", "2026-01-01", "2026-02-01")
+    finally:
+        log.removeHandler(handler)
+
+    assert out["source"] == "yfinance"
+    assert [r for r in seen if getattr(r, "event", None) == "market_feed_fallback"] == []
+
+
 def test_market_feed_endpoint_prices(route_provider):
     # Swap the shared client's provider for a stub so the route is exercised
     # without a network dependency.

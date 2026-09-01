@@ -88,6 +88,15 @@ _EXTRA_KEYS = (
     "relative_error",
     "tolerance",
     "paths",
+    # What a market-feed line is about: the feed method — prices, financials or
+    # multiples — and the symbol it was asked for. Added in R305 with the first
+    # log line this tier's `app/engine` package has ever written — a fallback
+    # payload, which is how every market-data failure is reported. Two named
+    # dimensions rather than prose in the message, because the diagnosis is a
+    # group-by: one ticker the source does not carry looks nothing like every
+    # ticker on the box failing, and only the second is an outage.
+    "feed_kind",
+    "ticker",
 )
 
 # ── Redaction ────────────────────────────────────────────────────────────────
