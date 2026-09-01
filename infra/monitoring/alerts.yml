@@ -66,6 +66,51 @@ groups:
           summary: '{{ $labels.service }} has restarted repeatedly in the last ten minutes'
           runbook: 'journalctl -u n409-<unit> -n 200 — look for uncaughtException/unhandledRejection'
 
+      # A partial deploy. `deploy.sh` rsyncs, builds and restarts five units, and
+      # a unit that fails to come back on the new code does not fail its
+      # readiness probe — it is perfectly healthy, on yesterday's build. So the
+      # estate serves a mixture: the web tier calling a valuation tier that
+      # predates the contract it is calling with, or a rollback that took on two
+      # units out of three. Nothing here noticed, and `n409_build_info` — the
+      # gauge written so that "what is live" is answerable from outside the box —
+      # had no rule against it at all.
+      #
+      # Covers the three Node units, which are the three that register this
+      # gauge. The two Python units carry their own `build_info` and have no
+      # scrape endpoint to publish it on; that is R313's open item, and a unit
+      # this rule cannot see is a reason to close it rather than to weaken the
+      # rule.
+      #
+      # Counting distinct `sha` rather than comparing to any expected value:
+      # there is nothing on the box that knows what the intended build is, and
+      # the question worth asking does not need one. Two builds live at once is
+      # wrong however it happened.
+      #
+      # `for` spans a deploy: the units restart one at a time and the estate is
+      # legitimately mixed for the seconds in between.
+      - alert: EstateBuildSkew
+        expr: count(count by (sha) (n409_build_info)) > 1
+        for: 15m
+        labels: { severity: page }
+        annotations:
+          summary: 'the estate is running more than one build'
+          runbook: 'sum by (service, sha) (n409_build_info) — then re-run deploy.sh for the odd one out'
+
+      # And the case that makes the rule above unable to fire: no unit knows what
+      # it is running. `buildInfo` falls back to `sha: unknown` when neither
+      # BUILD_SHA nor the file the deploy writes is readable, which every service
+      # does independently — so a deploy that stopped writing BUILD_SHA leaves
+      # all five agreeing on 'unknown', skew-free and provenance-free. Every
+      # dashboard that joins a series to a commit, and every rollback decision,
+      # is guessing from that point on, silently.
+      - alert: BuildProvenanceMissing
+        expr: n409_build_info{source="unknown"} == 1
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.service }} cannot say which commit it is running'
+          runbook: 'cat /opt/N409/BUILD_SHA; check deploy.sh wrote it and the unit can read it'
+
       # The cgroup limiter SIGKILLs a unit over MemoryMax and systemd restarts
       # it, leaving nothing in the process's own output to say why. This is the
       # warning that comes before that.

@@ -16,6 +16,7 @@
 // be woken by, and requiring an alert per metric would produce exactly the
 // pageable noise this file's header argues against.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readBuildInfo, UNKNOWN_BUILD } from '../src/build.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -122,6 +123,24 @@ describe('alert rules', () => {
     expect([...RULES.matchAll(/severity: \w+/g)]).toHaveLength(alerts.length);
     expect([...RULES.matchAll(/summary: /g)]).toHaveLength(alerts.length);
     expect(new Set(alerts).size, 'duplicate alert names').toBe(alerts.length);
+  });
+
+  it('matches label values the source actually emits', () => {
+    // R321. The census above catches a rule naming a metric nothing exports.
+    // A rule naming a metric that exists and selecting a label value that
+    // nothing ever sets fails in exactly the same way and is invisible to it:
+    // it parses, it matches nothing, and a query returning no series is what a
+    // healthy system looks like.
+    //
+    // `BuildProvenanceMissing` selects `source="unknown"`, which is the one
+    // label value in this file whose spelling lives in a TypeScript constant
+    // rather than in a metric name — so it is the one that can drift on a
+    // rename without anything noticing. `readBuildInfo`'s other two values are
+    // asserted with it so a rule written against either later has the same
+    // guard already in place.
+    expect(RULES).toContain('n409_build_info{source="unknown"}');
+    expect(UNKNOWN_BUILD.source).toBe('unknown');
+    expect(readBuildInfo({ BUILD_SHA: 'a'.repeat(40) }, { defaultFile: undefined }).source).toBe('env');
   });
 
   it('pages only on the severities it declares', () => {
