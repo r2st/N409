@@ -25,6 +25,7 @@ import {
   findReportByValuation,
   getVersionContent,
   getVersionPdf,
+  latestDeliveredVersion,
   listVersions,
   REPORT_VERSION_PAGE_LIMIT,
   reportView,
@@ -1059,7 +1060,9 @@ export function registerReportRoutes(
      *
      * Saving the report creates a new version, and that version renders
      * normally — so the way to publish revised figures is the way that leaves
-     * both documents in the history.
+     * both documents in the history. Rendering it is a deliberate act by an
+     * analyst; what `GET /report.pdf` had to stop doing is reaching the same
+     * outcome on its own, on a client's download. See the note there.
      */
     if (DELIVERED_REPORT_STATES.has(valuation.state) && version.has_pdf) {
       throw problems.conflict(
@@ -1085,7 +1088,39 @@ export function registerReportRoutes(
     if (!canReadReport(principal, toRef(valuation))) throw problems.notFound();
 
     const report = await findReportByValuation(deps.pool, valuation.id);
-    const version = report ? await getVersionContent(deps.pool, report.id, report.current_version) : null;
+    /*
+     * The version that was delivered, not the newest one somebody has typed.
+     *
+     * On a published engagement these are different questions, and this door
+     * was the only one of the three that asked the wrong one. Saving a new
+     * report version after publication is allowed on purpose — it is what the
+     * "already delivered" refusal on `POST /report/render` points at — and the
+     * publish gate, which is what makes a body signed and QA'd prose, runs only
+     * on the transition *into* `published`. `published` has no outgoing edges,
+     * so it never runs again.
+     *
+     * What that produced: an analyst edits a published 409A, the next reader to
+     * pull `report.pdf` finds no stored bytes for the new version, and the
+     * lazy render fills them in — unwatermarked, because the engagement is
+     * published, with the certification block resolved from the signature rows
+     * on file. The document the board and the auditor download is then the
+     * edited body under the original signer's name and the original signing
+     * date, and the version number in the filename has moved without anybody
+     * asking for a new deliverable. That is precisely the defect the gate's
+     * rule 4 exists to refuse before publication, reached after it.
+     *
+     * The evidence bundle and the partner API both take the newest version
+     * carrying stored bytes; this now asks the same question of the same table.
+     * Only on a published engagement: a draft renders its current body fresh
+     * and stamped on every read, which is the whole point of the stamp.
+     */
+    const deliveredVersion =
+      report && DELIVERED_REPORT_STATES.has(valuation.state)
+        ? await latestDeliveredVersion(deps.pool, report.id)
+        : null;
+    const version = report
+      ? await getVersionContent(deps.pool, report.id, deliveredVersion ?? report.current_version)
+      : null;
     if (!report || !version) throw problems.notFound('No report yet');
 
     // `human`, not `system`. A person asked for this file; the mechanism they

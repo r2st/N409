@@ -136,6 +136,29 @@ export async function getVersionPdf(
   return rows[0]?.pdf ?? null;
 }
 
+/**
+ * The newest version of this report that carries stored bytes — the one that
+ * has actually been delivered — or null when nothing has been rendered yet.
+ *
+ * `reports.current_version` is the newest body an analyst has *written*, and on
+ * a published engagement the two are not the same question. Saving a report
+ * version is guarded by nothing but `refuseIfRetired`, on purpose, so a
+ * published engagement can hold a body newer than the one it issued.
+ *
+ * The evidence bundle and the partner API both already ask this question — each
+ * walks the version list for the first row with `has_pdf` — and only the
+ * session download asked for `current_version` instead. This is that question
+ * as one statement, so the three doors agree about which version is the
+ * deliverable.
+ */
+export async function latestDeliveredVersion(pool: pg.Pool, reportId: string): Promise<number | null> {
+  const { rows } = await pool.query<{ version: number | null }>(
+    'SELECT max(version) AS version FROM report_versions WHERE report_id = $1 AND pdf IS NOT NULL',
+    [reportId],
+  );
+  return rows[0]?.version ?? null;
+}
+
 /** Version list for the history panel — content itself is fetched per version. */
 export type ReportVersionSummary = Omit<ReportVersionRow, 'content' | 'pdf'> & { has_pdf: boolean };
 
