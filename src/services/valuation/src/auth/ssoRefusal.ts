@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { requestErrorContext } from '@n409/shared';
+import { recordSsoOutcome, ssoFlowOf } from '../observability/ssoOutcomes.js';
 
 /**
  * Every refusal in the two identity-provider flows is answered to a browser
@@ -99,6 +100,11 @@ export function refuseSso(
   problem: Error,
 ): FastifyReply {
   const browser = browserNavigation(req);
+  // Counted here rather than at the seventeen call sites, the same way the log
+  // line is: a refusal that cannot reach the scrape can only reach the journal,
+  // and nothing on this box consumes a log field. See
+  // observability/ssoOutcomes.ts for what a 302 costs an alert rule.
+  recordSsoOutcome(ssoFlowOf(req), code);
   req.log.warn(
     { ssoRefusal: code, ...requestErrorContext(req), answered: browser ? 'redirect' : 'problem' },
     browser ? 'single sign-on refused — sending the browser back to sign in' : 'single sign-on refused',

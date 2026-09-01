@@ -34,6 +34,7 @@ import {
 } from '../repos/mfa.js';
 import type { GoogleOidc } from '../auth/google.js';
 import { refuseSso } from '../auth/ssoRefusal.js';
+import { recordSsoOutcome } from '../observability/ssoOutcomes.js';
 import {
   bumpSessionEpoch,
   createUser,
@@ -734,6 +735,10 @@ export function registerAuthRoutes(
       subjectLabel: user.email,
       payload: { method: 'google' },
     });
+    // The denominator for `sso_outcomes_total` — see ssoOutcomes.ts. Every
+    // refusal above this line leaves as a 302, which the HTTP metrics count
+    // beside every ordinary redirect on the platform.
+    recordSsoOutcome('google', 'signed_in');
     const token = await issueSession(reply, user);
     // Browsers land here from Google's redirect — hand the token to the SPA.
     // API callers (no text/html Accept) keep the JSON contract.

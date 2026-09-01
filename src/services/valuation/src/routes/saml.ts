@@ -12,6 +12,7 @@ import { EmailAddress, MAX_EMAIL_LENGTH } from '../domain/email.js';
 import type { RoleKey } from '../domain/roles.js';
 import { ROLE_KEYS } from '../domain/roles.js';
 import { refuseSso } from '../auth/ssoRefusal.js';
+import { recordSsoOutcome } from '../observability/ssoOutcomes.js';
 
 /**
  * SAML 2.0 Service Provider (feature 9). The IdP is configured in admin
@@ -395,6 +396,11 @@ export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
         payload: { method: 'saml', provisioned },
       });
 
+      // The denominator. Without it a refusal count cannot separate one person
+      // with the wrong address from a signing certificate that expired an hour
+      // ago — and every refusal on this path is answered as a 302, so nothing
+      // in the HTTP metrics can tell the two apart either.
+      recordSsoOutcome('saml', 'signed_in');
       const token = await signSession(
         { sub: user.id, roles: user.roles, partner_id: user.partner_id, session_epoch: user.session_epoch },
         deps.jwt,

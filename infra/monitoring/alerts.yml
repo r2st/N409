@@ -485,6 +485,48 @@ groups:
         annotations:
           summary: 'the {{ $labels.source }} webhook is being called and has no signing secret configured'
 
+  - name: n409-identity
+    rules:
+      # An SSO refusal is a 302. R273 said so in as many words when it gave
+      # these refusals a log line: "a refusal that becomes a 302 is a 302 in the
+      # access log, indistinguishable from the successful hand-off two lines
+      # below it". The half that was left is that the log is not the alerting
+      # channel here.
+      #
+      # So an expired IdP signing certificate, a rotated Google client secret or
+      # an administrator narrowing the allowed domain refuses every sign-in at a
+      # firm, and each refusal is counted by `http_requests_total` in the 3xx
+      # class beside every ordinary redirect on the platform. No 5xx, no slow
+      # request, no circuit — the IdP is not one of ours. Nobody can sign in and
+      # every other instrument reads green.
+      #
+      # A ratio against `signed_in`, and sustained: one person with a personal
+      # address hitting `domain_not_allowed` is Tuesday. Half an hour in which
+      # most attempts are refused is a setting somebody changed.
+      - alert: SsoRefusingSignIns
+        expr: |
+          sum by (flow) (rate(sso_outcomes_total{outcome!="signed_in"}[30m]))
+            / sum by (flow) (rate(sso_outcomes_total[30m])) > 0.5
+        for: 30m
+        labels: { severity: page }
+        annotations:
+          summary: 'most {{ $labels.flow }} sign-in attempts are being refused'
+          runbook: "journalctl -u n409-valuation | grep ssoRefusal — the code names which of the ten reasons, and half of them are a setting inside the firm's own identity provider"
+
+      # The two codes that are never a caller's doing. `assertion_rejected` is a
+      # signature, a condition window or a profile we will not trust;
+      # `provider_error` is the IdP not answering usefully at all. Either one
+      # arriving at any rate is worth a look before it becomes the rule above,
+      # and unlike that ratio this fires on the first firm to hit it rather than
+      # waiting for them to outnumber everybody signing in successfully.
+      - alert: SsoProviderRejecting
+        expr: |
+          sum by (flow) (rate(sso_outcomes_total{outcome=~"assertion_rejected|provider_error"}[30m])) > 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.flow }} assertions are being rejected or the provider is not answering'
+
   - name: n409-browser
     rules:
       # A release that blanks a route for every user leaves the access log full

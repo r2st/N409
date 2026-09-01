@@ -162,6 +162,7 @@ import {
 import { configureReportRenderer, registerReportRenderMetrics } from './clients/reportRender.js';
 import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
 import { registerInboundWebhookMetrics } from './observability/inboundWebhooks.js';
+import { registerSsoMetrics } from './observability/ssoOutcomes.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 import {
@@ -819,6 +820,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // design. Payments stop being fulfilled and bounces stop being recorded with
   // nothing on this box saying so.
   registerInboundWebhookMetrics(metricsRegistry);
+  // And how the two identity-provider flows are going. Every SSO refusal is
+  // answered as a 302 — R273 said so when it gave them a log line — so an
+  // expired signing certificate or a narrowed domain rule refuses every
+  // sign-in at a firm while `http_requests_total` counts each one beside the
+  // ordinary redirects. There is no other symptom on this box at all.
+  registerSsoMetrics(metricsRegistry);
   // Whether we are still dialling the engine, the AI service and the report
   // unit at all. The breaker's own view was reachable only from the ops
   // incident endpoint, which is a page somebody visits once they already
