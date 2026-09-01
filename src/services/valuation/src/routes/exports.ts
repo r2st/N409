@@ -23,6 +23,7 @@ import { listOverwrites } from '../repos/overwrites.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidQuery } from '../domain/validationProblem.js';
 import { recordEvent, type EventActor } from '../events/record.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import { withTransaction } from '../db/pool.js';
 
 /**
@@ -234,6 +235,46 @@ export function sendExport(reply: FastifyReply, truncated: boolean): FastifyRepl
 }
 
 export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
+  /**
+   * The engagement list leaving, on the record.
+   *
+   * Nothing recorded this. The row scope is `valuationScope(principal)` — the
+   * caller's own engagements from a client seat, every engagement on the
+   * platform from an operations one — and the projection carries
+   * `owner_email` and (for ops) `reviewer_email`, so the same URL is a
+   * personal export from one seat and the contact details of every client the
+   * firm has from another. `user_directory_exported` covers the equivalent
+   * over `users`; this is the same disclosure reached through the engagement
+   * book.
+   *
+   * Filed under `system` for the reason the directory export is: no one row is
+   * the subject. The filters go in whole, minus the pieces that are not
+   * filters — `ids` becomes its length, because the UI sends up to two hundred
+   * ULIDs when an operator ticks rows and the list of them says nothing the
+   * count does not.
+   */
+  const recordListExport = async (
+    principal: Principal,
+    format: string,
+    query: Record<string, unknown>,
+    rows: number,
+    truncated: boolean,
+  ) => {
+    const filters: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(query)) {
+      if (key === 'format' || key === 'sort' || value === undefined) continue;
+      filters[key] = key === 'ids' && Array.isArray(value) ? value.length : value;
+    }
+    await recordAdminEvent(deps.pool, {
+      type: 'engagement_list_exported',
+      actor: { actorType: 'human', actorId: principal.id, source: 'valuations.export' },
+      subjectType: 'system',
+      subjectId: null,
+      subjectLabel: 'Engagement list',
+      payload: { format, rows, truncated, filters },
+    });
+  };
+
   app.get('/api/v1/valuations/export', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = ExportQuery.safeParse(req.query);
@@ -270,6 +311,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
         MAX_EXPORT_ROWS + 1,
       );
       const { rows, truncated } = truncationOf(fetched);
+      await recordListExport(principal, format, parsed.data, rows.length, truncated);
       if (format === 'csv') {
         // CSV gets the headers but no in-band marker: there is no comment
         // syntax a spreadsheet honours, and a trailing note row would be
@@ -306,6 +348,7 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       perPage: MAX_EXPORT_ROWS + 1,
     });
     const { rows: items, truncated } = truncationOf(fetchedItems);
+    await recordListExport(principal, format, parsed.data, items.length, truncated);
     const pdf = tablePdf(
       truncated
         ? `Valuations — exported ${stamp} — ${truncationNotice(items.length)}`

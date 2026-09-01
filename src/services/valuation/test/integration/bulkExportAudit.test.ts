@@ -29,11 +29,12 @@ interface EventRow {
 describe.skipIf(!dbUp)('bulk personal-data exports reach the audit spine', () => {
   let ctx: TestApp;
   let admin: Awaited<ReturnType<typeof seedUser>>;
+  let client: Awaited<ReturnType<typeof seedUser>>;
 
   beforeAll(async () => {
     ctx = await setupTestApp();
     admin = await seedUser(ctx, { roles: ['admin'] });
-    await seedUser(ctx, { roles: ['valuation_user'] });
+    client = await seedUser(ctx, { roles: ['valuation_user'] });
   });
   afterAll(async () => ctx?.teardown());
 
@@ -88,6 +89,49 @@ describe.skipIf(!dbUp)('bulk personal-data exports reach the audit spine', () =>
     // An export that matched nothing is still an export that was attempted,
     // and the row says so rather than being suppressed as uninteresting.
     expect(Number(row.payload.rows)).toBe(0);
+  });
+
+  const listEventRows = async (): Promise<EventRow[]> => {
+    const { rows } = await ctx.pool.query<EventRow>(
+      `SELECT type, actor_id, subject_type, subject_id, subject_label, payload
+         FROM admin_events WHERE type = 'engagement_list_exported' ORDER BY occurred_at`,
+    );
+    return rows;
+  };
+
+  it('records the engagement list export, in every format', async () => {
+    for (const format of ['csv', 'xlsx', 'pdf'] as const) {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/export?format=${format}`,
+        headers: authHeader(admin.token),
+      });
+      expect(res.statusCode).toBe(200);
+    }
+    // The PDF branch fetches through a different repo call and returns from a
+    // second exit — recording on the CSV path only would leave the format an
+    // operator picks deciding whether the export is on the record.
+    const formats = (await listEventRows()).map((r) => r.payload.format);
+    expect(formats.slice(-3)).toEqual(['csv', 'xlsx', 'pdf']);
+  });
+
+  it('reduces the ticked-row id list to its length', async () => {
+    const ids = [admin.id, client.id].join(',');
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/export?ids=${ids}&state=pending`,
+      headers: authHeader(admin.token),
+    });
+    expect(res.statusCode).toBe(200);
+    const row = (await listEventRows()).at(-1)!;
+    expect(row.subject_type).toBe('system');
+    expect(row.subject_label).toBe('Engagement list');
+    // Non-ULID entries are dropped by the query schema before this point; what
+    // the row says is how many survived, not which.
+    expect((row.payload.filters as Record<string, unknown>).ids).toBe(2);
+    expect((row.payload.filters as Record<string, unknown>).state).toBe('pending');
+    // `format` and `sort` are not filters and are not restated inside them.
+    expect((row.payload.filters as Record<string, unknown>).format).toBeUndefined();
   });
 
   it('writes nothing when the caller is refused', async () => {

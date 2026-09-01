@@ -403,6 +403,25 @@ export const ADMIN_EVENT_CATALOG = {
    * the whole directory.
    */
   user_directory_exported: D('User directory exported', 'access', 'critical'),
+  /*
+   * The other list that leaves with addresses in it.
+   *
+   * `GET /valuations/export` is scoped by `valuationScope(principal)`, which
+   * for a client is their own engagements and for an operations principal is
+   * every engagement on the platform — and the CSV projection carries
+   * `owner_email` and `reviewer_email`. So the same file is the caller's own
+   * book from one seat and the contact details of every client the firm has
+   * from another, and only the column scope (not the row scope) was ever
+   * decided in the source.
+   *
+   * `notice` rather than the directory's `critical`: the common case really is
+   * somebody exporting the list they are looking at, and grading every one of
+   * those the same as a copy of a person's whole record would drown the filter
+   * `critical` exists to serve. The row count and the filters are the payload,
+   * so the two cases are told apart by what a reader can see rather than by
+   * the type.
+   */
+  engagement_list_exported: D('Engagement list exported', 'access', 'notice'),
   account_closed: D('Account closed', 'access', 'critical'),
 
   // ── Identity & access: the self-serve half ──────────────────────────────
