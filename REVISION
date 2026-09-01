@@ -6119,3 +6119,109 @@
 #            an estimator used as a cross-check on the closed form and the bias
 #            is one path in tens of thousands, but the two figures are printed
 #            side by side as agreeing.
+
+# R319 — State machine & lifecycle (M4). Three findings. One shape recurs: a
+#            state the product treats as terminal, and a fact about the row that
+#            went on moving after it.
+#
+#            **A client's download issued a deliverable nobody asked for.**
+#            `GET /report.pdf` served `reports.current_version`. On a published
+#            engagement that is not the same question as "which version was
+#            delivered": saving a report version is guarded by `refuseIfRetired`
+#            and nothing else, on purpose, so a published 409A can hold a body
+#            newer than the one it issued. The publish gate is what makes a body
+#            a deliverable — signed, QA'd against the calculation it states,
+#            rendered without the draft stamp — and it runs on the transition
+#            *into* `published`. `published` has no outgoing edges in
+#            `WORKFLOW_TRANSITIONS`, so it never runs again. So an analyst edits
+#            a published report, and the next reader to pull the PDF finds no
+#            stored bytes for that version and the lazy render fills them in:
+#            unwatermarked, because the engagement is published, with the
+#            certification block resolved from the signature rows on file. The
+#            document the board and the auditor download is the edited prose
+#            under the original signer's name and the original signing date, at
+#            a version number nobody asked to issue — `assertPublishGate` rule 4
+#            reached from the far side, by a download rather than a decision.
+#            The evidence bundle and the partner API both already take the
+#            newest version carrying stored bytes; only this door asked for the
+#            current one, and it now asks the same question. The deliberate
+#            re-render stays open: `POST /report/render` on a published
+#            engagement is an analyst choosing to issue a revision, and
+#            `reportDeliverable.test.ts` pins it as the escape hatch.
+#
+#            **The onboarding report step ticked when you opened the report
+#            tab.** `OnboardingFacts.reports` is documented as "reports that
+#            have been rendered at least once" and the query asked
+#            `r.current_version > 0` — true of every row that exists, because
+#            `createReport` is the only INSERT and it writes version 1 and the
+#            pointer only moves forward, so the column's DEFAULT 0 is
+#            unreachable. The predicate asked nothing. And a report row is
+#            created by *reading*: `GET /report` instantiates the body from the
+#            template on first open, so the box completed itself the moment an
+#            analyst opened the tab the checklist was pointing them at, and with
+#            it `all_done`, which retires the card. The module's own docblock
+#            names the failure — "a checklist that disagrees with the screen
+#            behind it teaches people to ignore it". Counted from
+#            `report_versions.rendered_at` now. The unit test asserted the
+#            vacuous predicate verbatim under a title claiming it counted
+#            rendered reports; the question is driven against Postgres instead.
+#
+#            **A tagging re-run relabelled the analyst's judgement as the
+#            model's.** `valuation_tags.source` records who *originated* a tag,
+#            and both halves of the subsystem say that fact is load-bearing:
+#            `TAG_SOURCES` ("only the first is evidence of independent
+#            judgement") and the PATCH route, which carries the existing source
+#            through an acceptance so "the model proposed this and an analyst
+#            agreed" is not rewritten into "an analyst concluded this". The
+#            conflict clause set `source = EXCLUDED.source` unconditionally,
+#            breaking that in the other direction and much more easily: an
+#            analyst tags `series_a` by hand, the agent runs and reaches the
+#            same conclusion — the common case — and the row becomes the
+#            model's. The status guard beside it held, so the tag stayed
+#            `accepted` and nothing looked wrong. Two things were: the file no
+#            longer shows an independent human judgement where one was made, and
+#            the tag became undeletable, because `DELETE /tags/:slug` refuses an
+#            `ai`-sourced row and tells the analyst to reject their own. `source`
+#            is write-once now, in both directions.
+#
+#            What was looked at and came back clean: `WORKFLOW_TRANSITIONS`
+#            against `assertTransition`/`assertTransitionForWrite` and the
+#            `decisionTarget`/`AUTO_ADVANCE`/`RESTART_STATE` derivations;
+#            `setPipelineRunStatus`' terminal-and-attempts pinning and the reap
+#            ladder; `completeAiJob` and `reapStaleAiJobs`; `recordSignoff` and
+#            `refreshResolutionStatusTx`; `activateTemplate` under the name lock;
+#            `createInvitation`/`acceptInvitation`/`revokeInvitationsFrom`;
+#            `convertIntakeLink`'s once-only claim; `markRollforwardRunApplied`;
+#            the review-task status CAS; `retireValuations` and
+#            `markValuationsArchived`; the retired-write census and its coverage
+#            test.
+#
+# gap:       A published engagement can be re-rendered into a revised
+#            deliverable (`POST /report/render` after saving a new version —
+#            `reportDeliverable.test.ts` blesses it), and the certification page
+#            of that document is resolved at render time from the signature rows
+#            on file. Those rows cannot be refreshed: `upsertSignature` refuses
+#            a published valuation. So every revised deliverable carries a
+#            signature and a signing date that certify the earlier body — the
+#            exact thing `assertPublishGate` rule 4 refuses one step earlier.
+#            The two guards contradict each other and only a product decision
+#            settles which gives way: either a published engagement may be
+#            re-signed (and the render is gated on rule 4), or it may not be
+#            re-rendered at all and a revision is a new engagement.
+#
+# gap:       `enforceExclusivity` (routes/valuationTags.ts) reads the tag list
+#            and demotes the incumbent in separate statements on the pool, with
+#            no transaction and no lock. Two accepts of mutually exclusive tags
+#            arriving together — a double-click, or a client sending both — each
+#            see the other as not yet accepted, and the invariant the function
+#            exists for ("at most one accepted tag from an exclusive category")
+#            does not hold. The demotion and the upsert want one transaction
+#            with the category's rows locked.
+#
+# gap:       `timeout` is a `ValuationState` with edges into it from `pending`,
+#            `started`, `onboarding_completed` and `user_finished`, and no
+#            writer anywhere in the service. The only way a file reaches it is
+#            an operator naming it in a PATCH or a bulk `set_state`. The name
+#            implies a sweep for engagements whose client never came back; there
+#            is none, and the SLA query at `repos/valuations.ts` excludes the
+#            state it would produce.
