@@ -350,6 +350,39 @@ describe.skipIf(!dbUp)('refunds and chargebacks', () => {
       expect(await notificationsFor(client.id, 'payment_reversed', vid)).toHaveLength(1);
     });
 
+    it('does not reopen a chargeback it already decided when the created event is redelivered', async () => {
+      /*
+       * Round 328. `charge.dispute.created` and `charge.dispute.closed` are
+       * separate events, both retried for days, and Stripe orders neither — so
+       * the `created` can land after the `closed` it belongs to. Nothing on the
+       * row identified which dispute, so the write took the later delivery as
+       * the newer reading and put a decided case back to 'open'.
+       *
+       * What an operator then gets is this test's last two assertions: a second
+       * `payment_disputed` notification and, beside it, an alerting log line
+       * saying evidence is due in Stripe — about a chargeback that closed, with
+       * a deadline that has already passed.
+       */
+      const { vid, sessionId, chargeId, intentId } = await seedPaid('Dispute Stale Co', 'dispute_stale');
+      const dispute = { id: 'dp_stale', charge: chargeId, payment_intent: intentId };
+
+      await post(disputeEvent('created', { ...dispute, status: 'needs_response' }));
+      await post(disputeEvent('closed', { ...dispute, status: 'won' }));
+      const decided = await findPaymentBySessionId(ctx.pool, sessionId);
+      expect(decided?.dispute_status).toBe('won');
+
+      // The retry of the opening event, arriving after the verdict.
+      const late = await post(disputeEvent('created', { ...dispute, status: 'needs_response' }));
+      expect(late.statusCode).toBe(200);
+
+      const after = await findPaymentBySessionId(ctx.pool, sessionId);
+      expect(after?.dispute_status).toBe('won');
+      expect(after?.disputed_at).toEqual(decided?.disputed_at);
+      expect(await paidStatus(vid)).toBe('paid');
+      // One case, one alert to the people who would have to answer it.
+      expect(await notificationsFor(ops.id, 'payment_disputed', vid)).toHaveLength(1);
+    });
+
     it('a won dispute leaves the money and the engagement alone', async () => {
       const { vid, sessionId, chargeId, intentId } = await seedPaid('Dispute Won Co', 'dispute_won');
       await post(

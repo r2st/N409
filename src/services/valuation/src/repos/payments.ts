@@ -1,7 +1,12 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import type { ValuationScope } from '../auth/rbac.js';
-import { PAYMENT_REVERSIBLE_STATUSES, type DisputeStatus, type PaymentStatus } from '../domain/payments.js';
+import {
+  DISPUTE_TERMINAL_STATUSES,
+  PAYMENT_REVERSIBLE_STATUSES,
+  type DisputeStatus,
+  type PaymentStatus,
+} from '../domain/payments.js';
 import type { QuoteLine } from '../domain/pricing.js';
 
 // Declared in domain/payments.ts alongside the transitions between them, and
@@ -24,6 +29,14 @@ export interface PaymentRow {
   refunded_cents: string | number;
   refunded_at: Date | null;
   dispute_status: DisputeStatus | null;
+  /**
+   * Stripe's id for the chargeback `dispute_status` is about (migration 0203).
+   *
+   * NULL on every row that has never seen one, and on rows whose last dispute
+   * predates the column — which is read as "we do not know which", not as "the
+   * same one". See `recordDispute`.
+   */
+  dispute_id: string | null;
   disputed_at: Date | null;
   /** Bought next-business-day delivery. Moves the SLA, so it is a column. */
   express: boolean;
@@ -282,36 +295,70 @@ export async function recordRefund(
  * charge do arrive together — and both then alerted the billing group, once to
  * work a case and once to say it was already decided.
  *
- * What this deliberately does *not* do is order them. Two events about one
- * dispute are two readings of one state, so of them the later is simply right;
- * but nothing on this row identifies which dispute, and the pair that looks
- * out-of-order is also what a genuine second case looks like — an early-warning
- * enquiry closed (`warning_closed`, recorded 'won') and a real chargeback
- * raised on the same charge afterwards reads exactly like a stale 'open'
- * landing after a verdict. Guessing would either drop a live case or reopen a
- * settled one. So a redelivered `created` arriving after a `closed` still
- * writes 'open' over the verdict, and the money side is what stays right:
- * `status` and `refunded_cents` are only ever set by a loss and are never
- * unset, so a lost dispute stays lost and revoked whatever the verdict column
- * later says.
+ * WHAT ORDERS THEM (round 328). Stripe does not order deliveries, so the
+ * `created` for a case already seen closed can arrive after the `closed`. This
+ * used to be let through, on the ground that the pair which looks out-of-order
+ * is also what a genuine second case looks like — an early-warning enquiry
+ * closed (`warning_closed`, recorded 'won') and a real chargeback raised on the
+ * same charge afterwards reads exactly like a stale 'open' landing after a
+ * verdict — and that guessing would either drop a live case or reopen a settled
+ * one. The money side was kept right (`status` and `refunded_cents` are only
+ * ever set by a loss and never unset) and the verdict column was allowed to
+ * walk backwards.
+ *
+ * It is the verdict column that everything else reads. A decided chargeback
+ * reading 'open' again is a live case with an evidence deadline: a
+ * `payment_disputed` audit entry, an alerting line telling billing that
+ * evidence is due in Stripe, and a notification to the whole group — about a
+ * case that closed and whose deadline has passed. On a lost one it also left
+ * `status = 'refunded'` beside `dispute_status = 'open'`, two incompatible
+ * facts about one case.
+ *
+ * The ambiguity was never inherent: the identity is in the event and was being
+ * discarded. `dispute_id` (migration 0203) stores it, and the two situations
+ * separate — a *different* dispute is news whatever the last one concluded, and
+ * the *same* one may not go from a verdict back to 'open'. A row whose
+ * `dispute_id` is NULL is one we cannot identify (an event carrying no id, or a
+ * verdict recorded before the column existed), and there the old permissive
+ * behaviour stands, because it is exactly the case it was written for.
+ *
+ * `disputed_at` moves for a new case and not otherwise: it dates the chargeback
+ * the row is about, and holding the first one's date over a second case is the
+ * `settled_at` mistake (migration 0195) in the dispute column.
  */
 export async function recordDispute(
   pool: pg.Pool,
   id: string,
   status: DisputeStatus,
+  /** Stripe's `dispute.id`, or null when the event carried none. */
+  disputeId: string | null,
 ): Promise<PaymentRow | null> {
   const lost = status === 'lost';
   const { rows } = await pool.query<PaymentRow>(
     `UPDATE payments
      SET dispute_status = $2,
-         disputed_at = COALESCE(disputed_at, now()),
+         dispute_id = COALESCE($5::text, dispute_id),
+         disputed_at = CASE WHEN $5::text IS NOT NULL AND dispute_id IS DISTINCT FROM $5::text
+                            THEN now() ELSE COALESCE(disputed_at, now()) END,
          status = CASE WHEN $3 THEN 'refunded'::payment_status ELSE status END,
          refunded_cents = CASE WHEN $3 THEN amount_cents ELSE refunded_cents END,
          refunded_at = CASE WHEN $3 THEN COALESCE(refunded_at, now()) ELSE refunded_at END,
          updated_at = now()
-     WHERE id = $1 AND dispute_status IS DISTINCT FROM $2 AND status::text = ANY($4::text[])
+     WHERE id = $1
+       AND status::text = ANY($4::text[])
+       AND (
+             -- A different chargeback on the same charge: a new case, whatever
+             -- the last one concluded and whatever this one says.
+             ($5::text IS NOT NULL AND dispute_id IS DISTINCT FROM $5::text)
+             -- The same case, or one we cannot identify: news only if it says
+             -- something new, and an identified verdict never walks back to
+             -- 'open'.
+             OR (dispute_status IS DISTINCT FROM $2
+                 AND NOT ($5::text IS NOT NULL AND $2 = 'open'
+                          AND dispute_status = ANY($6::text[])))
+           )
      RETURNING *`,
-    [id, status, lost, [...PAYMENT_REVERSIBLE_STATUSES]],
+    [id, status, lost, [...PAYMENT_REVERSIBLE_STATUSES], disputeId, [...DISPUTE_TERMINAL_STATUSES]],
   );
   return rows[0] ?? null;
 }

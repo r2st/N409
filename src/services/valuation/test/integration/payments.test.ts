@@ -380,7 +380,7 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
 
     it('says a disputed payment is disputed rather than heading it paid', async () => {
       const { vid, payment } = await settledPayment('Receipt Dispute Co', 'cs_test_receipt_6');
-      await recordDispute(ctx.pool, payment.id, 'open');
+      await recordDispute(ctx.pool, payment.id, 'open', 'du_receipt_6');
       const res = await ctx.app.inject({
         method: 'GET',
         url: `/api/v1/valuations/${vid}/payments/${payment.id}/receipt.pdf`,
@@ -404,7 +404,7 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
        * 'won' too, so it carried the same brand.
        */
       const { vid, payment } = await settledPayment('Receipt Won Co', 'cs_test_receipt_won');
-      await recordDispute(ctx.pool, payment.id, 'won');
+      await recordDispute(ctx.pool, payment.id, 'won', 'du_receipt_won');
       const res = await ctx.app.inject({
         method: 'GET',
         url: `/api/v1/valuations/${vid}/payments/${payment.id}/receipt.pdf`,

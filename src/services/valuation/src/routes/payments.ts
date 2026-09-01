@@ -1337,7 +1337,16 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     // together, so a read here let two deliveries both decide the verdict was
     // news and alert the billing group twice — once to work a case, once to say
     // it was already decided.
-    const recorded = await recordDispute(deps.pool, payment.id, status);
+    //
+    // The dispute's own id goes with it (round 328). Stripe does not order
+    // deliveries, so a retried `created` can land after the `closed` it belongs
+    // to; without the id that is indistinguishable from a second chargeback
+    // raised after the first was decided, and the guess the write had to make
+    // reopened settled cases — alerting the billing group about an evidence
+    // deadline that had already passed. With it, only the *same* dispute is
+    // stopped from walking backwards.
+    const disputeId = typeof dispute.id === 'string' && dispute.id !== '' ? dispute.id : null;
+    const recorded = await recordDispute(deps.pool, payment.id, status, disputeId);
     if (!recorded) {
       // Not news. A lost one may still have money to reverse, though: see
       // resumeRevocation, which this reaches by the same route a redelivered

@@ -127,6 +127,22 @@ export function disputeStatusOf(stripeStatus: unknown): DisputeStatus {
   return 'open';
 }
 
+/**
+ * The verdicts nothing follows. A decided chargeback does not re-open.
+ *
+ * Stated here, and read by the WHERE clause in `recordDispute`, for the reason
+ * {@link PAYMENT_REVERSIBLE_STATUSES} is stated here: the rule belongs to the
+ * lifecycle rather than to one statement. Why identity is what makes it
+ * enforceable — and why a row with no `dispute_id` is deliberately exempt — is
+ * on `recordDispute` and in migration 0203.
+ */
+export const DISPUTE_TERMINAL_STATUSES = ['won', 'lost'] as const;
+
+/** Is this dispute verdict final? See {@link DISPUTE_TERMINAL_STATUSES}. */
+export function isTerminalDisputeStatus(status: string): boolean {
+  return (DISPUTE_TERMINAL_STATUSES as readonly string[]).includes(status);
+}
+
 export interface RefundState {
   /** Cumulative cents refunded against the charge, clamped to [0, amount]. */
   refundedCents: number;

@@ -1,0 +1,39 @@
+-- Which chargeback the verdict on this row belongs to.
+--
+-- `charge.dispute.created` and `charge.dispute.closed` are separate events,
+-- both retried for days, and Stripe does not order deliveries — so the
+-- `created` for a case we have already seen closed can arrive after the
+-- `closed`. `recordDispute` let it through, and said why: two events about one
+-- dispute are two readings of one state and the later is simply right, but
+-- nothing on the row identified *which* dispute, so a stale 'open' landing
+-- after a verdict was indistinguishable from a real second chargeback raised
+-- after an early-warning enquiry closed. Refusing would drop a live case;
+-- allowing reopens a settled one. The code chose to allow, and mitigated the
+-- money side: `status` and `refunded_cents` are only ever set by a loss.
+--
+-- What the verdict column then did was walk backwards. A decided chargeback
+-- read 'open' again — a live case with an evidence deadline — which produced a
+-- `payment_disputed` audit entry, an alerting log line saying evidence is due
+-- in Stripe, and a notification to the whole billing group, about a case that
+-- was closed and whose deadline had passed. On a lost one it also left
+-- `status = 'refunded'` beside `dispute_status = 'open'`, which is two
+-- incompatible facts about one case, and every later reader of the column had
+-- the wrong answer to "is this decided".
+--
+-- The ambiguity is not inherent — the identity is in the event and was thrown
+-- away. With it stored, the two situations separate: the same `dispute_id`
+-- going backwards is stale and refused, a different one is a new case and is
+-- always news.
+--
+-- Additive and nullable, per the estate's rollback rule: the previous release
+-- neither reads nor writes this column. Deliberately NOT backfilled — there is
+-- nothing to backfill it from, and NULL is read as "we do not know which
+-- dispute this verdict was", which keeps the old permissive behaviour for
+-- exactly the rows the old behaviour was written for. The first event about
+-- such a row fills it in.
+ALTER TABLE payments ADD COLUMN dispute_id text;
+
+-- The lookup the guard makes: "is this the dispute already on the row". Partial
+-- because the column is NULL on every row that has never seen a chargeback,
+-- which is nearly all of them.
+CREATE INDEX IF NOT EXISTS payments_dispute_id_idx ON payments (dispute_id) WHERE dispute_id IS NOT NULL;

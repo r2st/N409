@@ -240,10 +240,74 @@ describe.skipIf(!dbUp)('the machine against the database', () => {
   it('refuses to lose a chargeback against a payment that never settled', async () => {
     for (const status of ['pending', 'failed', 'expired'] as const) {
       const row = await rowIn(status, `cs_machine_dispute_${status}_${newUlid()}`);
-      expect(await recordDispute(ctx.pool, row.id, 'lost'), `${status} → refunded`).toBeNull();
+      expect(
+        await recordDispute(ctx.pool, row.id, 'lost', `du_${status}`),
+        `${status} → refunded`,
+      ).toBeNull();
       const after = (await findPaymentBySessionId(ctx.pool, row.session_id))!;
       expect(after.status).toBe(status);
     }
+  });
+
+  /*
+   * Which chargeback the verdict belongs to (round 328).
+   *
+   * `charge.dispute.created` and `charge.dispute.closed` are separate events,
+   * both retried for days, and Stripe orders neither — so a `created` for a
+   * case already seen closed can arrive after the `closed`. Until the id was
+   * stored there was nothing on the row to tell that apart from a real second
+   * chargeback raised after the first was decided, and the write chose to
+   * allow: a decided case read 'open' again, which is a live case with an
+   * evidence deadline, and that is what the audit entry, the alerting line and
+   * the notification to the billing group are all about.
+   */
+  it('refuses a stale reopening of the chargeback it already decided', async () => {
+    const row = await rowIn('succeeded', `cs_machine_stale_open_${newUlid()}`);
+    const won = await recordDispute(ctx.pool, row.id, 'won', 'du_stale');
+    expect(won?.dispute_status).toBe('won');
+    const decidedAt = won!.disputed_at;
+
+    // The retried `charge.dispute.created` for the very same case, arriving
+    // after the verdict it belongs to.
+    expect(await recordDispute(ctx.pool, row.id, 'open', 'du_stale')).toBeNull();
+
+    const after = (await findPaymentBySessionId(ctx.pool, row.session_id))!;
+    expect(after.dispute_status).toBe('won');
+    expect(after.disputed_at).toEqual(decidedAt);
+  });
+
+  it('records a second chargeback on the same charge, whatever the first concluded', async () => {
+    /*
+     * The other half, and the reason refusing outright was not the fix. An
+     * early-warning enquiry closed (`warning_closed`, recorded 'won') and a
+     * real chargeback raised on the same charge afterwards is the pair that
+     * used to be indistinguishable from the stale delivery above. It is a live
+     * case with a deadline, and dropping it would be the worse mistake.
+     */
+    const row = await rowIn('succeeded', `cs_machine_second_case_${newUlid()}`);
+    expect((await recordDispute(ctx.pool, row.id, 'won', 'du_warning'))?.dispute_status).toBe('won');
+
+    const second = await recordDispute(ctx.pool, row.id, 'open', 'du_real_chargeback');
+    expect(second?.dispute_status).toBe('open');
+    expect(second?.dispute_id).toBe('du_real_chargeback');
+    // Dated to the case it is about, not to the enquiry that closed before it.
+    expect(second!.disputed_at!.getTime()).toBeGreaterThanOrEqual(
+      (await findPaymentBySessionId(ctx.pool, row.session_id))!.disputed_at!.getTime(),
+    );
+  });
+
+  it('leaves a verdict it cannot identify as permissive as it was', async () => {
+    /*
+     * A row whose `dispute_id` is NULL — a verdict recorded before migration
+     * 0203, or an event carrying no id — is one we cannot place. The old
+     * behaviour is kept there rather than guessed at, because it is exactly
+     * the case the old behaviour was written for: refusing would drop a live
+     * chargeback on the strength of a column we never filled in.
+     */
+    const row = await rowIn('succeeded', `cs_machine_unidentified_${newUlid()}`);
+    expect((await recordDispute(ctx.pool, row.id, 'won', null))?.dispute_status).toBe('won');
+    expect((await findPaymentBySessionId(ctx.pool, row.session_id))!.dispute_id).toBeNull();
+    expect((await recordDispute(ctx.pool, row.id, 'open', null))?.dispute_status).toBe('open');
   });
 
   it('still records both against a settled payment', async () => {
@@ -255,6 +319,6 @@ describe.skipIf(!dbUp)('the machine against the database', () => {
     expect(refunded?.status).toBe('refunded');
 
     const disputeRow = await rowIn('succeeded', `cs_machine_ok_dispute_${newUlid()}`);
-    expect((await recordDispute(ctx.pool, disputeRow.id, 'lost'))?.status).toBe('refunded');
+    expect((await recordDispute(ctx.pool, disputeRow.id, 'lost', 'du_machine_ok'))?.status).toBe('refunded');
   });
 });
