@@ -166,6 +166,15 @@ describe.skipIf(!dbUp)('publish gate — the report body the review graded', () 
     return id;
   }
 
+  /** The analyst signing the body as it now stands — `upsertSignature` replaces the row. */
+  const resign = (id: string) =>
+    ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/signatures`,
+      headers: authHeader(ops.token),
+      payload: { role: 'main', signer_name: 'Alice Analyst', signature_text: 'Alice Analyst' },
+    });
+
   /** Rewrites one chapter, exactly as the editor does. */
   async function editBody(id: string, html: string): Promise<number> {
     const before = await readReport(id);
@@ -202,13 +211,30 @@ describe.skipIf(!dbUp)('publish gate — the report body the review graded', () 
     expect(await stateOf(id)).toBe('draft_accepted');
   });
 
-  it('publishes once the edited body has been reviewed again', async () => {
-    // The other direction, and the reason the refusal is a 409 rather than a
-    // dead end: re-running QA over the new body clears it.
+  it('publishes once the edited body has been reviewed again and re-signed', async () => {
+    /*
+     * The other direction, and the reason the refusal is a 409 rather than a
+     * dead end: re-running QA over the new body clears it.
+     *
+     * The re-sign is R304's addition, and it is the half this test used not to
+     * ask for. The fixture signs last, so the edit above lands on a signed
+     * body — and the signature block is resolved at render time from the row on
+     * file, so publishing here put out a certification page reading "Date
+     * signed" against prose written afterwards. Rule 4 of `assertPublishGate`
+     * is rule 3's own argument applied to the stronger attestation, and the two
+     * steps have an order: QA reads the new prose, then the analyst signs what
+     * QA cleared.
+     */
     const id = await reviewedAtDraftAccepted('ReReviewed, Inc.');
     await editBody(id, '<p>Rewritten, then reviewed again.</p>');
 
     expect(await runQa(id)).toMatchObject({ statusCode: 201 });
+
+    const stillRefused = await advance(id);
+    expect(stillRefused.statusCode, 'published over a signature that predates the body').toBe(409);
+    expect(stillRefused.json().detail).toMatch(/since it was signed/i);
+
+    expect(await resign(id)).toMatchObject({ statusCode: 201 });
     expect(await advance(id)).toMatchObject({ statusCode: 200 });
     expect(await stateOf(id)).toBe('published');
   });

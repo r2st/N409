@@ -2,11 +2,11 @@ import type pg from 'pg';
 import { problems } from '@n409/shared';
 import type { Queryable } from '../db/pool.js';
 import type { ValuationState } from './valuation.js';
-import { hasMainSignature } from '../repos/signatures.js';
+import { mainSignedAt } from '../repos/signatures.js';
 import { lockPublishGate } from '../repos/publishLock.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { latestQaReviewForCalculation } from '../repos/qaReviews.js';
-import { findReportByValuation } from '../repos/reports.js';
+import { findReportByValuation, versionWrittenAt } from '../repos/reports.js';
 
 /**
  * Publish gating, called by every path that can set the state — the workflow
@@ -25,6 +25,34 @@ import { findReportByValuation } from '../repos/reports.js';
  *    carrying the skeleton's instructions — and a `PUT /report` afterwards
  *    replaces that body without touching anything rule 2 reads. So a document
  *    edited after its review published over a review of prose no longer in it.
+ * 4. And the body the analyst *signed* must still be the current one, which is
+ *    rule 3's argument applied to the stronger of the two attestations (R304,
+ *    methodology M3). Rules 2 and 3 both hold that an attestation is about the
+ *    artifact it was given against, and a QA review is pinned to both — the
+ *    calculation by `qa_reviews.calculation_id`, the prose by
+ *    `qa_reviews.report_version`. A signature was pinned to nothing. It is a
+ *    single row per role that `upsertSignature` replaces in place, and its
+ *    whole state machine was absent/present: once a `main` row existed, rule 1
+ *    was satisfied for every body the engagement ever went on to hold.
+ *
+ *    Which is not a theoretical ordering. `domain/reportSignatures.ts` states
+ *    the intended one — "the signature lands later, after QA closes, and may be
+ *    replaced … re-signing after a change supersedes the previous row" — so the
+ *    product already expects a re-sign after an edit, and simply never asked
+ *    for one. Sign, then correct a chapter, then re-run QA (which passes rules
+ *    2 and 3, being keyed to the new version), then publish: the deliverable
+ *    goes out with a certification page reading "/s/ …, Date signed
+ *    2026-08-01" over a body written on the 15th. That page is USPAP SR 10-3's
+ *    signed certification and the §409A safe harbour's named qualified
+ *    appraiser; an auditor holding the PDF can see the two dates and cannot see
+ *    that the platform did not mind.
+ *
+ *    Asked of `report_versions.created_at` rather than `reports.updated_at`:
+ *    the version row is written when a body is, and `updated_at` moves for
+ *    bookkeeping the analyst did not sign anything about. The remedy is one
+ *    click of the control that already exists, and the message says so — after
+ *    rule 3's, because re-signing before the re-review is the wrong order and
+ *    the operator would land back here.
  *
  * Runs on the pool or on a transaction's client. Both readings matter and they
  * are not the same reading — see {@link assertPublishGateForWrite}.
@@ -35,42 +63,74 @@ export async function assertPublishGate(
   to: ValuationState,
 ): Promise<void> {
   if (to !== 'published') return;
-  if (!(await hasMainSignature(db, valuationId))) {
+  const signedAt = await mainSignedAt(db, valuationId);
+  if (signedAt === null) {
     throw problems.conflict('A main signature is required before publishing — sign the valuation first');
   }
 
+  /*
+   * Loaded once for rules 3 and 4, and before the QA block rather than inside
+   * it: the calculation check below has nothing to say about an engagement that
+   * never ran one, and such an engagement still has a signed body somebody can
+   * have edited.
+   */
+  const report = await findReportByValuation(db, valuationId);
+
   const calculation = await latestSucceededCalculation(db, valuationId);
-  if (!calculation) return; // Nothing calculated — nothing for QA to judge.
-  const review = await latestQaReviewForCalculation(db, calculation.id);
-  if (!review) {
-    throw problems.conflict('Quality gate: run a QA review of the latest calculation before publishing');
-  }
-  if (review.status === 'fail') {
-    throw problems.conflict(
-      'Quality gate: the latest QA review failed — resolve the failing checks and re-run QA before publishing',
-    );
+  // Nothing calculated — nothing for QA to judge, so rules 2 and 3 do not
+  // apply. Rule 4 still does, which is why this is a skip and not a return.
+  if (calculation) {
+    const review = await latestQaReviewForCalculation(db, calculation.id);
+    if (!review) {
+      throw problems.conflict('Quality gate: run a QA review of the latest calculation before publishing');
+    }
+    if (review.status === 'fail') {
+      throw problems.conflict(
+        'Quality gate: the latest QA review failed — resolve the failing checks and re-run QA before publishing',
+      );
+    }
+
+    /*
+     * Rule 3. Only when there is a report: an engagement with none has no body
+     * to have graded, which is the same reading `runQa` files as a null.
+     *
+     * A null `report_version` beside a report that exists is a review filed
+     * before the column did, and is read as "does not say" rather than as "did
+     * not change". Refused, because the column answers a compliance question
+     * and an unknown is not a yes — the remediation is one QA re-run and the
+     * message names it.
+     *
+     * `>` rather than `!==`: a revert moves `current_version` forwards too (it
+     * writes the restored content as a *new* version), so there is no direction
+     * in which the pointer goes back, and an inequality that could fire on a
+     * lower number would only be describing a state that cannot arise.
+     */
+    if (report && (review.report_version === null || report.current_version > review.report_version)) {
+      throw problems.conflict(
+        'Quality gate: the report body has been edited since the last QA review — re-run QA before publishing',
+      );
+    }
   }
 
   /*
-   * Rule 3. Only when there is a report: an engagement with none has no body to
-   * have graded, which is the same reading `runQa` files as a null.
+   * Rule 4, and last on purpose.
    *
-   * A null `report_version` beside a report that exists is a review filed
-   * before the column did, and is read as "does not say" rather than as "did
-   * not change". Refused, because the column answers a compliance question and
-   * an unknown is not a yes — the remediation is one QA re-run and the message
-   * names it.
+   * An analyst who edits a signed, reviewed body has two things to redo, and
+   * they have an order: re-run QA over the new prose, then sign what QA
+   * cleared. A gate that named the signature first would send them to sign a
+   * body no reviewer had read, and they would be back here a moment later.
    *
-   * `>` rather than `!==`: a revert moves `current_version` forwards too (it
-   * writes the restored content as a *new* version), so there is no direction
-   * in which the pointer goes back, and an inequality that could fire on a
-   * lower number would only be describing a state that cannot arise.
+   * A version row with no `created_at` is not reachable — the column is NOT
+   * NULL with a default — so a null here means the pointer names a version that
+   * is not there, which is a broken report rather than an unsigned edit, and is
+   * left to the routes that read the body to fail on.
    */
-  const report = await findReportByValuation(db, valuationId);
   if (!report) return;
-  if (review.report_version === null || report.current_version > review.report_version) {
+  const writtenAt = await versionWrittenAt(db, report.id, report.current_version);
+  if (writtenAt !== null && writtenAt.getTime() > signedAt.getTime()) {
     throw problems.conflict(
-      'Quality gate: the report body has been edited since the last QA review — re-run QA before publishing',
+      'The report body has been edited since it was signed — the signature on file certifies an ' +
+        'earlier draft. Re-sign the valuation before publishing.',
     );
   }
 }

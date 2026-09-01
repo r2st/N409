@@ -2,25 +2,34 @@ import { describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { assertPublishGate } from '../../src/domain/publishGate.js';
 
-/** Routes the gate's four lookups by table name. */
+/** Routes the gate's five lookups by table name. */
 function poolWith(args: {
   signatures?: unknown[];
   calculations?: unknown[];
   qaReviews?: unknown[];
   reports?: unknown[];
+  reportVersions?: unknown[];
 }): pg.Pool {
   return {
     query: async (sql: string) => {
       if (sql.includes('valuation_signatures')) return { rows: args.signatures ?? [] };
       if (sql.includes('FROM calculations')) return { rows: args.calculations ?? [] };
       if (sql.includes('FROM qa_reviews')) return { rows: args.qaReviews ?? [] };
+      // Before `FROM reports`: the version lookup names `report_versions`, and
+      // a substring test for the shorter table name matches both.
+      if (sql.includes('FROM report_versions')) return { rows: args.reportVersions ?? WRITTEN_BEFORE };
       if (sql.includes('FROM reports')) return { rows: args.reports ?? [] };
       throw new Error(`unexpected query: ${sql}`);
     },
   } as unknown as pg.Pool;
 }
 
-const SIGNED = [{ '?column?': 1 }];
+const SIGNED_AT = new Date('2026-08-15T00:00:00Z');
+const SIGNED = [{ signed_at: SIGNED_AT }];
+/** The body the signature is about: written before it was signed. */
+const WRITTEN_BEFORE = [{ created_at: new Date('2026-08-14T00:00:00Z') }];
+/** The body written after — rule 4's case. */
+const WRITTEN_AFTER = [{ created_at: new Date('2026-08-16T00:00:00Z') }];
 const CALC = [{ id: 'calc-1', status: 'succeeded' }];
 /** A report whose current body is the one the review below graded. */
 const REPORT_V4 = [{ current_version: 4 }];
@@ -122,6 +131,27 @@ describe('publish gate (signature + QA)', () => {
         'published',
       ),
     ).rejects.toMatchObject({ status: 409, detail: expect.stringContaining('QA review') });
+  });
+
+  it('blocks publish when the body has been saved since it was signed', async () => {
+    // Rule 4, and the reason it is not rule 3 wearing a different hat: the
+    // review below graded the current body and passed, so every QA rule is
+    // satisfied. What has not been satisfied is the certification page, which
+    // prints the analyst's name and the date they signed against prose written
+    // the day after.
+    await expect(
+      assertPublishGate(
+        poolWith({
+          signatures: SIGNED,
+          calculations: CALC,
+          reports: REPORT_V4,
+          reportVersions: WRITTEN_AFTER,
+          qaReviews: [{ status: 'pass', report_version: 4 }],
+        }),
+        'v1',
+        'published',
+      ),
+    ).rejects.toMatchObject({ status: 409, detail: expect.stringContaining('since it was signed') });
   });
 
   it('does not read the report before the rules that come first', async () => {

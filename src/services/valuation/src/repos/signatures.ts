@@ -122,11 +122,23 @@ export async function deleteSignature(
   });
 }
 
-/** Signature gate: publish requires a 'main' signature (remaining-gaps §3 #3). */
-export async function hasMainSignature(db: Queryable, valuationId: string): Promise<boolean> {
-  const { rows } = await db.query(
-    "SELECT 1 FROM valuation_signatures WHERE valuation_id = $1 AND role = 'main'",
+/**
+ * When the analyst signed, or null if nobody has.
+ *
+ * The instant rather than the fact, because the publish gate asks two questions
+ * of this row and only one of them is answerable by its existence: whether the
+ * engagement is signed at all, and whether it was signed against the body it is
+ * about to publish. See `assertPublishGate`.
+ */
+export async function mainSignedAt(db: Queryable, valuationId: string): Promise<Date | null> {
+  const { rows } = await db.query<{ signed_at: Date }>(
+    "SELECT signed_at FROM valuation_signatures WHERE valuation_id = $1 AND role = 'main'",
     [valuationId],
   );
-  return rows.length > 0;
+  return rows[0]?.signed_at ?? null;
+}
+
+/** Signature gate: publish requires a 'main' signature (remaining-gaps §3 #3). */
+export async function hasMainSignature(db: Queryable, valuationId: string): Promise<boolean> {
+  return (await mainSignedAt(db, valuationId)) !== null;
 }

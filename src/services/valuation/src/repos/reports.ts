@@ -82,6 +82,27 @@ export type ReportVersionContent = Omit<ReportVersionRow, 'pdf'> & { has_pdf: bo
 const VERSION_CONTENT_COLUMNS =
   'id, report_id, version, content, rendered_at, created_by, created_at, pdf IS NOT NULL AS has_pdf';
 
+/**
+ * When the body a report currently points at was written.
+ *
+ * One column of one version row, because the publish gate asks nothing else of
+ * it: `assertPublishGate` compares this instant against the analyst's signature
+ * to decide whether the signature is about the document being published. Going
+ * through {@link getVersionContent} for it would pull the whole stored body —
+ * every chapter of a 409A — onto a connection that is holding the publish lock.
+ */
+export async function versionWrittenAt(
+  db: Queryable,
+  reportId: string,
+  version: number,
+): Promise<Date | null> {
+  const { rows } = await db.query<{ created_at: Date }>(
+    'SELECT created_at FROM report_versions WHERE report_id = $1 AND version = $2',
+    [reportId, version],
+  );
+  return rows[0]?.created_at ?? null;
+}
+
 export async function getVersionContent(
   pool: pg.Pool,
   reportId: string,
