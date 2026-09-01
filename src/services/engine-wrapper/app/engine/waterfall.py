@@ -465,8 +465,20 @@ def allocate_waterfall(
     r: float | None,
     sigma: float | None,
 ) -> dict:
-    normalized, segments, tranches, values = _allocate(equity_value, classes, t, r, sigma)
+    return _waterfall_response(equity_value, t, r, sigma, *_allocate(equity_value, classes, t, r, sigma))
 
+
+def _waterfall_response(
+    equity_value: float,
+    t: float | None,
+    r: float | None,
+    sigma: float | None,
+    normalized: list[dict],
+    segments: list[dict],
+    tranches: list[float],
+    values: dict[str, float],
+) -> dict:
+    """The response, given the arithmetic. See ``allocate_with_volatilities``."""
     breakpoints = [
         {
             "from": round(seg["from"], 2),
@@ -602,6 +614,19 @@ def class_volatilities(
     values is the same operation as taking the elasticity of the summed claim.
     """
     normalized, segments, _tranches, values = _allocate(equity_value, classes, t, r, sigma)
+    return _class_volatility_response(equity_value, t, r, sigma, normalized, segments, values)
+
+
+def _class_volatility_response(
+    equity_value: float,
+    t: float | None,
+    r: float | None,
+    sigma: float | None,
+    normalized: list[dict],
+    segments: list[dict],
+    values: dict[str, float],
+) -> dict:
+    """The schedule, given the arithmetic. See ``allocate_with_volatilities``."""
     # `_allocate` has validated all three; narrowing here is for the type checker
     # and costs nothing at runtime.
     assert t is not None and r is not None and sigma is not None
@@ -658,6 +683,37 @@ def class_volatilities(
         # schedule adds up without redoing the option arithmetic.
         "delta_total": round(sum(deltas.values()), 6),
     }
+
+
+def allocate_with_volatilities(
+    equity_value: float,
+    classes: list[dict],
+    t: float | None,
+    r: float | None,
+    sigma: float | None,
+) -> tuple[dict, dict]:
+    """The allocation and the class-volatility schedule, from one pass.
+
+    ``compute._opm_allocate`` wants both, and asked for them by calling
+    ``allocate_waterfall`` and then ``class_volatilities`` with the identical
+    five arguments — so ``_allocate`` ran twice: the same ``_normalize``, the
+    same ``_segments``, and the same Black-Scholes call on every breakpoint,
+    thrown away and redone. The two are not alternatives, they are two readings
+    of one allocation: ``class_volatilities``' own docstring says its deltas are
+    "the term-by-term derivative of the very sum ``_allocate`` uses for the
+    values", and its ``values`` are literally that sum. A cap table with 199
+    classes spent 10 ms of a 45 ms run recomputing what it already had.
+
+    Deliberately a third entry point rather than a change to either: both
+    remain correct on their own, ``class_volatilities`` is the one the
+    class-volatility tests drive directly, and the backsolve's Newton objective
+    still reaches ``_allocate`` without going through any of this.
+    """
+    normalized, segments, tranches, values = _allocate(equity_value, classes, t, r, sigma)
+    return (
+        _waterfall_response(equity_value, t, r, sigma, normalized, segments, tranches, values),
+        _class_volatility_response(equity_value, t, r, sigma, normalized, segments, values),
+    )
 
 
 def exit_allocation(exit_value: float, classes: list[dict]) -> dict:

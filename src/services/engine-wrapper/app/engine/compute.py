@@ -46,7 +46,7 @@ from .pwerm import allocate_pwerm
 from .trace import Trace
 from .volatility import estimate_volatility
 from .wacc import compute_wacc
-from .waterfall import allocate_waterfall, class_volatilities
+from .waterfall import allocate_with_volatilities
 
 ENGINE_VERSION = "py-1.0.0"
 
@@ -1478,21 +1478,25 @@ def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: 
     waterfall_per_share: float | None = None
     class_volatility: dict | None = None
     if has_waterfall:
-        # Full cap-table waterfall (remaining-gaps §2 — multi-breakpoint).
-        allocation = allocate_waterfall(equity_value, share_classes, t, r, volatility or 0.0)
+        # Full cap-table waterfall (remaining-gaps §2 — multi-breakpoint), and
+        # the gearing each class carries, from the same breakpoints. Only the
+        # waterfall path can produce the second: the two aggregate branches
+        # below do not decompose the payoff into tranches, so there is no
+        # per-class delta to take. A report on a valuation without a cap table
+        # therefore omits the class-volatility schedule rather than printing the
+        # enterprise figure against every class, which would assert something
+        # false.
+        #
+        # One pass for both. They were two calls with identical arguments, and
+        # the schedule is a second *reading* of this allocation rather than a
+        # second allocation — see `allocate_with_volatilities`.
+        allocation, class_volatility = allocate_with_volatilities(
+            equity_value, share_classes, t, r, volatility or 0.0
+        )
         common_equity = allocation["common_value"]
         waterfall_per_share = allocation["common_per_share"]
         share_basis = allocation["common_shares"]
         basis_kind = "cap_table_common"
-        # The gearing each class carries, from the same breakpoints. Only the
-        # waterfall path can produce it: the two aggregate branches below do not
-        # decompose the payoff into tranches, so there is no per-class delta to
-        # take. A report on a valuation without a cap table therefore omits the
-        # class-volatility schedule rather than printing the enterprise figure
-        # against every class, which would assert something false.
-        class_volatility = class_volatilities(
-            equity_value, share_classes, t, r, volatility or 0.0
-        )
     elif preferred_shares > 0 and liquidation_preference > 0:
         upside = bs_call(equity_value, liquidation_preference, t, r, volatility or 0.0)
         common_fraction = fully_diluted_common / (fully_diluted_common + preferred_shares)
