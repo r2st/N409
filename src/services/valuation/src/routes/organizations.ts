@@ -4,13 +4,12 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import {
+  HierarchyCycleError,
   assignValuationToOrg,
   createOrganization,
   deleteOrganization,
   organizationContents,
-  entityParentWouldCycle,
   findOrganization,
-  organizationParentWouldCycle,
   listOrganizations,
   ORG_ENTITY_PAGE_LIMIT,
   ORG_PAGE_LIMIT,
@@ -150,18 +149,28 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
       if (parsed.data.parent_org_id === id)
         throw problems.unprocessable('An organization cannot be its own parent');
       await loadOwnedOrg(principal, parsed.data.parent_org_id);
-      // Longer loops are just as damaging as self-parenting and just as easy
-      // to create two requests apart.
-      if (await organizationParentWouldCycle(deps.pool, id, parsed.data.parent_org_id)) {
-        throw problems.unprocessable(
-          'That parent sits below this organization — the hierarchy would loop back on itself',
-        );
-      }
     }
+    /*
+     * Longer loops are just as damaging as self-parenting and just as easy to
+     * create two requests apart — and, until round 328, easier still to create
+     * with two at once: the check was a read here and the write was
+     * unconditional, so `A.parent := B` and `B.parent := A` issued together
+     * both saw no loop and together closed one. It now runs inside
+     * `updateOrganization`'s transaction under the hierarchy lock; this is
+     * where its refusal is worded, because the sentence has to name the tree
+     * the caller is editing.
+     */
     const updated = await updateOrganization(deps.pool, id, {
       name: parsed.data.name,
       entityType: parsed.data.entity_type,
       parentOrgId: parsed.data.parent_org_id,
+    }).catch((err: unknown) => {
+      if (err instanceof HierarchyCycleError) {
+        throw problems.unprocessable(
+          'That parent sits below this organization — the hierarchy would loop back on itself',
+        );
+      }
+      throw err;
     });
     return { organization: updated };
   });
@@ -296,21 +305,25 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
       if (parsed.data.parent_valuation_id === id)
         throw problems.unprocessable('A valuation cannot be its own parent');
       await loadEditableValuation(principal, parsed.data.parent_valuation_id);
-      // A subsidiary cannot also be its own parent's parent: the entity tree
-      // drops any branch that loops, so the consolidated roll-up would quietly
-      // stop counting both entities.
-      if (await entityParentWouldCycle(deps.pool, id, parsed.data.parent_valuation_id)) {
-        throw problems.unprocessable(
-          'That entity sits below this one — the inter-company hierarchy would loop back on itself',
-        );
-      }
     }
+    // A subsidiary cannot also be its own parent's parent: the entity tree
+    // drops any branch that loops, so the consolidated roll-up would quietly
+    // stop counting both entities. Checked inside `setEntityRelationship`'s
+    // transaction, under the hierarchy lock, for the reason the organization
+    // patch above gives.
     await setEntityRelationship(
       deps.pool,
       id,
       parsed.data.entity_type,
       parsed.data.parent_valuation_id ?? null,
-    );
+    ).catch((err: unknown) => {
+      if (err instanceof HierarchyCycleError) {
+        throw problems.unprocessable(
+          'That entity sits below this one — the inter-company hierarchy would loop back on itself',
+        );
+      }
+      throw err;
+    });
     return {
       entity_type: parsed.data.entity_type,
       parent_valuation_id: parsed.data.parent_valuation_id ?? null,

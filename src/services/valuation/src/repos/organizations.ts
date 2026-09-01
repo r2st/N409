@@ -2,6 +2,29 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import type { EntityType, PortfolioEntity } from '../domain/portfolio.js';
 import { invalidateValuation } from './valuations.js';
+import { withTransaction, type Queryable } from '../db/pool.js';
+
+/**
+ * Lock class for the two single-parent hierarchies. Distinct from every other
+ * class in this service — `pg_advisory_xact_lock(key1, key2)` shares one
+ * namespace across the database — and split by `key2` so a re-parent in the
+ * organization tree does not wait on one in the inter-company tree.
+ */
+const HIERARCHY_LOCK = 0x7472_6565; // 'tree'
+const ORG_TREE = 1;
+const ENTITY_TREE = 2;
+
+/**
+ * Raised when the re-parent this transaction is about to write would close a
+ * loop. Carries no detail: the two callers word the refusal for their own
+ * hierarchy, and the sentence a user reads names the tree they are editing.
+ */
+export class HierarchyCycleError extends Error {
+  constructor() {
+    super('re-parenting would close a cycle');
+    this.name = 'HierarchyCycleError';
+  }
+}
 
 export type OrgEntityType = 'holding_company' | 'fund' | 'operating_group';
 
@@ -67,8 +90,35 @@ export async function findOrganization(pool: pg.Pool, id: string): Promise<Organ
   return rows[0] ?? null;
 }
 
+/**
+ * Patch an organization, re-parenting it under the hierarchy lock when asked.
+ *
+ * A patch that moves `parent_org_id` to a non-null value runs in a transaction
+ * that holds {@link HIERARCHY_LOCK} and re-asks {@link wouldCycle} there,
+ * throwing {@link HierarchyCycleError} rather than writing a loop. Detaching
+ * (`null`) and every other field need neither: nothing can be made cyclic by
+ * removing an edge.
+ */
 export async function updateOrganization(
   pool: pg.Pool,
+  id: string,
+  patch: { name?: string; entityType?: OrgEntityType; parentOrgId?: string | null },
+): Promise<OrganizationRow | null> {
+  const parent = patch.parentOrgId;
+  if (parent) {
+    return withTransaction(pool, async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock($1, $2)', [HIERARCHY_LOCK, ORG_TREE]);
+      if (await wouldCycle(client, 'organizations', 'parent_org_id', id, parent)) {
+        throw new HierarchyCycleError();
+      }
+      return writeOrganizationPatch(client, id, patch);
+    });
+  }
+  return writeOrganizationPatch(pool, id, patch);
+}
+
+async function writeOrganizationPatch(
+  db: Queryable,
   id: string,
   patch: { name?: string; entityType?: OrgEntityType; parentOrgId?: string | null },
 ): Promise<OrganizationRow | null> {
@@ -87,7 +137,7 @@ export async function updateOrganization(
     sets.push(`parent_org_id = $${params.length}`);
   }
   params.push(id);
-  const { rows } = await pool.query<OrganizationRow>(
+  const { rows } = await db.query<OrganizationRow>(
     `UPDATE organizations SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
     params,
   );
@@ -107,16 +157,40 @@ export async function updateOrganization(
  * Walks up from the candidate parent; if we reach `id`, the candidate is
  * already a descendant. `UNION` (not `UNION ALL`) terminates on any pre-existing
  * cycle rather than recursing forever.
+ *
+ * WHERE THIS HAS TO RUN (round 328). This is a read, and the re-parent that
+ * acts on it is a write, and neither hierarchy has any constraint behind them:
+ * two requests that each ask this question before either answer is written both
+ * get "no loop", and the pair of writes closes one. `A.parent := B` and
+ * `B.parent := A`, issued together, is all it takes — two tabs, a retried
+ * request, or two people tidying one holdco tree. The route comments already
+ * said a loop is "just as easy to create two requests apart"; concurrently it
+ * needs no second request at all, because neither read can see the other's
+ * write.
+ *
+ * And a cycle here is silent by construction: `buildEntityTree` finds a root by
+ * looking for a node whose parent is outside the set, so every node in the loop
+ * looks parented and the whole branch drops out of the portfolio view. What an
+ * auditor is handed is a consolidated figure with entities missing from it and
+ * nothing on the page saying so.
+ *
+ * So it runs on the transaction that performs the write, under
+ * {@link HIERARCHY_LOCK}, and never against the caller's own earlier reading —
+ * the same rule as `saveVersion` and the publish gate. The lock is per tree and
+ * not per node: a loop is a property of a path, so the two writes that close
+ * one need not touch a row in common, and there is nothing narrower to hold.
+ * Re-parenting is a rare administrative act on a small table, so a tree-wide
+ * lock costs nothing anybody can observe.
  */
 async function wouldCycle(
-  pool: pg.Pool,
+  db: Queryable,
   table: 'organizations' | 'valuations',
   parentColumn: 'parent_org_id' | 'parent_valuation_id',
   id: string,
   candidateParentId: string,
 ): Promise<boolean> {
   if (id === candidateParentId) return true;
-  const { rows } = await pool.query<{ hit: boolean }>(
+  const { rows } = await db.query<{ hit: boolean }>(
     `WITH RECURSIVE ancestors(id) AS (
        SELECT $1::text
        UNION
@@ -128,24 +202,6 @@ async function wouldCycle(
     [candidateParentId, id],
   );
   return rows.length > 0;
-}
-
-/** True when re-parenting `orgId` under `candidateParentId` would close a loop. */
-export function organizationParentWouldCycle(
-  pool: pg.Pool,
-  orgId: string,
-  candidateParentId: string,
-): Promise<boolean> {
-  return wouldCycle(pool, 'organizations', 'parent_org_id', orgId, candidateParentId);
-}
-
-/** True when re-parenting `valuationId` under `candidateParentId` would close a loop. */
-export function entityParentWouldCycle(
-  pool: pg.Pool,
-  valuationId: string,
-  candidateParentId: string,
-): Promise<boolean> {
-  return wouldCycle(pool, 'valuations', 'parent_valuation_id', valuationId, candidateParentId);
 }
 
 /** What a delete would take with it: live members and child organizations. */
@@ -267,11 +323,26 @@ export async function setEntityRelationship(
   entityType: EntityType,
   parentValuationId: string | null,
 ): Promise<void> {
-  await pool.query('UPDATE valuations SET entity_type = $2, parent_valuation_id = $3 WHERE id = $1', [
-    valuationId,
-    entityType,
-    parentValuationId,
-  ]);
+  const write = (db: Queryable) =>
+    db.query('UPDATE valuations SET entity_type = $2, parent_valuation_id = $3 WHERE id = $1', [
+      valuationId,
+      entityType,
+      parentValuationId,
+    ]);
+  // Same rule as `updateOrganization`: the loop check belongs on the
+  // transaction that writes the edge, not on a reading the caller took earlier.
+  // Clearing the parent cannot close anything, so it skips the lock.
+  if (parentValuationId) {
+    await withTransaction(pool, async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock($1, $2)', [HIERARCHY_LOCK, ENTITY_TREE]);
+      if (await wouldCycle(client, 'valuations', 'parent_valuation_id', valuationId, parentValuationId)) {
+        throw new HierarchyCycleError();
+      }
+      await write(client);
+    });
+  } else {
+    await write(pool);
+  }
   invalidateValuation(valuationId);
 }
 

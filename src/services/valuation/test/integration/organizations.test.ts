@@ -545,6 +545,106 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
     expect(loop.json().detail).toMatch(/loop/i);
   });
 
+  /*
+   * Two re-parents at once (round 328).
+   *
+   * The sequential refusals above are the whole of what the cycle guard used to
+   * be, and they hold only because the second request could see the first
+   * request's write. `wouldCycle` was a read on the pool and the re-parent that
+   * acted on it was an unconditional UPDATE, so `A.parent := B` and
+   * `B.parent := A` issued together both asked before either answered: both got
+   * "no loop", and the pair of writes closed one. Two tabs, a retried request
+   * or two people tidying one holdco tree is all it takes.
+   *
+   * A cycle is silent by construction — `buildEntityTree` roots a tree at the
+   * node whose parent is outside the set, so every node in the loop reads as
+   * parented and the whole branch drops out of the portfolio view. The number
+   * that goes missing is the consolidated one an auditor relies on.
+   *
+   * Both halves are driven by holding the hierarchy lock on a connection of the
+   * test's own, so "the two requests were in flight together" is an assertion
+   * rather than two injections raced and hoped to overlap: neither can reach
+   * its check until the holder commits, and by then both have been accepted by
+   * the route.
+   */
+  describe('two re-parents in flight at once', () => {
+    /** `HIERARCHY_LOCK` in `repos/organizations.ts` — 'tree' — and its two keys. */
+    const HIERARCHY_LOCK = 0x7472_6565;
+    const ORG_TREE = 1;
+    const ENTITY_TREE = 2;
+
+    /** Runs both injections while the lock is held, then lets them through. */
+    const raceUnderLock = async <T>(key: number, requests: readonly (() => Promise<T>)[]): Promise<T[]> => {
+      const holder = await ctx.pool.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query('SELECT pg_advisory_xact_lock($1, $2)', [HIERARCHY_LOCK, key]);
+        const inFlight = requests.map((send) => send());
+        // Long enough for both handlers to reach the lock and block on it.
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        await holder.query('COMMIT');
+        return await Promise.all(inFlight);
+      } finally {
+        holder.release();
+      }
+    };
+
+    it('lets one close the organization hierarchy and refuses the other', async () => {
+      const mk = async (name: string) => {
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/organizations',
+          headers: authHeader(owner.token),
+          payload: { name },
+        });
+        return res.json().organization.id as string;
+      };
+      const a = await mk('Race Holdings A');
+      const b = await mk('Race Holdings B');
+
+      const patch = (id: string, parentId: string) => () =>
+        ctx.app.inject({
+          method: 'PATCH',
+          url: `/api/v1/organizations/${id}`,
+          headers: authHeader(owner.token),
+          payload: { parent_org_id: parentId },
+        });
+
+      const results = await raceUnderLock(ORG_TREE, [patch(a, b), patch(b, a)]);
+      expect(results.map((r) => r.statusCode).sort()).toEqual([200, 422]);
+
+      // The invariant, asked of the rows rather than of the responses: at most
+      // one edge, so the tree still has a root.
+      const { rows } = await ctx.pool.query<{ id: string; parent_org_id: string | null }>(
+        'SELECT id, parent_org_id FROM organizations WHERE id = ANY($1)',
+        [[a, b]],
+      );
+      expect(rows.filter((r) => r.parent_org_id !== null)).toHaveLength(1);
+    });
+
+    it('lets one close the inter-company hierarchy and refuses the other', async () => {
+      const a = await seedValuation(owner, 'Race Entity A', null);
+      const b = await seedValuation(owner, 'Race Entity B', null);
+
+      const patch = (id: string, parentId: string) => () =>
+        ctx.app.inject({
+          method: 'PATCH',
+          url: `/api/v1/valuations/${id}/entity`,
+          headers: authHeader(owner.token),
+          payload: { entity_type: 'subsidiary', parent_valuation_id: parentId },
+        });
+
+      const results = await raceUnderLock(ENTITY_TREE, [patch(a.id, b.id), patch(b.id, a.id)]);
+      expect(results.map((r) => r.statusCode).sort()).toEqual([200, 422]);
+
+      const { rows } = await ctx.pool.query<{ id: string; parent_valuation_id: string | null }>(
+        'SELECT id, parent_valuation_id FROM valuations WHERE id = ANY($1)',
+        [[a.id, b.id]],
+      );
+      expect(rows.filter((r) => r.parent_valuation_id !== null)).toHaveLength(1);
+    });
+  });
+
   /**
    * The ops read of this list is every organization on the platform, and it
    * fills a `<select>` on the engagement page. Capped, and honest about it —
