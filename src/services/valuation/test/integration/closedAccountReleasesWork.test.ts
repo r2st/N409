@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createValuation, findValuationById, patchValuation } from '../../src/repos/valuations.js';
 import { createTask, findTaskById, patchTask } from '../../src/repos/tasks.js';
 import { softDeleteUser } from '../../src/repos/adminUsers.js';
+import { setUserActive } from '../../src/repos/users.js';
 import { forceState, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -114,6 +115,31 @@ describe.skipIf(!dbUp)('closing an account releases the work it was holding', ()
       changes: { assigned_reviewer_id: { from: reviewer.id, to: null } },
       reason: 'account_closed',
     });
+  });
+
+  /**
+   * The directory's door onto the same state, which is the automated one: an HR
+   * system deprovisioning a departing employee is exactly the case the release
+   * exists for. `setUserActive` applied the invitation rule and not this one.
+   */
+  it('releases the same work when the directory deprovisions the account', async () => {
+    const scim = await seedUser(ctx, { roles: ['reviewer'] });
+    const v = await createValuation(
+      ctx.pool,
+      { kind: '409a', companyName: 'Directory Co', userId: admin.id },
+      actor(),
+    );
+    await patchValuation(ctx.pool, v, { assigned_reviewer_id: scim.id }, actor());
+    const scimActor = { actorType: 'system' as const, actorId: 'tok', source: 'scim' };
+
+    const released = await setUserActive(ctx.pool, scim.id, false, scimActor);
+    expect(released.valuations).toContain(v.id);
+    expect((await findValuationById(ctx.pool, v.id))?.assigned_reviewer_id).toBeNull();
+
+    // An IdP re-asserts `active: false` for everybody on every resync pass, so
+    // the second pass must find nothing left and write no second event.
+    const again = await setUserActive(ctx.pool, scim.id, false, scimActor);
+    expect(again).toEqual({ valuations: [], reviewTasks: [] });
   });
 
   it('closes an account holding nothing without inventing work to release', async () => {

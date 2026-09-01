@@ -364,12 +364,12 @@ describe.skipIf(!dbUp || !opensslAvailable())('SAML assertion consumer', () => {
     // Deactivation has to survive SSO, or removing someone's access does
     // nothing as long as the IdP still knows them.
     const user = await findUserByEmail(ctx.pool, 'ada@example.com');
-    await setUserActive(ctx.pool, user!.id, false);
+    await setUserActive(ctx.pool, user!.id, false, { actorType: 'system', actorId: 'test', source: 'test' });
     try {
       const res = await post(samlResponse('ada@example.com', idp));
       expect(res.statusCode).toBe(403);
     } finally {
-      await setUserActive(ctx.pool, user!.id, true);
+      await setUserActive(ctx.pool, user!.id, true, { actorType: 'system', actorId: 'test', source: 'test' });
     }
   });
 

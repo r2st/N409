@@ -4,6 +4,13 @@ import { withTransaction } from '../db/pool.js';
 import { isSuspended } from '../auth/rbac.js';
 import type { RoleKey } from '../domain/roles.js';
 import { revokeInvitationsFrom } from './invitations.js';
+import {
+  NOTHING_RELEASED,
+  invalidateReleased,
+  releaseAssignedWork,
+  type ReleasedWork,
+} from './assignedWork.js';
+import type { EventActor } from '../events/record.js';
 
 export interface UserRow {
   id: string;
@@ -412,21 +419,44 @@ export async function listUserIdsWithRoles(
  * directory on a schedule and re-asserts `active` for everybody each pass". So
  * a deprovisioned account's `deleted_at` moved forward every pass, forever.
  *
+ *
+ * RELEASES THE WORK THE ACCOUNT WAS HOLDING, like the console's own
+ * deactivation — see `releaseAssignedWork`. This is the door that most needed
+ * it: a directory deprovisioning a departing employee is exactly the case where
+ * an engagement stays on the name of somebody nothing will reach again.
+ *
+ * Reactivation does not put it back, and that is the same asymmetry
+ * `restoreUser` has for roles: who should pick a file up is a decision, and
+ * three weeks of a reassigned reviewer's work is not undone by a resync.
+ *
  * That column is the answer to "when did this person lose access". The admin
  * event beside it is guarded and stays put, but `deleted_at` is what
  * `personalDataExport` hands the subject themselves under Article 15, what
  * `analystAvailability` reads to call an assignment `closed`, and what the
  * console prints. All three were reporting the date of the last resync.
  */
-export async function setUserActive(pool: pg.Pool, id: string, active: boolean): Promise<void> {
+export async function setUserActive(
+  pool: pg.Pool,
+  id: string,
+  active: boolean,
+  actor: EventActor,
+): Promise<ReleasedWork> {
   if (active) {
     await pool.query('UPDATE users SET deleted_at = NULL WHERE id = $1', [id]);
-    return;
+    return NOTHING_RELEASED;
   }
-  await withTransaction(pool, async (client) => {
+  const released = await withTransaction(pool, async (client) => {
     await client.query('UPDATE users SET deleted_at = COALESCE(deleted_at, now()) WHERE id = $1', [id]);
     await revokeInvitationsFrom(client, id);
+    // The third door onto a closed account, and the automated one — see
+    // `releaseAssignedWork`. Same transaction as the deprovision, and
+    // idempotent, which this door needs more than the other two: an IdP
+    // re-asserts `active: false` for everybody on every resync pass, and the
+    // second pass finds nothing left to release.
+    return releaseAssignedWork(client, id, actor, 'account_closed');
   });
+  invalidateReleased(released);
+  return released;
 }
 
 /**

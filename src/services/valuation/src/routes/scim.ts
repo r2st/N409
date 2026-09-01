@@ -355,7 +355,8 @@ export function registerScimRoutes(
           externalId: parsed.externalId,
           roles: [await defaultRole()],
         });
-        if (!parsed.active) await setUserActive(deps.pool, user.id, false);
+        // An account created deactivated holds nothing, so nothing is released.
+        if (!parsed.active) await setUserActive(deps.pool, user.id, false, scimActor(tokenId));
         await recordAdminEvent(deps.pool, {
           type: 'user_created',
           actor: scimActor(tokenId),
@@ -388,7 +389,7 @@ export function registerScimRoutes(
         if (!user) return;
         const active = activeFromPatch(req.body);
         if (active !== undefined) {
-          await setUserActive(deps.pool, id, active);
+          const released = await setUserActive(deps.pool, id, active, scimActor(tokenId));
           // Only when it moved. An IdP resyncs its whole directory on a schedule
           // and re-asserts `active: true` for everybody each pass; a row per
           // assertion would bury the one deactivation in a few hundred no-ops.
@@ -399,7 +400,19 @@ export function registerScimRoutes(
               subjectType: 'user',
               subjectId: id,
               subjectLabel: user.email,
-              payload: { method: 'scim' },
+              // The work the deprovision took off this account's name, as the
+              // console's own deactivation records it: an engagement whose
+              // reviewer the directory has just removed has to be picked up by
+              // somebody, and nothing else on this trail would say so.
+              payload: {
+                method: 'scim',
+                ...(active
+                  ? {}
+                  : {
+                      released_valuations: released.valuations,
+                      released_review_tasks: released.reviewTasks,
+                    }),
+              },
             });
         }
         // The re-read can come back empty — a hard delete between the two lookups,
@@ -420,7 +433,7 @@ export function registerScimRoutes(
         const { id } = req.params as { id: string };
         const user = await loadManaged(id, reply);
         if (!user) return;
-        await setUserActive(deps.pool, id, false);
+        const released = await setUserActive(deps.pool, id, false, scimActor(tokenId));
         if (!user.deleted_at)
           await recordAdminEvent(deps.pool, {
             type: 'user_deactivated',
@@ -428,7 +441,12 @@ export function registerScimRoutes(
             subjectType: 'user',
             subjectId: id,
             subjectLabel: user.email,
-            payload: { method: 'scim', via: 'delete' },
+            payload: {
+              method: 'scim',
+              via: 'delete',
+              released_valuations: released.valuations,
+              released_review_tasks: released.reviewTasks,
+            },
           });
         return reply.status(204).send();
       });
