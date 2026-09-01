@@ -213,7 +213,7 @@ export function registerAdminUserRoutes(
   const audit = async (
     actorId: string,
     type: AdminEventType,
-    subjectType: 'user' | 'invitation' | 'partner',
+    subjectType: 'user' | 'invitation' | 'partner' | 'system',
     subjectId: string | null,
     subjectLabel: string | null,
     payload: Record<string, unknown> = {},
@@ -351,7 +351,7 @@ export function registerAdminUserRoutes(
   });
 
   app.get('/api/v1/users/export', { preHandler: app.authenticate }, async (req, reply) => {
-    requireUserAdmin(req);
+    const principal = requireUserAdmin(req);
     const parsed = ListQuery.safeParse(req.query);
     if (!parsed.success) throw invalidQuery(parsed.error);
     const { q, role, partner_id, include_deleted } = parsed.data;
@@ -397,6 +397,32 @@ export function registerAdminUserRoutes(
       'deleted_at',
     ] as const;
     const csv = toCsv(columns, items);
+    /*
+     * The disclosure this route is, on the record.
+     *
+     * Every other copy of somebody's personal data leaving the platform writes
+     * a `critical` row — the admin subject-access route below, and the
+     * self-serve one in `account.ts`. This route copies the contact details of
+     * *every* account matching the filters and wrote nothing, so the trail
+     * named the administrators who exported one person and not the one who
+     * took the directory.
+     *
+     * Recorded after the rows are in hand rather than before, which is the
+     * opposite of `user_data_exported` next door: that route names its subject
+     * up front and wants the attempt on the record even if the build fails,
+     * while here the filters alone do not say how much left — `q` and
+     * `partner_id` are the difference between one account and ten thousand,
+     * and `truncated` says whether even that count is the whole answer.
+     */
+    await audit(principal.id, 'user_directory_exported', 'system', null, 'User directory', {
+      format: 'csv',
+      rows: items.length,
+      truncated,
+      // The filter values, not the file: `q` is what an operator typed, which
+      // may be a name or an address, and is the part of this that says who was
+      // being looked for.
+      filters: { q: q ?? null, role: role ?? null, partner_id: partner_id ?? null, include_deleted },
+    });
     return sendExport(reply, truncated)
       .header('content-type', 'text/csv; charset=utf-8')
       .header('content-disposition', 'attachment; filename="users.csv"')

@@ -349,6 +349,27 @@ export const ADMIN_EVENT_CATALOG = {
   user_password_reset_sent: D('Password reset sent', 'access', 'info'),
   user_sessions_revoked: D('Sessions revoked', 'access', 'notice'),
   user_data_exported: D('Personal data exported', 'access', 'critical'),
+  /*
+   * The copy that is taken of everybody at once.
+   *
+   * `user_data_exported` above records one subject's data leaving, at
+   * `critical`, from both the admin route and the self-serve one — and
+   * `GET /users/export` hands a user administrator a CSV of every account's
+   * email address, phone number, name, job title, employer and SSO provider,
+   * and recorded nothing at all. So the trail answered "who has taken a copy
+   * of this person's data" with the two routes that copy one row and stayed
+   * silent about the route that copies all of them, which is the wrong way
+   * round: a directory export is the larger disclosure and the one a
+   * compromised administrator account reaches for first.
+   *
+   * `system` rather than `user` as the subject, for the reason the email
+   * suppression events use it: there is no one row this is about, and filing
+   * it under a subject id would either pick an arbitrary user or put ten
+   * thousand rows in ten thousand account trails. The filters and the row
+   * count go in the payload, so a reader can tell a partner-scoped slice from
+   * the whole directory.
+   */
+  user_directory_exported: D('User directory exported', 'access', 'critical'),
   account_closed: D('Account closed', 'access', 'critical'),
 
   // ── Identity & access: the self-serve half ──────────────────────────────
