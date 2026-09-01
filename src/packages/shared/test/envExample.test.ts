@@ -99,6 +99,27 @@ function used(): Map<string, string[]> {
     for (const m of text.matchAll(/environ(?:\.get\(|\[)["']([A-Z][A-Z0-9_]{2,})["']/g)) {
       note(m[1]!, rel);
     }
+    // Python, the named-constant form: `os.environ.get(FETCH_TIMEOUT_ENV)`,
+    // where `FETCH_TIMEOUT_ENV = "MARKET_FEED_FETCH_TIMEOUT_S"` sits a few lines
+    // up beside the default it belongs to.
+    //
+    // The same blind spot as `PORT`/`SMTP_PORT`, `TokenLedger` and `keyRing`
+    // below, arriving through a fourth ordinary refactor: naming the variable so
+    // the log line that reports a typo in it can quote it. It is worth noting
+    // that this check has now been broken in this exact way four times, and
+    // that the direction it breaks in is the dangerous one — the *first* test
+    // still passes, because a name nothing appears to read cannot be missing
+    // from the contract. What fails is the staleness test, and its advice is to
+    // delete the line from `.env.example`. `MARKET_FEED_FETCH_TIMEOUT_S` had
+    // been in that state since round 308: the ceiling that keeps a hung market
+    // data source from eating the engine's threadpool, documented, read, and
+    // reported by this file as a variable to remove.
+    for (const m of text.matchAll(/environ(?:\.get\(|\[)\s*([A-Za-z_][A-Za-z0-9_]*)/g)) {
+      const constant = text.match(
+        new RegExp(`^${m[1]!}\\s*(?::[^=\\n]+)?=\\s*["']([A-Z][A-Z0-9_]{2,})["']`, 'm'),
+      );
+      if (constant) note(constant[1]!, rel);
+    }
     // The valuation service's env schema: a key of the `Env` object.
     //
     // Matched on the key rather than on what follows it, because what follows
@@ -295,6 +316,12 @@ describe('.env.example is the deployment contract', () => {
     // because nothing else in this list would notice it going missing: SMTP_PORT
     // is read nowhere else in the codebase.
     expect(names.has('SMTP_PORT')).toBe(true);
+    // `os.environ.get(FETCH_TIMEOUT_ENV)`, the name in a module constant beside
+    // the default it belongs to. Both of the market feed's ceilings are read
+    // that way and neither is read any other way, so a regression in this idiom
+    // shows up as nothing but these two lines.
+    expect(names.has('MARKET_FEED_FETCH_TIMEOUT_S')).toBe(true);
+    expect(names.has('MARKET_FEED_MULTIPLES_BUDGET_S')).toBe(true);
     expect(names.size).toBeGreaterThan(50);
   });
 
