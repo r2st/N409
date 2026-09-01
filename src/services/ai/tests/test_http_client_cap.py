@@ -10,6 +10,7 @@ tests hold the same one for the Python tier.
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from pathlib import Path
@@ -17,6 +18,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from app import http_client
 from app.http_client import (
     MAX_RESPONSE_BYTES,
     ResponseTooLarge,
@@ -107,6 +109,83 @@ def test_a_non_integer_setting_falls_back_to_the_default(monkeypatch: pytest.Mon
 def test_negative_is_off_not_unlimited(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MAX_RESPONSE_BYTES", "-1")
     assert max_response_bytes() == 0
+
+
+def _config_lines(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if getattr(r, "event", None) == "http_client_config"]
+
+
+def test_an_unparseable_ceiling_says_it_took_the_default(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """R341, M11. Falling back is right; falling back in silence is not.
+
+    ``limits._misconfigured`` already argues this for the request-body cap, in
+    as many words: the operator who set the value "has a service running on the
+    old one and nothing anywhere disagrees with them". This reader made the same
+    fallback and said nothing.
+    """
+    http_client._announced.clear()
+    monkeypatch.setenv("MAX_RESPONSE_BYTES", "16MB")
+    with caplog.at_level(logging.WARNING):
+        assert max_response_bytes() == MAX_RESPONSE_BYTES
+    line = _config_lines(caplog)[0]
+    assert line.levelno == logging.WARNING
+    # The value the operator actually typed, which is the whole diagnostic.
+    assert line.detail == "16MB"
+    assert line.limit == MAX_RESPONSE_BYTES
+
+
+def test_a_ceiling_of_nothing_says_the_guard_is_off(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The louder half: a mistyped `-1` removes the ceiling rather than tightening it.
+
+    ``max(value, 0)`` resolves every negative to 0, and 0 is documented as off —
+    ``_CappedStream`` tests ``self._limit > 0``. So the guard whose module header
+    says "the failure it guards is unbounded rather than merely large" is
+    removed by a typo, and the socket is then free to deliver into a buffer
+    nobody is draining. ``ratelimit.install_rate_limit`` has warned on its own
+    version of this since it was written.
+    """
+    http_client._announced.clear()
+    monkeypatch.setenv("MAX_RESPONSE_BYTES", "-1")
+    with caplog.at_level(logging.WARNING):
+        assert max_response_bytes() == 0
+    line = _config_lines(caplog)[0]
+    assert line.levelno == logging.WARNING
+    assert line.detail == "-1"
+    assert line.limit == 0
+
+
+def test_a_configured_ceiling_is_announced_once_rather_than_per_request(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # `new_client` is called once per outbound request, so an unconditional line
+    # would be one per LLM call. Announced on the value, not on a bare flag, so
+    # a redeploy that fixes a typo still says so.
+    http_client._announced.clear()
+    monkeypatch.setenv("MAX_RESPONSE_BYTES", "1024")
+    with caplog.at_level(logging.INFO):
+        for _ in range(5):
+            assert max_response_bytes() == 1024
+    assert len(_config_lines(caplog)) == 1
+    assert _config_lines(caplog)[0].levelno == logging.INFO
+
+
+def test_the_default_ceiling_is_not_worth_a_line(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A deployment that set nothing, and one that set the default explicitly,
+    # are both the ordinary case. A line for either is the noise that makes the
+    # two above easy to miss.
+    http_client._announced.clear()
+    monkeypatch.delenv("MAX_RESPONSE_BYTES", raising=False)
+    with caplog.at_level(logging.INFO):
+        assert max_response_bytes() == MAX_RESPONSE_BYTES
+        monkeypatch.setenv("MAX_RESPONSE_BYTES", str(MAX_RESPONSE_BYTES))
+        assert max_response_bytes() == MAX_RESPONSE_BYTES
+    assert _config_lines(caplog) == []
 
 
 def test_no_outbound_client_is_built_outside_the_factory() -> None:

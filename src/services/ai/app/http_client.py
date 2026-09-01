@@ -52,11 +52,14 @@ by the same figure already.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from collections.abc import Iterator
 
 import httpx
+
+_log = logging.getLogger("http_client")
 
 # Far above every real body these clients read: an LLM completion is bounded by
 # its token cap, a search page is a few hundred kilobytes, a Bedrock model list
@@ -72,17 +75,84 @@ MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_RESPONSE_BYTES_VAR = "MAX_RESPONSE_BYTES"
 
 
+#: Configuration lines this process has already written, keyed by the reading
+#: they were about.
+#:
+#: `new_client` is called once per outbound request, so an unconditional line in
+#: the reader below would be a line per LLM call. Keyed on the value rather than
+#: a bare flag so a ceiling that changes at runtime — which is what the suite
+#: does — is still announced, and so a redeploy that fixes a typo says so
+#: instead of staying quiet because the wrong value was already reported.
+_announced: set[str] = set()
+
+
+def _announce_once(key: str, level: int, message: str, **fields: object) -> None:
+    if key in _announced:
+        return
+    _announced.add(key)
+    _log.log(level, message, extra={"event": "http_client_config", **fields})
+
+
 def max_response_bytes(default: int = MAX_RESPONSE_BYTES) -> int:
-    """Configured ceiling (MAX_RESPONSE_BYTES); 0 disables it."""
+    """Configured ceiling (MAX_RESPONSE_BYTES); 0 disables it.
+
+    ## Why the two lines (round 341, methodology M11)
+
+    Both fallbacks were silent, and this service already has the convention for
+    them twice over: ``limits._misconfigured`` says in as many words that
+    "falling back *without saying so* is its own failure — the operator who
+    raised the body cap has a service running on the old one and nothing
+    anywhere disagrees with them", and ``ratelimit.install_rate_limit`` warns
+    whenever the ceiling it ends up with is nothing. This reader did neither.
+
+    An unparseable value — ``MAX_RESPONSE_BYTES=16MB`` in a unit file — took the
+    default with nothing said, which is exactly the sentence above.
+
+    And a *negative* one resolves to 0, which this function documents as off, so
+    a mistyped ``-1`` turns the ceiling off rather than tightening it. That is
+    not a smaller cap being applied quietly; it is the guard whose module header
+    says "the failure it guards is unbounded rather than merely large" being
+    removed by a typo, with the socket then free to deliver into a buffer nobody
+    is draining for as long as the far end keeps sending. ``0`` remains a
+    supported way to turn it off — it is in the docstring and ``new_client``
+    relies on it — so this is a line, not a refusal.
+    """
     raw = os.environ.get(MAX_RESPONSE_BYTES_VAR)
     if raw is None or raw.strip() == "":
         return default
     try:
         value = int(raw)
     except ValueError:
+        _announce_once(
+            f"unparseable:{raw}",
+            logging.WARNING,
+            "MAX_RESPONSE_BYTES is not an integer — falling back to the default",
+            detail=raw,
+            limit=default,
+        )
         return default
-    # Negative is a typo for "off", not a licence to buffer everything.
-    return max(value, 0)
+    # Negative is a typo for "off", not a licence to buffer everything — and
+    # "off" is what it resolves to, which is why the line below exists.
+    ceiling = max(value, 0)
+    if ceiling == 0:
+        _announce_once(
+            f"off:{raw}",
+            logging.WARNING,
+            "response size ceiling disabled — a far end that never stops sending will be buffered without limit",
+            detail=raw,
+            limit=0,
+        )
+    elif ceiling != default:
+        # The other half, for the same reason `install_rate_limit` logs the
+        # ceiling it enabled: an operator who raised or lowered this has no
+        # other way to confirm the value reached the process.
+        _announce_once(
+            f"set:{ceiling}",
+            logging.INFO,
+            "response size ceiling configured",
+            limit=ceiling,
+        )
+    return ceiling
 
 
 class ResponseTooLarge(httpx.HTTPError):
