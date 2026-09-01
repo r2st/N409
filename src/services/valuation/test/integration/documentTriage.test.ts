@@ -337,7 +337,9 @@ describe.skipIf(!dbUp)('document triage queue', () => {
 
     // And the batch is on the admin trail with the true tally, which a throw
     // past `recordAdminEvent` left off it entirely.
-    const events = await ctx.pool.query<{ payload: { requested: number; succeeded: number; failed: number } }>(
+    const events = await ctx.pool.query<{
+      payload: { requested: number; succeeded: number; failed: number };
+    }>(
       `SELECT payload FROM admin_events
         WHERE type = 'documents_refiled' ORDER BY occurred_at DESC, id DESC LIMIT 1`,
     );

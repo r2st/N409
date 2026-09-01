@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
+import { isIsoCalendarDate, isUlid, logUnretried, problems } from '@n409/shared';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
@@ -373,28 +373,79 @@ export function registerBoardApprovalRoutes(
       await remintSignoffToken(deps.pool, member.id, hash);
       const link = `${baseUrl}/board-sign#token=${token}`;
 
-      await sendTransactionalEmail(
-        { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
-        {
-          valuationId: valuation.id,
-          toEmail: member.member_email,
-          recipientName: member.member_name,
-          templateKey: 'board_resolution_signoff',
-          subject: `Board resolution to sign — ${valuation.company_name}`,
-          body:
-            `Dear ${member.member_name},\n\n` +
-            `The board resolution adopting the fair market value of ${valuation.company_name}'s ` +
-            `common stock is ready for your signature.\n\n` +
-            `Review and sign here: ${link}\n\n` +
-            `This link is unique to you. Thank you.`,
-          vars: {
-            member_name: member.member_name,
-            company_name: valuation.company_name,
-            link,
+      /*
+       * THE SEND AND THE STAMP ARE TWO STEPS, AND ONLY ONE OF THEM IS THE SEND
+       * (R301, methodology M6).
+       *
+       * This route destroys the director's previous link before it does
+       * anything else, so from here on the only working link is the one this
+       * message carries. Both statements below were bare awaits inside a
+       * handler with no catch, which made every failure after the re-mint
+       * arrive as "the send failed" — and one of them is not.
+       *
+       * `markMemberSent` is a bookkeeping UPDATE that runs *after*
+       * `sendTransactionalEmail` has enqueued the message and handed it to the
+       * transport. Losing it answered 500 for a link that had left the
+       * building, and left `sent_at` null so the list still reads "not sent".
+       * The operator's reasonable next move is to press Send again — which
+       * re-mints, and so revokes the link the director is at that moment
+       * reading in their inbox. A bookkeeping blip therefore ends with a
+       * director clicking a link they were legitimately sent and being told it
+       * is no longer valid.
+       *
+       * This is the same rule `email/sendAttempt.ts` states for the outbox: the
+       * transport step and the bookkeeping step must not share one catch,
+       * because the second cannot describe the first. So the stamp is contained
+       * and the route still answers `sent: true`, which is the true answer —
+       * and `logUnretried`, because nothing revisits `sent_at`.
+       *
+       * The enqueue in front of it keeps failing the request, which is right:
+       * no message exists, and the operator must know to send again. What it
+       * needs is to say that the previous link died anyway, which is the one
+       * fact a 500 alone does not carry.
+       */
+      try {
+        await sendTransactionalEmail(
+          { pool: deps.pool, transport: deps.transport, log: app.log, settings: deps.settings },
+          {
+            valuationId: valuation.id,
+            toEmail: member.member_email,
+            recipientName: member.member_name,
+            templateKey: 'board_resolution_signoff',
+            subject: `Board resolution to sign — ${valuation.company_name}`,
+            body:
+              `Dear ${member.member_name},\n\n` +
+              `The board resolution adopting the fair market value of ${valuation.company_name}'s ` +
+              `common stock is ready for your signature.\n\n` +
+              `Review and sign here: ${link}\n\n` +
+              `This link is unique to you. Thank you.`,
+            vars: {
+              member_name: member.member_name,
+              company_name: valuation.company_name,
+              link,
+            },
           },
-        },
-      );
-      await markMemberSent(deps.pool, member.id);
+        );
+      } catch (err) {
+        // The old link is already gone — `remintSignoffToken` committed above —
+        // so this is not a no-op failure the operator can ignore. Said out loud
+        // because the 500 they see cannot say it.
+        logUnretried(
+          app.log,
+          err,
+          { valuationId: valuation.id, memberId: member.id },
+          'board sign-off link could not be queued, and the member’s previous link is already revoked',
+        );
+        throw err;
+      }
+      await markMemberSent(deps.pool, member.id).catch((err: unknown) => {
+        logUnretried(
+          app.log,
+          err,
+          { valuationId: valuation.id, memberId: member.id },
+          'board sign-off link was sent but not stamped; the list still reads “not sent” and a re-send would revoke it',
+        );
+      });
       return { sent: true };
     },
   );

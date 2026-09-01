@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
-import { authHeader, isDbAvailable, seedUser, setupTestApp } from './helpers.js';
+import { authHeader, interceptPoolQueries, isDbAvailable, seedUser, setupTestApp } from './helpers.js';
 import { createCalculation } from '../../src/repos/calculations.js';
 
 const dbUp = await isDbAvailable();
@@ -479,6 +479,54 @@ describe.skipIf(!dbUp)('feature 5 — board approval workflow', () => {
         [memberId],
       );
       expect(Number(rows[0]!.days)).toBeGreaterThan(29.9);
+    });
+
+    /*
+     * The send and the stamp are two steps, and only one of them is the send
+     * (R301, methodology M6).
+     *
+     * This route revokes the director's previous link before it does anything
+     * else, so once the message is queued the only working link is the one it
+     * carries. `markMemberSent` runs after that, and losing it used to answer
+     * 500 for a link that had left the building — with `sent_at` still null, so
+     * the list reads "not sent" and the operator's reasonable next move is to
+     * press Send again, which revokes the link the director is reading.
+     */
+    it('answers sent when the message went and only the stamp was lost', async () => {
+      const { vId, memberId } = await seedMember('StampCo', 'dana.stamp@board.example');
+      const restore = interceptPoolQueries(pool, (sql) => {
+        if (sql.includes('UPDATE board_signoffs SET sent_at')) {
+          throw new Error('canceling statement due to statement timeout');
+        }
+        return undefined;
+      });
+      let sent;
+      try {
+        sent = await app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${vId}/board/members/${memberId}/send`,
+          headers: authHeader(ops.token),
+        });
+      } finally {
+        restore();
+      }
+      expect(sent.statusCode, sent.body).toBe(200);
+      expect(sent.json()).toEqual({ sent: true });
+
+      // The message really was queued — the half the 500 was denying.
+      const { rows: outbox } = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM email_outbox
+          WHERE to_email = $1 AND template_key = 'board_resolution_signoff'`,
+        ['dana.stamp@board.example'],
+      );
+      expect(outbox[0]!.n).toBe(1);
+
+      // And the stamp is the only thing missing, which is what the log says.
+      const { rows } = await pool.query<{ sent_at: Date | null }>(
+        'SELECT sent_at FROM board_signoffs WHERE id = $1',
+        [memberId],
+      );
+      expect(rows[0]!.sent_at).toBeNull();
     });
 
     it('shows ops the deadline so a lapsed link is visible before a member complains', async () => {
