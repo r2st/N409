@@ -72,6 +72,27 @@ const MIN_DEFLATE_BYTES = 256;
  */
 const DEFLATE_LEVEL = 6;
 
+/** Somewhere to say that an entry could not be compressed. */
+export interface ZipIssueLog {
+  warn: (obj: Record<string, unknown>, msg: string) => void;
+}
+
+let zipLog: ZipIssueLog | null = null;
+
+/**
+ * Install the logger this module reports a failed compression through.
+ *
+ * A module-level sink for the reason `configureReportPdfLogging` gives about
+ * the renderer beside it: `buildZip` is reached from the evidence bundle route
+ * and from `export/xlsx.ts`, which is itself called from every workbook
+ * download on the platform, and widening all of those signatures to carry a
+ * logger would be a lot of plumbing for a line that is written when zlib
+ * refuses. Null until a host installs one, which is what a test gets.
+ */
+export function configureZipLogging(log: ZipIssueLog | null): void {
+  zipLog = log;
+}
+
 /**
  * Whether this entry ships deflated, decided per entry by trying it.
  *
@@ -101,8 +122,35 @@ const DEFLATE_LEVEL = 6;
  */
 function deflateWins(data: Buffer): Buffer | null {
   if (data.length < MIN_DEFLATE_BYTES) return null;
-  const deflated = deflateRawSync(data, { level: DEFLATE_LEVEL });
-  return deflated.length < data.length ? deflated : null;
+  try {
+    const deflated = deflateRawSync(data, { level: DEFLATE_LEVEL });
+    return deflated.length < data.length ? deflated : null;
+  } catch (err) {
+    /*
+     * CONTAINED (round 332, methodology M5). Until R330 this writer never
+     * called zlib at all, so `buildZip` could not fail: it read bytes, wrote
+     * headers, and concatenated. Compression made an optional step that *can*
+     * fail load-bearing for every archive the platform produces — the evidence
+     * bundle an auditor is downloading and, far more often, every .xlsx export
+     * on the platform, because an .xlsx is a ZIP of XML parts built here.
+     *
+     * `deflateRawSync` allocates a second copy of the entry and can throw for
+     * reasons that have nothing to do with the caller: a buffer over
+     * `buffer.kMaxLength`, or `ENOMEM` on a box already under pressure — and a
+     * 2.7 MB `calculations.json` on a 3.8 GB host is exactly when the bundle
+     * matters. Letting that out turns a download that would have worked into a
+     * 500, to save bytes nobody asked to save.
+     *
+     * The fallback is this function's own contract and needs no new path:
+     * `null` is "ship it stored", which is what every entry did before R330.
+     * The archive is bigger and completely correct.
+     */
+    zipLog?.warn(
+      { err, bytes: data.length },
+      'could not deflate a zip entry; shipping it stored — the archive is larger but complete',
+    );
+    return null;
+  }
 }
 
 /**

@@ -34,6 +34,7 @@ declare module 'fastify' {
   }
 }
 import { configureReportPdfLogging, verifyFontAssets } from '@n409/report/pdf';
+import { configureZipLogging } from './export/zip.js';
 import type { Config } from './config.js';
 import { GoogleOidc } from './auth/google.js';
 import { registerAuth } from './plugins/auth.js';
@@ -424,6 +425,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // reports itself whenever the report unit is unreachable, so the library
   // needs a logger here as well as in that service.
   configureReportPdfLogging(app.log);
+
+  // And the eleventh, which belongs to neither: a zip entry zlib refused to
+  // compress. `export/zip.ts` ships it stored instead — the archive is larger
+  // and entirely correct — but a box refusing to deflate a 2.7 MB document is
+  // worth one line, and the alternative is the silent swallow this estate
+  // keeps finding. Every .xlsx download goes through that writer.
+  configureZipLogging(app.log);
 
   // Persist every engagement-scoped engine/AI call (409.ai §11, migration
   // 0127). Set here rather than passed through the twelve route modules that
