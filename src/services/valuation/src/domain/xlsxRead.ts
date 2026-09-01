@@ -73,16 +73,13 @@ const BUILTIN_DATE_FORMATS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46
  * stakeholder name, a security class, or a share count that then fails to
  * parse as a number.
  */
-const XML_ENTITIES: Record<string, string> = Object.assign(
-  Object.create(null) as Record<string, string>,
-  {
-    amp: '&',
-    lt: '<',
-    gt: '>',
-    quot: '"',
-    apos: "'",
-  },
-);
+const XML_ENTITIES: Record<string, string> = Object.assign(Object.create(null) as Record<string, string>, {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+});
 
 /**
  * Is this a code point `String.fromCodePoint` will accept — a Unicode scalar

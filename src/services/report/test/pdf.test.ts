@@ -52,9 +52,7 @@ describe('decodeEntities', () => {
   // that leaves `&unknown;` alone never ran. A narrative sentence rendered
   // `function Object() { [native code] }` into the deliverable.
   it('leaves an entity named after an Object.prototype member untouched', () => {
-    expect(decodeEntities('Fair value &constructor; per share')).toBe(
-      'Fair value &constructor; per share',
-    );
+    expect(decodeEntities('Fair value &constructor; per share')).toBe('Fair value &constructor; per share');
     for (const name of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', 'isPrototypeOf']) {
       expect(decodeEntities(`x&${name};y`)).toBe(`x&${name};y`);
     }
