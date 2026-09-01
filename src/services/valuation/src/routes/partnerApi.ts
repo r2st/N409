@@ -586,7 +586,9 @@ export function registerPartnerApiRoutes(
       response:
         '{ partner: { id, name, key, white_label_enabled, created_at }, token: { id, name, prefix, created_at, last_used_at } }',
       errors: {
-        '404': 'The key is valid but its organization has been archived — the key identifies nobody.',
+        '404':
+          'The organization behind the key could not be read — a backstop. An archived ' +
+          'organization is refused one layer earlier, as a 401 that says so.',
       },
     },
     async (req) => {
@@ -599,11 +601,24 @@ export function registerPartnerApiRoutes(
         findPartnerIdentity(deps.pool, token.partnerId),
         findApiTokenById(deps.pool, token.tokenId),
       ]);
-      // A live key whose organisation has been archived. `apiKeyGuard` cannot
-      // catch this — it resolves the token, and the token is fine. Answering
-      // 404 rather than inventing an identity is the same rule the branding
-      // reads follow, and it gives the partner the one diagnosis that is
-      // actionable: the key is good, the account is not.
+      // A live key whose organisation cannot be identified. This used to be the
+      // archived-firm case, on the reasoning that `apiKeyGuard` could not catch
+      // it — "it resolves the token, and the token is fine".
+      //
+      // The token was not fine, and this endpoint was the only one of the
+      // fifteen that noticed (round 342, methodology M3). `partners.archived_at`
+      // is the platform's soft delete for a firm and it closed the branding
+      // reads, the user assignments and the client intake links; the key it did
+      // not close carried the same authority over every *other* endpoint here —
+      // listing the firm's clients, reading their cap tables and concluded
+      // 409As, creating engagements, uploading documents. So the question moved
+      // to `resolveApiToken`, which is the layer that covers all of them and
+      // can name the condition (`partner_retired`) instead of 404-ing an
+      // identity lookup.
+      //
+      // Kept as a backstop rather than deleted: `findPartnerIdentity` also
+      // answers null for a partner row that is gone outright, and inventing an
+      // identity for one is the failure this line exists to prevent.
       if (!partner) throw problems.notFound();
       return {
         partner: {

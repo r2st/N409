@@ -720,10 +720,14 @@ describe.skipIf(!dbUp)('partner API: GET /me', () => {
     expect(res.body).not.toContain('rate_limit');
   });
 
-  // A live key whose organization has been archived. `apiKeyGuard` cannot catch
-  // it — the token resolves fine — so without this the endpoint would invent an
-  // identity for a firm that no longer exists.
-  it('404s when the organization behind a valid key is archived', async () => {
+  // A live key whose organization has been archived. This endpoint was the only
+  // one of the fifteen that noticed, on the reasoning that `apiKeyGuard` could
+  // not catch it — the token resolved fine. R342 moved the question to
+  // `resolveApiToken`, which covers every endpoint here rather than this one,
+  // so the refusal is now the credential layer's and says which condition it
+  // was. The 404 below stays as a backstop for a partner row that is gone
+  // outright; it is no longer how an archived firm is answered.
+  it('refuses a valid key whose organization has been archived', async () => {
     const doomedPartner = await seedPartner(ctx, 'Closed Advisors');
     const doomedAdmin = await seedUser(ctx, { roles: ['partner'], partnerId: doomedPartner });
     const minted = await app.inject({
@@ -736,7 +740,9 @@ describe.skipIf(!dbUp)('partner API: GET /me', () => {
     expect((await me(doomedKey)).statusCode).toBe(200);
 
     await ctx.pool.query('UPDATE partners SET archived_at = now() WHERE id = $1', [doomedPartner]);
-    expect((await me(doomedKey)).statusCode).toBe(404);
+    const refused = await me(doomedKey);
+    expect(refused.statusCode).toBe(401);
+    expect(refused.json().detail as string).toContain('has been archived');
   });
 
   it('is listed in the docs endpoint and the OpenAPI spec', async () => {

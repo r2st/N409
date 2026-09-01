@@ -135,6 +135,57 @@ describe.skipIf(!dbUp)('a refused API token says which refusal it was', () => {
     expect(detail).toContain('under a current user');
   });
 
+  it('refuses a key belonging to a firm the platform has withdrawn', async () => {
+    // ARCHIVING A FIRM CLOSED EVERY DOOR A PERSON USES AND NONE OF THE MACHINE
+    // ONES (round 342, methodology M3). `partners.archived_at` already stopped
+    // new user assignments, branding edits and — the closest analogue —
+    // outstanding client intake links, whose own comment calls this flag "the
+    // platform's soft delete for a firm". The partner API key was the same
+    // authority through the door with nobody behind it to notice, so a
+    // withdrawn firm's nightly integration went on reading its old clients'
+    // cap tables and creating engagements under it.
+    const retiring = await seedPartner(ctx, `Retiring Firm ${Date.now()}`);
+    const member = await seedUser(ctx, { roles: ['org_admin'], partnerId: retiring });
+    const { secret } = await createApiToken(ctx.pool, {
+      partnerId: retiring,
+      createdBy: member.id,
+      name: 'the-firms-integration',
+    });
+    expect((await call(secret)).statusCode).toBe(200);
+
+    await ctx.pool.query('UPDATE partners SET archived_at = now() WHERE id = $1', [retiring]);
+
+    const res = await call(secret);
+    expect(res.statusCode).toBe(401);
+    const detail = res.json().detail as string;
+    expect(detail).toContain('has been archived');
+    // Distinct from `orphaned` in the one way that changes what to do next:
+    // minting another key under a current member produces another refused key.
+    expect(detail).toContain('minting a replacement will not help');
+
+    // Refused, not revoked — the claim the sentence makes, and the reason the
+    // rule is allowed to be this blunt: un-archiving is one boolean.
+    await ctx.pool.query('UPDATE partners SET archived_at = NULL WHERE id = $1', [retiring]);
+    expect((await call(secret)).statusCode).toBe(200);
+  });
+
+  it('leaves a personal token alone when some other firm is archived', async () => {
+    // The clause is `t.partner_id IS NULL OR …`. A personal token belongs to no
+    // organisation and must not be caught by an archive anywhere on the
+    // platform — the same exemption the membership test beside it carries.
+    const personal = await seedUser(ctx, { roles: ['analyst'] });
+    const { secret } = await createApiToken(ctx.pool, {
+      partnerId: null,
+      createdBy: personal.id,
+      name: 'personal',
+    });
+    await ctx.pool.query('UPDATE partners SET archived_at = now() WHERE id = $1', [otherPartnerId]);
+    // Personal tokens are refused by the partner API for being personal (403),
+    // which is proof they resolved: an unresolved secret is a 401.
+    expect((await call(secret)).statusCode).toBe(403);
+    await ctx.pool.query('UPDATE partners SET archived_at = NULL WHERE id = $1', [otherPartnerId]);
+  });
+
   it('answers a well-formed but unknown token in one round trip’s worth of words', async () => {
     // The diagnostic SELECT runs only on the miss. Asserted as behaviour rather
     // than by counting queries: a live token must still be one statement, and

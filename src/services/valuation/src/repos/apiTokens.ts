@@ -264,7 +264,34 @@ export type ApiTokenRefusal =
    * rather than revoked, so it resumes if the move was a mistake — which is
    * only a useful property if somebody is told what happened.
    */
-  | 'orphaned';
+  | 'orphaned'
+  /**
+   * The token, its owner and their membership are all fine, and the firm the
+   * key acts for has been withdrawn from the platform (`partners.archived_at`).
+   *
+   * ARCHIVING A FIRM STOPPED EVERY DOOR A PERSON USES AND NONE OF THE MACHINE
+   * ONES (round 342, methodology M3). `LIVE_LINK_SQL` in `repos/clientIntake.ts`
+   * states what the flag means and it is not hedged: "the platform's soft delete
+   * for a firm — an archived partner takes no new user assignments, cannot have
+   * its branding edited, and is gone from the branding list", and it closed the
+   * intake links for exactly that reason. The partner API key was the fourth
+   * door onto the same authority and was never asked the question. So a firm the
+   * platform has withdrawn kept a working credential against
+   * `/api/partner/v1`: it could list its old clients, read their cap tables and
+   * concluded 409As, create new engagements under the archived firm and upload
+   * documents to them — unattended, on a schedule, with nothing in the product
+   * showing the firm at all.
+   *
+   * The person-facing doors were closed one at a time as somebody noticed each;
+   * this is the door with no person behind it to notice.
+   *
+   * Refused rather than revoked, the same choice `orphaned` makes and for a
+   * stronger reason: archiving a partner is a boolean an administrator can set
+   * back (`updatePartner`'s `archived: false` clears `archived_at`), so a firm
+   * archived by mistake gets its integration back by being un-archived, where
+   * revoking the keys would have made the mistake permanent.
+   */
+  | 'partner_retired';
 
 export interface ResolvedApiToken {
   tokenId: string;
@@ -294,6 +321,14 @@ export async function resolveApiTokenWithReason(
         AND u.id = t.created_by
         AND u.deleted_at IS NULL
         AND (t.partner_id IS NULL OR u.partner_id = t.partner_id)
+        -- The firm itself, not just the membership. See the partner_retired
+        -- refusal: a withdrawn partner's key kept full authority over its old
+        -- clients' files. An EXISTS rather than a second FROM entry, because a
+        -- join condition in UPDATE ... FROM cannot reference the target table.
+        AND (
+          t.partner_id IS NULL
+          OR EXISTS (SELECT 1 FROM partners p WHERE p.id = t.partner_id AND p.archived_at IS NULL)
+        )
      RETURNING t.id, t.created_by, t.partner_id`,
     [digest],
   );
@@ -311,18 +346,26 @@ export async function resolveApiTokenWithReason(
  * gone here, and the membership test is against `partner_id`, so both are read
  * explicitly rather than inferred from a row's absence. A token whose owner is
  * both deleted and moved reports `no_owner`, the more fundamental of the two.
+ *
+ * `partner_retired` is ordered ahead of `orphaned` for that same reason. A firm
+ * that has been withdrawn is the more fundamental fact of the pair, and it is
+ * the one whose remedy comes first: re-minting the key under a current member
+ * of an archived firm produces another key this same clause refuses.
  */
 async function refusalFor(pool: pg.Pool, digest: string): Promise<ApiTokenRefusal> {
   const { rows } = await pool.query<{
     revoked: boolean;
     owner_present: boolean;
+    partner_live: boolean;
     owner_in_partner: boolean;
   }>(
     `SELECT t.revoked_at IS NOT NULL AS revoked,
             (u.id IS NOT NULL AND u.deleted_at IS NULL) AS owner_present,
+            (t.partner_id IS NULL OR (p.id IS NOT NULL AND p.archived_at IS NULL)) AS partner_live,
             (t.partner_id IS NULL OR u.partner_id = t.partner_id) AS owner_in_partner
        FROM api_tokens t
        LEFT JOIN users u ON u.id = t.created_by
+       LEFT JOIN partners p ON p.id = t.partner_id
       WHERE t.token_hash = $1`,
     [digest],
   );
@@ -330,6 +373,7 @@ async function refusalFor(pool: pg.Pool, digest: string): Promise<ApiTokenRefusa
   if (!row) return 'unknown';
   if (row.revoked) return 'revoked';
   if (!row.owner_present) return 'no_owner';
+  if (!row.partner_live) return 'partner_retired';
   if (!row.owner_in_partner) return 'orphaned';
   // Every condition the UPDATE tests now reads as satisfied, so the row was
   // changed between the two statements. Nothing here is a fact any more; say
@@ -355,4 +399,6 @@ export const API_TOKEN_REFUSAL_DETAIL: Record<ApiTokenRefusal, string> = {
     'The user account this API token was created under no longer exists, so the token has no authority to act with. Mint a replacement under a current user from Settings → API tokens.',
   orphaned:
     'The user who created this API token is no longer a member of the organization the token acts for, so it has been refused rather than revoked. Mint a replacement under a current member from Settings → API tokens; if the change of membership was a mistake, restoring it brings this token back.',
+  partner_retired:
+    'The organization this API token acts for has been archived on this platform, so every key belonging to it is refused rather than revoked, and minting a replacement will not help. Ask your administrator to restore the organization — doing so brings this token back on its own.',
 };

@@ -545,7 +545,7 @@ describe('the layers below the routes', () => {
   it('answers each API token refusal with its own sentence', () => {
     const source = readFileSync(path.resolve(HERE, '../../src/repos/apiTokens.ts'), 'utf8');
     const table = source.slice(source.indexOf('API_TOKEN_REFUSAL_DETAIL'));
-    const kinds = ['unknown', 'revoked', 'no_owner', 'orphaned'];
+    const kinds = ['unknown', 'revoked', 'no_owner', 'orphaned', 'partner_retired'];
     for (const kind of kinds) {
       expect(table, `${kind} has no message`).toContain(`${kind}:`);
     }
