@@ -7351,3 +7351,137 @@
 #            `n409_metric_series` carries the count for a dashboard to read; a
 #            rule would need a cap the operator has chosen rather than the
 #            constant, which is a configuration change this round did not make.
+
+# R342 — State machine & lifecycle (M3). Five findings, and three of them are
+#            one flag asked at three doors. `partners.archived_at` is the
+#            platform's soft delete for a firm; the doors a *person* uses were
+#            each closed as somebody noticed them, and the doors with no person
+#            behind them were never asked. The other two are the same shape one
+#            subject over: a suspension every predicate subtracts except the
+#            surface that consults no principal, and a reset link bound to an
+#            account rather than to the address it was delivered to.
+#
+#            **An archived firm's API key kept every authority the firm had.**
+#            `LIVE_LINK_SQL` in `repos/clientIntake.ts` states the rule without
+#            hedging — "an archived partner takes no new user assignments, cannot
+#            have its branding edited, and is gone from the branding list" — and
+#            closed the intake links on the strength of it. `resolveApiToken`
+#            asked whether the token was revoked, whether its owner still
+#            existed, and whether that owner was still a member of
+#            `t.partner_id`. It never asked whether `t.partner_id` was still a
+#            firm. So a withdrawn firm's integration went on running unattended
+#            against `/api/partner/v1`: listing its old clients, reading their
+#            cap tables and concluded 409As, creating engagements under the
+#            archived firm, uploading documents to them. One endpoint of the
+#            fifteen had noticed — `GET /me` 404s an archived organisation, under
+#            a comment reading "`apiKeyGuard` cannot catch this — it resolves the
+#            token, and the token is fine" — which is a guard on the one endpoint
+#            that reports an identity and on none of the fourteen that move
+#            client data. The question moved to the credential layer as
+#            `partner_retired`, a fifth `ApiTokenRefusal`, because the remedy is
+#            unlike every other one on that list: minting a replacement under a
+#            current member produces another key the same clause refuses. Refused
+#            rather than revoked — archiving is a boolean an administrator can
+#            set back — and the test asserts that round trip, not only the
+#            refusal.
+#
+#            **A withdrawn firm went on being told about its old clients.**
+#            `enabledWebhooks` is the one read all four fan-out call sites go
+#            through, and its whole liveness test was `enabled`, which is the
+#            firm's own switch. Three single-row callers ride every transition of
+#            a partner engagement and the retention sweep fans out over a batch,
+#            so the platform kept POSTing an archived firm's old clients'
+#            engagement numbers, company names and states to a URL it owns, for
+#            as long as those engagements moved — and the firm could not stop it,
+#            because the console it would delete the hook from is behind a
+#            partner API key, which the finding above now refuses. Only the
+#            fan-out: deliveries already queued keep their retry ladder, because
+#            the disclosure was made when the row was written and a claim query
+#            taught to skip them would leave `pending` rows nothing ever settles.
+#
+#            **The one work queue that offered withdrawn engagements, and forbade
+#            clearing them.** Every list building its own WHERE over `valuations`
+#            has been swept into agreement with `archived_at` — the reviewer
+#            sign-off queue and the pay-now list, the two remediation queues, the
+#            shared inbox and its badge, the re-filing queue, the monitor scan,
+#            the drip campaigns, the SLA sweep, the portfolio roll-up.
+#            `review_tasks` never joined `valuations` at all. Worse here than in
+#            the queues those rounds finished, because `refuseIfSubjectRetired`
+#            reaches a task through its own id: moving one of these to `done` or
+#            `cancelled` is answered 409, so the rows were permanent — not
+#            workable, not clearable, `open` past their `due_at` forever, and
+#            `overdue` computed from exactly that. An EXISTS filtered above
+#            0193's console ordering rather than a join, which would invite the
+#            planner to drive from `valuations` and sort the whole queue; the
+#            plan is pinned beside 0193's own assertions.
+#
+#            **Suspending an account left its API key the firm's whole book.**
+#            `ignored` subtracts — `valuationScope` answers `none`, `isOps` and
+#            `canManageUsers` answer false, and R211 swept the four predicates
+#            that had not been subtracting for themselves. Every one of those is
+#            a question asked of a *principal*, and the partner API is the one
+#            surface that never asks: `loadScoped` compares `partner_id` with
+#            `token.partnerId` and the listing hand-builds `{ kind: 'partner' }`
+#            rather than calling `valuationScope`. Deliberate, and documented —
+#            an integration must not break because a seat's roles were edited —
+#            but the exemption swallowed the suspension with it, so a suspended
+#            org admin's key kept the firm's entire book and wrote the suspended
+#            account's id onto the audit spine as the actor of each change. In
+#            `apiKeyGuard` rather than in `resolveApiToken`, because asking about
+#            a role there means a third and fourth SQL spelling of
+#            `key = 'ignored'` — the drift `SUSPENDED_ROLE`'s own note exists to
+#            prevent.
+#
+#            **A reset link kept working after the address it was sent to moved.**
+#            The token named a `user_id` and nothing else. Three doors move
+#            `users.email` — the self-service profile PATCH, the admin console's
+#            `ADMIN_PATCH_COLUMNS` (which asks the subject for nothing), and SCIM
+#            — and none touched the token table, so a link in the old mailbox
+#            went on working for the rest of its hour; redeeming it sets
+#            `password_digest` *and* bumps `session_epoch`, taking the account
+#            and signing the owner out of it. Moving a login address in a hurry
+#            is what somebody does when the old mailbox is the thing that was
+#            compromised, which makes this the case where the remediation left
+#            the exploit live. `email_verification_tokens` was born with the rule
+#            and says so in its schema; the higher-value credential beside it
+#            never got the column. 0204 is that column, bound at mint rather than
+#            swept at each door, with NULL meaning "not bound" so links in flight
+#            at deploy survive their remaining hour.
+#
+#            gap: `partners.archived_at` was asked at two more doors this round
+#            and nobody has enumerated them. There is no census of "what a
+#            partner archive is supposed to stop" the way `retiredEngagementWrites`
+#            enumerates the valuation soft delete, so the next surface added
+#            under a `partner_id` starts outside the rule again. The five known
+#            doors — user assignment, branding, intake links, API keys, webhook
+#            fan-out — are now four files apart.
+#
+#            gap: a partner webhook delivery already queued when the firm is
+#            archived still walks its retry ladder to the withdrawn firm's
+#            receiver. Deliberate this round — the alternative leaves `pending`
+#            rows nothing settles — but it means the archive is not a clean stop,
+#            and the honest fix is an exhaustion-style reaper that *ends* those
+#            rows rather than a claim query that skips them.
+#
+#            gap: `engagements.current_stage` and `valuations.state` are two
+#            parallel lifecycles that never speak. Publishing a 409A moves the
+#            valuation to its terminal state and leaves the engagement wherever
+#            it was, so the pipeline board and the overdue sweep keep chasing the
+#            analyst about a file that is delivered. Not taken because
+#            `board_approval` after publication is legitimate work and nothing
+#            written down says which stages a publish should close.
+#
+#            gap: `listTasks`' `count(*)` now runs the soft-delete EXISTS over
+#            every row of `review_tasks` for the console's total. Bounded by the
+#            same argument 0193 makes about the count it already paid for — no
+#            index answers "how many are there" — but it is a nested loop the
+#            aggregate did not have before, and nothing measures the count's plan
+#            the way the page's is measured.
+#
+#            gap: `restoreUser` and `setUserActive(true)` bring an account back
+#            with no roles and no assignments, which is deliberate and documented.
+#            Nothing brings back a *suspension* lifted on an account whose
+#            partner key was refused meanwhile — it resumes, correctly — but there
+#            is no record anywhere that the key was refused at all. The refusal is
+#            a 403 with no counter and no audit row, so a firm whose integration
+#            went dark for a day has nothing on this side to join it to.
