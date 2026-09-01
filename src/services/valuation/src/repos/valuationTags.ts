@@ -123,6 +123,27 @@ export interface TagUpsert {
  * back as a suggestion in April, and one they accepted with a note reverts to
  * the model's wording. That is the failure that makes people stop re-running
  * agents, and stopping is worse than the drift.
+ *
+ * `source` IS NOT IN THE UPDATE SET AT ALL: it is written once, by the INSERT,
+ * and never moved. It records who *originated* the tag, and both halves of this
+ * subsystem say that fact is load-bearing — `TAG_SOURCES` ("only the first is
+ * evidence of independent judgement") and the PATCH route, which carries the
+ * existing source through an acceptance so that "the model proposed this and an
+ * analyst agreed" is not rewritten into "an analyst concluded this".
+ *
+ * It used to be `source = EXCLUDED.source`, unconditionally, which broke that in
+ * the other direction and much more easily: an analyst tags an engagement
+ * `series_a` by hand, the tagging agent runs and reaches the same conclusion,
+ * and the row is relabelled the model's. The status guard below held — it stays
+ * `accepted` — so nothing looked wrong. Two things were: the file no longer
+ * shows an independent human judgement where one was made, and the tag has
+ * become undeletable, because `DELETE /tags/:slug` refuses an `ai`-sourced row
+ * and tells the analyst to reject their own tag instead.
+ *
+ * Write-once rather than "an ai upsert may not overwrite a manual origin",
+ * because the other direction is the same fact: a `manual` upsert onto a row
+ * the model proposed is an analyst agreeing, which is what `status` and
+ * `decided_by` are for. There is no upsert that changes where a tag came from.
  */
 export async function upsertValuationTag(
   pool: pg.Pool | pg.PoolClient,
@@ -137,7 +158,6 @@ export async function upsertValuationTag(
         created_by, decided_by, decided_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10, CASE WHEN $10::ulid IS NULL THEN NULL ELSE now() END)
      ON CONFLICT (valuation_id, slug) DO UPDATE SET
-       source     = EXCLUDED.source,
        confidence = EXCLUDED.confidence,
        rationale  = EXCLUDED.rationale,
        evidence   = EXCLUDED.evidence,

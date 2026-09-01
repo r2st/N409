@@ -399,6 +399,51 @@ describe.skipIf(!dbUp)('engagement tags', () => {
       expect(rerun.rationale).toBe('April read');
     });
 
+    it('does not relabel an analyst\u2019s own tag as the model\u2019s', async () => {
+      /*
+       * The other direction of the same rule, and the one that was open.
+       *
+       * `source` records who *originated* the tag — `TAG_SOURCES` says only a
+       * manual one is evidence of independent judgement, and the PATCH route
+       * carries the existing source through an acceptance for exactly that
+       * reason. The conflict clause set `source = EXCLUDED.source`
+       * unconditionally, so an analyst who tagged an engagement by hand and
+       * then ran the tagging agent — which reaches the same conclusion, that
+       * being the common case — had their judgement rewritten as the model's.
+       */
+      const id = await newEngagement('Analyst Origin Co');
+      expect((await addTag(id, { slug: 'series_a' })).statusCode).toBe(200);
+
+      const rerun = await upsertValuationTag(
+        ctx.pool,
+        id,
+        { slug: 'series_a', source: 'ai', status: 'suggested', confidence: 0.9, rationale: 'model read' },
+        null,
+      );
+      expect(rerun.source).toBe('manual');
+      expect(rerun.status).toBe('accepted');
+      // The model's reasoning still lands; that half is not a claim about origin.
+      expect(rerun.confidence).toBe(0.9);
+
+      // And the tag is still the analyst's to remove. The delete route refuses
+      // an `ai`-sourced row, so the relabelling also made a manually added tag
+      // undeletable, with a message telling the analyst to reject their own.
+      expect((await removeTag(id, 'series_a')).statusCode).toBe(204);
+    });
+
+    it('does not relabel a model suggestion as the analyst\u2019s own conclusion', async () => {
+      // `POST /tags` on a tag the model already proposed is an acceptance, not
+      // an independent conclusion — the same fact the PATCH route preserves.
+      const id = await newEngagement('Model Origin Co');
+      await upsertValuationTag(ctx.pool, id, { slug: 'saas', source: 'ai', status: 'suggested' }, null);
+
+      expect((await addTag(id, { slug: 'saas' })).statusCode).toBe(200);
+      const row = (await findValuationTag(ctx.pool, id, 'saas'))!;
+      expect(row.source).toBe('ai');
+      expect(row.status).toBe('accepted');
+      expect(row.decided_by).toBe(ops.id);
+    });
+
     it('does not revert an accepted tag either', async () => {
       const id = await newEngagement('Accepted Rerun Co');
       await upsertValuationTag(ctx.pool, id, { slug: 'saas', source: 'ai', status: 'suggested' }, null);

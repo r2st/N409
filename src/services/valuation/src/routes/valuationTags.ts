@@ -160,7 +160,12 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
       subjectType: 'valuation',
       subjectId: valuation.id,
       subjectLabel: valuation.company_name,
-      payload: { slug: def.slug, source: 'manual', status: 'accepted' },
+      // The row's source, not this door's. `source` is written once and never
+      // moved (see `upsertValuationTag`), so adding a tag the model had already
+      // proposed is an acceptance of an `ai` row — and an audit line that said
+      // `manual` about it would be the very rewrite the column exists to
+      // prevent, restated on the trail.
+      payload: { slug: def.slug, source: row.source, status: row.status },
     });
     return { tag: presentValuationTag(row) };
   });
