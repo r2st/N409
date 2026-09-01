@@ -185,9 +185,12 @@ export function Asc718Tab() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The saved settings could not be read — see `load`. Blocks the save. */
+  const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setSettingsLoadError(null);
     try {
       const { settings: s } = await api<{ settings: Settings | null }>(`/valuations/${id}/asc718/settings`);
       if (s) {
@@ -196,8 +199,30 @@ export function Asc718Tab() {
         setTicker(s.ticker ?? '');
         setTermMethod(s.expected_term_method);
       }
-    } catch {
-      /* settings are optional */
+    } catch (err) {
+      /*
+       * A settings row that could not be read (round 340, methodology M5).
+       *
+       * This was `catch { /* settings are optional *\/ }`, and the word doing
+       * the work was "optional": the route answers `{ settings: null }` for a
+       * valuation that has none, so *absence* already arrives as a 200 and is
+       * handled by the `if (s)` above. What the swallow caught was the other
+       * thing — a 5xx, a dropped connection, an expired session — and left the
+       * three controls on the defaults this component starts on: private, no
+       * ticker, SAB 107 simplified.
+       *
+       * `PUT .../asc718/settings` is a whole-row replace: `upsertAsc718Settings`
+       * writes every column, and the four this form does not own ride along in
+       * `untouchedSettings(settings)`, which answers `{}` when `settings` is
+       * null. So the next press of Save on a form filled in from a failed read
+       * turns a public issuer back into a private one, drops its ticker and its
+       * term election, and nulls the ESPP discount, the lookback, the RSU
+       * performance conditions and the TSR peer basket — none of which are on
+       * this screen for anyone to notice going.
+       */
+      setSettingsLoadError(
+        describeActionFailure(err, 'Could not load the saved ASC 718 settings for this valuation.'),
+      );
     } finally {
       setLoading(false);
     }
@@ -352,10 +377,26 @@ export function Asc718Tab() {
                 </Field>
               </>
             )}
-            <Button variant="secondary" onClick={() => void saveSettings()}>
+            <Button
+              variant="secondary"
+              onClick={() => void saveSettings()}
+              // Saving a form filled in from a read that failed writes this
+              // component's defaults over the row — see `load`.
+              disabled={settingsLoadError !== null}
+            >
               Save settings
             </Button>
           </div>
+          {settingsLoadError !== null && (
+            <p
+              role="alert"
+              className="mt-2 text-xs font-medium text-red-600"
+              data-testid="settings-load-error"
+            >
+              {settingsLoadError} The controls above are showing this page&rsquo;s defaults rather than what
+              is saved, so they cannot be saved back until the settings load — reopen the tab to try again.
+            </p>
+          )}
           {settings && (
             <p className="mt-2 text-xs text-ink-400">
               Settings saved. Company type: {settings.company_type}.
