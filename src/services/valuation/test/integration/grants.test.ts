@@ -536,6 +536,55 @@ describe.skipIf(!dbUp)('feature 6 — grant management', () => {
     expect(patched.json().grant).toMatchObject({ vesting_months: 30, frequency_months: 3 });
   });
 
+  /**
+   * A cancelled grant is finished.
+   *
+   * `cancelGrant` is a once-only move onto a terminal status because a grant is
+   * a security, and the edit door asked nothing about it — so the grantee, the
+   * count, the date and the whole vesting schedule stayed editable on a
+   * withdrawn security, and the change landed on the spine as an ordinary
+   * `grant_updated`.
+   */
+  it('refuses an edit to a cancelled grant', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/grants`,
+      headers: authHeader(ops.token),
+      payload: { grantee_name: 'Withdrawn', grant_date: '2026-01-01', options_count: 100 },
+    });
+    const grantId = created.json().grant.id as string;
+    expect(
+      (
+        await app.inject({
+          method: 'DELETE',
+          url: `/api/v1/valuations/${valuationId}/grants/${grantId}`,
+          headers: authHeader(ops.token),
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${valuationId}/grants/${grantId}`,
+      headers: authHeader(ops.token),
+      payload: { options_count: 999 },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().detail).toMatch(/cancelled/i);
+
+    // Refused means nothing written — no column moved, and no event claiming
+    // one did.
+    const { rows } = await ctx.pool.query<{ options_count: number; n: number }>(
+      `SELECT g.options_count,
+              (SELECT count(*)::int FROM valuation_events e
+                WHERE e.valuation_id = $2 AND e.type = 'grant_updated'
+                  AND e.payload->>'grant_id' = $1) AS n
+         FROM option_grants g WHERE g.id = $1`,
+      [grantId, valuationId],
+    );
+    expect(rows[0]).toMatchObject({ options_count: 100, n: 0 });
+  });
+
   it('refuses an unrecognised template on a patch too', async () => {
     const created = await app.inject({
       method: 'POST',

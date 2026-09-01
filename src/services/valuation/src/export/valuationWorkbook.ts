@@ -478,13 +478,43 @@ function grantsSheet(grants: readonly WorkbookGrant[], asOf: Date, currency: str
     ];
   });
 
+  /*
+   * The Total line counts the grants that are still outstanding, and nothing
+   * else (round 296, methodology M3).
+   *
+   * `SUM` over the whole column added the cancelled ones in. A cancelled grant
+   * is a security that no longer exists — its shares went back to the pool, and
+   * `cancelGrant` is written to be a once-only terminal move for exactly that
+   * reason — so counting it overstates the outstanding option count, and this
+   * workbook is what an auditor reconciles the option pool against. The Status
+   * column named each row correctly the whole time; the total underneath it
+   * quietly disagreed, which is the worse half of that pairing: the reader who
+   * checks the rows sees the cancellation, and the reader who reads the total
+   * sees a number with nothing on it saying what it includes.
+   *
+   * `SUMIF` rather than a filtered range, because these formulas are live on
+   * purpose — an auditor who corrects a vested count expects the total to
+   * follow — and because an auditor who flips a row's Status to `cancelled` in
+   * their own copy should see the total move with it. The cached values are
+   * computed from the same predicate so a reader that shows them without
+   * recalculating (openpyxl's `data_only`, Quick Look, Numbers' preview) agrees
+   * with the formula.
+   *
+   * The label says which total this is; a bare "Total" under a mixed set is the
+   * unqualified sum this replaces.
+   */
   if (grants.length > 0) {
     const last = firstDataRow + grants.length - 1;
+    const live = `$N$${firstDataRow}:$N$${last},"active"`;
+    const outstanding = grants.map((g, i) => (g.status === 'active' ? statuses[i]! : null));
     rows.push([
-      'Total',
+      'Total (active grants)',
       null,
       null,
-      { formula: `SUM(D${firstDataRow}:D${last})`, value: grants.reduce((s, g) => s + g.options_count, 0) },
+      {
+        formula: `SUMIF(${live},D${firstDataRow}:D${last})`,
+        value: grants.reduce((s, g) => (g.status === 'active' ? s + g.options_count : s), 0),
+      },
       null,
       null,
       null,
@@ -492,12 +522,12 @@ function grantsSheet(grants: readonly WorkbookGrant[], asOf: Date, currency: str
       null,
       null,
       {
-        formula: `SUM(K${firstDataRow}:K${last})`,
-        value: statuses.reduce((s, st) => s + st.vestedShares, 0),
+        formula: `SUMIF(${live},K${firstDataRow}:K${last})`,
+        value: outstanding.reduce((s, st) => s + (st?.vestedShares ?? 0), 0),
       },
       {
-        formula: `SUM(L${firstDataRow}:L${last})`,
-        value: statuses.reduce((s, st) => s + st.unvestedShares, 0),
+        formula: `SUMIF(${live},L${firstDataRow}:L${last})`,
+        value: outstanding.reduce((s, st) => s + (st?.unvestedShares ?? 0), 0),
       },
       null,
       null,

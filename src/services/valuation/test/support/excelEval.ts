@@ -353,6 +353,34 @@ function apply(name: string, args: Array<() => Value>, src: string): Value {
         .flatMap((a) => spread(a()))
         .filter(isNum)
         .reduce((s, n) => s + n, 0);
+    /*
+     * `SUMIF(range, criterion, [sum_range])`, with the criterion restricted to
+     * the one form this estate writes: a literal the cell must equal.
+     *
+     * Excel's own criterion grammar is a small language — `">5"`, `"a*"`,
+     * `"<>"` — and implementing it here would be implementing a spec this
+     * harness has no test for. A criterion it cannot honour is refused rather
+     * than approximated, because the whole value of this evaluator is that a
+     * cached figure and its formula are checked against each other: an
+     * approximate SUMIF would score them as agreeing on a number neither Excel
+     * nor the writer meant.
+     */
+    case 'SUMIF': {
+      const range = spread(args[0]!());
+      const criterion = scalar(args[1]!());
+      if (typeof criterion === 'string' && /^\s*[<>=*?~]/.test(criterion)) {
+        throw new Error(`unsupported SUMIF criterion '${criterion}' in ${src}`);
+      }
+      const target = args[2] ? spread(args[2]()) : range;
+      if (args[2] && target.length !== range.length) {
+        throw new Error(`SUMIF ranges differ in size in ${src}`);
+      }
+      return range.reduce((total, cell, i) => {
+        if (cell !== criterion) return total;
+        const summed = target[i];
+        return isNum(summed) ? total + summed : total;
+      }, 0);
+    }
     case 'ISNUMBER':
       try {
         return isNum(scalar(args[0]!()));

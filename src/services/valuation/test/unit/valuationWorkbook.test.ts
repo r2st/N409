@@ -588,9 +588,45 @@ describe('valuationWorkbookSheets', () => {
     });
 
     it('totals the option count over the data rows', () => {
-      const total = indexOfLabel(g, 'Total');
-      expect(formulaAt(g, total, 3).formula).toBe('SUM(D3:D3)');
+      const total = indexOfLabel(g, 'Total (active grants)');
+      expect(formulaAt(g, total, 3).formula).toBe('SUMIF($N$3:$N$3,"active",D3:D3)');
       expect(formulaAt(g, total, 3).value).toBe(120_000);
+    });
+
+    /**
+     * A cancelled grant is printed and not counted.
+     *
+     * The shares of a cancelled grant went back to the pool, and this workbook
+     * is what an auditor reconciles the option pool against — so a `SUM` over
+     * the whole column overstated the outstanding count while the Status column
+     * two cells along said, correctly, that the row was cancelled. The formula
+     * and the cached value are both asserted: readers that do not recalculate
+     * show the second, and a total that agrees with itself only after a
+     * recalculation is two numbers.
+     */
+    it('leaves cancelled grants out of the total while still printing them', () => {
+      const withCancelled = sheet(
+        valuationWorkbookSheets(
+          input({
+            grants: [
+              GRANTS[0]!,
+              { ...GRANTS[0]!, grantee_name: 'Sam Ruiz', options_count: 40_000, status: 'cancelled' },
+            ],
+          }),
+        ),
+        'Grants',
+      );
+      // Still a row, still named as cancelled.
+      expect(valueAt(withCancelled, 1, 0)).toBe('Sam Ruiz');
+      expect(valueAt(withCancelled, 1, 13)).toBe('cancelled');
+
+      const total = indexOfLabel(withCancelled, 'Total (active grants)');
+      expect(formulaAt(withCancelled, total, 3).formula).toBe('SUMIF($N$3:$N$4,"active",D3:D4)');
+      expect(formulaAt(withCancelled, total, 3).value).toBe(120_000);
+      // Vested and unvested follow the same predicate, or the three totals on
+      // one line describe different sets of grants.
+      expect(formulaAt(withCancelled, total, 10).value).toBe(62_500);
+      expect(formulaAt(withCancelled, total, 11).value).toBe(57_500);
     });
   });
 

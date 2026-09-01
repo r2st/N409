@@ -239,12 +239,15 @@ describe('every workbook formula ships the answer it computed', () => {
     const sheets = valuationWorkbookSheets(saturatedInput());
     const grants = sheets.find((s) => s.name === 'Grants')!;
     const total = grants.rows[grants.rows.length - 1]!;
-    expect(total[0]).toBe('Total');
+    expect(total[0]).toBe('Total (active grants)');
 
     const vested = total[10] as { formula: string; value: number };
     const unvested = total[11] as { formula: string; value: number };
-    expect(vested.formula).toMatch(/^SUM\(K\d+:K\d+\)$/);
-    expect(unvested.formula).toMatch(/^SUM\(L\d+:L\d+\)$/);
+    // `SUMIF` over the Status column, not `SUM` over the whole one: cancelled
+    // grants are printed and not counted (R296). Both grants in this fixture
+    // are active, so the arithmetic below is unchanged by that.
+    expect(vested.formula).toMatch(/^SUMIF\(\$N\$\d+:\$N\$\d+,"active",K\d+:K\d+\)$/);
+    expect(unvested.formula).toMatch(/^SUMIF\(\$N\$\d+:\$N\$\d+,"active",L\d+:L\d+\)$/);
 
     // The two totals answer to the same 165,000 options column D totals, which
     // is the arithmetic an auditor does by eye and the reason a blank here is

@@ -296,6 +296,27 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     refuseIfRetired(await loadReadable(deps.pool, id, principal), 'accepting changes');
     const grant = await findGrantById(deps.pool, grantId);
     if (!grant || grant.valuation_id !== id) throw problems.notFound();
+    /*
+     * A cancelled grant is finished (round 296, methodology M3).
+     *
+     * `cancelGrant` is a once-only move onto a terminal status, and it is
+     * written that way because a grant is a security: the row is the record of
+     * what was issued and then withdrawn. This door asked nothing about the
+     * status, so every mutable column — the grantee, the count, the grant date,
+     * the whole vesting schedule — was still editable afterwards, and the edit
+     * landed on the audit spine as an ordinary `grant_updated` against a
+     * security that no longer exists. The auditor workbook prints cancelled
+     * rows, so the change is visible there too.
+     *
+     * A refusal rather than a silent no-op: the caller asked for a state change
+     * it did not get, and the answer names the reason so re-issuing (a new
+     * grant) reads as the way forward rather than a workaround.
+     */
+    if (grant.status === 'cancelled') {
+      throw problems.conflict(
+        'This grant has been cancelled and can no longer be edited — issue a new grant instead.',
+      );
+    }
 
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
