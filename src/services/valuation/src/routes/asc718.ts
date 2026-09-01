@@ -29,6 +29,7 @@ import { postJson } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { recordMarketFeedAnswer } from '../clients/marketFeedMetrics.js';
 
 /**
  * ASC 718 stock-based-compensation expense (domain/asc718.ts + asc718Public.ts).
@@ -224,6 +225,12 @@ async function resolveMarket(
     );
     const prices = Array.isArray(res.prices) ? res.prices : [];
     const closes = prices.map((p) => Number(p.close)).filter((c) => Number.isFinite(c) && c > 0);
+    // R305, M11. This call is deliberately best-effort and deliberately leaves
+    // no `network_items` row, so a fallback here was the least visible of the
+    // three: the measurement carries on against the caller's substituted
+    // defaults and answers 200. The counter is the one place a feed that has
+    // stopped returning observed prices shows up for every caller at once.
+    recordMarketFeedAnswer('prices', res.source === 'fallback' ? 'fallback' : 'observed');
     if (res.source !== 'fallback' && closes.length >= 2) {
       /*
        * A sample standard deviation needs two returns, so three closes. Two
@@ -269,6 +276,7 @@ async function resolveMarket(
     // is best-effort and deliberately leaves none, which makes the log line the
     // only place the reason can live.
     onUnavailable(err);
+    recordMarketFeedAnswer('prices', 'unreachable');
     return {
       ticker,
       underlying: null,

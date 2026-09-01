@@ -35,6 +35,7 @@ import {
 } from '../domain/volatility.js';
 import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { recordMarketFeedAnswer } from '../clients/marketFeedMetrics.js';
 
 /**
  * Selected volatility — the derivation behind sigma.
@@ -311,6 +312,7 @@ export function registerVolatilityRoutes(
         } catch (err) {
           if (err instanceof InternalServiceError) {
             req.log.warn({ err, ticker }, 'price history fetch failed');
+            recordMarketFeedAnswer('prices', 'unreachable');
             feedFailures.push({ ticker, reason: 'the price feed could not be reached' });
             continue;
           }
@@ -320,6 +322,13 @@ export function registerVolatilityRoutes(
         // A fallback payload is the engine's caller-supplied estimate, not an
         // observed price series. Measuring a volatility off it would produce a
         // figure with a peer's name on it that the peer never had.
+        //
+        // Counted (R305, M11): a fallback is a 200, so the breaker, the
+        // `network_items` row and `http_request_errors_total` all read healthy
+        // and are right to — nothing failed. Until this counter the only
+        // record that the live source had gone dark was a per-ticker line in
+        // the body of one request, read by one analyst.
+        recordMarketFeedAnswer('prices', feed.source === 'yfinance' ? 'observed' : 'fallback');
         if (feed.source !== 'yfinance') {
           feedFailures.push({
             ticker,

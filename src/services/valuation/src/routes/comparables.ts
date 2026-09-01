@@ -32,6 +32,7 @@ import {
 } from '../domain/comparables.js';
 import { isRetiredNow, refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { recordMarketFeedAnswer } from '../clients/marketFeedMetrics.js';
 
 /**
  * Network Items — the guideline-company peer set (design §4.5).
@@ -665,6 +666,7 @@ export function registerComparableRoutes(
               // "the feed is down for BADCO" beside four updated rows is more
               // use than a 502 that leaves them guessing which.
               req.log.warn({ err, ticker }, 'market feed fetch failed');
+              recordMarketFeedAnswer('financials', 'unreachable');
               // Composed rather than quoted: `err.message` is the raw feed body
               // whenever `opaque` is set, and this warning is drawn beside the
               // ticker in the comparables table.
@@ -674,6 +676,13 @@ export function registerComparableRoutes(
             throw err;
           }
 
+          // Counted before the usability test below, so the two questions stay
+          // separate (R305, M11): `fallback` means the live source had nothing
+          // to give, which is a platform-wide condition when it is happening to
+          // every ticker, while an observed payload missing a market cap is one
+          // company's filings. Folding them together would make an outage look
+          // like a thin peer set.
+          recordMarketFeedAnswer('financials', feed.source === 'yfinance' ? 'observed' : 'fallback');
           const marketCap = fin(feed.market_cap);
           const revenue = fin(feed.total_revenue);
           const ebitda = fin(feed.ebitda);

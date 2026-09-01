@@ -153,6 +153,7 @@ import type { PoolHealth } from './db/poolHealth.js';
 import { clamdScanner, type ScanPolicy } from './documents/virusScan.js';
 import { probeReady, setNetworkSink } from './clients/internal.js';
 import { configureReportRenderer, registerReportRenderMetrics } from './clients/reportRender.js';
+import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 import { findUnstorableText, unstorableTextMessage } from './domain/nulBytes.js';
@@ -755,6 +756,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // blocking its event loop for half a second per report — a regression with no
   // other symptom, because the fallback keeps producing correct bytes.
   registerReportRenderMetrics(metricsRegistry);
+  // The live market feed, by outcome. Same shape and same reason as the render
+  // counter above: the engine turns every market-data failure into a 200 with
+  // `source: "fallback"`, so a dead source produces correct-looking answers on
+  // substituted figures and has no other symptom on this side of the wire.
+  registerMarketFeedMetrics(metricsRegistry);
   registerMetricsEndpoint(app, { registry: metricsRegistry, service: 'valuation' });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });
