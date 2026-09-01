@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import type { AdminEventType } from '../domain/auditTrail.js';
-import { isUlid, problems } from '@n409/shared';
+import { isUlid, logFailure, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { describeForUser, InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -616,131 +616,179 @@ export function registerComparableRoutes(
       // the write that was meant to land on them. See the `dropped` push below.
       const dropped: string[] = [];
 
+      // Rows this press was asked to update and could not, because something
+      // threw while it was updating them. See the per-row catch below.
+      const failed: Array<{ ticker: string; failure_reason: string }> = [];
+
       /** Set when a withdrawal landed mid-loop; the refusal is raised below. */
       let retired = false;
 
       for (const row of batch) {
         const ticker = row.ticker!;
-        let feed: MarketFeedResponse;
+        /*
+         * One ticker's bad minute costs that ticker, not the record of the
+         * press. Everything below the fetch reaches the database — the
+         * retirement re-ask and the write itself — and both are on a pool this
+         * loop has been holding for minutes: `batch` is up to `REFRESH_BATCH`
+         * rows and each one leaves the process on an eight-second budget.
+         *
+         * The cost of letting one out is not the row. `updateComparableItem`
+         * commits per row, so a throw on the fourth leaves three peers carrying
+         * new observed figures, skips the `comparables_refreshed` event that
+         * says which, and answers 500. R292 put `dropped` on that event for
+         * exactly the reason this is here: the trail is what outlives the
+         * request, and a set whose multiples moved with nothing recording the
+         * press is what an analyst has no way to reconstruct.
+         *
+         * A bucket of its own, beside the two the loop already keeps.
+         * `unavailable` means the feed had nothing to give and the row kept
+         * what it had; `dropped` means the row was gone; this means the row is
+         * still there, still stale, and this press could not say why in terms
+         * of the feed.
+         */
         try {
-          feed = await postJson<MarketFeedResponse>(
-            'engine',
-            `${deps.engineUrl}/engine/v1/market-feed`,
-            { kind: 'financials', ticker },
-            {
-              timeoutMs: FEED_TIMEOUT_MS,
-              record: { valuationId: valuation.id, name: 'engine market-feed' },
-            },
-          );
-        } catch (err) {
-          if (err instanceof InternalServiceError) {
-            // One unreachable ticker is not a failed refresh. The loop is the
-            // unit of work an analyst pressed the button for, and reporting
-            // "the feed is down for BADCO" beside four updated rows is more
-            // use than a 502 that leaves them guessing which.
-            req.log.warn({ err, ticker }, 'market feed fetch failed');
-            // Composed rather than quoted: `err.message` is the raw feed body
-            // whenever `opaque` is set, and this warning is drawn beside the
-            // ticker in the comparables table.
-            unavailable.push({ ticker, warning: describeForUser(err) });
+          let feed: MarketFeedResponse;
+          try {
+            feed = await postJson<MarketFeedResponse>(
+              'engine',
+              `${deps.engineUrl}/engine/v1/market-feed`,
+              { kind: 'financials', ticker },
+              {
+                timeoutMs: FEED_TIMEOUT_MS,
+                record: { valuationId: valuation.id, name: 'engine market-feed' },
+              },
+            );
+          } catch (err) {
+            if (err instanceof InternalServiceError) {
+              // One unreachable ticker is not a failed refresh. The loop is the
+              // unit of work an analyst pressed the button for, and reporting
+              // "the feed is down for BADCO" beside four updated rows is more
+              // use than a 502 that leaves them guessing which.
+              req.log.warn({ err, ticker }, 'market feed fetch failed');
+              // Composed rather than quoted: `err.message` is the raw feed body
+              // whenever `opaque` is set, and this warning is drawn beside the
+              // ticker in the comparables table.
+              unavailable.push({ ticker, warning: describeForUser(err) });
+              continue;
+            }
+            throw err;
+          }
+
+          const marketCap = fin(feed.market_cap);
+          const revenue = fin(feed.total_revenue);
+          const ebitda = fin(feed.ebitda);
+          // `source` is the engine's own word for whether this was observed. A
+          // payload that fell back carries the caller's estimates, not a quote,
+          // and writing it as `live` is the one thing these columns exist to
+          // prevent.
+          if (feed.source !== 'yfinance' || marketCap === null || revenue === null) {
+            unavailable.push({
+              ticker,
+              warning: str(feed.warning) ?? 'the live source returned no usable figures',
+            });
             continue;
           }
-          throw err;
-        }
 
-        const marketCap = fin(feed.market_cap);
-        const revenue = fin(feed.total_revenue);
-        const ebitda = fin(feed.ebitda);
-        // `source` is the engine's own word for whether this was observed. A
-        // payload that fell back carries the caller's estimates, not a quote,
-        // and writing it as `live` is the one thing these columns exist to
-        // prevent.
-        if (feed.source !== 'yfinance' || marketCap === null || revenue === null) {
-          unavailable.push({
-            ticker,
-            warning: str(feed.warning) ?? 'the live source returned no usable figures',
+          // Asked once per row, on the far side of that row's fetch, for the
+          // reason the overdue sweep asks it once per engagement: this loop is
+          // sweep-shaped. `refuseIfRetired` above read the engagement the request
+          // came in with, and the loop then spends up to `REFRESH_BATCH` x
+          // `FEED_TIMEOUT_MS` — over three minutes — leaving the process before it
+          // stops writing. A withdrawal landing inside that window is the
+          // ordinary case, not the exotic one, and every row after it carried
+          // observed market figures onto a file the firm had closed, changing the
+          // multiples of an approach a report already rests on. Retirement is
+          // reversible since R90, so those figures come back with the engagement.
+          //
+          // After the fetch and immediately before the write, not at the top of
+          // the iteration: asked at the top it settles the eight seconds that
+          // follow it and says nothing about the write on the other side of them,
+          // which is the gap it exists to close.
+          //
+          // Broken rather than continued: unlike a sweep, the rows behind this
+          // one belong to the same withdrawn engagement, so there is nothing to
+          // carry on to. The audit below still runs, so what this press did
+          // before the withdrawal is recorded, and the refusal is raised after it
+          // — a 409 that reports nothing would be the discarded record this
+          // codebase keeps finding.
+          if (await isRetiredNow(deps.pool, valuation.id)) {
+            retired = true;
+            break;
+          }
+
+          const asOf = new Date();
+          const written = await updateComparableItem(deps.pool, valuation.id, row.id, {
+            ev: marketCap,
+            revenueLtm: revenue,
+            ebitdaLtm: ebitda,
+            figuresSource: 'live',
+            figuresAsOf: asOf,
           });
-          continue;
-        }
-
-        // Asked once per row, on the far side of that row's fetch, for the
-        // reason the overdue sweep asks it once per engagement: this loop is
-        // sweep-shaped. `refuseIfRetired` above read the engagement the request
-        // came in with, and the loop then spends up to `REFRESH_BATCH` x
-        // `FEED_TIMEOUT_MS` — over three minutes — leaving the process before it
-        // stops writing. A withdrawal landing inside that window is the
-        // ordinary case, not the exotic one, and every row after it carried
-        // observed market figures onto a file the firm had closed, changing the
-        // multiples of an approach a report already rests on. Retirement is
-        // reversible since R90, so those figures come back with the engagement.
-        //
-        // After the fetch and immediately before the write, not at the top of
-        // the iteration: asked at the top it settles the eight seconds that
-        // follow it and says nothing about the write on the other side of them,
-        // which is the gap it exists to close.
-        //
-        // Broken rather than continued: unlike a sweep, the rows behind this
-        // one belong to the same withdrawn engagement, so there is nothing to
-        // carry on to. The audit below still runs, so what this press did
-        // before the withdrawal is recorded, and the refusal is raised after it
-        // — a 409 that reports nothing would be the discarded record this
-        // codebase keeps finding.
-        if (await isRetiredNow(deps.pool, valuation.id)) {
-          retired = true;
-          break;
-        }
-
-        const asOf = new Date();
-        const written = await updateComparableItem(deps.pool, valuation.id, row.id, {
-          ev: marketCap,
-          revenueLtm: revenue,
-          ebitdaLtm: ebitda,
-          figuresSource: 'live',
-          figuresAsOf: asOf,
-        });
-        // THE UPDATE'S OUTCOME IS THE ONLY EVIDENCE THIS ROW WAS WRITTEN, and
-        // the loop it sits in is long enough for the answer to be "it was
-        // not". `batch` is a snapshot taken before the first fetch, and this
-        // handler then leaves the process once per ticker with an eight-second
-        // budget each — up to `REFRESH_BATCH` of them — so minutes separate the
-        // read that named `row.id` from the write aimed at it. `id` is a ULID
-        // and nothing reissues one, so a statement that matches no row means
-        // the comp is gone, and both ways of removing one are ops actions
-        // taken from the same screen: `DELETE /comparables/:itemId`, and a
-        // re-screen, which is worse because `replaceMachineComparables` drops
-        // *every* machine row and inserts new ids in their place. One
-        // re-screen landing mid-refresh therefore invalidates the whole rest of
-        // the batch at once.
-        //
-        // Pushed to `refreshed` regardless, this was a response that contradicted
-        // itself in the same body: `refreshed` naming a ticker with an `as_of`
-        // of seconds ago, `comparables` — re-read after the loop — either not
-        // holding that row at all or holding a new one still carrying snapshot
-        // figures, and `comparables_refreshed` recording the claim on the admin
-        // trail where it outlives the request. An analyst reading "refreshed
-        // AAA" and a peer set whose AAA is stale has no way to tell which half
-        // is true, and the multiples struck from that set go into a filed 409A.
-        //
-        // Reported rather than skipped, for the reason `unavailable` is: a row
-        // this press was asked to update and did not is exactly what the note
-        // above the table exists to say. A bucket of its own because the two
-        // are not the same fact — `unavailable` means the row kept the figures
-        // it had, and there is no row here to have kept anything.
-        if (!written) {
-          req.log.warn(
+          // THE UPDATE'S OUTCOME IS THE ONLY EVIDENCE THIS ROW WAS WRITTEN, and
+          // the loop it sits in is long enough for the answer to be "it was
+          // not". `batch` is a snapshot taken before the first fetch, and this
+          // handler then leaves the process once per ticker with an eight-second
+          // budget each — up to `REFRESH_BATCH` of them — so minutes separate the
+          // read that named `row.id` from the write aimed at it. `id` is a ULID
+          // and nothing reissues one, so a statement that matches no row means
+          // the comp is gone, and both ways of removing one are ops actions
+          // taken from the same screen: `DELETE /comparables/:itemId`, and a
+          // re-screen, which is worse because `replaceMachineComparables` drops
+          // *every* machine row and inserts new ids in their place. One
+          // re-screen landing mid-refresh therefore invalidates the whole rest of
+          // the batch at once.
+          //
+          // Pushed to `refreshed` regardless, this was a response that contradicted
+          // itself in the same body: `refreshed` naming a ticker with an `as_of`
+          // of seconds ago, `comparables` — re-read after the loop — either not
+          // holding that row at all or holding a new one still carrying snapshot
+          // figures, and `comparables_refreshed` recording the claim on the admin
+          // trail where it outlives the request. An analyst reading "refreshed
+          // AAA" and a peer set whose AAA is stale has no way to tell which half
+          // is true, and the multiples struck from that set go into a filed 409A.
+          //
+          // Reported rather than skipped, for the reason `unavailable` is: a row
+          // this press was asked to update and did not is exactly what the note
+          // above the table exists to say. A bucket of its own because the two
+          // are not the same fact — `unavailable` means the row kept the figures
+          // it had, and there is no row here to have kept anything.
+          if (!written) {
+            req.log.warn(
+              { ticker, itemId: row.id, valuationId: valuation.id },
+              'comparable row disappeared mid-refresh',
+            );
+            dropped.push(ticker);
+            continue;
+          }
+          refreshed.push({ ticker, as_of: asOf.toISOString() });
+        } catch (err) {
+          // A classified token rather than the error's own sentence.
+          // `describeForUser` is the only sanctioned publisher of upstream words
+          // and it takes an `InternalServiceError`; what reaches here is
+          // whatever else threw — a `pg` error whose message names a constraint,
+          // an opaque body — and none of it is written for an analyst. The
+          // sentence stays in the log, where the scrub is; `failure_reason` is
+          // the same vocabulary the sweeps report by.
+          //
+          // `logFailure`, not `logUnretried`: the row keeps the figures it had,
+          // the analyst is told which row this was, and pressing refresh again
+          // takes it. That is answered, not abandoned — so a transient cause is
+          // a warn and only a permanent one is worth waking somebody for.
+          const failure = logFailure(
+            req.log,
+            err,
             { ticker, itemId: row.id, valuationId: valuation.id },
-            'comparable row disappeared mid-refresh',
+            'comparable refresh failed for one row; the rest of the batch continues',
           );
-          dropped.push(ticker);
-          continue;
+          failed.push({ ticker, failure_reason: failure.reason });
         }
-        refreshed.push({ ticker, as_of: asOf.toISOString() });
       }
 
       await audit(valuation, principal, 'comparables_refreshed', {
         refreshed: refreshed.map((r) => r.ticker),
         unavailable: unavailable.map((r) => r.ticker),
         dropped,
+        failed: failed.map((r) => r.ticker),
       });
 
       // The loop's own break, raised now that the trail carries the rows that
@@ -757,6 +805,7 @@ export function registerComparableRoutes(
         refreshed,
         unavailable,
         dropped,
+        failed,
         // What this press did not reach, so the tab can say so rather than
         // presenting a partial refresh as a complete one. Zero on every set
         // smaller than the batch, which is every real one.

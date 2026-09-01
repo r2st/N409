@@ -87,6 +87,16 @@ interface RefreshResponse {
    */
   dropped: string[];
   /**
+   * Comps this press was asked to update and could not, because the write or
+   * the guard in front of it threw. A third bucket because it is a third fact:
+   * `unavailable` is the feed having nothing to give, `dropped` is the row
+   * having gone, and this is the row still sitting there with the figures it
+   * had and a press that could not say why in terms of the market. Reported
+   * because the alternative was a 500 that also discarded the peers the same
+   * press had already updated.
+   */
+  failed: Array<{ ticker: string; failure_reason: string }>;
+  /**
    * Comps this press did not reach. The refresh leaves the process once per
    * ticker and the server caps how many it will fetch in one request, so a set
    * wider than `refresh_batch` comes back part-done — and a note reading
@@ -309,6 +319,15 @@ export function ComparablesTab() {
       const done = res.refreshed.length;
       const missed = res.unavailable;
       const vanished = res.dropped ?? [];
+      // Read defensively for the same reason `dropped` is: a tab served by an
+      // older build must not render `undefined` into the note.
+      const broke = res.failed ?? [];
+      const errored =
+        broke.length > 0
+          ? ` ${broke.map((f) => f.ticker).join(', ')} could not be updated — ` +
+            `${broke.length === 1 ? 'that row keeps the figures it had' : 'those rows keep the figures they had'}. ` +
+            'Try again.'
+          : '';
       const gone =
         vanished.length > 0
           ? ` ${vanished.join(', ')} left the set while the refresh was running, so ` +
@@ -326,6 +345,7 @@ export function ComparablesTab() {
           : `Refreshed ${done} of ${done + missed.length}. No live figures for ` +
             `${missed.map((m) => m.ticker).join(', ')} — those rows keep the figures they had.`) +
           gone +
+          errored +
           left,
       );
     }, 'Could not refresh the comparable set from market data.');

@@ -543,6 +543,134 @@ describe.skipIf(!dbUp)('the peer set on the unhappy paths', () => {
   });
 
   /**
+   * One row's write failing, in a batch that has more rows behind it.
+   *
+   * Everything below the fetch reaches the database — the retirement re-ask and
+   * `updateComparableItem` itself — and the loop has been holding the pool for
+   * minutes by then: up to `REFRESH_BATCH` rows, each leaving the process on an
+   * eight-second budget. Uncontained, a deadlock on the fourth row answered 500
+   * over three peers that were already carrying new observed figures, and
+   * skipped the `comparables_refreshed` event that would have said which.
+   *
+   * R292 added `dropped` to that event on exactly this argument: the trail is
+   * what outlives the request, and a set whose multiples moved with nothing
+   * recording the press is what an analyst cannot reconstruct.
+   */
+  describe('a peer whose write fails mid-batch', () => {
+    let writeFailId: string;
+
+    const refreshFailSet = () =>
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${writeFailId}/comparables/refresh`,
+        headers: authHeader(ops.token),
+        payload: {},
+      });
+
+    beforeAll(async () => {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: '409a', company_name: 'WriteFail Inc' },
+      });
+      expect(created.statusCode, created.body).toBe(201);
+      writeFailId = created.json().valuation.id as string;
+
+      for (const ticker of ['WFA', 'WFB']) {
+        const res = await app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${writeFailId}/comparables`,
+          headers: authHeader(ops.token),
+          payload: { ticker, name: `${ticker} Co`, revenue_ltm: 10, ev: 100 },
+        });
+        expect(res.statusCode, res.body).toBe(201);
+      }
+      // Only rows the feed owns are refresh targets. `figures_as_of` decides the
+      // order — longest ago first — so WFA is the row the batch reaches before
+      // WFB, which is what makes the assertion below about containment rather
+      // than about ordering. Both columns move together: the pair is a check
+      // constraint, and a source without an `as_of` is not a state a row is
+      // allowed to be in.
+      await ctx.pool.query(
+        `UPDATE comparable_items
+            SET figures_source = 'snapshot',
+                figures_as_of = now() - (CASE WHEN ticker = 'WFA' THEN 10 ELSE 1 END || ' days')::interval
+          WHERE valuation_id = $1`,
+        [writeFailId],
+      );
+      state.feed.WFA = { source: 'yfinance', market_cap: 5_000, total_revenue: 500, ebitda: 90 };
+      state.feed.WFB = { source: 'yfinance', market_cap: 6_000, total_revenue: 600, ebitda: 80 };
+    });
+
+    afterAll(async () => {
+      delete state.feed.WFA;
+      delete state.feed.WFB;
+    });
+
+    it('reports the failed row and keeps refreshing the ones behind it', async () => {
+      // What a deadlock on the write looks like from here. Scoped to the one
+      // ticker, so "WFB was still updated" is the point of the test rather than
+      // an accident of ordering.
+      await ctx.pool.query(
+        `CREATE OR REPLACE FUNCTION test_fail_one_comparable() RETURNS trigger
+           LANGUAGE plpgsql AS $$
+           BEGIN
+             RAISE EXCEPTION 'deadlock detected' USING ERRCODE = '40P01';
+           END $$;
+         CREATE TRIGGER test_fail_one_comparable BEFORE UPDATE ON comparable_items
+           FOR EACH ROW WHEN (OLD.ticker = 'WFA')
+           EXECUTE FUNCTION test_fail_one_comparable()`,
+      );
+      let res;
+      try {
+        // Not a 500. The peers this press did update, and the record of them,
+        // are what an analyst needs before deciding what to do next.
+        res = await refreshFailSet();
+      } finally {
+        await ctx.pool.query('DROP TRIGGER IF EXISTS test_fail_one_comparable ON comparable_items');
+      }
+      expect(res.statusCode, res.body).toBe(200);
+      const body = res.json() as {
+        refreshed: Array<{ ticker: string }>;
+        unavailable: Array<{ ticker: string }>;
+        dropped: string[];
+        failed: Array<{ ticker: string; failure_reason: string }>;
+      };
+
+      // A bucket of its own: the row is still in the set, so it is not
+      // `dropped`, and the feed answered for it, so it is not `unavailable`.
+      expect(body.failed).toEqual([{ ticker: 'WFA', failure_reason: 'pg.40P01' }]);
+      expect(body.dropped).toEqual([]);
+      expect(body.unavailable).toEqual([]);
+      expect(body.refreshed.map((r) => r.ticker)).toEqual(['WFB']);
+
+      // The row behind the failure really was written, rather than merely
+      // reported: before the per-row catch the loop stopped at the first throw
+      // and WFB was never fetched at all.
+      const { rows } = await ctx.pool.query<{ ticker: string; ev: string; figures_source: string }>(
+        'SELECT ticker, ev, figures_source FROM comparable_items WHERE valuation_id = $1 ORDER BY ticker',
+        [writeFailId],
+      );
+      expect(rows.find((r) => r.ticker === 'WFB')?.figures_source).toBe('live');
+      expect(rows.find((r) => r.ticker === 'WFA')?.figures_source).toBe('snapshot');
+
+      // And the trail carries all three facts, which is the half a 500 threw
+      // away along with the writes it had already committed.
+      const { rows: events } = await ctx.pool.query<{
+        payload: { refreshed: string[]; failed: string[] };
+      }>(
+        `SELECT payload FROM admin_events
+          WHERE type = 'comparables_refreshed' AND subject_id = $1
+          ORDER BY occurred_at DESC LIMIT 1`,
+        [writeFailId],
+      );
+      expect(events[0]?.payload.refreshed).toEqual(['WFB']);
+      expect(events[0]?.payload.failed).toEqual(['WFA']);
+    });
+  });
+
+  /**
    * The refresh loop is sequential and leaves the process once per ticker, so
    * the size of the set is the length of the request.
    *

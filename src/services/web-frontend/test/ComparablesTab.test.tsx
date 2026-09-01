@@ -377,6 +377,33 @@ describe('ComparablesTab', () => {
     ).toBeInTheDocument();
   });
 
+  /**
+   * A row the write itself failed on is a third thing again: it is still in the
+   * table, still stale, and the press could not say why in terms of the market.
+   * Before the server contained these per row the whole press answered 500 —
+   * discarding the peers it had already updated along with the record of them —
+   * so there was no note to write.
+   */
+  it('names the comps whose update failed and says their figures stand', async () => {
+    mockApi({}, (path) => {
+      if (path.includes('/refresh')) {
+        return jsonResponse({
+          refreshed: [{ ticker: 'AAA', as_of: '2026-08-01' }],
+          unavailable: [],
+          failed: [{ ticker: 'DDD', failure_reason: 'pg.40P01' }],
+        });
+      }
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh from market' }));
+    expect(
+      await screen.findByText(/DDD could not be updated — that row keeps the figures it had\. Try again\./),
+    ).toBeInTheDocument();
+  });
+
   it('names the tickers a refresh could not reach, and says their figures stand', async () => {
     mockApi({}, (path) => {
       if (path.includes('/refresh')) {
