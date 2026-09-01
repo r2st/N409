@@ -148,9 +148,39 @@ const SCENARIO_TYPES = [
  * a negative required return is strange but not impossible — so only its shape
  * is checked.
  */
-const SCENARIO_BOUNDS: Array<{ key: keyof ScenarioRow; label: string; min?: number; max?: number }> = [
-  { key: 'probability', label: 'probability', min: 0, max: 1 },
-  { key: 'exit_value', label: 'exit value', min: 0 },
+const SCENARIO_BOUNDS: Array<{
+  key: keyof ScenarioRow;
+  label: string;
+  min?: number;
+  max?: number;
+  /**
+   * Blank is not a value this cell may be left holding.
+   *
+   * Marked on the two the engine-inputs schema declares required — `probability`
+   * is `z.number().min(0).max(1)` with no `.optional()`, and a scenario is
+   * refused outright unless it carries an `equity_value` or an
+   * `enterprise_value`. Neither refusal could ever fire from this panel, because
+   * the request is built with `Number(s.exit_value) || 0`: a blank box is
+   * `Number('')`, which is `0`, which is a perfectly good non-negative number.
+   *
+   * So the server's "each scenario needs an exit value" was answered by sending
+   * one worth nothing, and the row saved as a total-loss outcome — a scenario
+   * carrying, say, 40% probability of the company being worth zero. That is a
+   * different model from the one the analyst left half-filled, and it drags the
+   * probability-weighted conclusion down by its whole weight without anything on
+   * the page saying a figure was missing.
+   *
+   * Checked here rather than left to the server because the server cannot see
+   * it: what arrives is a complete, in-range scenario. `legWeightProblem`
+   * beside this already treats a blank as "required" for the same reason.
+   */
+  required?: boolean;
+}> = [
+  { key: 'probability', label: 'probability', min: 0, max: 1, required: true },
+  { key: 'exit_value', label: 'exit value', min: 0, required: true },
+  // Blank is a real answer for these two: the schema defaults
+  // `time_to_exit_years` to 0 (an exit modelled as immediate) and takes a null
+  // `discount_rate` to mean "use the PWERM-wide rate".
   { key: 'time_years', label: 'years', min: 0 },
   { key: 'discount_rate', label: 'discount rate' },
 ];
@@ -165,9 +195,12 @@ const SCENARIO_BOUNDS: Array<{ key: keyof ScenarioRow; label: string; min?: numb
  */
 function scenarioProblem(rows: ScenarioRow[]): string | null {
   for (const [i, row] of rows.entries()) {
-    for (const { key, label, min, max } of SCENARIO_BOUNDS) {
+    for (const { key, label, min, max, required } of SCENARIO_BOUNDS) {
       const raw = row[key].trim();
-      if (raw === '') continue;
+      if (raw === '') {
+        if (required) return `Scenario ${i + 1}: ${label} is required.`;
+        continue;
+      }
       const value = Number(raw);
       if (!Number.isFinite(value)) return `Scenario ${i + 1}: ${label} must be a number.`;
       if (min !== undefined && value < min) return `Scenario ${i + 1}: ${label} must be at least ${min}.`;

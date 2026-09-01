@@ -352,3 +352,64 @@ describe('ParamsPanel — the boxes the methodology form does not save', () => {
     expect(paramsPatches(patched)).toHaveLength(0);
   });
 });
+
+/**
+ * R339, methodology M19 — the blank that was accepted because `Number('')` is a
+ * number.
+ *
+ * The engine-inputs schema refuses a PWERM scenario with no exit value
+ * (`.refine((s) => s.equity_value != null || s.enterprise_value != null)`) and
+ * requires a probability. Neither refusal could reach this panel: the request
+ * is built with `Number(s.exit_value) || 0`, so an empty box crossed the wire
+ * as a valid, in-range zero and saved as a total-loss outcome carrying whatever
+ * probability the analyst had already typed beside it.
+ */
+describe('ParamsPanel — a scenario cell left blank', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  const scenarioIssue = () => screen.findByTestId('scenario-issue');
+
+  it('refuses a scenario whose exit value was never typed', async () => {
+    const { patched, user } = await renderPanel({ allocation_method: 'pwerm' });
+    await user.click(screen.getByRole('button', { name: 'Add scenario' }));
+    await user.type(await screen.findByLabelText('Scenario 1 probability'), '1');
+
+    expect(await scenarioIssue()).toHaveTextContent('Scenario 1: exit value is required.');
+    expect(screen.getByRole('button', { name: /save scenarios/i })).toBeDisabled();
+    expect(patched.filter((p) => p.path.includes('/engine-inputs'))).toHaveLength(0);
+  });
+
+  /**
+   * The probabilities of the rows that *are* filled in can sum to one on their
+   * own, so the "must total 100%" check the panel already had says nothing
+   * about the row that carries none. It saved as a probability of zero.
+   */
+  it('refuses a blank probability even when the other rows already total one', async () => {
+    const { user } = await renderPanel({ allocation_method: 'pwerm' });
+    await user.click(screen.getByRole('button', { name: 'Add scenario' }));
+    await user.type(await screen.findByLabelText('Scenario 1 probability'), '1');
+    await user.type(screen.getByLabelText('Scenario 1 exit value'), '5000000');
+    await user.click(screen.getByRole('button', { name: 'Add scenario' }));
+    await user.type(await screen.findByLabelText('Scenario 2 exit value'), '1000000');
+
+    expect(await scenarioIssue()).toHaveTextContent('Scenario 2: probability is required.');
+  });
+
+  /**
+   * The two cells that may be left empty stay that way: `time_to_exit_years`
+   * defaults to 0 in the schema and `discount_rate` is nullable, so a row
+   * carrying only a probability and an exit value still saves.
+   */
+  it('still saves a row that fills only the two required cells', async () => {
+    const { patched, user } = await renderPanel({ allocation_method: 'pwerm' });
+    await user.click(screen.getByRole('button', { name: 'Add scenario' }));
+    await user.type(await screen.findByLabelText('Scenario 1 probability'), '1');
+    await user.type(screen.getByLabelText('Scenario 1 exit value'), '5000000');
+    await user.click(screen.getByRole('button', { name: /save scenarios/i }));
+
+    await waitFor(() => expect(patched.filter((p) => p.path.includes('/engine-inputs'))).toHaveLength(1));
+    expect(patched.find((p) => p.path.includes('/engine-inputs'))!.body).toMatchObject({
+      pwerm: { scenarios: [{ probability: 1, equity_value: 5_000_000, time_to_exit_years: 0 }] },
+    });
+  });
+});

@@ -451,6 +451,9 @@ describe('ParamsPanel — PWERM scenario grid', () => {
     const { patched, user } = await openPwerm();
     await user.click(screen.getByRole('button', { name: 'Add scenario' }));
     await user.type(screen.getByLabelText('Scenario 1 probability'), '1');
+    // The exit value is required (R339): a blank one used to reach the server
+    // as a zero, which is why this row now has to carry one to be saved at all.
+    await user.type(screen.getByLabelText('Scenario 1 exit value'), '5000000');
     await user.click(screen.getByRole('button', { name: /save scenarios/i }));
 
     await waitFor(() => expect(patched.some((p) => p.path.includes('/engine-inputs'))).toBe(true));
@@ -521,6 +524,7 @@ describe('ParamsPanel — PWERM scenario grid', () => {
     const { user } = await openPwerm();
     await user.click(screen.getByRole('button', { name: 'Add scenario' }));
     await user.type(screen.getByLabelText('Scenario 1 probability'), '1');
+    await user.type(screen.getByLabelText('Scenario 1 exit value'), '5000000');
     await user.click(screen.getByRole('button', { name: /save scenarios/i }));
     expect(await screen.findByText('Scenarios saved.')).toBeInTheDocument();
 
