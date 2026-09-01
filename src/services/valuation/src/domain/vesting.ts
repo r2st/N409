@@ -317,9 +317,20 @@ export function vestingTimeline(schedule: VestingSchedule): VestingPoint[] {
     });
   }
   // Ensure the final point shows full vesting even if the term isn't a clean
-  // multiple of the cadence.
+  // multiple of the cadence — a 50-month vest on an annual cadence stops the
+  // loop at month 48, and the grant really does complete at month 50.
+  //
+  // Only when the loop reached the end of the schedule, though. `months` is the
+  // *capped* term, and on a stored row past the ceiling the last point built is
+  // mid-vest: a 600-month schedule stops at month 240 with 40% vested, and
+  // appending a full-vesting point there asserted the grant completes in 2040 —
+  // twice on the same date, 400 shares and then 1,000 — while `vestingStatus`
+  // on that very date, which is what the panel beside the chart reads, says 40%.
+  // The cap exists so a schedule no validated request body could carry cannot
+  // build a two-million-element array; it is not a statement that the grant
+  // finishes at the ceiling, and the chart must not make one.
   const last = points[points.length - 1]!;
-  if (last.cumulativeVested < total) {
+  if (months >= schedule.vestingMonths && last.cumulativeVested < total) {
     points.push({
       monthOffset: months,
       date: addMonths(schedule.vestingStartDate, months),

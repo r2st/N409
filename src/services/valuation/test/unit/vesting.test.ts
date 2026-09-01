@@ -369,6 +369,34 @@ describe('vestingTimeline bounds the points it builds', () => {
     expect(last.monthOffset).toBeLessThanOrEqual(VESTING_MONTHS_MAX);
     expect(last.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
+
+  /*
+   * The cap is a bound on the work, not a claim about the grant. A stored row
+   * whose term outruns it stops the loop mid-vest, and the "finish the curve"
+   * point was appended there anyway: a 600-month schedule drew 400 shares and
+   * then 1,000 on the same day, twenty years in, while the status panel beside
+   * the chart read 40% vested on that date.
+   */
+  it('does not claim full vesting at the ceiling for a term that outruns it', () => {
+    const longVest = schedule(600, 12);
+    const points = vestingTimeline(longVest);
+    const last = points[points.length - 1]!;
+    expect(last.monthOffset).toBe(VESTING_MONTHS_MAX);
+    expect(last.cumulativeVested).toBeLessThan(1000);
+    // No two points share a month offset, and the chart agrees with the panel.
+    expect(new Set(points.map((p) => p.monthOffset)).size).toBe(points.length);
+    const asOf = new Date(`${last.date}T00:00:00Z`);
+    expect(last.cumulativeVested).toBe(vestingStatus(longVest, asOf).vestedShares);
+  });
+
+  it('still completes the curve when the term is inside the ceiling', () => {
+    // 50 months on an annual cadence: the loop stops at 48 and the grant does
+    // finish at 50, so the closing point stays.
+    const points = vestingTimeline(schedule(50, 12));
+    const last = points[points.length - 1]!;
+    expect(last.monthOffset).toBe(50);
+    expect(last.cumulativeVested).toBe(1000);
+  });
 });
 
 describe('addMonths past the representable date range', () => {
