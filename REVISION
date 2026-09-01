@@ -6325,3 +6325,115 @@
 #            post-publication amendment (R212) and the first is arguably just
 #            waste, which is why neither was closed here — but the two states
 #            differ, and nothing in the pipeline distinguishes them.
+#
+# R321 — Observability & monitoring (M11). Five findings, and a shape that runs
+#            through four of them: an instrument that measures the *wrapper*
+#            rather than the work, so the failure it exists to catch happens
+#            inside it and returns normally. R313 wrote the thresholds; this
+#            round is mostly about the readings those thresholds are taken
+#            against being able to move at all.
+#
+#            **A sweep whose every row failed read as an idle one.** R297 gave
+#            the twelve background sweeps `background_sweep_runs_total` and
+#            `background_sweep_failures_total`, which answer whether the tick
+#            threw. None of these ladders fails by throwing: every one contains
+#            its per-row failures on purpose, so that one row's SMTP refusal
+#            cannot cost the other nineteen their attempt. An outbox refusing
+#            every send, a webhook receiver that has been 500ing since
+#            yesterday, a retry sweep stranding every run it claims — all three
+#            return normally, every tick, and read through all four instruments
+#            exactly as a healthy sweep with nothing to do. The tally was
+#            already computed in each of them (`{ attempted, sent }`,
+#            `{ claimed, resumed, stranded }`, `{ queued, skipped, suppressed,
+#            failed }`) and went into an `info` line and nowhere else, and the
+#            log is not what alerts here. `sweepTally` reads the countable
+#            outcomes off whatever a tick returns and `scheduleSweep` records
+#            them into `background_sweep_items_total{sweep,outcome}` — by
+#            construction, the way the sweep's name already reaches the gauges
+#            and the failure line from one place. Conservative about what counts
+#            as a count (own enumerable finite non-negative numbers), which
+#            drops `HousekeepingResult`'s per-table map while keeping its
+#            `total`. The half construction cannot supply is a tick actually
+#            returning its tally, so the roster census brace-matches each tick
+#            body and fails any that ends without one. `retryFailedEmails` now
+#            carries `failed` and `retired` rather than leaving them to
+#            `attempted - sent`, which reads "no failures" for a sweep that is
+#            claiming nothing at all.
+#
+#            **The alerting subsystem's own failure was a level down.**
+#            `runJobAlertScan` returns `notified.failed` — announcements still
+#            owed after the pass, i.e. an operator who has *not* been told a
+#            queue is stalled. `sweepTally` is deliberately shallow, so a nested
+#            count is dropped rather than guessed at; the tick now flattens it
+#            as `announcements_failed`, with the one rule in this file whose
+#            subject is the monitoring itself.
+#
+#            **A sweep switched off vanished rather than reading zero.** Six of
+#            the eleven sweeps sit behind a `_MINUTES > 0` switch, and a
+#            switched-off sweep is never registered — absent from `track`, from
+#            the four gauges built off that roster, and so from the scrape
+#            entirely. `SweepStopped` is `page` and its own comment says it
+#            exists for "the timer was never scheduled, or the interval is
+#            configured to zero"; `rate(background_sweep_runs_total[1h]) == 0`
+#            cannot express that, because there is no such series. A missing
+#            series and a healthy scrape look alike. The six behind the switch
+#            are every retry ladder the platform has. `SWEEP_ROSTER` declares
+#            the eleven, `background_sweep_enabled` carries a reading for each
+#            whether or not anything scheduled it, and the rule is anchored on
+#            it. Being off is supported, so nothing alerts on `enabled == 0`;
+#            the boot line ('background sweeps: not all scheduled', warn, naming
+#            them) is where an unintended one is caught, in the same shape as
+#            the feature-flag line above it.
+#
+#            **The queue verdict reached three channels, none of them on-call.**
+#            `auto_pipeline_runs_pending` explains that the DB-backed backlogs
+#            are deliberately absent from the scrape because a count query per
+#            scrape is the wrong shape and "the job-alert sweep already watches
+#            them on its own schedule". Both halves true, and the sentence stops
+#            one clause early: the delegate reported an in-app notification, an
+#            `admin_events` row and a journal line. The platform decided every
+#            five minutes that its outbox had stopped and no rule could hear it.
+#            `runJobAlertScan` keeps the set it reconciled — `opened` plus
+#            `ongoing`, so an alert that stays true does not drop out on the
+#            scan that stops notifying about it — and `job_queue_alert_open`
+#            is a gauge over that snapshot rather than over a query, because
+#            `collect` runs inside the scrape and a scrape that hits the
+#            database loads the thing being monitored hardest exactly when it is
+#            already the problem. Null until a scan finishes, and the gauge then
+#            reports nothing rather than ten reassuring zeros: "nothing has
+#            looked" is not "no queue is in trouble", and it already has an
+#            answer one rule over.
+#
+#            **A half-landed deploy left the estate on two builds.**
+#            `n409_build_info` exists so "what is live" is answerable from
+#            outside the box, and no rule referred to it. A unit that fails to
+#            come back on the new code does not fail readiness — it is perfectly
+#            healthy, on yesterday's build — so the estate serves a mixture and
+#            every instrument reads normally, because each unit individually is
+#            fine. `EstateBuildSkew` counts distinct `sha`; no expected value,
+#            because nothing on the box holds one and the question does not need
+#            it. `BuildProvenanceMissing` covers what would stop the first rule
+#            firing: each service falls back to `sha: unknown` independently, so
+#            a deploy that stopped writing BUILD_SHA leaves them all agreeing —
+#            skew-free, provenance-free, every rollback decision a guess.
+#            `alertRulesCensus` grew the matching half it lacked: it caught a
+#            rule naming a metric nothing exports, and a rule selecting a label
+#            *value* nothing ever sets fails identically and was invisible to
+#            it.
+#
+# gap:       The two Python units still have no scrape endpoint, so
+#            `EstateBuildSkew` sees three of five and the AI and engine tiers
+#            are still measured only from the caller. R313's open item, and a
+#            unit the skew rule cannot see is an argument for closing it rather
+#            than for weakening the rule. Nothing on the box scrapes the three
+#            endpoints that do exist, so every rule in alerts.yml is still
+#            written against readings nobody collects.
+#
+# gap:       `silentCatchCensus` reads `.catch(…)` and not `try { } catch { }`.
+#            Fifty-six catch blocks in the valuation service neither report nor
+#            rethrow; every one read here is argued in a comment beside it and
+#            none is wrong, so the finding is the population, not a bug in it —
+#            the guard that would catch the fifty-seventh does not cover the
+#            shape. Left alone because closing it means fifty-six `// swallow:`
+#            markers on handlers whose comments already say more than the marker
+#            would.
