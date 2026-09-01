@@ -206,9 +206,7 @@ describe('AuditorAccessPanel — revoking', () => {
     // `fetch` rejecting means the DELETE never arrived, so the link is still
     // live — and the reader is told nothing was submitted rather than left to
     // guess whether pressing Revoke again would revoke twice.
-    expect(
-      await screen.findByText(`Could not revoke the link. ${OFFLINE_DETAIL}`),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(`Could not revoke the link. ${OFFLINE_DETAIL}`)).toBeInTheDocument();
     expect(screen.getByText('Active')).toBeInTheDocument();
   });
 

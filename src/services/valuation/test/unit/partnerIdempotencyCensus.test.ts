@@ -80,8 +80,7 @@ function blocks(): Block[] {
  * unlisted one fails below until somebody writes the reason down here.
  */
 const NO_KEY_NEEDED: Record<string, string> = {
-  'PUT /valuations/{id}':
-    'a whole-resource correction — replaying it writes the same fields to the same row',
+  'PUT /valuations/{id}': 'a whole-resource correction — replaying it writes the same fields to the same row',
   'DELETE /webhooks/{id}':
     'deleting an id that is already gone is the 404 the first call earned, not a second deletion',
 };

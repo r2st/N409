@@ -173,9 +173,7 @@ describe('SignaturePanel — removing a signature', () => {
     render(<SignaturePanel valuation={VALUATION} />);
     await user.click(await screen.findByRole('button', { name: 'remove' }));
 
-    expect(
-      await screen.findByText(`Could not remove the signature. ${OFFLINE_DETAIL}`),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(`Could not remove the signature. ${OFFLINE_DETAIL}`)).toBeInTheDocument();
   });
 
   it('names the operation and the status when the server explains nothing', async () => {
