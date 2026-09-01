@@ -355,6 +355,25 @@ groups:
           summary: 'the {{ $labels.source }} queue is {{ $labels.kind }}, per the job monitor'
           runbook: 'https://n409.aiknol.com/admin/jobs'
 
+      # The gauge above is the monitor's verdict; this is whether it reached one.
+      # A queue with no enabled rule produces no findings, so before R329 it
+      # reported the same confident zero as a healthy watched one and
+      # `JobQueueAlertOpen` could never fire for it again — for the outbox and
+      # the webhook deliveries, that zero was the only thing anybody had, since
+      # `auto_pipeline_runs_pending` delegates every DB-backed backlog here.
+      #
+      # Deliberately no rule on `state="disabled"`: switching a queue's rule off
+      # in the admin console is supported, the same way a switched-off sweep is.
+      # `unconfigured` is the one nobody chose — a source in JOB_SOURCES with no
+      # row in `job_alert_rules`, unwatched since the day it was added.
+      - alert: JobQueueUnwatched
+        expr: job_queue_alert_rule{state="unconfigured"} == 1
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the {{ $labels.source }} queue has no alert rule at all — nothing is watching it'
+          runbook: 'INSERT a row into job_alert_rules for it; the seed in migration 0120 has the thresholds the others use'
+
       - alert: AutoPipelineBacklog
         expr: auto_pipeline_runs_pending > 0
         for: 30m
@@ -453,8 +472,8 @@ groups:
         for: 30m
         labels: { severity: page }
         annotations:
-          summary: 'the {{ $labels.source }} webhook is refusing signed deliveries — its secret and the sender''s have drifted'
-          runbook: 'journalctl -u n409-valuation | grep inbound_webhook — then compare the endpoint secret in the provider dashboard with this deployment''s'
+          summary: "the {{ $labels.source }} webhook is refusing signed deliveries — its secret and the sender's have drifted"
+          runbook: "journalctl -u n409-valuation | grep inbound_webhook — then compare the endpoint secret in the provider dashboard with this deployment's"
 
       # The other half: the door is open and nothing is behind it. A deploy that
       # brought up the service without the secret answers every delivery 503,

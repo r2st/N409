@@ -2,7 +2,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
-import { openJobAlerts, resetOpenJobAlerts, runJobAlertScan } from '../../src/hooks/jobAlerts.js';
+import {
+  jobAlertRuleStates,
+  openJobAlerts,
+  resetOpenJobAlerts,
+  runJobAlertScan,
+} from '../../src/hooks/jobAlerts.js';
 import { JOB_SOURCES } from '../../src/domain/jobQueue.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
@@ -545,6 +550,77 @@ describe.skipIf(!dbUp)('job queue alert delivery', () => {
     await pool.query(`UPDATE email_outbox SET status = 'sent' WHERE status = 'queued'`);
     await scan();
     expect(openJobAlerts()).toEqual([]);
+  });
+
+  it('says which queues it was in a position to judge, not just what it found', async () => {
+    /*
+     * R329. The snapshot above is the monitor's verdict. This is whether it
+     * reached one at all — and before this, a queue with no *enabled rule*
+     * reported through `job_queue_alert_open` exactly as a healthy watched one
+     * does. `evaluateJobAlerts` skips a disabled or missing rule entirely and
+     * `reconcileJobAlerts` resolves whatever was open, so the queue produced no
+     * findings, the gauge published a confident 0 per kind, and
+     * `JobQueueAlertOpen` could never fire for it again.
+     *
+     * That is not a corner: the comment on `auto_pipeline_runs_pending` sends
+     * every DB-backed backlog here on the grounds that a count query per scrape
+     * is the wrong shape, so for the outbox and the webhook deliveries that
+     * zero was the whole of the platform's monitoring.
+     *
+     * The two ways in are separated because they are different incidents.
+     * `disabled` is a choice made in the admin console and nothing alerts on
+     * it. `unconfigured` — a source in JOB_SOURCES with no row in
+     * `job_alert_rules` — is nobody's choice at all.
+     */
+    resetOpenJobAlerts();
+    expect(jobAlertRuleStates(), 'nothing has looked yet').toBeNull();
+
+    await scan();
+    expect(jobAlertRuleStates()).toEqual({
+      pipeline_run: 'enabled',
+      ai_job: 'enabled',
+      calculation: 'enabled',
+      email: 'enabled',
+      webhook_delivery: 'enabled',
+    });
+
+    await pool.query(`UPDATE job_alert_rules SET enabled = false WHERE source = 'email'`);
+    await pool.query(`DELETE FROM job_alert_rules WHERE source = 'webhook_delivery'`);
+    try {
+      await scan();
+      expect(jobAlertRuleStates()).toMatchObject({
+        email: 'disabled',
+        webhook_delivery: 'unconfigured',
+        ai_job: 'enabled',
+      });
+    } finally {
+      // The seed from migration 0120; this table is not truncated between tests.
+      await pool.query(`UPDATE job_alert_rules SET enabled = true WHERE source = 'email'`);
+      await pool.query(
+        `INSERT INTO job_alert_rules (source, stall_minutes, failure_count, failure_window_hours)
+         VALUES ('webhook_delivery', 120, 10, 24) ON CONFLICT (source) DO NOTHING`,
+      );
+    }
+  });
+
+  it('records the states even when every rule is off, which is when it matters most', async () => {
+    // The all-disabled path early-returns before the evaluation. Snapshotting
+    // after that return would leave the one deployment where every queue is
+    // unwatched reporting last week's states — or nothing at all.
+    resetOpenJobAlerts();
+    await pool.query(`UPDATE job_alert_rules SET enabled = false`);
+    try {
+      await scan();
+      expect(Object.values(jobAlertRuleStates() ?? {})).toEqual([
+        'disabled',
+        'disabled',
+        'disabled',
+        'disabled',
+        'disabled',
+      ]);
+    } finally {
+      await pool.query(`UPDATE job_alert_rules SET enabled = true`);
+    }
   });
 
   it('still announces recoveries when every rule is turned off', async () => {

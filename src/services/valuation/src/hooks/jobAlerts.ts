@@ -1,7 +1,12 @@
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import { JOB_SOURCES, JOB_SOURCE_LABELS, type JobSource } from '../domain/jobQueue.js';
-import { evaluateJobAlerts, observeQueues, type JobAlertKind } from '../domain/jobAlerts.js';
+import {
+  evaluateJobAlerts,
+  observeQueues,
+  type JobAlertKind,
+  type JobAlertRule,
+} from '../domain/jobAlerts.js';
 import { dbNow, jobStats, oldestActiveJobs } from '../repos/jobs.js';
 import {
   deliverJobAlertAnnouncement,
@@ -67,6 +72,36 @@ export interface OpenJobAlert {
 let openAlerts: readonly OpenJobAlert[] | null = null;
 
 /**
+ * Whether each queue in `JOB_SOURCES` is being watched at all.
+ *
+ * `job_queue_alert_open` reports a 0 per queue meaning "the monitor is holding
+ * no alert here", and R321 was right that publishing it beats leaving a rule to
+ * infer health from an absent series. What it could not say is the third state
+ * underneath both: a queue with no *enabled rule* produces no findings at all
+ * (`evaluateJobAlerts` skips it, and `reconcileJobAlerts` resolves whatever was
+ * open), so it reported the same confident zero as a healthy watched queue —
+ * and `JobQueueAlertOpen` could never fire for it again. The comment on
+ * `auto_pipeline_runs_pending` delegates every DB-backed backlog to this sweep,
+ * so for the outbox and the webhook deliveries that zero was the only thing
+ * anybody had.
+ *
+ * Two ways in, and they are different incidents. `disabled` is an operator
+ * choice made in the admin console and is supported — nothing alerts on it, for
+ * the reason `background_sweep_enabled == 0` has no rule either.
+ * `unconfigured` is a source in this codebase's `JOB_SOURCES` with no row in
+ * `job_alert_rules`: nobody chose to stop watching it, a migration simply never
+ * seeded it, and the queue has been unwatched since the day it was added.
+ *
+ * Same snapshot discipline as `openAlerts` above — read by the scan on its own
+ * schedule, never by the scrape.
+ */
+let ruleStates: Readonly<Record<JobSource, JobAlertRuleState>> | null = null;
+
+/** The three states a queue's alert rule can be in. A state-set, like the circuits. */
+export const JOB_ALERT_RULE_STATES = ['enabled', 'disabled', 'unconfigured'] as const;
+export type JobAlertRuleState = (typeof JOB_ALERT_RULE_STATES)[number];
+
+/**
  * What the job monitor currently holds open, or null before the first scan.
  *
  * This subsystem decides that a queue is stalled or failing, and until R321 it
@@ -82,9 +117,38 @@ export function openJobAlerts(): readonly OpenJobAlert[] | null {
   return openAlerts;
 }
 
+/**
+ * Which queues the last scan was in a position to say anything about.
+ *
+ * Null before the first scan, for the same reason `openJobAlerts` is: "nothing
+ * has looked" is not "every queue is watched".
+ */
+export function jobAlertRuleStates(): Readonly<Record<JobSource, JobAlertRuleState>> | null {
+  return ruleStates;
+}
+
 /** Test seam: forget the last scan, as a fresh process would. */
 export function resetOpenJobAlerts(): void {
   openAlerts = null;
+  ruleStates = null;
+}
+
+/**
+ * The rule rows, read as a verdict per source in `JOB_SOURCES`.
+ *
+ * Keyed off this codebase's source list rather than off the rows, because the
+ * failure being caught is a source that has no row — which a scan of the rows
+ * cannot see. A row for a source `JOB_SOURCES` does not contain is inert by
+ * the migration's own decision ("an unknown key here is inert rather than a
+ * broken insert") and is left out here for the same reason.
+ */
+function rememberRules(rules: readonly JobAlertRule[]): void {
+  ruleStates = Object.fromEntries(
+    JOB_SOURCES.map((source) => {
+      const rule = rules.find((r) => r.source === source);
+      return [source, !rule ? 'unconfigured' : rule.enabled ? 'enabled' : 'disabled'];
+    }),
+  ) as Record<JobSource, JobAlertRuleState>;
 }
 
 function rememberOpen(result: ReconcileResult): void {
@@ -152,6 +216,9 @@ async function scanUnderLock(deps: {
   now?: Date;
 }): Promise<ReconcileResult & { evaluated: number; notified: AnnouncementTally }> {
   const rules = await listJobAlertRules(deps.pool);
+  // Before the early return below, not after it: a deployment with every rule
+  // switched off is exactly the state this snapshot exists to make legible.
+  rememberRules(rules);
   const enabled = rules.filter((r) => r.enabled);
   if (enabled.length === 0) {
     // No enabled rule means nothing can be true, so everything open resolves.

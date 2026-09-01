@@ -25,7 +25,8 @@ const { buildApp, buildEmailTransports, capTableSyncCredentials, hrisCredentials
 const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
 const { retryFailedEmails } = await import('./hooks/emailRetry.js');
 const { retryDueDeliveries } = await import('./hooks/partnerWebhooks.js');
-const { runJobAlertScan, openJobAlerts } = await import('./hooks/jobAlerts.js');
+const { runJobAlertScan, openJobAlerts, jobAlertRuleStates, JOB_ALERT_RULE_STATES } =
+  await import('./hooks/jobAlerts.js');
 const { JOB_SOURCES } = await import('./domain/jobQueue.js');
 const { JOB_ALERT_KINDS } = await import('./domain/jobAlerts.js');
 const { retryFailedPipelineRuns } = await import('./hooks/pipelineRetry.js');
@@ -383,8 +384,15 @@ app.metrics.gauge(
   'The job monitor is holding an alert open for this queue',
   () => {
     const open = openJobAlerts();
-    if (open === null) return [];
-    return JOB_SOURCES.flatMap((source) =>
+    const states = jobAlertRuleStates();
+    if (open === null || states === null) return [];
+    // Only for the queues the scan was in a position to say anything about. A
+    // queue with no enabled rule produces no findings at all, so a 0 here would
+    // be the same reading a healthy watched queue gives — see `ruleStates` in
+    // hooks/jobAlerts.ts. The gauge below is what explains the absence, which
+    // is what makes leaving it out honest rather than the missing series R321
+    // argued against.
+    return JOB_SOURCES.filter((source) => states[source] === 'enabled').flatMap((source) =>
       JOB_ALERT_KINDS.map((kind) => ({
         value: open.some((a) => a.source === source && a.kind === kind) ? 1 : 0,
         labels: { source, kind },
@@ -392,6 +400,31 @@ app.metrics.gauge(
     );
   },
   ['source', 'kind'],
+);
+
+// And whether anything is watching that queue at all.
+//
+// The gauge above is the monitor's verdict; this is whether it reached one. A
+// state-set rather than a 1/0, because the two ways a queue goes unwatched are
+// different incidents: `disabled` is an operator's choice in the admin console
+// and nothing alerts on it, the way nothing alerts on
+// `background_sweep_enabled == 0`. `unconfigured` is a source in JOB_SOURCES
+// with no row in `job_alert_rules` — nobody decided to stop watching it, a
+// migration never seeded it, and it has been unwatched since it was added.
+app.metrics.gauge(
+  'job_queue_alert_rule',
+  'Whether the job monitor has an enabled rule for this queue',
+  () => {
+    const states = jobAlertRuleStates();
+    if (states === null) return [];
+    return JOB_SOURCES.flatMap((source) =>
+      JOB_ALERT_RULE_STATES.map((state) => ({
+        value: states[source] === state ? 1 : 0,
+        labels: { source, state },
+      })),
+    );
+  },
+  ['source', 'state'],
 );
 
 /**
