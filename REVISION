@@ -7184,3 +7184,170 @@
 #            `PERPLEXITY_CALL_BUDGET_S` are off it too, the last three
 #            deliberately. Left because none of them fails toward unbounded spend,
 #            which is the line that module draws.
+
+# R341 — Observability & monitoring (M11). Five findings, and four of them are
+#            the same question asked at four altitudes: *who reads this?* An
+#            instrument computed and wired to nothing; a rule absent rather than
+#            wrong; a refusal answered as a redirect; a ceiling that turned
+#            itself off. Every one of them produces a system that looks healthy
+#            from every channel an operator has.
+#
+#            **The two sweeps that report having examined nothing report it to
+#            no rule.** `auto-email` and `job-alerts` each take a Postgres
+#            session advisory lock inside the tick and decline when another pass
+#            holds it. A declined pass returns exactly the zeros a pass that ran
+#            and found nothing due returns — which is why each sweep flattens the
+#            decline into its tally, `declined` (R340) and `skipped` (R321), for
+#            the sole purpose of separating "did not happen" from "nothing to
+#            do". Both fields reach `background_sweep_items_total`, and no rule
+#            read either. Every rule in the background group is blind to the
+#            condition: the tick ran, so `SweepStopped` is quiet; it did not
+#            throw, so `SweepFailing` is quiet; it did not overlap *in-process*
+#            — `SweepOverlapping` watches `nonOverlapping`, a different guard —
+#            so that is quiet; and it failed no rows, so `SweepWorkFailing` is
+#            quiet. The case both fields were written for is the permanent one:
+#            `withSweepLock`'s own note describes a failed unlock returning a
+#            live connection to the pool while it still holds a session-scoped
+#            key, after which every later pass declines for ever and the only
+#            line written for it is the benign `info`. Two rules, not one with
+#            `outcome=~"declined|skipped"`, because the sweeps do not agree on
+#            the spelling and `auto-email` *also* reports a `skipped` —
+#            candidates passed over for want of a phone number, an entirely
+#            ordinary outcome a regex across both would page on.
+#            `JobMonitorNeverRuns` is a page rather than a ticket:
+#            `job_queue_alert_open` is read from the last scan's snapshot, so a
+#            monitor that has stopped scanning does not go absent, it keeps
+#            publishing the verdict it reached before it stopped, and
+#            `JobQueueAlertOpen` then reports zero open alerts for every queue
+#            with total confidence. A fifth census direction now stands beside
+#            the four in `alertRulesCensus.test.ts`: the four hold a rule that is
+#            *wrong* (a metric nothing exports, a label value nothing sets, a
+#            label name nothing carries, a divisor whose zero is not a
+#            measurement), this holds the rule that is *absent*, which is harder
+#            to notice because nothing in `alerts.yml` mentions it. `x ? 1 : 0`
+#            in a sweep tally is the whole idiom — `sweepTally` counts numbers
+#            only — so the third one is caught the day it is written.
+#
+#            **The registry's own degradation signal had no reader.** Every
+#            instrument is capped at 200 distinct label sets and folds everything
+#            past that into one reserved `__other__` series. `Family` has
+#            computed `cardinality` and `truncated` since the cap was written and
+#            the only thing that has ever read either is `prometheus.test.ts` —
+#            so the event the module header names as the cost of the cap
+#            ("attribution is what degrades, which is the right thing to lose")
+#            happens permanently, per process, and reaches no channel at all. A
+#            dashboard grouped by `route` starts showing `__other__` beside the
+#            real routes as if it were one of them. The loss is not cosmetic in
+#            the direction that matters: totals stay exact, which is why
+#            `HighServerErrorRate` and `SlowRequests` are untouched — they all
+#            `sum by (job)` — but a rule that *selects* a label value no longer
+#            matches the folded readings, and `WebhookOutcomesUnrecorded`,
+#            `JobAlertAnnouncementsFailing`, `SweepAbandoningWork`,
+#            `ScimThrottled` and every SSO rule are that shape. `seriesCensus()`
+#            plus two gauges in `registerProcessMetrics`, so all three Node
+#            services get them without new wiring. `MetricAttributionFolded`
+#            excludes `http_request*`, and that exclusion is the whole
+#            calibration: `route` comes from a URL path and this estate serves
+#            over four hundred of them, so those three are *expected* to fold,
+#            while every other instrument carries a closed label domain small
+#            enough that a fold is label values nobody declared.
+#
+#            **A gauge that throws when scraped left nothing behind.**
+#            `ObservableGauge.render` caught its own `collect` and returned no
+#            lines. Dropping the gauge is right and stays — an endpoint that
+#            500s because a pool handle went away is down exactly when it is
+#            needed — but an absent series is the one reading a rule cannot tell
+#            apart from a healthy one, and nearly every page-severity rule here
+#            is gauge-backed: `SweepStopped` reads `background_sweep_enabled`,
+#            `UpstreamCircuitOpen` reads `upstream_circuit_state`,
+#            `PoolSaturated` reads `db_pool_connections_waiting`,
+#            `MemoryCeilingMissing` reads the cgroup. These collects are not
+#            trivial — a live pool, a sweep roster, a scan snapshot, cgroup
+#            files — and one that throws every scrape takes its rule with it for
+#            as long as the process lives. The catch moves up to
+#            `MetricsRegistry.render`, the only place that can record it; gauges
+#            are collected before the counters are written out, though still
+#            emitted last, so the increment lands in the same body as the
+#            failure. Registered lazily: a permanent zero is a series an operator
+#            learns to ignore.
+#
+#            **Three of the five ways an OAuth connect ends left no record.**
+#            Each of the three callbacks — HRIS, accounting, cap-table sync —
+#            builds one `back(result)` helper and answers every outcome through
+#            it as a redirect. Five results go through it and two left a trace:
+#            `connected` writes an audit event, `error` writes a warn for the
+#            token exchange. `denied`, `retired` and `unauthorized` wrote nothing
+#            at all, on any of the three doors. Which is `ssoOutcomes.ts`'s shape
+#            one flow over: a refusal answered as a 302 is counted in
+#            `http_requests_total`'s 3xx class beside every ordinary navigation,
+#            no 5xx for `HighServerErrorRate`, nothing for `SlowRequests`, and no
+#            breaker because the provider is not one of ours. A rotated Rippling
+#            client secret, a redirect URI that no longer matches, or a role
+#            migration that breaks `isOps` refuses every connection attempt with
+#            every instrument on the box green, and the only symptom is a query
+#            parameter in one person's browser. Recorded inside `back` rather
+#            than at the five `return` sites — the `scheduleSweep` argument, and
+#            it matters more here because the sixth outcome anybody adds will be
+#            a refusal. `retired` and `unauthorized` also get a line, because the
+#            counter is what a rule reads and the line is where the identities
+#            are: `unauthorized` is a thirty-minute token presented by an account
+#            whose access ended inside those thirty minutes, a security-relevant
+#            refusal of a stale credential that `registerProblemHandler`
+#            structurally cannot see.
+#
+#            **A mistyped response ceiling turned the ceiling off.** R340 left
+#            this as a gap and it is closed. `max_response_bytes` had two silent
+#            fallbacks and the AI tier already has the convention for both:
+#            `limits._misconfigured` says "falling back *without saying so* is
+#            its own failure", and `ratelimit.install_rate_limit` warns whenever
+#            its ceiling resolves to nothing. An unparseable `16MB` took the
+#            default in silence. And `max(value, 0)` resolves every negative to
+#            0, which the function documents as off — `_CappedStream` tests
+#            `self._limit > 0` — so a mistyped `-1` does not tighten the ceiling,
+#            it removes the guard whose own header says "the failure it guards is
+#            unbounded rather than merely large", after which the socket delivers
+#            into a buffer nobody is draining for as long as the far end keeps
+#            sending. Announced once per distinct reading rather than per call:
+#            `new_client` builds a client per outbound request.
+#
+#            Checked and found sound, which is worth recording because each was a
+#            candidate: `alerts.yml`'s label *values* all resolve to something
+#            the source emits (`announcements_failed`, `stranded` and `unsettled`
+#            are tally field names, not quoted strings, which is why a naive grep
+#            reports them missing); `background_sweep_enabled` and
+#            `upstream_circuit_consecutive_failures` are both registered; the AI
+#            tier's `extra={...}` census walks both trees whole and no call site
+#            passes a key the formatter drops; all three `market-feed` call sites
+#            record an answer.
+#
+#            gap: nothing reads `/ready` at runtime. Carried forward from earlier
+#            rounds and left again for the same reason: a rule on it would make an
+#            AI-provider outage a 503 that kills a deploy, and the readiness gate
+#            and the boot config disagree about which checks are allowed to be
+#            optional. That disagreement is the thing to settle first.
+#
+#            gap: `MAX_RESPONSE_BYTES` is still absent from
+#            `config_check.SPECS`, and that list is hand-written with no
+#            completeness census — `BEDROCK_MAX_TOKENS`, `BEDROCK_CALL_BUDGET_S`,
+#            `PERPLEXITY_MAX_TOKENS` and `PERPLEXITY_CALL_BUDGET_S` are off it
+#            too. Half of R340's gap; this round closed the logging half. A census
+#            would have to decide what belongs on that list, which is the module's
+#            "fails toward unbounded spend" line and not obviously a census's to
+#            draw.
+#
+#            gap: `MarketFeedKind` still declares `multiples`, which no call site
+#            records. A dead union member is not itself a bug, but it means the
+#            `kind` label's vocabulary is documented wider than the series set,
+#            so a reader of `/metrics` cannot tell "nobody asked for multiples"
+#            from "that path forgot to record".
+#
+#            gap: the swallowed-failure census still cannot see the `try { … }
+#            catch { … }` statement spelling, ~39 candidate sites. Unchanged from
+#            R340 and unchanged by this round.
+#
+#            gap: `MetricAttributionFolded` will not fire for the three
+#            `http_request*` instruments by design, so the estate has no signal
+#            for *how much* per-route attribution it has lost — only that it has.
+#            `n409_metric_series` carries the count for a dashboard to read; a
+#            rule would need a cap the operator has chosen rather than the
+#            constant, which is a configuration change this round did not make.
