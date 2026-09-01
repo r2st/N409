@@ -116,7 +116,14 @@ interface IdField {
  * Response objects are not swept up by widening it, because the value still has
  * to begin with `z.` or `ulidField` to be a schema at all.
  */
-const ID_FIELD = /(?:^|[{,(\s])((?:[a-z][a-z0-9_]*_)?ids?)\s*:\s*(?=z\.|ulidField)/g;
+/**
+ * `UlidParam` is in the lookahead beside `z.` and `ulidField` because
+ * `valuations.ts` spells its two query ids that way — the params plugin's own
+ * ULID schema, reused. It is a correct spelling, and a matcher that only knows
+ * literals cannot say so: the field was simply not in the population, which is
+ * the same silence as an unvalidated one.
+ */
+const ID_FIELD = /(?:^|[{,(\s])((?:[a-z][a-z0-9_]*_)?ids?)\s*:\s*(?=z\.|ulidField|UlidParam)/g;
 
 /** Every id-shaped schema field on one line — a one-line object can declare several. */
 export function idFieldsOn(text: string): Array<{ field: string; expression: string }> {
@@ -165,7 +172,7 @@ describe('an id in a body or query string is validated as one', () => {
   it('spells every one of ours `ulidField()`', () => {
     const offenders = idFields()
       // `z.array(ulidField())` is the plural spelling of the same rule.
-      .filter((f) => !/^(?:ulidField|z\.array\(ulidField)/.test(f.expression))
+      .filter((f) => !/^(?:ulidField|UlidParam|z\.array\(ulidField)/.test(f.expression))
       .filter((f) => !(`${f.file}:${f.field}` in FILTERED_ID_ARRAYS))
       .filter((f) => !(`${f.file}:${f.field}` in NOT_OUR_IDS))
       .map((f) => `${f.file}:${f.line} ${f.field}: ${f.expression}`);
