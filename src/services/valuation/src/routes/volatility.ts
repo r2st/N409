@@ -7,7 +7,7 @@ import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
-import { findParams } from '../repos/params.js';
+import { applyEngineInputs, findParams } from '../repos/params.js';
 import { listComparableItems } from '../repos/comparableItems.js';
 import { listOverwrites, upsertOverwrite } from '../repos/overwrites.js';
 import { OVERWRITE_FIELDS_BY_KEY } from '../domain/overwrites.js';
@@ -447,6 +447,41 @@ export function registerVolatilityRoutes(
         originalValue: before,
         actor: { actorType: 'human', actorId: principal.id },
       });
+
+      /*
+       * The half of "adopt" that reaches the engine.
+       *
+       * `upsertOverwrite` above writes the override registry — the audit
+       * trail, the "was 0.65, now 0.64" on the overwrites tab, and the
+       * `applied_volatility` this route and the panel both answer with. What
+       * it does not do is change what the calculation runs on: nothing merges
+       * the `overwrites` table into the engine payload. `buildEngineInputs`
+       * (routes/calculations.ts) assembles the run from the stored extraction,
+       * `valuation_params.engine_inputs`, the peer set and the caller's own
+       * body, and never reads an override.
+       *
+       * So adopting a derived sigma moved a number on the volatility screen
+       * and moved nothing else. A recalculation — the one this route's
+       * `recalculation_required` tells the analyst to run — re-read
+       * `engine_inputs.volatility`, found the figure that was there before the
+       * adoption, and concluded the same FMV per share it had already
+       * concluded. The screen said 64.0% was applied; the allocation ran on
+       * 65.0%, and `results.assumptions.volatility` (what the report summary
+       * and Exhibit F actually print) agreed with the allocation. The only
+       * surface that carried the adopted figure was the one that recorded it.
+       *
+       * Written where the engine reads it, with the same `||` merge the
+       * extraction auto-apply uses. No `expectedVersion`: like that path, this
+       * is applying a figure the caller just derived on this engagement rather
+       * than saving a form somebody has been looking at, and the field it
+       * touches is the one the adopted estimate is about.
+       */
+      await applyEngineInputs(
+        deps.pool,
+        valuation.id,
+        { volatility: estimate.recommended },
+        { actorType: 'human', actorId: principal.id, source: 'api' },
+      );
 
       const applied = await markVolatilityEstimateApplied(deps.pool, valuation.id, estimateId, principal.id);
       await audit(valuation, principal, 'volatility_applied', {

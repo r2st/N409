@@ -251,8 +251,10 @@ describe.skipIf(!dbUp)('volatility — adopting an estimate, and thin price hist
     });
 
     it('writes the figure through the override trail and says a recalculation is due', async () => {
-      // Through `upsertOverwrite` rather than into the params row, so the
-      // change carries a before/after pair exactly as a hand-typed one would.
+      // Through `upsertOverwrite`, so the change carries a before/after pair
+      // exactly as a hand-typed one would — and, since R302, into the params
+      // row as well, because the override trail is not somewhere the engine
+      // reads. See the engine-inputs assertion below.
       const estimateId = await freshEstimate();
       const res = await apply(estimateId);
       expect(res.statusCode).toBe(200);
@@ -261,6 +263,55 @@ describe.skipIf(!dbUp)('volatility — adopting an estimate, and thin price hist
 
       const panel = await view();
       expect(Number(panel.json().applied_volatility)).toBe(res.json().applied_volatility);
+    });
+
+    /**
+     * The adoption has to reach the figure the allocation actually runs on.
+     *
+     * `buildEngineInputs` assembles a calculation from the stored extraction,
+     * `valuation_params.engine_inputs`, the peer set and the caller's body. It
+     * does not read the `overwrites` table, and nothing else merges one into
+     * the other — so an adoption that wrote only the override trail moved the
+     * volatility screen and left the engine on whatever sigma was there
+     * before. `recalculation_required: true` then sent the analyst to re-run a
+     * calculation that could only reproduce the number it already had, while
+     * `applied_volatility` on the panel named a figure `results.assumptions`
+     * — and therefore the report summary and Exhibit F — disagreed with.
+     */
+    it('puts the adopted figure where the engine reads it, not only in the trail', async () => {
+      const estimateId = await freshEstimate();
+      const res = await apply(estimateId);
+      expect(res.statusCode).toBe(200);
+      const adopted = res.json().applied_volatility as number;
+
+      const { rows } = await ctx.pool.query<{ engine_inputs: Record<string, unknown> }>(
+        'SELECT engine_inputs FROM valuation_params WHERE valuation_id = $1',
+        [valuationId],
+      );
+      expect(Number(rows[0]!.engine_inputs.volatility)).toBeCloseTo(adopted, 10);
+    });
+
+    it('leaves the rest of the engine inputs alone', async () => {
+      // `||` merges at the top level, so adopting sigma must not take a
+      // neighbouring block with it. The financial model is entered once and
+      // re-entering it is not what "adopt this estimate" asks for.
+      const patch = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${valuationId}/engine-inputs`,
+        headers: authHeader(ops.token),
+        payload: { shares_outstanding_common: 4_000_000 },
+      });
+      expect(patch.statusCode, patch.body).toBe(200);
+
+      const estimateId = await freshEstimate();
+      expect((await apply(estimateId)).statusCode).toBe(200);
+
+      const { rows } = await ctx.pool.query<{ engine_inputs: Record<string, unknown> }>(
+        'SELECT engine_inputs FROM valuation_params WHERE valuation_id = $1',
+        [valuationId],
+      );
+      expect(Number(rows[0]!.engine_inputs.shares_outstanding_common)).toBe(4_000_000);
+      expect(rows[0]!.engine_inputs.volatility).toBeDefined();
     });
 
     it('reports no recalculation when the adopted figure is the one already there', async () => {
