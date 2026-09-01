@@ -43,7 +43,7 @@ export async function retryFailedEmails(deps: {
   maxAttempts?: number;
   limit?: number;
   leaseMs?: number;
-}): Promise<{ attempted: number; sent: number }> {
+}): Promise<{ attempted: number; sent: number; failed: number; retired: number }> {
   // FLAG_RETRY_LADDERS off stops the sweep *claiming*, which is what makes this
   // a pause rather than a loss: nothing is claimed, so nothing has its attempt
   // counter spent or its lease taken, and every row sits exactly where it is
@@ -53,7 +53,7 @@ export async function retryFailedEmails(deps: {
   // Checked here rather than at the interval in index.ts because this function
   // is reachable three ways — the timer, the ops retry route, and any future
   // caller — and a kill switch that only covers one of them is not one.
-  if (!flagEnabled(FLAGS.retryLadders)) return { attempted: 0, sent: 0 };
+  if (!flagEnabled(FLAGS.retryLadders)) return { attempted: 0, sent: 0, failed: 0, retired: 0 };
 
   const channels: Array<'email' | 'sms'> = [];
   if (deps.transport) channels.push('email');
@@ -200,5 +200,11 @@ export async function retryFailedEmails(deps: {
     // this number reports. The row not saying so is the line logged above.
     if (outcome !== 'failed') sent += 1;
   }
-  return { attempted: claimed.length, sent };
+  // `failed` and `retired` are carried rather than left to be derived from
+  // `attempted - sent`, because they are what a reader wants to alert on and a
+  // subtraction across two counter series is not the same question: a batch
+  // that claimed nothing has `attempted` 0 and would read as "no failures" the
+  // same way one that sent everything does. `retired` is the ladder giving up
+  // on a row for good — the only tally here that nothing else ever revisits.
+  return { attempted: claimed.length, sent, failed: claimed.length - sent, retired: retired.length };
 }

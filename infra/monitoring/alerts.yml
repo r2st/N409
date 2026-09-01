@@ -198,6 +198,35 @@ groups:
         annotations:
           summary: 'the {{ $labels.sweep }} sweep is skipping ticks; its interval is too short'
 
+      # The three rules above describe the *tick*: whether it ran, whether it
+      # overlapped, whether it threw. None of them describes the work, and the
+      # work is where these sweeps fail. Every ladder here contains its per-row
+      # failures on purpose — one row's SMTP refusal must not cost the other
+      # nineteen their attempt — so an outbox whose every send is refused, a
+      # webhook receiver that has been 500ing since yesterday, and a retry sweep
+      # stranding every run it claims all return normally, every tick, for ever.
+      # `background_sweep_items_total` is the tally each tick already computed.
+      - alert: SweepWorkFailing
+        expr: |
+          rate(background_sweep_items_total{outcome="failed"}[30m]) > 0
+        for: 1h
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the {{ $labels.sweep }} sweep has been failing rows for an hour'
+          runbook: 'journalctl -u n409-valuation | grep ''"sweep":"{{ $labels.sweep }}"'''
+
+      # The ladder giving up. `retired` and `stranded` are the two endings no
+      # later tick revisits — an outbox row whose attempts are spent, a pipeline
+      # run abandoned mid-claim — so unlike `failed` there is no next attempt
+      # that might make this right, and one is worth a look.
+      - alert: SweepAbandoningWork
+        expr: |
+          increase(background_sweep_items_total{outcome=~"retired|stranded"}[6h]) > 0
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the {{ $labels.sweep }} sweep has given up on rows nothing else will take'
+
       - alert: AutoPipelineBacklog
         expr: auto_pipeline_runs_pending > 0
         for: 30m

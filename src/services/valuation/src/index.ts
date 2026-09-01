@@ -7,6 +7,7 @@ import {
   installShutdownHandlers,
   listenHost,
   quiesceAndLog,
+  sweepTally,
   trackedSweep,
   type NamedScheduler,
   flagOverrides,
@@ -302,6 +303,16 @@ const track = <
   return scheduler;
 };
 
+// What the ticks *did*, as opposed to whether they ran. Cumulative and keyed on
+// the tally field name, so `rate(background_sweep_items_total{outcome="failed"})`
+// against the same sweep's `attempted` is the question an outbox outage answers
+// yes to and the three gauges around it cannot be asked at all.
+const sweepItems = app.metrics.counter(
+  'background_sweep_items_total',
+  'Rows a background sweep put in each outcome, cumulative',
+  ['sweep', 'outcome'],
+);
+
 /**
  * A tracked, non-overlapping sweep whose failures are classified and alertable.
  *
@@ -323,7 +334,19 @@ const track = <
  * interleave with nothing to separate them.
  */
 const scheduleSweep = (name: string, tick: () => Promise<unknown>) =>
-  track(name, trackedSweep(app.log, name, tick));
+  track(
+    name,
+    trackedSweep(app.log, name, async () => {
+      const result = await tick();
+      // The tally the tick already computed, counted rather than only logged.
+      // See `sweepTally` for why the two gauges below cannot answer this: they
+      // describe the *tick*, and every ladder here contains its per-row
+      // failures on purpose, so a sweep whose every send, delivery or resume
+      // failed returns normally and reads as an idle healthy one.
+      for (const { outcome, value } of sweepTally(result)) sweepItems.inc({ sweep: name, outcome }, value);
+      return result;
+    }),
+  );
 
 // A scheduler that is routinely skipping ticks is one whose interval is too
 // short for its work — `nonOverlapping` counts them precisely so that is
@@ -380,6 +403,7 @@ if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
       log: app.log,
     });
     if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');
+    return r;
   });
   autoEmailTimer = setInterval(() => scan.run(), config.AUTO_EMAIL_SCAN_MINUTES * 60_000);
 }
@@ -396,6 +420,7 @@ if (config.EMAIL_RETRY_SCAN_MINUTES > 0) {
       maxAttempts: config.EMAIL_RETRY_MAX_ATTEMPTS,
     });
     if (r.attempted > 0) app.log.info(r, 'email retry sweep');
+    return r;
   });
   emailRetryTimer = setInterval(() => sweep.run(), config.EMAIL_RETRY_SCAN_MINUTES * 60_000);
 }
@@ -409,6 +434,7 @@ if (config.WEBHOOK_RETRY_SCAN_MINUTES > 0) {
     // `reaped` too, not just `attempted`: a pass that settled abandoned
     // deliveries and delivered nothing did the work this line reports on.
     if (r.attempted > 0 || r.reaped > 0) app.log.info(r, 'webhook retry sweep');
+    return r;
   });
   webhookRetryTimer = setInterval(() => sweep.run(), config.WEBHOOK_RETRY_SCAN_MINUTES * 60_000);
 }
@@ -435,6 +461,7 @@ if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
     if (reaped.length > 0) {
       app.log.warn({ count: reaped.length, runIds: reaped.map((r) => r.id) }, 'reaped stale pipeline runs');
     }
+    return { reaped: reaped.length };
   });
   sweep.run();
   reaperTimer = setInterval(() => sweep.run(), Math.min(olderThanMs, 5 * 60_000));
@@ -454,6 +481,7 @@ let aiJobReaperTimer: NodeJS.Timeout | undefined;
     if (reaped.length > 0) {
       app.log.warn({ count: reaped.length, jobIds: reaped.map((j) => j.id) }, 'reaped stale AI jobs');
     }
+    return { reaped: reaped.length };
   });
   sweep.run();
   aiJobReaperTimer = setInterval(() => sweep.run(), 5 * 60_000);
@@ -467,6 +495,7 @@ let capTableSyncTimer: NodeJS.Timeout | undefined;
   const tick = scheduleSweep('cap-table-sync', async () => {
     const n = await runDueCapTableSyncs({ pool, credentials: capTableSyncCredentials(config), log: app.log });
     if (n > 0) app.log.info({ processed: n }, 'cap-table sync scan');
+    return { processed: n };
   });
   capTableSyncTimer = setInterval(() => tick.run(), 15 * 60_000);
 }
@@ -477,6 +506,7 @@ let hrisSyncTimer: NodeJS.Timeout | undefined;
   const tick = scheduleSweep('hris-sync', async () => {
     const n = await runDueHrisSyncs({ pool, credentials: hrisCredentials(config), log: app.log });
     if (n > 0) app.log.info({ processed: n }, 'HRIS sync scan');
+    return { processed: n };
   });
   hrisSyncTimer = setInterval(() => tick.run(), 15 * 60_000);
 }
@@ -492,6 +522,7 @@ if (config.JOB_ALERT_SCAN_MINUTES > 0) {
     if (r.opened.length > 0 || r.resolved.length > 0) {
       app.log.info({ opened: r.opened.length, resolved: r.resolved.length }, 'job alert sweep');
     }
+    return { opened: r.opened.length, resolved: r.resolved.length };
   });
   sweep.run();
   jobAlertTimer = setInterval(() => sweep.run(), config.JOB_ALERT_SCAN_MINUTES * 60_000);
@@ -504,6 +535,7 @@ let retentionTimer: NodeJS.Timeout | undefined;
   const sweep = scheduleSweep('retention', async () => {
     const r = await runRetentionSweep(pool, { log: app.log });
     if (r.archived > 0 || r.skipped_hold > 0 || r.purged > 0) app.log.info(r, 'retention sweep');
+    return r;
   });
   sweep.run();
   retentionTimer = setInterval(() => sweep.run(), 6 * 60 * 60_000);
@@ -542,6 +574,7 @@ if (config.PIPELINE_RETRY_SCAN_MINUTES > 0) {
   const sweep = scheduleSweep('pipeline-retry', async () => {
     const r = await retryFailedPipelineRuns({ pool, autoPipeline: autoPipelineDeps });
     if (r.claimed > 0) app.log.info(r, 'auto-pipeline retry sweep');
+    return r;
   });
   sweep.run();
   pipelineRetryTimer = setInterval(() => sweep.run(), config.PIPELINE_RETRY_SCAN_MINUTES * 60_000);
@@ -557,6 +590,7 @@ let housekeepingTimer: NodeJS.Timeout | undefined;
   const sweep = scheduleSweep('housekeeping', async () => {
     const r = await runHousekeepingSweep({ pool, log: app.log });
     if (r.total > 0) app.log.info(r, 'housekeeping sweep');
+    return r;
   });
   housekeepingTimer = setInterval(() => sweep.run(), 60 * 60_000);
 }

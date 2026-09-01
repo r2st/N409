@@ -346,3 +346,48 @@ export async function quiesceAndLog(
   }
   return result;
 }
+
+/**
+ * One outcome from a sweep's own tally of what its tick did.
+ *
+ * @see sweepTally
+ */
+export interface SweepOutcome {
+  /** The tally's field name, used as the `outcome` label. */
+  outcome: string;
+  /** How many rows the tick put in that outcome. Finite and not negative. */
+  value: number;
+}
+
+/**
+ * The countable outcomes in whatever a sweep's tick returned.
+ *
+ * Every sweep in this estate already computes one of these — `{ attempted,
+ * sent }`, `{ claimed, resumed, stranded }`, `{ queued, skipped, suppressed,
+ * failed }` — and until now every one of them went into an `info` line and
+ * nowhere else. What a scraper could see about this tier was whether the *tick*
+ * threw, and a tick does not throw when its work fails: each of these ladders
+ * contains its per-row failures on purpose, so one row's SMTP refusal cannot
+ * cost the other nineteen their attempt. So an outbox failing every send, a
+ * webhook receiver that has been 500ing for a day, and a retry ladder stranding
+ * every run it claims all read through `background_sweep_runs_total` and
+ * `background_sweep_failures_total` exactly as a healthy sweep with nothing to
+ * do — the same blind spot R313 closed one level up, one level down.
+ *
+ * Extraction rather than a per-sweep registration so the counter is got by
+ * construction, in the same spirit as `scheduleSweep` itself: the tick returns
+ * the tally it already had, and the field names are the outcome labels. Only
+ * own enumerable finite non-negative numbers count, which is what drops
+ * `HousekeepingResult`'s `removed` map and `capped` list while keeping its
+ * `total`, and what keeps a tally field that is a duration or an id from
+ * silently becoming a counter series.
+ */
+export function sweepTally(result: unknown): SweepOutcome[] {
+  if (typeof result !== 'object' || result === null || Array.isArray(result)) return [];
+  const out: SweepOutcome[] = [];
+  for (const [outcome, value] of Object.entries(result as Record<string, unknown>)) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) continue;
+    out.push({ outcome, value });
+  }
+  return out;
+}

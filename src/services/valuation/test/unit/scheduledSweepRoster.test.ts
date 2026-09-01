@@ -115,6 +115,37 @@ function sweepNames(source: string): string[] {
   return [...source.matchAll(/\bscheduleSweep\(\s*\n?\s*'([a-z0-9-]+)'/g)].map((m) => m[1]!);
 }
 
+/**
+ * Each `scheduleSweep` call's tick body, by brace matching.
+ *
+ * A regex cannot do this — the bodies contain object literals, arrow functions
+ * and template strings — and the question being asked is about the body's last
+ * statement, so the whole body is what has to be in hand. The count is checked
+ * against `sweepNames` at the call site, which is this scan's vacuity guard.
+ */
+function sweepBodies(source: string): Array<{ name: string; body: string }> {
+  const out: Array<{ name: string; body: string }> = [];
+  for (const m of source.matchAll(/\bscheduleSweep\(\s*\n?\s*'([a-z0-9-]+)'/g)) {
+    const open = source.indexOf('{', m.index! + m[0].length);
+    if (open < 0) continue;
+    let depth = 0;
+    let end = -1;
+    for (let i = open; i < source.length; i += 1) {
+      if (source[i] === '{') depth += 1;
+      else if (source[i] === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    if (end < 0) continue;
+    out.push({ name: m[1]!, body: source.slice(open + 1, end) });
+  }
+  return out;
+}
+
 describe('the scheduled sweeps', () => {
   const found = sweepNames(INDEX);
 
@@ -163,7 +194,7 @@ describe('the scheduled sweeps', () => {
     const code = INDEX.replace(/\/\*[\s\S]*?\*\//g, '').replace(/([^:])\/\/[^\n]*/g, '$1');
     expect([...code.matchAll(/\bnonOverlapping\(/g)]).toHaveLength(0);
     expect([...code.matchAll(/\btrackedSweep\(/g)]).toHaveLength(1);
-    expect(code).toMatch(/const scheduleSweep = [^;]*trackedSweep\(app\.log, name, tick\)/);
+    expect(code).toMatch(/const scheduleSweep = [\s\S]*?trackedSweep\(app\.log, name, async \(\) =>/);
   });
 
   it('exposes each sweep\u2019s health, not only its saturation', () => {
@@ -186,6 +217,27 @@ describe('the scheduled sweeps', () => {
     expect(code).toMatch(/runCounters\.push\(\{\s*name/);
     expect([...code.matchAll(/runCounters\.push\(/g)]).toHaveLength(1);
     expect([...code.matchAll(/runCounters\.map\(/g)]).toHaveLength(2);
+  });
+
+  it('counts what each tick did, not only whether it ran', () => {
+    // R321, and the level below the gauges above. `background_sweep_runs_total`
+    // and `background_sweep_failures_total` describe the *tick*, and none of
+    // these ladders fails by throwing: every one of them contains its per-row
+    // failures on purpose, so that one row's SMTP refusal cannot cost the other
+    // nineteen their attempt. An outbox refusing every send, a webhook receiver
+    // that has been 500ing since yesterday, a retry sweep stranding every run
+    // it claims — all three return normally, every tick, and read through all
+    // four instruments as a healthy sweep with nothing to do.
+    //
+    // The tally was already there in each of them; it went into an `info` line
+    // and nowhere else. `sweepTally` in `scheduleSweep` is what counts it, so
+    // the guard is again on the construction — but the wrapper can only count
+    // what the tick hands back, so this is the half that construction cannot
+    // supply: every tick must actually return its tally.
+    const bodies = sweepBodies(INDEX);
+    expect(bodies.length).toBe(found.length);
+    const silent = bodies.filter(({ body }) => !/\breturn\s+[^;]/.test(body)).map(({ name }) => name);
+    expect(silent).toEqual([]);
   });
 
   it('says how each valuation-writing sweep is guarded', () => {

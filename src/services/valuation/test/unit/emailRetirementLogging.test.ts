@@ -36,6 +36,8 @@ describe('the stranded-outbox retirement reports its own failure (R273)', () => 
     await expect(retryFailedEmails({ pool: poolThatRejects(busy), log: log as never })).resolves.toEqual({
       attempted: 0,
       sent: 0,
+      failed: 0,
+      retired: 0,
     });
     expect(log.error).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledTimes(1);
@@ -48,6 +50,8 @@ describe('the stranded-outbox retirement reports its own failure (R273)', () => 
     await expect(retryFailedEmails({ pool: poolThatRejects(broken), log: log as never })).resolves.toEqual({
       attempted: 0,
       sent: 0,
+      failed: 0,
+      retired: 0,
     });
     expect(log.error).toHaveBeenCalledTimes(1);
     expect(log.error.mock.calls[0]![0]).toMatchObject({ alert: true, failure_kind: 'permanent' });

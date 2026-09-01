@@ -48,6 +48,8 @@ describe('FLAG_RETRY_LADDERS off — the email outbox sweep', () => {
     await expect(retryFailedEmails({ pool: hostilePool, transport })).resolves.toEqual({
       attempted: 0,
       sent: 0,
+      failed: 0,
+      retired: 0,
     });
   });
 
@@ -57,7 +59,7 @@ describe('FLAG_RETRY_LADDERS off — the email outbox sweep', () => {
     // operator's manual "retry now" button running the thing they just stopped.
     await expect(
       retryFailedEmails({ pool: hostilePool, transport, maxAttempts: 99, limit: 500 }),
-    ).resolves.toEqual({ attempted: 0, sent: 0 });
+    ).resolves.toEqual({ attempted: 0, sent: 0, failed: 0, retired: 0 });
   });
 });
 

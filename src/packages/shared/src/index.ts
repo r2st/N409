@@ -112,11 +112,13 @@ export {
   quiesce,
   quiesceAndLog,
   sweepFailed,
+  sweepTally,
   trackedSweep,
   type NamedScheduler,
   type QuiesceLogger,
   type QuiesceResult,
   type Scheduler,
+  type SweepOutcome,
 } from './scheduler.js';
 export { listenHost, listenPort, DEFAULT_LISTEN_HOST } from './listen.js';
 export { trustedProxies, DEFAULT_TRUSTED_PROXIES, CLOUDFLARE_RANGES } from './clientIp.js';
