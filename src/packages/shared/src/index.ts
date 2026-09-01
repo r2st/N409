@@ -7,7 +7,7 @@ export {
   serializeRequest,
   type LoggerOptions,
 } from './logger.js';
-export { startTelemetry, type TelemetryHandle } from './otel.js';
+export { incomingSpanUrlAttributes, startTelemetry, type TelemetryHandle } from './otel.js';
 export { createHttpMetrics, registerGauge, routeLabel, statusClass, type HttpMetrics } from './metrics.js';
 export {
   Counter,
