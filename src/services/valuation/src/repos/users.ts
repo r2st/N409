@@ -326,6 +326,20 @@ export async function listUserIdsWithRoles(
  * person's access, so the invitations they have outstanding go with it — the
  * same rule the console's own deactivation applies, for the same reason:
  * nothing else can revoke a link that is already in somebody's inbox.
+ *
+ * `COALESCE` on the way out, and it is the same rule `cancelSubscription`
+ * carries for `canceled_at`: a transition into a state the row is already in
+ * must not restate when it was reached. `now()` was assigned unconditionally,
+ * and the `/Users/:id` PATCH beside this one already says why that is the
+ * ordinary case rather than the exotic one — "an IdP resyncs its whole
+ * directory on a schedule and re-asserts `active` for everybody each pass". So
+ * a deprovisioned account's `deleted_at` moved forward every pass, forever.
+ *
+ * That column is the answer to "when did this person lose access". The admin
+ * event beside it is guarded and stays put, but `deleted_at` is what
+ * `personalDataExport` hands the subject themselves under Article 15, what
+ * `analystAvailability` reads to call an assignment `closed`, and what the
+ * console prints. All three were reporting the date of the last resync.
  */
 export async function setUserActive(pool: pg.Pool, id: string, active: boolean): Promise<void> {
   if (active) {
@@ -333,7 +347,7 @@ export async function setUserActive(pool: pg.Pool, id: string, active: boolean):
     return;
   }
   await withTransaction(pool, async (client) => {
-    await client.query('UPDATE users SET deleted_at = now() WHERE id = $1', [id]);
+    await client.query('UPDATE users SET deleted_at = COALESCE(deleted_at, now()) WHERE id = $1', [id]);
     await revokeInvitationsFrom(client, id);
   });
 }

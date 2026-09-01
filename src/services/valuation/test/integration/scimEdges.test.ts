@@ -229,6 +229,47 @@ describe.skipIf(!dbUp)('SCIM edges', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json().active).toBe(true);
     });
+
+    /**
+     * A re-asserted deactivation does not move the date it happened.
+     *
+     * This route already guards the *event* on the grounds that "an IdP resyncs
+     * its whole directory on a schedule and re-asserts `active` for everybody
+     * each pass". The column was written unconditionally under the same
+     * traffic, so `users.deleted_at` — what `personalDataExport` gives the
+     * subject for when they lost access, and what the console prints — reported
+     * the last resync rather than the deprovision.
+     */
+    it('keeps the first deactivation date across an IdP resync', async () => {
+      const created = await scim('POST', '/scim/v2/Users', { userName: 'resynced@corp.example' });
+      const userId = created.json().id as string;
+      const off = { Operations: [{ op: 'replace', path: 'active', value: false }] };
+
+      expect((await scim('PATCH', `/scim/v2/Users/${userId}`, off)).json().active).toBe(false);
+      const first = await ctx.pool.query<{ deleted_at: Date }>('SELECT deleted_at FROM users WHERE id = $1', [
+        userId,
+      ]);
+      const at = first.rows[0]!.deleted_at;
+      expect(at).not.toBeNull();
+
+      // The next pass, and the one after it through the DELETE door — both
+      // re-assert a deprovision that already happened.
+      await scim('PATCH', `/scim/v2/Users/${userId}`, off);
+      await scim('DELETE', `/scim/v2/Users/${userId}`);
+
+      const again = await ctx.pool.query<{ deleted_at: Date }>('SELECT deleted_at FROM users WHERE id = $1', [
+        userId,
+      ]);
+      expect(again.rows[0]!.deleted_at.getTime()).toBe(at.getTime());
+
+      // And the guarded event stayed guarded: one deactivation, not three.
+      const { rows } = await ctx.pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM admin_events
+          WHERE subject_id = $1 AND type = 'user_deactivated'`,
+        [userId],
+      );
+      expect(rows[0]!.n).toBe(1);
+    });
   });
 
   describe('deleting', () => {

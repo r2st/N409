@@ -61,7 +61,12 @@ export async function retireValuations(pool: pg.Pool, ids: readonly string[]): P
 
     if (toRetire.length > 0) {
       // The suffix is applied only where it is not already there, so retiring a
-      // row twice cannot produce "Name [retired] [retired]".
+      // row twice cannot produce "Name [retired] [retired]", and
+      // `archived_at IS NULL` is the same rule stated where the write happens.
+      // `toRetire` comes from a SELECT one statement earlier that takes no row
+      // lock, so a second seeder run against the same sample can pass the same
+      // ids through the filter — the predicate here is what makes the archive
+      // date the moment it was first reached rather than the last re-run's.
       //
       // `version` moves because `company_name` moved. The rule is
       // `lockCounterDiscipline.test.ts`': every writer of a column a guarded
@@ -79,7 +84,7 @@ export async function retireValuations(pool: pg.Pool, ids: readonly string[]): P
                   WHEN company_name LIKE ('%' || $2::text) THEN company_name
                   ELSE company_name || $2::text
                 END
-          WHERE id = ANY($1::ulid[])`,
+          WHERE id = ANY($1::ulid[]) AND archived_at IS NULL`,
         [toRetire, RETIRED_SUFFIX],
       );
     }

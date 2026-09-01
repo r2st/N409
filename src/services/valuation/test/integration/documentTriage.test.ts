@@ -283,4 +283,38 @@ describe.skipIf(!dbUp)('document triage queue', () => {
     }));
     expect((await file(many)).statusCode).toBe(422);
   });
+
+  /**
+   * Deleting one document is one deletion, however many times the button is
+   * pressed.
+   *
+   * The route reads the row through `findDocumentById`, which filters
+   * tombstones — but on a different connection, one statement before the write.
+   * Two DELETEs off that one read is a double-click, and both committed: a
+   * second `document_deleted` on an append-only trail for a file removed once,
+   * and `deleted_at` moved to the later press. That date is what the personal
+   * data export gives the uploader for their own file.
+   *
+   * Driven concurrently rather than in sequence, because a sequential second
+   * call is refused by the read and would pass against the unguarded write too.
+   */
+  it('records one deletion for a double-clicked delete', async () => {
+    const doc = await upload('double-clicked.pdf');
+    const del = () =>
+      ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/valuations/${valuationId}/documents/${doc.id}`,
+        headers: authHeader(admin.token),
+      });
+    const [a, b] = await Promise.all([del(), del()]);
+    expect([a.statusCode, b.statusCode]).toEqual([204, 204]);
+
+    const { rows } = await ctx.pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'document_deleted'
+          AND payload->>'document_id' = $2`,
+      [valuationId, doc.id],
+    );
+    expect(rows[0]!.n).toBe(1);
+  });
 });

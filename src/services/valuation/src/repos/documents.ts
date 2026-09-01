@@ -364,10 +364,36 @@ export async function setDocumentReviewed(
   return rows[0] ?? null;
 }
 
-/** Soft delete — the file stays on disk for audit; the row is tombstoned. */
+/**
+ * Soft delete — the file stays on disk for audit; the row is tombstoned.
+ *
+ * `AND deleted_at IS NULL` is what makes it happen once. The route reads the
+ * row through `findDocumentById`, which filters tombstones, so it can only ever
+ * reach a live document — but that read is on a different connection one
+ * statement earlier, and two DELETEs off one read is a double-clicked button.
+ * Every other soft delete in this service already asks the question
+ * (`revokeApiToken`, `revokeIntakeLink`, `revokeAuditorAccess`, `softDeleteUser`,
+ * the SCIM toggle); this one did not, and the second write cost two things:
+ *
+ *   * A second `document_deleted` on an append-only spine, for one deletion.
+ *     `documents_deleted` counters and the activity log both read that trail,
+ *     and the row a reviewer sees twice describes a thing that happened once.
+ *   * `deleted_at` moved. It is the date `personalDataExport` gives the subject
+ *     for their own uploads, and the one the audit view prints for a file the
+ *     analyst says was removed in March.
+ *
+ * Losing the race writes nothing at all — no timestamp, no event — because the
+ * document is already gone and the caller's own outcome is unchanged either
+ * way. Same reading as `completeAiJob`'s late worker: it asked for a state the
+ * row is already in, so there is nothing for it to do differently.
+ */
 export async function deleteDocument(pool: pg.Pool, doc: DocumentRow, actor: EventActor): Promise<void> {
   await withTransaction(pool, async (client) => {
-    await client.query('UPDATE documents SET deleted_at = now() WHERE id = $1', [doc.id]);
+    const { rowCount } = await client.query(
+      'UPDATE documents SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL',
+      [doc.id],
+    );
+    if (rowCount === 0) return;
     await recordEvent(client, {
       valuationId: doc.valuation_id,
       type: PIPELINE_EVENT_TYPES.documentDeleted,
