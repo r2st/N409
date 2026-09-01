@@ -6746,3 +6746,71 @@
 #            is a handful of narrow lookups per tick rather than a fan-out —
 #            measured against the deflate and formatter findings it was not
 #            worth the churn this round.
+#
+# R334 — Workflow & cross-module integration (M4). Three findings, and two of
+#            them are one shape: a rule that was fixed on one side of a seam
+#            and left standing on the other, so the two halves disagree and the
+#            disagreement is silent.
+#
+#            **An engagement retired mid-OAuth still came back connected.** The
+#            three integration callbacks — cap-table sync, accounting, HRIS —
+#            were the one write in each of those files that never re-asked
+#            whether the engagement was still live. `/connect` refuses to start
+#            on a withdrawn engagement and the pulls re-ask with
+#            `refuseIfRetiredNow` before they write; the callback in between is
+#            also the step with by far the longest window, because the signed
+#            state lives thirty minutes and what it has to survive is a person
+#            reading a provider's consent screen. `upsertConnection` then stored
+#            the provider's access *and refresh* tokens for a client whose work
+#            the firm had closed, recorded a `connected` event against the
+#            withdrawn file, and — since retirement is reversible and
+#            `findDueConnections` skips rather than disables — armed a schedule
+#            that begins pulling the client's data the moment an admin restores
+#            it. Checked before the token exchange, because spending the code is
+#            itself telling a third party we are working a withdrawn file.
+#            `retiredEngagementWrites.test.ts` structurally could not see these:
+#            it drives the routes under `/api/v1/valuations/:id/…`, and a
+#            callback names its engagement in a signed token instead — the same
+#            blind spot the subject-id writes of R279/R282 fell into.
+#
+#            **Two OAuth callbacks answered into a page that read nothing.**
+#            `domain/oauthCallbackRefusal.ts` states the contract: these are the
+#            only routes a browser navigates to, so instead of a problem body
+#            they redirect back "carrying a result code the page turns into a
+#            sentence". That was true of one of the three pages.
+#            `CapTableSyncPanel` and `HrisSyncPanel` never read `?sync=` or
+#            `?hris=` at all, so an analyst who pressed Cancel on Carta's
+#            consent screen was returned to a panel that looked exactly as it
+#            had before they left — it refetched, found no connection, and drew
+#            the same Connect button. No wrong claim, and no answer either. One
+#            reader now, in `lib/integrationCallback`, rather than a third
+#            hand-written copy of a vocabulary that had just grown a fourth code.
+#
+#            **Work could be assigned to an account nothing would reach.**
+#            `findUsersByIds` excludes deactivated and suspended accounts,
+#            because every caller of it decides who to *write to*. Nothing
+#            excluded them on the way in: all four doors that hand somebody work
+#            asked `userExists`, which only asks whether a row is there. So the
+#            write succeeds, the worklist says the file is theirs, and every
+#            consumer downstream silently drops them — the transition email, the
+#            auditor-note fan-out, the monitoring reviewer alert. It needed no
+#            stale list: `ignored` is additive, so a suspended reviewer kept the
+#            grant that put them in the picker an operator assigns from. Both
+#            sides read one rule now (`assignableUser`, the matching `NOT EXISTS`
+#            in `listUserOptions`, `SUSPENDED_ROLE` as the single spelling), and
+#            an account that exists and is closed gets its own sentence rather
+#            than "Unknown reviewer", which sends the reader to check an id that
+#            was right.
+#
+# gap:       The nav-badge freeze suspected in `useBadgePoll` is not one. The
+#            timer is torn down and restarted on every navigation, but the
+#            15s floor lets navigation itself poll once that much time has
+#            passed, so frequent navigation makes the badge *fresher*, not
+#            stale. Investigated and reverted rather than committed.
+#
+# gap:       `storeDocument`'s orphan cleanup still has a narrow window between
+#            `documentPathInUse` and the `unlink` — a concurrent upload of
+#            byte-identical content under the same name could insert its row
+#            inside it. Left: it needs a lock over a content-addressed path to
+#            close properly, and the two conditions already there cover every
+#            ordering that is not sub-millisecond.
