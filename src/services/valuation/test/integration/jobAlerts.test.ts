@@ -213,6 +213,60 @@ describe.skipIf(!dbUp)('job queue alerts', () => {
     });
   });
 
+  it("counts a queue's failures over that queue's own window, not the widest one", async () => {
+    /*
+     * The rules are per queue and each carries its own `failure_window_hours`.
+     * The scan used to run one stats query at the widest window any enabled
+     * rule asked for and count every queue against it, so an email rule reading
+     * "10 failures in the last hour" fired on failures from three days ago
+     * whenever some other queue's rule asked for a longer window — under a
+     * message that said "in the last 1h" about a count that covered 72.
+     */
+    const setWindow = async (source: string, hours: number, count: number) => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/admin/jobs/alert-rules/${source}`,
+        headers: authHeader(ops.token),
+        payload: { failure_window_hours: hours, failure_count: count },
+      });
+      expect(res.statusCode).toBe(200);
+    };
+    const failedEmailsAgedHours = async (n: number, hours: number) => {
+      for (let i = 0; i < n; i++) {
+        await pool.query(
+          `INSERT INTO email_outbox
+             (id, valuation_id, to_email, template_key, subject, body, status, created_at)
+           VALUES ($1, $2, 'dead@test.example.com', 'draft_ready', 'Draft ready', 'body', 'failed',
+                   now() - make_interval(hours => $3::int))`,
+          [newUlid(), valuationId, hours],
+        );
+      }
+    };
+
+    try {
+      // Email asks about the last hour; another queue asks about the last week,
+      // which is what used to set the window for both.
+      await setWindow('email', 1, 5);
+      await setWindow('webhook_delivery', 168, 5);
+
+      await failedEmailsAgedHours(8, 24);
+      const stale = await scan();
+      expect(stale.opened.filter((a) => a.kind === 'failing')).toEqual([]);
+
+      // The same eight failures inside the window do open it, so the absence
+      // above is the window and not the counting.
+      await pool.query('DELETE FROM email_outbox');
+      await failedEmailsAgedHours(8, 0);
+      const fresh = await scan();
+      expect(fresh.opened).toHaveLength(1);
+      expect(fresh.opened[0]).toMatchObject({ source: 'email', kind: 'failing', observed: 8 });
+      expect(fresh.opened[0]!.detail).toContain('in the last 1h');
+    } finally {
+      await setWindow('email', 24, 10);
+      await setWindow('webhook_delivery', 24, 10);
+    }
+  });
+
   it('re-evaluates on demand for an operator who has just fixed something', async () => {
     await stuckEmail(60 * 8);
     await scan();

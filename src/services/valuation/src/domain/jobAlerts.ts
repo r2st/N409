@@ -88,6 +88,21 @@ export function observeQueues(
   sources: readonly JobSource[],
   stats: readonly JobStats[],
   oldest: readonly { source: JobSource; oldest_due_at: Date; active: number }[],
+  /**
+   * Failed counts already struck over each source's *own* rule window, when the
+   * caller has them (`repos/jobs.failedJobCounts`).
+   *
+   * `stats` carries one window for every queue, which is what the monitor page
+   * asks for and not what the rules mean: a rule reading "five failures in an
+   * hour" evaluated against a day of them fires on failures it was never meant
+   * to see, and says "in the last 1h" while doing it. The alert sweep passes
+   * this; the monitor page has no per-source window and passes nothing, and
+   * falls back to counting `stats` as before.
+   *
+   * A source absent from the map has no failures inside its window — the query
+   * groups, so it returns no row rather than a zero.
+   */
+  failedBySource?: ReadonlyMap<JobSource, number>,
 ): QueueObservation[] {
   return sources.map((source) => {
     const mine = stats.filter((s) => s.source === source);
@@ -96,7 +111,10 @@ export function observeQueues(
       source,
       oldestActiveAt: head ? new Date(head.oldest_due_at) : null,
       active: mine.reduce((n, s) => (ACTIVE_JOB_STATUSES.includes(s.status) ? n + s.count : n), 0),
-      failed: mine.reduce((n, s) => (s.status === 'failed' ? n + s.count : n), 0),
+      failed:
+        failedBySource === undefined
+          ? mine.reduce((n, s) => (s.status === 'failed' ? n + s.count : n), 0)
+          : (failedBySource.get(source) ?? 0),
     };
   });
 }

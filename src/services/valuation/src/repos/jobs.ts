@@ -190,6 +190,41 @@ export async function jobStats(pool: pg.Pool, sinceHours: number): Promise<JobSt
 }
 
 /**
+ * Failed-job counts, each source over its own trailing window.
+ *
+ * Separate from `jobStats` because the two answer different questions with the
+ * same word. `jobStats` is the monitor page: one window the operator chose,
+ * applied to every queue, so five columns of a table are comparable. The alert
+ * rules are per queue and each carries its own `failure_window_hours` — "five
+ * webhook failures in an hour" and "twenty emails in a day" are different
+ * conditions — and counting both over the widest of the two windows makes the
+ * tighter rule fire on failures older than it was ever meant to see, under a
+ * message that names the window it did not use.
+ *
+ * Still one scan of the union: the windows arrive as a pair of arrays and are
+ * joined on, rather than one query per source.
+ *
+ * Sources with no failures in their window are absent from the result, as they
+ * are from `jobStats`; the caller reads a missing source as zero.
+ */
+export async function failedJobCounts(
+  pool: pg.Pool,
+  windows: ReadonlyArray<{ source: JobSource; hours: number }>,
+): Promise<Array<{ source: JobSource; count: number }>> {
+  if (windows.length === 0) return [];
+  const { rows } = await pool.query<{ source: JobSource; count: string }>(
+    `SELECT j.source, count(*)::text AS count
+     FROM (${unionSql(JOB_SOURCES)}) j
+     JOIN unnest($1::text[], $2::integer[]) AS w(source, hours) ON w.source = j.source
+     WHERE j.status = 'failed'
+       AND j.created_at > now() - make_interval(hours => w.hours)
+     GROUP BY j.source`,
+    [windows.map((w) => w.source), windows.map((w) => w.hours)],
+  );
+  return rows.map((r) => ({ source: r.source, count: Number(r.count) }));
+}
+
+/**
  * The database's wall clock.
  *
  * Every timestamp the monitor reads — `created_at` on all five queues — is

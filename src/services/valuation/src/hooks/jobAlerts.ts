@@ -7,7 +7,7 @@ import {
   type JobAlertKind,
   type JobAlertRule,
 } from '../domain/jobAlerts.js';
-import { dbNow, jobStats, oldestActiveJobs } from '../repos/jobs.js';
+import { dbNow, failedJobCounts, jobStats, oldestActiveJobs } from '../repos/jobs.js';
 import {
   deliverJobAlertAnnouncement,
   listJobAlertRules,
@@ -43,10 +43,15 @@ import { JOB_ALERT_ROLES } from '../domain/roles.js';
  * scan saw them as `ongoing`. Delivery is now retried until it lands, and one
  * alert's failure is contained to that alert. See migration 0157.
  *
- * The failure window comes from the rules rather than being fixed here, and the
- * stats query is run once at the widest window any enabled rule asks for, then
- * counted per queue. Running it once per source would be five scans of five
- * unioned tables every tick to answer one question.
+ * The failure window comes from the rules rather than being fixed here, and it
+ * is each rule's own window. It used to be the widest window any enabled rule
+ * asked for, applied to all of them — one scan instead of five, and a different
+ * question than the rules ask: a webhook rule reading "five failures in an
+ * hour" beside an email rule reading "twenty in a day" counted the webhook's
+ * failures over the day as well, so it opened on failures it was never meant to
+ * see and the alert text said "in the last 1h" for a count that covered
+ * twenty-four. `failedJobCounts` joins the per-source windows inside the one
+ * scan, so the windows are the rules' own and the union is still read once.
  */
 /** One queue's alert, as the gauge below reports it. */
 export interface OpenJobAlert {
@@ -234,18 +239,32 @@ async function scanUnderLock(deps: {
     return { ...result, evaluated: 0, notified: await announceJobAlerts(deps) };
   }
 
+  // Each enabled rule's own window, and only the enabled ones: a disabled rule
+  // produces no finding, so counting its queue's failures would be work for an
+  // answer nobody reads.
+  const windows = enabled.map((r) => ({ source: r.source, hours: r.failure_window_hours }));
+  // `jobStats` still supplies the active counts, which are window-independent —
+  // its query keeps every queued or running row however old. The window passed
+  // here therefore only bounds the succeeded/skipped columns nothing below
+  // reads; the widest rule window keeps it from being an all-time scan.
   const windowHours = Math.max(...enabled.map((r) => r.failure_window_hours));
   // The clock is read from the database alongside the stats, not from the
   // process. Every `created_at` being subtracted was written by Postgres, so
   // this is the one clock that makes the difference an age rather than an age
   // plus the drift between two hosts. See `dbNow`.
-  const [stats, oldest, observedAt] = await Promise.all([
+  const [stats, oldest, failed, observedAt] = await Promise.all([
     jobStats(deps.pool, windowHours),
     oldestActiveJobs(deps.pool),
+    failedJobCounts(deps.pool, windows),
     deps.now ? Promise.resolve(deps.now) : dbNow(deps.pool),
   ]);
 
-  const findings = evaluateJobAlerts(observeQueues(JOB_SOURCES, stats, oldest), rules, observedAt);
+  const failedBySource = new Map(failed.map((f) => [f.source, f.count]));
+  const findings = evaluateJobAlerts(
+    observeQueues(JOB_SOURCES, stats, oldest, failedBySource),
+    rules,
+    observedAt,
+  );
   const result = await reconcileJobAlerts(deps.pool, findings);
 
   rememberOpen(result);
