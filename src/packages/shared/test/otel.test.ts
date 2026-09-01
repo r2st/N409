@@ -73,6 +73,10 @@ vi.mock('@opentelemetry/instrumentation-http', () => ({
 vi.mock('@opentelemetry/instrumentation-pg', () => ({
   PgInstrumentation: class {
     kind = 'pg';
+    options: Record<string, unknown>;
+    constructor(options: Record<string, unknown> = {}) {
+      this.options = options;
+    }
   },
 }));
 // `resourceFromAttributes` replaced `new Resource(...)` in
@@ -83,7 +87,7 @@ vi.mock('@opentelemetry/resources', () => ({
   resourceFromAttributes: (attributes: Record<string, unknown>) => ({ attributes }),
 }));
 
-const { startTelemetry } = await import('../src/otel.js');
+const { startTelemetry, incomingSpanUrlAttributes } = await import('../src/otel.js');
 
 const ENV_KEYS = [
   'OTEL_EXPORTER_OTLP_ENDPOINT',
@@ -188,6 +192,69 @@ describe('startTelemetry', () => {
       expect(hook({ url: '/ready' })).toBe(true);
       expect(hook({ url: '/api/v1/valuations' })).toBe(false);
       expect(hook({})).toBe(false);
+    });
+  });
+
+  describe('what a span is allowed to carry', () => {
+    beforeEach(() => {
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://collector:4318';
+    });
+
+    // The collector is a sink the pino redaction and `serializeRequest` never
+    // reach: the instrumentation reads the request itself. It sets `url.query`
+    // to the raw query string, and applies its own `redactedQueryParams` only
+    // to an outgoing `url.full` — so every incoming span carried the query
+    // verbatim, which on this platform is where the credentials are.
+    it('scrubs the query off an incoming span', () => {
+      startTelemetry('valuation');
+      const hook = configs[0]!.instrumentations[0]!.options!.startIncomingSpanHook as (req: {
+        url?: string;
+      }) => Record<string, string>;
+      expect(hook({ url: '/api/v1/unsubscribe?token=abc.def' })).toEqual({
+        'url.path': '/api/v1/unsubscribe',
+        'url.query': 'token=[REDACTED]',
+      });
+      // `q` is deliberately not on the parameter list — free text is the most
+      // useful thing in the line — so the *value* is what has to be scrubbed.
+      expect(hook({ url: '/api/v1/admin/users?q=ada%40acme.com' })['url.query']).not.toContain(
+        'ada@acme.com',
+      );
+      // No query, nothing invented.
+      expect(hook({ url: '/api/v1/valuations' })).toEqual({ 'url.path': '/api/v1/valuations' });
+      expect(hook({})).toEqual({});
+    });
+
+    it('redacts the same parameters out of an outgoing url', () => {
+      startTelemetry('valuation');
+      const params = configs[0]!.instrumentations[0]!.options!.redactedQueryParams as string[];
+      // Ours…
+      for (const p of ['token', 'code', 'state', 'email', 'api_key']) expect(params).toContain(p);
+      // …without dropping the instrumentation's own, which this option replaces
+      // rather than extends.
+      for (const p of ['sig', 'Signature', 'AWSAccessKeyId', 'X-Goog-Signature']) {
+        expect(params).toContain(p);
+      }
+    });
+
+    it('never asks pg to report parameter values', () => {
+      startTelemetry('valuation');
+      // A flag that reads like verbosity and means "attach every statement's
+      // parameters" — this platform's cap tables, addresses and grants.
+      expect(configs[0]!.instrumentations[1]!.options).toEqual({ enhancedDatabaseReporting: false });
+    });
+  });
+
+  describe('incomingSpanUrlAttributes', () => {
+    it('splits on the first ? so a scrubbed value carrying one stays in the query', () => {
+      expect(incomingSpanUrlAttributes('/a?b=1?2')).toEqual({
+        'url.path': '/a',
+        'url.query': 'b=1?2',
+      });
+    });
+
+    it('answers an absent url with no attributes at all', () => {
+      expect(incomingSpanUrlAttributes(undefined)).toEqual({});
+      expect(incomingSpanUrlAttributes('')).toEqual({});
     });
   });
 
