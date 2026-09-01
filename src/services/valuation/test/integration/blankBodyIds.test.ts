@@ -149,6 +149,52 @@ describe.skipIf(!dbUp)('a blank id in a body is refused, not stored', () => {
     expect(rows[0].assignee_id).toBe(ops.id);
   });
 
+  /*
+   * The same three doors on the administration side. `POST /users`,
+   * `POST /users/invite` and `PATCH /users/:id` each guard the partner with
+   * `if (body.partner_id)` and write `partner_id ?? null`, so a blank one
+   * skipped `assertAssignablePartner` and reached `users.partner_id ulid`.
+   */
+  it('refuses a blank partner_id when an administrator creates an account', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/users',
+      headers: authHeader(ops.token),
+      payload: {
+        email: 'blank-partner@example.com',
+        password: 'correct-horse-9-battery',
+        roles: ['valuation_user'],
+        partner_id: '',
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(JSON.stringify(res.json())).toContain('partner_id');
+  });
+
+  it('refuses a blank partner_id on an invitation', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/users/invite',
+      headers: authHeader(ops.token),
+      payload: { email: 'blank-partner-invite@example.com', roles: ['valuation_user'], partner_id: '' },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(JSON.stringify(res.json())).toContain('partner_id');
+  });
+
+  it('refuses a blank partner_id on an account patch, and leaves the account alone', async () => {
+    const victim = await seedUser(ctx, { roles: ['valuation_user'] });
+    const res = await ctx.app.inject({
+      method: 'PATCH',
+      url: `/api/v1/users/${victim.id}`,
+      headers: authHeader(ops.token),
+      payload: { partner_id: '' },
+    });
+    expect(res.statusCode).toBe(422);
+    const { rows } = await ctx.pool.query('SELECT partner_id FROM users WHERE id = $1', [victim.id]);
+    expect(rows[0].partner_id).toBeNull();
+  });
+
   /** Unassigning is still `null`, which is what the SPA sends for its blank option. */
   it('still accepts an explicit null assignee_id', async () => {
     const v = await seedValuation('Task Null Co');

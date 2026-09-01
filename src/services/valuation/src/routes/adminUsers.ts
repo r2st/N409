@@ -66,6 +66,7 @@ import { isUniqueViolation } from '../db/pgError.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { templateText } from '../domain/templateText.js';
 import { nonBlankText } from '../domain/nonBlankText.js';
+import { ulidField } from '../domain/ulidField.js';
 import { forbidden } from '../domain/accessProblem.js';
 
 const ListQuery = z.object({
@@ -84,7 +85,21 @@ const CreateBody = z.object({
     .min(PASSWORD_MIN_LENGTH, `password must be at least ${PASSWORD_MIN_LENGTH} characters`),
   first_name: nonBlankText(1, 100).optional(),
   last_name: nonBlankText(1, 100).optional(),
-  partner_id: z.string().nullable().optional(),
+  /*
+   * `ulidField()`, not `z.string()`, on all three doors that write it.
+   *
+   * Every one of them reads `if (body.partner_id) await assertAssignablePartner(…)`
+   * and then writes `partner_id ?? null`. `''` is falsy to the guard and defined
+   * to the write, so a blank partner skipped the "does this partner exist / is
+   * it archived" check and went to `users.partner_id ulid`, whose CHECK answers
+   * 23514 — an "Internal Server Error" on an administrator's own screen. See
+   * domain/ulidField.ts.
+   *
+   * `assertPartnerScopeConsistent` above reads `!partnerId` for the same reason
+   * and was the only thing that ever caught it, and only for a partner role: a
+   * blank partner on an ordinary account passed it and 500'd underneath.
+   */
+  partner_id: ulidField().nullable().optional(),
   verified: z.boolean().optional(),
   roles: RoleSet.min(1),
 });
@@ -98,7 +113,7 @@ const PatchBody = z
     job_title: z.string().max(150).nullable(),
     company_name: z.string().max(200).nullable(),
     verified: z.boolean(),
-    partner_id: z.string().nullable(),
+    partner_id: ulidField().nullable(),
     roles: RoleSet,
   })
   .partial()
@@ -152,7 +167,7 @@ function toAdminUser(u: UserWithRoles & { deleted_at: Date | null; partner_name?
 const InviteBody = z.object({
   email: EmailAddress,
   roles: RoleSet.min(1),
-  partner_id: z.string().nullable().optional(),
+  partner_id: ulidField().nullable().optional(),
 });
 
 function toInvitation(i: InvitationRow | InvitationListRow) {
