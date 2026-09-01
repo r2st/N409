@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
-import { runJobAlertScan } from '../../src/hooks/jobAlerts.js';
+import { openJobAlerts, resetOpenJobAlerts, runJobAlertScan } from '../../src/hooks/jobAlerts.js';
 import { JOB_SOURCES } from '../../src/domain/jobQueue.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
@@ -513,6 +513,38 @@ describe.skipIf(!dbUp)('job queue alert delivery', () => {
     expect(await notifications('job_alert')).toHaveLength(1);
     // Exactly one of the two did the sending, and it says so.
     expect((a?.notified.opened ?? 0) + (b?.notified.opened ?? 0)).toBe(1);
+  });
+
+  it('leaves the open set where a scrape can read it, and says nothing before the first scan', async () => {
+    /*
+     * R321. This subsystem decides that a queue has stopped, and it told an
+     * in-app notification list, the admin trail and the journal — three
+     * channels, none of them the one an on-call rotation reads. The comment on
+     * `auto_pipeline_runs_pending` delegates the DB-backed backlogs to this
+     * sweep on the grounds that a count query per scrape is the wrong shape;
+     * what it did not say is that the delegate reported nowhere a rule could
+     * see. The snapshot is what `job_queue_alert_open` is built from.
+     *
+     * Null before any scan, and that is the load-bearing half: a process whose
+     * job-alert sweep is switched off or has never run must not publish a row
+     * of reassuring zeros. Whether the sweep is running at all is
+     * `SweepStopped`'s question, and it has its own answer.
+     */
+    resetOpenJobAlerts();
+    expect(openJobAlerts()).toBeNull();
+
+    await stuckEmail(60 * 8);
+    await scan();
+    expect(openJobAlerts()).toEqual([{ source: 'email', kind: 'stalled' }]);
+
+    // Still open on the next scan — `ongoing`, which notifies nobody a second
+    // time and must not therefore drop out of the gauge.
+    await scan();
+    expect(openJobAlerts()).toEqual([{ source: 'email', kind: 'stalled' }]);
+
+    await pool.query(`UPDATE email_outbox SET status = 'sent' WHERE status = 'queued'`);
+    await scan();
+    expect(openJobAlerts()).toEqual([]);
   });
 
   it('still announces recoveries when every rule is turned off', async () => {

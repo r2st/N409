@@ -25,7 +25,9 @@ const { buildApp, buildEmailTransports, capTableSyncCredentials, hrisCredentials
 const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
 const { retryFailedEmails } = await import('./hooks/emailRetry.js');
 const { retryDueDeliveries } = await import('./hooks/partnerWebhooks.js');
-const { runJobAlertScan } = await import('./hooks/jobAlerts.js');
+const { runJobAlertScan, openJobAlerts } = await import('./hooks/jobAlerts.js');
+const { JOB_SOURCES } = await import('./domain/jobQueue.js');
+const { JOB_ALERT_KINDS } = await import('./domain/jobAlerts.js');
 const { retryFailedPipelineRuns } = await import('./hooks/pipelineRetry.js');
 const { runHousekeepingSweep } = await import('./hooks/housekeeping.js');
 const { monitorPool, reportPoolFindings } = await import('./db/poolHealth.js');
@@ -359,6 +361,37 @@ const sweepItems = app.metrics.counter(
   'background_sweep_items_total',
   'Rows a background sweep put in each outcome, cumulative',
   ['sweep', 'outcome'],
+);
+
+// What the job monitor currently holds open, per queue.
+//
+// `auto_pipeline_runs_pending` above says the DB-backed backlogs — the outbox,
+// the webhook deliveries, the job tables — are deliberately absent from this
+// endpoint because a count query per scrape is the wrong shape and "the
+// job-alert sweep already watches them on its own schedule". True, and the half
+// that was missing is that the sweep reported its verdict to an in-app
+// notification list, the admin trail and the journal: three channels, none of
+// them the one an on-call rotation reads. A stalled outbox was decided on every
+// five minutes and could not reach a rule.
+//
+// Read from the sweep's own snapshot, not from the database: a gauge's
+// `collect` runs inside the scrape and must be cheap and synchronous. Empty
+// until the first scan finishes, so "nothing has looked" cannot read as "no
+// queue is in trouble" — that absence is `SweepStopped`'s question.
+app.metrics.gauge(
+  'job_queue_alert_open',
+  'The job monitor is holding an alert open for this queue',
+  () => {
+    const open = openJobAlerts();
+    if (open === null) return [];
+    return JOB_SOURCES.flatMap((source) =>
+      JOB_ALERT_KINDS.map((kind) => ({
+        value: open.some((a) => a.source === source && a.kind === kind) ? 1 : 0,
+        labels: { source, kind },
+      })),
+    );
+  },
+  ['source', 'kind'],
 );
 
 /**

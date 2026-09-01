@@ -258,6 +258,25 @@ groups:
           summary: 'job queue alerts have been failing to reach an operator for half an hour'
           runbook: "journalctl -u n409-valuation | grep 'job queue alert announcement failed'"
 
+      # The queues themselves, as the job monitor judges them. `stalled` is the
+      # oldest job that is *due now* having been due longer than the queue's
+      # window — a stopped worker or a dead SMTP host; `failing` is a queue
+      # moving fine and getting every answer wrong. Both thresholds are the
+      # per-queue rules in `job_alert_rules`, so this rule deliberately restates
+      # no number of its own: the judgement is already made, and until R321 it
+      # was made every five minutes and told only an in-app notification list.
+      #
+      # `for` is short because the sweep's own reconciler is the de-duplicator:
+      # an alert here has already survived a scan, and it stays open until the
+      # condition clears.
+      - alert: JobQueueAlertOpen
+        expr: job_queue_alert_open == 1
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the {{ $labels.source }} queue is {{ $labels.kind }}, per the job monitor'
+          runbook: 'https://n409.aiknol.com/admin/jobs'
+
       - alert: AutoPipelineBacklog
         expr: auto_pipeline_runs_pending > 0
         for: 30m

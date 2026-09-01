@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
-import { JOB_SOURCES, JOB_SOURCE_LABELS } from '../domain/jobQueue.js';
-import { evaluateJobAlerts, observeQueues } from '../domain/jobAlerts.js';
+import { JOB_SOURCES, JOB_SOURCE_LABELS, type JobSource } from '../domain/jobQueue.js';
+import { evaluateJobAlerts, observeQueues, type JobAlertKind } from '../domain/jobAlerts.js';
 import { dbNow, jobStats, oldestActiveJobs } from '../repos/jobs.js';
 import {
   deliverJobAlertAnnouncement,
@@ -42,6 +42,54 @@ import { JOB_ALERT_ROLES } from '../domain/roles.js';
  * counted per queue. Running it once per source would be five scans of five
  * unioned tables every tick to answer one question.
  */
+/** One queue's alert, as the gauge below reports it. */
+export interface OpenJobAlert {
+  source: JobSource;
+  kind: JobAlertKind;
+}
+
+/**
+ * The alerts this ledger held open at the end of the last scan.
+ *
+ * `null` until a scan has finished, which is the difference between "no queue
+ * is in trouble" and "nothing has looked". The gauge reports nothing at all in
+ * that state rather than a row of reassuring zeros — a sweep that is not
+ * running is `SweepStopped`'s question, not this one's.
+ *
+ * Why a snapshot rather than a query at scrape time: a gauge's `collect` runs
+ * inside the request that scrapes and must be cheap and synchronous, for the
+ * reason `MetricsRegistry.gauge` gives — a scrape that queries the database
+ * turns a monitoring poll into load on the thing being monitored, hardest
+ * exactly when the database is already the problem. The scan already reads this
+ * state on its own schedule; this is that read, kept.
+ */
+let openAlerts: readonly OpenJobAlert[] | null = null;
+
+/**
+ * What the job monitor currently holds open, or null before the first scan.
+ *
+ * This subsystem decides that a queue is stalled or failing, and until R321 it
+ * told an in-app notification list, the admin trail and the journal — three
+ * channels, none of which is the one an on-call rotation reads. The gauge
+ * `metricsRegistry` builds off this is what puts a stalled outbox in front of
+ * the same alerting the pool and the upstream hops go to. The comment on
+ * `auto_pipeline_runs_pending` delegates the DB-backed backlogs to this sweep
+ * precisely because a count query per scrape is the wrong shape; what it did
+ * not say is that the delegate reported nowhere a rule could see.
+ */
+export function openJobAlerts(): readonly OpenJobAlert[] | null {
+  return openAlerts;
+}
+
+/** Test seam: forget the last scan, as a fresh process would. */
+export function resetOpenJobAlerts(): void {
+  openAlerts = null;
+}
+
+function rememberOpen(result: ReconcileResult): void {
+  openAlerts = [...result.opened, ...result.ongoing].map((a) => ({ source: a.source, kind: a.kind }));
+}
+
 export async function runJobAlertScan(deps: {
   pool: pg.Pool;
   log?: FastifyBaseLogger;
@@ -59,6 +107,7 @@ export async function runJobAlertScan(deps: {
     // returning early here would resolve them in the ledger and tell nobody,
     // which is the failure the rest of this file exists to remove.
     const result = await reconcileJobAlerts(deps.pool, []);
+    rememberOpen(result);
     return { ...result, evaluated: 0, notified: await announceJobAlerts(deps) };
   }
 
@@ -76,6 +125,7 @@ export async function runJobAlertScan(deps: {
   const findings = evaluateJobAlerts(observeQueues(JOB_SOURCES, stats, oldest), rules, observedAt);
   const result = await reconcileJobAlerts(deps.pool, findings);
 
+  rememberOpen(result);
   const notified = await announceJobAlerts(deps);
 
   return { ...result, evaluated: findings.length, notified };
