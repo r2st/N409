@@ -203,11 +203,58 @@ export const PER_SHARE_DIGITS = 4;
  * The fallback prints the amount with the code beside it, which is what `Intl`
  * itself does for a well-formed code it does not recognise.
  */
+/**
+ * Built formatters, keyed by the arguments that built them.
+ *
+ * WHY THIS EXISTS (round 330, methodology M8). `Intl.NumberFormat` is expensive
+ * to *construct* and cheap to call — measured here at 363 ms to build-and-format
+ * twenty thousand values against 6.9 ms to format them through one instance, a
+ * factor of fifty-three. Every function in this file built a fresh one per call,
+ * and these are per-*cell* functions: a cap table of two hundred classes with
+ * half a dozen money columns is thousands of constructions per render, and a
+ * re-render does all of it again.
+ *
+ * Bounded, and not because currencies are unbounded — the platform's are a
+ * closed set — but because the key carries caller-supplied options, and an
+ * unbounded module-level map is a leak that only shows up in a long session.
+ * Sixty-four is far above the handful of (currency, options) pairs the app
+ * actually uses; past it the cache is cleared rather than evicted one at a time,
+ * which keeps this to a Map and a size check.
+ *
+ * Locale is not part of the key because it is not part of the input: every
+ * construction here passes `undefined`, which resolves to the browser's locale
+ * and does not change within a page's lifetime.
+ */
+const formatterCache = new Map<string, (value: number) => string>();
+const MAX_CACHED_FORMATTERS = 64;
+
+/** Stable across key order, since the options come from object literals. */
+function formatterKey(code: string, options: Intl.NumberFormatOptions): string {
+  const parts = Object.entries(options)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([k, v]) => `${k}=${String(v)}`);
+  return `${code}|${parts.join(',')}`;
+}
+
 export function moneyFormatter(
   currency: string | null | undefined,
   options: Intl.NumberFormatOptions = {},
 ): (value: number) => string {
   const code = (currency || 'USD').trim();
+  const cacheKey = formatterKey(code, options);
+  const cached = formatterCache.get(cacheKey);
+  if (cached) return cached;
+  const format = buildMoneyFormatter(code, options);
+  if (formatterCache.size >= MAX_CACHED_FORMATTERS) formatterCache.clear();
+  formatterCache.set(cacheKey, format);
+  return format;
+}
+
+function buildMoneyFormatter(
+  code: string,
+  options: Intl.NumberFormatOptions,
+): (value: number) => string {
   try {
     return new Intl.NumberFormat(undefined, { style: 'currency', currency: code, ...options }).format;
   } catch {
@@ -287,11 +334,25 @@ export function formatChargedCents(
  * server's. Its default for a well-formed code it does not recognise is two,
  * which is the same assumption the divide-by-100 made and the right one to keep.
  */
+const scaleCache = new Map<string, number>();
+
 function minorUnitScale(currency: string | null | undefined): number {
+  // Same construction cost as `moneyFormatter`'s, and `formatCents` pays both
+  // on every cell — one to learn the scale and one to render the result.
+  const code = (currency || 'USD').trim();
+  const cached = scaleCache.get(code);
+  if (cached !== undefined) return cached;
+  const scale = readMinorUnitScale(code);
+  if (scaleCache.size >= MAX_CACHED_FORMATTERS) scaleCache.clear();
+  scaleCache.set(code, scale);
+  return scale;
+}
+
+function readMinorUnitScale(code: string): number {
   try {
     const digits = new Intl.NumberFormat(undefined, {
       style: 'currency',
-      currency: (currency || 'USD').trim(),
+      currency: code,
     }).resolvedOptions().maximumFractionDigits;
     // Typed optional, always present for `style: 'currency'`; cents if not.
     return digits === undefined ? 100 : 10 ** digits;
@@ -327,10 +388,13 @@ export function formatAmount(
   })(n);
 }
 
+/** Built once — see {@link formatterCache} for why that is worth saying. */
+const plainNumberFormat = new Intl.NumberFormat();
+
 export function formatNumber(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === '') return '—';
   const n = Number(value);
-  return Number.isFinite(n) ? new Intl.NumberFormat().format(n) : '—';
+  return Number.isFinite(n) ? plainNumberFormat.format(n) : '—';
 }
 
 /**
