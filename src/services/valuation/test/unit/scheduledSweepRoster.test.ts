@@ -240,6 +240,27 @@ describe('the scheduled sweeps', () => {
     expect(silent).toEqual([]);
   });
 
+  it('declares a roster that a switched-off sweep still appears in', () => {
+    // R321. Six of the eleven sweeps sit behind a `_MINUTES > 0` switch, and a
+    // sweep that is switched off is never registered — so it is absent from
+    // `track`, from the four gauges built off that roster, and from the scrape
+    // altogether. A missing series is not a series reading zero, and
+    // `SweepStopped` is the rule that was written for precisely this case: "the
+    // timer was never scheduled, or the interval is configured to zero". It
+    // could not match it. The six behind the switch are every retry ladder the
+    // platform has.
+    //
+    // `SWEEP_ROSTER` is what `background_sweep_enabled` reads, so it has to
+    // stay equal to the sweeps below in *both* directions: a name missing from
+    // it is a sweep whose absence is still invisible, and a name left in it
+    // after the sweep is deleted is a gauge reporting 0 for something that
+    // cannot be turned on.
+    const declared = [...INDEX.matchAll(/const SWEEP_ROSTER = \[([\s\S]*?)\] as const;/g)];
+    expect(declared).toHaveLength(1);
+    const names = [...declared[0]![1]!.matchAll(/'([a-z0-9-]+)'/g)].map((m) => m[1]!);
+    expect([...names].sort()).toEqual([...found].sort());
+  });
+
   it('says how each valuation-writing sweep is guarded', () => {
     const writers = Object.entries(DECIDED).filter(([, v]) => v.writesValuation);
     // Five of the ten write to a valuation on their own schedule. That is the

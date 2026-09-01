@@ -303,6 +303,54 @@ const track = <
   return scheduler;
 };
 
+/**
+ * Every sweep this process knows how to run, whether or not this deployment
+ * runs it.
+ *
+ * Six of the eleven are behind a `_MINUTES > 0` switch, and a sweep that is
+ * switched off is not *registered* — so it is absent from `track`, absent from
+ * the four gauges built off that roster, and therefore absent from the scrape
+ * entirely. A missing series is not a series reading zero: `SweepStopped` was
+ * written for exactly this case ("the timer was never scheduled, or the
+ * interval is configured to zero") and could not express it, because
+ * `rate(background_sweep_runs_total[1h]) == 0` matches nothing when there is no
+ * `background_sweep_runs_total` for that sweep at all. The six behind the switch
+ * are every retry ladder the platform has.
+ *
+ * So the roster is declared, and `background_sweep_enabled` carries a reading
+ * for each name whether or not anything scheduled it. Being off is a supported
+ * configuration ([[optional capabilities]]), which is why this is a gauge and a
+ * boot line rather than an alert: what was missing is not a rule saying "this
+ * must be on", it is any way at all to tell "off" from "gone".
+ *
+ * `scheduledSweepRoster.test.ts` holds this equal to the `scheduleSweep` calls
+ * below, in both directions.
+ */
+const SWEEP_ROSTER = [
+  'auto-email',
+  'email-retry',
+  'webhook-retry',
+  'pipeline-reaper',
+  'ai-job-reaper',
+  'cap-table-sync',
+  'hris-sync',
+  'job-alerts',
+  'retention',
+  'pipeline-retry',
+  'housekeeping',
+] as const;
+
+app.metrics.gauge(
+  'background_sweep_enabled',
+  '1 for a sweep this process scheduled, 0 for one its configuration turned off',
+  () =>
+    SWEEP_ROSTER.map((name) => ({
+      value: sweeps.some((s) => s.name === name) ? 1 : 0,
+      labels: { sweep: name },
+    })),
+  ['sweep'],
+);
+
 // What the ticks *did*, as opposed to whether they ran. Cumulative and keyed on
 // the tally field name, so `rate(background_sweep_items_total{outcome="failed"})`
 // against the same sweep's `attempted` is the question an outbox outage answers
@@ -602,6 +650,17 @@ let housekeepingTimer: NodeJS.Timeout | undefined;
     return r;
   });
   housekeepingTimer = setInterval(() => sweep.run(), 60 * 60_000);
+}
+
+// What this deployment actually started, said once, the way the feature-flag
+// line above says the same thing about flags. The gauge makes a switched-off
+// sweep legible to a scraper; this makes it legible to whoever is reading the
+// journal after a deploy, which is where a `_MINUTES=0` typo is caught before
+// anybody needs the ladder it turned off.
+{
+  const off = SWEEP_ROSTER.filter((name) => !sweeps.some((s) => s.name === name));
+  if (off.length > 0) app.log.warn({ off, scheduled: sweeps.length }, 'background sweeps: not all scheduled');
+  else app.log.info({ scheduled: sweeps.length }, 'background sweeps scheduled');
 }
 
 // This is the service `deploy.sh` restarts and then waits for, and the one with

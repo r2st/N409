@@ -182,8 +182,25 @@ groups:
       # And the opposite failure: a sweep that is not running at all. The timer
       # was never scheduled, or the interval is configured to zero. Every retry
       # ladder on this platform is a sweep.
+      #
+      # Anchored on `background_sweep_enabled` rather than on the run counter
+      # alone, and that is the whole of R321's correction here: a sweep behind a
+      # `_MINUTES > 0` switch that is switched off used not to be registered at
+      # all, so it had no `background_sweep_runs_total` series, and
+      # `rate(...) == 0` over a series that does not exist matches nothing. The
+      # second half of the sentence above — "or the interval is configured to
+      # zero" — was the one case this rule could not see. `enabled` now carries
+      # a reading for every sweep the process knows of, so `unless` catches both
+      # the enabled sweep whose timer has stopped and, should the roster and the
+      # gauges ever drift apart again, the enabled sweep with no counter at all.
+      #
+      # Deliberately no rule on `background_sweep_enabled == 0`: a deployment
+      # turning a sweep off is supported, and the boot line
+      # ('background sweeps: not all scheduled', warn) is where an unintended
+      # one is caught. What was missing was any way to tell "off" from "gone".
       - alert: SweepStopped
-        expr: rate(background_sweep_runs_total[1h]) == 0
+        expr: |
+          background_sweep_enabled == 1 unless (rate(background_sweep_runs_total[1h]) > 0)
         for: 1h
         labels: { severity: page }
         annotations:
