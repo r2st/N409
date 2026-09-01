@@ -178,4 +178,45 @@ describe('cardinality is bounded, because the key is not ours', () => {
     rates.record({ route: '/a', statusCode: 200 });
     expect(rates.snapshot().routes_truncated).toBe(false);
   });
+
+  it('stops reporting truncation once the minute that caused it has slid out', () => {
+    // The flag was a process-lifetime latch inside a sliding window: one
+    // scanner burst set it and nothing ever cleared it, so every snapshot for
+    // the rest of the process's life described its `worst_routes` as
+    // incomplete. That is the wrong direction to be wrong in — the caveat is
+    // there to tell an operator mid incident that the route they are hunting
+    // may be missing from the list, and one that is always on is one nobody
+    // reads by the time it is true.
+    let now = 0;
+    const rates = new ErrorRates({ now: () => now });
+    for (let i = 0; i < MAX_ROUTES + 5; i += 1) {
+      rates.record({ route: `/scanner-${i}`, statusCode: 404 });
+    }
+    expect(rates.snapshot().routes_truncated).toBe(true);
+
+    // A quiet minute later, asked about that minute alone.
+    now += BUCKET_MS;
+    rates.record({ route: '/a', statusCode: 200 });
+    expect(rates.snapshot(1).routes_truncated).toBe(false);
+    // The hour still contains the burst, so the wide window still says so.
+    expect(rates.snapshot().routes_truncated).toBe(true);
+
+    // And once the ring has wrapped past it, nothing does.
+    now += BUCKET_MS * BUCKET_COUNT;
+    rates.record({ route: '/a', statusCode: 200 });
+    expect(rates.snapshot().routes_truncated).toBe(false);
+  });
+
+  it('attributes again in a fresh minute rather than staying capped', () => {
+    // The other half of the same latch: the cap is per bucket, so a minute
+    // after a burst starts with an empty route map and full attribution.
+    let now = 0;
+    const rates = new ErrorRates({ now: () => now });
+    for (let i = 0; i < MAX_ROUTES * 2; i += 1) {
+      rates.record({ route: `/junk-${i}`, statusCode: 404 });
+    }
+    now += BUCKET_MS;
+    rates.record({ route: '/real', statusCode: 500 });
+    expect(rates.snapshot(1).worst_routes).toEqual([{ route: '/real', requests: 1, server_errors: 1 }]);
+  });
 });

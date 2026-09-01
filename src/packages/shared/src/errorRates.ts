@@ -49,6 +49,8 @@ interface Bucket {
   server: number;
   /** route -> [total, server]. Capped at {@link MAX_ROUTES}. */
   routes: Map<string, [number, number]>;
+  /** Whether this minute hit the cap and stopped attributing. */
+  truncated: boolean;
 }
 
 export interface RouteErrorRate {
@@ -66,7 +68,19 @@ export interface ErrorRateSnapshot {
   error_rate: number;
   /** Worst routes by server errors, then by volume. At most 10. */
   worst_routes: RouteErrorRate[];
-  /** True while some routes went unattributed — see the cardinality note. */
+  /**
+   * True when some request inside *this window* went unattributed — see the
+   * cardinality note.
+   *
+   * Per bucket rather than per process, which is what it was: a single scanner
+   * burst latched a flag that nothing ever cleared, so every snapshot for the
+   * life of the process reported its `worst_routes` as incomplete. That is the
+   * wrong direction to be wrong in. The flag exists to tell an operator mid
+   * incident that the list below may be missing the route they are looking
+   * for; permanently on, it says so about lists that are complete, and a
+   * caveat that is always present is one nobody reads by the time it is true.
+   * Everything else here slides; this now slides with it.
+   */
   routes_truncated: boolean;
 }
 
@@ -76,6 +90,7 @@ const emptyBucket = (): Bucket => ({
   client: 0,
   server: 0,
   routes: new Map(),
+  truncated: false,
 });
 
 /**
@@ -88,7 +103,6 @@ const emptyBucket = (): Bucket => ({
 export class ErrorRates {
   private readonly buckets: Bucket[];
   private readonly now: () => number;
-  private truncated = false;
 
   constructor(opts: { now?: () => number } = {}) {
     this.buckets = Array.from({ length: BUCKET_COUNT }, emptyBucket);
@@ -111,6 +125,7 @@ export class ErrorRates {
       bucket.client = 0;
       bucket.server = 0;
       bucket.routes.clear();
+      bucket.truncated = false;
     }
     return bucket;
   }
@@ -132,7 +147,7 @@ export class ErrorRates {
     // The cap. Totals above are already counted, so what is lost is only which
     // route a request belonged to — see the cardinality note at the top.
     if (bucket.routes.size >= MAX_ROUTES) {
-      this.truncated = true;
+      bucket.truncated = true;
       return;
     }
     bucket.routes.set(route, [1, bucketClass === '5xx' ? 1 : 0]);
@@ -150,8 +165,10 @@ export class ErrorRates {
     let client = 0;
     let server = 0;
     const routes = new Map<string, [number, number]>();
+    let truncated = false;
     for (const bucket of this.buckets) {
       if (bucket.startMs < oldest) continue;
+      truncated ||= bucket.truncated;
       requests += bucket.total;
       client += bucket.client;
       server += bucket.server;
@@ -180,7 +197,7 @@ export class ErrorRates {
       // NaN in a JSON body is `null`, which reads as "unknown" to a dashboard.
       error_rate: requests === 0 ? 0 : server / requests,
       worst_routes: worst,
-      routes_truncated: this.truncated,
+      routes_truncated: truncated,
     };
   }
 }
