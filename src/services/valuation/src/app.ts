@@ -151,7 +151,7 @@ import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rat
 import type { QueryStats } from './db/queryStats.js';
 import type { PoolHealth } from './db/poolHealth.js';
 import { clamdScanner, type ScanPolicy } from './documents/virusScan.js';
-import { probeReady, setNetworkSink } from './clients/internal.js';
+import { probeReady, registerCircuitMetrics, setCircuitObserver, setNetworkSink } from './clients/internal.js';
 import { configureReportRenderer, registerReportRenderMetrics } from './clients/reportRender.js';
 import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
@@ -440,6 +440,29 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       // is nothing new to push the count over the bound.
       if (id) void pruneNetworkItems(pool, call.valuationId, KEEP_PER_VALUATION, onError);
     });
+  });
+
+  // Say out loud when we stop calling a dependency, and when we start again.
+  //
+  // The breaker has had an `onStateChange` hook since it was written and
+  // nothing ever passed one, so "the AI service has been cut off for the last
+  // eleven minutes" existed only as a field on a page nobody was looking at.
+  // Every other symptom is indirect: the users see a feature reporting itself
+  // unavailable, and the calls that were refused locally are recorded against
+  // whichever engagement happened to trigger them.
+  //
+  // `alert: true` is hand-written rather than coming through `logFailure`,
+  // which classifies a thrown error — there is no error here, the breaker has
+  // simply changed its mind about a dependency. Only the open transition
+  // carries it: half-open and closed are the recovery, and an alert on the good
+  // news is how a channel gets muted.
+  setCircuitObserver(({ name, from, to, reason }) => {
+    const fields = { service: name, from, to, reason };
+    if (to === 'open') {
+      app.log.error({ ...fields, alert: true }, `circuit opened — no longer calling ${name}`);
+    } else {
+      app.log.warn(fields, `circuit ${to} — ${name}`);
+    }
   });
 
   const jwt = { secret: config.JWT_SECRET, issuer: config.JWT_ISSUER, ttlSeconds: config.JWT_TTL_SECONDS };
@@ -776,6 +799,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // `source: "fallback"`, so a dead source produces correct-looking answers on
   // substituted figures and has no other symptom on this side of the wire.
   registerMarketFeedMetrics(metricsRegistry);
+  // Whether we are still dialling the engine, the AI service and the report
+  // unit at all. The breaker's own view was reachable only from the ops
+  // incident endpoint, which is a page somebody visits once they already
+  // suspect something — so a dependency going away and coming back was, to
+  // everything that polls, indistinguishable from it never having happened.
+  registerCircuitMetrics(metricsRegistry);
   registerMetricsEndpoint(app, { registry: metricsRegistry, service: 'valuation' });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });

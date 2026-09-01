@@ -10,7 +10,9 @@ import {
   probeReady as sharedProbeReady,
   problems,
   requestIdHeaders,
+  type CircuitState,
   type FailureClass,
+  type MetricsRegistry,
 } from '@n409/shared';
 import { sliceChars } from '../domain/textSlice.js';
 import { MAX_INTEGRATION_JSON_BYTES, readCappedBytes } from './deadline.js';
@@ -132,7 +134,113 @@ export const circuits = new CircuitRegistry({
   failureThreshold: 5,
   resetTimeoutMs: 30_000,
   halfOpenMax: 1,
+  onStateChange: (change) => {
+    try {
+      circuitObserver?.(change);
+    } catch {
+      /* a diagnostic that cannot be written must not fail the call that caused it */
+    }
+  },
 });
+
+/**
+ * A breaker's state transitions, offered to the composition root.
+ *
+ * The breaker had `onStateChange` from the day it was written and nothing ever
+ * passed one, so the single most consequential event in this tier — "we have
+ * stopped calling the AI service" — was recorded nowhere. `snapshots()` is on
+ * the ops incident endpoint, which answers *what the state is right now* to
+ * somebody who already suspects a problem and has gone looking. It cannot say
+ * that a breaker opened at 03:12 and closed at 03:14, and a transition that
+ * happens between two visits to that page leaves no trace at all.
+ *
+ * So: the transition goes to the log (durable, has the request id and the
+ * classified reason on it) and the *state* goes on `/metrics` below (pollable,
+ * and the only channel on this box anything alerts from — see the note on
+ * `registerMetricsEndpoint`). Neither substitutes for the other.
+ */
+export type CircuitStateSink = (change: {
+  name: string;
+  from: CircuitState;
+  to: CircuitState;
+  reason: string;
+}) => void;
+
+let circuitObserver: CircuitStateSink | null = null;
+
+/**
+ * Where breaker transitions go, or null to record nothing.
+ *
+ * Module-level for the same reason {@link setNetworkSink} is: `circuits` is a
+ * module-level singleton constructed at import time, long before there is a
+ * Fastify logger to hand it.
+ */
+export function setCircuitObserver(sink: CircuitStateSink | null): void {
+  circuitObserver = sink;
+}
+
+/**
+ * The dependencies this service puts behind a breaker.
+ *
+ * Named here rather than discovered, because `CircuitRegistry.get` mints a
+ * breaker on first use: a registry that has never been called is empty, so a
+ * gauge derived from `snapshots()` alone publishes *no series* for a service
+ * until the first request reaches it. An alert on a missing series is a
+ * different, worse alert than one on a series reading zero — and the moment it
+ * matters most is a boot into an outage, where the first call fails and the
+ * breaker opens before anything has scraped a healthy value to compare against.
+ *
+ * `upstreamCircuitRoster.test.ts` pins this list against the names the call
+ * sites actually pass, so a fourth dependency cannot be added silently.
+ */
+export const UPSTREAM_CIRCUITS = ['engine', 'ai-service', 'report'] as const;
+
+/** Numeric ordering used by the state gauge; higher is worse. */
+const CIRCUIT_STATES: readonly CircuitState[] = ['closed', 'half-open', 'open'];
+
+/**
+ * Publish breaker state on the scrape endpoint.
+ *
+ * A state-set rather than an encoded number: `upstream_circuit_state{state="open"}
+ * == 1` is an alert expression somebody can read, where a gauge holding 2 needs
+ * the legend to be somewhere else. Three services times three states is nine
+ * series, well inside `MAX_SERIES_PER_METRIC`.
+ *
+ * All three reads are in-memory, which is the requirement for a scrape-time
+ * gauge — `snapshot()` only compares a monotonic clock against a timestamp.
+ */
+export function registerCircuitMetrics(registry: MetricsRegistry): void {
+  // Mint the known breakers so their series exist from boot; see the roster note.
+  for (const name of UPSTREAM_CIRCUITS) circuits.get(name);
+
+  registry.gauge(
+    'upstream_circuit_state',
+    'Circuit-breaker state per internal dependency; 1 on the active state. state="open" means we have stopped dialling it.',
+    () =>
+      circuits.snapshots().flatMap((s) =>
+        CIRCUIT_STATES.map((state) => ({
+          value: s.state === state ? 1 : 0,
+          labels: { service: s.name, state },
+        })),
+      ),
+    ['service', 'state'],
+  );
+  registry.gauge(
+    'upstream_circuit_rejected_total',
+    'Calls refused locally without dialling because the breaker was open, cumulative',
+    () => circuits.snapshots().map((s) => ({ value: s.rejected, labels: { service: s.name } })),
+    ['service'],
+  );
+  // The leading indicator: this climbing toward the threshold is the window in
+  // which a dependency is failing and the platform has not yet given up on it.
+  registry.gauge(
+    'upstream_circuit_consecutive_failures',
+    'Consecutive transient failures against a dependency since its last success',
+    () =>
+      circuits.snapshots().map((s) => ({ value: s.consecutiveFailures, labels: { service: s.name } })),
+    ['service'],
+  );
+}
 
 /**
  * How a failed exchange is classified for the breaker.
