@@ -117,7 +117,7 @@ const INT = new Intl.NumberFormat('en-US');
  * sentence a valuation report actually writes.
  */
 function incomeAssumptions(
-  calculation: CalculationRow,
+  calculation: FigureSource,
   results: ResultsShape,
 ): Record<string, string | null> {
   // Read through a local view rather than off `ResultsShape`: that interface is
@@ -174,7 +174,22 @@ function list(value: unknown): unknown[] {
  * `{{fmv_per_share}}` is. It also means a placeholder that no longer resolves
  * degrades to itself rather than to "undefined".
  */
-export function reportFigures(calculation: CalculationRow | null, currency: string): ReportFigures {
+/**
+ * Narrowed to the three columns this reads, so a caller that has only those can
+ * pass what it has.
+ *
+ * `routes/qa.ts` collects the superseded figures over a twenty-run window and
+ * needs nothing else off those rows — see `listCalculationResults`, which is
+ * what stops that window carrying twenty whole engine request payloads across
+ * the wire for no reader. `inputs` stays in the shape because
+ * {@link incomeAssumptions} still falls back to it on runs that predate the
+ * engine recording those assumptions on the result; that reader takes one path
+ * into the document (`inputs.inputs.income`) and the repo hands it that path
+ * and nothing else.
+ */
+export type FigureSource = Pick<CalculationRow, 'status' | 'results' | 'inputs'>;
+
+export function reportFigures(calculation: FigureSource | null, currency: string): ReportFigures {
   if (!calculation || calculation.status !== 'succeeded' || !calculation.results) return {};
   const results = calculation.results as ResultsShape;
   const out: ReportFigures = {};

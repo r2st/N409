@@ -454,6 +454,50 @@ export async function listCalculationSummaries(
 }
 
 /**
+ * The window's *results* documents, without the payload nobody opens beside them.
+ *
+ * WHY THIS EXISTS (round 330, methodology M8). `routes/qa.ts` reads this same
+ * twenty-run window to collect the figures a report may still be quoting after
+ * they were superseded, and it does one thing with each row: hand it to
+ * `reportFigures`. It was taking the full row, so every QA review pulled twenty
+ * `inputs` documents — the whole engine request per run, cap table and all — out
+ * of the table, across the socket and through the driver's JSON parse, for no
+ * reader. That is the defect `listCalculationSummaries` was written for, in the
+ * one caller that genuinely needs `results` and so could not use it.
+ *
+ * `inputs` is not simply dropped, because `reportFigures` has one path into it:
+ * `incomeAssumptions` falls back to `inputs.inputs.income` on runs that predate
+ * the engine recording those assumptions on the result. Dropping the column
+ * would quietly stop the stale-figure check seeing the income assumptions of
+ * *older* runs — which is exactly the history it exists to look at. So the
+ * column is projected down to that one path and rebuilt in the shape its reader
+ * expects: same values, none of the cap table. A run with nothing there yields
+ * `{"income": null}`, which that reader already treats as absent.
+ *
+ * Same `LIMIT 20`, same ordering and the same `+ 1` probe as `listCalculations`,
+ * because the window has to be the one a reviewer can see — that is
+ * `CALCULATION_PAGE_LIMIT`'s whole argument. The status filter stays with the
+ * caller for the same reason: filtering in SQL would give the twenty most recent
+ * *succeeded* runs rather than the succeeded ones among the twenty most recent,
+ * which is a different and longer history.
+ */
+export type CalculationResultRow = Pick<CalculationRow, 'id' | 'status' | 'results' | 'inputs'>;
+
+export async function listCalculationResults(
+  pool: pg.Pool,
+  valuationId: string,
+): Promise<{ calculations: CalculationResultRow[]; truncated: boolean }> {
+  const limit = CALCULATION_PAGE_LIMIT;
+  const { rows } = await pool.query<CalculationResultRow>(
+    `SELECT id, status, results,
+            jsonb_build_object('inputs', jsonb_build_object('income', inputs #> '{inputs,income}')) AS inputs
+       FROM calculations WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [valuationId, limit + 1],
+  );
+  return { calculations: rows.slice(0, limit), truncated: rows.length > limit };
+}
+
+/**
  * Every trace this valuation still holds, for the evidence bundle.
  *
  * The comment on `CALCULATION_COLUMNS` explains why no list query carries the

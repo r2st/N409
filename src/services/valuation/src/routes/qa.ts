@@ -5,7 +5,7 @@ import { isOps, type Principal } from '../auth/rbac.js';
 import { runQaChecks, worstStatus, type QaStatus } from '../domain/qaChecks.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
-import { latestSucceededCalculation, listCalculations } from '../repos/calculations.js';
+import { latestSucceededCalculation, listCalculationResults } from '../repos/calculations.js';
 import { createQaReview, listQaReviews } from '../repos/qaReviews.js';
 import { findReportByValuation, getVersionContent } from '../repos/reports.js';
 import { reportReadiness } from '../domain/reportReadiness.js';
@@ -158,11 +158,15 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
      * a failed run concluded nothing, and the current run's own figures are
      * what the body is supposed to be stating.
      *
-     * `listCalculations` rather than a new query — it is the same bounded
-     * twenty-run window the calculation history and the evidence bundle read,
-     * so the runs this check can see are the runs a reviewer can see.
+     * The same bounded twenty-run window the calculation history and the
+     * evidence bundle read, so the runs this check can see are the runs a
+     * reviewer can see — through `listCalculationResults`, which is that window
+     * carrying only the two columns `reportFigures` reads. It used to be
+     * `listCalculations`, which carries `inputs` as well: twenty engine request
+     * payloads, cap table and all, pulled across the wire per review for a
+     * caller that never opens one.
      */
-    const supersededFigures = (await listCalculations(deps.pool, valuation.id)).calculations
+    const supersededFigures = (await listCalculationResults(deps.pool, valuation.id)).calculations
       .filter((run) => run.id !== calculation.id && run.status === 'succeeded')
       .map((run) => reportFigures(run, valuation.currency));
 
