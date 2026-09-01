@@ -110,12 +110,27 @@ export function inlineScriptHashes(
   log?: { warn: (fields: Record<string, unknown>, message: string) => void },
 ): string[] {
   const hashes = new Set<string>();
-  const documents = htmlFilesUnder(staticRoot);
+  const documents = htmlFilesUnder(staticRoot, log);
   for (const file of documents) {
     let html: string;
     try {
       html = readFileSync(file, 'utf8');
-    } catch {
+    } catch (err) {
+      /*
+       * One document of many that could not be read (round 340, methodology
+       * M5), which is the half the `hashes.size === 0` warning below cannot
+       * see. The scan continues — a partial CSP is better than a public site
+       * that will not boot — but a document skipped here contributes no hashes,
+       * so every inline script *on that page* is blocked by the browser and
+       * reported nowhere but the visitor's console. That is the same outcome
+       * the warning below exists for, arrived at one file at a time, and with
+       * the other documents' hashes present the count is nonzero and the
+       * warning never fires.
+       */
+      log?.warn(
+        { file, err: err instanceof Error ? err.message : String(err) },
+        'could not read a built HTML document — its inline scripts will be blocked by the CSP',
+      );
       continue;
     }
     for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
@@ -167,18 +182,33 @@ export function inlineScriptHashes(
   return [...hashes].sort();
 }
 
-/** Every `.html` file under `dir`, recursively. Missing directory → nothing. */
-function htmlFilesUnder(dir: string): string[] {
+/**
+ * Every `.html` file under `dir`, recursively. Missing directory → nothing.
+ *
+ * A directory that cannot be listed takes its whole subtree with it, silently,
+ * and the caller's "no hashes at all" warning cannot see it whenever any other
+ * directory answered — see the per-file note in `inlineScriptHashes`. The
+ * *root* being unreadable is the one case that warning does catch, because
+ * nothing else is left to contribute; every directory below it is this one.
+ */
+function htmlFilesUnder(
+  dir: string,
+  log?: { warn: (fields: Record<string, unknown>, message: string) => void },
+): string[] {
   let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (err) {
+    log?.warn(
+      { dir, err: err instanceof Error ? err.message : String(err) },
+      'could not list a directory under the static root — any documents below it are unhashed and unserved',
+    );
     return [];
   }
   const found: string[] = [];
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) found.push(...htmlFilesUnder(full));
+    if (entry.isDirectory()) found.push(...htmlFilesUnder(full, log));
     else if (/\.html?$/i.test(entry.name)) found.push(full);
   }
   return found;

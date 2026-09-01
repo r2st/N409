@@ -1,5 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,6 +92,78 @@ describe('inlineScriptHashes', () => {
     const root = rootWith({ 'index.html': '<!doctype html><script>var t = 1;</script>' });
     expect(inlineScriptHashes(root, log)).toHaveLength(1);
     expect(lines).toEqual([]);
+  });
+
+  /**
+   * R340, methodology M5 — the half the vacuity guard above cannot see.
+   *
+   * A document that cannot be read contributes no hashes, so every inline
+   * script on that page is blocked by the browser and reported nowhere but the
+   * visitor's console. With any other document's hashes present the count is
+   * nonzero and the `hashes.size === 0` warning never fires, so the outcome the
+   * warning exists for is reached one file at a time in silence.
+   */
+  /**
+   * chmod does not stop root, and a suite run as root would otherwise fail
+   * these two rather than skip them. `unreadable` reports whether the mode
+   * actually took.
+   */
+  const unreadable = (dir: string): boolean => {
+    try {
+      readdirSync(dir);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  const fileUnreadable = (file: string): boolean => {
+    try {
+      readFileSync(file);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+
+  it('says which document it could not read, and keeps the rest', () => {
+    const { lines, log } = capture();
+    const root = rootWith({
+      'index.html': '<!doctype html><script>var t = 1;</script>',
+      'unreadable.html': '<!doctype html><script>var u = 2;</script>',
+    });
+    const target = path.join(root, 'unreadable.html');
+    chmodSync(target, 0o000);
+    try {
+      if (!fileUnreadable(target)) return; // running as root
+
+      // The readable document still contributes; the CSP is partial, not absent.
+      expect(inlineScriptHashes(root, log)).toEqual([sha256('var t = 1;')]);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]!.message).toMatch(/inline scripts will be blocked by the CSP/);
+      expect(String(lines[0]!.fields.file)).toContain('unreadable.html');
+    } finally {
+      chmodSync(path.join(root, 'unreadable.html'), 0o644);
+    }
+  });
+
+  it('says which directory it could not list', () => {
+    const { lines, log } = capture();
+    const root = rootWith({ 'index.html': '<!doctype html><script>var t = 1;</script>' });
+    const sub = path.join(root, 'help');
+    mkdirSync(sub);
+    writeFileSync(path.join(sub, 'a.html'), '<!doctype html><script>var v = 3;</script>');
+    chmodSync(sub, 0o000);
+    try {
+      if (!unreadable(sub)) return; // running as root
+
+      // A whole subtree gone, and the root's own hash keeps the count nonzero.
+      expect(inlineScriptHashes(root, log)).toEqual([sha256('var t = 1;')]);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]!.message).toMatch(/could not list a directory/);
+      expect(String(lines[0]!.fields.dir)).toContain('help');
+    } finally {
+      chmodSync(sub, 0o755);
+    }
   });
 
   it('hashes an executable inline script', () => {
