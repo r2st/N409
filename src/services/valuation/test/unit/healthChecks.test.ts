@@ -462,6 +462,61 @@ describe('runHealthChecks on sparse and degenerate inputs', () => {
       expect(byKey(report, 'exit_after_valuation')?.severity).toBe('ok');
     });
 
+    /**
+     * One horizon, two stores, and only one of them is read by anything that
+     * computes.
+     *
+     * `params.exit_timeline` is a date on the parameters tab and the engine
+     * reads nothing from it. `engine_inputs.time_to_exit_years` is the term the
+     * OPM strikes on and the figure Exhibit F-1, the ASC 718 assumptions table
+     * and the summary's "T 4.50y" all print. A horizon revised on one and not
+     * the other computes cleanly and prints cleanly, and the report then tells
+     * a reader two different things about when this company expects to exit.
+     */
+    it('reconciles the dated exit against the term the allocation ran on', () => {
+      const agreeing = run({
+        inputs: { valuation_date: '2026-06-30', time_to_exit_years: 4 },
+        params: { exit_timeline: '2030-06-30' },
+      });
+      expect(byKey(agreeing, 'exit_horizon_agrees')?.severity).toBe('ok');
+      expect(byKey(agreeing, 'exit_horizon_agrees')?.category).toBe('temporal');
+
+      const revisedOnOneField = run({
+        inputs: { valuation_date: '2026-06-30', time_to_exit_years: 4 },
+        params: { exit_timeline: '2028-06-30' },
+      });
+      expect(byKey(revisedOnOneField, 'exit_horizon_agrees')?.severity).toBe('warning');
+      expect(byKey(revisedOnOneField, 'exit_horizon_agrees')?.detail).toContain('2.00 years');
+      expect(byKey(revisedOnOneField, 'exit_horizon_agrees')?.detail).toContain('4.00 years');
+    });
+
+    it('allows a whole quarter between a rounded date and a stated term', () => {
+      // An exit stated as a quarter-end against a term stated to two decimals
+      // differs by up to a full quarter without anybody having changed their
+      // mind — 4.00 years against the quarter-end 4.25 years out is the
+      // commonest such pair — and a check that fires on that is one nobody
+      // reads.
+      const report = run({
+        inputs: { valuation_date: '2026-06-30', time_to_exit_years: 4 },
+        params: { exit_timeline: '2030-09-30' },
+      });
+      expect(byKey(report, 'exit_horizon_agrees')?.severity).toBe('ok');
+    });
+
+    it('says nothing about the horizon when only one of the two is recorded', () => {
+      const noTerm = run({
+        inputs: { valuation_date: '2026-06-30' },
+        params: { exit_timeline: '2030-06-30' },
+      });
+      expect(byKey(noTerm, 'exit_horizon_agrees')).toBeUndefined();
+
+      const noDate = run({
+        inputs: { valuation_date: '2026-06-30', time_to_exit_years: 4 },
+        params: { exit_timeline: null },
+      });
+      expect(byKey(noDate, 'exit_horizon_agrees')).toBeUndefined();
+    });
+
     it('skips every ordering rule when the valuation date is missing or unparseable', () => {
       for (const valuation_date of [undefined, '', 'not a date']) {
         const report = run({

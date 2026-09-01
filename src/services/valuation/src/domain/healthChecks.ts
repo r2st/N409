@@ -56,6 +56,23 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const pct = (v: number): string => `${(v * 100).toFixed(1)}%`;
 
 /**
+ * Average Gregorian year in milliseconds — 365.2425 days.
+ *
+ * The horizon check below turns a span between two dates into years, and the
+ * figure it compares against is a term somebody typed. 365 flat drifts about a
+ * day per four years, which is well inside the tolerance and would still be the
+ * wrong constant to reason about a five-year option with.
+ */
+const MS_PER_YEAR = 365.2425 * 24 * 60 * 60 * 1000;
+
+/**
+ * How far the dated horizon and the stated term may differ before it is a
+ * finding. A whole quarter plus a few days, so a term rounded to the next
+ * quarter-end clears it and a revision that landed on one field does not.
+ */
+const EXIT_HORIZON_TOLERANCE_YEARS = 0.3;
+
+/**
  * Thousands separators for the share counts these findings quote, pinned to a
  * locale rather than left to the host's.
  *
@@ -530,6 +547,47 @@ export function runHealthChecks(args: {
         exitMs >= valuationMs
           ? 'Expected exit is in the future relative to the valuation date'
           : 'Expected exit is before the valuation date — the time-to-liquidity is negative',
+      );
+    }
+
+    /*
+     * The same horizon, written down twice, in two stores that never consult
+     * each other.
+     *
+     * `params.exit_timeline` is a date on the parameters tab; it reaches the
+     * engine payload and the engine reads nothing from it. `time_to_exit_years`
+     * is a number in `engine_inputs`, and it is the one the OPM strikes its
+     * term on and the one Exhibit F-1, the ASC 718 assumptions table and the
+     * summary's "T 4.50y" all print. So a horizon revised on one of them and
+     * not the other computes cleanly, prints cleanly, and disagrees with the
+     * document's own parameters page by however much the revision moved — the
+     * disagreement being invisible precisely because each figure is internally
+     * consistent with everything that reads *it*.
+     *
+     * Slightly over a quarter of slack, because the two are not the same
+     * measurement: an exit stated as a quarter-end against a term stated to two
+     * decimals differs by up to a full quarter without anybody having changed
+     * their mind, and a tolerance of exactly 0.25 fires on the commonest such
+     * pair (a 4.00-year term against the quarter-end 4.25 years out). Beyond
+     * that it is a revision that landed on one field, which is a warning rather
+     * than an error — the calculation is not wrong, the report is telling a
+     * reader two things.
+     */
+    const statedYears = num(engineInputs.time_to_exit_years);
+    if (exitMs !== null && statedYears !== null) {
+      const impliedYears = (exitMs - valuationMs) / MS_PER_YEAR;
+      const gap = Math.abs(impliedYears - statedYears);
+      add(
+        'temporal',
+        'exit_horizon_agrees',
+        'Expected exit date and time to liquidity agree',
+        gap <= EXIT_HORIZON_TOLERANCE_YEARS ? 'ok' : 'warning',
+        gap <= EXIT_HORIZON_TOLERANCE_YEARS
+          ? `Expected exit is ${impliedYears.toFixed(2)} years out, against a stated term of ` +
+              `${statedYears.toFixed(2)} years`
+          : `Expected exit is ${impliedYears.toFixed(2)} years after the valuation date but the ` +
+              `term applied is ${statedYears.toFixed(2)} years — the parameters page and the ` +
+              'assumptions the allocation ran on state different horizons',
       );
     }
   }
