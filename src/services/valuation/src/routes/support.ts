@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { createSupportMessage, listSupportMessages, setSupportMessageStatus } from '../repos/support.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 
@@ -59,8 +60,32 @@ export function registerSupportRoutes(app: FastifyInstance, deps: { pool: pg.Poo
     if (!isUlid(id)) throw problems.notFound();
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
-    const message = await setSupportMessageStatus(deps.pool, id, parsed.data.status, principal.id);
-    if (!message) throw problems.notFound();
-    return { message };
+    const written = await setSupportMessageStatus(deps.pool, id, parsed.data.status, principal.id);
+    if (!written) throw problems.notFound();
+    /*
+     * The transition, on the spine that carries every other ops action.
+     *
+     * Triaging support was the one operations surface that wrote nothing to
+     * `admin_events`. Who closed a message lived on the row and nowhere else,
+     * so reopening one erased it — `resolved_by` and `resolved_at` are cleared
+     * on the way back to `open` — and there was no other copy to read. A
+     * message a customer raised, an operator closed, and somebody reopened
+     * left a row that could only say it was open.
+     *
+     * Only on a real transition: `changed` is decided by the UPDATE's own
+     * predicate, so a repeated press writes no second row saying it happened
+     * twice.
+     */
+    if (written.changed) {
+      await recordAdminEvent(deps.pool, {
+        type: parsed.data.status === 'resolved' ? 'support_message_resolved' : 'support_message_reopened',
+        actor: { actorType: 'human', actorId: principal.id },
+        subjectType: 'support_message',
+        subjectId: written.message.id,
+        subjectLabel: written.message.subject,
+        payload: { status: parsed.data.status },
+      });
+    }
+    return { message: written.message };
   });
 }

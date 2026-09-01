@@ -489,6 +489,22 @@ export const ADMIN_EVENT_CATALOG = {
   job_alert_resolved: D('Job alert resolved', 'integration', 'info'),
   data_remediation_rerun: D('Data remediation re-run', 'data', 'notice'),
 
+  // ── Inbound queues ──────────────────────────────────────────────────────
+  //
+  // Triage was the last operations surface writing nothing here. Both queues
+  // record who closed a row in a pair of columns *on the row*, and both clear
+  // that pair on the way back — so reopening was an action with no trace
+  // anywhere, and the state it left could not say it had ever been closed.
+  //
+  // `info` on the way in and `notice` on the way back out, for the reason the
+  // billing types are graded that way: closing a queue item is the ordinary
+  // motion of working it, and undoing somebody else's close is the one a
+  // reader is looking for.
+  support_message_resolved: D('Support message resolved', 'integration', 'info'),
+  support_message_reopened: D('Support message reopened', 'integration', 'notice'),
+  contact_submission_handled: D('Contact submission handled', 'integration', 'info'),
+  contact_submission_reopened: D('Contact submission reopened', 'integration', 'notice'),
+
   // ── Analyst actions on one engagement ───────────────────────────────────
   comparable_added: D('Comparable added', 'analysis', 'critical'),
   comparable_deleted: D('Comparable deleted', 'analysis', 'critical'),

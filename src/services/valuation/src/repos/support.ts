@@ -71,20 +71,45 @@ export async function listSupportMessages(
   return { messages: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
+/**
+ * Move a message between `open` and `resolved`, once per transition.
+ *
+ * Same statement, same reason, as `setContactSubmissionStatus`: `resolved_by`
+ * and `resolved_at` are the only record this surface keeps of who closed a
+ * support message and when, and an unconditional write let the second person
+ * to press Resolve on an already-resolved row take the credit and move the
+ * date. The triage inbox lists resolved messages and offers the control on
+ * them, so that is the ordinary way to arrive here rather than an exotic one.
+ *
+ * `changed` is what the route records the transition off — a repeat writes no
+ * event, because the transition it would describe did not happen here.
+ */
+export interface SupportMessageWrite {
+  message: SupportMessageRow;
+  changed: boolean;
+}
+
 export async function setSupportMessageStatus(
   pool: pg.Pool,
   id: string,
   status: SupportMessageStatus,
   resolvedBy: string,
-): Promise<SupportMessageRow | null> {
+): Promise<SupportMessageWrite | null> {
   const { rows } = await pool.query<SupportMessageRow>(
     `UPDATE support_messages
      SET status = $2::support_message_status,
          resolved_by = CASE WHEN $2::text = 'resolved' THEN $3 ELSE NULL END,
          resolved_at = CASE WHEN $2::text = 'resolved' THEN now() ELSE NULL END
-     WHERE id = $1
+     WHERE id = $1 AND status <> $2::support_message_status
      RETURNING *`,
     [id, status, resolvedBy],
   );
+  if (rows[0]) return { message: rows[0], changed: true };
+  const existing = await findSupportMessage(pool, id);
+  return existing ? { message: existing, changed: false } : null;
+}
+
+export async function findSupportMessage(pool: pg.Pool, id: string): Promise<SupportMessageRow | null> {
+  const { rows } = await pool.query<SupportMessageRow>('SELECT * FROM support_messages WHERE id = $1', [id]);
   return rows[0] ?? null;
 }

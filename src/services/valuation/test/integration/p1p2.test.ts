@@ -496,6 +496,59 @@ describe.skipIf(!dbUp)('P1/P2 features API', () => {
       expect(reopened.json().message.resolved_at).toBeNull();
     });
 
+    /**
+     * Resolving twice must not move who resolved it, and every real move is
+     * on the spine.
+     *
+     * `resolved_by`/`resolved_at` were the only record that anybody closed a
+     * message, the write was unconditional, and reopening clears the pair — so
+     * a second Resolve by a colleague took the close off its author, and a
+     * reopen erased that anybody had ever closed it. The inbox lists resolved
+     * messages and offers the control on them, so both are ordinary.
+     */
+    it('does not re-stamp who resolved a message, and records each real move', async () => {
+      const sent = await app.inject({
+        method: 'POST',
+        url: '/api/v1/support/messages',
+        headers: authHeader(client.token),
+        payload: { subject: 'Second look', body: 'The export is empty.' },
+      });
+      const id = sent.json().message.id as string;
+      const second = await seedUser({ app, pool, teardown: async () => {} }, { roles: ['admin'] });
+
+      const patch = (token: string, status: string) =>
+        app.inject({
+          method: 'PATCH',
+          url: `/api/v1/support/messages/${id}`,
+          headers: authHeader(token),
+          payload: { status },
+        });
+
+      const first = await patch(ops.token, 'resolved');
+      const resolvedAt = first.json().message.resolved_at as string;
+
+      const again = await patch(second.token, 'resolved');
+      expect(again.statusCode).toBe(200);
+      expect(again.json().message).toMatchObject({
+        status: 'resolved',
+        resolved_by: ops.id,
+        resolved_at: resolvedAt,
+      });
+
+      await patch(second.token, 'open');
+
+      const { rows } = await pool.query(
+        `SELECT type, actor_id FROM admin_events
+          WHERE subject_type = 'support_message' AND subject_id = $1
+          ORDER BY occurred_at ASC, id ASC`,
+        [id],
+      );
+      expect(rows).toEqual([
+        { type: 'support_message_resolved', actor_id: ops.id },
+        { type: 'support_message_reopened', actor_id: second.id },
+      ]);
+    });
+
     it('rejects an empty subject', async () => {
       const res = await app.inject({
         method: 'POST',

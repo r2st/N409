@@ -137,6 +137,74 @@ describe.skipIf(!dbUp)('contact form', () => {
     });
     expect(clientPatch.statusCode).toBe(403);
   });
+
+  /**
+   * Handling a submission twice must not move who handled it.
+   *
+   * `handled_by` and `handled_at` are the only record that anybody answered a
+   * prospect — the queue writes nothing else, anywhere — and the write was
+   * unconditional, so a colleague pressing Handled on a row the list already
+   * shows as handled took the answer off the person who gave it and moved the
+   * date to today. The control is offered on handled rows, so this is the
+   * ordinary way to arrive here.
+   */
+  it('does not re-stamp who handled a submission, and records each real move', async () => {
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/contact',
+      payload: { ...VALID, email: 'restamp@analytical.example' },
+      remoteAddress: '203.0.113.77',
+    });
+    expect(created.statusCode).toBe(201);
+    const id = created.json().submission.id as string;
+
+    const other = await seedUser(ctx, { roles: ['admin'] });
+    const patch = (token: string, status: string) =>
+      ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/contact/submissions/${id}`,
+        headers: authHeader(token),
+        payload: { status },
+      });
+
+    const first = await patch(ops.token, 'handled');
+    expect(first.statusCode).toBe(200);
+    const handledAt = first.json().submission.handled_at as string;
+
+    // A second Handled, by somebody else. Still a 200 over the ending that
+    // stands, and the ending is unchanged.
+    const again = await patch(other.token, 'handled');
+    expect(again.statusCode).toBe(200);
+    expect(again.json().submission).toMatchObject({
+      status: 'handled',
+      handled_by: ops.id,
+      handled_at: handledAt,
+    });
+
+    const reopened = await patch(other.token, 'new');
+    expect(reopened.json().submission).toMatchObject({
+      status: 'new',
+      handled_by: null,
+      handled_at: null,
+    });
+
+    /*
+     * And the spine. Reopening clears the pair, so without a row here the
+     * submission could only say it was open — the fact that it had been
+     * answered, and by whom, was erased by the reopen and recorded nowhere
+     * else. Two rows, not three: the repeated Handled was not a transition.
+     */
+    const { rows } = await ctx.pool.query(
+      `SELECT type, actor_id FROM admin_events
+        WHERE subject_type = 'contact_submission' AND subject_id = $1
+        ORDER BY occurred_at ASC, id ASC`,
+      [id],
+    );
+    expect(rows).toEqual([
+      { type: 'contact_submission_handled', actor_id: ops.id },
+      { type: 'contact_submission_reopened', actor_id: other.id },
+    ]);
+  });
 });
 
 describe.skipIf(!dbUp)('contact form rate limiting', () => {

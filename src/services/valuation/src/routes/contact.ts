@@ -9,6 +9,7 @@ import {
   listContactSubmissions,
   setContactSubmissionStatus,
 } from '../repos/contactSubmissions.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
@@ -83,8 +84,23 @@ export function registerContactRoutes(
     if (!isUlid(id)) throw problems.notFound();
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid patch', parsed.error);
-    const submission = await setContactSubmissionStatus(deps.pool, id, parsed.data.status, principal.id);
-    if (!submission) throw problems.notFound();
-    return { submission };
+    const written = await setContactSubmissionStatus(deps.pool, id, parsed.data.status, principal.id);
+    if (!written) throw problems.notFound();
+    // Same reason as the support inbox next door: `handled_by`/`handled_at`
+    // were the only record that anybody answered this enquiry, and marking it
+    // `new` again cleared both. Recorded only when the status actually moved.
+    if (written.changed) {
+      await recordAdminEvent(deps.pool, {
+        type: parsed.data.status === 'handled' ? 'contact_submission_handled' : 'contact_submission_reopened',
+        actor: { actorType: 'human', actorId: principal.id },
+        subjectType: 'contact_submission',
+        subjectId: written.submission.id,
+        // The enquirer's name, not their message: the label is printed in the
+        // ops feed, and the message is free text a stranger supplied.
+        subjectLabel: written.submission.name,
+        payload: { status: parsed.data.status },
+      });
+    }
+    return { submission: written.submission };
   });
 }
