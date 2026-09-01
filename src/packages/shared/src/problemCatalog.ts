@@ -156,6 +156,19 @@ export const PROBLEM_CATALOG: Readonly<Record<string, ProblemCatalogEntry>> = {
       'Ask an administrator for the role, or use a key scoped to the right organisation.',
     retry: 'never',
   },
+  'urn:n409:problem:mfa-required': {
+    type: 'urn:n409:problem:mfa-required',
+    status: '403',
+    title: 'Forbidden',
+    summary:
+      'The deployment requires two-factor authentication and this password account has not enrolled ' +
+      'one. The session is valid; only the enrolment routes are reachable until a factor is confirmed.',
+    resolution:
+      'Enrol a second factor: `POST /api/v1/account/mfa/setup`, then `POST /api/v1/account/mfa/confirm` ' +
+      'with a live code. Nothing else on the authenticated surface answers until that is done. Accounts ' +
+      'that sign in through an identity provider and hold no password are not subject to this.',
+    retry: 'never',
+  },
   'urn:n409:problem:not-found': {
     type: 'urn:n409:problem:not-found',
     status: '404',

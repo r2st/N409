@@ -81,6 +81,17 @@ export interface AuthPrincipalRow {
   partner_id: string | null;
   deleted_at: Date | null;
   session_epoch: number;
+  /** Whether a second factor is confirmed and live on this account. */
+  totp_enabled: boolean;
+  /**
+   * Whether the account has a password at all — *not* the digest.
+   *
+   * The preHandler's 2FA gate has to tell a password account from an SSO-only
+   * one, and that is the whole of what it needs to know. Answered as a boolean
+   * in SQL so `password_digest` stays out of the request path, which is the
+   * property the comment below exists to protect.
+   */
+  has_password: boolean;
 }
 
 /**
@@ -88,11 +99,13 @@ export interface AuthPrincipalRow {
  *
  * This runs on *every authenticated request* — it is the single most-executed
  * statement in the service — and it used to be `findUserById`, which is
- * `SELECT u.*`. The preHandler reads five fields; the other seventeen columns
- * were fetched, decoded and thrown away several times per page load, and among
- * them are `password_digest` and the encrypted `totp_secret`, which have no
- * business being materialised into the request path of a route that only wants
- * to know who is calling.
+ * `SELECT u.*`. The preHandler reads seven fields — five identity columns plus
+ * the two the mandatory-2FA gate needs; the other columns were fetched, decoded
+ * and thrown away several times per page load, and among them are
+ * `password_digest` and the encrypted `totp_secret`, which have no business
+ * being materialised into the request path of a route that only wants to know
+ * who is calling. `has_password` is why the digest still does not have to be:
+ * the question is answered as a boolean in SQL.
  *
  * Deliberately *not* cached. `plugins/auth.ts` documents why: roles and partner
  * are re-read per request so that a role change or a removal takes effect
@@ -102,7 +115,8 @@ export interface AuthPrincipalRow {
  */
 export async function findAuthPrincipal(pool: pg.Pool, id: string): Promise<AuthPrincipalRow | null> {
   const { rows } = await pool.query<AuthPrincipalRow>(
-    `SELECT u.id, u.partner_id, u.deleted_at, u.session_epoch,
+    `SELECT u.id, u.partner_id, u.deleted_at, u.session_epoch, u.totp_enabled,
+            (u.password_digest IS NOT NULL) AS has_password,
             coalesce(array_agg(r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
      FROM users u
      LEFT JOIN user_roles ur ON ur.user_id = u.id

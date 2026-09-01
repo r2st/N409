@@ -341,6 +341,10 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
 
     it('cannot be disabled while an administrator requires 2FA', async () => {
       const admin = await seedUser(ctx, { roles: ['admin'] });
+      // The administrator enrols first, because turning the setting on closes
+      // the authenticated surface to *them* too — including the settings route
+      // they would turn it back off with. See MFA_ENROLMENT_ROUTES.
+      await enroll(admin.token);
       const user = await seedPasswordUser();
       await enroll(user.token);
 
@@ -371,6 +375,109 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
           payload: { require_mfa: false },
         });
       }
+    });
+  });
+
+  /**
+   * `require_mfa` used to be a sentence.
+   *
+   * It refused a *disable* on an account that already had a factor and it put a
+   * line on the settings card, and that was all of it: an account that had never
+   * enrolled kept the whole authenticated surface. These drive the gate in
+   * `plugins/auth.ts` from both sides — what is still reachable while it holds,
+   * and that it stops holding the moment a factor is confirmed.
+   */
+  describe('while an administrator requires 2FA', () => {
+    /** Turns the setting on, runs `body`, and always turns it back off. */
+    async function withRequiredMfa(body: () => Promise<void>): Promise<void> {
+      const admin = await seedUser(ctx, { roles: ['admin'] });
+      // The administrator is subject to the gate as well, so they enrol before
+      // flipping it — otherwise the route that turns it back off is closed.
+      await enroll(admin.token);
+      const set = await ctx.app.inject({
+        method: 'PUT',
+        url: '/api/v1/admin/settings',
+        headers: authHeader(admin.token),
+        payload: { require_mfa: true },
+      });
+      expect(set.statusCode).toBe(200);
+      try {
+        await body();
+      } finally {
+        await ctx.app.inject({
+          method: 'PUT',
+          url: '/api/v1/admin/settings',
+          headers: authHeader(admin.token),
+          payload: { require_mfa: false },
+        });
+      }
+    }
+
+    it('refuses an un-enrolled password account the rest of the API', async () => {
+      const user = await seedPasswordUser();
+      await withRequiredMfa(async () => {
+        const res = await ctx.app.inject({
+          method: 'GET',
+          url: '/api/v1/valuations',
+          headers: authHeader(user.token),
+        });
+        expect(res.statusCode).toBe(403);
+        expect(res.json().type).toBe('urn:n409:problem:mfa-required');
+      });
+      // And the refusal is the setting, not the account: it lifts with it.
+      const after = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/valuations',
+        headers: authHeader(user.token),
+      });
+      expect(after.statusCode).toBe(200);
+    });
+
+    it('refuses a write the same way, so the gate is not read-only', async () => {
+      const user = await seedPasswordUser();
+      await withRequiredMfa(async () => {
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/me/tokens',
+          headers: authHeader(user.token),
+          payload: { name: 'escape hatch', current_password: PASSWORD },
+        });
+        // Specifically this one: a key minted here would carry the exemption
+        // API tokens have out of the gate.
+        expect(res.statusCode).toBe(403);
+        expect(res.json().type).toBe('urn:n409:problem:mfa-required');
+      });
+    });
+
+    it('leaves the enrolment path open, and closes again once it is walked', async () => {
+      const user = await seedPasswordUser();
+      await withRequiredMfa(async () => {
+        for (const url of ['/api/v1/me', '/api/v1/branding', '/api/v1/account/mfa']) {
+          const res = await ctx.app.inject({ method: 'GET', url, headers: authHeader(user.token) });
+          expect(res.statusCode, url).toBe(200);
+        }
+        // The whole point: the session it refuses everything else to is the one
+        // that can enrol, so the user is never stuck.
+        await enroll(user.token);
+        const res = await ctx.app.inject({
+          method: 'GET',
+          url: '/api/v1/valuations',
+          headers: authHeader(user.token),
+        });
+        expect(res.statusCode).toBe(200);
+      });
+    });
+
+    it('does not apply to an account that has no password to protect', async () => {
+      const sso = await seedThenStripPassword();
+      await withRequiredMfa(async () => {
+        const res = await ctx.app.inject({
+          method: 'GET',
+          url: '/api/v1/valuations',
+          headers: authHeader(sso.token),
+        });
+        expect(res.statusCode).toBe(200);
+      });
     });
   });
 });

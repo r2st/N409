@@ -63,6 +63,48 @@ const MISSING_CREDENTIAL =
 const READ_ONLY_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
+ * The routes an account still under a mandatory-2FA requirement may reach.
+ *
+ * `require_mfa` is the one system setting that was a sentence rather than a
+ * rule. It refused a *disable* on an account that already had a factor and it
+ * put "Your organization requires two-factor authentication" on the settings
+ * card, and that was the whole of it: an account that had simply never enrolled
+ * signed in with a password and used every one of the ~410 authenticated routes
+ * exactly as before. So the administrator who turned it on was shown a control
+ * whose effect was confined to the people who had already complied with it —
+ * and the setting's own definition (`domain/systemSettings.ts`) states the rule
+ * it was not enforcing: "an un-enrolled user is allowed to sign in but is
+ * required to set it up before proceeding."
+ *
+ * Enforced here rather than at the sign-in door, for that reason. Refusing the
+ * session would leave the user with no credential to enrol *with* — the setup
+ * and confirm routes are themselves authenticated — so the session is issued
+ * and the surface behind it is closed down to the four calls it takes to get
+ * out of this state:
+ *
+ *   * `GET /api/v1/me` — the SPA's bootstrap; without it the app cannot render
+ *     anything, including the screen it is being sent to.
+ *   * `GET /api/v1/branding` — that screen's chrome. A white-labelled tenant
+ *     being bounced to an unbranded page reads as the wrong site.
+ *   * `GET /api/v1/account/mfa`, `POST …/setup`, `POST …/confirm` — enrolment.
+ *
+ * `POST …/disable` is deliberately *not* here, and needs no special case: it is
+ * refused by `routes/mfa.ts` while the setting is on, and an account with no
+ * factor has nothing to disable.
+ *
+ * Sign-out is not here either because it does not need to be — `POST
+ * /api/v1/auth/logout` is unauthenticated and clears the cookie, so a user who
+ * would rather leave than enrol can.
+ */
+const MFA_ENROLMENT_ROUTES: ReadonlySet<string> = new Set([
+  'GET /api/v1/me',
+  'GET /api/v1/branding',
+  'GET /api/v1/account/mfa',
+  'POST /api/v1/account/mfa/setup',
+  'POST /api/v1/account/mfa/confirm',
+]);
+
+/**
  * Checks `key` against `limiter` (a no-op when undefined) and mirrors the
  * partner API's header convention (`x-ratelimit-*` / `retry-after`) so every
  * throttle on this platform reports the same shape. Scope distinguishes the
@@ -233,6 +275,52 @@ export function registerAuth(
         throw maintenanceMode();
       }
     }
+
+    /*
+     * Mandatory 2FA (see MFA_ENROLMENT_ROUTES for why the gate is here).
+     *
+     * The three cheap predicates are tested before the settings read so the
+     * common case — an account that has a factor, or has no password to protect
+     * with one — costs nothing at all. The read itself is a 5-second cache
+     * (`SystemSettingsStore`), the same one maintenance mode above consults.
+     *
+     * API tokens are exempt, and that is a decision rather than an oversight.
+     * A key is a secret in its own right, minted through the re-authentication
+     * prompt in `auth/reauth.ts`, and making a firm's running integration stop
+     * the moment an administrator ticks a box would be a worse failure than the
+     * one this closes. The exemption cannot be used to escape the gate either:
+     * `POST /api/v1/me/tokens` is not on the enrolment list, so an account
+     * under the requirement cannot mint the key that would carry it out.
+     */
+    if (
+      deps.settings &&
+      !req.apiToken &&
+      user.has_password &&
+      !user.totp_enabled &&
+      !MFA_ENROLMENT_ROUTES.has(`${req.method} ${req.routeOptions?.url ?? ''}`) &&
+      (await deps.settings.get('require_mfa'))
+    ) {
+      throw mfaEnrolmentRequired();
+    }
+  });
+}
+
+/**
+ * The refusal an un-enrolled account meets while `require_mfa` is on.
+ *
+ * Its own `type` rather than a plain `forbidden`, because this is the one 403
+ * on the platform the caller can clear themselves, and a client that cannot
+ * tell it apart from a role decision has no way to know that. The SPA branches
+ * on it to send the user to the enrolment card instead of drawing an error.
+ */
+function mfaEnrolmentRequired(): ApiProblem {
+  return new ApiProblem({
+    status: 403,
+    title: 'Forbidden',
+    type: 'urn:n409:problem:mfa-required',
+    detail:
+      'Two-factor authentication is required on this platform. Set up an authenticator app in your ' +
+      'account settings — until then, only the enrolment steps are available.',
   });
 }
 
