@@ -6437,3 +6437,92 @@
 #            shape. Left alone because closing it means fifty-six `// swallow:`
 #            markers on handlers whose comments already say more than the marker
 #            would.
+
+# R322 — Performance & efficiency (M8). Four findings, and the round is the
+#            eleventh, so it went where R314 said the tenth had left off: the
+#            Node SQL surface is exhausted, and none of these is an index or a
+#            plan. Two are work computed twice, one is a byte count taken with
+#            the wrong ruler, one is a payload nobody reads.
+#
+#            **The list PDF re-encoded the whole document once per object.**
+#            `export/pdf.ts` renders the valuations and users list exports, in
+#            the valuation process, on the event loop every other request is
+#            waiting on — there is no offload for it the way R98 built one for
+#            the report renderer. It accumulated the file into one string and
+#            called `Buffer.byteLength(out)` per object to record that object's
+#            cross-reference offset, so each of the 611 objects a 10,000-row
+#            export produces re-encoded and re-scanned a rope ending at 2.8 MB.
+#            2,000 rows 11.9 ms, 5,000 44.8, 10,000 147.3; counting each chunk
+#            once as it is appended, 3.1 / 7.6 / 16.4 and linear.
+#
+#            And `Buffer.byteLength` is UTF-8 while the file is emitted as
+#            `latin1`, so every offset after the first character in
+#            U+0080..U+00FF was too large by one per character. One `Société` in
+#            a company name and the page's declared `/Length` overruns
+#            `endstream` while `startxref` lands inside the `xref` keyword.
+#            Post-escape every character is one Latin-1 byte, so `.length` is
+#            both the right count and an O(1) one. **The existing `Ünïcode` test
+#            could not see it**: it reads the output back as latin1, where the
+#            string is fine — the defect was in the table of byte offsets beside
+#            it, which nothing checked.
+#
+#            **The cap-table allocation computed twice, one copy discarded.**
+#            `compute._opm_allocate` wants the waterfall allocation and the
+#            class-volatility schedule, and asked for them with
+#            `allocate_waterfall(...)` then `class_volatilities(...)` — the
+#            identical five arguments, each running `_allocate`: the same
+#            normalisation, the same breakpoint segmentation, a Black-Scholes
+#            call at every breakpoint. They are not two allocations.
+#            `class_volatilities`' own docstring says its deltas are "the
+#            term-by-term derivative of the very sum `_allocate` uses for the
+#            values" — the second call recomputed the thing the first had
+#            produced, in order to differentiate it. `allocate_with_volatilities`
+#            runs it once: 18.8 -> 13.8 ms per `compute` at 199 classes, and
+#            `sensitivity` puts that run through thousands of times per request.
+#            R314's transposed sensitivity pair, one level down.
+#
+#            **Two surfaces read every run's documents to print its date.**
+#            `packageView` and the specialty tab each map the twenty-run window
+#            to the same seven scalar columns, and both went through
+#            `listCalculations`, which carries `inputs` and `results` because the
+#            Calculations tab and the evidence bundle read them. Measured off the
+#            engine, a 409A `results` document is 11 kB on a ten-class cap table,
+#            67 kB at fifty and 613 kB at the 200-class cap — times twenty-one
+#            rows, read, sent and parsed into JS objects to be dropped one line
+#            later. `listCalculationSummaries` carries the seven columns plus
+#            `input_endpoint`, the one key of `inputs` anything here reads,
+#            probed with `jsonb_typeof(...) = 'string'` because `->>` renders a
+#            number as text and the filter's rule is `typeof === 'string'`
+#            (R298's hazard, same shape).
+#
+#            **p1p2's package-explorer test is why this was invisible**, and the
+#            lesson generalises: it asserts `not.toHaveProperty('results')` on
+#            the *response*, and the narrowing was real — it happened after the
+#            read. A guard over what an endpoint *returns* cannot see an
+#            over-fetch. The new one asserts over the statements it issues.
+#
+#            **The result sweep named every node on its way past it.**
+#            `_assert_finite_results` composed `f"{path}.{key}"` on the way down,
+#            so a 199-class result document built 24,600 strings to name the one
+#            node that fails. A stack, joined only at the raise: 2.51 -> 1.96 ms.
+#            Small per `compute`, and `sensitivity` runs `compute` thousands of
+#            times. R314's `nulBytes` shape in the engine tier.
+#
+# gap:       The evidence bundle stores its twenty JSON parts uncompressed. The
+#            comment says so and argues it ("auditors care about fidelity, not
+#            bytes"), which is right about the PDFs it also carries and is not an
+#            argument about DEFLATE — a bundle whose spine is 5,000 events is
+#            megabytes of JSON on the wire that would compress an order of
+#            magnitude. Left alone because the choice is stated rather than
+#            accidental, and changing it changes every byte of an audit artifact.
+#
+# gap:       `listCalculations` still ships `inputs` to the browser for the
+#            Calculations tab and to `qa.ts`, neither of which reads it. Left
+#            alone because `inputs` is small next to `results` — 21 kB against
+#            613 at the 200-class cap — and both of those callers do read
+#            `results`, so the narrowing would be a third column list for a
+#            twentieth of the bytes.
+#
+# gap:       R154's AppLayout badge-poll churn is still open, still for the
+#            reason R314 restated: the refetch-on-navigation is the point, and
+#            bounding it needs a min-interval rather than a dependency change.
