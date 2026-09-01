@@ -38,7 +38,7 @@ describe.skipIf(!dbUp)('assigning work to an account that cannot do it', () => {
     // reason nothing downstream could tell.
     suspended = await seedUser(ctx, { roles: ['reviewer', 'ignored'] });
     closed = await seedUser(ctx, { roles: ['reviewer'] });
-    await softDeleteUser(ctx.pool, closed.id);
+    await softDeleteUser(ctx.pool, closed.id, { actorType: 'human', actorId: ops.id, source: 'test' });
     const v = await createValuation(
       ctx.pool,
       { kind: '409a', companyName: 'Acme Inc', userId: ops.id },

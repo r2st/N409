@@ -415,8 +415,12 @@ export function registerAccountRoutes(
 
     await revokeTokensOwnedBy(deps.pool, user.id);
     await bumpSessionEpoch(deps.pool, user.id);
-    const deleted = await softDeleteUser(deps.pool, user.id);
-    if (!deleted) throw problems.conflict('This account is already closed');
+    const released = await softDeleteUser(deps.pool, user.id, {
+      actorType: 'human',
+      actorId: user.id,
+      source: 'account',
+    });
+    if (!released) throw problems.conflict('This account is already closed');
 
     await recordAdminEvent(deps.pool, {
       type: 'account_closed',
@@ -424,7 +428,14 @@ export function registerAccountRoutes(
       subjectType: 'user',
       subjectId: user.id,
       subjectLabel: user.email,
-      payload: { self_service: true },
+      // The work the closure released, for the reason the admin route gives:
+      // an engagement or task nobody is holding any more has to reach somebody,
+      // and the closure is the only record that it was let go.
+      payload: {
+        self_service: true,
+        released_valuations: released.valuations,
+        released_review_tasks: released.reviewTasks,
+      },
     });
     return reply.status(204).send();
   });

@@ -67,7 +67,9 @@ describe.skipIf(!dbUp)('mail addressed to a closed account', () => {
     const user = await seedUser(ctx, { roles: [] });
     const mail = await failedMailFor(user.id, user.email);
 
-    expect(await softDeleteUser(ctx.pool, user.id)).toBe(true);
+    expect(
+      await softDeleteUser(ctx.pool, user.id, { actorType: 'human', actorId: user.id, source: 'test' }),
+    ).not.toBeNull();
     const result = await retryFailedEmails({ pool: ctx.pool, transport: recordingTransport });
 
     expect(sent).not.toContain(user.email);
@@ -81,7 +83,7 @@ describe.skipIf(!dbUp)('mail addressed to a closed account', () => {
     // un-failed by that. The row simply stops being claimable.
     const user = await seedUser(ctx, { roles: [] });
     const mail = await failedMailFor(user.id, user.email);
-    await softDeleteUser(ctx.pool, user.id);
+    await softDeleteUser(ctx.pool, user.id, { actorType: 'human', actorId: user.id, source: 'test' });
     await retryFailedEmails({ pool: ctx.pool, transport: recordingTransport });
     expect(sent).toHaveLength(0);
 

@@ -5,6 +5,10 @@ import { likeContains, userSearchSql } from '../db/like.js';
 import { stateGroupOf } from '../domain/operations.js';
 import { NAMED_BUCKET_KEYS, namedBucketsFor } from '../domain/workflow.js';
 import { assignRoles, type UserWithRoles } from './users.js';
+import { invalidateValuation } from './valuations.js';
+import { recordEvent, type EventActor } from '../events/record.js';
+import { EVENT_TYPES } from '../domain/valuation.js';
+import { PIPELINE_EVENT_TYPES } from '../domain/pipeline.js';
 import { revokeInvitationsFrom } from './invitations.js';
 import type { RoleKey } from '../domain/roles.js';
 import { SUSPENDED_ROLE } from '../auth/rbac.js';
@@ -164,28 +168,131 @@ export async function adminPatchUser(pool: pg.Pool, id: string, patch: AdminUser
   });
 }
 
+/**
+ * What a closure handed back, so the caller can put it on the trail.
+ *
+ * Ids rather than counts, for the reason `upsertResolution` returns its
+ * discarded sign-off ids: "three engagements were released" cannot be joined to
+ * anything, and the whole point of recording it is that somebody has to pick
+ * the work up.
+ */
+export interface ReleasedWork {
+  /** Live engagements this account was the assigned reviewer of. */
+  valuations: string[];
+  /** Unfinished review tasks it was the assignee of. */
+  reviewTasks: string[];
+}
+
 /** Soft delete: the user keeps their audit trail but can no longer sign in. */
 /**
- * Close an account: soft-delete it, drop its roles, and retire the invitations
- * it still has outstanding.
+ * Close an account: soft-delete it, drop its roles, retire the invitations it
+ * still has outstanding, and release the work it was holding.
  *
- * The third of those is the one that was missing, and it is the one that
- * outlives everything else here — see `revokeInvitationsFrom`. Same
- * transaction as the other two, because a closure that took the roles and left
- * the standing offer of new ones is the state this is meant to make
- * unreachable.
+ * THE FOURTH OF THOSE IS THE ONE THAT WAS MISSING, AND IT IS THE ONE NOTHING
+ * COULD SEE (round 336, methodology M3). R334 made an assignment to a closed
+ * account impossible to *create* — `assignableUser` behind all four doors that
+ * hand somebody work — on the grounds that the write succeeds while every
+ * consumer downstream silently drops the assignee: `resolveRecipients` in the
+ * state-change hook, the auditor-note fan-out, the monitoring sweep's reviewer
+ * alert. It closed the door that reaches that state from the assignment side.
+ * This is the door that reaches the identical state from the other side, and it
+ * is the ordinary one: an analyst leaves the firm, an administrator closes
+ * their account, and every engagement and task already on their name stays on
+ * it.
+ *
+ * The attention queue is what makes it invisible rather than merely wrong.
+ * `domain/firmDashboard.ts` flags an engagement in review or drafting with
+ * nobody's name on it — "the failure mode a firm cannot see from any single
+ * valuation's own page" — by asking whether `assigned_reviewer_id` is null. A
+ * released engagement is flagged; one still naming a closed account is not,
+ * because the column is populated. So the one surface built to catch unowned
+ * work is the surface that certifies this work as owned, while the reviewer
+ * workload panel goes on counting the file against somebody who cannot sign in.
+ *
+ * Same transaction as the other three: a closure that took the roles and left
+ * the file on the departed analyst's name is the state this is meant to make
+ * unreachable, and a second statement after the commit is one a crash can skip.
+ *
+ * WHAT IS DELIBERATELY LEFT ALONE. Published engagements keep their reviewer —
+ * that is a record of who reviewed the thing, not a claim about who is going to
+ * — and so do archived ones, which are out of the product entirely. Finished
+ * tasks (`done`, `cancelled`) keep their assignee for the same reason. What is
+ * released is exactly the work somebody still has to do.
+ *
+ * `version` moves on every engagement released, per
+ * `lockCounterDiscipline.test.ts`: `assigned_reviewer_id` is in
+ * `OPS_PATCH_FIELDS`, so an operator holding the workflow form is holding a
+ * reviewer this statement changed, and without the bump their `If-Match` would
+ * be told nobody had touched it.
  */
-export async function softDeleteUser(pool: pg.Pool, id: string): Promise<boolean> {
-  return withTransaction(pool, async (client) => {
+export async function softDeleteUser(
+  pool: pg.Pool,
+  id: string,
+  actor: EventActor,
+): Promise<ReleasedWork | null> {
+  const released = await withTransaction(pool, async (client) => {
     const { rowCount } = await client.query(
       'UPDATE users SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL',
       [id],
     );
-    if ((rowCount ?? 0) === 0) return false;
+    if ((rowCount ?? 0) === 0) return null;
     await client.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
     await revokeInvitationsFrom(client, id);
-    return true;
+
+    const { rows: valuations } = await client.query<{ id: string }>(
+      `UPDATE valuations
+          SET assigned_reviewer_id = NULL,
+              version = version + 1
+        WHERE assigned_reviewer_id = $1
+          AND archived_at IS NULL
+          AND state <> 'published'
+        RETURNING id`,
+      [id],
+    );
+    for (const row of valuations) {
+      // The shape `patchValuation` writes for the same column, so the change
+      // log and the evidence bundle read it as the reassignment it is rather
+      // than as an event with no descriptor — see `extractChanges`.
+      await recordEvent(client, {
+        valuationId: row.id,
+        type: EVENT_TYPES.updated,
+        actor,
+        payload: {
+          changes: { assigned_reviewer_id: { from: id, to: null } },
+          reason: 'account_closed',
+        },
+      });
+    }
+
+    const { rows: tasks } = await client.query<{ id: string; valuation_id: string }>(
+      `UPDATE review_tasks
+          SET assignee_id = NULL,
+              updated_at = now()
+        WHERE assignee_id = $1
+          AND status IN ('open', 'in_progress', 'blocked')
+        RETURNING id, valuation_id`,
+      [id],
+    );
+    for (const row of tasks) {
+      await recordEvent(client, {
+        valuationId: row.valuation_id,
+        type: PIPELINE_EVENT_TYPES.taskUpdated,
+        actor,
+        payload: {
+          task_id: row.id,
+          changes: { assignee_id: { from: id, to: null } },
+          reason: 'account_closed',
+        },
+      });
+    }
+
+    return { valuations: valuations.map((r) => r.id), reviewTasks: tasks.map((r) => r.id) };
   });
+  // After the COMMIT, not inside it — see `invalidateValuationAfter`. This is
+  // the tenth writer to `valuations` and the read-through cache is only correct
+  // because every one of them drops the row afterwards.
+  for (const valuationId of released?.valuations ?? []) invalidateValuation(valuationId);
+  return released;
 }
 
 /**

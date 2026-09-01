@@ -674,8 +674,12 @@ export function registerAdminUserRoutes(
     if (!isUlid(id)) throw problems.notFound();
     if (id === principal.id) throw problems.unprocessable('You cannot delete your own account');
     const target = await findUserById(deps.pool, id);
-    const deleted = await softDeleteUser(deps.pool, id);
-    if (!deleted) throw problems.notFound();
+    const released = await softDeleteUser(deps.pool, id, {
+      actorType: 'human',
+      actorId: principal.id,
+      source: 'admin',
+    });
+    if (!released) throw problems.notFound();
     // The roles that were dropped, because this is the one role change on the
     // platform that leaves nothing behind to read: `softDeleteUser` DELETEs the
     // `user_roles` rows, and `restoreUser` deliberately brings the account back
@@ -684,8 +688,14 @@ export function registerAdminUserRoutes(
     // removes all of them at once recorded only that it happened. So the answer
     // to "what did this account hold" was gone from the database and from the
     // trail at the same instant, and reactivating one meant guessing.
+    // And the work the closure took off this account's name, for the same
+    // reason: an engagement whose reviewer left the firm has to be picked up by
+    // somebody, and after this it is no longer on anybody's worklist to notice.
+    // The per-engagement events say the same thing on each file's own spine.
     await audit(principal.id, 'user_deactivated', 'user', id, target?.email ?? null, {
       roles_removed: target?.roles ?? [],
+      released_valuations: released.valuations,
+      released_review_tasks: released.reviewTasks,
     });
     return reply.status(204).send();
   });
