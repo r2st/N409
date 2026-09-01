@@ -54,6 +54,42 @@ describe('accounting OAuth (§23)', () => {
     expect(String(init.body)).toContain('grant_type=authorization_code');
   });
 
+  /*
+   * A Xero connection with no tenant is a connection every import will fail
+   * (R301, methodology M6).
+   *
+   * The connections call used to be wrapped in a bare `catch {}` under "org
+   * identification is best-effort; the connection still works", and a non-`ok`
+   * answer fell through the same way. `fetchFinancials` sends `xero-tenant-id`
+   * only when the id is set, so what "still works" produced was a connection
+   * that reads healthy and refuses every import, with nothing recording the
+   * call that caused it.
+   */
+  it('refuses a Xero connect whose organisation lookup fails', async () => {
+    const fetchFn = (async (url: RequestInfo | URL) => {
+      if (String(url).includes('identity.xero.com')) {
+        return jsonResponse({ access_token: 'at', refresh_token: 'rt', expires_in: 1800 });
+      }
+      return new Response('nope', { status: 503 });
+    }) as typeof fetch;
+    await expect(exchangeCode('xero', creds, 'https://cb', 'the-code', fetchFn)).rejects.toThrow(
+      /Xero organisation lookup failed/,
+    );
+  });
+
+  it('refuses a Xero connect that granted no organisation', async () => {
+    const fetchFn = (async (url: RequestInfo | URL) => {
+      if (String(url).includes('identity.xero.com')) {
+        return jsonResponse({ access_token: 'at', refresh_token: 'rt', expires_in: 1800 });
+      }
+      // The consent screen finished with nothing ticked.
+      return jsonResponse([]);
+    }) as typeof fetch;
+    await expect(exchangeCode('xero', creds, 'https://cb', 'the-code', fetchFn)).rejects.toThrow(
+      /did not return an organisation/,
+    );
+  });
+
   it('rejects a failed token exchange', async () => {
     const fetchFn = (async () => new Response('nope', { status: 400 })) as typeof fetch;
     await expect(exchangeCode('quickbooks', creds, 'https://cb', 'bad', fetchFn)).rejects.toThrow(

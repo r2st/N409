@@ -232,31 +232,60 @@ export async function exchangeCode(
     expiresAt: body.expires_in ? new Date(Date.now() + body.expires_in * 1000) : null,
   };
 
-  // Xero identifies the org via a separate connections call.
+  /*
+   * Xero identifies the org via a separate connections call.
+   *
+   * NOT BEST-EFFORT, WHATEVER THE COMMENT SAID (R301, methodology M6).
+   *
+   * This was a bare `catch {}` under "org identification is best-effort; the
+   * connection still works", and a non-`ok` response fell through the same way
+   * in silence. Neither is true of Xero. `fetchFinancials` and
+   * `fetchBalanceSheet` send `xero-tenant-id` only when `externalOrgId` is set
+   * — read the spread at their headers — so a connection without one is a
+   * connection every later import is made without the header Xero requires.
+   *
+   * That is the shape this round is for: the failure lands nowhere near where
+   * it happened. The connect answers `?accounting=connected`, the card reads
+   * healthy, and the first import comes back as a provider refusal that names
+   * the import. Nothing recorded the connections call, so there is no line to
+   * join the two, and a reconnect — the obvious remedy — reproduces it exactly.
+   *
+   * So the connect refuses instead. The OAuth code is spent either way; what
+   * changes is that the operator is told now, by the callback they are looking
+   * at, rather than by an import days later. The route already answers
+   * `?accounting=error` and logs the reason for every other failure in this
+   * exchange, so this needs no new handling — only to stop being swallowed.
+   */
   if (provider === 'xero') {
-    try {
-      const conns = await withDeadline(PROVIDER_LABELS[provider], OAUTH_TIMEOUT_MS, (signal) =>
-        fetchFn('https://api.xero.com/connections', {
-          headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
-          signal,
-        }),
+    const conns = await withDeadline(PROVIDER_LABELS[provider], OAUTH_TIMEOUT_MS, (signal) =>
+      fetchFn('https://api.xero.com/connections', {
+        headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
+        signal,
+      }),
+    );
+    if (!conns.ok) {
+      throw providerRefused(PROVIDER_LABELS[provider], 'organisation lookup', conns);
+    }
+    const list = await readJsonArray(conns);
+    // `readJsonArray` guarantees a list and nothing about what is in it,
+    // so both of these were whatever Xero's JSON had at those keys. They
+    // land on `accounting_connections` as `text` *and* in the connect
+    // event's `jsonb` payload, written by `upsertConnection` in the same
+    // transaction as the row — so a `tenantName` the driver refuses (a NUL
+    // byte, half a character) is not a cosmetic field stored wrong, it
+    // rolls the connection back after the one-time OAuth code has been
+    // spent, identically on every reconnect. See `storableProviderText`.
+    const org = list[0] as { tenantId?: unknown; tenantName?: unknown } | undefined;
+    tokens.externalOrgId = storableProviderText(org?.tenantId);
+    tokens.externalOrgName = storableProviderText(org?.tenantName);
+    if (!tokens.externalOrgId) {
+      // An empty list is the consent screen finishing with no organisation
+      // ticked, which is a thing a person does and can undo. Said in those
+      // terms rather than as a missing field, because the fix is theirs.
+      throw new IntegrationError(
+        `${PROVIDER_LABELS[provider]} did not return an organisation for this connection — ` +
+          'reconnect and choose the organisation to share',
       );
-      if (conns.ok) {
-        const list = await readJsonArray(conns);
-        // `readJsonArray` guarantees a list and nothing about what is in it,
-        // so both of these were whatever Xero's JSON had at those keys. They
-        // land on `accounting_connections` as `text` *and* in the connect
-        // event's `jsonb` payload, written by `upsertConnection` in the same
-        // transaction as the row — so a `tenantName` the driver refuses (a NUL
-        // byte, half a character) is not a cosmetic field stored wrong, it
-        // rolls the connection back after the one-time OAuth code has been
-        // spent, identically on every reconnect. See `storableProviderText`.
-        const org = list[0] as { tenantId?: unknown; tenantName?: unknown } | undefined;
-        tokens.externalOrgId = storableProviderText(org?.tenantId);
-        tokens.externalOrgName = storableProviderText(org?.tenantName);
-      }
-    } catch {
-      // org identification is best-effort; the connection still works
     }
   }
   return tokens;
