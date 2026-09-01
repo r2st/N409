@@ -573,8 +573,7 @@ describe('xlsxRead', () => {
       // coverage in `zipReader.test.ts`; this test is about the *row* budget,
       // so the fixture has to be compressible the way a real workbook is
       // rather than the way a bomb is.
-      const rows = (n: number) =>
-        Array.from({ length: n }, (_, i) => `<row r="${i + 1}"/>`).join('');
+      const rows = (n: number) => Array.from({ length: n }, (_, i) => `<row r="${i + 1}"/>`).join('');
       const sheet = { data: sheetWith(rows(900_000)) };
       expect(() =>
         readXlsx(

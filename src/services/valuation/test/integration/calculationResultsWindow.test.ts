@@ -109,8 +109,9 @@ describe.skipIf(!dbUp)('the superseded-figure window', () => {
       wide.calculations.map((c) => reportFigures(c, v.currency)),
     );
     // Not vacuously equal: the window really is producing figures.
-    expect(Object.keys(narrow.calculations.map((c) => reportFigures(c, v.currency))[0]!).length)
-      .toBeGreaterThan(0);
+    expect(
+      Object.keys(narrow.calculations.map((c) => reportFigures(c, v.currency))[0]!).length,
+    ).toBeGreaterThan(0);
   });
 
   it('carries the one path into inputs its reader takes, and none of the rest', async () => {

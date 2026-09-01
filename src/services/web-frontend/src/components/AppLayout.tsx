@@ -214,9 +214,7 @@ export interface BucketCounts {
 }
 
 function useBucketCounts(enabled: boolean): BucketCounts | null {
-  return (
-    useBadgePoll<{ counts: BucketCounts }>('/valuations/counts?buckets=named', enabled)?.counts ?? null
-  );
+  return useBadgePoll<{ counts: BucketCounts }>('/valuations/counts?buckets=named', enabled)?.counts ?? null;
 }
 
 /**

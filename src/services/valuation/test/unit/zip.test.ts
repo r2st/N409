@@ -118,7 +118,7 @@ describe('buildZip', () => {
     for (const e of entries) expect(crc32(Buffer.from(e.data))).toBe(e.crc);
   });
 
-  it("round-trips through the platform’s own zip reader", () => {
+  it('round-trips through the platform’s own zip reader', () => {
     const xml = `<?xml version="1.0"?><sheetData>${'<row><c><v>12345</v></c></row>'.repeat(300)}</sheetData>`;
     const read = readZip(buildZip([{ name: 'xl/worksheets/sheet1.xml', data: xml }]));
     expect(read.get('xl/worksheets/sheet1.xml')?.toString('utf8')).toBe(xml);

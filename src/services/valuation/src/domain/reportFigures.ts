@@ -116,10 +116,7 @@ const INT = new Intl.NumberFormat('en-US');
  * that names whichever basis was used always resolves, and reads as the
  * sentence a valuation report actually writes.
  */
-function incomeAssumptions(
-  calculation: FigureSource,
-  results: ResultsShape,
-): Record<string, string | null> {
+function incomeAssumptions(calculation: FigureSource, results: ResultsShape): Record<string, string | null> {
   // Read through a local view rather than off `ResultsShape`: that interface is
   // structurally assignable to `reportSummary`'s reading of the same payload,
   // and narrowing `approaches` here would break the assignment for every other

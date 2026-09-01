@@ -157,9 +157,9 @@ describe('sidebar bucket counts', () => {
     expect(badgeCalls()).toBe(3);
     // Still showing the counts it already had, which is the point — the value
     // is at most one cache TTL old rather than absent.
-    expect(
-      (await within(sidebar()).findByRole('link', { name: /All valuations/ })).textContent,
-    ).toContain('979');
+    expect((await within(sidebar()).findByRole('link', { name: /All valuations/ })).textContent).toContain(
+      '979',
+    );
   });
 
   it('polls on a fresh mount, which has never asked', async () => {
