@@ -31,8 +31,25 @@ export async function onboardingFacts(pool: pg.Pool, scope: ValuationScope): Pro
           WHERE p.dlom IS NOT NULL OR p.dloc IS NOT NULL) AS "assumptions",
        (SELECT count(*) FROM calculations c JOIN scoped s ON s.id = c.valuation_id
           WHERE c.status = 'succeeded') AS "calculations",
+       -- A report that has been *produced*, not one that exists.
+       --
+       -- The predicate here used to compare current_version against zero, which
+       -- matched every row: the only INSERT into "reports" is createReport, which writes
+       -- version 1, and the pointer only ever moves forward, so the column's
+       -- DEFAULT 0 is unreachable. It asked nothing. And a report row is
+       -- created by *reading* -- GET /report instantiates the body from the
+       -- template on first open -- so the box ticked the moment somebody opened
+       -- the tab this checklist points them at, which is the disagreement
+       -- between a checklist and the screen behind it that this module exists
+       -- to end.
+       --
+       -- rendered_at is the column named for the fact, written by exactly one
+       -- statement (storeRenderedPdf, alongside the bytes). The sibling
+       -- boardSignoffs already draws this line: sent-but-unsigned does not
+       -- count.
        (SELECT count(*) FROM reports r JOIN scoped s ON s.id = r.valuation_id
-          WHERE r.current_version > 0) AS "reports",
+          WHERE EXISTS (SELECT 1 FROM report_versions v
+                         WHERE v.report_id = r.id AND v.rendered_at IS NOT NULL)) AS "reports",
        (SELECT count(*) FROM board_signoffs b JOIN scoped s ON s.id = b.valuation_id
           WHERE b.status = 'signed') AS "boardSignoffs"`,
     params,

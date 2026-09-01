@@ -78,7 +78,12 @@ describe('onboardingFacts', () => {
     await onboardingFacts(pool, { kind: 'all' });
     const { sql } = calls[0]!;
     expect(sql).toContain("b.status = 'signed'");
-    expect(sql).toContain('r.current_version > 0');
+    // Not `current_version > 0`, which was true of every row that exists —
+    // `createReport` writes version 1 and the pointer only moves forward, so
+    // the box ticked when somebody merely opened the report tab. The fact is
+    // `rendered_at`; `onboardingReportStep.test.ts` drives it end to end.
+    expect(sql).not.toContain('current_version > 0');
+    expect(sql).toContain('v.rendered_at IS NOT NULL');
     // A soft-deleted document must not tick the financials step.
     expect(sql).toContain('d.deleted_at IS NULL');
     // An empty cap table is not a built cap table.
