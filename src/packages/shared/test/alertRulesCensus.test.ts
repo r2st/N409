@@ -93,6 +93,68 @@ function metricTokens(): string[] {
   return [...tokens];
 }
 
+/**
+ * The labels each metric registers, read off the same `counter(`/`histogram(`/
+ * `gauge(` calls the names come from.
+ *
+ * The label array is the last argument that is an array *of quoted strings* —
+ * histograms carry a bucket array after theirs, and it is numeric, which is
+ * what keeps the two apart without a second inventory to drift.
+ */
+function registeredLabels(): Map<string, string[]> {
+  const labels = new Map<string, string[]>();
+  for (const file of sourceFiles(path.join(REPO, 'src'))) {
+    const src = readFileSync(file, 'utf8');
+    for (const m of src.matchAll(/\.(?:counter|histogram|gauge)\(\s*'([a-z_][a-z0-9_]*)'/g)) {
+      // Paren-balanced to the end of the call, for the same reason the webhook
+      // census brace-matches its scopes: a `gauge(` whose `collect` runs for
+      // twenty lines would otherwise be read to the wrong closing bracket.
+      const open = src.indexOf('(', m.index!);
+      let depth = 0;
+      let end = src.length;
+      for (let i = open; i < src.length; i++) {
+        if (src[i] === '(') depth++;
+        else if (src[i] === ')' && --depth === 0) {
+          end = i;
+          break;
+        }
+      }
+      const arrays = [...src.slice(open, end).matchAll(/\[\s*(?:'[^']*'\s*,\s*)*'[^']*'\s*,?\s*\]/g)];
+      const last = arrays.at(-1);
+      labels.set(m[1]!, last ? [...last[0].matchAll(/'([^']*)'/g)].map((q) => q[1]!) : []);
+    }
+  }
+  return labels;
+}
+
+/** One rule: its expression, and the whole block including its annotations. */
+interface Rule {
+  name: string;
+  expr: string;
+  block: string;
+}
+
+function parsedRules(): Rule[] {
+  const blocks: Rule[] = [];
+  const starts = [...RULES.matchAll(/- alert: (\w+)/g)];
+  for (const [i, start] of starts.entries()) {
+    const block = RULES.slice(start.index!, starts[i + 1]?.index ?? RULES.length);
+    const expr = /expr:\s*(\|[\s\S]*?\n(?=\s{8}\w)|.*)/.exec(block)?.[1] ?? '';
+    blocks.push({ name: start[1]!, expr, block });
+  }
+  return blocks;
+}
+
+/**
+ * Labels the *scraper* attaches rather than the source, plus PromQL's own.
+ *
+ * `job` and `instance` come from the scrape config's `job_name` and target
+ * address and are on every series Prometheus collects; `le` is the bucket
+ * boundary a histogram query groups by. Nothing in `src/` registers any of
+ * them, and a rule that groups by one is correct.
+ */
+const SCRAPER_LABELS = new Set(['job', 'instance', 'le']);
+
 describe('alert rules', () => {
   it('names only metrics this repository registers', () => {
     const registered = registeredMetrics();
@@ -141,6 +203,77 @@ describe('alert rules', () => {
     expect(RULES).toContain('n409_build_info{source="unknown"}');
     expect(UNKNOWN_BUILD.source).toBe('unknown');
     expect(readBuildInfo({ BUILD_SHA: 'a'.repeat(40) }, { defaultFile: undefined }).source).toBe('env');
+  });
+
+  it('groups and annotates by labels the metrics in that rule actually carry', () => {
+    /*
+     * R329. Two censuses already stand here: a rule may not name a metric
+     * nothing exports, and may not select a label *value* nothing sets. The
+     * third direction was open, and it is the one that fails hardest — a label
+     * *name* that no metric in the expression carries.
+     *
+     * Five rules grouped and annotated by `service`, which lives on
+     * `upstream_*` (where it names the dependency being called) and on
+     * `n409_build_info`, and on none of the process or HTTP instruments. Both
+     * halves of that are silent:
+     *
+     *   * `sum by (service) (rate(http_request_errors_total[5m]))` drops `job`
+     *     and `instance` and groups by a label that is not there, which is one
+     *     series containing all three units. `HighServerErrorRate` therefore
+     *     fired on the estate-wide ratio, and the report unit — low volume by
+     *     design — could fail every single request while the web service's
+     *     healthy traffic held the quotient under five per cent.
+     *   * `{{ $labels.service }}` on a series without one renders empty, so the
+     *     page that did fire said "  is failing more than 5% of requests".
+     *
+     * Neither is visible from the rule: it parses, it evaluates, it produces a
+     * number. Same family as a query that matches nothing, one level down.
+     */
+    const labels = registeredLabels();
+    const rules = parsedRules();
+    expect(rules.length).toBeGreaterThan(15);
+
+    const offenders: string[] = [];
+    for (const rule of rules) {
+      const metrics = [...rule.expr.replace(/"[^"]*"/g, '""').matchAll(/[a-z_][a-z0-9_]*/g)]
+        .map((m) => baseMetric(m[0]))
+        .filter((name) => labels.has(name));
+      // A rule with no instrument of ours in it (`up`) can only be talking
+      // about the scraper's labels, which is the allow-list below.
+      const available = new Set([...SCRAPER_LABELS, ...metrics.flatMap((m) => labels.get(m)!)]);
+
+      const referenced = new Set<string>();
+      // Grouped by…
+      for (const by of rule.expr.matchAll(/\b(?:by|without)\s*\(([^)]*)\)/g)) {
+        for (const name of by[1]!.split(',')) if (name.trim()) referenced.add(name.trim());
+      }
+      // …selected on…
+      for (const sel of rule.expr.matchAll(/([a-z_][a-z0-9_]*)\s*(?:=~|!~|!=|=)\s*"/g)) {
+        referenced.add(sel[1]!);
+      }
+      // …and named in the summary or the runbook, which is the half an operator
+      // reads at three in the morning.
+      for (const tpl of rule.block.matchAll(/\$labels\.([a-z_][a-z0-9_]*)/g)) referenced.add(tpl[1]!);
+
+      for (const name of referenced) {
+        if (!available.has(name)) offenders.push(`${rule.name}: ${name}`);
+      }
+    }
+    expect(offenders, 'rules referring to labels their own metrics do not carry').toEqual([]);
+  });
+
+  it('reads the label arrays off the registrations rather than a list', () => {
+    // Non-vacuity for the census above: if the extraction returned nothing, or
+    // returned the bucket array instead of the label array, every rule would
+    // pass by having no labels to contradict.
+    const labels = registeredLabels();
+    expect(labels.get('http_requests_total')).toEqual(['method', 'route', 'status']);
+    expect(labels.get('upstream_requests_total')).toEqual(['service', 'outcome']);
+    // A histogram, whose buckets follow its labels.
+    expect(labels.get('http_request_duration_seconds')).toEqual(['method', 'route']);
+    // And the shape the five broken rules were written against: no labels at
+    // all, so `by (service)` on it was one series holding the whole estate.
+    expect(labels.get('process_uptime_seconds')).toEqual([]);
   });
 
   it('pages only on the severities it declares', () => {

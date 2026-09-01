@@ -20,11 +20,30 @@
 # Ports 3001–3004 are firewalled from the internet and only :3000 is proxied by
 # Caddy, so a scraper must run on the host. Targets:
 #
-#   web         127.0.0.1:3000
-#   valuation   127.0.0.1:3001
-#   report      127.0.0.1:3004
+#   web         127.0.0.1:3000     job_name: n409-web
+#   valuation   127.0.0.1:3001     job_name: n409-valuation
+#   report      127.0.0.1:3004     job_name: n409-report
 #
-# with `authorization: {credentials: $INTERNAL_SERVICE_TOKEN}`. The AI (:3002)
+# with `authorization: {credentials: $INTERNAL_SERVICE_TOKEN}`.
+#
+# ── Which label names a process, and which names a dependency ───────────────
+#
+# `job` — attached by the scraper to every series it collects, from the
+# `job_name` above. This is the only label that says *which unit emitted this*,
+# and it is therefore the one every rule about a process — its uptime, its
+# memory, its request rate, its latency — must group by and name in its summary.
+#
+# `service` — ours, and it does not mean that. It appears on `upstream_*`, where
+# it names the dependency being *called* (`engine`, `ai-service`, `report`), and
+# on `n409_build_info`, where it is a fact carried in the info metric's labels.
+# Five rules used to group and annotate by `service` on metrics that carry no
+# such label: `sum by (service)` over `http_requests_total` put all three units
+# in one series, so the estate-wide error ratio was what the page fired on and a
+# low-traffic unit failing every request was diluted below the threshold by the
+# healthy volume beside it — and the summaries that did fire named nobody, since
+# `{{ $labels.service }}` on a series without one renders empty.
+# `alertRulesCensus.test.ts` now holds every label a rule groups by, selects on
+# or interpolates to one the metrics in that rule actually carry. The AI (:3002)
 # and engine (:3003) services expose no scrape endpoint; they are measured from
 # the caller instead — see the `upstream_*` rules below, and the note on
 # `registerUpstreamMetrics` for why the caller's view is the one that decides
@@ -63,7 +82,7 @@ groups:
         for: 10m
         labels: { severity: page }
         annotations:
-          summary: '{{ $labels.service }} has restarted repeatedly in the last ten minutes'
+          summary: '{{ $labels.job }} has restarted repeatedly in the last ten minutes'
           runbook: 'journalctl -u n409-<unit> -n 200 — look for uncaughtException/unhandledRejection'
 
       # A partial deploy. `deploy.sh` rsyncs, builds and restarts five units, and
@@ -119,7 +138,7 @@ groups:
         for: 10m
         labels: { severity: ticket }
         annotations:
-          summary: '{{ $labels.service }} is within 10% of its MemoryMax'
+          summary: '{{ $labels.job }} is within 10% of its MemoryMax'
 
   - name: n409-http
     rules:
@@ -128,12 +147,12 @@ groups:
       # minutes is well clear of one bad client and well short of an outage.
       - alert: HighServerErrorRate
         expr: |
-          sum by (service) (rate(http_request_errors_total[5m]))
-            / sum by (service) (rate(http_requests_total[5m])) > 0.05
+          sum by (job) (rate(http_request_errors_total[5m]))
+            / sum by (job) (rate(http_requests_total[5m])) > 0.05
         for: 5m
         labels: { severity: page }
         annotations:
-          summary: '{{ $labels.service }} is failing more than 5% of requests'
+          summary: '{{ $labels.job }} is failing more than 5% of requests'
 
       # The other shape of a service in trouble: not failing, just not
       # finishing. Requests pile up in flight when the event loop is blocked or
@@ -143,15 +162,15 @@ groups:
         for: 5m
         labels: { severity: page }
         annotations:
-          summary: '{{ $labels.service }} is holding over 100 requests at once'
+          summary: '{{ $labels.job }} is holding over 100 requests at once'
 
       - alert: SlowRequests
         expr: |
-          histogram_quantile(0.95, sum by (service, le) (rate(http_request_duration_seconds_bucket[10m]))) > 2
+          histogram_quantile(0.95, sum by (job, le) (rate(http_request_duration_seconds_bucket[10m]))) > 2
         for: 15m
         labels: { severity: ticket }
         annotations:
-          summary: '{{ $labels.service }} p95 request latency is over two seconds'
+          summary: '{{ $labels.job }} p95 request latency is over two seconds'
 
   - name: n409-dependencies
     rules:
