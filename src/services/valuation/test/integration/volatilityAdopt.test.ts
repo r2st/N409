@@ -291,6 +291,35 @@ describe.skipIf(!dbUp)('volatility — adopting an estimate, and thin price hist
       expect(Number(rows[0]!.engine_inputs.volatility)).toBeCloseTo(adopted, 10);
     });
 
+    /**
+     * The panel's one question is whether the derivation and the calculation
+     * agree, and until R302 it asked the `overwrites` table — which only the
+     * adopt route ever wrote. A sigma typed on the financial-model form, the
+     * ordinary way it is set, showed as "nothing applied": the panel offered to
+     * adopt a recommendation without saying what it would be replacing, and a
+     * reviewer could not tell a figure the calculation was ignoring from one it
+     * already agreed with.
+     */
+    it('reports a sigma typed on the engine-inputs form as the applied figure', async () => {
+      const patch = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${valuationId}/engine-inputs`,
+        headers: authHeader(ops.token),
+        payload: { volatility: 0.71 },
+      });
+      expect(patch.statusCode, patch.body).toBe(200);
+
+      expect((await view()).json().applied_volatility).toBeCloseTo(0.71, 10);
+
+      // And a derivation adopted over it is a change, so the route says a
+      // recalculation is due rather than comparing against a trail the typed
+      // figure never touched.
+      const estimateId = await freshEstimate();
+      const res = await apply(estimateId);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().recalculation_required).toBe(true);
+    });
+
     it('leaves the rest of the engine inputs alone', async () => {
       // `||` merges at the top level, so adopting sigma must not take a
       // neighbouring block with it. The financial model is entered once and

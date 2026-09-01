@@ -7,9 +7,9 @@ import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
-import { applyEngineInputs, findParams } from '../repos/params.js';
+import { applyEngineInputs, findParams, type ValuationParamsRow } from '../repos/params.js';
 import { listComparableItems } from '../repos/comparableItems.js';
-import { listOverwrites, upsertOverwrite } from '../repos/overwrites.js';
+import { upsertOverwrite } from '../repos/overwrites.js';
 import { OVERWRITE_FIELDS_BY_KEY } from '../domain/overwrites.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import {
@@ -130,20 +130,40 @@ function present(row: VolatilityEstimateRow) {
   };
 }
 
-/** One numeric `valuation_params` override, as the calculation would read it. */
-function overrideNumber(
-  overwrites: Array<{ field_key: string; value: unknown }>,
-  key: string,
-): number | null {
-  const row = overwrites.find((o) => o.field_key === key);
-  if (!row) return null;
-  const n = typeof row.value === 'number' ? row.value : Number(row.value);
+/**
+ * One numeric engine input, as the calculation would read it.
+ *
+ * `valuation_params.engine_inputs` rather than the `overwrites` table, because
+ * that is where the figure is read from: `buildEngineInputs`
+ * (routes/calculations.ts) assembles a run from the stored extraction, this
+ * document, the screened peer set and the caller's body, and no path merges an
+ * override into it. The override registry is the audit trail beside the figure
+ * — the before/after pair and the reason naming the run — not the figure.
+ *
+ * Both of this file's questions were asked of the trail. Sigma is the one this
+ * panel exists for, and it read back only what the adopt route had written, so
+ * an engagement whose volatility was typed on the financial-model form — the
+ * ordinary way it is set — showed "no applied figure" beside a derivation the
+ * calculation was in fact already ignoring or already agreeing with, and the
+ * reviewer could not tell which. The horizon carried onto an estimate row is
+ * the same mistake with a quieter symptom: `time_to_exit_years` is an engine
+ * input like any other, so Exhibit F-1 printed a measurement window with no
+ * expected term beside it on every engagement that had one, and the disclosure
+ * the horizon exists to make — whether a one-year measurement is supporting a
+ * five-year option — silently was not made.
+ */
+function engineInputNumber(paramsRow: ValuationParamsRow | null | undefined, key: string): number | null {
+  const inputs = paramsRow?.engine_inputs;
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) return null;
+  const raw = (inputs as Record<string, unknown>)[key];
+  if (raw === null || raw === undefined || raw === '') return null;
+  const n = typeof raw === 'number' ? raw : Number(raw);
   return Number.isFinite(n) ? n : null;
 }
 
 /** The engagement's sigma as the calculation would read it today. */
-function appliedVolatility(overwrites: Array<{ field_key: string; value: unknown }>): number | null {
-  return overrideNumber(overwrites, 'volatility');
+function appliedVolatility(paramsRow: ValuationParamsRow | null | undefined): number | null {
+  return engineInputNumber(paramsRow, 'volatility');
 }
 
 export function registerVolatilityRoutes(
@@ -195,15 +215,15 @@ export function registerVolatilityRoutes(
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(id, principal);
 
-    const [estimates, overwrites, peerPage] = await Promise.all([
+    const [estimates, paramsRow, peerPage] = await Promise.all([
       listVolatilityEstimates(deps.pool, valuation.id),
-      listOverwrites(deps.pool, valuation.id),
+      findParams(deps.pool, valuation.id),
       listComparableItems(deps.pool, valuation.id),
     ]);
 
     return {
       estimates: estimates.map(present),
-      applied_volatility: appliedVolatility(overwrites),
+      applied_volatility: appliedVolatility(paramsRow),
       // What an estimate would be struck on if one were run now. A set with no
       // tickers in it is the reason the button cannot work, and saying so here
       // is cheaper than a 422 after the press.
@@ -246,10 +266,7 @@ export function registerVolatilityRoutes(
         );
       }
 
-      const [paramsRow, currentOverwrites] = await Promise.all([
-        findParams(deps.pool, valuation.id),
-        listOverwrites(deps.pool, valuation.id),
-      ]);
+      const paramsRow = await findParams(deps.pool, valuation.id);
       const rawDate = (paramsRow?.engine_inputs as { valuation_date?: unknown } | null | undefined)
         ?.valuation_date;
       const valuationDate = typeof rawDate === 'string' && rawDate ? rawDate : null;
@@ -258,7 +275,7 @@ export function registerVolatilityRoutes(
       // anything — it is disclosure, and the point of the disclosure is to let a
       // reviewer see whether a one-year measurement is supporting a five-year
       // option.
-      const timeToExit = overrideNumber(currentOverwrites, 'time_to_exit_years');
+      const timeToExit = engineInputNumber(paramsRow, 'time_to_exit_years');
 
       let window: { start: string; end: string };
       try {
@@ -396,10 +413,13 @@ export function registerVolatilityRoutes(
         window: { start: window.start, end: window.end },
       });
 
-      const overwrites = await listOverwrites(deps.pool, valuation.id);
       return reply.status(201).send({
         estimate: present(row),
-        applied_volatility: appliedVolatility(overwrites),
+        // Re-read rather than reusing `paramsRow` above: the estimate run
+        // leaves the process for a rate-limited third-party feed one ticker at
+        // a time, and the figure this answers with is the one the calculation
+        // would read *now*.
+        applied_volatility: appliedVolatility(await findParams(deps.pool, valuation.id)),
       });
     },
   );
@@ -433,7 +453,7 @@ export function registerVolatilityRoutes(
       // logs as a stack — a route that quietly wrote nothing would be worse.
       if (!def) throw new Error('The volatility override field is not defined');
 
-      const before = appliedVolatility(await listOverwrites(deps.pool, valuation.id));
+      const before = appliedVolatility(await findParams(deps.pool, valuation.id));
       await upsertOverwrite(deps.pool, {
         valuationId: valuation.id,
         def,

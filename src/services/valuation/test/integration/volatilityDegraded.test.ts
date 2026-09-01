@@ -1,5 +1,4 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { newUlid } from '@n409/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
@@ -234,11 +233,17 @@ describe.skipIf(!dbUp)('volatility when something upstream is broken', () => {
     });
 
     it('carries the exit horizon to the estimator and onto the stored run', async () => {
+      // Through the engine-inputs document, which is where the horizon lives
+      // and where the calculation reads it. It was read off the `overwrites`
+      // table until R302, so a horizon set the ordinary way — this PATCH, the
+      // financial-model form's own field — reached neither the estimator nor
+      // the stored run, and Exhibit F-1 printed a measurement window with no
+      // expected term beside it.
       const put = await app.inject({
-        method: 'PUT',
-        url: `/api/v1/valuations/${valuationId}/overwrites/time_to_exit_years`,
+        method: 'PATCH',
+        url: `/api/v1/valuations/${valuationId}/engine-inputs`,
         headers: authHeader(ops.token),
-        payload: { value: 4.5, reason: 'Board plan' },
+        payload: { time_to_exit_years: 4.5 },
       });
       expect(put.statusCode, put.body).toBe(200);
 
@@ -340,25 +345,35 @@ describe.skipIf(!dbUp)('volatility when something upstream is broken', () => {
   });
 
   describe('a stored sigma that is not a number', () => {
-    const writeOverride = (value: string) =>
+    /**
+     * Straight into `engine_inputs`, past the route that would have coerced it.
+     *
+     * The panel answers with the figure the *calculation* reads, which since
+     * R302 is this document rather than the `overwrites` row beside it.
+     * `engine_inputs` is jsonb and `PATCH /engine-inputs` is not the only
+     * writer of it — the extraction auto-apply and the roll-forward and
+     * projection adoptions all merge into the same column — so a value stored
+     * as text is a shape the reader has to survive rather than one the schema
+     * rules out.
+     */
+    const writeAppliedSigma = (value: string) =>
       ctx.pool.query(
-        `INSERT INTO overwrites (id, valuation_id, category, field_key, class, value)
-         VALUES ($1, $2, 'valuation_params', 'volatility', 'numeric', $3::jsonb)
-         ON CONFLICT (valuation_id, field_key) DO UPDATE SET value = EXCLUDED.value`,
-        [newUlid(), valuationId, JSON.stringify(value)],
+        `UPDATE valuation_params
+            SET engine_inputs = engine_inputs || jsonb_build_object('volatility', $2::jsonb)
+          WHERE valuation_id = $1`,
+        [valuationId, JSON.stringify(value)],
       );
 
     it('reads a figure stored as text as the number it says', async () => {
-      // `value` is jsonb and the column does not care which JSON type went in.
-      // A row written by an import — or by hand — can hold "0.62", and the
+      // A document written by an import — or by hand — can hold "0.62", and the
       // panel comparing it against the recommendation must not read that as
       // "nothing applied" and offer to adopt a figure already in force.
-      await writeOverride('0.62');
+      await writeAppliedSigma('0.62');
       expect((await view()).json().applied_volatility).toBeCloseTo(0.62, 6);
     });
 
     it('reports nothing applied rather than NaN for a figure that is not one', async () => {
-      await writeOverride('about sixty percent');
+      await writeAppliedSigma('about sixty percent');
       // NaN would serialise to null anyway — but by way of every comparison in
       // the panel answering false first, including the one that decides whether
       // a recalculation is due.
