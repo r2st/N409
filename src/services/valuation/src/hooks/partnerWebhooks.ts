@@ -350,6 +350,17 @@ export async function retryDueDeliveries(deps: WebhookDeps & { limit?: number; l
    * receiver, and a non-zero value here means two sweepers are overlapping.
    */
   superseded: number;
+  /**
+   * Attempts whose settle was refused by the database — a POST that reached the
+   * receiver and was recorded nowhere.
+   *
+   * Its own count rather than folded into `failed`, for the reason `superseded`
+   * has one: `failed` is a statement about a receiver, and this is a statement
+   * about us. A row counted here keeps its claim until the lease lapses and is
+   * then delivered again, so every one of these is a duplicate the partner will
+   * see and nothing else records.
+   */
+  unsettled: number;
 }> {
   // See the note in hooks/emailRetry.ts: claiming nothing is what makes
   // FLAG_RETRY_LADDERS a pause rather than a loss. A pending delivery keeps its
@@ -360,7 +371,7 @@ export async function retryDueDeliveries(deps: WebhookDeps & { limit?: number; l
   // the ladders are paused, "still pending" is the honest reading of every
   // unsettled row rather than a claim about this one in particular.
   if (!flagEnabled(FLAGS.retryLadders)) {
-    return { attempted: 0, delivered: 0, retrying: 0, failed: 0, reaped: 0, superseded: 0 };
+    return { attempted: 0, delivered: 0, retrying: 0, failed: 0, reaped: 0, superseded: 0, unsettled: 0 };
   }
 
   const abandoned = await failExhaustedDeliveries(deps.pool, { leaseMs: deps.leaseMs, limit: deps.limit });
@@ -380,6 +391,7 @@ export async function retryDueDeliveries(deps: WebhookDeps & { limit?: number; l
   let retrying = 0;
   let failed = 0;
   let superseded = 0;
+  let unsettled = 0;
   for (const row of claimed) {
     const result = await postDelivery(
       { url: row.url, secret: row.secret },
@@ -389,7 +401,47 @@ export async function retryDueDeliveries(deps: WebhookDeps & { limit?: number; l
       deps.allowPrivateTargets,
       deps.lookupFn,
     );
-    const outcome = await settle(deps, row, result);
+    /*
+     * The settle is contained, the way `dispatchToWebhook` contains the fan-out
+     * and `hooks/emailRetry.ts` contains its own.
+     *
+     * `postDelivery` never throws, so this loop's only raise is a database
+     * failure inside `settle` — and it was the one of the three delivery loops
+     * that let it out. The claim above takes up to a hundred rows in one
+     * statement, stamping a lease and spending an attempt on every one of them,
+     * so a single refused UPDATE ended the tick with the whole tail still
+     * claimed: an attempt poorer for a POST nobody made, invisible until the
+     * lease lapses, and — because the throw escapes `scheduleSweep` — with the
+     * tally for everything this pass *had* delivered never counted either.
+     *
+     * The row this happened on is the expensive one. Its POST already reached
+     * the partner's receiver; only the record of it is missing, so the re-claim
+     * after the lease is a second delivery of an event they have already
+     * processed. `logUnretried` because nothing recovers *this* attempt — the
+     * next sweep makes a new one — and because a database refusing writes
+     * halfway through a batch is a person's problem, not the next tick's.
+     */
+    let outcome: AttemptOutcome;
+    try {
+      outcome = await settle(deps, row, result);
+    } catch (err) {
+      unsettled += 1;
+      if (deps.log) {
+        logUnretried(
+          deps.log,
+          err,
+          {
+            deliveryId: row.id,
+            webhookId: row.webhook_id,
+            event: row.event_type,
+            attempts: row.attempts,
+            posted: result.ok,
+          },
+          'partner webhook delivery could not be settled; the row keeps its claim and will be delivered again',
+        );
+      }
+      continue;
+    }
     if (outcome === 'delivered') delivered += 1;
     else if (outcome === 'retrying') retrying += 1;
     else if (outcome === 'superseded') {
@@ -410,7 +462,15 @@ export async function retryDueDeliveries(deps: WebhookDeps & { limit?: number; l
       );
     }
   }
-  return { attempted: claimed.length, delivered, retrying, failed, reaped: abandoned.length, superseded };
+  return {
+    attempted: claimed.length,
+    delivered,
+    retrying,
+    failed,
+    reaped: abandoned.length,
+    superseded,
+    unsettled,
+  };
 }
 
 /**

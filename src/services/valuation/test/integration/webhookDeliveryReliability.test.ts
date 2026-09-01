@@ -2,7 +2,15 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 import { WEBHOOK_MAX_ATTEMPTS, WEBHOOK_RETRY_BACKOFF_MINUTES } from '../../src/domain/partnerWebhooks.js';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  interceptPoolQueries,
+  isDbAvailable,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -333,5 +341,74 @@ describe.skipIf(!dbUp)('webhook delivery reliability', () => {
     // finds nothing to settle and does not re-report it.
     const again = await retryDueDeliveries({ pool: ctx.pool, leaseMs: 60_000 });
     expect(again.reaped).toBe(0);
+  });
+
+  /**
+   * A settle the database refuses, in the middle of a claimed batch.
+   *
+   * `postDelivery` never throws, so this sweep's only raise is a database
+   * failure inside `settle` — and this loop was the one of the three delivery
+   * loops that let it out. `dispatchToWebhook` contains the fan-out per hook and
+   * says why in as many words; `hooks/emailRetry.ts` contains its own settle for
+   * the same reason. Here the claim takes up to a hundred rows in one statement,
+   * stamping a lease and spending an attempt on every one of them, so a single
+   * refused UPDATE ended the tick with the whole tail still claimed: an attempt
+   * poorer for a POST nobody made, and invisible until the lease lapses.
+   *
+   * Staged on the pool rather than with a trigger, because the point is a blip
+   * on one statement with a healthy database either side of it — a statement
+   * timeout, a dropped backend, a failover that costs one connection.
+   */
+  it('finishes the rest of a claimed batch when one settle is refused', async () => {
+    const { retryDueDeliveries } = await import('../../src/hooks/partnerWebhooks.js');
+    // The partner is one webhook off its ten-hook ceiling by now, and this case
+    // wants a table holding only its own two deliveries. Deliveries cascade.
+    await ctx.pool.query('DELETE FROM partner_webhooks');
+    const webhookId = await registerWebhook();
+    receiverStatus = 500;
+    await ping(webhookId);
+    await ping(webhookId);
+    receiverStatus = 200;
+    // Both attempts are pending with a backoff; bring them forward so one sweep
+    // claims the pair.
+    await ctx.pool.query(
+      `UPDATE partner_webhook_deliveries SET next_attempt_at = now() - interval '1 minute'
+        WHERE webhook_id = $1 AND status = 'pending'`,
+      [webhookId],
+    );
+
+    // Only the settle, not the reap or the claim above it — all three are an
+    // UPDATE on the same table.
+    let left = 1;
+    const restore = interceptPoolQueries(ctx.pool, (sql, phase) => {
+      if (phase === 'before' && sql.includes("SET status = 'delivered'") && left > 0) {
+        left -= 1;
+        throw new Error('connection terminated unexpectedly');
+      }
+      return undefined;
+    });
+    let result;
+    try {
+      result = await retryDueDeliveries({ pool: ctx.pool, leaseMs: 600_000 });
+    } finally {
+      restore();
+    }
+
+    expect(result.attempted).toBe(2);
+    // One settle refused, and the pass says so rather than throwing: `failed`
+    // is a statement about a receiver and this is a statement about us.
+    expect(result.unsettled).toBe(1);
+    // The other row is nothing to do with it and must still have been settled.
+    expect(result.delivered).toBe(1);
+
+    const { rows } = await ctx.pool.query<{ status: string; claimed_at: Date | null }>(
+      `SELECT status, claimed_at FROM partner_webhook_deliveries
+        WHERE webhook_id = $1 ORDER BY status`,
+      [webhookId],
+    );
+    expect(rows.map((r) => r.status).sort()).toEqual(['delivered', 'pending']);
+    // The unsettled row keeps its claim: nothing else has to notice, and it is
+    // delivered again once the lease lapses.
+    expect(rows.find((r) => r.status === 'pending')!.claimed_at).not.toBeNull();
   });
 });

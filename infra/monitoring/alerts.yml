@@ -289,6 +289,20 @@ groups:
         annotations:
           summary: 'the {{ $labels.sweep }} sweep has given up on rows nothing else will take'
 
+      # An outcome the database refused to record, for a POST that had already
+      # reached the receiver. `unsettled` is deliberately not `failed`: the
+      # partner *got* the event, only the row does not say so, so the claim
+      # lapsing sends it a second time. One is a blip on one statement; a rate
+      # that does not fall is a partner processing duplicates of every event.
+      - alert: WebhookOutcomesUnrecorded
+        expr: |
+          rate(background_sweep_items_total{sweep="webhook-retry",outcome="unsettled"}[30m]) > 0
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'partner webhook outcomes are going unrecorded — receivers are being sent duplicates'
+          runbook: "journalctl -u n409-valuation | grep 'could not be settled'"
+
       # The alerting subsystem failing to report. `announceJobAlerts` retries
       # an announcement until it lands, so one failure is a database blip and
       # not news — but a count that keeps rising is an operator who has not been
