@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -74,6 +74,68 @@ describe('the migration advisory lock', () => {
     await migrate(pool, { dir: await emptyMigrationDir(), log: (m) => lines.push(m) });
 
     expect(lines.some((l) => l.includes('could not release the migration lock'))).toBe(true);
+  });
+
+  it('reports the refusal on its own channel, not among the steps that went right', async () => {
+    /*
+     * R337, methodology M11. R332 gave this failure a voice and put it out
+     * through `log` — the channel that also carries "applied 0161_foo.sql",
+     * "waiting for the migration lock" and "acquired the migration lock after
+     * 40ms". Every one of those is a step that went *right*, and the caller has
+     * to choose one level and one message for the whole channel: `index.ts`
+     * chose `info`, titled 'migration applied'. So the one line here that means
+     * a later deploy will not come up was announced as a migration having been
+     * applied, at the level used for routine progress, with no `alert` flag on
+     * it — and the only way a caller could have told them apart was by reading
+     * the prose.
+     */
+    const { pool } = fakePool({ unlockFails: true });
+    const progress: string[] = [];
+    const issues: Array<{ msg: string; err: unknown }> = [];
+
+    await migrate(pool, {
+      dir: await emptyMigrationDir(),
+      log: (m) => progress.push(m),
+      onIssue: (msg, err) => issues.push({ msg, err }),
+    });
+
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.msg).toContain('could not release the migration lock');
+    // The error itself, not its `String()`. The caller classifies it — see
+    // `logUnretried`, which puts `failure_reason` on the line — and it cannot
+    // do that from prose.
+    expect(issues[0]!.err).toBeInstanceOf(Error);
+    expect(progress.some((l) => l.includes('migration lock'))).toBe(false);
+  });
+
+  it('still reaches a caller that only supplies the progress channel', async () => {
+    // The fallback is deliberate: of the two ways to be wrong about a caller
+    // that has not been updated, saying it on the wrong channel beats not
+    // saying it. The case above is what holds the right channel in place.
+    const { pool } = fakePool({ unlockFails: true });
+    const lines: string[] = [];
+    await migrate(pool, { dir: await emptyMigrationDir(), log: (m) => lines.push(m) });
+    expect(lines.some((l) => l.includes('could not release the migration lock'))).toBe(true);
+  });
+
+  it('is wired to the alert contract by its one production caller', async () => {
+    /*
+     * The channel exists so that a level and a flag can be chosen for it, and
+     * the choosing happens in `index.ts`. Read from source because there is no
+     * way to reach that line without booting the service — and without this,
+     * the whole of the fix above can be undone by a caller passing the same
+     * `app.log.info` to both.
+     */
+    const src = await readFile(new URL('../../src/index.ts', import.meta.url), 'utf8');
+    const call = src.slice(src.indexOf('await migrate(pool, {'), src.indexOf('markReady()'));
+    expect(call).toContain('onIssue:');
+    // `logUnretried` is the estate's shape for a failure nothing revisits: it
+    // logs `error` with `alert: true` and classifies the cause. The cost here
+    // lands on the *next* deploy, so no retry is coming for it.
+    expect(call).toContain('logUnretried(');
+    expect(call, "the runner's progress lines must not claim a migration was applied").not.toContain(
+      "'migration applied'",
+    );
   });
 
   it('does not turn a completed migration into a failure', async () => {

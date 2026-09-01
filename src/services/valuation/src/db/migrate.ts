@@ -346,7 +346,33 @@ export async function migrate(
   pool: pg.Pool,
   opts: {
     dir?: string;
+    /**
+     * Progress. One line per step the runner takes, and every one of them is a
+     * thing that went right: a lock waited for, a lock acquired, a file
+     * applied.
+     *
+     * Separated from {@link MigrateOptions.onIssue} below because the caller
+     * has to pick a level and a message, and it cannot do that from a string
+     * without reading the prose (R337, methodology M11). `index.ts` rendered
+     * every line this channel carries as `info` under the fixed message
+     * 'migration applied' — so "waiting for the migration lock, held by pid
+     * 8134" and "could not release the migration lock" were both announced, at
+     * `info`, as a migration having been applied.
+     */
     log?: (msg: string) => void;
+    /**
+     * A failure the run survived and nothing will come back for.
+     *
+     * There is exactly one today and it is the reason this channel exists: a
+     * refused `pg_advisory_unlock`. The migration itself succeeded, so the
+     * caller must not be told the run failed — and the consequence is a *later*
+     * deploy that cannot come up, which makes it precisely the shape
+     * `logUnretried` is for. It reached the same `info` line as the successes.
+     *
+     * Defaults to the progress channel so a caller that has not been updated
+     * still hears about it, which is the safer of the two ways to be wrong.
+     */
+    onIssue?: (msg: string, err: unknown) => void;
     /** Cap on the wait for the advisory lock. See
      *  {@link DEFAULT_MIGRATION_LOCK_TIMEOUT_MS} for why there is one at all. */
     lockTimeoutMs?: number;
@@ -362,6 +388,7 @@ export async function migrate(
 ): Promise<string[]> {
   const dir = opts.dir ?? DEFAULT_DIR;
   const log = opts.log ?? (() => {});
+  const onIssue = opts.onIssue ?? ((msg: string) => log(msg));
   const env = resolveMigrationTimeouts();
   const timeouts: MigrationTimeouts = {
     ddlLockTimeoutMs: opts.ddlLockTimeoutMs ?? env.ddlLockTimeoutMs,
@@ -476,9 +503,14 @@ export async function migrate(
       await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]);
     } catch (err) {
       unreleasedLock = err;
-      log(
-        `could not release the migration lock (${String(err)}); ` +
-          'dropping the connection so the lock cannot outlive it',
+      // `onIssue`, not `log` (R337, methodology M11). Every other line this
+      // runner writes is a step that went right, and the caller renders the
+      // channel as one level with one message — so R332 gave this failure a
+      // voice and put it out as `info`, titled 'migration applied'. It is
+      // neither: the deploy it costs is the *next* one, and no retry is coming.
+      onIssue(
+        'could not release the migration lock; dropped the connection so the lock cannot outlive it',
+        err,
       );
     }
     client.release(unreleasedLock ? (unreleasedLock as Error) : undefined);

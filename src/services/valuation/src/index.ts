@@ -6,6 +6,7 @@ import {
   installCrashHandlers,
   installShutdownHandlers,
   listenHost,
+  logUnretried,
   quiesceAndLog,
   sweepTally,
   trackedSweep,
@@ -238,7 +239,21 @@ if (dependencies.degraded.length > 0) {
   );
 }
 
-await migrate(pool, { log: (msg) => app.log.info({ migration: msg }, 'migration applied') });
+await migrate(pool, {
+  // Progress, and only progress. Every line this channel carries used to go out
+  // under the fixed message "migration applied", which made "waiting for the
+  // migration lock" and "could not release the migration lock" both announce a
+  // migration that had been applied (R337, methodology M11). The step is in
+  // `migration`; the title says what kind of line this is and no more.
+  log: (msg) => app.log.info({ migration: msg }, 'migration runner'),
+  // `logUnretried` rather than a level chosen here: the run survived, nothing
+  // revisits this, and the cost lands on a *later* deploy — a lock left on a
+  // pooled connection of a healthy service, which every subsequent boot then
+  // waits out and dies against. That is the definition this estate uses for the
+  // `alert: true` flag, and picking `warn` because the cause was a busy pool
+  // would promise a retry that does not exist.
+  onIssue: (msg, err) => logUnretried(app.log, err, { migration: 'lock_release' }, msg),
+});
 // `/ready` has been answering 503 since the server object existed; this is what
 // lets it go green. Everything above — the dependency probes and the migrations
 // — happens while readiness is still red, so the load balancer cannot route a
