@@ -27,7 +27,7 @@ import {
   markRollforwardRunApplied,
   type RollforwardRunRow,
 } from '../repos/rollforwardRuns.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
 /**
@@ -366,6 +366,9 @@ export function registerRollforwardRoutes(
       throw err;
     }
 
+    // The engagement as it stands now — see the guard on the compute in
+    // `calculations.ts`. The stored run is what Exhibit B-2 is drawn from.
+    await refuseIfRetiredNow(deps.pool, valuation.id, 'accepting roll-forward runs');
     const row = await insertRollforwardRun(deps.pool, {
       valuationId: valuation.id,
       priorValuationId: prior.id,

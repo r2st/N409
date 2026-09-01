@@ -21,7 +21,7 @@ import { deepMerge, parseComputeResponse } from './calculations.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { kindLabel } from '../domain/valuationSelector.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
@@ -279,6 +279,10 @@ export function registerScenarioRoutes(
           record: { valuationId: valuation.id, name: `engine compute (scenario ${name})` },
         }),
       );
+      // The engagement as it stands now — see the guard on the compute in
+      // `calculations.ts`. This runs the same engine endpoint on the same
+      // budget and stores the answer against the engagement.
+      await refuseIfRetiredNow(deps.pool, valuation.id, 'accepting new runs');
       const scenario = await createScenario(
         deps.pool,
         {

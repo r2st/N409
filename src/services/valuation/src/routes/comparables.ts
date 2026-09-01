@@ -616,26 +616,10 @@ export function registerComparableRoutes(
       // the write that was meant to land on them. See the `dropped` push below.
       const dropped: string[] = [];
 
-      for (const row of batch) {
-        // Asked once per row, for the reason the overdue sweep asks it once per
-        // engagement: this loop is sweep-shaped. `refuseIfRetired` above read
-        // the engagement the request came in with, and the loop then spends up
-        // to `REFRESH_BATCH` x `FEED_TIMEOUT_MS` — over three minutes — leaving
-        // the process before it stops writing. A withdrawal landing inside that
-        // window is the ordinary case, not the exotic one, and every row after
-        // it carried observed market figures onto a file the firm had closed,
-        // changing the multiples of an approach a report already rests on.
-        // Retirement is reversible since R90, so those figures come back with
-        // the engagement.
-        //
-        // Broken rather than continued: unlike a sweep, the rows behind this
-        // one belong to the same withdrawn engagement, so there is nothing to
-        // carry on to. The audit below still runs, so what this press did
-        // before the withdrawal is recorded, and the refusal is raised after it
-        // — a 409 that reports nothing would be the discarded record this
-        // codebase keeps finding.
-        if (await isRetiredNow(deps.pool, valuation.id)) break;
+      /** Set when a withdrawal landed mid-loop; the refusal is raised below. */
+      let retired = false;
 
+      for (const row of batch) {
         const ticker = row.ticker!;
         let feed: MarketFeedResponse;
         try {
@@ -677,6 +661,33 @@ export function registerComparableRoutes(
             warning: str(feed.warning) ?? 'the live source returned no usable figures',
           });
           continue;
+        }
+
+        // Asked once per row, on the far side of that row's fetch, for the
+        // reason the overdue sweep asks it once per engagement: this loop is
+        // sweep-shaped. `refuseIfRetired` above read the engagement the request
+        // came in with, and the loop then spends up to `REFRESH_BATCH` x
+        // `FEED_TIMEOUT_MS` — over three minutes — leaving the process before it
+        // stops writing. A withdrawal landing inside that window is the
+        // ordinary case, not the exotic one, and every row after it carried
+        // observed market figures onto a file the firm had closed, changing the
+        // multiples of an approach a report already rests on. Retirement is
+        // reversible since R90, so those figures come back with the engagement.
+        //
+        // After the fetch and immediately before the write, not at the top of
+        // the iteration: asked at the top it settles the eight seconds that
+        // follow it and says nothing about the write on the other side of them,
+        // which is the gap it exists to close.
+        //
+        // Broken rather than continued: unlike a sweep, the rows behind this
+        // one belong to the same withdrawn engagement, so there is nothing to
+        // carry on to. The audit below still runs, so what this press did
+        // before the withdrawal is recorded, and the refusal is raised after it
+        // — a 409 that reports nothing would be the discarded record this
+        // codebase keeps finding.
+        if (await isRetiredNow(deps.pool, valuation.id)) {
+          retired = true;
+          break;
         }
 
         const asOf = new Date();
@@ -735,7 +746,7 @@ export function registerComparableRoutes(
       // The loop's own break, raised now that the trail carries the rows that
       // did land. A no-op on every press that ran to the end, and it also
       // closes the gap between the last write and this response.
-      await refuseIfRetiredNow(deps.pool, valuation.id, 'accepting changes');
+      if (retired) await refuseIfRetiredNow(deps.pool, valuation.id, 'accepting changes');
 
       const { items: after, truncated } = await listComparableItems(deps.pool, valuation.id);
       return reply.status(200).send({

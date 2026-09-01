@@ -32,7 +32,7 @@ import {
 } from '../domain/specialty.js';
 import type { ValuationKind } from '../domain/valuation.js';
 import { kindLabel } from '../domain/valuationSelector.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
 /**
@@ -164,6 +164,11 @@ export function registerSpecialtyRoutes(
         { timeoutMs: 30_000, record: { valuationId: id, name: `engine specialty (${kind})` } },
       );
       const headline = specialtyHeadline(kind, request, result);
+      // The engagement as it stands now — see the same guard on the 409A
+      // compute in `calculations.ts`. A specialty run writes a `calculations`
+      // row exactly as that one does, and it is the row the specialty exhibits
+      // read. Only the succeeded arm, for the reason given there.
+      await refuseIfRetiredNow(deps.pool, id, 'accepting changes');
       const calculation = await createCalculation(
         deps.pool,
         {

@@ -449,8 +449,9 @@ describe.skipIf(!dbUp)('the peer set on the unhappy paths', () => {
         [retiredId],
       );
 
-      // Withdrawn after the first ticker's fetch is issued: RRA's write lands
-      // (it was in flight while the engagement was live), RRB's must not.
+      // Withdrawn while the first ticker's fetch is in flight. The guard sits
+      // on the far side of that fetch, so neither row is written: RRA's write
+      // is the one the withdrawal beat, and RRB is never fetched at all.
       state.onFeed = async (ticker) => {
         if (ticker !== 'RRA') return;
         await ctx.pool.query('UPDATE valuations SET archived_at = now() WHERE id = $1', [retiredId]);
@@ -478,19 +479,24 @@ describe.skipIf(!dbUp)('the peer set on the unhappy paths', () => {
         'SELECT ticker, ev, figures_source FROM comparable_items WHERE valuation_id = $1',
         [retiredId],
       );
-      const rrb = rows.find((r) => r.ticker === 'RRB');
-      expect(rrb?.figures_source).toBe('snapshot');
-      expect(Number(rrb?.ev)).toBe(100);
+      for (const ticker of ['RRA', 'RRB']) {
+        const row = rows.find((r) => r.ticker === ticker);
+        expect(row?.figures_source, ticker).toBe('snapshot');
+        expect(Number(row?.ev), ticker).toBe(100);
+      }
+      // Only RRA was ever asked about: the loop stopped rather than spending
+      // the second feed call on a file the firm had closed.
+      expect(state.feedCalls.filter((t) => t === 'RRB')).toEqual([]);
 
-      // What did land before the withdrawal is on the trail rather than lost
-      // with the refusal.
+      // The run is still recorded — the refusal ends the request, it does not
+      // erase what the press did — and what it records is that nothing landed.
       const { rows: events } = await ctx.pool.query<{ payload: { refreshed: string[] } }>(
         `SELECT payload FROM admin_events
           WHERE type = 'comparables_refreshed' AND subject_id = $1
           ORDER BY occurred_at DESC LIMIT 1`,
         [retiredId],
       );
-      expect(events[0]?.payload.refreshed).toEqual(['RRA']);
+      expect(events[0]?.payload.refreshed).toEqual([]);
     });
 
     it('does not report a comp deleted mid-refresh as one it refreshed', async () => {

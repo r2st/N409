@@ -17,7 +17,7 @@ import {
   type ProjectionRow,
   type ProjectionYear,
 } from '../repos/projections.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
 /**
@@ -368,6 +368,9 @@ export function registerProjectionRoutes(
 
     const rows = Array.isArray(result.projections) ? (result.projections as ProjectionYear[]) : [];
     const terminalMethod = result.terminal_method;
+    // The engagement as it stands now — see the guard on the compute in
+    // `calculations.ts`. The stored run is what the DCF approach reads.
+    await refuseIfRetiredNow(deps.pool, valuation.id, 'accepting projection runs');
     const run = await insertProjection(deps.pool, {
       valuationId: valuation.id,
       method: result.method === 'driver' ? 'driver' : 'growth',

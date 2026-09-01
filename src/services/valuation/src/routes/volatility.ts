@@ -32,7 +32,7 @@ import {
   type VolatilityEngineResponse,
   type VolatilitySeries,
 } from '../domain/volatility.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
 /**
@@ -362,6 +362,10 @@ export function registerVolatilityRoutes(
         throw err;
       }
 
+      // The engagement as it stands now — see the guard on the compute in
+      // `calculations.ts`. This one also leaves the process twice, for the
+      // price feed and then the estimate, so the gap is the wider of the set.
+      await refuseIfRetiredNow(deps.pool, valuation.id, 'accepting volatility estimates');
       const row = await insertVolatilityEstimate(deps.pool, {
         valuationId: valuation.id,
         method: shaped.method,

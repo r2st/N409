@@ -69,7 +69,7 @@ import {
 } from '../domain/valuationTags.js';
 import { listValuationTags, upsertValuationTags } from '../repos/valuationTags.js';
 import { presentValuationTag } from './valuationTags.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { isRetiredNow, refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { quoteForMessage } from '../domain/displayText.js';
 
@@ -737,13 +737,23 @@ export async function runAiPipeline(
        * recorded, and turning a completed run into an error would lose that.
        * The response reports nothing applied, which is what happened.
        */
-      const live = await findValuationById(deps.pool, valuation.id);
-      if (!live || live.archived_at !== null) {
+      // `isRetiredNow` rather than `findValuationById`, which is what this read
+      // used to be. That reader is the 5s read-through cache from
+      // `repos/valuations.ts` and the whole question here is whether the answer
+      // is current — the same reason the sweeps do not use it, stated on
+      // `isRetiredNow` itself. Correctness did not rest on the difference (every
+      // writer of `archived_at` invalidates the row), which is exactly why it
+      // was the wrong thing to depend on: the guard's answer should not turn on
+      // a caching contract kept somewhere else.
+      //
+      // Retired and deleted collapse into one answer, which is the reading
+      // `isRetiredNow` states — "a missing row counts as withdrawn". The log
+      // line says both, because from here they are the same fact: there is no
+      // live engagement to apply this to.
+      if (await isRetiredNow(deps.pool, valuation.id)) {
         deps.log.warn(
-          { valuationId: valuation.id, jobId: job.id, deleted: !live },
-          live
-            ? 'the engagement was retired while the extraction ran; its engine inputs were not applied'
-            : 'the engagement was deleted while the extraction ran; its engine inputs were not applied',
+          { valuationId: valuation.id, jobId: job.id },
+          'the engagement was retired or deleted while the extraction ran; its engine inputs were not applied',
         );
       } else {
         appliedInputs = applied;

@@ -28,7 +28,7 @@ import { sanitizeExtractedInputs } from './engineInputs.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { RECALC_APPROACHES } from '../domain/approaches.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 
 /**
@@ -384,6 +384,21 @@ export async function runCalculation(
         record: { valuationId: args.valuation.id, name: 'engine compute' },
       }),
     );
+    // The engagement as it stands now. `refuseIfRetired` fires on the route
+    // before the payload is assembled, and the engine has had the whole round
+    // trip since — the window R279/R282 settled for every sibling route that
+    // calls the engine before writing ("that gap was the whole engine round
+    // trip"). This is the write that gap matters most on: a succeeded
+    // calculation is the engagement's concluded FMV per share, it is what
+    // `latestCalculation` hands the report and the exhibits, and retirement is
+    // reversible (R90), so it comes back with the engagement as the number the
+    // opinion rests on.
+    //
+    // Only the succeeded arm. The `failed` row in the catch below is the record
+    // of an attempt rather than a conclusion — the same distinction `ai.ts`
+    // draws when it settles a job whose effect it then declines to apply — and
+    // turning a recorded engine failure into a 409 would lose it.
+    await refuseIfRetiredNow(deps.pool, args.valuation.id, 'accepting calculations');
     return await createCalculation(
       deps.pool,
       {
