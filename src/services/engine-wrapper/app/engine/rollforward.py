@@ -202,6 +202,20 @@ def roll_forward(
     if updated_inputs.get("last_round_price_per_share") is None:
         pre_populated.pop("last_round_price_per_share", None)
         pre_populated.pop("last_round_class", None)
+    # `market_movement` is the same kind of stale observation, and it compounds
+    # rather than merely competing. It moves the *round* indication forward over
+    # the interval between the round's close and the prior valuation date; the
+    # anchor above has already been carried across that interval and past it, by
+    # accretion or by a new round. Left in place, `compute` multiplies the
+    # rolled figure by a benchmark move that is now inside it — a 20% accretion
+    # over a year during which the benchmark rose 20% concluded at 1.44x the
+    # prior equity value — and the report prints an adjustment chapter citing a
+    # period that ends before the valuation date it is stated as of.
+    #
+    # Same rule as the price: only a block supplied in `updated_inputs`
+    # describes the new date, and that one is kept.
+    if updated_inputs.get("market_movement") is None:
+        pre_populated.pop("market_movement", None)
 
     return {
         "prior_valuation_date": d0.isoformat(),

@@ -449,6 +449,14 @@ export function registerRollforwardRoutes(
       const before = appliedAnchor(engineInputs(paramsRow));
 
       const supersededPrice = run.pre_populated_inputs.last_round_price_per_share === undefined;
+      // The benchmark adjustment goes the same way, and for a sharper reason
+      // than the price: it does not compete with the anchor, it multiplies it.
+      // `market_movement` moves a round indication forward over the interval
+      // between the round and the prior valuation date, and the rolled value
+      // has already been carried across that interval — so leaving it beside
+      // the new anchor applies the same market move twice and cites a period
+      // ending before the date the conclusion is stated as of.
+      const supersededMovement = run.pre_populated_inputs.market_movement === undefined;
       const actor = { actorType: 'human' as const, actorId: principal.id };
       await applyEngineInputs(
         deps.pool,
@@ -458,6 +466,7 @@ export function registerRollforwardRoutes(
           // Explicit nulls: the engine-inputs convention for clearing a field,
           // and a jsonb merge has no other way to remove one.
           ...(supersededPrice ? { last_round_price_per_share: null, last_round_class: null } : {}),
+          ...(supersededMovement ? { market_movement: null } : {}),
         },
         actor,
       );
@@ -474,6 +483,7 @@ export function registerRollforwardRoutes(
         from: before,
         to: run.rolled_equity_value,
         cleared_round_price: supersededPrice,
+        cleared_market_movement: supersededMovement,
       });
 
       return {

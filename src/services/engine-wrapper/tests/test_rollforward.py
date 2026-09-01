@@ -339,3 +339,54 @@ def test_adjustments_survive_into_the_computed_value():
     assert out["rolled_equity_value"] == pytest.approx(6_000_000.0)
     results = compute(_PARAMS, out["pre_populated_inputs"])["results"]
     assert results["equity_value"] == pytest.approx(6_000_000.0)
+
+
+# ── The benchmark adjustment is superseded too ───────────────────────────────
+
+_PRIOR_INPUTS_WITH_MOVEMENT = {
+    **_PRIOR_INPUTS,
+    "market_movement": {"index_start": 100.0, "index_end": 120.0, "period_end": "2025-01-01"},
+}
+
+
+def test_stale_market_movement_is_dropped_from_pre_populated_inputs():
+    out = roll_forward(
+        {"results": {"equity_value": 10_000_000.0}},
+        prior_valuation_date="2025-01-01",
+        new_valuation_date="2026-01-01",
+        prior_inputs=_PRIOR_INPUTS_WITH_MOVEMENT,
+        annual_accretion=0.30,
+    )
+    assert "market_movement" not in out["pre_populated_inputs"]
+
+
+def test_the_rolled_value_is_not_moved_by_last_period_s_benchmark():
+    """The property the drop protects, and the reason it is sharper than the
+    price: the movement multiplies the anchor rather than replacing it, so a
+    20% accretion under a benchmark that rose 20% concluded at 1.44x."""
+    from app.engine.compute import compute
+
+    out = roll_forward(
+        {"results": {"equity_value": 10_000_000.0}},
+        prior_valuation_date="2025-01-01",
+        new_valuation_date="2026-01-01",
+        prior_inputs=_PRIOR_INPUTS_WITH_MOVEMENT,
+        annual_accretion=0.20,
+    )
+    rolled = out["rolled_equity_value"]
+    results = compute(_PARAMS, out["pre_populated_inputs"])["results"]
+    assert results["equity_value"] == pytest.approx(rolled)
+    assert "market_movement" not in results
+
+
+def test_a_benchmark_supplied_for_the_new_date_is_kept():
+    out = roll_forward(
+        {"results": {"equity_value": 10_000_000.0}},
+        prior_valuation_date="2025-01-01",
+        new_valuation_date="2026-01-01",
+        prior_inputs=_PRIOR_INPUTS_WITH_MOVEMENT,
+        updated_inputs={"market_movement": {"index_start": 120.0, "index_end": 132.0}},
+        annual_accretion=0.20,
+    )
+    pre = out["pre_populated_inputs"]
+    assert pre["market_movement"] == {"index_start": 120.0, "index_end": 132.0}

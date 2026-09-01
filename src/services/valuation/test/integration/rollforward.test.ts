@@ -172,6 +172,9 @@ describe.skipIf(!dbUp)('roll-forward', () => {
       last_round_post_money: 30_000_000,
       last_round_price_per_share: 1.25,
       last_round_class: 'Series A',
+      // The benchmark that moved *last* year's round indication forward, so
+      // adopting a rolled anchor has something stale to supersede.
+      market_movement: { index_start: 100, index_end: 120 },
     });
   });
 
@@ -440,6 +443,14 @@ describe.skipIf(!dbUp)('roll-forward', () => {
       expect(inputs.last_round_class).toBeNull();
     });
 
+    it('clears the superseded benchmark adjustment', async () => {
+      // Sharper than the price, because it multiplies the anchor instead of
+      // replacing it: `market_movement` moves a round indication over the
+      // interval the rolled value has already been carried across, so left in
+      // place the same market move is applied twice.
+      expect((await readEngineInputs(currentId)).market_movement).toBeNull();
+    });
+
     it('ticks the rolling_forward flag the params table has always carried', async () => {
       const { rows } = await pool.query<{ rolling_forward: boolean }>(
         'SELECT rolling_forward FROM valuation_params WHERE valuation_id = $1',
@@ -468,6 +479,7 @@ describe.skipIf(!dbUp)('roll-forward', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]!.payload.to).toBe(42_000_000);
       expect(rows[0]!.payload.cleared_round_price).toBe(true);
+      expect(rows[0]!.payload.cleared_market_movement).toBe(true);
     });
 
     it('keeps the round price when the new date supplies one of its own', async () => {
@@ -489,6 +501,7 @@ describe.skipIf(!dbUp)('roll-forward', () => {
           last_round_post_money: 55_000_000,
           last_round_price_per_share: 2.4,
           last_round_class: 'Series B',
+          market_movement: { index_start: 120, index_end: 132 },
         },
       });
       const created = await run({ prior_valuation_id: priorId, new_round_post_money: 55_000_000 });
@@ -501,6 +514,7 @@ describe.skipIf(!dbUp)('roll-forward', () => {
         last_round_post_money: 42_000_000,
         last_round_price_per_share: 1.9,
         last_round_class: 'Series A',
+        market_movement: { index_start: 100, index_end: 110 },
       });
       const res = await apply(created.json().run.id);
       expect(res.statusCode).toBe(200);
@@ -509,6 +523,7 @@ describe.skipIf(!dbUp)('roll-forward', () => {
       // Untouched: the route only clears what the engine dropped.
       expect(inputs.last_round_price_per_share).toBe(1.9);
       expect(inputs.last_round_class).toBe('Series A');
+      expect(inputs.market_movement).toEqual({ index_start: 100, index_end: 110 });
       engine.setReply(null);
     });
   });
