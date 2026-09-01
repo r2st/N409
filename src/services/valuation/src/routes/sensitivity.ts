@@ -7,6 +7,7 @@ import { sensitivityGrid, sensitivityTables } from '../domain/sensitivity.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
 import { buildCalculationInputs, engineParams } from './calculations.js';
+import { EngineInputsBody } from './engineInputs.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
@@ -30,7 +31,14 @@ const ModelBody = z
       .optional(),
     span: z.number().gt(0).max(2).optional(),
     steps: z.number().int().min(2).max(21).optional(),
-    inputs: z.record(z.unknown()).default({}),
+    /**
+     * Analyst overrides on the engine input document, held to the schema hand
+     * entry is — see `ComputeBody` in routes/calculations.ts. The stress table
+     * is priced off `buildCalculationInputs` exactly as a calculation is, so an
+     * override this door admits and that one refuses is a grid drawn around a
+     * volatility the engine would never have been given.
+     */
+    inputs: EngineInputsBody.default({}),
   })
   .default({ inputs: {} });
 

@@ -24,7 +24,7 @@ import {
   toProblem,
   type UpstreamIssue,
 } from '../clients/internal.js';
-import { sanitizeExtractedInputs } from './engineInputs.js';
+import { EngineInputsBody, sanitizeExtractedInputs } from './engineInputs.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { RECALC_APPROACHES } from '../domain/approaches.js';
@@ -38,15 +38,40 @@ import { invalidBody } from '../domain/validationProblem.js';
  */
 export { RECALC_APPROACHES, type RecalcApproach } from '../domain/approaches.js';
 
+/**
+ * The analyst's explicit overrides, held to the same schema hand entry is.
+ *
+ * `inputs` is the engine input document — the same document
+ * `PATCH /valuations/:id/engine-inputs` writes, and the same one
+ * `sanitizeExtractedInputs` holds the model's extraction to. Both of those
+ * doors run it through {@link EngineInputsBody}, which is where every bound on
+ * an engine input is written down: volatility at most 5 because a "65%" read
+ * off a page as `65` prices cleanly and wrongly, a discount rate in (0, 1], an
+ * exit multiple under 100x, at most fifty share classes.
+ *
+ * This door took `z.record(z.unknown())`, so the third way into the same
+ * document was the one with no bounds at all — and it is the *last* merge
+ * (`buildCalculationInputs` applies it over the extraction and over params),
+ * so a figure the other two doors refuse arrived here and won. The bypass was
+ * the whole point of the bounds: the extraction is checked against them
+ * precisely because a plausible, finite, wrong number is what a decimal-point
+ * error looks like, and an analyst types those too.
+ *
+ * `.strict()` comes with the schema, which is the second half: a misspelt
+ * override — `volatilty` — used to be merged in under its misspelling, ignored
+ * by the engine, and reported back on the run as an input that was applied.
+ */
 const ComputeBody = z
   .object({
-    inputs: z.record(z.unknown()).default({}),
+    inputs: EngineInputsBody.default({}),
     // When set, only this approach is recomputed; the other approaches reuse
     // the latest successful calculation and the weighting/allocation/discount
     // chain re-runs on top (409.ai's per-subsystem recompute triggers).
     approach: z.enum(['asset', 'opm', 'income', 'market']).optional(),
   })
   .default({ inputs: {} });
+
+export { ComputeBody };
 
 export interface EngineComputeResponse {
   engine_version: string;
