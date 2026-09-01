@@ -228,7 +228,17 @@ describe('error messages name what failed, why, and what to do', () => {
       // caller had already loaded successfully. That is precisely the growth
       // this ratchet is for. Ten of them now name the holding
       // (`noSuchHolding`), which is what brought it back under.
-      319,
+      //
+      // Re-based up by one in R312, and this is the direction that needs the
+      // argument. R307 gave `/help/articles/:slug` the shape check every other
+      // non-`:id` path parameter already had, and refused a slug that cannot
+      // name an article with a bare 404 — which is not the growth above but the
+      // population the sibling test 'keeps the malformed-id 404 deliberately
+      // uninformative' requires to stay wordless: a message describing why the
+      // shape was wrong tells a prober how to spell a real one. The gate has
+      // been red on main for five rounds over that one call, which is a ratchet
+      // measuring nothing.
+      320,
     );
   });
 });
