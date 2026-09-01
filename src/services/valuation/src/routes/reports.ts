@@ -305,6 +305,26 @@ export async function brandingFor(
  * engine also writes into, so without the restriction an EMI scheme valuation
  * put its *actual* (restricted) market value on a line labelled "Concluded FMV
  * of each prior valuation of this company".
+ *
+ * Each point is dated by the run's own **measurement date** — `valuation_date`
+ * off the inputs the calculation was made from — and not by `created_at`, the
+ * moment the engine happened to run. The two agree only while nobody
+ * recalculates, and a 409A is recalculated for ordinary reasons: a review
+ * finding, a corrected share count, an approach re-weighted. Once one is, the
+ * run timestamp says when the arithmetic was redone and the chart printed that
+ * under a point captioned as a prior valuation.
+ *
+ * It is wrong in two ways at once. The label under each marker is a date the
+ * valuation it names was not made as of — including this valuation's own last
+ * point, whose date then disagrees with the measurement date on the cover of
+ * the same PDF. And the *order* follows the timestamps: an engagement dated
+ * last December but recalculated after this one's run sorts to the right of it,
+ * so a line captioned "oldest first" plots the client's history out of
+ * sequence and the trend a board reads off it is not the client's.
+ *
+ * `created_at` still bounds the series — a report states what was known on the
+ * day it was drawn — because that is a question about when a run existed, which
+ * is the one question the timestamp is the right answer to.
  */
 async function historyFor(
   pool: pg.Pool,
@@ -312,11 +332,20 @@ async function historyFor(
   before: Date,
 ): Promise<Array<{ as_of: string; fmv_per_share: number }>> {
   const scope = sameCompanyFilter(valuation);
-  const { rows } = await pool.query<{ as_of: Date; fmv_per_share: string | null }>(
-    `SELECT c.created_at AS as_of, c.fmv_per_share
+  const { rows } = await pool.query<{ as_of: string; fmv_per_share: string | null }>(
+    // The measurement date is a free-form JSON field, so it is taken only when
+    // it is spelled as a calendar day and `created_at` stands in otherwise —
+    // the pre-`valuation_date` runs, and any row whose blob holds something
+    // else. Both legs come back as `YYYY-MM-DD` text rather than as a `date`,
+    // which the driver would hand back as midnight *local* (domain/calendarDate).
+    `SELECT COALESCE(
+              NULLIF(substring(c.inputs->>'valuation_date' from '^\\d{4}-\\d{2}-\\d{2}'), ''),
+              to_char(c.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+            ) AS as_of,
+            c.created_at, c.fmv_per_share
        FROM valuations v
        JOIN LATERAL (
-         SELECT created_at, fmv_per_share
+         SELECT created_at, fmv_per_share, inputs
            FROM calculations
           WHERE valuation_id = v.id
             AND status = 'succeeded'
@@ -327,11 +356,11 @@ async function historyFor(
        ) c ON true
       WHERE ${scope.clause}
         AND v.kind = ANY($4)
-      ORDER BY c.created_at ASC`,
+      ORDER BY as_of ASC, c.created_at ASC`,
     [...scope.params, before, FMV_TREND_KINDS],
   );
   return rows
-    .map((r) => ({ as_of: new Date(r.as_of).toISOString(), fmv_per_share: Number(r.fmv_per_share) }))
+    .map((r) => ({ as_of: r.as_of, fmv_per_share: Number(r.fmv_per_share) }))
     .filter((p) => Number.isFinite(p.fmv_per_share));
 }
 

@@ -322,7 +322,10 @@ export function weightingChart(results: ResultsShape): ChartSpec | null {
 
 /** One point per prior valuation of this company, oldest first. */
 export interface HistoryPoint {
-  /** ISO date the calculation was produced. */
+  /**
+   * The run's measurement date (`YYYY-MM-DD`), which is what the marker is
+   * labelled with — not the moment the engine ran. See `historyFor`.
+   */
   as_of: string;
   fmv_per_share: number;
 }
