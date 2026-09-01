@@ -32,7 +32,7 @@ import {
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { applyEngineInputs, findParams, patchParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { logConnectorSyncFailure } from '../domain/connectorSyncLog.js';
 import { describeConnectorFailure, IntegrationError } from '../clients/deadline.js';
 import { tokenNeedsRefresh } from '../clients/oauthRefresh.js';
@@ -379,6 +379,24 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
         });
         throw problems.unprocessable(`Import failed: ${message}`);
       }
+
+      /*
+       * The engagement, asked again on the way back (R308, methodology M5).
+       *
+       * `refuseIfRetired` ran at the top of this handler and the ledger pull
+       * between the two is a call out of the process against a provider doing
+       * real work — `IMPORT_TIMEOUT_MS` alone allows thirty seconds.
+       * `staleEngagementWriteCensus` states the rule for every handler that
+       * spends a round trip before it writes; it matches `postJson`, so the
+       * connector door was outside the population rather than exempt from the
+       * rule. The twins in the HRIS and cap-table syncs carry the same line.
+       *
+       * What lands below is not bookkeeping: `ytd_revenue_cents`,
+       * `revenue_status` and the balance sheet are engine inputs, so an import
+       * that completes after a firm withdraws the work restates what the next
+       * calculation values on.
+       */
+      await refuseIfRetiredNow(deps.pool, valuation.id, 'importing financials');
 
       // Apply to the valuation: revenue params + the full snapshot as engine
       // input, all under a system actor so the audit trail shows the source.

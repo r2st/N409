@@ -35,7 +35,7 @@ import { diffCapTables, type CapTableDiff } from '../domain/capTableSync.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import {
   describeConnectorFailure,
   IntegrationError,
@@ -231,6 +231,24 @@ export async function syncCapTableConnection(
     });
     throw err;
   }
+
+  /*
+   * The engagement, asked again on the way back (R308, methodology M5).
+   *
+   * Same rule and same reason as the twin in `routes/hris.ts`:
+   * `refuseIfRetired` runs on the route above, and both doors into this
+   * function then leave the process for as long as the pull takes — up to
+   * `PAGED_PULL_BUDGET_MS`, two minutes. `staleEngagementWriteCensus` states
+   * this for every handler that spends an engine or AI round trip before it
+   * writes; a connector pull is the same gap through a door the census's
+   * `postJson` matcher cannot see, and a longer one.
+   *
+   * Ahead of the row cap below, because both are refusals of the same pull and
+   * this one is about whether the pull may be applied at all. Nothing has been
+   * written yet, so unlike the cap there is nothing to record on the
+   * connection: restoring the engagement makes the next pull work.
+   */
+  await refuseIfRetiredNow(deps.pool, connection.valuation_id, 'importing a cap table');
 
   /*
    * The row cap the import routes enforce, on the writer that had none.
@@ -641,6 +659,10 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
         // sync failure and must not be logged as one — see the sync's own note.
         // It is already a 409 written for this caller to read.
         if (err instanceof CapTableAppearedError) throw err;
+        // Likewise the retirement re-ask in the sync: a refusal this service
+        // wrote for this caller is already the answer, and reporting it as a
+        // provider failure would log a connector fault for a decision.
+        if (err instanceof ApiProblem) throw err;
         /**
          * Only wording this codebase vouched for reaches the client.
          *

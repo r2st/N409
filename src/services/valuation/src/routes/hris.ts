@@ -42,7 +42,7 @@ import { createGrant } from '../repos/grants.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
-import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { integrationCallbackRefusal } from '../domain/oauthCallbackRefusal.js';
 import {
@@ -244,6 +244,31 @@ export async function syncHrisConnection(
     });
     throw err;
   }
+
+  /*
+   * The engagement, asked again on the way back (R308, methodology M5).
+   *
+   * `refuseIfRetired` runs on the route above, and both doors into this
+   * function then leave the process for as long as the pull takes —
+   * `PAGED_PULL_BUDGET_MS` allows two minutes, and the sweep's own tick allows
+   * four of these at once. `staleEngagementWriteCensus` states the rule for
+   * every handler that spends an engine or an AI round trip before it writes,
+   * and the reason it could not state it here is that it matches `postJson`:
+   * a connector pull is the same gap through a different door, and a longer
+   * one than any engine call.
+   *
+   * The sweep's due query already excludes an archived engagement
+   * (`findDueConnections`), which is the same "a list that stops offering
+   * something is not a write that refuses it" the helper's own header is about:
+   * the row was live when the tick picked it up.
+   *
+   * Before the apply rather than inside it, so the partial-import bookkeeping
+   * below keeps describing an import that was attempted. Nothing has been
+   * written at this point, so there is nothing to record on the connection
+   * either — a `409` is the whole answer, and restoring the engagement makes
+   * the next pull work.
+   */
+  await refuseIfRetiredNow(deps.pool, connection.valuation_id, 'importing grants');
 
   const actor: EventActor = {
     actorType: 'system',
@@ -617,6 +642,10 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
         { actorId: principal.id },
       );
     } catch (err) {
+      // A refusal this service wrote for this caller — the retirement re-ask in
+      // the sync — is already the answer. Wrapping it in "sync failed" would
+      // report a decision as a fault and log a connector failure for it.
+      if (err instanceof ApiProblem) throw err;
       // Only a provider-attributable failure is echoed. This catch used to
       // forward `err.message` whatever it was, and the sync's insert loop had
       // no catch of its own — so a grant the driver refused answered the

@@ -53,8 +53,17 @@ const AUDIT_WRITE = /\bawait record(Admin)?Event\(/;
 /** The ways a handler re-asks the question after leaving the process. */
 const REASK =
   /\b(refuseIfRetiredNow|refuseIfSubjectRetired|refuseIfSubjectRetiredIn|isRetiredNow|instrumentForWriteIn|positionForWriteIn)\(/;
-/** A call that leaves the process. */
-const OUTBOUND = /\b(postJson|postForm|getJson)\b/;
+/**
+ * A call that leaves the process.
+ *
+ * The three connector pulls are here as of R308 (methodology M5). They are the
+ * same gap through a different door and a *longer* one — `PAGED_PULL_BUDGET_MS`
+ * allows a page walk two minutes, where an engine round trip is seconds — and
+ * the census could not see them, because they do not go through `postJson`.
+ * Nothing exempted them; they were simply outside the population, which is the
+ * failure mode a census is supposed to remove rather than reproduce.
+ */
+const OUTBOUND = /\b(postJson|postForm|getJson|fetchCapTable|fetchRosterAndGrants|fetchFinancials)\b/;
 
 /**
  * Writes that record an attempt rather than a conclusion. `createCalculation`
@@ -62,6 +71,18 @@ const OUTBOUND = /\b(postJson|postForm|getJson)\b/;
  * evidence of that refusal. Turning it into a 409 would lose it.
  */
 const ATTEMPT_RECORD = /status: 'failed'/;
+
+/**
+ * Writers whose whole subject is that an attempt failed, by name.
+ *
+ * The connector families spell the same idea as `status: 'failed'` does, one
+ * table over: `recordSyncError` and `recordImportError` move a *connection* to
+ * `error` and put the reason on it. Refusing to write one because the
+ * engagement was withdrawn mid-pull loses the record of an import that was
+ * genuinely attempted and leaves the connection due, which is the state R186
+ * and R261 exist to remove. Neither touches the engagement's own content.
+ */
+const ATTEMPT_WRITER = /\brecord(Sync|Import)Error\(/;
 
 /**
  * Reading forward from an outbound call to the first write, a "handler" ends at
@@ -96,7 +117,7 @@ function gapsIn(file: string): Gap[] {
       if (REASK.test(line)) break;
       // Another outbound call: the next iteration of the outer loop owns it.
       if (OUTBOUND.test(line)) break;
-      if (!WRITE.test(line) || AUDIT_WRITE.test(line)) continue;
+      if (!WRITE.test(line) || AUDIT_WRITE.test(line) || ATTEMPT_WRITER.test(line)) continue;
       // An attempt record rather than a conclusion — look a few lines ahead for
       // the status the writer is passing.
       const body = lines.slice(j, j + 12).join('\n');
@@ -146,7 +167,7 @@ describe('a write on the far side of a round trip', () => {
       if (!OUTBOUND.test(lines[i]!)) continue;
       for (let j = i + 1; j < lines.length; j += 1) {
         if (HANDLER_END.test(lines[j]!) || REASK.test(lines[j]!) || OUTBOUND.test(lines[j]!)) break;
-        if (!WRITE.test(lines[j]!) || AUDIT_WRITE.test(lines[j]!)) continue;
+        if (!WRITE.test(lines[j]!) || AUDIT_WRITE.test(lines[j]!) || ATTEMPT_WRITER.test(lines[j]!)) continue;
         if (ATTEMPT_RECORD.test(lines.slice(j, j + 12).join('\n'))) break;
         found = true;
         break;
