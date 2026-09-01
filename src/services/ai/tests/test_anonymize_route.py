@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.anonymize import MAX_KNOWN_ENTITIES
-from app.main import app
+from app.main import MAX_REQUEST_DOCUMENTS, app
 
 client = TestClient(app)
 
@@ -169,3 +169,26 @@ def test_options_anonymize_false_is_ignored():
     )
     assert res.status_code == 200
     assert res.json()["text"] == "[EMAIL]"
+
+
+def test_document_list_ceilings_are_the_same_on_both_routes():
+    """The pipeline route bounds its corpus the way `/anonymize` always has.
+
+    The ceiling on the other side of this wire is `MAX_AI_DOCUMENTS` (10) in the
+    valuation service, the only caller either route has. `/anonymize` stated its
+    own; the pipeline route — the one that actually runs the corpus through a
+    model — stated none, so the sender's cap was the whole guarantee and this
+    side would have taken whatever fitted in the 32 MiB body.
+
+    Asserted as a 422 on both, from one constant, so the pair cannot drift back
+    apart: a bound that holds only because of what `extract_texts` does
+    downstream is not a bound on this contract.
+    """
+    over = [_doc(f"sheet-{i}.csv", CAP_TABLE) for i in range(MAX_REQUEST_DOCUMENTS + 1)]
+    for url, payload in (
+        ("/ai/v1/anonymize", {"text": "", "documents": over}),
+        ("/ai/v1/pipelines/cap_table", {"valuation": {"company_name": "Acme"}, "documents": over}),
+    ):
+        res = client.post(url, json=payload)
+        assert res.status_code == 422, (url, res.status_code)
+        assert "documents" in res.text

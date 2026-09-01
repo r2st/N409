@@ -165,6 +165,28 @@ def _rate_limited(exc: RateLimited) -> HTTPException:
     )
 
 
+#: How many documents one request may carry.
+#:
+#: The ceiling on the other side of this wire is `MAX_AI_DOCUMENTS` (10) in the
+#: valuation service's `routes/ai.ts`, which is the only caller either of these
+#: routes has. `/ai/v1/anonymize` has stated its own bound since it was written;
+#: the pipeline route — the one that actually runs the corpus through a model —
+#: stated none, so the sender's cap was the whole guarantee and this side would
+#: have accepted whatever fitted in the 32 MiB body.
+#:
+#: That is the shape a paired ceiling fails in: each side is sound alone, the
+#: relationship is written nowhere, and the receiver inherits a bound it cannot
+#: see. `extract_texts` bounds the *output* of extraction (`MAX_TOTAL_CHARS`)
+#: and stops early, which is why an unbounded list was not also unbounded work —
+#: but a bound that holds because of what a different module does downstream is
+#: not a bound on this contract.
+#:
+#: Double the sender's, so a caller that legitimately raises its own cap a
+#: little does not meet a 422 here first, and far below anything that costs
+#: real work.
+MAX_REQUEST_DOCUMENTS = 20
+
+
 class PipelineRequest(BaseModel):
     # Agents accept assorted context blocks (comp_context, company_profile,
     # comparables, methodology, prior_valuation, new_data, ...); allow extra
@@ -173,7 +195,7 @@ class PipelineRequest(BaseModel):
 
     valuation: dict = Field(default_factory=dict)
     params: dict | None = None
-    documents: list[dict] = Field(default_factory=list)
+    documents: list[dict] = Field(default_factory=list, max_length=MAX_REQUEST_DOCUMENTS)
     # Prompt-registry override: {"system": str|None, "model": str|None}
     prompt: dict | None = None
     # Run options, e.g. {"anonymize": false} to skip the PII redaction step.
@@ -290,7 +312,7 @@ class AnonymizeRequest(BaseModel):
     # Same shape the pipelines take: {filename, kind, content_base64}. Text is
     # extracted here rather than by the caller so a .xlsx cap table can be
     # anonymized without the operator first converting it to something readable.
-    documents: list[dict] = Field(default_factory=list, max_length=20)
+    documents: list[dict] = Field(default_factory=list, max_length=MAX_REQUEST_DOCUMENTS)
     company_names: list[str] = Field(default_factory=list)
     person_names: list[str] = Field(default_factory=list)
 
