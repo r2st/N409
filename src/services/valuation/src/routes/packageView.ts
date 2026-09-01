@@ -7,7 +7,7 @@ import { findParams } from '../repos/params.js';
 import { findCompanyProfile } from '../repos/companyProfiles.js';
 import { listDocuments } from '../repos/documents.js';
 import { listAiJobs } from '../repos/aiJobs.js';
-import { listCalculations } from '../repos/calculations.js';
+import { listCalculationSummaries } from '../repos/calculations.js';
 import { listOverwrites } from '../repos/overwrites.js';
 import { findReportByValuation, listVersions } from '../repos/reports.js';
 import { reportStatusFor } from '../domain/report.js';
@@ -47,7 +47,7 @@ export function registerPackageRoutes(app: FastifyInstance, deps: { pool: pg.Poo
       findParams(deps.pool, id),
       listDocuments(deps.pool, id),
       listAiJobs(deps.pool, id),
-      listCalculations(deps.pool, id),
+      listCalculationSummaries(deps.pool, id),
       listOverwrites(deps.pool, id),
       findReportByValuation(deps.pool, id),
       listTasks(deps.pool, { valuationId: id, page: 1, perPage: 100 }),
@@ -65,7 +65,9 @@ export function registerPackageRoutes(app: FastifyInstance, deps: { pool: pg.Poo
     const { calculations, truncated: calculationsTruncated } = calculationPage;
 
     // Calculations without result payloads — the explorer shows summaries,
-    // the Calculations tab has the full breakdown.
+    // the Calculations tab has the full breakdown. Narrowed in SQL, not here:
+    // this map used to be handed the two jsonb documents of every run and drop
+    // them (see `listCalculationSummaries`).
     const calculationSummaries = calculations.map((c) => ({
       id: c.id,
       status: c.status,

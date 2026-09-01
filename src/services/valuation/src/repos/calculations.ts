@@ -401,6 +401,59 @@ export async function listCalculations(
 }
 
 /**
+ * The same window, for the two surfaces that read a run's *headline* and throw
+ * the documents away.
+ *
+ * `listCalculations` carries `inputs` and `results` because the calculation
+ * history and the evidence bundle read them. Two of its callers do not:
+ * `packageView` maps the page down to seven scalar columns under a comment
+ * saying so ("Calculations without result payloads — the explorer shows
+ * summaries"), and `routes/specialty.ts` maps to the same seven after filtering
+ * on one key of `inputs`. Both were narrowing *after* the documents had been
+ * read out of the table, shipped over the socket and parsed into JS objects by
+ * the driver. A 409A `results` document is 11 kB on a ten-class cap table, 67 kB
+ * at fifty and 613 kB at the 200-class cap — times twenty-one runs, to render a
+ * list of dates and figures.
+ *
+ * `input_endpoint` is the one key of `inputs` that survives, because the
+ * specialty tab's filter is the reason the column was being read at all. Probed
+ * with `jsonb_typeof` rather than taken from `->>` alone: `->>` renders a number
+ * or a boolean as text too, and the filter's own rule is `typeof === 'string'`.
+ * Null for a run whose `inputs` has no `endpoint` — the ordinary 409A compute,
+ * which is exactly what that filter drops.
+ *
+ * Same cap, same `+ 1` probe and same `truncated` as `listCalculations`, because
+ * both callers report the window rather than the filtered list.
+ */
+export interface CalculationSummaryRow {
+  id: string;
+  valuation_id: string;
+  engine_version: string;
+  status: string;
+  equity_value: string | null;
+  fmv_per_share: string | null;
+  error: string | null;
+  created_at: Date;
+  /** `inputs.endpoint`, when it is a string. Null on a 409A run. */
+  input_endpoint: string | null;
+}
+
+export async function listCalculationSummaries(
+  pool: pg.Pool,
+  valuationId: string,
+): Promise<{ calculations: CalculationSummaryRow[]; truncated: boolean }> {
+  const limit = CALCULATION_PAGE_LIMIT;
+  const { rows } = await pool.query<CalculationSummaryRow>(
+    `SELECT id, valuation_id, engine_version, status, equity_value, fmv_per_share, error, created_at,
+            CASE WHEN jsonb_typeof(inputs -> 'endpoint') = 'string'
+                 THEN inputs ->> 'endpoint' END AS input_endpoint
+       FROM calculations WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT $2`,
+    [valuationId, limit + 1],
+  );
+  return { calculations: rows.slice(0, limit), truncated: rows.length > limit };
+}
+
+/**
  * Every trace this valuation still holds, for the evidence bundle.
  *
  * The comment on `CALCULATION_COLUMNS` explains why no list query carries the

@@ -16,7 +16,7 @@ import { findQuestionnaire } from '../repos/intake.js';
 import {
   createCalculation,
   latestSucceededSpecialtyCalculation,
-  listCalculations,
+  listCalculationSummaries,
 } from '../repos/calculations.js';
 import { loadHmrcForm } from '../repos/hmrcForms.js';
 import type { EventActor } from '../events/record.js';
@@ -244,12 +244,13 @@ export function registerSpecialtyRoutes(
     // Failed runs belong in the history as much as successful ones: an analyst
     // reading "why did nothing happen" is looking for the 422 the engine gave
     // back, and a list of only the successes cannot show it.
-    const historyPage = await listCalculations(deps.pool, id);
+    // The narrow reader: this list is seven scalar columns and one key of
+    // `inputs`, and the full one carried both jsonb documents of all twenty-one
+    // runs to produce it. `input_endpoint` is that key, probed in SQL under the
+    // same `typeof === 'string'` rule this filter applies.
+    const historyPage = await listCalculationSummaries(deps.pool, id);
     const history = historyPage.calculations
-      .filter((c) => {
-        const endpoint = (c.inputs as { endpoint?: unknown } | null)?.endpoint;
-        return typeof endpoint === 'string' && endpoint.startsWith('/engine/v1/');
-      })
+      .filter((c) => c.input_endpoint?.startsWith('/engine/v1/') === true)
       .map((c) => ({
         id: c.id,
         status: c.status,
