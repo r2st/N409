@@ -1,4 +1,5 @@
 /** M1 core-pipeline entities + helpers (mirror valuation domain/pipeline.ts). */
+import { moneyFormatter } from './format';
 
 export const REVIEW_TASK_KINDS = [
   'data_review',
@@ -460,11 +461,13 @@ export function formatBytes(bytes: number | string): string {
 export function formatMoney(value: number | string | null | undefined, currency = 'USD'): string {
   const n = Number(value);
   if (value === null || value === undefined || !Number.isFinite(n)) return '—';
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: n >= 100 ? 0 : 4,
-  }).format(n);
+  // Through `moneyFormatter` rather than constructing one here (R330, M8): it
+  // is the cache, and the fifty-three-fold construction cost is paid per cell
+  // on the pipeline board otherwise. It also carries the guard this call was
+  // missing — `Intl` throws a RangeError on a currency code that is not three
+  // letters, and a formatter that throws inside render unmounts the tree to
+  // the nearest error boundary rather than mis-formatting one number.
+  return moneyFormatter(currency, { maximumFractionDigits: n >= 100 ? 0 : 4 })(n);
 }
 
 /** Human "due in 3h / overdue by 2d" for SLA chips. */
