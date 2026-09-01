@@ -294,6 +294,24 @@ export function registerVolatilityRoutes(
 
       const series: VolatilitySeries[] = [];
       const feedFailures: VolatilityExclusion[] = [];
+      /*
+       * The peers `MAX_SERIES` cuts off, named.
+       *
+       * The cap is a real one and stays — twenty sequential third-party fetches
+       * is already the ceiling a button press should carry. What it must not do
+       * is take peers out of the measurement without saying so. `excluded` is
+       * the list the exhibit prints under "Considered and not measured", the
+       * one the module note promises names every peer that is in the set and
+       * out of the number, and a ticker dropped here was in neither it nor
+       * `companies`: an estimate struck on twenty of thirty peers reported
+       * twenty peers and a set of twenty, and nothing on the row, in the audit
+       * event or in the exhibit carried a trace of the other ten.
+       *
+       * `listComparableItems` orders included first and then by score, so the
+       * tail is the lowest-scoring end of the screened set — which is the right
+       * end to drop and still the wrong thing to drop silently.
+       */
+      const overCap = tickers.slice(MAX_SERIES);
       // Sequential rather than concurrent: this leaves the process for a
       // third-party API that rate-limits, and twenty parallel fetches is the
       // shape that gets an API key throttled for everyone on the deployment.
@@ -351,6 +369,15 @@ export function registerVolatilityRoutes(
           continue;
         }
         series.push(built);
+      }
+
+      // Appended after the fetch loop so the exhibit reads the peers that were
+      // tried and failed before the ones that were never reached.
+      for (const ticker of overCap) {
+        feedFailures.push({
+          ticker,
+          reason: `outside the ${MAX_SERIES} highest-scoring peers this estimate measures`,
+        });
       }
 
       if (series.length === 0 && (manual_override === null || manual_override === undefined)) {

@@ -305,4 +305,70 @@ describe.skipIf(!dbUp)('selected volatility', () => {
   it('404s on an estimate that belongs to nothing', async () => {
     expect((await adopt('01J000000000000000000000ZZ')).statusCode).toBe(404);
   });
+
+  /**
+   * Every eligible peer is accounted for — measured or named.
+   *
+   * `MAX_SERIES` bounds how many third-party price fetches one button press
+   * makes, and it is the right bound. The property under test is not the cap
+   * but the accounting: a peer the cap cuts off is still a peer that was in the
+   * set and out of the number, so it belongs in `excluded` beside the dead
+   * series and the unreachable tickers. It was in neither list, so an estimate
+   * struck on twenty of twenty-three peers described a peer set of twenty and
+   * the exhibit's "considered and not measured" table omitted three companies
+   * a reviewer would have had to be told about.
+   *
+   * Asserted as a set union rather than a count, because the count is the thing
+   * that looked right while the fidelity was broken.
+   */
+  it('names every eligible peer the series cap left out', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(client.token),
+      payload: { kind: '409a', company_name: 'WidePeerCo' },
+    });
+    const wideId = created.json().valuation.id;
+
+    // Twenty-three, so three fall past the twenty the estimate fetches.
+    const tickers = Array.from({ length: 23 }, (_, i) => `T${String(i).padStart(2, '0')}`);
+    for (const ticker of tickers) {
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${wideId}/comparables`,
+        headers: authHeader(ops.token),
+        payload: { ticker, name: `${ticker} Corp` },
+      });
+    }
+    // Every one of them has observed history: nothing here is dropped for any
+    // reason other than the cap.
+    engine.setFeed(
+      Object.fromEntries(
+        tickers.map((t, i) => [t, { source: 'yfinance', ticker: t, prices: bars(60, 0.02 + i * 0.001) }]),
+      ),
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${wideId}/volatility/estimate`,
+      headers: authHeader(ops.token),
+      payload: {},
+    });
+    expect(res.statusCode).toBe(201);
+    const est = res.json().estimate;
+
+    // The cap held: twenty fetches, twenty measurements.
+    expect(engine.feedCalls()).toHaveLength(20);
+    expect(est.measured_count).toBe(20);
+
+    // And nothing vanished between the peer set and the run.
+    const accounted = new Set<string>([
+      ...est.companies.map((c: { ticker: string }) => c.ticker),
+      ...est.excluded.map((e: { ticker: string }) => e.ticker),
+    ]);
+    expect([...accounted].sort()).toEqual([...tickers].sort());
+
+    const capped = est.excluded.filter((e: { reason: string }) => e.reason.includes('highest-scoring'));
+    expect(capped).toHaveLength(3);
+  });
 });
