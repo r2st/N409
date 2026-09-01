@@ -88,6 +88,78 @@ describe('nonOverlapping', () => {
     expect(tick).toHaveBeenCalledTimes(2);
   });
 
+  it('counts the ticks it started and the ones that failed', async () => {
+    // The blind spot these close: `skipped` and `running` describe saturation,
+    // so a sweep failing on every tick reads as a healthy idle one from
+    // outside — it fails and returns long before the next scrape, and nothing
+    // ever overlaps.
+    let fail = true;
+    const s = nonOverlapping(
+      () => (fail ? Promise.reject(new Error('down')) : Promise.resolve()),
+      () => {},
+    );
+
+    expect(s.started).toBe(0);
+    expect(s.failed).toBe(0);
+
+    s.run();
+    await flush();
+    expect(s.started).toBe(1);
+    expect(s.failed).toBe(1);
+    // Every tick failing and nothing else moving is exactly the case that was
+    // invisible: no overlap, so no skip.
+    expect(s.skipped).toBe(0);
+
+    fail = false;
+    s.run();
+    await flush();
+    expect(s.started).toBe(2);
+    expect(s.failed).toBe(1);
+  });
+
+  it('counts a synchronous throw as a failed tick too', () => {
+    const s = nonOverlapping(
+      () => {
+        throw new Error('synchronous');
+      },
+      () => {},
+    );
+    s.run();
+    expect(s.started).toBe(1);
+    expect(s.failed).toBe(1);
+  });
+
+  it('does not count a skipped tick as started', async () => {
+    // A dropped tick never ran, so counting it would put a denominator under
+    // work that was not attempted and understate the failure rate.
+    const gate = deferred();
+    const s = nonOverlapping(
+      () => gate.promise,
+      () => {},
+    );
+    s.run();
+    s.run();
+    expect(s.started).toBe(1);
+    expect(s.skipped).toBe(1);
+    gate.resolve();
+    await flush();
+    expect(s.failed).toBe(0);
+  });
+
+  it('counts the failure even when the error handler throws', async () => {
+    // The last `.catch` in `run` swallows a handler's own rejection, so the
+    // tally is taken before `onError` is called rather than after it.
+    const s = nonOverlapping(
+      () => Promise.reject(new Error('tick failed')),
+      () => {
+        throw new Error('the logger failed too');
+      },
+    );
+    s.run();
+    await flush();
+    expect(s.failed).toBe(1);
+  });
+
   it('does not let a throwing error handler become an unhandled rejection', async () => {
     const s = nonOverlapping(
       () => Promise.reject(new Error('tick failed')),

@@ -166,6 +166,28 @@ describe('the scheduled sweeps', () => {
     expect(code).toMatch(/const scheduleSweep = [^;]*trackedSweep\(app\.log, name, tick\)/);
   });
 
+  it('exposes each sweep\u2019s health, not only its saturation', () => {
+    // R297. `background_sweep_skipped_total` and `background_sweep_running`
+    // measure whether a sweep is keeping up. Neither can see one that is
+    // *failing*: a tick that rejects immediately is never in flight at a scrape
+    // and never overlaps its successor, so both read exactly as they do for a
+    // healthy sweep with nothing to do. Twelve sweeps, every retry ladder the
+    // platform has among them, sat in that gap.
+    //
+    // The roster is one `track` call, so a sweep cannot be in the saturation
+    // gauges and absent from the health ones — that is the property this pins,
+    // rather than the text of any one gauge.
+    const code = INDEX.replace(/\/\*[\s\S]*?\*\//g, '').replace(/([^:])\/\/[^\n]*/g, '$1');
+    expect(code).toContain("'background_sweep_failures_total'");
+    // With its denominator: a bare failure count cannot tell "failed twice
+    // since boot" from "failing every tick", and the tick interval is
+    // configuration a dashboard does not hold.
+    expect(code).toContain("'background_sweep_runs_total'");
+    expect(code).toMatch(/runCounters\.push\(\{\s*name/);
+    expect([...code.matchAll(/runCounters\.push\(/g)]).toHaveLength(1);
+    expect([...code.matchAll(/runCounters\.map\(/g)]).toHaveLength(2);
+  });
+
   it('says how each valuation-writing sweep is guarded', () => {
     const writers = Object.entries(DECIDED).filter(([, v]) => v.writesValuation);
     // Five of the ten write to a valuation on their own schedule. That is the

@@ -220,12 +220,7 @@ function credentialFields(): Map<string, string[]> {
  *    longer read, so a genuinely unredacted `*_email` arriving after it would
  *    have changed nothing about what this suite reported.
  */
-const NON_PERSONAL_CONTACT_FIELDS = new Set([
-  'marketing_email',
-  'support_email',
-  'auto_email',
-  'no_email',
-]);
+const NON_PERSONAL_CONTACT_FIELDS = new Set(['marketing_email', 'support_email', 'auto_email', 'no_email']);
 
 /**
  * Compound contact-detail field names the services carry, in property position.

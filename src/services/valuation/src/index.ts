@@ -288,12 +288,17 @@ const emailTransports = buildEmailTransports(config, app.log, sweepSettings);
  */
 const sweeps: NamedScheduler[] = [];
 const skipCounters: Array<{ name: string; skipped: () => number }> = [];
-const track = <T extends { running: boolean; whenIdle(): Promise<void>; skipped: number }>(
+/** The health half of the same roster: ticks attempted, and ticks that failed. */
+const runCounters: Array<{ name: string; started: () => number; failed: () => number }> = [];
+const track = <
+  T extends { running: boolean; whenIdle(): Promise<void>; skipped: number; started: number; failed: number },
+>(
   name: string,
   scheduler: T,
 ): T => {
   sweeps.push({ name, scheduler });
   skipCounters.push({ name, skipped: () => scheduler.skipped });
+  runCounters.push({ name, started: () => scheduler.started, failed: () => scheduler.failed });
   return scheduler;
 };
 
@@ -333,6 +338,30 @@ app.metrics.gauge(
   'background_sweep_running',
   'Background sweeps with a tick in flight right now',
   () => sweeps.map((s) => ({ value: s.scheduler.running ? 1 : 0, labels: { sweep: s.name } })),
+  ['sweep'],
+);
+// The two above describe saturation, and until now they were the whole of what
+// a scraper could see about this tier. A sweep failing on *every* tick reads
+// through them as a healthy one: it fails and returns long before the next
+// scrape, so `running` is 0, and nothing ever overlaps, so `skipped` is 0. The
+// failure is classified and stamped `alert: true` in the log by `sweepFailed`,
+// but the log is not what alerts here — this endpoint is — and this endpoint
+// could not see it. Twelve sweeps, including every retry ladder the platform
+// has, were in that blind spot.
+//
+// `started` is here for the denominator: without it, "failed twice since boot"
+// and "has failed every tick for an hour" are the same number until you know
+// the interval, which is configuration a dashboard does not have.
+app.metrics.gauge(
+  'background_sweep_runs_total',
+  'Background ticks begun, cumulative — the denominator for the failure rate',
+  () => runCounters.map((s) => ({ value: s.started(), labels: { sweep: s.name } })),
+  ['sweep'],
+);
+app.metrics.gauge(
+  'background_sweep_failures_total',
+  'Background ticks that ended in a failure, cumulative',
+  () => runCounters.map((s) => ({ value: s.failed(), labels: { sweep: s.name } })),
   ['sweep'],
 );
 

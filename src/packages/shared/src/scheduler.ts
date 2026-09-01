@@ -76,6 +76,25 @@ export interface Scheduler {
   /** Ticks dropped because one was already in flight — for tests and gauges. */
   readonly skipped: number;
   /**
+   * Ticks that started, and ticks that ended in a failure.
+   *
+   * `skipped` and `running` describe *saturation*, and they were the only two
+   * numbers a scraper could see: a sweep failing on every tick shows `running`
+   * 0 at every scrape (it fails and returns long before the next one) and
+   * `skipped` 0 (nothing ever overlaps), so from outside it is indistinguishable
+   * from a healthy sweep with nothing to do. The failure is well described in
+   * the log — `sweepFailed` classifies it and stamps `alert: true` — but the
+   * log is not the channel anything alerts on here, and the one that is could
+   * not see it at all.
+   *
+   * Both, rather than only `failed`: a raw failure count has no denominator, so
+   * "failed twice since boot" and "has failed every tick for an hour" read the
+   * same until you know the interval, and the interval is configuration a
+   * dashboard does not have. `rate(failed) / rate(started)` is the question.
+   */
+  readonly started: number;
+  readonly failed: number;
+  /**
    * Resolves once no tick is in flight.
    *
    * Resolves immediately when idle, which is the normal case at shutdown. A
@@ -101,6 +120,8 @@ export interface Scheduler {
 export function nonOverlapping(tick: () => Promise<unknown>, onError: (err: unknown) => void): Scheduler {
   let running = false;
   let skipped = 0;
+  let started = 0;
+  let failed = 0;
   // Woken when the in-flight tick finishes. A set rather than one callback:
   // `whenIdle` may be called more than once for the same tick — the shutdown
   // path calls it on every scheduler at once, and a test may hold two waiters.
@@ -121,6 +142,12 @@ export function nonOverlapping(tick: () => Promise<unknown>, onError: (err: unkn
     get skipped() {
       return skipped;
     },
+    get started() {
+      return started;
+    },
+    get failed() {
+      return failed;
+    },
     whenIdle(): Promise<void> {
       if (!running) return Promise.resolve();
       return new Promise<void>((resolve) => {
@@ -137,6 +164,7 @@ export function nonOverlapping(tick: () => Promise<unknown>, onError: (err: unkn
         return;
       }
       running = true;
+      started += 1;
       // Guarded because `tick` may throw synchronously before returning a
       // promise — a `.finally()` chain would never be reached, and the flag
       // would stay set, silently stopping the schedule for the process's life.
@@ -144,12 +172,20 @@ export function nonOverlapping(tick: () => Promise<unknown>, onError: (err: unkn
       try {
         settled = Promise.resolve(tick());
       } catch (err) {
+        failed += 1;
         finish();
         onError(err);
         return;
       }
       void settled
-        .catch(onError)
+        // Counted here rather than inside `onError`, so the tally covers a
+        // synchronous throw and a rejection alike and cannot be lost by a
+        // caller supplying a handler that throws — which the last `.catch`
+        // below deliberately swallows.
+        .catch((err) => {
+          failed += 1;
+          onError(err);
+        })
         .finally(finish)
         // `onError` is caller-supplied (a logger); if it throws, the rejection
         // would be unhandled and the process would exit. The flag is already
