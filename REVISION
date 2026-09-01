@@ -6646,3 +6646,103 @@
 #            still caught, one severity down. Adding a second gauge for it would
 #            be two instruments answering one question, which is the drift this
 #            file keeps arguing against.
+
+# R330 — Performance & efficiency (M8). Five findings, and the two largest are
+#            the same shape from opposite ends: a cost paid per *unit* — per
+#            entry, per cell, per navigation — where the work only had to be
+#            done once. The measurements are all from this box and are quoted
+#            below rather than characterised, because "expensive" is what let
+#            three of these sit unread in comments that had already looked at
+#            the code and concluded the opposite.
+#
+#            **The evidence bundle shipped twenty JSON documents uncompressed.**
+#            `buildZip` stored every entry, and said why: "the bundle is mostly
+#            JSON + already compressed PDFs, and auditors care about fidelity,
+#            not bytes". The second half is true of exactly one entry — the
+#            rendered report — and the first half is the argument for
+#            compressing rather than against it. A bundle is twenty-odd
+#            pretty-printed JSON documents of repeated record shapes, which is
+#            about as compressible as anything gets: a real `calculations.json`
+#            of 21 engine runs is 2.67 MB stored and 74.6 kB deflated — 2.8%, a
+#            36x reduction, for 10.6 ms. `calculation-traces.json` is the
+#            engine's whole working state per run and compresses harder still.
+#            Fidelity was never the trade: deflate is lossless, and the CRC and
+#            the uncompressed size in both headers describe the original bytes.
+#            The same writer builds every .xlsx this platform exports — an .xlsx
+#            *is* a ZIP of XML parts — so the workbook download was shipping raw
+#            XML too, and that is the far more frequent of the two.
+#            `domain/zipReader.ts` already reads method 8, which is what keeps a
+#            workbook this writes parseable by the importer opposite it. Decided
+#            per entry by trying it rather than by filename, so the PDF — which
+#            comes back a shade larger — stays stored and the archive is never
+#            bigger than it was. `crc32` went with it: `for (const byte of buf)`
+#            allocates through the generic iteration protocol once per byte over
+#            every byte of every entry, 21.8 ms against 6.2 ms indexed.
+#
+#            **A money formatter built per cell.** `Intl.NumberFormat` is
+#            expensive to construct and cheap to call — 363 ms to
+#            build-and-format twenty thousand values, 6.9 ms through one
+#            instance, a factor of fifty-three. Every function in
+#            `lib/format.ts` built a fresh one per call, across twenty-five call
+#            sites, and these are per-cell functions: a two-hundred-class cap
+#            table with half a dozen money columns is thousands of constructions
+#            per render and does all of it again on the next one. `formatCents`
+#            paid it twice per cell, once to read the currency's minor-unit
+#            scale off `resolvedOptions` and once to render. Keyed by (currency,
+#            options), which is the half a coarser cache gets wrong:
+#            `formatAmount` widens the fraction digits below one unit, so a
+#            $0.0001 par value and a $1,000 preference must not share an
+#            instance. `lib/pipeline.ts` held a second copy of the same cost and
+#            now routes through the same cache — picking up, as it goes, the
+#            RangeError guard that call site predated.
+#
+#            **Every navigation re-asked three badge endpoints that could not
+#            have changed.** R154's open item, closed. The three `AppLayout`
+#            badge hooks each carried `location.pathname`, so a client-side
+#            navigation fired all three immediately; walking five screens is
+#            fifteen requests in a couple of seconds returning the numbers the
+#            last one returned. R314 declined to touch the dependency and was
+#            right to — the refetch-on-navigation is the point — and named what
+#            was needed: a minimum interval. The interval is not a guess. It is
+#            `UNREAD_COUNT_CACHE_TTL_MS` and `COUNTS_CACHE_TTL_MS`, the 15s TTL
+#            caches all three endpoints already sit behind, so inside that
+#            window the server *cannot* answer differently. Those caches were
+#            added to absorb this exact storm, and `routes/inbox.ts` says so —
+#            but a cache absorbs the query, not the request, and each of these
+#            still costs a JWT verification, the `findAuthPrincipal` join every
+#            authenticated route makes, and a rate-limit charge. This is the
+#            other half of that fix, on the side doing the asking. The floor is
+#            per hook instance and applies to navigation only, so a fresh mount
+#            — reload, sign-in, first render — always polls.
+#
+#            **Every QA review pulled twenty engine request payloads for one key
+#            of one of them.** `routes/qa.ts` reads the twenty-run window to
+#            collect superseded figures and hands each row to `reportFigures`.
+#            It took the whole row, so each review carried twenty `inputs`
+#            documents — the engine request per run, cap table and all — through
+#            the driver's JSON parse. R322 wrote `listCalculationSummaries` for
+#            this shape; this is the one caller that genuinely needs `results`
+#            and so could not use it. The part a column list gets wrong
+#            silently: `incomeAssumptions` falls back to `inputs.inputs.income`
+#            on runs predating the engine recording those on the result — which
+#            is precisely the older half of the history this check exists to
+#            look at. So the column is projected down to that one path in SQL
+#            and rebuilt in the shape its reader expects. The window is
+#            unchanged, and the status filter deliberately stays with the caller
+#            rather than moving into SQL, where it would yield the twenty most
+#            recent *succeeded* runs instead of the succeeded ones among the
+#            twenty most recent.
+#
+# gap:       `GET /valuations/:id/calculations` still ships full `inputs` and
+#            `results` for twenty runs to the browser. Left because no frontend
+#            caller for it could be found — it is ops-only and reads as
+#            orphaned, and narrowing an endpoint whose consumer is unknown is a
+#            guess about what the consumer reads. The right next move is the
+#            orphaned-endpoint census, not a column list.
+#
+# gap:       `hooks/pipelineRetry.ts` calls `findValuationById` once per claimed
+#            run and uses three fields of it. Bounded by
+#            `PIPELINE_RETRY_CLAIM_LIMIT` and by the one-active-run index, so it
+#            is a handful of narrow lookups per tick rather than a fan-out —
+#            measured against the deflate and formatter findings it was not
+#            worth the churn this round.
