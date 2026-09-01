@@ -13,6 +13,7 @@ import {
   createGrant,
   findGrantById,
   GRANT_CANCELLED_DETAIL,
+  GRANTS_NEED_APPROVAL,
   GRANT_PAGE_LIMIT,
   listGrants,
   updateGrant,
@@ -170,7 +171,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
 
     const resolution = await findResolutionByValuation(deps.pool, id);
     if (!resolution || resolution.status !== 'approved') {
-      throw problems.conflict('Grants can only be issued after the board has approved the 409A valuation');
+      throw problems.conflict(GRANTS_NEED_APPROVAL);
     }
 
     // Exercise price from the adopted FMV unless explicitly overridden.
@@ -203,6 +204,9 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
         frequencyMonths,
         notes: parsed.data.notes ?? null,
         createdBy: principal.id,
+        // Re-asked under the resolution's row lock: the check above and the
+        // price below are a read the three reopening doors can overtake.
+        requireApproval: { approvedAt: resolution.approved_at },
       },
       { actorType: 'human', actorId: principal.id },
     );

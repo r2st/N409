@@ -52,14 +52,73 @@ export interface CreateGrantInput {
   /** Provenance for HRIS-imported grants (feature 11). */
   source?: string;
   externalId?: string | null;
+  /**
+   * The board approval this issuance is being made under, re-asked inside the
+   * transaction — see {@link createGrant}. Absent on the HRIS import, which
+   * records grants made elsewhere rather than issuing one here.
+   */
+  requireApproval?: { approvedAt: Date | null };
 }
 
+/** A grant may only be issued off a live board approval — the route's sentence. */
+export const GRANTS_NEED_APPROVAL =
+  'Grants can only be issued after the board has approved the 409A valuation';
+
+/**
+ * The same check, when the approval the caller read is not the one still
+ * standing. A different sentence because the operator's next move is different:
+ * nothing is missing, the board's position moved underneath them.
+ */
+export const APPROVAL_MOVED =
+  'The board’s approval of this valuation changed while the grant was being issued — reload the ' +
+  'board resolution and issue the grant again.';
+
+/**
+ * Issue a grant, and its audit event, atomically.
+ *
+ * THE APPROVAL THIS IS ISSUED UNDER IS A READ THE ROUTE TOOK EARLIER (round
+ * 312, methodology M3). `POST /valuations/:id/grants` refuses unless the board
+ * resolution is `approved`, because an option struck at a §409A fair market
+ * value the board has not adopted is the compliance failure the whole board
+ * workflow exists to prevent — and the exercise price it defaults to is that
+ * resolution's `fmv_conclusion`.
+ *
+ * Both come from `findResolutionByValuation` on the pool, statements before the
+ * INSERT, and the approval is a state three doors can take back: a director
+ * removed (`deleteBoardMember`), a director's decision recorded
+ * (`recordSignoff`), and a regeneration replacing the document outright
+ * (`upsertResolution`, R312). Each of those takes the resolution `FOR UPDATE`,
+ * so asking again under that lock settles the question against a row nothing
+ * can move until this transaction ends.
+ *
+ * `approved_at` rather than the status alone, because 'approved' is not one
+ * state: a resolution regenerated at a different FMV and re-signed is approved
+ * too, and it is not the approval the caller read or the figure they were
+ * shown. The timestamp is stamped exactly once per approval
+ * (`refreshResolutionStatusTx`), which makes it the generation marker.
+ */
 export async function createGrant(
   pool: pg.Pool,
   input: CreateGrantInput,
   actor: EventActor,
 ): Promise<GrantRow> {
   return withTransaction(pool, async (client) => {
+    if (input.requireApproval) {
+      const { rows: live } = await client.query<{ status: string; approved_at: Date | null }>(
+        'SELECT status, approved_at FROM board_resolutions WHERE valuation_id = $1 FOR UPDATE',
+        [input.valuationId],
+      );
+      const resolution = live[0];
+      if (!resolution || resolution.status !== 'approved' || resolution.approved_at === null) {
+        throw problems.conflict(GRANTS_NEED_APPROVAL);
+      }
+      if (
+        input.requireApproval.approvedAt === null ||
+        resolution.approved_at.getTime() !== input.requireApproval.approvedAt.getTime()
+      ) {
+        throw problems.conflict(APPROVAL_MOVED);
+      }
+    }
     const id = newUlid();
     const { rows } = await client.query<GrantRow>(
       `INSERT INTO option_grants
