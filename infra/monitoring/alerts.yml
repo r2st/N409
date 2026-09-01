@@ -206,6 +206,35 @@ groups:
         annotations:
           summary: '{{ $labels.job }} p95 request latency is over two seconds'
 
+      # The endpoint reporting on itself.
+      #
+      # Every instrument is capped at 200 distinct label sets and folds
+      # everything past that into one reserved `__other__` series. Totals stay
+      # exact — which is why the three rules above are untouched by a fold, they
+      # all `sum by (job)` — but a rule that *selects* a label value matches the
+      # folded readings no longer, because they are filed under `__other__`.
+      # `WebhookOutcomesUnrecorded`, `JobAlertAnnouncementsFailing`,
+      # `SweepAbandoningWork`, `ScimThrottled` and every SSO rule are that shape.
+      # Such a rule stops watching its condition and starts matching nothing,
+      # which is what a healthy system looks like from here.
+      #
+      # `http_request*` excluded deliberately, and it is the whole calibration of
+      # this rule. `route` comes from a URL path: this estate serves over four
+      # hundred of them, so those three instruments are *expected* to fold, and
+      # losing per-route attribution to keep an exact total is the trade the cap
+      # was written to make. Every other instrument here carries a closed label
+      # domain — a sweep name, an outcome word, a circuit state — small enough
+      # that folding one is not the cap working as designed but label values
+      # nobody declared: a caller-supplied string reaching a label, or a
+      # vocabulary that has grown past the list it was written from.
+      - alert: MetricAttributionFolded
+        expr: n409_metric_series_folded{metric!~"http_request.*"} == 1
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.metric }} has run out of label sets — rules selecting on its labels are matching less than they did'
+          runbook: 'compare n409_metric_series{metric="{{ $labels.metric }}"} against the 200 in MAX_SERIES_PER_METRIC; the fix is the unbounded label, not the cap'
+
   - name: n409-dependencies
     rules:
       # The platform has stopped calling a dependency altogether. Pages: every

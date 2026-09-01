@@ -356,6 +356,15 @@ class ObservableGauge {
   }
 }
 
+/** One instrument's label-set usage. See {@link MetricsRegistry.seriesCensus}. */
+export interface SeriesCensusEntry {
+  metric: string;
+  /** Distinct label sets held, the reserved overflow series included. */
+  cardinality: number;
+  /** True once at least one reading has been folded into `__other__`. */
+  truncated: boolean;
+}
+
 /**
  * The metrics one process exposes.
  *
@@ -410,6 +419,39 @@ export class MetricsRegistry {
   ): void {
     if (this.gauges.has(name)) return;
     this.gauges.set(name, new ObservableGauge(name, help, labelNames, collect));
+  }
+
+  /**
+   * What each capped instrument is holding, and whether it has begun folding.
+   *
+   * WHY THIS IS EXPORTED (R341, methodology M11). `Family` has computed
+   * `cardinality` and `truncated` since the cap was written, and until now the
+   * only thing that ever read either was `prometheus.test.ts`. So the one event
+   * this module's header calls out as the cost of the cap — "attribution is
+   * what degrades" — happened, permanently and per-process, with no channel at
+   * all: no log line, no series, no rule. A dashboard grouped by `route` simply
+   * starts showing `__other__` beside the real routes, as if it were one, and
+   * nothing anywhere says that a fold is what produced it.
+   *
+   * The fold is silent in the direction that matters most for the rules in
+   * `infra/monitoring/alerts.yml`. Totals stay exact, so `sum by (job)` keeps
+   * answering correctly — which is why `HighServerErrorRate` and `SlowRequests`
+   * are unaffected — but a rule that *selects* a label value
+   * (`outcome="unsettled"`, `sweep="job-alerts"`) matches the folded readings
+   * no longer, because they are filed under `__other__`. Such a rule goes from
+   * watching a condition to watching nothing, and a query returning no series
+   * is what a healthy system looks like.
+   *
+   * Gauges are absent on purpose: `ObservableGauge` holds no series map and
+   * re-derives its readings on every scrape, so there is nothing there to
+   * overflow.
+   */
+  seriesCensus(): SeriesCensusEntry[] {
+    const out: SeriesCensusEntry[] = [];
+    for (const family of [...this.counters.values(), ...this.histograms.values()]) {
+      out.push({ metric: family.name, cardinality: family.cardinality, truncated: family.truncated });
+    }
+    return out;
   }
 
   /** The whole registry in the text exposition format, newline-terminated. */
@@ -590,4 +632,22 @@ export function registerProcessMetrics(
   );
   registry.gauge('nodejs_heap_used_bytes', 'V8 heap in use', () => proc.memoryUsage().heapUsed);
   registry.gauge('nodejs_heap_total_bytes', 'V8 heap allocated', () => proc.memoryUsage().heapTotal);
+
+  // And what this endpoint is itself holding back. See `seriesCensus`: the cap
+  // trades attribution for a bounded map, and the moment that trade is taken is
+  // the moment several rules quietly stop matching what they were written for.
+  // Registered here rather than beside the HTTP instruments because it is a
+  // fact about the process, and because every service already calls this.
+  registry.gauge(
+    'n409_metric_series',
+    'Distinct label sets one instrument is holding, the reserved __other__ series included',
+    () => registry.seriesCensus().map((e) => ({ value: e.cardinality, labels: { metric: e.metric } })),
+    ['metric'],
+  );
+  registry.gauge(
+    'n409_metric_series_folded',
+    '1 once an instrument has begun folding label sets into __other__ — its attribution is no longer complete',
+    () => registry.seriesCensus().map((e) => ({ value: e.truncated ? 1 : 0, labels: { metric: e.metric } })),
+    ['metric'],
+  );
 }

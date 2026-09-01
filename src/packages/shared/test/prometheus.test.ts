@@ -343,6 +343,61 @@ describe('registerProcessMetrics', () => {
     expect(text).toContain('nodejs_heap_total_bytes 30');
     expect(text).toMatch(/n409_build_info\{service="valuation",sha="[^"]*",source="[^"]*"\} 1/);
   });
+
+  it('reports what each instrument is holding, and which have begun folding', () => {
+    /*
+     * R341, M11. `cardinality` and `truncated` have been computed since the cap
+     * was written and read by nothing but this file. So the one event the
+     * module header names as the cost of the cap — "attribution is what
+     * degrades" — reached no channel at all: a dashboard grouped by `route`
+     * simply starts showing `__other__` beside the real routes, as if it were
+     * one of them.
+     *
+     * It is not a cosmetic loss. Totals stay exact, so every `sum by (job)`
+     * rule keeps answering; a rule that *selects* a label value
+     * (`outcome="unsettled"`, `sweep="job-alerts"`) stops matching the folded
+     * readings entirely, because they are filed under `__other__`. That is a
+     * rule going from watching a condition to matching nothing, which is
+     * exactly what a healthy system looks like from Prometheus's side.
+     */
+    const r = new MetricsRegistry(2);
+    registerProcessMetrics(r, 'valuation');
+    const roomy = r.counter('roomy_total', 'two label sets fit', ['k']);
+    roomy.inc({ k: 'a' });
+    const folded = r.counter('folded_total', 'a third does not', ['k']);
+    for (const k of ['a', 'b', 'c', 'd']) folded.inc({ k });
+
+    const text = r.render();
+    expect(seriesOf(text, 'n409_metric_series_folded')).toEqual([
+      'n409_metric_series_folded{metric="folded_total"} 1',
+      'n409_metric_series_folded{metric="roomy_total"} 0',
+    ]);
+    // The count, as context for the rule: two real label sets plus the one
+    // reserved series everything past the cap was folded into.
+    expect(text).toContain('n409_metric_series{metric="folded_total"} 3');
+    expect(text).toContain('n409_metric_series{metric="roomy_total"} 1');
+    // And the fold itself, which is the reading the two gauges above describe:
+    // `c` and `d` are not series of their own and their counts are not lost.
+    expect(seriesOf(text, 'folded_total')).toEqual([
+      'folded_total{k="__other__"} 2',
+      'folded_total{k="a"} 1',
+      'folded_total{k="b"} 1',
+    ]);
+  });
+
+  it('counts a histogram beside the counters and leaves the gauges out', () => {
+    // Gauges hold no series map — `ObservableGauge` re-derives its readings on
+    // every scrape — so there is nothing there to overflow and a reading for
+    // one would be a number that could never move.
+    const r = new MetricsRegistry();
+    registerProcessMetrics(r, 'valuation');
+    r.histogram('h_seconds', 'a histogram', ['k']).observe(1, { k: 'a' });
+
+    const census = r.seriesCensus().map((e) => e.metric);
+    expect(census).toContain('h_seconds');
+    expect(census).not.toContain('process_uptime_seconds');
+    expect(census).not.toContain('n409_metric_series');
+  });
 });
 
 describe('metricsToken', () => {
