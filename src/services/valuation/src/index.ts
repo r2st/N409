@@ -574,9 +574,14 @@ let aiJobReaperTimer: NodeJS.Timeout | undefined;
 let capTableSyncTimer: NodeJS.Timeout | undefined;
 {
   const tick = scheduleSweep('cap-table-sync', async () => {
-    const n = await runDueCapTableSyncs({ pool, credentials: capTableSyncCredentials(config), log: app.log });
-    if (n > 0) app.log.info({ processed: n }, 'cap-table sync scan');
-    return { processed: n };
+    const r = await runDueCapTableSyncs({ pool, credentials: capTableSyncCredentials(config), log: app.log });
+    // Gated on `due`, not on the successes. A scan in which every provider
+    // refused used to report the same number a scan with nothing due does —
+    // zero — so it wrote no line and counted nothing, which is the blind spot
+    // R321 built `background_sweep_items_total` to close. `failed` is what
+    // `SweepWorkFailing` already reads; this sweep simply had no way to say it.
+    if (r.due > 0) app.log.info(r, 'cap-table sync scan');
+    return r;
   });
   capTableSyncTimer = setInterval(() => tick.run(), 15 * 60_000);
 }
@@ -585,9 +590,10 @@ let capTableSyncTimer: NodeJS.Timeout | undefined;
 let hrisSyncTimer: NodeJS.Timeout | undefined;
 {
   const tick = scheduleSweep('hris-sync', async () => {
-    const n = await runDueHrisSyncs({ pool, credentials: hrisCredentials(config), log: app.log });
-    if (n > 0) app.log.info({ processed: n }, 'HRIS sync scan');
-    return { processed: n };
+    const r = await runDueHrisSyncs({ pool, credentials: hrisCredentials(config), log: app.log });
+    // See the cap-table scan above: gated on `due`, and carrying `failed`.
+    if (r.due > 0) app.log.info(r, 'HRIS sync scan');
+    return r;
   });
   hrisSyncTimer = setInterval(() => tick.run(), 15 * 60_000);
 }

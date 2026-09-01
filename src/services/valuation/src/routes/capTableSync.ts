@@ -51,6 +51,7 @@ import {
   logSyncBookkeepingFailure,
   logSyncOutcomeSuperseded,
   type ConnectorLogger,
+  type ConnectorScanTally,
 } from '../domain/connectorSyncLog.js';
 
 /**
@@ -473,7 +474,7 @@ export async function runDueCapTableSyncs(deps: {
    */
   credentials?: Partial<Record<CapTableProvider, ProviderCredentials>>;
   log?: ConnectorLogger;
-}): Promise<number> {
+}): Promise<ConnectorScanTally> {
   const fetchFn = deps.fetchFn ?? fetch;
   const due = await findDueConnections(deps.pool);
   // Bounded concurrency (P2-7): connections are independent, so run up to 4 in
@@ -525,7 +526,13 @@ export async function runDueCapTableSyncs(deps: {
       }),
     ),
   );
-  return results.filter(Boolean).length;
+  const synced = results.filter(Boolean).length;
+  // All three, not just the successes. See `ConnectorScanTally`: a scan whose
+  // every connection failed returned `0` here, which is what a scan with
+  // nothing due returns, so both the `info` line gated on it and every
+  // instrument built off this tick read a total provider outage as an idle
+  // schedule.
+  return { due: due.length, synced, failed: due.length - synced };
 }
 
 export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableSyncDeps): void {

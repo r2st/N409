@@ -218,3 +218,28 @@ export function logConnectorSyncFailure(
   // and the thing that clears it is still a person.
   logFailure(log, err, context, `${opts.scheduled ? 'scheduled ' : ''}${label} sync failed`);
 }
+
+/**
+ * What one scheduled connector scan did, per connection.
+ *
+ * The two scans returned the number of connections they *synced* and nothing
+ * else, which put both of them squarely in the blind spot R321 built
+ * `background_sweep_items_total` to close: the per-connection failure is
+ * contained on purpose — one provider being down must not cost the other
+ * nineteen their pull — so the tick returns normally, and a scan in which every
+ * provider refused returns `0` exactly as a scan with nothing due does. It did
+ * not even write its `info` line, which is gated on that same number.
+ *
+ * So the tally names all three. `failed` is the one the estate already has a
+ * rule for — `SweepWorkFailing`, on `outcome="failed"` — which these two sweeps
+ * had no way to reach; `due` is its denominator, and the difference between a
+ * quiet scan and a scan that could not do anything.
+ */
+export interface ConnectorScanTally {
+  /** Connections whose cadence came round on this tick. */
+  due: number;
+  /** Of those, the ones that pulled and recorded a result. */
+  synced: number;
+  /** Of those, the ones that raised — recorded on the row, contained here. */
+  failed: number;
+}

@@ -298,11 +298,11 @@ describe.skipIf(!dbUp)('what an operation leaves behind when it dies halfway', (
       // tick re-pulled the provider's whole roster and failed the same way,
       // billed the quota, and reported nothing anywhere. Recording the failure
       // takes the row out of `findDueConnections` — which is what this asks.
-      const processed = await runDueHrisSyncs({
+      const scan = await runDueHrisSyncs({
         pool: ctx.pool,
         fetchFn: hrisFetch as unknown as typeof fetch,
       });
-      expect(processed).toBe(0);
+      expect(scan.synced).toBe(0);
     });
 
     it('completes on a retry once the fault clears, skipping what it already has', async () => {
@@ -365,11 +365,11 @@ describe.skipIf(!dbUp)('what an operation leaves behind when it dies halfway', (
       // event, so this half fails for reasons the pull cannot: an analyst
       // saving in another tab, a retired engagement, a pool with nothing left.
       failNth('INSERT INTO cap_tables', 1, 'could not serialize access due to concurrent update');
-      const processed = await runDueCapTableSyncs({
+      const scan = await runDueCapTableSyncs({
         pool: ctx.pool,
         fetchFn: capTableFetch as unknown as typeof fetch,
       });
-      expect(processed).toBe(0);
+      expect(scan.synced).toBe(0);
 
       expect(await findCapTable(ctx.pool, valuationId)).toBeNull();
       const row = await connectionRow();
@@ -381,11 +381,11 @@ describe.skipIf(!dbUp)('what an operation leaves behind when it dies halfway', (
     });
 
     it('the scheduler does not come back for it either', async () => {
-      const processed = await runDueCapTableSyncs({
+      const scan = await runDueCapTableSyncs({
         pool: ctx.pool,
         fetchFn: capTableFetch as unknown as typeof fetch,
       });
-      expect(processed).toBe(0);
+      expect(scan.synced).toBe(0);
       // Not merely "processed nothing" — the provider was not dialled at all.
       // A connection left due keeps spending the quota on a call whose result
       // it cannot store.

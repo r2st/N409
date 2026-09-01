@@ -275,11 +275,11 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
       `UPDATE cap_table_connections SET next_sync_at = now() - interval '1 hour' WHERE valuation_id = $1`,
       [v.id],
     );
-    const processed = await runDueCapTableSyncs({
+    const scan = await runDueCapTableSyncs({
       pool: ctx.pool,
       fetchFn: mockFetch(() => CARTA_V1) as unknown as typeof fetch,
     });
-    expect(processed).toBeGreaterThanOrEqual(1);
+    expect(scan.synced).toBeGreaterThanOrEqual(1);
     const saved = await findCapTable(ctx.pool, v.id);
     expect(saved?.entries.length).toBe(3);
   });
@@ -401,13 +401,13 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
       throw new Error(`unexpected fetch ${u}`);
     });
 
-    const processed = await runDueCapTableSyncs({
+    const scan = await runDueCapTableSyncs({
       pool: ctx.pool,
       fetchFn: refreshingFetch as unknown as typeof fetch,
       credentials: { carta: { clientId: 'cid', clientSecret: 'csecret' } },
     });
 
-    expect(processed).toBe(1);
+    expect(scan.synced).toBe(1);
     expect(grants).toEqual(['refresh_token']);
     expect(capTokens).toEqual(['renewed']);
     const { rows } = await ctx.pool.query<{ status: string; token_expires_at: Date }>(
@@ -442,14 +442,22 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
       return jsonResponse(CARTA_V1);
     });
 
-    const processed = await runDueCapTableSyncs({
+    const scan = await runDueCapTableSyncs({
       pool: ctx.pool,
       fetchFn: refusingFetch as unknown as typeof fetch,
       credentials: { carta: { clientId: 'cid', clientSecret: 'csecret' } },
       log: silentLog,
     });
 
-    expect(processed).toBe(0);
+    expect(scan.synced).toBe(0);
+    // The half a bare success count cannot say. `synced: 0` is also what a scan
+    // with nothing due returns, so until the tally named all three a schedule
+    // in which every provider had refused our authorisation read through the
+    // sweep's `info` line and every instrument built on this tick exactly like
+    // an idle one — the blind spot R321 closed for the ladders and left open
+    // here.
+    expect(scan.due).toBe(1);
+    expect(scan.failed).toBe(1);
     expect(capCalled).toBe(false);
     const { rows } = await ctx.pool.query<{ status: string; last_error: string }>(
       'SELECT status, last_error FROM cap_table_connections WHERE valuation_id = $1',
@@ -507,7 +515,7 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
     });
 
     const warnings: unknown[] = [];
-    const processed = await runDueCapTableSyncs({
+    const scan = await runDueCapTableSyncs({
       pool: ctx.pool,
       fetchFn: trackingFetch as unknown as typeof fetch,
       log: { warn: (o) => warnings.push(o), error: (o) => warnings.push(o), info: () => {} },
@@ -515,7 +523,11 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
 
     // All N were attempted; the one 500 is isolated → N-1 succeed.
     expect(capCalls).toBe(N);
-    expect(processed).toBe(N - 1);
+    expect(scan.synced).toBe(N - 1);
+    // And the isolated one is counted rather than only logged: `failed` is the
+    // label `SweepWorkFailing` reads, and it is the difference between this
+    // scan and one where nothing was due.
+    expect(scan).toEqual({ due: N, synced: N - 1, failed: 1 });
     expect(warnings).toHaveLength(1);
     // Bounded to 4 in flight, yet genuinely concurrent (>1 at once).
     expect(peak).toBeLessThanOrEqual(4);

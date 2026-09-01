@@ -730,13 +730,13 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
         [v.id],
       );
       const recovered: Array<Record<string, unknown>> = [];
-      const processed = await runDueHrisSyncs({
+      const scan = await runDueHrisSyncs({
         pool: ctx.pool,
         fetchFn: mockFetch() as unknown as typeof fetch,
         log: { ...silentLog, info: (fields) => void recovered.push(fields as Record<string, unknown>) },
       });
 
-      expect(processed).toBeGreaterThanOrEqual(1);
+      expect(scan.synced).toBeGreaterThanOrEqual(1);
       const row = await connectionRow(v.id);
       expect(row.status).toBe('connected');
       expect(row.sync_failures).toBe(0);
@@ -883,12 +883,12 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
 
       // And nothing is due, so no sweep spends the refused credential again.
       rosterFails = true;
-      const processed = await runDueHrisSyncs({
+      const scan = await runDueHrisSyncs({
         pool: ctx.pool,
         fetchFn: mockFetch() as unknown as typeof fetch,
         log: silentLog,
       });
-      expect(processed).toBe(0);
+      expect(scan.synced).toBe(0);
       expect((await connectionRow(v.id)).sync_failures).toBe(3);
     });
 
@@ -1024,9 +1024,9 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
           { actorType: 'system', actorId: 'other-door', source: 'hris_sync' },
         );
       });
-      let processed = 0;
+      let scan = { due: 0, synced: 0, failed: 0 };
       try {
-        processed = await runDueHrisSyncs({
+        scan = await runDueHrisSyncs({
           pool: ctx.pool,
           fetchFn: mockFetch() as unknown as typeof fetch,
           log: silentLog,
@@ -1036,7 +1036,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       }
 
       expect(raced).toBe(true);
-      expect(processed).toBe(1);
+      expect(scan.synced).toBe(1);
       // Both grants exist exactly once, and the connection is healthy.
       const grants = await listGrants(ctx.pool, v.id);
       expect(grants.grants.map((g) => g.external_id).sort()).toEqual(['g1', 'g2']);
@@ -1328,14 +1328,18 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     });
 
     const warnings: unknown[] = [];
-    const processed = await runDueHrisSyncs({
+    const scan = await runDueHrisSyncs({
       pool: ctx.pool,
       fetchFn: trackingFetch as unknown as typeof fetch,
       log: { warn: (o) => warnings.push(o), error: (o) => warnings.push(o), info: () => {} },
     });
 
     expect(rosterCalls).toBe(N);
-    expect(processed).toBe(N - 1);
+    expect(scan.synced).toBe(N - 1);
+    // The isolated failure is counted, not only logged — see the cap-table
+    // twin. A bare success count made a scan where every provider refused
+    // indistinguishable from one with nothing due.
+    expect(scan).toEqual({ due: N, synced: N - 1, failed: 1 });
     expect(warnings).toHaveLength(1);
     expect(peak).toBeLessThanOrEqual(4);
     expect(peak).toBeGreaterThan(1);
