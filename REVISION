@@ -5871,3 +5871,76 @@
 #            papers and is not one anybody has written down for the personal
 #            data reachable from them. Not opened here — it is a feature, not
 #            a fix.
+#
+# R316 — Error handling & edge cases (M5). Four places where a failure told the
+#            wrong story: two on the retention sweep R315 had just put on the
+#            audit spine, one on the SSE reconnect, one on the public crash
+#            intake.
+#
+#            The sweep's two passes commit independently — R296 split them so an
+#            unenforceable outbox policy does not silently stop the valuation
+#            policy being enforced — and R315 gave the manual trigger a
+#            `retention_sweep_run` row written on the failure path too, on the
+#            stated ground that a run that half happened is the one a reviewer
+#            asks about. Both of this round's retention findings are about that
+#            path being the only one on this surface where an exception is
+#            already in flight while a write is attempted.
+#
+#            First: the failure-path audit was awaited unguarded inside the
+#            `catch`, so a spine that could not be written threw from there and
+#            *replaced* the sweep's error. The operator looking at a run that had
+#            already purged rows was told the wrong thing about why it stopped,
+#            and the 500 the error handler logged named the wrong failure.
+#            Contained the way billing's `auditRequest` contains its own — and
+#            every `withTransaction` in `db/pool.ts` already contains its
+#            ROLLBACK the same way, which is what made this the outlier rather
+#            than the convention.
+#
+#            Second, and the one that matters: the counts lived only in the
+#            return value, and on the two paths that throw there is no return
+#            value. An archival throw comes out of a run that may have
+#            irreversibly purged five thousand messages a moment earlier; a
+#            re-raised outbox failure comes out of a run that archived forty
+#            engagements. So the failure row said `outcome: 'failed'` and nothing
+#            else, and "who purged this" — the question `retention_sweep_run` was
+#            added to answer — was unanswerable on exactly the runs that purged
+#            something and then fell over. `onProgress` reports each pass as it
+#            finishes and the route files it as `partial`; nested rather than
+#            spread flat, because these are what the passes that completed
+#            reported and not the run's totals, and `null` when the first pass
+#            threw, because both passes are transactional and a row asserting
+#            `purged: 0` would be a claim about a pass never reached.
+#
+#            Third: `ValuationHub` refuses a caller with too many streams open
+#            with a 429 and `retry-after: 30`. The SPA's stream reader treated
+#            401/403/404 as terminal and everything else as a dropped socket, so
+#            the refusal fell into the flat three-second reconnect: every tab
+#            that caused the saturation re-asked twenty times a minute, forever,
+#            each attempt paying `authorizeStream`'s reads and `findUserById`
+#            before reaching the capacity check that refuses it. The reconnect
+#            now honours a `retry-after` and otherwise widens 3s → 30s while
+#            attempts keep failing, resetting the moment a stream opens — a
+#            socket the server restarted under still comes back in three seconds,
+#            which is the case the flat wait was written for.
+#
+#            Fourth, small and of a kind: `POST /client-errors` states at the top
+#            of its own file that every string is bounded here rather than
+#            trusted to the client, and then wrote `user-agent` through to the
+#            log untouched — same untrusted caller, public route, no schema cap
+#            over it because it is not in the schema.
+#
+# gap:       The report unit has no in-flight cap of its own. `POST
+#            /render/v1/pdf` will start as many concurrent renders as it is
+#            given, on a box whose cgroup limiter can SIGKILL it — the comment
+#            registering `registerCgroupMemoryMetrics` says as much. It is safe
+#            today only because its one caller holds the slot limiter
+#            (`queue_full` is a `LocalReason`) and internal auth keeps everyone
+#            else out, which is a property of the caller rather than of the
+#            boundary.
+#
+#            `POST /admin/retention/run` bypasses the sweep scheduler entirely,
+#            so a manual run can overlap the six-hourly tick and two admins can
+#            run two at once. It degrades rather than corrupts — both passes are
+#            transactional and `markValuationsArchived` reports what it actually
+#            took — but `nonOverlapping` is a timer guard and this is the route
+#            beside it, which is the shape [[n409-sweep-guards]] names.
