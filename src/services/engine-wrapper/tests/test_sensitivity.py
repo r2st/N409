@@ -439,3 +439,74 @@ def test_two_way_flood_is_rejected_over_http():
     )
     assert res.status_code == 422
     assert "at most" in res.json()["detail"]
+
+
+# ── The cell computed twice (R314, methodology M8) ───────────────────────────
+
+
+def _count_computes(monkeypatch):
+    """Count `compute` calls made through the sensitivity module."""
+    from app.engine import sensitivity as module
+
+    calls = {"n": 0}
+    real = module.compute
+
+    def counting(params, inputs):
+        calls["n"] += 1
+        return real(params, inputs)
+
+    monkeypatch.setattr(module, "compute", counting)
+    return calls
+
+
+def test_a_transposed_pair_reuses_the_valuations_it_already_made(monkeypatch):
+    calls = _count_computes(monkeypatch)
+    pair = [["volatility", "time_to_exit"]]
+    sensitivity(PARAMS, INPUTS, parameters=[], two_way=pair, steps=5)
+    one = calls["n"]
+
+    calls["n"] = 0
+    both = [["volatility", "time_to_exit"], ["time_to_exit", "volatility"]]
+    out = sensitivity(PARAMS, INPUTS, parameters=[], two_way=both, steps=5)
+    # Two tables, and not one extra valuation: the second is the first
+    # transposed, and `_apply` writes each lever into a disjoint part of the
+    # payload so the order they are applied in cannot change the answer.
+    assert len(out["two_way"]) == 2
+    assert calls["n"] == one
+
+    # …and it really is the transpose, cell for cell. The saving is only sound
+    # because this holds.
+    first, second = out["two_way"]
+    for i, row in enumerate(first["rows"]):
+        for j, cell in enumerate(row):
+            assert second["rows"][j][i]["fmv_per_share"] == cell["fmv_per_share"]
+    assert first["row_values"] == second["col_values"]
+
+
+def test_the_worst_case_request_is_halved(monkeypatch):
+    # Twenty ordered pairs over ten unordered ones, which is the ceiling
+    # `MAX_TWO_WAY_TABLES` admits. Every one of those valuations used to be run
+    # twice.
+    calls = _count_computes(monkeypatch)
+    pairs = [[a, b] for a in PARAMETERS for b in PARAMETERS if a != b]
+    out = sensitivity(PARAMS, INPUTS, parameters=[], two_way=pairs, steps=5)
+    assert len(out["two_way"]) == 20
+    # 20 tables x 25 cells = 500 before the memo, plus the base valuation.
+    assert calls["n"] < 300
+
+
+def test_the_memo_does_not_collapse_a_one_way_point_onto_a_two_way_cell():
+    # A lever applied at its own base value is not always a no-op —
+    # `exit_multiple` rewrites the multiples list either way — so a one-lever
+    # key and a two-lever key naming the same figures are different questions.
+    out = sensitivity(
+        PARAMS,
+        INPUTS,
+        parameters=["volatility"],
+        two_way=[["volatility", "exit_multiple"]],
+        steps=3,
+    )
+    one_way_mid = out["one_way"][0]["points"][1]
+    two_way_mid = out["two_way"][0]["rows"][1][1]
+    assert one_way_mid["fmv_per_share"] is not None
+    assert two_way_mid["fmv_per_share"] is not None

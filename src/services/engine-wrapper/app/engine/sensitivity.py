@@ -214,14 +214,59 @@ def _fmv(params: dict, inputs: dict) -> tuple[float | None, float | None, float 
         return None, None, None, str(exc)
 
 
+def _fmv_at(memo: dict, params: dict, inputs: dict, mutations: tuple) -> tuple:
+    """`_fmv` for one set of applied levers, computed at most once per request.
+
+    THE SAME CELL WAS COMPUTED TWICE ACROSS A TRANSPOSED PAIR (round 314,
+    methodology M8). A two-way table is indexed by the levers it moves and the
+    values it moves them to, and `_apply` writes each lever into a disjoint part
+    of the payload — `volatility` at the top, two keys of `income`, `market`,
+    `time_to_exit_years` — so the order they are applied in cannot matter. Which
+    makes ``[["volatility","time_to_exit"], ["time_to_exit","volatility"]]`` two
+    tables over one set of valuations: the second is the first transposed, cell
+    for cell, and it re-ran every one of them.
+
+    Both orderings are legitimate to ask for — the axes are what the caller
+    renders — and there are twenty ordered pairs against ten unordered ones, so
+    at the ceiling half the work was a re-run. At `steps` = 21 that is 4,410
+    valuations of a cap-table payload, several seconds of a threadpool slot,
+    for an answer already in hand.
+
+    Keyed on the *set* of mutations rather than on the pair, so it also collapses
+    the centre cell every odd-`steps` table shares, and it deliberately does not
+    collapse a two-way cell onto a one-way point: a lever explicitly applied at
+    its own base value is not always a no-op (`exit_multiple` rewrites the
+    multiples list either way), so a one-lever key and a two-lever key that
+    happen to name the same figures are different questions.
+
+    Per request, not per process: the memo is created in `sensitivity()` and dies
+    with it, because it is keyed on mutations to *these* inputs.
+    """
+    key = tuple(sorted(mutations))
+    hit = memo.get(key)
+    if hit is not None:
+        return hit
+    mutated = _variant(inputs)
+    for name, value in mutations:
+        _apply(name, value, params, mutated)
+    result = _fmv(params, mutated)
+    memo[key] = result
+    return result
+
+
 def _one_way(
-    name: str, base_value: float, base_fmv: float, params: dict, inputs: dict, span: float, steps: int
+    name: str,
+    base_value: float,
+    base_fmv: float,
+    params: dict,
+    inputs: dict,
+    span: float,
+    steps: int,
+    memo: dict,
 ) -> dict:
     points = []
     for value in _steps(base_value, span, steps):
-        mutated = _variant(inputs)
-        _apply(name, value, params, mutated)
-        fmv, exact, equity, error = _fmv(params, mutated)
+        fmv, exact, equity, error = _fmv_at(memo, params, inputs, ((name, value),))
         points.append(
             {
                 "value": value,
@@ -246,6 +291,7 @@ def _two_way(
     base_fmv: float,
     span: float,
     steps: int,
+    memo: dict,
 ) -> dict:
     row_values = _steps(row_base, span, steps)
     col_values = _steps(col_base, span, steps)
@@ -253,10 +299,7 @@ def _two_way(
     for rv in row_values:
         cells = []
         for cv in col_values:
-            mutated = _variant(inputs)
-            _apply(row, rv, params, mutated)
-            _apply(col, cv, params, mutated)
-            fmv, exact, _equity, error = _fmv(params, mutated)
+            fmv, exact, _equity, error = _fmv_at(memo, params, inputs, ((row, rv), (col, cv)))
             cells.append(
                 {
                     "fmv_per_share": fmv,
@@ -313,6 +356,11 @@ def sensitivity(
     # block, and twice per two-way pair.
     bases: dict[str, float | None] = {p: _base_value(p, params, inputs) for p in PARAMETERS}
 
+    # One memo for the whole request — see `_fmv_at`. Every valuation below goes
+    # through it, so a cell asked for twice under two different axis orderings is
+    # computed once.
+    memo: dict = {}
+
     if parameters is None:
         selected = [p for p in PARAMETERS if bases[p] is not None]
     else:
@@ -328,7 +376,7 @@ def sensitivity(
         if base_value is None:
             skipped.append(name)
             continue
-        one_way.append(_one_way(name, base_value, base_exact, params, inputs, span, steps))
+        one_way.append(_one_way(name, base_value, base_exact, params, inputs, span, steps, memo))
 
     # Refused up front rather than de-duped below, because a list this long
     # cannot be anything but repetition — and saying so beats silently
@@ -373,7 +421,7 @@ def sensitivity(
             skipped_two_way.append([row, col])
             continue
         two_way_tables.append(
-            _two_way(row, col, row_base, col_base, params, inputs, base_exact, span, steps)
+            _two_way(row, col, row_base, col_base, params, inputs, base_exact, span, steps, memo)
         )
 
     return {
