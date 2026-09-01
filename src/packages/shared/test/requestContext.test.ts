@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
+  MAX_REQUEST_ID_CHARS,
   REQUEST_ID_HEADER,
+  acceptableRequestId,
   bindRequestId,
   currentRequestId,
   requestIdHeaders,
   runWithRequestId,
+  runWithSweep,
 } from '../src/requestContext.js';
+import { newUlid } from '../src/ids.js';
 
 describe('ambient request id', () => {
   it('is undefined outside a request', () => {
@@ -78,9 +82,39 @@ describe('outbound header', () => {
   });
 
   it('sends nothing rather than a minted id when unbound', () => {
-    // A background job has no request to correlate to. Inventing an id here
-    // would make the downstream service log one that appears nowhere else.
+    // Nothing to correlate to. Inventing an id here would make the downstream
+    // service log one that appears nowhere else.
     expect(requestIdHeaders()).toEqual({});
+  });
+
+  it('sends the sweep run id when a tick has no request behind it', () => {
+    // `pipeline-retry` re-runs auto-pipeline orchestrations from a tick, so the
+    // AI and engine calls it makes used to land downstream with no header and
+    // be logged under a freshly minted uuid — an id in no other service's logs.
+    // `sweepRun` is on every local line of the same tick, so forwarding it is
+    // what makes the two halves joinable.
+    const headers = runWithSweep({ name: 'pipeline-retry', runId: '01J000000000000000000SWEEP' }, () =>
+      requestIdHeaders(),
+    );
+    expect(headers).toEqual({ [REQUEST_ID_HEADER]: '01J000000000000000000SWEEP' });
+  });
+
+  it('is an id the far side will adopt rather than replace', () => {
+    // The Python tier applies the same rule (`acceptable_request_id`): over
+    // 128 characters or outside the charset and it mints its own instead, which
+    // would put the join back where it started.
+    const runId = newUlid();
+    expect(runId.length).toBeLessThanOrEqual(MAX_REQUEST_ID_CHARS);
+    expect(acceptableRequestId(runId)).toBe(runId);
+  });
+
+  it('prefers the request id when a sweep runs under one', () => {
+    // The ops-triggered form of the same sweep. `requestId` is the id the
+    // caller is holding, and both are still on every local line.
+    const headers = runWithRequestId('req-9', () =>
+      runWithSweep({ name: 'email-retry', runId: '01J00000000000000000000000' }, () => requestIdHeaders()),
+    );
+    expect(headers).toEqual({ [REQUEST_ID_HEADER]: 'req-9' });
   });
 
   it('uses the header name the Python tier reads', () => {

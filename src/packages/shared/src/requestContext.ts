@@ -234,14 +234,35 @@ export function requestIdFromHeaders(headers: Record<string, string | string[] |
 }
 
 /**
- * `{ 'x-request-id': … }` when a request is in flight, `{}` otherwise.
+ * `{ 'x-request-id': … }` when there is something to correlate to, `{}` otherwise.
  *
- * Empty rather than a minted id when unbound: a background job genuinely has no
- * request to correlate to, and inventing one at the client would let the
- * downstream service log an id that appears in no other service's logs, which
- * is worse than letting it mint its own.
+ * Empty rather than a *minted* id when there is not: inventing one at the client
+ * would let the downstream service log an id that appears in no other service's
+ * logs, which is worse than letting it mint its own.
+ *
+ * ## Why a sweep tick counts
+ *
+ * That argument was written when a background tick had no identity, and it has
+ * had one since {@link runWithSweep}: `sweepRun` is on every line the tick
+ * writes here (see `requestIdMixin` in logger.ts) and it is a ULID, so it is
+ * both stable and acceptable to `acceptableRequestId` on either side of the
+ * wire. Forwarding it is not minting — it is sending an id that already appears
+ * in this service's logs, which is the exact test the rule above states.
+ *
+ * The gap it closes is reachable on the ordinary path. `pipeline-retry` is a
+ * sweep whose whole job is to re-run auto-pipeline orchestrations, so it drives
+ * `postJson` at the AI and engine services from inside a tick; `cap-table-sync`
+ * and `hris-sync` do the same. With no header the Python tier minted a fresh
+ * uuid per call, so the two halves of one retried pipeline — the valuation
+ * lines under `sweepRun`, the AI lines under that uuid — had no field in common
+ * and could only be joined by timestamp. The failures those sweeps exist to
+ * report are precisely the ones whose explanation is on the far side.
+ *
+ * A request wins when both are bound: a sweep function reached from an ops
+ * route is serving that request, and `requestId` is the id the caller is
+ * holding. Both facts are still on every local line, so neither join is lost.
  */
 export function requestIdHeaders(): Record<string, string> {
-  const requestId = currentRequestId();
+  const requestId = currentRequestId() ?? currentSweep()?.runId;
   return requestId ? { [REQUEST_ID_HEADER]: requestId } : {};
 }
