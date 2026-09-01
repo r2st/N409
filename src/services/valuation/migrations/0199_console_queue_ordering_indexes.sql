@@ -1,0 +1,89 @@
+-- Two ops consoles whose LIMIT bounded the answer and not the work.
+--
+-- R193's shape, and both of these are tables that grow without bound while the
+-- page they feed stays one screen. Neither was reached by that round's sweep or
+-- by R251's: the sweep planned SQL literals, and both statements here are
+-- ordinary column-led ORDER BYs that plan cleanly on an empty database. What
+-- gives them away is the *sibling* — every other console list on the platform
+-- got its ordering index in 0170, 0181, 0189, 0192 or 0193, and these two did
+-- not.
+--
+-- ── 1. The monitoring dashboard ────────────────────────────────────────────
+--
+-- `listEnabledMonitors` (repos/monitors.ts) is
+--
+--     ... WHERE m.enabled AND v.archived_at IS NULL
+--     ORDER BY m.created_at DESC, m.id DESC LIMIT $1
+--
+-- and `valuation_monitors` carried exactly two indexes: the primary key, and
+-- the UNIQUE on `valuation_id`. Nothing leads with `created_at`, so a page of
+-- 500 was a seq scan of every monitor hash-joined to a seq scan of every live
+-- engagement, top-N sorted.
+--
+-- Measured at 20k enabled monitors (EXPLAIN ANALYZE, warm):
+--
+--     listEnabledMonitors   10.56 ms, 40,000 rows read  ->  3.18 ms, 1,002
+--
+-- The millisecond figure is not the claim — the row count is. Both scans are
+-- O(monitors on the platform) and a monitor is opt-in per completed engagement,
+-- so the set only grows; the index scan is O(page). It walks the monitor book
+-- newest-first and probes `valuations_pkey` per row, stopping at the page.
+--
+-- Partial on `enabled`, because that is the only way this list is ever read —
+-- both readers (`listEnabledMonitors` and `eachEnabledMonitor`) carry the
+-- predicate, and a disabled monitor is a row nobody orders by date. The
+-- direction pair is copied from the statement rather than chosen: DESC on both
+-- keys is one backwards walk, and a mixed ordering costs a sort node however
+-- well the leading key is indexed (0170's rule).
+--
+-- `eachEnabledMonitor` is deliberately not served by this. It pages the whole
+-- enabled book by `m.id ASC` for a keyset walk and reaches the primary key,
+-- which is right: a sweep that must read every row wants insertion order, not a
+-- date it never asks about.
+--
+-- ── 2. The unfiled-document triage queue ───────────────────────────────────
+--
+-- `listUnfiledDocuments` and `countUnfiledDocuments` (repos/documents.ts) both
+-- ask for documents that are `category = 'uploads' AND kind = 'other'` — the
+-- ones the platform knows nothing about on either axis — and `documents`'
+-- existing indexes all lead with `valuation_id` or `uploaded_by`. With no
+-- valuation to scope by, the queue read the whole document table.
+--
+-- Which is the table on this platform with the least reason ever to stop
+-- growing: a row per file anybody has ever uploaded, and the queue's own
+-- comment says the backlog it exists to drain "is at the far end of the table".
+-- The predicate is *selective*, which is what hid it — the sort is over a few
+-- thousand rows and looks cheap. The cost is the 295,000 rows discarded to find
+-- them, and it is paid twice per page load, because the count is rendered
+-- beside the list.
+--
+-- Measured at 300k documents, 5k of them unfiled (EXPLAIN ANALYZE, warm):
+--
+--     listUnfiledDocuments    26.05 ms, 300,000 rows read  ->  5.50 ms, 500
+--     countUnfiledDocuments   scanned the table            ->  5,000 index rows
+--
+-- The list's `Sort` node disappears entirely rather than getting cheaper: the
+-- index is in `created_at` order, which is the queue's oldest-first ordering, so
+-- the scan stops at the page instead of sorting a filtered set.
+--
+-- Every term of the partial predicate is in both statements verbatim, including
+-- `deleted_at IS NULL` — a partial index is only reachable when the planner can
+-- prove the query implies it, and a soft-delete term left out of one of the two
+-- readers would silently serve one and not the other.
+--
+-- `v.archived_at IS NULL` is deliberately not in the predicate. It is a fact
+-- about the *engagement*, on the other side of a join, and no index on
+-- `documents` can hold it; both statements keep it as a probe per candidate row.
+--
+-- Not CONCURRENTLY: db/migrate.ts wraps each file in BEGIN/COMMIT. Both are ops
+-- consoles rather than client traffic, and the partial index on `documents`
+-- covers a few thousand rows of a large table, so the SHARE lock while these
+-- build is short and is not in front of anybody waiting.
+
+CREATE INDEX IF NOT EXISTS valuation_monitors_enabled_recent_idx
+    ON valuation_monitors (created_at DESC, id DESC)
+    WHERE enabled;
+
+CREATE INDEX IF NOT EXISTS documents_unfiled_idx
+    ON documents (created_at)
+    WHERE deleted_at IS NULL AND category = 'uploads' AND kind = 'other';

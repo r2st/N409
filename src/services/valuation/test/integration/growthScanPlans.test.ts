@@ -6,6 +6,8 @@ import { listActiveEngagements } from '../../src/repos/engagements.js';
 import { listSuppressions } from '../../src/repos/emailDelivery.js';
 import { listJobs } from '../../src/repos/jobs.js';
 import { listValuations as listDebtValuations } from '../../src/repos/debtInstruments.js';
+import { listEnabledMonitors } from '../../src/repos/monitors.js';
+import { listUnfiledDocuments } from '../../src/repos/documents.js';
 import { isDbAvailable, setupTestDb, type TestDb } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -102,6 +104,25 @@ interface Case {
   table: string;
   /** The index migration 0178/0179 added for it. */
   index: string;
+  /**
+   * Block ceiling for the driving scan, when the shared one does not apply.
+   *
+   * A BLOCK COUNT IS A PROPERTY OF THE CORPUS, NOT OF THE QUERY (R283). The
+   * shared bound of 200 works for every case whose predicate keeps most of the
+   * table, because there the index scan and the rows it wants are the same
+   * thing. It does not hold for a *selective* one: `listUnfiledDocuments` keeps
+   * one row in twenty, scattered a row at a time across the heap, so each of
+   * the 200 it returns is its own heap block — and at this seed the whole
+   * `documents` table is smaller than that. The index still wins where it
+   * matters, and by more the bigger the table gets (at 300k documents,
+   * 26.05ms/300,000 rows against 5.50ms/500); it is the *level* that is
+   * meaningless at 20k, not the fix.
+   *
+   * Raising it does not weaken the case. The plan without the index is a
+   * parallel seq scan discarding nineteen rows in twenty, which fails both
+   * `does not sequentially scan` and `discards nothing` before it reaches here.
+   */
+  maxBlocks?: number;
   run: (db: TestDb) => Promise<{ text: string; values: unknown[] }>;
 }
 
@@ -200,6 +221,38 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
       run: captured(/FROM debt_valuations/i, (d) => listDebtValuations(d.pool, INSTRUMENT)),
     },
     {
+      // R298. The sixth and seventh tables with this shape, and both found the
+      // way R283's was — by the sibling rather than by a sweep. Every other
+      // console list on the platform got its ordering index in 0170, 0181,
+      // 0189, 0192 or 0193; `valuation_monitors` carried nothing but its
+      // primary key and the UNIQUE on `valuation_id`, so a page of the
+      // monitoring dashboard was a seq scan of every monitor hash-joined to a
+      // seq scan of every live engagement, top-N sorted. 10.56ms and 40,000
+      // rows read at 20k monitors, against 3.18ms and 1,002 with 0199.
+      name: 'listEnabledMonitors',
+      table: 'valuation_monitors',
+      index: 'valuation_monitors_enabled_recent_idx',
+      run: captured(/FROM valuation_monitors/i, (d) => listEnabledMonitors(d.pool, { limit: 200 })),
+    },
+    {
+      // R298. The same shape hiding behind a *selective* predicate, which is
+      // why no round had looked at it: the unfiled queue keeps a few thousand
+      // rows, so its sort is small and looks cheap. The cost is the 295,000
+      // rows discarded to find them — `documents` has the least reason of any
+      // table here ever to stop growing, and every one of its indexes leads
+      // with `valuation_id` or `uploaded_by`, neither of which this queue has.
+      // Paid twice per page load, because `countUnfiledDocuments` is rendered
+      // beside the list and repeats the scan. 26.05ms and 300,000 rows read at
+      // 300k documents, against 5.50ms and 500 with 0199 — and the `Sort` node
+      // disappears rather than getting cheaper, because the index is already in
+      // the queue's oldest-first order.
+      name: 'listUnfiledDocuments',
+      table: 'documents',
+      index: 'documents_unfiled_idx',
+      maxBlocks: 800,
+      run: captured(/FROM documents/i, (d) => listUnfiledDocuments(d.pool, { limit: 200 })),
+    },
+    {
       name: 'GET /scim/v2/Users',
       table: 'users',
       index: 'users_scim_provisioned_idx',
@@ -296,6 +349,31 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
          FROM generate_series(1, ${ROWS}) g`,
       [INSTRUMENT],
     );
+    // One monitor per engagement, which is the most there can ever be
+    // (`valuation_monitors_valuation_id_key`), all enabled: the dashboard's
+    // predicate keeps nearly everything, which is what made the seq scan
+    // expensive rather than selective.
+    await q(
+      `INSERT INTO valuation_monitors (id, valuation_id, enabled, baseline, created_by, created_at)
+       SELECT ${ULID('g')}, ${ULID('g')}, true, '{}'::jsonb, $1,
+              now() - (g || ' minutes')::interval
+         FROM generate_series(1, ${ROWS}) g`,
+      [OWNER],
+    );
+    // The opposite share to the monitors, and it is the point of this case: a
+    // document the platform knows nothing about on either axis is a minority of
+    // uploads. A selective predicate is what makes the sort look cheap and the
+    // scan behind it invisible.
+    await q(
+      `INSERT INTO documents (id, valuation_id, kind, category, filename, content_type,
+                              size_bytes, sha256, storage_path, created_at)
+       SELECT ${ULID('g')}, ${ULID('g')},
+              (CASE WHEN g % 20 = 0 THEN 'other' ELSE 'cap_table' END)::document_kind,
+              (CASE WHEN g % 20 = 0 THEN 'uploads' ELSE 'captable_documents' END)::document_category,
+              'f' || g || '.pdf', 'application/pdf', 1000, md5(g::text), '/x/' || g,
+              now() - (g || ' minutes')::interval
+         FROM generate_series(1, ${ROWS}) g`,
+    );
     await q('ANALYZE');
 
     for (const c of CASES) {
@@ -322,7 +400,11 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
               (SELECT count(*) FROM ai_jobs WHERE status = 'running') AS running_jobs,
               (SELECT count(*) FROM ai_jobs) AS jobs_total,
               (SELECT count(*) FROM email_suppressions WHERE released_at IS NULL) AS held,
-              (SELECT count(*) FROM debt_valuations) AS debt_runs`,
+              (SELECT count(*) FROM debt_valuations) AS debt_runs,
+              (SELECT count(*) FROM valuation_monitors WHERE enabled) AS monitors,
+              (SELECT count(*) FROM documents) AS documents_total,
+              (SELECT count(*) FROM documents
+                WHERE deleted_at IS NULL AND category = 'uploads' AND kind = 'other') AS unfiled`,
     );
     const counts = rows[0]!;
     expect(Number(counts.invoices)).toBe(ROWS);
@@ -342,6 +424,14 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
     // All on one instrument: the page is fifty of them however many there are,
     // which is what makes reading the rest of the trail waste.
     expect(Number(counts.debt_runs)).toBe(ROWS);
+    // Every engagement monitored, because that is the ceiling and the dashboard
+    // filter keeps nearly all of it — the seq scan this replaced was expensive
+    // for being unselective, not for being wrong.
+    expect(Number(counts.monitors)).toBe(ROWS);
+    // And the unfiled queue the other way round: a minority of a table that
+    // must be big enough for the discarded majority to be the cost.
+    expect(Number(counts.documents_total)).toBe(ROWS);
+    expect(Number(counts.unfiled)).toBe(ROWS / 20);
   });
 
   it('matches the statement the source issues, for the two written out here', () => {
@@ -393,7 +483,7 @@ describe.skipIf(!dbUp)('a capped list still reads a page, not a table (R193)', (
       // a page and the other is the table.
       const scan = plans.get(c.name)!.find((n) => n['Relation Name'] === c.table)!;
       expect(scan['Rows Removed by Filter'] ?? 0).toBeLessThan(1_000);
-      expect(blocks(scan)).toBeLessThan(200);
+      expect(blocks(scan)).toBeLessThan(c.maxBlocks ?? 200);
     },
   );
 });
