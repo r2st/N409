@@ -151,7 +151,13 @@ import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rat
 import type { QueryStats } from './db/queryStats.js';
 import type { PoolHealth } from './db/poolHealth.js';
 import { clamdScanner, type ScanPolicy } from './documents/virusScan.js';
-import { probeReady, registerCircuitMetrics, setCircuitObserver, setNetworkSink } from './clients/internal.js';
+import {
+  probeReady,
+  registerCircuitMetrics,
+  registerUpstreamMetrics,
+  setCircuitObserver,
+  setNetworkSink,
+} from './clients/internal.js';
 import { configureReportRenderer, registerReportRenderMetrics } from './clients/reportRender.js';
 import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
@@ -805,6 +811,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // suspect something — so a dependency going away and coming back was, to
   // everything that polls, indistinguishable from it never having happened.
   registerCircuitMetrics(metricsRegistry);
+  // And how those calls are going while the breaker is still closed. Everything
+  // this service knew about the engine and the AI gateway was per-engagement
+  // (`network_items`) or per-request (the problem the caller got); nothing
+  // aggregated, so "the engine's error rate doubled an hour ago" was not a
+  // question anything on this box could answer.
+  registerUpstreamMetrics(metricsRegistry);
   registerMetricsEndpoint(app, { registry: metricsRegistry, service: 'valuation' });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });

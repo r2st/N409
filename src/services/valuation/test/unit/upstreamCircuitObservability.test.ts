@@ -6,6 +6,8 @@ import {
   circuits,
   postJson,
   registerCircuitMetrics,
+  registerUpstreamMetrics,
+  resetUpstreamMetrics,
   setCircuitObserver,
   UPSTREAM_CIRCUITS,
 } from '../../src/clients/internal.js';
@@ -50,6 +52,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   setCircuitObserver(null);
+  resetUpstreamMetrics();
   circuits.get(service).reset();
 });
 
@@ -147,5 +150,78 @@ describe('UPSTREAM_CIRCUITS roster', () => {
 
     expect(found.size).toBeGreaterThan(0);
     expect([...found].sort()).toEqual([...UPSTREAM_CIRCUITS].sort());
+  });
+});
+
+describe('upstream RED', () => {
+  it('separates a 4xx from a 5xx, because they are different people\'s problems', async () => {
+    const registry = new MetricsRegistry();
+    registerUpstreamMetrics(registry);
+
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, { ok: true }))
+        .mockResolvedValueOnce(jsonResponse(422, { detail: 'volatility is required' }))
+        .mockResolvedValueOnce(jsonResponse(503, { detail: 'down' })),
+    );
+    await postJson(service, 'http://x/y', {}, { retries: 0 });
+    await postJson(service, 'http://x/y', {}, { retries: 0 }).catch(() => undefined);
+    await postJson(service, 'http://x/y', {}, { retries: 0 }).catch(() => undefined);
+
+    const text = registry.render();
+    expect(text).toContain(`upstream_requests_total{service="${service}",outcome="ok"} 1`);
+    expect(text).toContain(`upstream_requests_total{service="${service}",outcome="rejected"} 1`);
+    expect(text).toContain(`upstream_requests_total{service="${service}",outcome="failed"} 1`);
+    // Three attempts observed, whatever they answered: a latency histogram that
+    // only holds the successes cannot see a dependency that got slow and fell over.
+    expect(text).toContain(`upstream_request_duration_seconds_count{service="${service}"} 3`);
+  });
+
+  it('counts one attempt per attempt, so a retry is visible', async () => {
+    const registry = new MetricsRegistry();
+    registerUpstreamMetrics(registry);
+
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(503, { detail: 'down' }))
+        .mockResolvedValueOnce(jsonResponse(200, { ok: true })),
+    );
+    await postJson(service, 'http://x/y', {}, { retries: 1, backoffMs: 1 });
+
+    const text = registry.render();
+    expect(text).toContain(`upstream_requests_total{service="${service}",outcome="failed"} 1`);
+    expect(text).toContain(`upstream_requests_total{service="${service}",outcome="ok"} 1`);
+    expect(text).toContain(`upstream_request_duration_seconds_count{service="${service}"} 2`);
+  });
+
+  it('records a refusal by the breaker without putting a zero in the latency histogram', async () => {
+    const registry = new MetricsRegistry();
+    registerUpstreamMetrics(registry);
+    await tripBreaker(service);
+
+    // Five failed attempts are in the histogram; the sixth call never dials.
+    await postJson(service, 'http://x/y', {}, { retries: 0 }).catch(() => undefined);
+
+    const text = registry.render();
+    expect(text).toContain(`upstream_requests_total{service="${service}",outcome="circuit_open"} 1`);
+    expect(text).toContain(`upstream_request_duration_seconds_count{service="${service}"} 5`);
+  });
+
+  it('records an unreachable host, which has no status to be classified by', async () => {
+    const registry = new MetricsRegistry();
+    registerUpstreamMetrics(registry);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED 10.0.1.4:3003')),
+    );
+    await postJson(service, 'http://x/y', {}, { retries: 0 }).catch(() => undefined);
+
+    expect(registry.render()).toContain(
+      `upstream_requests_total{service="${service}",outcome="unreachable"} 1`,
+    );
   });
 });

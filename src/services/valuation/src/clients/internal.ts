@@ -11,7 +11,9 @@ import {
   problems,
   requestIdHeaders,
   type CircuitState,
+  type Counter,
   type FailureClass,
+  type Histogram,
   type MetricsRegistry,
 } from '@n409/shared';
 import { sliceChars } from '../domain/textSlice.js';
@@ -209,6 +211,93 @@ const CIRCUIT_STATES: readonly CircuitState[] = ['closed', 'half-open', 'open'];
  * All three reads are in-memory, which is the requirement for a scrape-time
  * gauge — `snapshot()` only compares a monotonic clock against a timestamp.
  */
+/**
+ * How an attempt against an internal service ended.
+ *
+ * Per *attempt*, matching `NetworkCall`: a call that was retried made two
+ * exchanges, and collapsing them would hide the retry — which is exactly what
+ * an operator is looking for when a pipeline "took four minutes".
+ *
+ * `rejected` (4xx) and `failed` (5xx) are separate because they are different
+ * people's problems: a run of 4xx is this service sending the engine payloads
+ * it will not accept, and a run of 5xx is the engine. Nothing downstream can
+ * tell them apart from a single error rate, and only one of them is worth
+ * waking somebody for.
+ */
+export type UpstreamOutcome =
+  | 'ok'
+  | 'rejected'
+  | 'failed'
+  | 'timeout'
+  | 'unreachable'
+  | 'bad_body'
+  | 'circuit_open';
+
+let upstreamCalls: Counter | null = null;
+let upstreamDuration: Histogram | null = null;
+
+/**
+ * Wall time an internal call is allowed to take, as buckets.
+ *
+ * `DEFAULT_DURATION_BUCKETS` tops out at ten seconds, which is the right shape
+ * for a request this service serves and the wrong one for a request it makes:
+ * the default budget here is 120 seconds and an AI pipeline routinely uses tens
+ * of it, so every interesting call would land in `+Inf` and the histogram would
+ * answer nothing. Extended to cover the budget, so the quantile that matters —
+ * "are we close to the deadline that abandons the work" — is readable.
+ */
+const UPSTREAM_DURATION_BUCKETS: readonly number[] = [
+  0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120,
+];
+
+/**
+ * RED for the dependencies, on the scrape endpoint.
+ *
+ * Everything this service knew about the engine and the AI gateway was either
+ * per-engagement (`network_items`, a row keyed to a valuation, absent for every
+ * call that is not on behalf of one) or per-request (the problem document the
+ * caller got). Nothing aggregated: no rate, no error rate, no latency. The
+ * report offload has had exactly this pair since it was written
+ * (`report_render_total`), and the two hops that actually compute the valuation
+ * had neither.
+ *
+ * From this side of the wire on purpose. Neither Python service exposes a
+ * scrape endpoint, and even if it did, the numbers that decide whether a user
+ * saw a failure are the caller's: a request abandoned at our deadline is a
+ * success in the engine's own access log, still running.
+ */
+export function registerUpstreamMetrics(registry: MetricsRegistry): void {
+  upstreamCalls = registry.counter(
+    'upstream_requests_total',
+    'Attempts against an internal service, by outcome. One per attempt, so a retried call counts twice.',
+    ['service', 'outcome'],
+  );
+  upstreamDuration = registry.histogram(
+    'upstream_request_duration_seconds',
+    'Wall time of one attempt against an internal service, whether it succeeded or not.',
+    ['service'],
+    UPSTREAM_DURATION_BUCKETS,
+  );
+}
+
+/** Test seam: drops the instruments so one suite's counts cannot leak into another. */
+export function resetUpstreamMetrics(): void {
+  upstreamCalls = null;
+  upstreamDuration = null;
+}
+
+/**
+ * Record one finished attempt.
+ *
+ * `durationMs` is null for `circuit_open`, which is not an attempt — nothing was
+ * dialled, and folding a zero into the latency histogram would drag every
+ * quantile toward the floor exactly while the dependency is down.
+ */
+function recordUpstream(service: string, outcome: UpstreamOutcome, durationMs: number | null): void {
+  upstreamCalls?.inc({ service, outcome });
+  if (durationMs !== null) upstreamDuration?.observe(durationMs / 1000, { service });
+}
+
 export function registerCircuitMetrics(registry: MetricsRegistry): void {
   // Mint the known breakers so their series exist from boot; see the roster note.
   for (const name of UPSTREAM_CIRCUITS) circuits.get(name);
@@ -463,6 +552,7 @@ export async function postJson<T>(
         /* a diagnostic that cannot be written is a diagnostic that is missing */
       }
     }
+    recordUpstream(service, 'circuit_open', null);
     throw new InternalServiceError(
       service,
       null,
@@ -558,6 +648,7 @@ async function postJsonOnce<T>(
       // worth having: it says the upstream was still working when we left,
       // rather than that it was down.
       emit({ response: null, status: null, error: `did not respond within ${seconds}s` });
+      recordUpstream(service, 'timeout', Date.now() - startedAt);
       throw new InternalServiceError(service, null, `did not respond within ${seconds}s`, [], true);
     }
     // A transport failure's message is written for whoever is holding the
@@ -566,6 +657,7 @@ async function postJsonOnce<T>(
     // for the log and the call record, withheld from the response.
     const reason = err instanceof Error ? err.message : 'unreachable';
     emit({ response: null, status: null, error: reason });
+    recordUpstream(service, 'unreachable', Date.now() - startedAt);
     throw new InternalServiceError(service, null, reason, [], false, true);
   };
 
@@ -656,6 +748,7 @@ async function postJsonOnce<T>(
     // proxy's HTML error page — and re-reading it later beats re-running the
     // call that produced it.
     emit({ response: safeParse(text), status: res.status, error: detail });
+    recordUpstream(service, res.status >= 500 ? 'failed' : 'rejected', Date.now() - startedAt);
     throw new InternalServiceError(service, res.status, detail, issues, false, opaque, false, retryAfter);
   }
   let parsed: T;
@@ -663,9 +756,11 @@ async function postJsonOnce<T>(
     parsed = JSON.parse(text) as T;
   } catch {
     emit({ response: sliceChars(text, 2_000), status: res.status, error: 'invalid JSON in response body' });
+    recordUpstream(service, 'bad_body', Date.now() - startedAt);
     throw new InternalServiceError(service, res.status, 'invalid JSON in response body');
   }
   emit({ response: parsed, status: res.status, error: null });
+  recordUpstream(service, 'ok', Date.now() - startedAt);
   return parsed;
 }
 
