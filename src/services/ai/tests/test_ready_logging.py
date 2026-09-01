@@ -17,6 +17,7 @@ durable channel of the three — said nothing.
 
 from __future__ import annotations
 
+import json
 import logging
 from types import SimpleNamespace
 
@@ -25,6 +26,7 @@ from fastapi.testclient import TestClient
 
 from app import openrouter
 from app.main import app
+from app.observability import JsonLogFormatter
 from app.openrouter import KeyStatus
 
 client = TestClient(app)
@@ -116,3 +118,31 @@ def test_two_failures_are_one_event(monkeypatch, caplog):
     lines = _ready_lines(caplog)
     assert len(lines) == 1
     assert lines[0].failed == "openrouter_key,search"
+
+
+def test_the_two_fields_survive_the_formatter(monkeypatch, caplog):
+    """Present on the record is not the same as present on the line (R338, M8-adjacent).
+
+    ``_EXTRA_KEYS`` is an allowlist, so a key the formatter does not name is
+    dropped in silence — and every assertion above reads the ``LogRecord``,
+    which carries the attribute whether or not anything ever writes it out.
+    ``failed`` and ``gating`` were both unlisted, so the line this module exists
+    to produce went to disk saying only that *something* was wrong, and the two
+    tests above passed the whole time.
+
+    Asserted through the formatter, which is the only place the difference is
+    visible.
+    """
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-revoked")
+    monkeypatch.setattr(
+        openrouter,
+        "_probe_key",
+        lambda key, client=None: KeyStatus("invalid", "OpenRouter rejected the key"),
+    )
+    _search(monkeypatch, "valid")
+    with caplog.at_level(logging.WARNING):
+        assert client.get("/ready").status_code == 503
+
+    line = json.loads(JsonLogFormatter().format(_ready_lines(caplog)[0]))
+    assert line["failed"] == "openrouter_key"
+    assert line["gating"] is True

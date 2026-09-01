@@ -87,6 +87,14 @@ _EXTRA_KEYS = (
     # how much is the diagnostic it was written to be, minus the diagnosis.
     # Both of its fields were being dropped in silence for want of a name.
     "total",
+    # Which readiness checks came back invalid, and whether one of them is the
+    # gating one. R337 added both to `/ready`'s warning line — the whole point of
+    # that line being that a failed check now reaches a channel rather than none
+    # — and neither was named here, so the formatter dropped both and the line
+    # went out saying only that *something* was wrong. Exactly the shape the
+    # comment above describes: from the call site it looked like it worked.
+    "failed",
+    "gating",
 )
 
 # ── Redaction ────────────────────────────────────────────────────────────────

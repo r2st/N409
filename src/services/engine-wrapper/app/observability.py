@@ -80,6 +80,12 @@ _EXTRA_KEYS = (
     # `websearch` and `pipelines`, neither of which this tier has.
     "cooldown_s",
     "total",
+    # which readiness checks came back invalid, and whether one of them gates
+    # the verdict. Carried here for the same subset rule: the users are on the
+    # AI tier's `/ready`, which is where R337 added them — and where the
+    # formatter dropped both in silence until R338 named them.
+    "failed",
+    "gating",
     # how far out a run that could not be completed was — see
     # `engine.errors.EngineDegradedError`. Named rather than folded into
     # `count`/`limit`, which is the overloading the note above exists about:
