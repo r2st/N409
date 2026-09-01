@@ -347,6 +347,8 @@ def root() -> dict:
         "version": VERSION,
         "status": "ok",
         "pipelines": sorted(ALL_PIPELINES),
+        # The service's own account of what it answers, held to the routes
+        # actually registered by tests/test_endpoint_roster.py.
         "endpoints": [
             "/health",
             "/ready",
@@ -355,6 +357,7 @@ def root() -> dict:
             "/ai/v1/test",
             "/ai/v1/models",
             "/ai/v1/research",
+            "/ai/v1/anonymize",
         ],
     }
 

@@ -305,6 +305,11 @@ def root() -> dict:
         "version": ENGINE_VERSION,
         "status": "ok",
         "contract": "engine/v1",
+        # The service's own account of what it answers. Held to the routes
+        # actually registered by tests/test_endpoint_roster.py: the fund and
+        # debt families were added to the app and never to this list, so a
+        # caller reading the discovery document was told six of the endpoints
+        # it depends on do not exist.
         "endpoints": [
             "/health",
             "/ready",
@@ -319,6 +324,12 @@ def root() -> dict:
             "/engine/v1/wacc",
             "/engine/v1/projection",
             "/engine/v1/rollforward",
+            "/engine/v1/fund-valuation",
+            "/engine/v1/fund-waterfall",
+            "/engine/v1/fund-calibrate",
+            "/engine/v1/fund-rollforward",
+            "/engine/v1/debt-valuation",
+            "/engine/v1/debt-rating-spread",
             "/engine/v1/qsbs",
             "/engine/v1/intangible",
             "/engine/v1/ppa",
