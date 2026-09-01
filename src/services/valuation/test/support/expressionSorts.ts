@@ -69,6 +69,26 @@ function withoutComments(text: string): string {
     .replace(/(^|[^:])\/\/[^\n]*/g, (m, keep: string) => keep + ' '.repeat(m.length - keep.length));
 }
 
+/**
+ * Blanks SQL line comments inside a query, keeping every byte's position.
+ *
+ * `withoutComments` above strips the TypeScript kinds; a query written as a
+ * template literal carries its own, and this repo writes long ones. R306's
+ * outbox sweep explains its index in `--` prose that contains the words "the
+ * ORDER BY below was a sort above it", and the scanner read that sentence as a
+ * clause and reported `repos/emailOutbox.ts` as an unaccounted expression sort
+ * — a roster failing over a comment describing a statement rather than over the
+ * statement, which is the same thing R311's path harvest had to be taught.
+ *
+ * Length-preserving so `at.index` still names the byte it found and the line
+ * numbers stay the file's own. A `--` inside a quoted SQL string would be
+ * blanked too; that can only lose a detection, never invent one, and the
+ * vacuity guard in the test above is what would notice a scanner going quiet.
+ */
+function withoutSqlComments(sql: string): string {
+  return sql.replace(/--[^\n]*/g, (m) => ' '.repeat(m.length));
+}
+
 /** Splits on commas outside parentheses — `count(*) FILTER (…), x` is two terms. */
 function topLevelTerms(clause: string): string[] {
   const terms: string[] = [];
@@ -94,7 +114,7 @@ export function scanExpressionSorts(dir: string = SRC_DIR): ExpressionSort[] {
     // String literals only. Every query in this service is written as one, and
     // scanning raw file text picks up identifiers and prose instead.
     for (const literal of text.matchAll(/`(?:[^`\\]|\\.)*`|'(?:[^'\\\n]|\\.)*'/g)) {
-      const sql = literal[0].slice(1, -1);
+      const sql = withoutSqlComments(literal[0].slice(1, -1));
       for (const at of sql.matchAll(/\bORDER\s+BY\s+/gi)) {
         const from = at.index + at[0].length;
         let depth = 0;
