@@ -367,6 +367,22 @@ def allocate_monte_carlo(
         s_totals = [0.0] * n
         s_common = 0.0
         s_common_sq = 0.0
+        # The common classes' running totals as they stood before this draw.
+        #
+        # This used to be `before = s_totals[:]` — the whole cap table copied,
+        # once per draw, to read back a difference over the two or three entries
+        # of `common_at` (R338, methodology M8). At the default 20,000 paths that
+        # is 20,000 list allocations and 20,000·n element copies per scenario,
+        # and at `MAX_PATHS` against the 200-class cap it is forty million
+        # element copies to compute a number that depends on `len(common_at)` of
+        # them. A reused buffer over the indices actually read is O(k) with no
+        # allocation at all.
+        #
+        # Term by term and in the same order, deliberately: the natural
+        # rewrite — summing the common classes before and after and subtracting
+        # the two — is different floating-point arithmetic, and this feeds the
+        # variance the run reports as its precision claim.
+        before = [0.0] * len(common_at)
         for _ in range(pairs):
             z = rng.gauss(0.0, 1.0)
             # The antithetic pair. Both are real draws from the same
@@ -374,9 +390,13 @@ def allocate_monte_carlo(
             # this seed happens to lean high.
             for draw in (z, -z):
                 exit_value = equity_value * math.exp(drift + vol * draw)
-                before = s_totals[:]
+                for j, i in enumerate(common_at):
+                    before[j] = s_totals[i]
                 payoff(exit_value, s_totals)
-                common = sum(s_totals[i] - before[i] for i in common_at) * discount
+                common = 0.0
+                for j, i in enumerate(common_at):
+                    common += s_totals[i] - before[j]
+                common *= discount
                 s_common += common
                 s_common_sq += common * common
         count = pairs * 2
