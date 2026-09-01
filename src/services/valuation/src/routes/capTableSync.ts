@@ -54,6 +54,10 @@ import {
   type ConnectorLogger,
   type ConnectorScanTally,
 } from '../domain/connectorSyncLog.js';
+import {
+  recordIntegrationCallbackOutcome,
+  type IntegrationCallbackOutcome,
+} from '../observability/integrationCallbacks.js';
 
 /**
  * Live cap-table sync (feature 4). Flow mirrors the accounting integration:
@@ -601,10 +605,21 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
       throw problems.unprocessable(integrationCallbackRefusal('capTable'));
     }
     const provider = parseProvider(state.provider);
-    const back = (result: string) =>
-      reply.redirect(
+    /*
+     * Recorded inside `back` rather than at the five call sites (R341,
+     * methodology M11). Every outcome of this handler, refusals included, is a
+     * 302 — counted in `http_requests_total`'s 3xx class beside every ordinary
+     * navigation — and three of the five wrote nothing anywhere at all. See
+     * `observability/integrationCallbacks.ts`. Here rather than beside each
+     * `return` for the reason `scheduleSweep` takes its name once: a recorder
+     * per call site is a recorder one call site is later added without.
+     */
+    const back = (result: IntegrationCallbackOutcome) => {
+      recordIntegrationCallbackOutcome('cap-table', result);
+      return reply.redirect(
         `${deps.publicBaseUrl}/valuations/${state.valuationId}/cap-table?sync=${result}&provider=${provider}`,
       );
+    };
     if (q.error || !q.code) return back('denied');
 
     /*
@@ -641,7 +656,18 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
      * session; `back()` is how its every other refusal answers, and the reader
      * has to land somewhere they can read the reason.
      */
-    if (await isRetiredNow(deps.pool, state.valuationId)) return back('retired');
+    if (await isRetiredNow(deps.pool, state.valuationId)) {
+      // The counter inside `back` is what a rule reads; this is the half a
+      // person needs once it has fired. A refusal here names an engagement the
+      // firm withdrew while somebody was on a provider's consent screen, and
+      // until R341 the only record of it anywhere was a query parameter in that
+      // person's browser.
+      req.log.warn(
+        { provider, valuationId: state.valuationId, userId: state.userId },
+        'integration callback refused: the engagement was withdrawn during the OAuth hop',
+      );
+      return back('retired');
+    }
     /*
      * And whether the person who started the hop may still finish it.
      *
@@ -655,8 +681,18 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
      * stored and a standing pull armed in the name of an account that can no
      * longer open the file.
      */
-    if (!(await integrationActorStillAuthorized(deps.pool, state.userId, state.valuationId, 'read')))
+    if (!(await integrationActorStillAuthorized(deps.pool, state.userId, state.valuationId, 'read'))) {
+      // Same argument as the retirement line above, with a stronger case for
+      // it: this is a thirty-minute token presented by somebody whose access
+      // ended inside those thirty minutes — closed, suspended, demoted, or
+      // moved out of a partner's scope. A security-relevant refusal of a stale
+      // credential, and it wrote nothing anywhere.
+      req.log.warn(
+        { provider, valuationId: state.valuationId, userId: state.userId },
+        'integration callback refused: the actor may no longer complete this connection',
+      );
       return back('unauthorized');
+    }
 
     const creds = deps.credentials[provider];
     if (!creds) throw providerUnavailable(provider);

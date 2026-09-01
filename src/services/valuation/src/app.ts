@@ -165,6 +165,7 @@ import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
 import { registerInboundWebhookMetrics } from './observability/inboundWebhooks.js';
 import { registerSsoMetrics } from './observability/ssoOutcomes.js';
 import { registerScimMetrics } from './observability/scimRequests.js';
+import { registerIntegrationCallbackMetrics } from './observability/integrationCallbacks.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 import {
@@ -841,6 +842,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // rule watches, so the automated path that takes a departing employee's
   // access away stops and the platform's own instruments read green.
   registerScimMetrics(metricsRegistry);
+  // And the three OAuth connect doors, whose refusals are 302s for exactly the
+  // reason SSO's are. Three of the five outcomes a callback can reach — the
+  // provider saying no, the engagement withdrawn mid-hop, the actor no longer
+  // allowed to finish — wrote nothing anywhere at all, so a rotated client
+  // secret or a redirect URI that no longer matches refuses every connection
+  // attempt with every instrument on this box reading green.
+  registerIntegrationCallbackMetrics(metricsRegistry);
   // Whether we are still dialling the engine, the AI service and the report
   // unit at all. The breaker's own view was reachable only from the ops
   // incident endpoint, which is a page somebody visits once they already

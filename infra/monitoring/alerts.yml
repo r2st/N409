@@ -741,3 +741,49 @@ groups:
         labels: { severity: ticket }
         annotations:
           summary: 'crash reports are being refused by the throttle; client_errors_total is an undercount'
+
+  - name: n409-integration-connects
+    rules:
+      # The three OAuth connect doors — HRIS, accounting, cap-table sync — whose
+      # every outcome, refusals included, is a 302. `ssoOutcomes.ts` established
+      # the shape one flow over and the argument is the same: a refusal answered
+      # as a redirect is counted in `http_requests_total`'s 3xx class beside
+      # every ordinary navigation, `HighServerErrorRate` sees no 5xx,
+      # `SlowRequests` sees nothing, and the breakers see nothing because the
+      # provider is not one of ours. Three of the five outcomes wrote nothing at
+      # all until R341, so a rotated client secret or a redirect URI that no
+      # longer matches refuses every connection with every instrument green.
+      #
+      # `denied` is the provider's side saying no, and it is the one that
+      # catches a misconfigured OAuth app: the provider refuses before we are
+      # ever asked, so nothing downstream of the callback runs. A ratio against
+      # every outcome, because one person clicking Deny on a consent screen is
+      # Tuesday and nothing but `denied` for an afternoon is a setting somebody
+      # changed. `for` is long because these are hand-driven flows: a firm makes
+      # a handful of connections a week, not a stream.
+      - alert: IntegrationConnectsRefusedByProvider
+        expr: |
+          sum by (family) (rate(integration_callback_outcomes_total{outcome="denied"}[6h]))
+            / sum by (family) (rate(integration_callback_outcomes_total[6h])) > 0.8
+        for: 2h
+        labels: { severity: ticket }
+        annotations:
+          summary: 'the {{ $labels.family }} provider is refusing every connection attempt — check the client secret and the redirect URI'
+          runbook: "journalctl -u n409-valuation | grep 'integration callback'"
+
+      # And this platform refusing on the far side of the hop. `retired` is the
+      # engagement withdrawn while somebody was on a consent screen and
+      # `unauthorized` is the actor's access ending inside the token's thirty
+      # minutes — closed, suspended, demoted, or moved out of a partner's scope.
+      # Both are ordinary one at a time, which is why this is a count over a long
+      # window rather than a ratio: several in a day is a role migration or a
+      # retirement sweep turning away connections nobody realises are failing,
+      # and `unauthorized` in particular is a stale credential being presented.
+      - alert: IntegrationConnectsRefusedLocally
+        expr: |
+          sum by (family) (increase(integration_callback_outcomes_total{outcome=~"retired|unauthorized"}[6h])) > 3
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.family }} connections are being refused after the OAuth hop — the engagement or the actor changed mid-flow'
+          runbook: "journalctl -u n409-valuation | grep 'integration callback refused'"
