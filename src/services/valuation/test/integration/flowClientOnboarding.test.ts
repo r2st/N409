@@ -201,11 +201,28 @@ describe.skipIf(!dbUp)('a prospect becoming an engagement', () => {
     expect(res.json().can_edit).toBe(false);
     expect(res.json().status).toBe('submitted');
 
+    /*
+     * R303: 409, not 401. R222 split "already submitted" out of the dead-link
+     * response here and this flow was not updated with it, so it has been red
+     * on main since 30 Aug.
+     *
+     * The status is the substance rather than a detail. 401 says the token is
+     * no longer good — which is false, and the assertion three lines above
+     * proves it false, since the same token just read the form back. What
+     * happened is that the questionnaire is in, and the reader is a client with
+     * no account who otherwise concludes their answers are gone.
+     */
     const late = await asProspect('/api/v1/intake/portal/answers', {
       token,
       answers: { legal_name: 'Nope' },
     });
-    expect(late.statusCode).toBe(401);
+    expect(late.statusCode).toBe(409);
+    expect(late.json().detail).toMatch(/already been submitted/);
+    expect(late.json().detail).toMatch(/nothing has been lost/);
+
+    // And the write was refused, not merged: what they sent on Friday stands.
+    const reread = await asProspect('/api/v1/intake/portal', { token });
+    expect(reread.json().answers.legal_name).not.toBe('Nope');
   });
 
   // ── 3. The firm reads it, and only the firm ───────────────────────────────
