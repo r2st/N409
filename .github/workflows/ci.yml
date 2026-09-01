@@ -199,6 +199,8 @@ jobs:
         run: docker build -f src/services/valuation/Dockerfile .
       - name: Build web (BFF) image
         run: docker build -f src/services/web/Dockerfile .
+      - name: Build report image
+        run: docker build -f src/services/report/Dockerfile .
       - name: Build ai image
         run: docker build src/services/ai
       - name: Build engine-wrapper image

@@ -1170,3 +1170,97 @@ describe('shipped code imports nothing that a production install omits', () => {
     });
   }
 });
+
+/**
+ * The `@n409/*` workspaces each production image has to physically contain.
+ *
+ * A workspace dependency is a symlink into the tree, not a tarball npm fetches.
+ * `npm ci` inside an image happily creates that link whether or not the target
+ * directory was ever COPYed — so a manifest can declare `@n409/report`, the
+ * install can report success, and the module simply is not there. Nothing else
+ * in this repo asks the question: `npm audit` is about registry packages, the
+ * lockfile records a link with no integrity hash by design, and the census
+ * above stops at what the manifests say.
+ *
+ * `src/services/valuation/Dockerfile` had that hole from Milestone 0. It was
+ * written when valuation depended on `@n409/shared` alone, `@n409/report`
+ * arrived with Milestone 1+2, and the COPY list never grew — while `app.ts`
+ * imports `verifyFontAssets` from it and `clients/reportRender.ts` renders the
+ * PDF in-process whenever the report service is unreachable. The build stage
+ * could not resolve its own project graph and the runtime stage had no
+ * `dist/` to import.
+ */
+function n409RuntimeClosure(ws: string): string[] {
+  const nameToWs = new Map(WORKSPACES.map((w) => [manifest(w).name as string, w]));
+  const seen = new Set<string>();
+  const queue = [ws];
+  while (queue.length) {
+    const cur = queue.pop()!;
+    for (const dep of Object.keys(manifest(cur).dependencies ?? {})) {
+      const depWs = nameToWs.get(dep);
+      if (!depWs || seen.has(depWs)) continue;
+      seen.add(depWs);
+      queue.push(depWs);
+    }
+  }
+  return [...seen].sort();
+}
+
+describe('a production image contains every workspace it links to', () => {
+  for (const ws of shippedWorkspaces()) {
+    const dockerfile = path.join(repoRoot, ws, 'Dockerfile');
+    if (!existsSync(dockerfile)) continue;
+
+    it(ws, () => {
+      const text = readFileSync(dockerfile, 'utf8');
+      const missing: string[] = [];
+
+      for (const dep of n409RuntimeClosure(ws)) {
+        // The build stage needs the source (tsc builds it as a project
+        // reference); the runtime stage needs the manifest, for the `exports`
+        // map subpaths resolve through, and the emitted `dist/`.
+        if (!new RegExp(`^COPY\\s+${dep}\\s+${dep}\\s*$`, 'm').test(text)) {
+          missing.push(`${dep} source is never copied into the build stage`);
+        }
+        if (!text.includes(`${dep}/package.json`)) {
+          missing.push(`${dep}/package.json is never copied (its exports map resolves subpaths)`);
+        }
+        if (!text.includes(`${dep}/dist`)) {
+          missing.push(`${dep}/dist is never copied into the runtime stage`);
+        }
+      }
+
+      expect(
+        missing,
+        `${ws}/Dockerfile declares these workspaces as runtime dependencies but never ` +
+          `puts them in the image. npm ci links a workspace by path and does not check ` +
+          `that the path exists, so the install succeeds and the container dies on the ` +
+          `first import instead.`,
+      ).toEqual([]);
+    });
+  }
+});
+
+describe('CI builds every image this repo ships', () => {
+  it('no Dockerfile is left unbuilt', () => {
+    const ci = readFileSync(path.join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+    const builds = ci.split('\n').filter((l) => /^\s*run:\s*docker build\b/.test(l));
+
+    // Anti-vacuity: if the job is renamed away or the steps move to a composite
+    // action, "every Dockerfile is built" would otherwise become true by there
+    // being nothing to compare against.
+    expect(builds.length, 'ci.yml runs no `docker build` at all').toBeGreaterThan(0);
+
+    const unbuilt = WORKSPACES.filter((ws) => existsSync(path.join(repoRoot, ws, 'Dockerfile')))
+      // Either `docker build -f <ws>/Dockerfile .` or `docker build <ws>`.
+      .filter((ws) => !builds.some((l) => l.includes(`${ws}/Dockerfile`) || l.trim().endsWith(ws)));
+
+    expect(
+      unbuilt,
+      'these images are defined and never built by CI, so nothing checks that their ' +
+        'install and COPY lists still work. docker-compose.yml offers them to anyone ' +
+        'running the stack, and a Dockerfile that no pipeline builds rots silently — ' +
+        'src/services/report was one of five images with only four build steps.',
+    ).toEqual([]);
+  });
+});

@@ -3,9 +3,16 @@ FROM node:22-alpine AS build
 WORKDIR /repo
 COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
 COPY src/packages/shared/package.json src/packages/shared/
+# @n409/report is a runtime dependency of this service, not just a sibling:
+# app.ts imports `verifyFontAssets` from it and clients/reportRender.ts renders
+# the PDF in-process whenever the report service is unreachable. Its tsconfig is
+# also a project reference of valuation's, so `tsc -b` below cannot even resolve
+# the build graph without it.
+COPY src/services/report/package.json src/services/report/
 COPY src/services/valuation/package.json src/services/valuation/
 RUN npm ci --workspaces --include-workspace-root
 COPY src/packages/shared src/packages/shared
+COPY src/services/report src/services/report
 COPY src/services/valuation src/services/valuation
 RUN npx tsc -b src/services/valuation
 
@@ -15,6 +22,13 @@ WORKDIR /repo
 COPY --from=build /repo/package.json /repo/package-lock.json ./
 COPY --from=build /repo/src/packages/shared/package.json src/packages/shared/
 COPY --from=build /repo/src/packages/shared/dist src/packages/shared/dist
+COPY --from=build /repo/src/services/report/package.json src/services/report/
+COPY --from=build /repo/src/services/report/dist src/services/report/dist
+# The embedded typeface, for the same reason report's own image carries it:
+# pdf.ts resolves the font files relative to its own module URL, so `assets/`
+# must sit beside `dist/`. The local-render fallback throws on the first page
+# without it, and /ready's `fonts` probe fails before that.
+COPY --from=build /repo/src/services/report/assets src/services/report/assets
 COPY --from=build /repo/src/services/valuation/package.json src/services/valuation/
 COPY --from=build /repo/src/services/valuation/dist src/services/valuation/dist
 COPY --from=build /repo/src/services/valuation/migrations src/services/valuation/migrations
