@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { findUnstorableText, MAX_SCAN_DEPTH } from '../../src/domain/nulBytes.js';
+import { findOverDeepValue, findUnstorableText, MAX_SCAN_DEPTH } from '../../src/domain/nulBytes.js';
 
 /**
  * The walk behind the boundary guard in app.ts.
@@ -30,6 +30,39 @@ describe('the gap this closes', () => {
 
 /** The path alone, for the cases that are only about where the walk stopped. */
 const at = (value: unknown): string | null => findUnstorableText(value)?.path ?? null;
+
+describe('findOverDeepValue', () => {
+  const nest = (levels: number, leaf: unknown): unknown => {
+    let v = leaf;
+    for (let i = 0; i < levels; i += 1) v = { a: v };
+    return v;
+  };
+
+  it('passes anything the unstorable scan can finish reading', () => {
+    expect(findOverDeepValue({ a: 1 })).toBeNull();
+    expect(findOverDeepValue(nest(MAX_SCAN_DEPTH, 'leaf'))).toBeNull();
+    // The engine input document, the deepest body this API takes.
+    expect(findOverDeepValue({ market: { multiples: [{ metric: 'ev_revenue', value: 4.2 }] } })).toBeNull();
+  });
+
+  it('names the first value nested past the scan, in objects and in arrays', () => {
+    expect(findOverDeepValue(nest(MAX_SCAN_DEPTH + 2, 'leaf'))).toBe('a'.repeat(1).concat(
+      '.a'.repeat(MAX_SCAN_DEPTH),
+    ));
+    expect(findOverDeepValue({ rows: [nest(MAX_SCAN_DEPTH + 2, 1)] })?.startsWith('rows[0]')).toBe(true);
+  });
+
+  /**
+   * The reason it exists: the unstorable scan answers `null` below its depth
+   * bound, so a NUL at depth 13 passed the hook and reached the jsonb column
+   * that `inputs` is stored in, where the driver refuses it as 22021.
+   */
+  it('catches the depth a NUL was hiding at', () => {
+    const hidden = nest(MAX_SCAN_DEPTH + 1, `x${NUL}y`);
+    expect(findUnstorableText(hidden)).toBeNull();
+    expect(findOverDeepValue(hidden)).not.toBeNull();
+  });
+});
 
 describe('findUnstorableText', () => {
   it('passes ordinary payloads, including awkward Unicode', () => {

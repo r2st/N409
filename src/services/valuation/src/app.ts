@@ -156,7 +156,12 @@ import { configureReportRenderer, registerReportRenderMetrics } from './clients/
 import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
-import { findUnstorableText, unstorableTextMessage } from './domain/nulBytes.js';
+import {
+  findOverDeepValue,
+  findUnstorableText,
+  overDeepMessage,
+  unstorableTextMessage,
+} from './domain/nulBytes.js';
 
 export interface AppDeps {
   config: Config;
@@ -353,6 +358,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       findUnstorableText(req.body) ?? findUnstorableText(req.query) ?? findUnstorableText(req.params);
     if (at) {
       done(problems.badRequest(unstorableTextMessage(at)));
+      return;
+    }
+    // The scan above stops at MAX_SCAN_DEPTH and answers "nothing here" for
+    // everything below it, so a NUL nested past that depth used to pass this
+    // hook and reach the jsonb column a free-form record is stored in. A body
+    // the guard cannot finish reading is refused instead. See
+    // `findOverDeepValue`.
+    const deep = findOverDeepValue(req.body);
+    if (deep) {
+      done(problems.badRequest(overDeepMessage(deep)));
       return;
     }
     done();

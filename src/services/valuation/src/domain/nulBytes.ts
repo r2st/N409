@@ -141,6 +141,56 @@ export function findUnstorableText(value: unknown, path = '', depth = 0): Unstor
   return null;
 }
 
+/**
+ * The path of the first value nested deeper than {@link findUnstorableText}
+ * will walk, or null.
+ *
+ * The scan stops at `MAX_SCAN_DEPTH` and answers `null` — "nothing unstorable
+ * here" — for everything below it. That answer is vacuous rather than true: a
+ * NUL at depth 13 is as unstorable as one at depth 1, and it reached the jsonb
+ * column that a request body's free-form record ends up in
+ * (`POST /valuations/:id/calculate`'s `inputs`, the debt route's `params` and
+ * `overrides`, and their siblings), where the driver refused it as `22021` and
+ * the route answered 500.
+ *
+ * The bound itself stays: the scan is recursive, and an unbounded walk over a
+ * megabyte of `[[[[…` is a stack overflow, which is the same 500 by another
+ * road. So what changes is what the bound *means* — a body the guard cannot
+ * finish reading is refused rather than waved through. Nothing legitimate is
+ * near it: the deepest request body this API accepts is the engine input
+ * document at four levels, and the nested provider payloads that genuinely run
+ * deep (a Stripe event, a connector pull) are not request bodies and do not
+ * come through this door.
+ */
+export function findOverDeepValue(value: unknown, path = '', depth = 0): string | null {
+  // Ahead of the type tests, and that is the point: what is reported is the
+  // place the unstorable scan gave up, whatever sits there. A string at this
+  // depth is exactly the value it could not read.
+  if (depth > MAX_SCAN_DEPTH) return path || '(root)';
+  if (value === null || typeof value !== 'object') return null;
+  if (Buffer.isBuffer(value) || value instanceof Date) return null;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const hit = findOverDeepValue(value[i], `${path}[${i}]`, depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const hit = findOverDeepValue(child, path ? `${path}.${key}` : key, depth + 1);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** The sentence a caller reads when their body is nested past the scan. */
+export function overDeepMessage(path: string): string {
+  return (
+    `Field ${path} is nested more than ${MAX_SCAN_DEPTH} levels deep, ` +
+    'which is deeper than this API accepts'
+  );
+}
+
 /** What a refusal says about `reason`, as the sentence a caller reads. */
 export const UNSTORABLE_REASONS: Record<UnstorableReason, string> = {
   nul: 'a NUL byte, which cannot be stored',
