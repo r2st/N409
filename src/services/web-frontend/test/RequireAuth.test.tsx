@@ -168,6 +168,28 @@ describe('AuthProvider session lifecycle', () => {
     expect(fetchSpy).toHaveBeenCalledWith('/api/v1/auth/logout', expect.objectContaining({ method: 'POST' }));
   });
 
+  // Sign-out cleared the session marker and left everything else this browser
+  // held about the account — the company name typed at registration, and the
+  // onboarding wizard's place, which survives a sign-out because the tab does.
+  it('clears what the browser holds about the account that is leaving', async () => {
+    localStorage.setItem('n409.token', '1');
+    localStorage.setItem('n409.company_hint', 'Acme Robotics, Inc.');
+    localStorage.setItem('n409.getting-started.done', '["upload"]');
+    sessionStorage.setItem('n409.onboarding.draft', '{"valuation":{"company_name":"Acme"}}');
+    localStorage.setItem('n409.theme', 'dark');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ user: me }));
+    renderProbe();
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('authenticated'));
+
+    await userEvent.click(screen.getByRole('button', { name: 'sign out' }));
+
+    expect(localStorage.getItem('n409.company_hint')).toBeNull();
+    expect(localStorage.getItem('n409.getting-started.done')).toBeNull();
+    expect(sessionStorage.getItem('n409.onboarding.draft')).toBeNull();
+    // The browser's own preference is not the account's to take away.
+    expect(localStorage.getItem('n409.theme')).toBe('dark');
+  });
+
   it('does not carry a "normal view" preview across a sign-out', async () => {
     localStorage.setItem('n409.token', '1');
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ user: me }));

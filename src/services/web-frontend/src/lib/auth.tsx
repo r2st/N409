@@ -9,6 +9,7 @@ import {
   tokenExpiry,
   UNAUTHORIZED_EVENT,
 } from './api';
+import { clearAccountScopedStorage } from './accountStorage';
 import type { ViewMode } from './rbac';
 import type { User } from './types';
 
@@ -76,6 +77,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     clearToken();
+    // Everything else this browser holds about the account that is leaving —
+    // the company name typed at registration, the onboarding wizard's place,
+    // the checklist. See lib/accountStorage.ts for what stays and why.
+    clearAccountScopedStorage();
     setUser(null);
     setStatus('anonymous');
     // Never carry a "normal view" preview across sign-outs.
