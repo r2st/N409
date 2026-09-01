@@ -98,6 +98,7 @@ const EAGER_REGISTER: Record<string, string> = {
   // Providers wrapping the whole tree (see main.tsx).
   'components/ErrorBoundary.tsx': 'top-level render-throw boundary',
   'lib/auth.tsx': 'session provider',
+  'lib/accountStorage.ts': 'the sign-out key list — `auth.tsx` clears it on account change',
   'lib/branding.tsx': 'tenant branding provider',
   'lib/consent.tsx': 'cookie-consent provider',
   'components/Analytics.tsx': 'consent-gated tag loader, mounted at the root',
