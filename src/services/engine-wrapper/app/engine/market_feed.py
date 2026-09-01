@@ -29,10 +29,18 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import threading
 import time
 from collections.abc import Mapping
 
-__all__ = ["MarketFeedClient", "YFinanceProvider", "default_provider", "UNSET"]
+__all__ = [
+    "MarketFeedClient",
+    "YFinanceProvider",
+    "default_provider",
+    "fetch_timeout_seconds",
+    "UNSET",
+]
 
 _log = logging.getLogger("market_feed")
 
@@ -123,6 +131,122 @@ CACHE_TTL_SECONDS = 900.0
 CACHE_MAX_ENTRIES = 256
 
 
+# How long one provider fetch may hold the thread that asked for it.
+#
+# WHY THIS EXISTS (R308, methodology M5). Everything below this line was written
+# so that a market-data failure degrades to the caller's own figures instead of
+# failing a valuation — a missing provider, a network error, a parse error, an
+# unknown ticker. A *hang* is the one failure that arrangement could not
+# express. `yfinance` is `requests` underneath and passes no timeout, so a
+# black-holed socket at Yahoo — the TCP handshake completes and nothing follows
+# — never returns and never raises, and there is no `except` for that.
+#
+# What that costs is not one slow answer. These handlers are sync `def`s, so
+# each holds a FastAPI threadpool slot for its whole duration and no client
+# disconnect reclaims it (see `limits.py`, which sizes that pool deliberately
+# for exactly this reason). The Node side gives up at 8-12s (`FEED_TIMEOUT_MS`
+# in routes/comparables.ts and routes/volatility.ts) and *retries*, so a hung
+# upstream converts one dead socket into a new held thread every few seconds
+# until the pool is gone — and then the engine answers nothing at all, for
+# valuations too, which is the tier's whole job. `market_universe._fetch_all`
+# already bounds its fan-out for this reason; the three feed methods, reached
+# straight off the route, did not.
+#
+# Fifteen seconds is past any healthy fetch and past the caller's own patience,
+# so a bound that fires is a fetch nobody was still waiting for.
+FETCH_TIMEOUT_S = 15.0
+FETCH_TIMEOUT_ENV = "MARKET_FEED_FETCH_TIMEOUT_S"
+
+# The most provider fetches that may be in flight — which, on a hung upstream,
+# is the number of stranded threads this module can accumulate.
+#
+# A deadline alone does not bound that: the thread that is waiting on the dead
+# socket is still there after the deadline hands the caller a fallback, and it
+# stays there until the socket does something. Without a ceiling the retries
+# above mint one per attempt, which is the same exhaustion one level down.
+#
+# Past the ceiling a fetch is not queued, it is refused — as a fallback, like
+# every other way this module fails. Queueing would reintroduce the wait the
+# deadline just removed, and a caller holding a threadpool slot to wait for a
+# slot to wait for a socket is worse than being told now.
+MAX_INFLIGHT_FETCHES = 8
+
+_inflight = threading.BoundedSemaphore(MAX_INFLIGHT_FETCHES)
+
+
+def fetch_timeout_seconds(default: float = FETCH_TIMEOUT_S) -> float:
+    """Configured per-fetch ceiling (MARKET_FEED_FETCH_TIMEOUT_S); 0 disables it.
+
+    Falls back on anything unusable rather than raising, the same way
+    `limits._misconfigured` does: a typo in a unit file must not be a service
+    that will not boot.
+    """
+    raw = os.environ.get(FETCH_TIMEOUT_ENV)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        _log.warning(
+            "%s is not a number - falling back to the default",
+            FETCH_TIMEOUT_ENV,
+            extra={"event": "market_feed_config", "detail": raw},
+        )
+        return default
+    return value if value >= 0 else default
+
+
+class _FetchAbandoned(Exception):
+    """A fetch that was given up on rather than one that failed.
+
+    Its own type because the sentence differs and both end in the same
+    `_fallback`: "the source did not answer in time" is an upstream that is
+    unwell, "too many fetches already in flight" is this process protecting
+    itself, and an operator reading the fallback rate needs to tell them apart.
+    """
+
+
+def _run_bounded(call, timeout_s: float):
+    """Run `call` on a throwaway thread and wait at most `timeout_s` for it.
+
+    Daemon threads rather than a `ThreadPoolExecutor`, deliberately. The whole
+    point of the bound is that the thread underneath may never finish, and
+    `concurrent.futures` joins its workers at interpreter exit — so a pool here
+    would trade a wedged request handler for a process that will not shut down,
+    which the deployment's own shutdown contract gives us seconds to do.
+
+    A straggler is not cancelled, because a blocking socket read cannot be. It
+    holds its slot until it returns, and if it returns successfully it has
+    already written into the memo (see `_store`), where the next call finds it.
+    """
+    if timeout_s <= 0:
+        return call()
+    if not _inflight.acquire(blocking=False):
+        raise _FetchAbandoned(
+            f"too many market-data fetches already in flight (limit {MAX_INFLIGHT_FETCHES})"
+        )
+    box: dict = {}
+    done = threading.Event()
+
+    def run() -> None:
+        try:
+            box["value"] = call()
+        except BaseException as exc:  # re-raised on the caller's thread below
+            box["error"] = exc
+        finally:
+            # Released before the event so the slot is freed even for the
+            # straggler nobody is waiting for any more.
+            _inflight.release()
+            done.set()
+
+    threading.Thread(target=run, name="market-feed-fetch", daemon=True).start()
+    if not done.wait(timeout_s):
+        raise _FetchAbandoned(f"source did not answer within {timeout_s:g}s")
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
 class MarketFeedClient:
     """Caching live market-data client with fallback-on-error semantics."""
 
@@ -134,6 +258,7 @@ class MarketFeedClient:
         ttl_seconds: float = CACHE_TTL_SECONDS,
         max_entries: int = CACHE_MAX_ENTRIES,
         clock=time.monotonic,
+        fetch_timeout_s: float | None = None,
     ) -> None:
         self.provider = default_provider() if provider is UNSET else provider
         # key → (expires_at, result). Insertion order doubles as recency, the
@@ -142,6 +267,14 @@ class MarketFeedClient:
         self.ttl_seconds = ttl_seconds
         self.max_entries = max_entries
         self._clock = clock
+        # Resolved once per client, not per fetch: `default_client()` holds one
+        # for the life of the process, and re-reading the environment on every
+        # call would make the ceiling something a fetch in flight could see
+        # change under it. `None` defers to the environment; a number pins it,
+        # which is what the tests pass.
+        self.fetch_timeout_s = (
+            fetch_timeout_seconds() if fetch_timeout_s is None else fetch_timeout_s
+        )
 
     # ── internals ─────────────────────────────────────────────────────────────
     def _fallback(self, reason: str, fallback, *, kind: str = "unknown", ticker=None) -> dict:
@@ -222,7 +355,12 @@ class MarketFeedClient:
                 ticker=ticker,
             )
         try:
-            result = produce(self.provider)
+            result = _run_bounded(lambda: produce(self.provider), self.fetch_timeout_s)
+        except _FetchAbandoned as exc:
+            # Said as what it is rather than folded into "fetch failed": the
+            # provider did not refuse us, we stopped waiting. See
+            # `FETCH_TIMEOUT_S` for why waiting is not an option here.
+            return self._fallback(f"market-data fetch abandoned: {exc}", fallback, kind=kind, ticker=ticker)
         except Exception as exc:  # network/parse/library errors → fallback, never raise
             return self._fallback(
                 f"market-data fetch failed: {exc}", fallback, kind=kind, ticker=ticker

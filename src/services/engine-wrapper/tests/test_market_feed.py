@@ -1,9 +1,17 @@
 """Live market-feed client tests — stub providers, no network access."""
 
+import threading
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
-from app.engine.market_feed import MarketFeedClient
+from app.engine.market_feed import (
+    FETCH_TIMEOUT_ENV,
+    FETCH_TIMEOUT_S,
+    MarketFeedClient,
+    fetch_timeout_seconds,
+)
 from app.engine.market_universe import set_client
 from app.main import app
 
@@ -428,3 +436,129 @@ def test_a_failed_fetch_is_not_cached():
         out = c.get_company_financials("DDOG")
         assert out["source"] == "fallback"
     assert c.cache == {}
+
+
+# ── The fetch that never returns (R308, methodology M5) ──────────────────────
+#
+# Every other failure in this module arrives as an exception and is answered
+# with a fallback. A hang arrives as nothing at all: `yfinance` is `requests`
+# underneath with no timeout, so a black-holed socket holds the FastAPI
+# threadpool slot the handler is running on, forever, and the Node caller's own
+# 8-12s deadline turns that into one stranded thread per retry.
+
+
+class HangingProvider:
+    """A provider whose fetch does not come back until it is told to."""
+
+    def __init__(self):
+        self.released = threading.Event()
+        self.entered = threading.Event()
+        self.calls = 0
+
+    def financials(self, ticker):
+        self.calls += 1
+        self.entered.set()
+        self.released.wait(10.0)
+        return {"market_cap": 1e9}
+
+    def info(self, ticker):
+        return self.financials(ticker)
+
+    def prices(self, ticker, start, end):
+        self.financials(ticker)
+        return []
+
+
+def test_a_hanging_fetch_is_abandoned_rather_than_waited_on():
+    provider = HangingProvider()
+    c = MarketFeedClient(provider=provider, fetch_timeout_s=0.1)
+    try:
+        out = c.get_company_financials("DDOG")
+        assert out["source"] == "fallback"
+        assert "abandoned" in out["warning"]
+        # Not folded into the ordinary fetch-failure wording: the provider did
+        # not refuse us, we stopped waiting, and the fallback rate is read by
+        # whoever has to tell those two apart.
+        assert "did not answer" in out["warning"]
+    finally:
+        provider.released.set()
+
+
+def test_an_abandoned_fetch_leaves_nothing_in_the_memo():
+    # Same rule as a failed one: a blip must not be served for a whole TTL, and
+    # a straggler that eventually succeeds writes its own entry.
+    provider = HangingProvider()
+    c = MarketFeedClient(provider=provider, fetch_timeout_s=0.1)
+    try:
+        c.get_company_financials("DDOG")
+        assert c.cache == {}
+    finally:
+        provider.released.set()
+
+
+def test_stranded_fetches_are_capped_and_the_next_one_is_refused_at_once():
+    from app.engine import market_feed as mf
+
+    provider = HangingProvider()
+    c = MarketFeedClient(provider=provider, fetch_timeout_s=0.05)
+    try:
+        # Fill every slot with a fetch that will not return. Distinct tickers so
+        # the memo cannot answer any of them.
+        for i in range(mf.MAX_INFLIGHT_FETCHES):
+            assert c.get_company_financials(f"T{i}")["source"] == "fallback"
+        assert provider.calls == mf.MAX_INFLIGHT_FETCHES
+
+        # The next one is refused rather than queued — queueing would give back
+        # the wait the deadline just took away.
+        started = time.monotonic()
+        out = c.get_company_financials("OVERFLOW")
+        assert out["source"] == "fallback"
+        assert "already in flight" in out["warning"]
+        assert time.monotonic() - started < 0.05
+        assert provider.calls == mf.MAX_INFLIGHT_FETCHES  # never reached the provider
+    finally:
+        provider.released.set()
+        # The slots come back when the stragglers do.
+        for _ in range(200):
+            if mf._inflight._value == mf.MAX_INFLIGHT_FETCHES:
+                break
+            time.sleep(0.01)
+        assert mf._inflight._value == mf.MAX_INFLIGHT_FETCHES
+
+
+def test_a_provider_error_still_reads_as_a_failure_not_an_abandonment():
+    # The bound runs the fetch on another thread; an exception raised there has
+    # to arrive on this one, or every provider error becomes a timeout.
+    c = MarketFeedClient(provider=BoomProvider(), fetch_timeout_s=5.0)
+    out = c.get_company_financials("DDOG")
+    assert out["source"] == "fallback"
+    assert "fetch failed" in out["warning"]
+
+
+def test_the_ceiling_can_be_turned_off():
+    # An operator running a deliberately slow local source, per `limits.py`'s
+    # own convention that 0 disables rather than refuses everything.
+    provider = HangingProvider()
+    c = MarketFeedClient(provider=provider, fetch_timeout_s=0)
+    done = threading.Event()
+
+    def call():
+        c.get_company_financials("DDOG")
+        done.set()
+
+    threading.Thread(target=call, daemon=True).start()
+    assert provider.entered.wait(2.0)
+    assert not done.wait(0.2)  # still waiting, because nothing bounds it
+    provider.released.set()
+    assert done.wait(2.0)
+
+
+def test_a_misconfigured_ceiling_falls_back_on_the_default(monkeypatch, caplog):
+    monkeypatch.setenv(FETCH_TIMEOUT_ENV, "soon")
+    with caplog.at_level("WARNING"):
+        assert fetch_timeout_seconds() == FETCH_TIMEOUT_S
+    assert any("MARKET_FEED_FETCH_TIMEOUT_S" in r.getMessage() for r in caplog.records)
+    monkeypatch.setenv(FETCH_TIMEOUT_ENV, "-1")
+    assert fetch_timeout_seconds() == FETCH_TIMEOUT_S
+    monkeypatch.setenv(FETCH_TIMEOUT_ENV, "2.5")
+    assert fetch_timeout_seconds() == 2.5
