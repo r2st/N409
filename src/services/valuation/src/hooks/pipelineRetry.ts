@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { FLAGS, flagEnabled } from '@n409/shared';
+import { FLAGS, flagEnabled, logUnretried } from '@n409/shared';
 import {
   claimRetryablePipelineRuns,
   PIPELINE_RETRY_CLAIM_LIMIT,
@@ -38,12 +38,12 @@ export async function retryFailedPipelineRuns(deps: {
   pool: pg.Pool;
   autoPipeline: AutoPipelineDeps;
   limit?: number;
-}): Promise<{ claimed: number; resumed: number }> {
+}): Promise<{ claimed: number; resumed: number; stranded: number }> {
   // See the note in hooks/emailRetry.ts. Claiming is what spends a run's
   // attempt and moves it to an active status, so refusing to claim leaves the
   // whole backlog recoverable — which matters more here than in the other two
   // ladders, because an active run holds the one-per-valuation index.
-  if (!flagEnabled(FLAGS.retryLadders)) return { claimed: 0, resumed: 0 };
+  if (!flagEnabled(FLAGS.retryLadders)) return { claimed: 0, resumed: 0, stranded: 0 };
 
   const actor = { actorType: 'system', actorId: 'retry-sweep', source: 'auto-pipeline' } as const;
 
@@ -67,71 +67,108 @@ export async function retryFailedPipelineRuns(deps: {
    */
   const limit = deps.limit ?? PIPELINE_RETRY_CLAIM_LIMIT;
   const room = Math.max(0, limit - autoPipelineConcurrency().pending);
-  if (room === 0) return { claimed: 0, resumed: 0 };
+  if (room === 0) return { claimed: 0, resumed: 0, stranded: 0 };
 
   const claimed = await claimRetryablePipelineRuns(deps.pool, { limit: room, actor });
 
   let resumed = 0;
+  /*
+   * Claimed runs this pass neither resumed nor settled, because something threw
+   * while it was deciding which.
+   *
+   * THE LOOP HAD NO PER-ROW CATCH, and it is the one ladder where that costs
+   * more than the row. Claiming is not a read: `claimRetryablePipelineRuns`
+   * moves each run to `queued` and clears `next_attempt_at` in the same
+   * statement, so by the time this loop sees them they are already out of the
+   * ladder's reach. A throw on the third of twenty — `findValuationById` on a
+   * pool at its ceiling, `setPipelineRunStatus` losing a deadlock — abandoned
+   * the other seventeen in an active status with nothing scheduled to touch
+   * them again. This file already says what that costs, twice, about a single
+   * row: "an active run holds the one-per-valuation index — so abandoning it
+   * silently would block every new trigger for this valuation until the stale
+   * reaper came round".
+   *
+   * Contained per row, so one bad row costs that row. Reported rather than
+   * swallowed because the row is genuinely left behind — `logUnretried` for the
+   * classified reason and the alert, and the count so the sweep's own log line
+   * says how many rows are waiting on the reaper rather than on the limiter.
+   */
+  let stranded = 0;
   for (const run of claimed) {
-    const valuation = await findValuationById(deps.pool, run.valuation_id);
-    if (!valuation) {
-      // The valuation was deleted between the failure and the retry. The run
-      // row is cascade-deleted with it, so there is nothing left to settle —
-      // and nothing to log about either, since this is the ordinary outcome of
-      // deleting a valuation that had a failed run.
-      continue;
-    }
-    if (valuation.archived_at !== null) {
-      // THE HOLE THIS CLOSES. `POST /valuations/:id/pipeline/runs` refuses a
-      // retired engagement and the upload that would start one is refused
-      // before the file lands — but a run that failed *before* the firm
-      // withdrew the work sat in the ladder with a `next_attempt_at`, and this
-      // sweep would resume it afterwards. Resuming means auto-applying an AI
-      // extraction and recording a calculation against an engagement every
-      // button in the product has stopped accepting changes to. A guard on the
-      // route is not a guard on the timer that performs the same write.
-      //
-      // Settled for the same reason as the opt-out below: the claim has
-      // already moved this run to an active status, and an active run holds
-      // the one-per-valuation index. `permanent`, because retirement is a
-      // decision rather than an outage — and if it is reversed, the restore
-      // gives back an engagement that takes a fresh run, not this stale one.
-      await setPipelineRunStatus(deps.pool, run, 'failed', {
-        error: 'the engagement was retired before the retry ran',
-        actor,
-        failure: { kind: 'permanent', reason: 'valuation.retired', retryable: false },
-      });
-      deps.autoPipeline.log.info(
-        { runId: run.id, valuationId: valuation.id },
-        'auto-pipeline retry skipped — the engagement has been retired since it failed',
+    try {
+      const valuation = await findValuationById(deps.pool, run.valuation_id);
+      if (!valuation) {
+        // The valuation was deleted between the failure and the retry. The run
+        // row is cascade-deleted with it, so there is nothing left to settle —
+        // and nothing to log about either, since this is the ordinary outcome of
+        // deleting a valuation that had a failed run.
+        continue;
+      }
+      if (valuation.archived_at !== null) {
+        // THE HOLE THIS CLOSES. `POST /valuations/:id/pipeline/runs` refuses a
+        // retired engagement and the upload that would start one is refused
+        // before the file lands — but a run that failed *before* the firm
+        // withdrew the work sat in the ladder with a `next_attempt_at`, and this
+        // sweep would resume it afterwards. Resuming means auto-applying an AI
+        // extraction and recording a calculation against an engagement every
+        // button in the product has stopped accepting changes to. A guard on the
+        // route is not a guard on the timer that performs the same write.
+        //
+        // Settled for the same reason as the opt-out below: the claim has
+        // already moved this run to an active status, and an active run holds
+        // the one-per-valuation index. `permanent`, because retirement is a
+        // decision rather than an outage — and if it is reversed, the restore
+        // gives back an engagement that takes a fresh run, not this stale one.
+        await setPipelineRunStatus(deps.pool, run, 'failed', {
+          error: 'the engagement was retired before the retry ran',
+          actor,
+          failure: { kind: 'permanent', reason: 'valuation.retired', retryable: false },
+        });
+        deps.autoPipeline.log.info(
+          { runId: run.id, valuationId: valuation.id },
+          'auto-pipeline retry skipped — the engagement has been retired since it failed',
+        );
+        continue;
+      }
+      if (!valuation.auto_pipeline) {
+        // Somebody turned the orchestration off for this valuation while the run
+        // was waiting. Honour that: re-running now would be the switch being
+        // ignored, which is worse than the work not being done.
+        //
+        // Settled here rather than left on 'queued'. The claim has already moved
+        // it to an active status, and an active run holds the one-per-valuation
+        // index — so abandoning it silently would block every new trigger for
+        // this valuation until the stale reaper came round, which is up to
+        // AUTO_PIPELINE_STALE_MINUTES of a valuation that cannot be re-run.
+        // Recorded `permanent` so the ladder does not schedule it again: the
+        // opt-out is a decision, not an outage.
+        await setPipelineRunStatus(deps.pool, run, 'failed', {
+          error: 'auto-pipeline was disabled for this valuation before the retry ran',
+          actor,
+          failure: { kind: 'permanent', reason: 'pipeline.opted-out', retryable: false },
+        });
+        deps.autoPipeline.log.info(
+          { runId: run.id, valuationId: valuation.id },
+          'auto-pipeline retry skipped — the valuation has opted out since it failed',
+        );
+        continue;
+      }
+      resumePipelineRun(deps.autoPipeline, run, valuation);
+      resumed += 1;
+    } catch (err) {
+      // The row stays `queued` — there is nothing here that could safely settle
+      // it, since whatever just failed is the thing that would have to write
+      // the settle — so the stale reaper is what eventually frees the
+      // valuation's index. Said out loud, because until it comes round that
+      // valuation takes no new trigger and nothing else records why.
+      logUnretried(
+        deps.autoPipeline.log,
+        err,
+        { runId: run.id, valuationId: run.valuation_id },
+        'auto-pipeline retry could not resume a claimed run; it is left active for the stale reaper',
       );
-      continue;
+      stranded += 1;
     }
-    if (!valuation.auto_pipeline) {
-      // Somebody turned the orchestration off for this valuation while the run
-      // was waiting. Honour that: re-running now would be the switch being
-      // ignored, which is worse than the work not being done.
-      //
-      // Settled here rather than left on 'queued'. The claim has already moved
-      // it to an active status, and an active run holds the one-per-valuation
-      // index — so abandoning it silently would block every new trigger for
-      // this valuation until the stale reaper came round, which is up to
-      // AUTO_PIPELINE_STALE_MINUTES of a valuation that cannot be re-run.
-      // Recorded `permanent` so the ladder does not schedule it again: the
-      // opt-out is a decision, not an outage.
-      await setPipelineRunStatus(deps.pool, run, 'failed', {
-        error: 'auto-pipeline was disabled for this valuation before the retry ran',
-        actor,
-        failure: { kind: 'permanent', reason: 'pipeline.opted-out', retryable: false },
-      });
-      deps.autoPipeline.log.info(
-        { runId: run.id, valuationId: valuation.id },
-        'auto-pipeline retry skipped — the valuation has opted out since it failed',
-      );
-      continue;
-    }
-    resumePipelineRun(deps.autoPipeline, run, valuation);
-    resumed += 1;
   }
-  return { claimed: claimed.length, resumed };
+  return { claimed: claimed.length, resumed, stranded };
 }

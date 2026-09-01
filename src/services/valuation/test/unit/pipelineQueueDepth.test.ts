@@ -83,6 +83,6 @@ describe('runs the auto-pipeline has queued but not started', () => {
     const { retryFailedPipelineRuns } = await import('../../src/hooks/pipelineRetry.js');
     await expect(
       retryFailedPipelineRuns({ pool: wedgedPool, autoPipeline: deps(), limit: 2 }),
-    ).resolves.toEqual({ claimed: 0, resumed: 0 });
+    ).resolves.toEqual({ claimed: 0, resumed: 0, stranded: 0 });
   });
 });

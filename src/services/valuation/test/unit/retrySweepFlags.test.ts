@@ -81,6 +81,9 @@ describe('FLAG_RETRY_LADDERS off — the pipeline retry sweep', () => {
     await expect(retryFailedPipelineRuns({ pool: hostilePool, autoPipeline: {} as never })).resolves.toEqual({
       claimed: 0,
       resumed: 0,
+      // Nothing was claimed, so nothing can have been left claimed: the third
+      // count is only ever about rows this sweep took and then could not place.
+      stranded: 0,
     });
   });
 });
