@@ -130,6 +130,14 @@ const DISPOSITION: Record<string, Disposition> = {
     how: 'housekeeping',
     why: 'Settled invitations — accepted, revoked or lapsed — are swept 30 days after they stop meaning anything.',
   },
+  password_reset_tokens: {
+    how: 'housekeeping',
+    why:
+      'Spent reset tokens are swept 30 days after they are redeemed or expire, on the same rule as ' +
+      'the verification tokens below. The address on the row arrived with 0204 and is a copy of the ' +
+      'one the link was sent to, held so a link cannot be redeemed after the login email moved; it ' +
+      'goes with the token.',
+  },
   email_verification_tokens: {
     how: 'housekeeping',
     why:
