@@ -388,9 +388,19 @@ export async function claimRetryableEmails(
   const { rows } = await pool.query<EmailOutboxRow>(
     `WITH claimable AS (
        SELECT id FROM email_outbox
-        -- Spelled as an IN over the leading index column, then narrowed, so
-        -- email_outbox_claim_idx (status, created_at, claimed_at) still drives
-        -- the scan rather than the planner falling back to a seq scan.
+        -- Spelled as an IN rather than as an OR over two columns, so it is a
+        -- predicate an index can be built on rather than one the planner has to
+        -- apply per row. It is 0201's partial index, verbatim: that index is
+        -- (created_at) WHERE status IN ('failed', 'queued'), and a partial index
+        -- is only reachable when the planner can prove the query implies its
+        -- predicate — so this line and that one have to stay the same sentence.
+        --
+        -- What 0201 changed is which half of the statement the index serves.
+        -- email_outbox_claim_idx (status, created_at, claimed_at) answered
+        -- *which rows*, and then the ORDER BY below was a sort above it — two
+        -- status values are two index ranges, and no scan of them is in
+        -- created_at order — so a batch of fifty cost a read and a sort of every
+        -- failed or queued row in the outbox, on a timer, forever.
         WHERE status IN ('failed', 'queued')
           AND (status = 'failed' OR created_at < now() - ($3 || ' seconds')::interval)
           AND attempts < $1
@@ -413,7 +423,11 @@ export async function claimRetryableEmails(
           AND (status = 'queued' OR next_attempt_at IS NULL OR next_attempt_at <= now())
           AND (claimed_at IS NULL OR claimed_at < now() - ($3 || ' seconds')::interval)
         -- Oldest first: a backlog larger than the batch must not leave the
-        -- earliest failures permanently behind the newest ones.
+        -- earliest failures permanently behind the newest ones. This is the
+        -- ordering 0201's index holds, so the scan stops at the batch instead of
+        -- sorting the queue (15,000 rows read -> 67, at a 15,000-row backlog).
+        -- Everything above except the status predicate stays a filter per
+        -- candidate row, which is why 67 and not 50.
         ORDER BY created_at ASC
         LIMIT $4
         FOR UPDATE SKIP LOCKED

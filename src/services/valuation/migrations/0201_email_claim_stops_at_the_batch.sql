@@ -1,0 +1,84 @@
+-- The retry claim read the whole backlog, every tick, to send fifty.
+--
+-- `claimRetryableEmails` (repos/emailOutbox.ts) is the outbox sweep: it runs on
+-- a timer on every instance, forever, and its LIMIT bounded the answer and not
+-- the work. R193's shape, and this one hid behind a *big* index rather than
+-- behind a selective predicate:
+--
+--     Bitmap Index Scan on email_outbox_claim_idx   15,000 rows
+--     Bitmap Heap Scan  on email_outbox             13,638 rows
+--     Sort  (created_at)                            -> Limit 50
+--
+-- `status IN ('failed','queued')` reaches `email_outbox_claim_idx (status,
+-- created_at, claimed_at)` as an index condition, which is what the statement's
+-- own comment says it was spelled for. What that index cannot do is *order* the
+-- result: two status values are two ranges, so `ORDER BY created_at ASC` is a
+-- sort above them, and a sort cannot stop. Every eligible row in the backlog was
+-- read and sorted to choose the fifty oldest — so the cost of one tick is the
+-- size of the queue, which is exactly the quantity that is large on the day this
+-- matters.
+--
+-- `email_outbox_claimable_idx (created_at) WHERE status IN ('failed','queued')`
+-- holds the eligible rows in the order the claim wants them, so the scan walks
+-- oldest-first and stops. The remaining predicates — attempts, bounce_kind,
+-- channel, the lease, the ladder, and the three withheld-EXISTS — stay as a
+-- filter per candidate row, which is the right place for them: they are why 67
+-- rows were examined to return 50 rather than exactly 50.
+--
+-- Measured at 300k outbox rows, 15,000 of them failed or queued (EXPLAIN
+-- ANALYZE, warm, batch of 50):
+--
+--     claimRetryableEmails   21.6 ms, 15,000 rows read  ->  6.6 ms, 67
+--
+-- The row count is the claim. The residual 4.6 ms is the hashed EXISTS over
+-- `valuations`, which is one scan per statement rather than per row and is not
+-- a function of the backlog.
+--
+-- Its worst case is the same scan it replaces. If nothing in the backlog is
+-- claimable — every row leased, or terminally bounced — the walk reaches the end
+-- of the partial index, which is the set the bitmap scan read anyway. It cannot
+-- be worse than what it replaces; it is better by however much of the queue is
+-- claimable.
+--
+-- ── Three indexes come off the same table ──────────────────────────────────
+--
+-- `email_outbox` carried eight indexes. Three of them served nothing:
+--
+--  1. `email_outbox_deliverable_idx (next_attempt_at, status, created_at)
+--     WHERE status IN ('failed','queued') AND bounce_kind IS NULL`, added by
+--     0163 to "keep that predicate on the index". It never could. The claim's
+--     predicate is `(bounce_kind IS NULL OR bounce_kind = 'soft')` — a soft
+--     bounce is a full mailbox, which is precisely the case the ladder exists
+--     for — and that does not imply `bounce_kind IS NULL`, so a partial index
+--     on the stricter condition is unreachable by construction. Both landed in
+--     the same commit; the index has never been usable by the only statement
+--     that filters on the column.
+--  2. `email_outbox_retry_idx (next_attempt_at, status, created_at) WHERE
+--     status IN ('failed','queued')`, from 0159. The ladder is not a predicate
+--     the claim can seek on: it reads
+--     `status = 'queued' OR next_attempt_at IS NULL OR next_attempt_at <= now()`,
+--     an OR across two columns, so the leading key is never an index condition.
+--     Confirmed by measurement rather than by reading — with a real backlog the
+--     planner chose `claim_idx` over it, and dropping it changed no plan.
+--  3. `email_outbox_status_idx (status, created_at)` is a strict prefix of
+--     `email_outbox_claim_idx (status, created_at, claimed_at)`. `listEmails`'
+--     `status = $1 ORDER BY created_at DESC` already planned as an Index Scan
+--     Backward on `claim_idx` with `status_idx` present, at the same cost.
+--
+-- Which is the other half of the win, and the half that is paid on every write
+-- rather than on every sweep: `email_outbox` takes a row per message and a
+-- status transition per attempt, and an UPDATE that moves `status`,
+-- `claimed_at` or `next_attempt_at` cannot be HOT while an index holds them.
+-- Four maintained indexes on the write path where there were six.
+--
+-- Not CONCURRENTLY: db/migrate.ts wraps each file in BEGIN/COMMIT. The build is
+-- over 5% of the table (the partial predicate), and the sweep it blocks is a
+-- timer that will run again.
+
+CREATE INDEX IF NOT EXISTS email_outbox_claimable_idx
+    ON email_outbox (created_at)
+    WHERE status IN ('failed', 'queued');
+
+DROP INDEX IF EXISTS email_outbox_deliverable_idx;
+DROP INDEX IF EXISTS email_outbox_retry_idx;
+DROP INDEX IF EXISTS email_outbox_status_idx;
