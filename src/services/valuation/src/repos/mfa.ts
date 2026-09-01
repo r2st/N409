@@ -11,14 +11,30 @@ import { encryptSecret, generateBackupCodes, hashBackupCode } from '../auth/mfaC
  * plaintext base32 never touches the database.
  */
 
-/** Stage a freshly generated (plaintext base32) secret, un-enabled. */
-export async function stageTotpSecret(pool: pg.Pool, userId: string, secretBase32: string): Promise<void> {
-  await pool.query(
+/**
+ * Stage a freshly generated (plaintext base32) secret, un-enabled.
+ *
+ * False when the account already has 2FA on, and the predicate is the point:
+ * this statement clears `totp_enabled` and `totp_confirmed_at` on its way past.
+ * The route refuses a re-enrolment ("disable it first"), but that read is one
+ * statement earlier on another connection, so a `/setup` racing the `/confirm`
+ * that finishes an enrolment saw an un-enrolled account and then turned the
+ * factor back off — silently, with no `user_mfa_disabled` on the admin trail
+ * and with the user holding the backup codes `/confirm` had just handed them.
+ * The one thing the second factor must not do is come off without being asked.
+ *
+ * Not `AND totp_secret IS NULL` as well: re-staging over an *unconfirmed*
+ * secret is what re-opening the setup page does, and the route's comment says
+ * so — harmless, because nothing is enabled until `/confirm`.
+ */
+export async function stageTotpSecret(pool: pg.Pool, userId: string, secretBase32: string): Promise<boolean> {
+  const { rowCount } = await pool.query(
     `UPDATE users
        SET totp_secret = $2, totp_enabled = false, totp_confirmed_at = NULL
-     WHERE id = $1`,
+     WHERE id = $1 AND totp_enabled = false`,
     [userId, encryptSecret(secretBase32)],
   );
+  return (rowCount ?? 0) > 0;
 }
 
 /**

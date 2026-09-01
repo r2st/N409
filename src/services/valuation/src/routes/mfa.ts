@@ -77,7 +77,11 @@ export function registerMfaRoutes(
     if (user.totp_enabled) throw problems.conflict('2FA is already enabled — disable it first to re-enrol');
 
     const secret = generateTotpSecret();
-    await stageTotpSecret(deps.pool, user.id, secret);
+    // The refusal above again, this time as the write's own predicate. Staging
+    // clears `totp_enabled`, so losing this race is not a wasted request — it
+    // is the second factor coming off an account that had just switched it on.
+    if (!(await stageTotpSecret(deps.pool, user.id, secret)))
+      throw problems.conflict('2FA is already enabled — disable it first to re-enrol');
     const uri = otpauthUri(secret, user.email);
     const qr = await QRCode.toDataURL(uri, { margin: 1, width: 240 });
     return { secret, otpauth_uri: uri, qr };

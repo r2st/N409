@@ -3,7 +3,14 @@ import { newUlid } from '@n409/shared';
 import { createUser } from '../../src/repos/users.js';
 import { hashPassword } from '../../src/auth/password.js';
 import { totp } from '../../src/auth/totp.js';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  interceptPoolQueries,
+  isDbAvailable,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -121,6 +128,52 @@ describe.skipIf(!dbUp)('MFA — account self-service routes', () => {
         headers: authHeader(user.token),
       });
       expect(again.statusCode).toBe(409);
+    });
+
+    it('does not turn the factor off when it is enabled between the read and the write', async () => {
+      /*
+       * The refusal above is a read on one connection and the staging write is
+       * a statement on another, and the write cleared `totp_enabled` on its way
+       * past. So a `/setup` overtaken by the `/confirm` that finishes an
+       * enrolment — two tabs, a re-opened setup page, a retried request — saw an
+       * un-enrolled account and then switched the second factor back off. No
+       * `user_mfa_disabled` on the admin trail, no answer to the user, and the
+       * backup codes `/confirm` had just shown them still in their hand.
+       *
+       * Staged by enrolling from inside the hook, immediately before the
+       * staging UPDATE, which is the interleaving itself rather than a
+       * simulation of it.
+       */
+      const user = await seedPasswordUser();
+      let staged = false;
+      const restore = interceptPoolQueries(ctx.pool, async (sql, phase) => {
+        if (phase !== 'before' || staged || !sql.includes('totp_confirmed_at = NULL')) return undefined;
+        staged = true;
+        await enroll(user.token);
+        return undefined;
+      });
+      let res;
+      try {
+        res = await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/account/mfa/setup',
+          headers: authHeader(user.token),
+        });
+      } finally {
+        restore();
+      }
+      expect(staged).toBe(true);
+      expect(res.statusCode).toBe(409);
+
+      // The factor the winner switched on is still on, with the secret it
+      // confirmed — not the loser's staged one.
+      expect((await status(user.token)).json()).toMatchObject({ enabled: true });
+      const { rows } = await ctx.pool.query<{ totp_enabled: boolean; totp_confirmed_at: Date | null }>(
+        'SELECT totp_enabled, totp_confirmed_at FROM users WHERE id = $1',
+        [user.id],
+      );
+      expect(rows[0]!.totp_enabled).toBe(true);
+      expect(rows[0]!.totp_confirmed_at).not.toBeNull();
     });
 
     it('refuses enrolment on an SSO-only account', async () => {
