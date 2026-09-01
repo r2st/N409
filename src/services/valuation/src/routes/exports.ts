@@ -22,6 +22,8 @@ import { latestCalculationForKind } from '../repos/calculations.js';
 import { listOverwrites } from '../repos/overwrites.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidQuery } from '../domain/validationProblem.js';
+import { recordEvent, type EventActor } from '../events/record.js';
+import { withTransaction } from '../db/pool.js';
 
 /**
  * CSV / PDF / XLSX export of the valuations list (M3 feature 16 + M4 P2), plus
@@ -393,10 +395,44 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       calculation,
     });
 
+    const xlsx = buildXlsx(sheets, { mtime: generatedAt });
+
+    /*
+     * The working papers leaving, on the record.
+     *
+     * The report and the evidence bundle each write a row when they are
+     * pulled — "the export itself is an auditable act" is what the bundle has
+     * said since it was written. This file is more of the engagement than
+     * either: the assumption register, the model sheets, the cap table and
+     * grant schedules, the flattened engine results, and every value an
+     * analyst overrode with the reason they typed. It left by a URL the UI
+     * never shows and recorded nothing, so a trail could show the deliverable
+     * being read and say nothing about the working papers behind it being
+     * taken.
+     *
+     * The sheet names and the override count are the payload: they say how
+     * much of the engagement the file actually carried, which a fixed label
+     * cannot.
+     */
+    const actor: EventActor = { actorType: 'human', actorId: principal.id, source: 'workbook.xlsx' };
+    await withTransaction(deps.pool, (client) =>
+      recordEvent(client, {
+        valuationId: valuation.id,
+        type: 'workbook_exported',
+        actor,
+        payload: {
+          sheets: sheets.map((s) => s.name),
+          overrides: overwrites.length,
+          grants: grants.length,
+          size_bytes: xlsx.length,
+        },
+      }),
+    );
+
     const stamp = generatedAt.toISOString().slice(0, 10);
     return reply
       .header('content-type', XLSX_CONTENT_TYPE)
       .header('content-disposition', `attachment; filename="workbook-${valuation.number}-${stamp}.xlsx"`)
-      .send(buildXlsx(sheets, { mtime: generatedAt }));
+      .send(xlsx);
   });
 }

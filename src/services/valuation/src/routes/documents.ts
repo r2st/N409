@@ -7,7 +7,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
-import { DOCUMENT_KINDS, type DocumentKind } from '../domain/pipeline.js';
+import { DOCUMENT_KINDS, PIPELINE_EVENT_TYPES, type DocumentKind } from '../domain/pipeline.js';
 import {
   DOCUMENT_CATEGORIES,
   resolveDocumentFiling,
@@ -26,7 +26,8 @@ import {
   type DocumentRow,
 } from '../repos/documents.js';
 import { requirePrincipal } from '../plugins/auth.js';
-import type { EventActor } from '../events/record.js';
+import { recordEvent, type EventActor } from '../events/record.js';
+import { withTransaction } from '../db/pool.js';
 import { maybeStartAutoPipeline, type AutoPipelineDeps } from '../pipeline/autoPipeline.js';
 import { checkUploadType } from '../documents/fileType.js';
 import { safeFilename, scrubFilename } from '../documents/filename.js';
@@ -417,6 +418,37 @@ export function registerDocumentRoutes(
         throw problems.notFound('Stored file is missing');
       }
       const plain = readStoredBlob(doc, stored, req.log);
+
+      /*
+       * The client's own material leaving, on the record.
+       *
+       * A document arriving, being re-filed and being removed each wrote an
+       * event; the bytes being handed out did not. The report and the evidence
+       * bundle both record their reads — "the export itself is an auditable
+       * act" — and these are the source materials behind them: audited
+       * financials, board minutes, the signed cap table. So the trail could
+       * show what an engagement relied on and never who took a copy of it.
+       *
+       * After `readStoredBlob`, so a stored file that cannot be decrypted
+       * refuses and records nothing rather than logging a download that did
+       * not happen. The AI tier's reads of the same blobs are deliberately not
+       * this event; a pipeline run records itself, and a row per extraction
+       * would bury the deliberate downloads this exists to show.
+       */
+      await withTransaction(deps.pool, (client) =>
+        recordEvent(client, {
+          valuationId: valuation.id,
+          type: PIPELINE_EVENT_TYPES.documentDownloaded,
+          actor: actorFor(principal),
+          payload: {
+            document_id: doc.id,
+            filename: doc.filename,
+            category: doc.category,
+            size_bytes: plain.length,
+          },
+        }),
+      );
+
       // nosniff so a stored text/html blob can't be sniffed and rendered
       // inline (audit B-1 P1); attachment already forces a download.
       return reply

@@ -102,6 +102,24 @@ export const EVENT_CATALOG = {
   // ── Documents & intake ──────────────────────────────────────────────────
   document_uploaded: D('Document uploaded', 'documents', 'notice', 'client'),
   document_deleted: D('Document deleted', 'documents', 'notice', 'client'),
+  /*
+   * The third side of a document's life, and the one nothing recorded.
+   *
+   * Arriving, being re-filed and being removed each wrote a row; the bytes
+   * *leaving* did not. These are the client's own source materials — audited
+   * financials, board minutes, the signed cap table, whatever an intake asked
+   * for — and the one place a copy of them is handed out is
+   * `/documents/:documentId/download`, which said nothing about who pulled
+   * which file or when.
+   *
+   * `client` visibility, like its three siblings: it is the client's document,
+   * and "who has read what I uploaded" is a question they have as much
+   * standing to ask as the firm does. The machine reads in `routes/ai.ts` are
+   * deliberately not this event — a pipeline run already records itself, and
+   * a row per extraction would bury the deliberate downloads this exists to
+   * show.
+   */
+  document_downloaded: D('Document downloaded', 'documents', 'notice', 'client'),
   // Visible to the client: the bucket a document sits in is what the
   // deliverable's evidence list prints, so a re-filing changes what the
   // engagement says it relied on.
@@ -254,6 +272,21 @@ export const EVENT_CATALOG = {
    * pull — is cached, and the cache hit was the silent path.
    */
   report_downloaded: D('Report downloaded', 'output', 'notice'),
+  /*
+   * The working papers leaving by the same kind of door.
+   *
+   * `workbook.xlsx` is the auditor workbook: the assumption register, the
+   * three model sheets, the cap table and grant schedules, the flattened
+   * engine `results`, and the manual-override log — every value an analyst set
+   * by hand, the engine value it replaced and the reason they typed. It is
+   * more of the engagement in one file than either of the two exports above,
+   * and it recorded nothing, so the trail could show a deliverable being read
+   * and not the working papers behind it being taken.
+   *
+   * `internal`: the route is `canEditWorkingData`, and the file is analyst
+   * material rather than anything a client is shown.
+   */
+  workbook_exported: D('Auditor workbook exported', 'output', 'notice'),
 
   // The auditor's half of the review round trip. `notice` rather than `info`:
   // it is an outside reviewer putting something on the record about a
