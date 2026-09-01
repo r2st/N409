@@ -339,3 +339,64 @@ def test_the_fund_valuation_endpoint_refuses_an_overflowing_position():
     )
     assert res.status_code == 422
     assert res.json()["detail"]
+
+
+# ── Paid-in capital and DPI ──────────────────────────────────────────────────
+
+
+def test_dpi_divides_by_paid_in_including_fees():
+    """A fund that has returned exactly what its LPs put in is at 1.0x.
+
+    Tier 1 gives the capital back as `contributed + fees`, so that pair is what
+    the LPs paid in. Dividing by `contributed` alone reported 1.2x on a fund
+    that had made nobody anything — and the overstatement is by the fee ratio,
+    largest early in a fund's life, which is where the multiple is read most.
+    """
+    w = lp_waterfall(
+        committed_capital=120,
+        contributed_capital=100,
+        distributable=120,
+        preferred_return_rate=0.0,
+        years=1.0,
+        carry_pct=0.20,
+        management_fees_paid=20,
+    )
+    assert w["paid_in_capital"] == pytest.approx(120.0)
+    assert w["tiers"]["return_of_capital"] == pytest.approx(120.0)
+    assert w["lp_distribution"] == pytest.approx(120.0)
+    assert w["gp_distribution"] == pytest.approx(0.0)
+    assert w["total_profit"] == pytest.approx(0.0)
+    assert w["dpi"] == pytest.approx(1.0)
+
+
+def test_fees_do_not_change_dpi_when_none_were_drawn():
+    w = lp_waterfall(
+        committed_capital=100,
+        contributed_capital=100,
+        distributable=150,
+        preferred_return_rate=0.0,
+        years=1.0,
+        carry_pct=0.20,
+    )
+    assert w["paid_in_capital"] == pytest.approx(100.0)
+    assert w["dpi"] == pytest.approx(w["lp_distribution"] / 100.0)
+
+
+def test_fees_are_returned_before_profit_exists():
+    """The fees come back ahead of the carry, so the GP's share is struck on
+    what is left after them — not on the whole of the distribution above the
+    invested capital alone."""
+    w = lp_waterfall(
+        committed_capital=100,
+        contributed_capital=100,
+        distributable=200,
+        preferred_return_rate=0.0,
+        years=1.0,
+        carry_pct=0.20,
+        gp_catch_up=True,
+        management_fees_paid=20,
+    )
+    assert w["total_profit"] == pytest.approx(80.0)
+    assert w["gp_distribution"] == pytest.approx(16.0)
+    assert w["lp_distribution"] == pytest.approx(184.0)
+    assert w["dpi"] == pytest.approx(184.0 / 120.0, abs=1e-4)

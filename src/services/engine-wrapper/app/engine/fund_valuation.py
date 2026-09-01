@@ -338,6 +338,13 @@ def lp_waterfall(
     remaining -= roc
 
     # Tier 2 — preferred return (compounded hurdle on contributed capital).
+    #
+    # On `contributed` alone, deliberately: the hurdle base is an LPA term, and
+    # accruing it on the capital that funded the fees as well is one drafting of
+    # it rather than the only one. The two figures are separate inputs so a
+    # caller whose LPA says otherwise can fold the fees into `contributed_capital`
+    # and leave `management_fees_paid` at zero — which changes tier 2 and leaves
+    # tier 1 where it already is.
     pref_target = contributed * (compound_factor(pref_rate, yrs, "preferred_return_rate") - 1.0)
     pref = min(remaining, pref_target)
     lp += pref
@@ -360,6 +367,9 @@ def lp_waterfall(
     lp += carry_lp
     remaining = 0.0
 
+    # Paid-in capital, as tier 1 above defines it: the LPs put in `contributed`
+    # and funded `fees`, and both come back before a dollar of profit exists.
+    paid_in = roc_target
     total_profit = max(available - roc_target, 0.0)
     gp_total = gp + _num(gp_distributions_to_date, "gp_distributions_to_date", minimum=0.0)
     entitled = carry * total_profit
@@ -381,7 +391,16 @@ def lp_waterfall(
         "total_profit": round(total_profit, 4),
         "gp_carry_entitled": round(entitled, 4),
         "clawback_owed": clawback,
-        "dpi": round(lp / contributed, 4) if contributed > 0 else None,
+        # Distributions to *paid-in*, and the denominator is the paid-in figure
+        # tier 1 returns — `contributed + fees` — not `contributed` alone. On
+        # `contributed`, a fund that had returned exactly the capital its LPs
+        # put in reported a DPI above 1.0: 100 contributed against 20 of fees
+        # drawn, 120 distributed, and the headline multiple every LP report
+        # leads with said 1.2x on a fund that had made nobody anything. It is
+        # overstated by the fee ratio at every point on the curve, which is
+        # largest early, where the figure is read most.
+        "paid_in_capital": round(paid_in, 4),
+        "dpi": round(lp / paid_in, 4) if paid_in > 0 else None,
         "committed_capital": round(committed, 4),
     }
 
