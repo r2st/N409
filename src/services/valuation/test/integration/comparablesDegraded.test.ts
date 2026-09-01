@@ -349,6 +349,74 @@ describe.skipIf(!dbUp)('the peer set on the unhappy paths', () => {
         state.screen = null;
       }
     });
+
+    /**
+     * R339, methodology M19 — the engine's nulls arrived as present zeros.
+     *
+     * `fin` was `Number(value)` filtered through `Number.isFinite`, and
+     * `Number(null)` is `0`. Both of these rows are ones the engine publishes on
+     * purpose: `Company.ebitda_margin` is null exactly where EBITDA is "not
+     * meaningfully positive" (four rows of the shipped universe are), and
+     * `Company.enterprise_value` is null where the row has neither a revenue nor
+     * a market cap, which is what the `?? market_cap` fallback beside it exists
+     * for.
+     */
+    it('keeps a null margin null rather than storing an EBITDA of zero', async () => {
+      state.screen = {
+        selected: [
+          {
+            ticker: 'NEB',
+            name: 'No Ebitda Co',
+            market_cap: 1_000,
+            revenue: 100,
+            ebitda_margin: null,
+          },
+        ],
+        screened_out: [],
+        universe_size: 5,
+      };
+      try {
+        expect((await screen({})).statusCode).toBe(201);
+        const row = (
+          (await list()).json().comparables as Array<{
+            ticker: string;
+            ebitda_ltm: string | null;
+            revenue_ltm: string | null;
+          }>
+        ).find((r) => r.ticker === 'NEB');
+        // `revenue_ltm * 0` is an EBITDA of nothing, which is a claim about the
+        // company; the engine declined to make it and so does this row.
+        expect(row?.ebitda_ltm).toBeNull();
+        expect(Number(row?.revenue_ltm)).toBe(100);
+      } finally {
+        state.screen = null;
+      }
+    });
+
+    it('falls back to the market cap when the engine reports no enterprise value', async () => {
+      state.screen = {
+        selected: [{ ticker: 'NEV', name: 'No EV Co', enterprise_value: null, market_cap: 750, revenue: 50 }],
+        screened_out: [],
+        universe_size: 5,
+      };
+      try {
+        expect((await screen({})).statusCode).toBe(201);
+        const row = (
+          (await list()).json().comparables as Array<{
+            ticker: string;
+            ev: string | null;
+            multiples: Record<string, number | null>;
+          }>
+        ).find((r) => r.ticker === 'NEV');
+        // A zero EV is refused by `impliedMultiples`, so the row used to land in
+        // the peer set contributing no multiple to any median while its market
+        // cap sat unread in the payload.
+        expect(Number(row?.ev)).toBe(750);
+        expect(row?.multiples.ev_revenue_ltm).toBe(15);
+      } finally {
+        state.screen = null;
+      }
+    });
   });
 
   describe('refreshing from the feed', () => {
@@ -382,6 +450,41 @@ describe.skipIf(!dbUp)('the peer set on the unhappy paths', () => {
       // Left exactly as it was: a half-updated row would pair an EV from today
       // with a revenue from the snapshot, and imply a multiple that never was.
       expect(Number(row?.ev)).toBe(100);
+    });
+
+    /**
+     * R339, M19 — `marketCap === null` is the R305 guard that tells "the live
+     * source is down" from "this company's filings are thin", and `fin` made it
+     * unreachable: `Number(null)` is 0, and 0 is not null. An observed payload
+     * with no market cap was therefore written as a live figure of nothing.
+     */
+    it('refuses an observed payload that carries no market cap', async () => {
+      const seeded = await add({ ticker: 'NMC', name: 'No Cap Co', revenue_ltm: 10, ev: 100 });
+      expect(seeded.statusCode, seeded.body).toBe(201);
+      await ctx.pool.query(
+        `UPDATE comparable_items SET figures_source = 'snapshot' WHERE valuation_id = $1 AND ticker = 'NMC'`,
+        [valuationId],
+      );
+      state.feed.NMC = { source: 'yfinance', market_cap: null, total_revenue: 900, ebitda: 90 };
+      try {
+        const res = await refresh();
+        expect(res.statusCode, res.body).toBe(200);
+        expect((res.json().unavailable as Array<{ ticker: string }>).some((u) => u.ticker === 'NMC')).toBe(
+          true,
+        );
+        const row = (
+          (await list()).json().comparables as Array<{
+            ticker: string;
+            ev: string;
+            figures_source: string;
+          }>
+        ).find((c) => c.ticker === 'NMC');
+        // Untouched, and still labelled as the snapshot figure it is.
+        expect(Number(row?.ev)).toBe(100);
+        expect(row?.figures_source).toBe('snapshot');
+      } finally {
+        delete state.feed.NMC;
+      }
     });
 
     it('says something even when the fallback payload explains nothing', async () => {

@@ -163,9 +163,42 @@ function str(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
 }
 
+/**
+ * A finite figure the engine actually reported, or null.
+ *
+ * This was `Number(value)` filtered through `Number.isFinite`, and `Number(null)`
+ * is `0` (R339, methodology M19). Both sides of this file publish nulls on
+ * purpose and every one of them arrived here as a present zero:
+ *
+ *   * `Company.ebitda_margin` is null exactly where EBITDA is "not meaningfully
+ *     positive" — its docstring says so, and the sample universe carries four
+ *     such rows. It read as a margin of 0, so `revenueLtm !== null && margin !==
+ *     null ? revenueLtm * margin : null` — a ternary written to keep the null —
+ *     stored `ebitda_ltm: 0` for a company whose EBITDA the engine declined to
+ *     state.
+ *   * `Company.enterprise_value` is null when the row has neither a revenue nor
+ *     a market cap, which is what `?? fin(c.market_cap)` beside it is for. A
+ *     null EV became 0, the `??` never fired, and `impliedMultiples` refuses a
+ *     non-positive EV — so the row landed in the peer set contributing no
+ *     multiple to any median, with a market cap sitting unused in the payload.
+ *   * `feed.market_cap` is null on an observed payload whose filings had none,
+ *     and the refresh loop's `marketCap === null` test is the R305 guard that
+ *     separates "the live source is down" from "this company's figures are
+ *     thin". Zero is not null, so the guard never fired and the row was written
+ *     `figures_source: 'live'` with an enterprise value of nothing.
+ *
+ * Numbers and numeric strings only — `numeric` arrives from pg as a string,
+ * which is the one non-number worth reading. `null`, `''`, `false` and `[]` are
+ * all `Number`-coercible to a figure nobody wrote. Same rule, same words, as
+ * `num` in routes/projections.ts, which was this bug one route over.
+ */
 function fin(value: unknown): number | null {
-  const n = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(n) ? n : null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
 /** The row as the tab and the exhibit read it: stored columns plus the four quotients. */
