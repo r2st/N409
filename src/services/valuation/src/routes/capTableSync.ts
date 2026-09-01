@@ -35,7 +35,7 @@ import { diffCapTables, type CapTableDiff } from '../domain/capTableSync.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
-import { refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
+import { isRetiredNow, refuseIfRetired, refuseIfRetiredNow } from '../domain/retiredEngagement.js';
 import {
   describeConnectorFailure,
   IntegrationError,
@@ -605,6 +605,43 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
         `${deps.publicBaseUrl}/valuations/${state.valuationId}/cap-table?sync=${result}&provider=${provider}`,
       );
     if (q.error || !q.code) return back('denied');
+
+    /*
+     * The retirement question, asked again on the far side of the hop.
+     *
+     * `/connect` refuses to start this on a withdrawn engagement, and every
+     * other write in this file re-asks (`refuseIfRetiredNow` in the pull, the
+     * `archived_at IS NULL` join in `findDueConnections`). The callback was the
+     * one door that asked nobody. Its window is not a millisecond either: the
+     * signed state lives 30 minutes and the thing it has to survive is a person
+     * reading a provider's consent screen, so a firm withdrawing the engagement
+     * between Connect and Allow is the ordinary case — it is exactly the length
+     * of time in which a decision about a file gets made.
+     *
+     * `retiredEngagementWrites.test.ts` structurally could not see this: the
+     * census drives the routes under `/api/v1/valuations/:id/…`, and a callback
+     * names its engagement in a signed token instead. Same blind spot the
+     * subject-id writes of R279/R282 fell into.
+     *
+     * What it wrote was not nothing. `upsertConnection` stores the provider's
+     * access *and refresh* tokens for a client whose work the firm has closed,
+     * records a `connected` event against the withdrawn file, and — because a
+     * retirement is reversible (R90) and `findDueConnections` skips rather than
+     * disables — arms a schedule that starts pulling the client's data the
+     * moment an admin restores the engagement.
+     *
+     * Before the exchange, not after, for the reason `findDueConnections` gives
+     * for filtering in the query: spending the code is itself telling a third
+     * party we are working a file the firm has withdrawn, and it mints a
+     * refresh token that then has to be disposed of. Nothing is connected and
+     * nothing is granted.
+     *
+     * A redirect, not a 409. This handler is a browser navigation with no
+     * session; `back()` is how its every other refusal answers, and the reader
+     * has to land somewhere they can read the reason.
+     */
+    if (await isRetiredNow(deps.pool, state.valuationId)) return back('retired');
+
     const creds = deps.credentials[provider];
     if (!creds) throw providerUnavailable(provider);
     try {
