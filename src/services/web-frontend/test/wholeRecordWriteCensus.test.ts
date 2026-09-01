@@ -22,13 +22,21 @@ import { describe, expect, it } from 'vitest';
  * printed them in the fund report. A reset that nothing reports, on figures
  * that change what the report says the GP is owed.
  *
- * So the rule is stated once, here: for every `app.put` in the valuation
- * service whose body schema is a whole record — at least one field that is not
- * `.optional()`, so an omitted field takes a value rather than being skipped —
- * the client call that drives it must send every field the schema names, or
- * spread the stored record to carry the rest (what `Asc718Tab` does). An
- * endpoint with no client caller, or one whose client legitimately sends less,
- * is listed in {@link EXEMPT} with the reason.
+ * So the rule is stated once, here, in two halves. For every `app.put` in the
+ * valuation service whose body schema is a whole record — at least one field
+ * that is not `.optional()`, so an omitted field takes a value rather than
+ * being skipped:
+ *
+ *   * *reachability* — the client has to name the path somewhere, or the
+ *     endpoint is a server feature with no way to reach it. That is how the
+ *     two measurement links were found: `PUT /funds/:id/valuation` and its
+ *     debt twin gate both report packs and no client file mentioned either.
+ *   * *completeness* — a call that writes the record with a literal body must
+ *     name every field the schema does, or spread the stored record to carry
+ *     the rest (what `Asc718Tab` does).
+ *
+ * An endpoint either half does not reach is listed in {@link EXEMPT} with the
+ * reason.
  *
  * The census reads both sides from source rather than exercising a route,
  * because the failure is a *missing* key: no request this client makes is
@@ -89,7 +97,10 @@ function entries(body: string): Map<string, string> {
   let value = '';
   for (const line of body.split('\n')) {
     if (depth === 0) {
-      const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/.exec(line);
+      // `key: value` and the shorthand `key,` — `body: { content }` is a whole
+      // record spelled in one word, and a parser that missed it would read the
+      // client as sending nothing at all.
+      const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::|,\s*$|$)/.exec(line);
       if (m) {
         if (key) out.set(key, value);
         key = m[1]!;
@@ -128,7 +139,9 @@ function serverWrites(): ServerWrite[] {
 
     const schemas = new Map<string, Map<string, string>>();
     const patchLike = new Set<string>();
-    for (const m of src.matchAll(/const (\w+)\s*=\s*(?:z\s*\.\s*object\(|[A-Z_]+\s*\n?\s*\.\s*partial\(\))/g)) {
+    for (const m of src.matchAll(
+      /const (\w+)\s*=\s*(?:z\s*\.\s*object\(|[A-Z_]+\s*\n?\s*\.\s*partial\(\))/g,
+    )) {
       if (m[0].includes('.partial()')) {
         patchLike.add(m[1]!);
         continue;
@@ -188,9 +201,32 @@ function clientWrites(): ClientWrite[] {
   return found;
 }
 
+/**
+ * Every API path spelled anywhere in the client.
+ *
+ * Broader than {@link clientWrites} on purpose. A shared control takes its
+ * endpoint as a prop — `MeasurementSubjectLink` does — so the only literal is
+ * at the call site, in a file that never mentions `method: 'PUT'`. Matching
+ * only `api('literal', …)` would read those endpoints as unreachable.
+ */
+function clientPaths(): string[] {
+  const out: string[] = [];
+  for (const file of walk(CLIENT_SRC)) {
+    // Comments first. `MeasurementSubjectLink`'s own doc block names both link
+    // endpoints, so a census reading comments would be satisfied by the
+    // sentence describing the bug rather than by any code that calls them.
+    const src = readFileSync(file, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    for (const m of src.matchAll(/[`'"](\/[A-Za-z0-9_\-/${}.]*)[`'"]/g)) out.push(m[1]!);
+  }
+  return out;
+}
+
 describe('whole-record writes carry the whole record', () => {
   const server = serverWrites();
   const client = clientWrites();
+  const paths = clientPaths();
 
   it('finds both halves — a census reading nothing passes for the wrong reason', () => {
     expect(server.length).toBeGreaterThanOrEqual(6);
@@ -204,23 +240,26 @@ describe('whole-record writes carry the whole record', () => {
     for (const route of Object.keys(EXEMPT)) expect(routes, route).toContain(route);
   });
 
-  it.each(server.filter((s) => !(s.route in EXEMPT)).map((s) => [s.route, s] as const))(
-    '%s',
-    (route, write) => {
-      const callers = client.filter((c) => shape(c.path) === shape(route));
-      expect(
-        callers.length,
-        `${route} (${write.file}) has no client caller and no entry in EXEMPT — say why the rule does not reach it`,
-      ).toBeGreaterThan(0);
+  const audited = server.filter((s) => !(s.route in EXEMPT)).map((s) => [s.route, s] as const);
 
-      for (const caller of callers) {
-        if (caller.spreads) continue; // carries the stored record forward
-        const missing = write.keys.filter((k) => !caller.keys.includes(k));
-        expect(
-          missing,
-          `${caller.file}:${caller.line} PUTs ${route} without ${missing.join(', ')} — the handler will write ${missing.length === 1 ? 'that field' : 'those fields'} back as the body schema's default`,
-        ).toEqual([]);
-      }
-    },
-  );
+  it.each(audited)('%s is reachable from the client', (route, write) => {
+    // The path as the client spells it, wherever it spells it: an `api(...)`
+    // call, or the prop a shared control is handed it through. A route no
+    // client file names is a server feature with no way in.
+    expect(
+      paths.some((p) => shape(p) === shape(route)),
+      `${route} (${write.file}) is named nowhere in the client and has no entry in EXEMPT — say why the rule does not reach it`,
+    ).toBe(true);
+  });
+
+  it.each(audited)('%s is written whole', (route, write) => {
+    for (const caller of client.filter((c) => shape(c.path) === shape(route))) {
+      if (caller.spreads) continue; // carries the stored record forward
+      const missing = write.keys.filter((k) => !caller.keys.includes(k));
+      expect(
+        missing,
+        `${caller.file}:${caller.line} PUTs ${route} without ${missing.join(', ')} — the handler will write ${missing.length === 1 ? 'that field' : 'those fields'} back as the body schema's default`,
+      ).toEqual([]);
+    }
+  });
 });
