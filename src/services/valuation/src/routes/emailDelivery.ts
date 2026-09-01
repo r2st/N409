@@ -23,6 +23,11 @@ import {
   suppressAddress,
 } from '../repos/emailDelivery.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
+import {
+  recordInboundWebhook,
+  refuseInboundWebhook,
+  type InboundWebhookSource,
+} from '../observability/inboundWebhooks.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { flagParam } from '../domain/queryFlag.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
@@ -35,6 +40,9 @@ import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
  * actually are, which addresses have been taken out of circulation and why, and
  * the one authenticated way for a downstream signal to get in.
  */
+
+/** This handler's door, in the inbound-webhook counter's vocabulary. */
+const WEBHOOK_SOURCE: InboundWebhookSource = 'email-delivery';
 
 const StatsQuery = z.object({
   /**
@@ -273,11 +281,9 @@ export function registerEmailDeliveryRoutes(
         // Unauthenticated, like the two Stripe webhooks beside it: the caller
         // is the provider or it is a stranger, and the stranger learned the
         // name of an unset secret by asking. The provider retries on either
-        // body; the operator reads the log.
-        req.log.warn(
-          { provider: req.params },
-          'email delivery webhook refused: EMAIL_WEBHOOK_SECRET is unset',
-        );
+        // body; the operator reads the log — and, since R329, so does the
+        // scrape, because the log is not the alerting channel on this box.
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'unconfigured');
         throw problems.serviceUnavailable('Delivery webhooks are not configured.');
       }
       const { provider } = req.params as { provider: string };
@@ -288,10 +294,16 @@ export function registerEmailDeliveryRoutes(
       const raw = req.body as Buffer;
       const provided = req.headers['x-n409-signature'];
       if (typeof provided !== 'string' || !Buffer.isBuffer(raw)) {
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'unsigned');
         throw problems.unauthorized('Missing signature');
       }
       const expected = createHmac('sha256', secret).update(raw).digest('hex');
       if (!signatureMatches(expected, provided)) {
+        // The provider holding a key this deployment does not have. Every
+        // bounce and complaint is being dropped, a suppression that should have
+        // happened does not, and until R329 the only trace was a 401 in the
+        // status histogram. See observability/inboundWebhooks.ts.
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'bad_signature');
         throw problems.unauthorized('Bad signature');
       }
 
@@ -299,8 +311,10 @@ export function registerEmailDeliveryRoutes(
       try {
         body = JSON.parse(raw.toString('utf8'));
       } catch {
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'malformed');
         throw problems.badRequest('Invalid webhook payload');
       }
+      recordInboundWebhook(WEBHOOK_SOURCE, 'accepted');
       const parsed = WebhookBody.safeParse(body);
       if (!parsed.success) {
         throw invalidBody('Invalid delivery events', parsed.error);

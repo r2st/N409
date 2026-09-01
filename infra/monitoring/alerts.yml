@@ -410,6 +410,43 @@ groups:
         annotations:
           summary: 'over half of market-feed answers are substituted figures rather than observed ones'
 
+  - name: n409-inbound-webhooks
+    rules:
+      # A webhook's whole authority is a signature, and the secret behind it is
+      # held on two machines neither of which tells the other when it changes.
+      # A rotation in the Stripe dashboard that misses this deployment refuses
+      # every delivery: no payment is fulfilled, no refund recorded, no
+      # subscription changes state, and a customer who has been charged has an
+      # engagement that is still unpaid. `registerProblemHandler` leaves 4xx
+      # unlogged on purpose — right for a browser, wrong for the one caller that
+      # is a machine and cannot tell anybody it is being turned away.
+      #
+      # A ratio, not a count. These URLs are in PUBLIC_ROUTES and the internet
+      # scans them, so a nonzero refusal rate is the normal condition of an
+      # endpoint on the internet. What is not normal is refusing most of what
+      # arrives — and `unsigned` is deliberately excluded from the numerator,
+      # because a scanner POSTing junk is exactly the traffic that must not be
+      # able to page somebody.
+      - alert: InboundWebhookSecretDrifted
+        expr: |
+          sum by (source) (rate(inbound_webhook_deliveries_total{outcome="bad_signature"}[30m]))
+            / sum by (source) (rate(inbound_webhook_deliveries_total{outcome!="unsigned"}[30m])) > 0.5
+        for: 30m
+        labels: { severity: page }
+        annotations:
+          summary: 'the {{ $labels.source }} webhook is refusing signed deliveries — its secret and the sender''s have drifted'
+          runbook: 'journalctl -u n409-valuation | grep inbound_webhook — then compare the endpoint secret in the provider dashboard with this deployment''s'
+
+      # The other half: the door is open and nothing is behind it. A deploy that
+      # brought up the service without the secret answers every delivery 503,
+      # the provider retries for days and gives up, and the events are gone.
+      - alert: InboundWebhookUnconfigured
+        expr: rate(inbound_webhook_deliveries_total{outcome="unconfigured"}[1h]) > 0
+        for: 15m
+        labels: { severity: page }
+        annotations:
+          summary: 'the {{ $labels.source }} webhook is being called and has no signing secret configured'
+
   - name: n409-browser
     rules:
       # A release that blanks a route for every user leaves the access log full

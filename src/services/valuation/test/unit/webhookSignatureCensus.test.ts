@@ -209,6 +209,38 @@ describe('inbound webhooks verify their signature', () => {
     ]);
   });
 
+  it('every one of them counts what it refused', () => {
+    /*
+     * The census above proves each door refuses an unproven request. This is
+     * the half after it: that the refusal leaves a trace anything on the box
+     * can see.
+     *
+     * A signature is a secret held on two machines and neither tells the other
+     * when it changes. A rotation that misses this deployment refuses *every*
+     * delivery — Stripe retries for days and gives up, and on this side no
+     * payment is fulfilled and no bounce is recorded. The refusal is a 4xx, and
+     * `registerProblemHandler` leaves 4xx unlogged on purpose ("those describe
+     * the request, the caller was told"), which is right for a browser and
+     * wrong for the one caller that is a machine and cannot tell anybody it is
+     * being turned away.
+     *
+     * So: the counter, not a log line, for the reason the sweep tallies became
+     * counters in R321 — nothing on this box consumes a log field, and the
+     * scrape is what an alert can be written against.
+     */
+    const COUNTS_REFUSALS = /refuseInboundWebhook\(/;
+    expect(WEBHOOKS.filter((w) => !COUNTS_REFUSALS.test(w.scope)).map(at)).toEqual([]);
+  });
+
+  it('every one of them counts the deliveries it accepted, for the denominator', () => {
+    // A refusal count alone cannot separate one scanner POSTing junk at a URL
+    // that is written down in PUBLIC_ROUTES from a secret that has been wrong
+    // since Tuesday. Same reason `background_sweep_runs_total` exists beside
+    // the failure count.
+    const COUNTS_ACCEPTED = /recordInboundWebhook\([^)]*'accepted'\)/;
+    expect(WEBHOOKS.filter((w) => !COUNTS_ACCEPTED.test(w.scope)).map(at)).toEqual([]);
+  });
+
   it('takes the whole scope, not the lines nearest the parser', () => {
     // The brace balance is what makes the assertions above trustworthy on the
     // Stripe handler, whose verification sits well below the parser and whose

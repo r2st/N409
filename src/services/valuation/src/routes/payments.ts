@@ -3,6 +3,11 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { ApiProblem, isUlid, logUnretried, problems } from '@n409/shared';
 import { renderReportPdf } from '../clients/reportRender.js';
+import {
+  recordInboundWebhook,
+  refuseInboundWebhook,
+  type InboundWebhookSource,
+} from '../observability/inboundWebhooks.js';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import {
   formatMoneyCents,
@@ -120,6 +125,9 @@ export const NOT_CONFIGURED_DETAIL =
 function paidAt(payment: { settled_at: Date | null; updated_at: Date }): Date {
   return new Date(payment.settled_at ?? payment.updated_at);
 }
+
+/** This handler's door, in the inbound-webhook counter's vocabulary. */
+const WEBHOOK_SOURCE: InboundWebhookSource = 'stripe-payments';
 
 const paymentsUnavailable = (detail: string) =>
   new ApiProblem({
@@ -1466,15 +1474,22 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // Unauthenticated endpoint: the caller here is Stripe or it is a
         // stranger, and the stranger learned the name of an unset variable by
         // asking. What Stripe does with either body is retry.
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'unconfigured');
         throw paymentsUnavailable('Payment webhooks are not configured.');
       }
       const raw = req.body as Buffer;
       const header = req.headers['stripe-signature'];
-      if (
-        typeof header !== 'string' ||
-        !Buffer.isBuffer(raw) ||
-        !verifyWebhookSignature({ payload: raw, header, secret: deps.stripeWebhookSecret })
-      ) {
+      // Counted, and the two refusals kept apart: no header is a scanner
+      // finding a URL that is written down in PUBLIC_ROUTES, a header that does
+      // not verify is Stripe holding a secret this deployment does not have —
+      // in which case every payment event is being dropped and nothing else on
+      // this box would say so. See observability/inboundWebhooks.ts.
+      if (typeof header !== 'string' || !Buffer.isBuffer(raw)) {
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'unsigned');
+        throw problems.badRequest('Invalid Stripe signature');
+      }
+      if (!verifyWebhookSignature({ payload: raw, header, secret: deps.stripeWebhookSecret })) {
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'bad_signature');
         throw problems.badRequest('Invalid Stripe signature');
       }
 
@@ -1484,7 +1499,11 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       // — the one hook that would have caught it cannot see past the raw-buffer
       // parser above. See domain/stripeEvents.ts.
       const envelope = parseStripeEvent(raw);
-      if ('error' in envelope) throw problems.badRequest(envelope.error);
+      if ('error' in envelope) {
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'malformed');
+        throw problems.badRequest(envelope.error);
+      }
+      recordInboundWebhook(WEBHOOK_SOURCE, 'accepted');
       const event = envelope.raw as { type?: string; data?: { object?: Record<string, unknown> } };
       const session = envelope.object;
       const sessionId = typeof session.id === 'string' ? session.id : null;

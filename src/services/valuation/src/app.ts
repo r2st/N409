@@ -161,6 +161,7 @@ import {
 } from './clients/internal.js';
 import { configureReportRenderer, registerReportRenderMetrics } from './clients/reportRender.js';
 import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
+import { registerInboundWebhookMetrics } from './observability/inboundWebhooks.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 import {
@@ -811,6 +812,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // `source: "fallback"`, so a dead source produces correct-looking answers on
   // substituted figures and has no other symptom on this side of the wire.
   registerMarketFeedMetrics(metricsRegistry);
+  // What arrives at the three unauthenticated webhook doors, by outcome. The
+  // signature on each is a secret held on two machines, neither of which tells
+  // the other when it changes — and a rotation that misses this side refuses
+  // every delivery with a 4xx, which `registerProblemHandler` leaves silent by
+  // design. Payments stop being fulfilled and bounces stop being recorded with
+  // nothing on this box saying so.
+  registerInboundWebhookMetrics(metricsRegistry);
   // Whether we are still dialling the engine, the AI service and the report
   // unit at all. The breaker's own view was reachable only from the ops
   // incident endpoint, which is a page somebody visits once they already

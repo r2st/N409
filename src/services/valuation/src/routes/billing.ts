@@ -3,6 +3,11 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { ApiProblem, isUlid, logUnretried, problems } from '@n409/shared';
 import { renderReportPdf } from '../clients/reportRender.js';
+import {
+  recordInboundWebhook,
+  refuseInboundWebhook,
+  type InboundWebhookSource,
+} from '../observability/inboundWebhooks.js';
 import { isOps } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
@@ -110,6 +115,9 @@ const PLANS_UNAVAILABLE_DETAIL =
 const PORTAL_UNAVAILABLE_DETAIL =
   'Subscription management is unavailable at the moment. Your plan and billing are unaffected — ' +
   'contact us to change a plan, update a card, or cancel, and we will do it for you.';
+
+/** This handler's door, in the inbound-webhook counter's vocabulary. */
+const WEBHOOK_SOURCE: InboundWebhookSource = 'stripe-billing';
 
 const billingUnavailable = (detail: string) =>
   new ApiProblem({
@@ -1002,14 +1010,21 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     );
 
     scope.post('/api/v1/billing/webhook', async (req, reply) => {
-      if (!deps.stripeWebhookSecret) throw billingUnavailable('Billing webhooks are not configured.');
+      if (!deps.stripeWebhookSecret) {
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'unconfigured');
+        throw billingUnavailable('Billing webhooks are not configured.');
+      }
       const raw = req.body as Buffer;
       const header = req.headers['stripe-signature'];
-      if (
-        typeof header !== 'string' ||
-        !Buffer.isBuffer(raw) ||
-        !verifyWebhookSignature({ payload: raw, header, secret: deps.stripeWebhookSecret })
-      ) {
+      // Counted, and the two refusals kept apart — see the same pair on the
+      // payments webhook and observability/inboundWebhooks.ts for why a 4xx on
+      // a machine-to-machine door is ours rather than the caller's.
+      if (typeof header !== 'string' || !Buffer.isBuffer(raw)) {
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'unsigned');
+        throw problems.badRequest('Invalid Stripe signature');
+      }
+      if (!verifyWebhookSignature({ payload: raw, header, secret: deps.stripeWebhookSecret })) {
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'bad_signature');
         throw problems.badRequest('Invalid Stripe signature');
       }
       // Parsed, not cast — see domain/stripeEvents.ts. A body of `null` was a
@@ -1017,7 +1032,11 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       // id or the object id was a 500 out of the ledger insert below, which to
       // Stripe is a delivery it retries for days rather than an answer.
       const envelope = parseStripeEvent(raw);
-      if ('error' in envelope) throw problems.badRequest(envelope.error);
+      if ('error' in envelope) {
+        refuseInboundWebhook(req.log, WEBHOOK_SOURCE, 'malformed');
+        throw problems.badRequest(envelope.error);
+      }
+      recordInboundWebhook(WEBHOOK_SOURCE, 'accepted');
       const event = envelope.raw as { type?: string; data?: { object?: Record<string, unknown> } };
       const obj = envelope.object;
       const type = envelope.type;
