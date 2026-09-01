@@ -1,7 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
 import { runRetentionSweep } from '../../src/routes/retention.js';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  interceptPoolQueries,
+  isDbAvailable,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 const actor = { actorType: 'human' as const, actorId: 'test', source: 'test' };
@@ -322,5 +329,77 @@ describe.skipIf(!dbUp)('data retention + legal hold (feature 10)', () => {
       headers: authHeader(plain.token),
     });
     expect(res.statusCode).toBe(403);
+  });
+
+  /**
+   * The destructive half of this surface, attributed.
+   *
+   * Every governance decision above writes a spine row. `POST /retention/run`
+   * archives engagements and purges outbox rows on the spot and wrote nothing —
+   * and `retention_actions`, the ledger it does write, has no actor column at
+   * all, because it was written for the six-hourly tick. So a sweep somebody
+   * ran by hand and a sweep the clock ran left identical rows.
+   */
+  describe('a sweep run by hand', () => {
+    const sweepEvents = async () => {
+      const { rows } = await ctx.pool.query<{ actor_id: string | null; payload: Record<string, unknown> }>(
+        `SELECT actor_id, payload FROM admin_events WHERE type = 'retention_sweep_run' ORDER BY occurred_at`,
+      );
+      return rows;
+    };
+
+    it('records who triggered it, and what it did', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/retention/run',
+        headers: authHeader(admin.token),
+      });
+      expect(res.statusCode).toBe(200);
+
+      const row = (await sweepEvents()).at(-1)!;
+      expect(row.actor_id).toBe(admin.id);
+      expect(row.payload.manual).toBe(true);
+      expect(row.payload.outcome).toBe('completed');
+      // The counts, so the row says what was destroyed rather than only that
+      // somebody pressed the button.
+      expect(row.payload).toHaveProperty('archived');
+      expect(row.payload).toHaveProperty('purged');
+      expect(row.payload).toHaveProperty('skipped_hold');
+    });
+
+    it('records the run that failed partway, which is the one a reviewer asks about', async () => {
+      const before = (await sweepEvents()).length;
+      const restore = interceptPoolQueries(ctx.pool, (sql, phase) => {
+        if (phase !== 'before' || !sql.includes('FROM retention_policies')) return undefined;
+        throw new Error('retention policies unreadable');
+      });
+      try {
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/admin/retention/run',
+          headers: authHeader(admin.token),
+        });
+        expect(res.statusCode).toBe(500);
+      } finally {
+        restore();
+      }
+
+      const rows = await sweepEvents();
+      expect(rows).toHaveLength(before + 1);
+      expect(rows.at(-1)!.payload.outcome).toBe('failed');
+      expect(rows.at(-1)!.actor_id).toBe(admin.id);
+    });
+
+    it('is refused, and records nothing, for a non-admin', async () => {
+      const outsider = await seedUser(ctx, { roles: ['valuation_user'] });
+      const before = (await sweepEvents()).length;
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/retention/run',
+        headers: authHeader(outsider.token),
+      });
+      expect(res.statusCode).toBe(403);
+      expect(await sweepEvents()).toHaveLength(before);
+    });
   });
 });

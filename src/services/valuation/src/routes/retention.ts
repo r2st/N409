@@ -685,8 +685,39 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
   );
 
   // Manual sweep trigger (admins), in addition to the scheduled run.
+  /**
+   * The sweep, by hand.
+   *
+   * Everything else on this surface writes a spine row; this one archived
+   * engagements and purged outbox rows and wrote nothing. `retention_actions`
+   * has no actor column — it was written for the six-hourly tick, which has no
+   * actor — so a run somebody triggered was indistinguishable from the
+   * scheduler's, and the destructive half of the retention surface was the
+   * unattributed half.
+   *
+   * Recorded on both paths, which is a deliberate departure from the
+   * fire-after-success rule the five governance events above follow. The
+   * sweep's two passes commit independently and either can throw partway, so a
+   * failed run is not a run that did not happen — and it is the one a reviewer
+   * is most likely to be asking about.
+   */
   app.post('/api/v1/admin/retention/run', { preHandler: app.authenticate }, async (req) => {
-    requireAdmin(req);
-    return { result: await runRetentionSweep(deps.pool, { log: app.log }) };
+    const principal = requireAdmin(req);
+    let result: SweepResult;
+    try {
+      result = await runRetentionSweep(deps.pool, { log: app.log });
+    } catch (err) {
+      await audit(principal.id, 'retention_sweep_run', 'system', null, 'Retention sweep', {
+        manual: true,
+        outcome: 'failed',
+      });
+      throw err;
+    }
+    await audit(principal.id, 'retention_sweep_run', 'system', null, 'Retention sweep', {
+      manual: true,
+      outcome: 'completed',
+      ...result,
+    });
+    return { result };
   });
 }

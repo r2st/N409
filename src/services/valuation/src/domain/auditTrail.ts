@@ -517,6 +517,25 @@ export const ADMIN_EVENT_CATALOG = {
   legal_hold_released: D('Legal hold released', 'other', 'critical'),
   valuation_retired: D('Engagement withdrawn', 'lifecycle', 'critical'),
   valuation_restored: D('Engagement restored', 'lifecycle', 'critical'),
+  /*
+   * The sixth, and the one that actually destroys something.
+   *
+   * The five above record governance *decisions* — a policy changed, a hold
+   * placed, an engagement withdrawn. `POST /admin/retention/run` is not a
+   * decision: it archives engagements and purges outbox rows on the spot, by
+   * hand, outside the six-hourly tick, and it wrote nothing. `retention_actions`
+   * records what was archived and purged, and has no actor column at all — it
+   * was written for the scheduler, which has no actor — so a sweep somebody ran
+   * and a sweep the clock ran are the same rows, and "who purged this" had no
+   * answer anywhere.
+   *
+   * Written on the failure path too, unlike its five neighbours. Fire-after-
+   * success is right for a decision, because the decision is what the row is
+   * about; here the row is about an irreversible action that may have half
+   * happened before it threw, and the reviewer asking who started it is asking
+   * about exactly that run.
+   */
+  retention_sweep_run: D('Retention sweep run', 'other', 'critical'),
 
   // ── Billing & subscriptions ─────────────────────────────────────────────
   //
