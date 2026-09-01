@@ -154,7 +154,7 @@ describe('UPSTREAM_CIRCUITS roster', () => {
 });
 
 describe('upstream RED', () => {
-  it('separates a 4xx from a 5xx, because they are different people\'s problems', async () => {
+  it("separates a 4xx from a 5xx, because they are different people's problems", async () => {
     const registry = new MetricsRegistry();
     registerUpstreamMetrics(registry);
 
@@ -214,10 +214,7 @@ describe('upstream RED', () => {
   it('records an unreachable host, which has no status to be classified by', async () => {
     const registry = new MetricsRegistry();
     registerUpstreamMetrics(registry);
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED 10.0.1.4:3003')),
-    );
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connect ECONNREFUSED 10.0.1.4:3003')));
     await postJson(service, 'http://x/y', {}, { retries: 0 }).catch(() => undefined);
 
     expect(registry.render()).toContain(
