@@ -90,11 +90,20 @@ export async function listProjections(
 /**
  * The run that counts.
  *
- * The newest *applied* run if there is one, and otherwise the newest run of
- * any kind — the same rule `findCurrentVolatilityEstimate` follows, for the
- * same reason: a report may only describe the forecast the calculation
+ * The most recently *adopted* run if there is one, and otherwise the newest
+ * run of any kind — the same rule `findCurrentVolatilityEstimate` follows, for
+ * the same reason: a report may only describe the forecast the calculation
  * actually ran on, and a run nobody adopted is not that. Callers that must
  * have an adopted run check `applied_at` on what comes back.
+ *
+ * And adopted *last*, not measured last — see the note beside
+ * `findCurrentVolatilityEstimate`, where R304 found the same `created_at`
+ * ordering and the same consequence. Here the consequence is Exhibit C-1's
+ * adoption note: the exhibit compares the build it was handed against the
+ * stream `income.free_cash_flows` actually discounts, so a superseded forecast
+ * arrives as "the financial model was amended after the forecast was adopted"
+ * — an amendment nobody made, on an engagement whose analyst simply went back
+ * to an earlier projection.
  */
 export async function findCurrentProjection(
   pool: pg.Pool,
@@ -103,7 +112,7 @@ export async function findCurrentProjection(
   const { rows } = await pool.query<RawProjectionRow>(
     `SELECT * FROM valuation_projections
       WHERE valuation_id = $1
-      ORDER BY (applied_at IS NOT NULL) DESC, created_at DESC, id DESC
+      ORDER BY (applied_at IS NOT NULL) DESC, applied_at DESC, created_at DESC, id DESC
       LIMIT 1`,
     [valuationId],
   );

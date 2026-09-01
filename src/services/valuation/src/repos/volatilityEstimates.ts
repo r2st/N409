@@ -114,11 +114,33 @@ export async function listVolatilityEstimates(
 /**
  * The run that counts.
  *
- * The newest *applied* run if there is one, and otherwise the newest run of
- * any kind. The distinction matters to the exhibit: a report may only describe
- * the derivation the calculation actually ran on, and an estimate nobody
- * adopted is not that. Callers that must have an adopted run check
+ * The most recently *adopted* run if there is one, and otherwise the newest
+ * run of any kind. The distinction matters to the exhibit: a report may only
+ * describe the derivation the calculation actually ran on, and an estimate
+ * nobody adopted is not that. Callers that must have an adopted run check
  * `applied_at` on what comes back.
+ *
+ * ADOPTION ORDER, NOT CREATION ORDER (R304, methodology M3). Among the adopted
+ * runs this ordered by `created_at`, which is the wrong question: the run whose
+ * sigma the calculation is carrying is the one adopted *last*, and nothing ties
+ * that to the order the runs were measured in. Adopting is an ordinary POST on
+ * any run of the engagement's history — `POST /volatility/:estimateId/apply`
+ * looks the row up by id and does not ask whether a newer one exists — so an
+ * analyst who measures a wide window, measures a narrow one, adopts the narrow
+ * one and then goes back to the wide one leaves two rows with `applied_at` set
+ * and `engine_inputs.volatility` holding the *first* run's figure.
+ *
+ * What came out of that is a report describing the wrong derivation, and saying
+ * so in the one sentence Exhibit F-1 exists to be able to make. The exhibit
+ * reads the applied sigma off the calculation's own assumptions and compares:
+ * handed the superseded row, it printed that row's window, peers and median and
+ * then added "the valuation applies 64.0%, which departs from the derived
+ * 71.0% — the basis for the departure is stated in the body of this report".
+ * There was no departure. The valuation applied exactly the figure the analyst
+ * adopted; the exhibit was holding the other run.
+ *
+ * `findAppliedRollforwardRun` — the third member of this family — already
+ * orders by `applied_at`, and is what this now agrees with.
  */
 export async function findCurrentVolatilityEstimate(
   pool: pg.Pool,
@@ -127,7 +149,7 @@ export async function findCurrentVolatilityEstimate(
   const { rows } = await pool.query<RawVolatilityEstimateRow>(
     `SELECT * FROM volatility_estimates
       WHERE valuation_id = $1
-      ORDER BY (applied_at IS NOT NULL) DESC, created_at DESC, id DESC
+      ORDER BY (applied_at IS NOT NULL) DESC, applied_at DESC, created_at DESC, id DESC
       LIMIT 1`,
     [valuationId],
   );
