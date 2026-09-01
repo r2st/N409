@@ -72,6 +72,19 @@ const CALCULATION_COLUMNS = `id, valuation_id, engine_version, status, inputs, r
   equity_value, fmv_per_share, error, diagnostics, created_by, created_at`;
 
 /**
+ * {@link CALCULATION_COLUMNS} with every name qualified by `alias`.
+ *
+ * Needed wherever the column list sits beside another relation that also has an
+ * `id` — `unnest(...) AS v(id)` in the batch reader below makes the bare list
+ * ambiguous, and the failure is a query that does not parse rather than one
+ * that quietly reads the wrong column.
+ */
+const qualified = (alias: string): string =>
+  CALCULATION_COLUMNS.split(',')
+    .map((c) => `${alias}.${c.trim()}`)
+    .join(', ');
+
+/**
  * The 409 a superseded per-approach recalculation is refused with.
  *
  * Refusal rather than repair, and the difference is not stylistic. The reused
@@ -279,9 +292,29 @@ export async function latestSucceededCalculation(
 
 /**
  * Batch form of {@link latestSucceededCalculation}: the newest succeeded
- * calculation for each of `valuationIds`, keyed by valuation id. `DISTINCT ON`
- * collapses to one row per valuation, so this stays a single round trip no
- * matter how many valuations are asked for.
+ * calculation for each of `valuationIds`, keyed by valuation id. One round trip
+ * however many valuations are asked for.
+ *
+ * A LATERAL AND NOT A `DISTINCT ON`, for the reason `funds.latestMarks` is one
+ * (R283): the two read different amounts of the table to give the same answer.
+ * `DISTINCT ON` is a sort with a filter on top, and a sort cannot stop at the
+ * first row of a group — so it must read *every* succeeded run of every
+ * valuation on the page and order the lot to keep one row each. The LATERAL
+ * makes one stopping index scan per valuation against
+ * `calculations_latest_succeeded_idx`, whose leading columns are exactly
+ * `(valuation_id, created_at DESC)`.
+ *
+ * WHICH IS THE DIFFERENCE BETWEEN A PAGE AND A HISTORY. The cost of the old
+ * spelling was the *run history* of the page, not the page: an engagement
+ * re-runs the engine many times a day (see `CALCULATION_PAGE_LIMIT`, which
+ * exists because of it), so the rows read grow with how long the platform has
+ * been running while the answer stays one row per valuation. Measured on 200k
+ * calculations, a 500-monitor page 100 runs deep: 50,000 rows read, an external
+ * merge sort spilling 9.5 MB to disk, 246 ms — against 500 rows, no sort, 22 ms.
+ *
+ * Both callers make that the shape that matters. `GET /api/v1/monitors` asks it
+ * for a `MONITOR_PAGE_LIMIT` page, and `POST /monitors/scan` asks it once per
+ * page while paging the entire enabled book.
  */
 export async function latestSucceededCalculationsByValuationIds(
   pool: pg.Pool,
@@ -289,10 +322,18 @@ export async function latestSucceededCalculationsByValuationIds(
 ): Promise<Map<string, CalculationRow>> {
   if (valuationIds.length === 0) return new Map();
   const { rows } = await pool.query<CalculationRow>(
-    `SELECT DISTINCT ON (valuation_id) ${CALCULATION_COLUMNS}
-       FROM calculations
-      WHERE valuation_id = ANY($1) AND status = 'succeeded'
-      ORDER BY valuation_id, created_at DESC`,
+    // `unnest(...) AS v(id)` rather than `= ANY($1)`: the LATERAL needs a row
+    // per requested id to correlate against, and `ANY` is a predicate rather
+    // than a relation.
+    `SELECT ${qualified('c')}
+       FROM unnest($1::ulid[]) AS v(id)
+       CROSS JOIN LATERAL (
+         SELECT ${CALCULATION_COLUMNS}
+           FROM calculations c
+          WHERE c.valuation_id = v.id AND c.status = 'succeeded'
+          ORDER BY c.created_at DESC
+          LIMIT 1
+       ) c`,
     [[...new Set(valuationIds)]],
   );
   return new Map(rows.map((row) => [row.valuation_id, row]));

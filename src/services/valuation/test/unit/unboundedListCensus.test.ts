@@ -93,10 +93,6 @@ const BOUNDED: Record<string, Bound> = {
     bound: 'caller',
     why: 'One row per valuation id handed in, and every caller passes a page of `eachEnabledMonitor` or of a capped list.',
   },
-  'calculations.ts:latestSucceededCalculationsByValuationIds': {
-    bound: 'caller',
-    why: 'DISTINCT ON over the ids handed in — one row per valuation, and the id list is the caller’s page.',
-  },
   'capTables.ts:findCapTablesByValuationIds': {
     bound: 'caller',
     why: 'One cap table per valuation id handed in.',
@@ -316,8 +312,9 @@ function returnsMany(ret: string): boolean {
 /**
  * Multi-row reads with no `LIMIT` of any kind — literal or parameterised.
  *
- * KNOWN BLIND SPOT, and the reason `funds.ts:latestMarks` is no longer accounted
- * for below. The test is `\bLIMIT\b` over the whole body, so a `LIMIT` anywhere
+ * KNOWN BLIND SPOT, and the reason neither `funds.ts:latestMarks` nor
+ * `calculations.ts:latestSucceededCalculationsByValuationIds` is accounted for
+ * below. The test is `\bLIMIT\b` over the whole body, so a `LIMIT` anywhere
  * in the statement takes the read out of the population — including one that
  * bounds a *subquery* and says nothing about the outer result. R283 rewrote
  * `latestMarks` as `unnest($1::ulid[]) CROSS JOIN LATERAL (SELECT … LIMIT 1)`,
@@ -325,6 +322,14 @@ function returnsMany(ret: string): boolean {
  * uncapped as it was, and this census stopped seeing it. It failed loudly rather
  * than quietly — the entry became an account of nothing — but for the opposite
  * reason to the real one, and removing the entry is what makes it green.
+ *
+ * R298 put a second read in the same hole for the same reason: the monitoring
+ * snapshot's batch reader was a `DISTINCT ON` that read every succeeded run of
+ * every valuation on the page, and it is now the identical
+ * `unnest(...) CROSS JOIN LATERAL (SELECT … LIMIT 1)`. That is twice this
+ * spelling has been the right fix for a real defect and twice it has cost the
+ * census a statement, which is the argument for closing the hole rather than
+ * noting it again — the reads it hides are the ones this file most wants to see.
  *
  * Counting parenthesis depth and accepting only a `LIMIT` at the outer
  * `SELECT`'s own depth is most of the answer and not all of it: several
