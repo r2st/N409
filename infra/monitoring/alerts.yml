@@ -227,6 +227,33 @@ groups:
       # that folding one is not the cap working as designed but label values
       # nobody declared: a caller-supplied string reaching a label, or a
       # vocabulary that has grown past the list it was written from.
+      # And the harder half of the same question: a gauge that is not in the
+      # body at all.
+      #
+      # `ObservableGauge` samples at scrape time, and a `collect` that throws
+      # must not fail the whole scrape — an endpoint that 500s because a pool
+      # handle went away is down exactly when it is needed. So the gauge is
+      # dropped and the scrape continues, and an absent series is the one thing
+      # a rule cannot tell apart from a healthy one.
+      #
+      # Most of the page-severity rules on this page are gauge-backed:
+      # `SweepStopped` reads `background_sweep_enabled`, `UpstreamCircuitOpen`
+      # reads `upstream_circuit_state`, `PoolSaturated` reads
+      # `db_pool_connections_waiting`, `JobQueueAlertOpen` reads the job
+      # monitor's snapshot, `MemoryCeilingMissing` reads the cgroup. A `collect`
+      # that throws on every scrape takes its rule with it, for as long as the
+      # process lives, and until R341 left nothing behind to say so.
+      #
+      # `increase`, not a ratio: one throw is one scrape in which a rule was not
+      # being evaluated against anything, and there is no benign rate of that.
+      - alert: MetricCollectFailing
+        expr: increase(n409_metric_collect_failures_total[30m]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.metric }} is throwing when scraped — it is absent from /metrics and every rule reading it is matching nothing'
+          runbook: "journalctl -u n409-{{ $labels.job }}; the gauge's `collect` runs inside the scrape and must be cheap, synchronous and non-throwing"
+
       - alert: MetricAttributionFolded
         expr: n409_metric_series_folded{metric!~"http_request.*"} == 1
         for: 15m

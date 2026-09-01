@@ -317,7 +317,46 @@ describe('observable gauges', () => {
     });
     const text = r.render();
     expect(text).toContain('boots_total 1');
-    expect(text).not.toContain('broken');
+    expect(seriesOf(text, 'broken')).toEqual([]);
+  });
+
+  it('counts the drop, in the same scrape it happened in', () => {
+    /*
+     * R341, M11. Dropping the gauge is right and stays; being silent about it
+     * was not. An absent series is the one reading a Prometheus rule cannot
+     * tell apart from a healthy one, and most of the page-severity rules in
+     * `infra/monitoring/alerts.yml` are gauge-backed — `SweepStopped`,
+     * `UpstreamCircuitOpen`, `PoolSaturated`, `JobQueueAlertOpen`,
+     * `MemoryCeilingMissing`. A `collect` that throws on every scrape takes its
+     * rule with it for as long as the process lives.
+     *
+     * "In the same scrape" is the half worth pinning. The counter renders after
+     * the gauges are collected precisely so this scrape reports this scrape's
+     * failure; collected in map order, the increment would land after the
+     * counter had already been written and would not surface until the next
+     * body — which for a gauge that throws once, on the scrape somebody is
+     * reading, is never.
+     */
+    const r = new MetricsRegistry();
+    r.gauge('broken', 'x', () => {
+      throw new Error('pool is gone');
+    });
+    r.gauge('fine', 'y', () => 3);
+
+    const text = r.render();
+    expect(text).toContain('n409_metric_collect_failures_total{metric="broken"} 1');
+    expect(text).toContain('fine 3');
+    // Two scrapes, two failures: this is a per-scrape condition, not a latch.
+    expect(r.render()).toContain('n409_metric_collect_failures_total{metric="broken"} 2');
+  });
+
+  it('registers the failure counter only once something has failed', () => {
+    // A permanent zero is a series an operator learns to ignore, and it would
+    // also put an instrument nothing uses into `seriesCensus`.
+    const r = new MetricsRegistry();
+    r.gauge('fine', 'y', () => 3);
+    expect(r.render()).not.toContain('n409_metric_collect_failures_total');
+    expect(r.seriesCensus()).toEqual([]);
   });
 
   it('refuses an invalid gauge name', () => {

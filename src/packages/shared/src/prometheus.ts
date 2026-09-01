@@ -337,16 +337,25 @@ class ObservableGauge {
   }
 
   render(): string[] {
-    let readings: readonly GaugeReading[];
-    try {
-      const raw = this.collect();
-      readings = typeof raw === 'number' ? [{ value: raw }] : raw;
-    } catch {
-      // A gauge whose source is unavailable must not fail the whole scrape:
-      // losing one series is recoverable, losing the endpoint during an
-      // incident is what this module exists to prevent.
-      return [];
-    }
+    /*
+     * Deliberately not caught here (R341, methodology M11). A gauge whose
+     * source is unavailable must not fail the whole scrape — losing one series
+     * is recoverable, losing the endpoint during an incident is what this
+     * module exists to prevent — and that is still what happens; the catch has
+     * moved one level up, to {@link MetricsRegistry.render}, which is the only
+     * place that can *record* it.
+     *
+     * Swallowed here, the gauge simply was not in the body, and an absent
+     * series is the one thing a Prometheus rule cannot distinguish from a
+     * healthy one. Most of the page-severity rules in this estate are gauge-
+     * backed: `SweepStopped` reads `background_sweep_enabled`,
+     * `UpstreamCircuitOpen` reads `upstream_circuit_state`, `PoolSaturated`
+     * reads `db_pool_connections_waiting`, `JobQueueAlertOpen` reads the job
+     * monitor's snapshot. A `collect` that throws on every scrape takes its
+     * rule with it, silently and for as long as the process lives.
+     */
+    const raw = this.collect();
+    const readings: readonly GaugeReading[] = typeof raw === 'number' ? [{ value: raw }] : raw;
     const out = [`# HELP ${this.name} ${escapeHelp(this.help)}`, `# TYPE ${this.name} gauge`];
     for (const r of readings) {
       const values = orderValues(this.labelNames, r.labels);
@@ -454,12 +463,48 @@ export class MetricsRegistry {
     return out;
   }
 
+  /**
+   * Gauge collections that threw, by metric.
+   *
+   * Registered on the first failure rather than at construction, so an estate
+   * where nothing has ever thrown exposes no series at all and the alert on it
+   * is written against a condition, not against a permanent zero. Lazy is also
+   * what keeps `seriesCensus` honest: an instrument nothing has used is not an
+   * instrument this endpoint is holding anything for.
+   */
+  private collectFailures(): Counter {
+    return this.counter(
+      'n409_metric_collect_failures_total',
+      'Gauge collections that threw during a scrape — that gauge is absent from this body, and any rule reading it is matching nothing',
+      ['metric'],
+    );
+  }
+
   /** The whole registry in the text exposition format, newline-terminated. */
   render(): string {
+    /*
+     * Gauges first, though they are written out last. A `collect` that throws
+     * is recorded on the counter below, and the counter has to be rendered
+     * after that increment or the failure would not appear until the *next*
+     * scrape — which for a gauge that throws once, on the scrape somebody is
+     * reading, is never.
+     */
+    const gauges: string[] = [];
+    for (const g of this.gauges.values()) {
+      try {
+        gauges.push(...g.render());
+      } catch {
+        // The scrape continues without this one, which is the original
+        // contract and the right one: an endpoint that 500s because a pool
+        // handle went away is an endpoint that is down exactly when it is
+        // needed. What is new is that the absence is now countable.
+        this.collectFailures().inc({ metric: g.name });
+      }
+    }
     const lines: string[] = [];
     for (const c of this.counters.values()) lines.push(...c.render());
     for (const h of this.histograms.values()) lines.push(...h.render());
-    for (const g of this.gauges.values()) lines.push(...g.render());
+    lines.push(...gauges);
     return lines.length > 0 ? `${lines.join('\n')}\n` : '';
   }
 }
