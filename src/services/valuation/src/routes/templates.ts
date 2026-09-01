@@ -152,7 +152,24 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const { id } = req.params as { id: string };
     await loadTemplate(deps.pool, id);
     const archived = await archiveTemplate(deps.pool, id);
-    if (!archived) throw problems.notFound();
+    /*
+     * Not a bare 404 (round 336). `loadTemplate` one line above answered for
+     * this id, so `null` here means the row went between that read and this
+     * transaction — a version deleted out from under the request. The
+     * existence-oracle argument that keeps most of this API's 404s wordless
+     * does not apply to a caller who has just been shown the thing; what a
+     * bare "Resource not found" reads as in reply to an archive is a bad
+     * request, which sends an operator to check an id that was right.
+     *
+     * The same distinction `staleAdvance` draws for an engagement whose
+     * valuation was deleted mid-change, and the same sentence shape: what
+     * happened, and that nothing was recorded.
+     */
+    if (!archived)
+      throw problems.notFound(
+        'This template version no longer exists — it was deleted while this change was being ' +
+          'made. Nothing was archived and nothing was recorded.',
+      );
     // A repeat writes no trail line: the retirement it would describe did not
     // happen here. See `archiveTemplate`.
     if (archived.changed) await audit('template_archived', principal.id, archived.template);
