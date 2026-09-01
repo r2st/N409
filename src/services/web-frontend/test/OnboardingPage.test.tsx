@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { OnboardingPage } from '../src/pages/OnboardingPage';
 import { ONBOARDING_DRAFT_KEY } from '../src/lib/onboardingDraft';
+import { OFFLINE_DETAIL } from '../src/lib/api';
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -556,7 +557,16 @@ describe('OnboardingPage — uploading documents', () => {
     expect(storedUploads()).toEqual({});
   });
 
-  it('falls back to a plain message when the upload carries none', async () => {
+  /*
+   * R303. Two ways a failure can carry no message of its own, which this used
+   * to conflate — and after R255 routed these handlers through
+   * `describeActionFailure`, the single assertion left here matched neither.
+   *
+   * The operation sentence is a prefix, not the whole message: what follows it
+   * says which of the two happened and what the reader should do about it.
+   * Asserting the prefix alone passed only while there was nothing after it.
+   */
+  it('names the operation and the network when the upload never left', async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       if (String(url).includes('/documents')) throw new Error('offline');
@@ -566,7 +576,24 @@ describe('OnboardingPage — uploading documents', () => {
 
     await user.upload(picker(), file('cap.pdf'));
 
-    expect(await screen.findByText('Upload failed.')).toBeInTheDocument();
+    expect(await screen.findByText(`Upload failed. ${OFFLINE_DETAIL}`)).toBeInTheDocument();
+  });
+
+  it('names the operation and the status when the server explains nothing', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('/documents'))
+        return jsonResponse({ title: 'Internal Server Error', status: 500 }, 500);
+      return jsonResponse({});
+    });
+    resumeAtUploads();
+
+    await user.upload(picker(), file('cap.pdf'));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Upload failed.');
+    expect(alert).toHaveTextContent('unexpected fault (500)');
+    expect(alert).not.toHaveTextContent('Internal Server Error');
   });
 
   /**

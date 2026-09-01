@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SignaturePanel, type Signature } from '../src/components/SignaturePanel';
+import { OFFLINE_DETAIL } from '../src/lib/api';
 import type { Valuation } from '../src/lib/types';
 
 const jsonResponse = (body: unknown, status = 200) =>
@@ -153,7 +154,16 @@ describe('SignaturePanel — removing a signature', () => {
     expect(screen.getByText('/s/ Ada Analyst')).toBeInTheDocument();
   });
 
-  it('falls back to a plain message when the failure carries none', async () => {
+  /*
+   * R303. Two ways a failure can carry no message of its own, which this used
+   * to conflate — and after R255 routed these handlers through
+   * `describeActionFailure`, the single assertion left here matched neither.
+   *
+   * The operation sentence is a prefix, not the whole message: what follows it
+   * says which of the two happened and what the reader should do about it.
+   * Asserting the prefix alone passed only while there was nothing after it.
+   */
+  it('names the operation and the network when the request never left', async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
       if ((init?.method ?? 'GET') === 'DELETE') throw new Error('offline');
@@ -163,7 +173,26 @@ describe('SignaturePanel — removing a signature', () => {
     render(<SignaturePanel valuation={VALUATION} />);
     await user.click(await screen.findByRole('button', { name: 'remove' }));
 
-    expect(await screen.findByText('Could not remove the signature.')).toBeInTheDocument();
+    expect(
+      await screen.findByText(`Could not remove the signature. ${OFFLINE_DETAIL}`),
+    ).toBeInTheDocument();
+  });
+
+  it('names the operation and the status when the server explains nothing', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if ((init?.method ?? 'GET') === 'DELETE')
+        return jsonResponse({ title: 'Internal Server Error', status: 500 }, 500);
+      return jsonResponse({ signatures: [MAIN_SIGNATURE] });
+    });
+
+    render(<SignaturePanel valuation={VALUATION} />);
+    await user.click(await screen.findByRole('button', { name: 'remove' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not remove the signature.');
+    expect(alert).toHaveTextContent('unexpected fault (500)');
+    expect(alert).not.toHaveTextContent('Internal Server Error');
   });
 
   /** A published valuation's signatures are part of the record. */

@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AuditorAccessPanel } from '../src/components/valuation/AuditorAccessPanel';
+import { OFFLINE_DETAIL } from '../src/lib/api';
 
 const VAL = '01N409VAL000000000000000AA';
 const jsonResponse = (body: unknown, status = 200) =>
@@ -183,7 +184,16 @@ describe('AuditorAccessPanel — revoking', () => {
     expect(screen.getByRole('button', { name: 'Revoke' })).toBeInTheDocument();
   });
 
-  it('falls back to a plain message when the failure carries none', async () => {
+  /*
+   * R303. Two ways a failure can carry no message of its own, which this used
+   * to conflate — and after R255 routed these handlers through
+   * `describeActionFailure`, the single assertion left here matched neither.
+   *
+   * The operation sentence is a prefix, not the whole message: what follows it
+   * says which of the two happened and what the reader should do about it.
+   * Asserting the prefix alone passed only while there was nothing after it.
+   */
+  it('names the operation and the network when the request never left', async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
       if ((init?.method ?? 'GET') === 'DELETE') throw new Error('offline');
@@ -193,7 +203,35 @@ describe('AuditorAccessPanel — revoking', () => {
     render(<AuditorAccessPanel valuationId={VAL} />);
     await user.click(await screen.findByRole('button', { name: 'Revoke' }));
 
-    expect(await screen.findByText('Could not revoke the link.')).toBeInTheDocument();
+    // `fetch` rejecting means the DELETE never arrived, so the link is still
+    // live — and the reader is told nothing was submitted rather than left to
+    // guess whether pressing Revoke again would revoke twice.
+    expect(
+      await screen.findByText(`Could not revoke the link. ${OFFLINE_DETAIL}`),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Active')).toBeInTheDocument();
+  });
+
+  it('names the operation and the status when the server explains nothing', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      // The shape this API's own 500 handler emits: a title, deliberately no
+      // `detail`, so an internal failure cannot leak its message.
+      if ((init?.method ?? 'GET') === 'DELETE')
+        return jsonResponse({ title: 'Internal Server Error', status: 500 }, 500);
+      return jsonResponse({ access: [link()] });
+    });
+
+    render(<AuditorAccessPanel valuationId={VAL} />);
+    await user.click(await screen.findByRole('button', { name: 'Revoke' }));
+
+    // Not 'Internal Server Error' — the reason phrase is the one string in the
+    // body guaranteed not to be about this request.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not revoke the link.');
+    expect(alert).toHaveTextContent('unexpected fault (500)');
+    expect(alert).not.toHaveTextContent('Internal Server Error');
+    expect(screen.getByText('Active')).toBeInTheDocument();
   });
 
   /**
