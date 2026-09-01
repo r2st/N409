@@ -779,7 +779,15 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
           partial: progress,
         });
       } catch (auditErr) {
-        app.log.warn({ err: auditErr }, 'retention sweep failure not recorded on the audit spine');
+        // Named, not just reported. A line that says only that an audit insert
+        // failed leaves the one question a reader has — *whose* run, and which
+        // one — answerable nowhere, because the row that would have said so is
+        // the row that did not get written. `logSubjectCensus` holds every
+        // failure line on this surface to that rule.
+        app.log.warn(
+          { err: auditErr, actorId: principal.id, sweep: 'retention', trigger: 'manual' },
+          'retention sweep failure not recorded on the audit spine',
+        );
       }
       throw err;
     }
