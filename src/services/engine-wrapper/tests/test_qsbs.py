@@ -282,11 +282,32 @@ def test_disqualified_obbba_stock_reports_no_ceiling_either():
     assert out["gain_exclusion_cap"] == 0.0
 
 
-def test_obbba_leap_day_acquisition_rolls_every_tier_to_march_first():
+def test_obbba_leap_day_acquisition_rolls_only_the_tiers_that_have_no_feb_29():
+    """Mar 1 in a common year, Feb 29 in a leap year — not Mar 1 in both.
+
+    2032 is a leap year, so the fourth anniversary of a 29 February 2028
+    acquisition is 29 February 2032 and not the 1st of March. Rolling it anyway
+    moved a real anniversary a day into the future, and the tiered §1202(a)(4)
+    test is worded "at least" and decided on the day.
+    """
     out = qsbs_eligibility(**_base(acquisition_date="2028-02-29", assessment_date="2031-03-01"))
     assert [t["date"] for t in out["holding_period"]["tiers"]] == [
         "2031-03-01",
-        "2032-03-01",
+        "2032-02-29",
         "2033-03-01",
     ]
     assert out["exclusion_percentage"] == 0.50
+
+
+def test_obbba_leap_day_tier_is_met_on_its_own_leap_anniversary():
+    """The four-year tier, on the day it is reached.
+
+    This concluded 50% until R335: the tier date was reported as 1 March 2032,
+    so a letter written on 29 February 2032 — four years to the day — told the
+    holder they had the 50% exclusion when §1202(a)(4) gives them 75%.
+    """
+    out = qsbs_eligibility(**_base(acquisition_date="2028-02-29", assessment_date="2032-02-29"))
+    assert out["exclusion_percentage"] == 0.75
+    assert out["holding_period"]["met"] is True
+    tiers = {t["years"]: t["met"] for t in out["holding_period"]["tiers"]}
+    assert tiers == {3: True, 4: True, 5: False}

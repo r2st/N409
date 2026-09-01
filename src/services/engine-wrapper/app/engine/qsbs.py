@@ -141,11 +141,27 @@ def _years_between(start: date, end: date) -> float:
     return (end - start).days / 365.25
 
 
+def _is_leap(year: int) -> bool:
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+
 def _anniversary(acquired: date, years: int) -> date:
-    """The calendar anniversary `years` on. Feb 29 rolls to Mar 1 (the day the
-    full year completes in a non-leap year), matching how the holding period is
-    conventionally counted."""
-    if acquired.month == 2 and acquired.day == 29:
+    """The calendar anniversary `years` on.
+
+    Feb 29 rolls to Mar 1 **only when the target year has no Feb 29** — that is
+    the day the full year completes in a non-leap year, which is how the holding
+    period is conventionally counted. Where the target year *is* a leap year the
+    anniversary is Feb 29 itself, and rolling it to Mar 1 there moved a real
+    anniversary a day into the future.
+
+    That is not a rounding difference on the tiered OBBBA test, which is worded
+    "at least" and decided on the day: stock acquired 29 February 2028 and
+    assessed on 29 February 2032 has held it four years, and this reported the
+    75% tier as unmet and the letter concluded 50%. Every fourth anniversary of
+    a leap-day acquisition landed on a leap year, so the wrong ones were the
+    ones a holder is most likely to be asked about.
+    """
+    if acquired.month == 2 and acquired.day == 29 and not _is_leap(acquired.year + years):
         return date(acquired.year + years, 3, 1)
     return date(acquired.year + years, acquired.month, acquired.day)
 
