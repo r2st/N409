@@ -210,8 +210,22 @@ function credentialFields(): Map<string, string[]> {
  *    its login page by the branding routes. It is business contact detail that
  *    the product deliberately shows to anonymous visitors.
  *  - `auto_email` names a feature (the `auto_emails` table), not a recipient.
+ *  - `no_email` is a *refusal reason code* — one member of `SSO_REFUSAL_CODES`
+ *    (`auth/ssoRefusal.ts`), keyed again in the login page's message map. It is
+ *    the name of the case where the provider sent no address at all, so there
+ *    is nothing under it to redact; the `has_password` case once more, in the
+ *    negative. This one is why the whole check was red: it entered the tree
+ *    with the SSO refusal vocabulary and has been failing ever since, which is
+ *    the state a tripwire is least useful in — still red, and therefore no
+ *    longer read, so a genuinely unredacted `*_email` arriving after it would
+ *    have changed nothing about what this suite reported.
  */
-const NON_PERSONAL_CONTACT_FIELDS = new Set(['marketing_email', 'support_email', 'auto_email']);
+const NON_PERSONAL_CONTACT_FIELDS = new Set([
+  'marketing_email',
+  'support_email',
+  'auto_email',
+  'no_email',
+]);
 
 /**
  * Compound contact-detail field names the services carry, in property position.
@@ -317,7 +331,7 @@ describe('the redact list keeps up with the code', () => {
     expect(names.size).toBeGreaterThan(5);
   });
 
-  it('holds the three non-addresses as declared exceptions, not as oversights', () => {
+  it('holds the non-addresses as declared exceptions, not as oversights', () => {
     // `marketing_email` is the one that matters: it is a boolean consent flag,
     // so redacting it would blank a diagnostic and tell nobody anything —
     // exactly the `has_password` case. Naming the exceptions in a list keeps
@@ -326,6 +340,26 @@ describe('the redact list keeps up with the code', () => {
       expect(SENSITIVE_FIELDS, `${name} should not be redacted`).not.toContain(name);
     }
     expect(NON_PERSONAL_CONTACT_FIELDS.has('marketing_email')).toBe(true);
+    // The exceptions must stay *narrow*: each is a specific name, not a family.
+    // `no_email` is excused; the role-keyed addresses beside it are not.
+    expect(NON_PERSONAL_CONTACT_FIELDS.has('actor_email')).toBe(false);
+    expect(NON_PERSONAL_CONTACT_FIELDS.has('to_email')).toBe(false);
+  });
+
+  it('excuses no_email because it is a refusal code, not an address', () => {
+    // Pinned against the source it comes from: if `no_email` ever stops being a
+    // member of the SSO refusal vocabulary, the reason for the exception is
+    // gone and this fails rather than quietly widening the census's blind spot.
+    // Read from source rather than imported: `packages/shared` is a dependency
+    // of the valuation service, not the other way round.
+    const vocabulary = readFileSync(
+      path.join(repoRoot, 'src/services/valuation/src/auth/ssoRefusal.ts'),
+      'utf8',
+    );
+    expect(vocabulary).toMatch(/SSO_REFUSAL_CODES = \[[\s\S]*'no_email'[\s\S]*\] as const/);
+    expect(SENSITIVE_FIELDS).not.toContain('no_email');
+    // And it is genuinely what the scanner picks up — not a name nobody writes.
+    expect([...contactFields().keys()]).toContain('no_email');
   });
 
   it('redacts a personal address under a role-shaped key, at depth', () => {
