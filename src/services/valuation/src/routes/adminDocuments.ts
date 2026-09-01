@@ -177,6 +177,19 @@ export function registerAdminDocumentRoutes(app: FastifyInstance, deps: { pool: 
       const target = refileTarget(doc.kind, assignment.category);
       try {
         const moved = await refileDocument(deps.pool, doc, target, actorFor(principal));
+        if (!moved) {
+          // The same refusal as the snapshot check above, reached the other
+          // way: `refileDocument` pins the bucket it read, so a document
+          // another operator filed — or deleted — between this route's read and
+          // its write matches nothing and is left exactly as they left it.
+          // Losing that race is one row's answer, not the batch's.
+          results.push({
+            document_id: id,
+            ok: false,
+            error: 'Filed or removed since this list was loaded — reload the queue.',
+          });
+          continue;
+        }
         // Write the moved row back over the snapshot. The batch is read once,
         // so without this a list that names the same document twice would file
         // it twice — both assignments reading the pre-batch `uploads` state,

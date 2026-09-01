@@ -303,25 +303,49 @@ export async function countUnfiledDocuments(pool: pg.Pool): Promise<number> {
 }
 
 /**
- * Re-file one document into a named bucket.
+ * Re-file one document into a named bucket, from the bucket the caller read.
  *
  * Writes an event on the engagement rather than only an admin event: a
  * document's filing is part of the evidence record, and "who decided this was
  * the option plan, and when" is a question an auditor asks of the engagement,
  * not of the platform. The previous bucket rides in the payload so the change
  * is reversible from the trail alone.
+ *
+ * THE BUCKET IT IS MOVING *FROM* IS PART OF THE WRITE. Its only caller is the
+ * triage queue, whose rule is that a row may be filed once — it refuses a
+ * document that is no longer `uploads`/`other` with "it may have been triaged
+ * since this list was loaded". That refusal was decided in TypeScript against a
+ * snapshot read one statement earlier, on another connection, and the UPDATE
+ * under it named no state at all. Two operators working the same "select all",
+ * or the same operator's double-click, both read `uploads`, both passed the
+ * check and both wrote: the second silently overwrote the first's filing, and
+ * put a `document_refiled` on the spine claiming it came *from* `uploads` when
+ * it came from wherever the first operator had just put it. The payload the
+ * doc-comment above calls reversible then describes a move that did not happen.
+ *
+ * `deleted_at IS NULL` closes the same window against the delete: the caller's
+ * read filters tombstones (`findDocumentsByIds`) and the delete lands in
+ * between, so without it a removed document gets re-filed and a refile event
+ * arrives on the engagement's trail after the deletion event.
+ *
+ * Null when the row is no longer as it was read — nothing written, no event.
+ * The caller reports it as the per-row refusal it already has wording for; a
+ * whole-batch failure is not what one moved document means.
  */
 export async function refileDocument(
   pool: pg.Pool,
   doc: DocumentRow,
   target: { category: DocumentCategory; kind: DocumentKind },
   actor: EventActor,
-): Promise<DocumentRow> {
+): Promise<DocumentRow | null> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<DocumentRow>(
-      'UPDATE documents SET category = $2, kind = $3 WHERE id = $1 RETURNING *',
-      [doc.id, target.category, target.kind],
+      `UPDATE documents SET category = $2, kind = $3
+        WHERE id = $1 AND deleted_at IS NULL AND category = $4 AND kind = $5
+        RETURNING *`,
+      [doc.id, target.category, target.kind, doc.category, doc.kind],
     );
+    if (!rows[0]) return null;
     await recordEvent(client, {
       valuationId: doc.valuation_id,
       type: PIPELINE_EVENT_TYPES.documentRefiled,

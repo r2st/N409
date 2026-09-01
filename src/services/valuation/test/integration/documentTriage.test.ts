@@ -276,6 +276,104 @@ describe.skipIf(!dbUp)('document triage queue', () => {
   });
 
   /**
+   * The "already filed" rule was decided in TypeScript and written in SQL that
+   * named no state (R320, methodology M3).
+   *
+   * The route reads the batch once and refuses a document that is no longer
+   * `uploads`/`other` — "it may have been triaged since this list was loaded".
+   * That read is a statement on another connection, and the UPDATE under it
+   * pinned nothing, so two operators working the same "select all" both passed
+   * the check and both wrote. The second overwrote the first's filing and put a
+   * `document_refiled` on the engagement's spine claiming it came *from*
+   * `uploads`, when it came from wherever the first operator had just put it —
+   * and that payload is what the trail offers as the way to reverse the move.
+   *
+   * Staged through the pooled client because the refile is a transaction: see
+   * `interceptPoolQueries`. The competing write is spelled with its SET clauses
+   * the other way round so the hook does not match its own staging.
+   */
+  it('refuses a re-file of a document another operator filed first', async () => {
+    const doc = await upload('raced-filing.pdf');
+
+    let staged = false;
+    const restore = interceptPoolQueries(ctx.pool, async (sql, phase) => {
+      if (phase !== 'before' || staged || !sql.includes('UPDATE documents SET category')) return undefined;
+      staged = true;
+      await ctx.pool.query(
+        `UPDATE documents SET kind = 'cap_table', category = 'captable_documents' WHERE id = $1`,
+        [doc.id],
+      );
+      return undefined;
+    });
+    let res;
+    try {
+      res = await file([{ document_id: doc.id, category: 'corporate_documents' }]);
+    } finally {
+      restore();
+    }
+
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json() as {
+      succeeded: number;
+      failed: number;
+      results: Array<{ ok: boolean; error?: string }>;
+    };
+    expect(body).toMatchObject({ succeeded: 0, failed: 1 });
+    expect(body.results[0]!.error).toMatch(/reload the queue/i);
+
+    // The winner's filing stands, untouched by the loser.
+    const { rows } = await ctx.pool.query<{ category: string }>(
+      'SELECT category FROM documents WHERE id = $1',
+      [doc.id],
+    );
+    expect(rows[0]!.category).toBe('captable_documents');
+
+    // And nothing on the spine says the document moved out of `uploads`, which
+    // is the claim the losing write used to leave behind.
+    const events = await ctx.pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'document_refiled' AND payload->>'document_id' = $2`,
+      [valuationId, doc.id],
+    );
+    expect(events.rows[0]!.n).toBe('0');
+  });
+
+  /**
+   * The same window against the delete.
+   *
+   * `findDocumentsByIds` filters tombstones, so the queue can only ever hand
+   * the loop a live document — but the delete lands between that read and the
+   * write, and an UPDATE naming no state re-filed a removed file and put a
+   * refile event on the trail *after* the deletion event.
+   */
+  it('does not re-file a document deleted since the queue was loaded', async () => {
+    const doc = await upload('raced-deletion.pdf');
+
+    let staged = false;
+    const restore = interceptPoolQueries(ctx.pool, async (sql, phase) => {
+      if (phase !== 'before' || staged || !sql.includes('UPDATE documents SET category')) return undefined;
+      staged = true;
+      await ctx.pool.query('UPDATE documents SET deleted_at = now() WHERE id = $1', [doc.id]);
+      return undefined;
+    });
+    let res;
+    try {
+      res = await file([{ document_id: doc.id, category: 'corporate_documents' }]);
+    } finally {
+      restore();
+    }
+
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toMatchObject({ succeeded: 0, failed: 1 });
+
+    const { rows } = await ctx.pool.query<{ category: string }>(
+      'SELECT category FROM documents WHERE id = $1',
+      [doc.id],
+    );
+    expect(rows[0]!.category).toBe('uploads');
+  });
+
+  /**
    * One refused write is one row, not the batch (R301, methodology M6).
    *
    * Every other refusal in this route is already reported per row — that is
