@@ -224,10 +224,58 @@ export async function activateTemplate(pool: pg.Pool, id: string): Promise<Repor
   });
 }
 
-export async function archiveTemplate(pool: pg.Pool, id: string): Promise<ReportTemplateRow | null> {
-  const { rows } = await pool.query<ReportTemplateRow>(
-    `UPDATE report_templates SET status = 'archived', updated_at = now() WHERE id = $1 RETURNING *`,
-    [id],
-  );
-  return rows[0] ?? null;
+/**
+ * Retire a version. Under the name lock, like the activation it races.
+ *
+ * `activateTemplate` is two writes — archive whichever version of the name is
+ * live, then set this one active — and the lock exists so the pair is
+ * indivisible. This is the other half of the same invariant and it took no
+ * lock at all, so it could land *between* those two writes: the activation
+ * archives the incumbent, this archives the version being promoted, the
+ * activation then sets it active, and the operator who asked for the archive
+ * is told it happened while the version they retired is the live skeleton
+ * every new report of that kind is built from. Run the other way round — the
+ * archive lands after both writes — the name is left with no active version
+ * and the activation's 200 described a state that survived for one statement.
+ *
+ * Serialised, both orderings are answers rather than accidents: either the
+ * archive happens and the activation finds nothing to promote out of, or the
+ * activation completes and the archive retires what it promoted. Leaving a
+ * kind with no managed template is a thing ops is allowed to do — the render
+ * falls back — so this refuses nothing; it only stops the two from
+ * interleaving.
+ *
+ * `changed` is false for a version that was already archived. `updated_at` and
+ * the `template_archived` trail line are the entire record of who retired a
+ * skeleton and when, and the admin screen lists archived versions with the
+ * control still on them — so a second press moved the date and put a second
+ * retirement on the trail for one retirement. Same reading as
+ * `setContactSubmissionStatus`: the row comes back either way, and `changed` is
+ * what tells the route whether there is a transition to record.
+ */
+export async function archiveTemplate(
+  pool: pg.Pool,
+  id: string,
+): Promise<{ template: ReportTemplateRow; changed: boolean } | null> {
+  return withTransaction(pool, async (client) => {
+    const { rows: named } = await client.query<{ name: string }>(
+      'SELECT name FROM report_templates WHERE id = $1',
+      [id],
+    );
+    if (!named[0]) return null;
+    await lockTemplateName(client, named[0].name);
+
+    const { rows } = await client.query<ReportTemplateRow>(
+      `UPDATE report_templates SET status = 'archived', updated_at = now()
+        WHERE id = $1 AND status <> 'archived'
+        RETURNING *`,
+      [id],
+    );
+    if (rows[0]) return { template: rows[0], changed: true };
+    const { rows: current } = await client.query<ReportTemplateRow>(
+      'SELECT * FROM report_templates WHERE id = $1',
+      [id],
+    );
+    return current[0] ? { template: current[0], changed: false } : null;
+  });
 }

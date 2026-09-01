@@ -259,6 +259,91 @@ describe.skipIf(!dbUp)('report template activation under concurrency', () => {
     expect(await statuses(name)).toEqual({ 1: 'archived', 2: 'active' });
   });
 
+  /**
+   * The archive is the other half of the activation's invariant, and it took no
+   * lock at all (R320, methodology M3).
+   *
+   * The test above stages the competing archive *holding the name lock*,
+   * because that is the only way the interleaving it describes is safe. The
+   * real `POST /:id/archive` did not take it: one statement on the pool, no
+   * transaction. So it could land in the middle of an activation's two writes —
+   * incumbent archived, promotion not yet written — and the promotion then set
+   * active the very version the operator had just retired. Their archive
+   * answered 200 and the version they retired is the skeleton every new report
+   * of that kind is built from.
+   *
+   * Under the lock both orderings are answers: here the archive queues behind
+   * the activation and retires what it promoted, leaving the name with no
+   * active version, which is a state ops is allowed to ask for.
+   */
+  it('makes an archive wait for an activation of the same name', async () => {
+    const name = freshName();
+    const v1 = await createTemplateVersion(ctx.pool, { name, kind: '409a', createdBy: ops.id });
+    const v2 = await createTemplateVersion(ctx.pool, { name, kind: '409a', createdBy: ops.id });
+    await activateTemplate(ctx.pool, v1.id);
+
+    const holder = await ctx.pool.connect();
+    let inFlight: ReturnType<typeof ctx.app.inject> | null = null;
+    try {
+      // An activation of v2, mid-flight: the name lock taken, the incumbent
+      // archived, the promotion not yet written.
+      await holder.query('BEGIN');
+      await holder.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [0x74706c6, name]);
+      await holder.query(
+        `UPDATE report_templates SET status = 'archived', updated_at = now()
+          WHERE name = $1 AND status = 'active'`,
+        [name],
+      );
+
+      inFlight = ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/report-templates/${v2.id}/archive`,
+        headers: { authorization: `Bearer ${ops.token}` },
+      });
+      // Fails outright without the lock: the archive would already have
+      // committed by now, and no backend ever blocks.
+      await waitForABlockedBackend();
+
+      await holder.query(`UPDATE report_templates SET status = 'active', updated_at = now() WHERE id = $1`, [
+        v2.id,
+      ]);
+      await holder.query('COMMIT');
+    } finally {
+      holder.release();
+    }
+
+    expect((await inFlight!).statusCode).toBe(200);
+    // The archive ran after the whole activation, so what it retired is what
+    // the activation promoted — not a version left live behind its back.
+    expect(await statuses(name)).toEqual({ 1: 'archived', 2: 'archived' });
+  });
+
+  it('does not re-stamp a version that is already archived', async () => {
+    // `updated_at` and the `template_archived` trail line are the whole record
+    // of who retired a skeleton and when, and the admin screen lists archived
+    // versions with the control still on them.
+    const name = freshName();
+    const v1 = await createTemplateVersion(ctx.pool, { name, kind: '409a', createdBy: ops.id });
+    const archive = () =>
+      ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/report-templates/${v1.id}/archive`,
+        headers: { authorization: `Bearer ${ops.token}` },
+      });
+    expect((await archive()).statusCode).toBe(200);
+    const first = await ctx.pool.query<{ updated_at: Date }>(
+      'SELECT updated_at FROM report_templates WHERE id = $1',
+      [v1.id],
+    );
+
+    expect((await archive()).statusCode).toBe(200);
+    const second = await ctx.pool.query<{ updated_at: Date }>(
+      'SELECT updated_at FROM report_templates WHERE id = $1',
+      [v1.id],
+    );
+    expect(second.rows[0]!.updated_at).toEqual(first.rows[0]!.updated_at);
+  });
+
   it('keeps activations of different names independent', async () => {
     const names = Array.from({ length: 3 }, freshName);
     const rows = [];

@@ -152,7 +152,10 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const { id } = req.params as { id: string };
     await loadTemplate(deps.pool, id);
     const archived = await archiveTemplate(deps.pool, id);
-    await audit('template_archived', principal.id, archived!);
-    return { template: serialize(archived!) };
+    if (!archived) throw problems.notFound();
+    // A repeat writes no trail line: the retirement it would describe did not
+    // happen here. See `archiveTemplate`.
+    if (archived.changed) await audit('template_archived', principal.id, archived.template);
+    return { template: serialize(archived.template) };
   });
 }
