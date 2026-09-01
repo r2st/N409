@@ -255,9 +255,40 @@ def _has_doctype(data: bytes) -> bool:
         rest = rest[end + (3 if rest.startswith(b"<!--") else 2) :].lstrip()
 
 
-def _pdf_text(raw: bytes) -> str:
+def _pdf_text(raw: bytes, limit: int = MAX_CHARS_PER_DOC) -> str:
+    """The first `limit` characters of a PDF's text, and no more work than that.
+
+    ## Why the page loop stops (R338, methodology M8)
+
+    Every caller of this function throws away everything past
+    `MAX_CHARS_PER_DOC` — `extract_texts` ends `text.strip()[:MAX_CHARS_PER_DOC]`
+    — and 20,000 characters is five to eight pages of an ordinary document. The
+    loop read forty of them regardless, so on the long PDFs this pipeline is
+    actually given (a signed financing set, a board deck, an audit report) four
+    fifths of the extraction was performed and discarded.
+
+    It is not cheap work to discard. `page.extract_text()` parses the page's
+    content stream, resolves its font descriptors and decodes every glyph
+    through them; it is the dominant cost of an AI run whose documents are PDFs,
+    and it is paid inline on the request. Stopping at the budget is exact rather
+    than approximate: the characters that would have been kept are all produced
+    before the loop breaks, so the returned string's first `limit` characters are
+    the ones the unbounded version produced.
+
+    The forty-page ceiling stays behind it as the bound for the other direction
+    — a document whose pages are mostly images extracts almost nothing per page,
+    so the budget alone would let a thousand-page scan walk the whole file.
+    """
     reader = PdfReader(io.BytesIO(raw))
-    pages = [page.extract_text() or "" for page in reader.pages[:40]]
+    pages: list[str] = []
+    size = 0
+    for page in reader.pages[:40]:
+        text = page.extract_text() or ""
+        pages.append(text)
+        # +1 for the newline this page will be joined with.
+        size += len(text) + 1
+        if size >= limit:
+            break
     return "\n".join(pages)
 
 
@@ -423,9 +454,21 @@ def _row_values(row: ElementTree.Element, shared: list[str]) -> list[str]:
     return values
 
 
-def _xlsx_text(raw: bytes) -> str:
+def _xlsx_text(raw: bytes, limit: int = MAX_CHARS_PER_DOC) -> str:
     """Tab-separated rows per sheet — enough structure for the LLM to read a
-    cap table without a spreadsheet dependency."""
+    cap table without a spreadsheet dependency.
+
+    Stops at `limit` characters for the reason `_pdf_text` does (R338, M8): the
+    caller keeps `MAX_CHARS_PER_DOC` of what comes back, and the declared
+    ceilings here are twenty sheets of two thousand rows — two orders of
+    magnitude more text than that. The per-row cost is a `_row_values` walk of
+    the row element plus a shared-strings lookup per cell, so a twenty-sheet
+    workbook parsed the whole way and threw away all but its first sheet or two.
+
+    The two ceilings stay behind the budget, unchanged, for the case the budget
+    cannot bound: a workbook of empty rows yields no characters per row, and
+    `MAX_XLSX_ROWS_PER_SHEET` is what stops that walk.
+    """
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         zf = _BoundedZip(archive, xlsx_inflated_budget(len(raw)))
         shared = _xlsx_shared_strings(zf)
@@ -443,16 +486,24 @@ def _xlsx_text(raw: bytes) -> str:
                 )
             ]
         blocks: list[str] = []
+        size = 0
         for name, path in sheets[:MAX_XLSX_SHEETS]:
+            if size >= limit:
+                break
             try:
                 root = _parse_xml_part(zf.read(path))
             except (KeyError, ElementTree.ParseError):
                 continue
             lines = [f"=== Sheet: {name} ==="]
+            size += len(lines[0]) + 2
             for row in list(root.iter(f"{_SSML}row"))[:MAX_XLSX_ROWS_PER_SHEET]:
                 values = _row_values(row, shared)
                 if any(v.strip() for v in values):
-                    lines.append("\t".join(values).rstrip())
+                    line = "\t".join(values).rstrip()
+                    lines.append(line)
+                    size += len(line) + 1
+                    if size >= limit:
+                        break
             blocks.append("\n".join(lines))
         return "\n\n".join(blocks)
 
