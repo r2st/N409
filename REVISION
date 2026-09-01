@@ -7053,3 +7053,118 @@
 #            The docstring's claim — that the returned prefix is the one the
 #            unbounded version produced — is true; what is not is that the *kept*
 #            20,000 are. Below the resolution of anything downstream.
+
+# R340 — Silent failure (M5). Five findings. Three are the same shape wearing
+#            three costumes: a failure that produced the value which also means
+#            "there is nothing here", so every surface downstream read it as an
+#            ordinary absence and said so out loud.
+#
+#            **A failed read of the saved exit scenarios was drawn as "no
+#            scenarios yet".** `ParamsPanel` fetches `/engine-inputs` after
+#            `/params` to fill the PWERM table, inside a bare `catch {}` whose
+#            comment gave the reason: "engine-inputs is ops-only / may 404 for
+#            owners". Only the PATCH is ops-only. The GET guards on
+#            `canReadValuation`, which the `/params` read on the line above has
+#            already passed, so a 404 there is all but unreachable and what the
+#            swallow caught was a 5xx, a dropped connection or an expired
+#            session. The panel does not render "unknown" for an empty
+#            `scenarios`; it renders "No scenarios yet — add IPO / acquisition /
+#            continuation / liquidation outcomes", which is a claim about the
+#            model on the one tab where the model is the deliverable. And it is
+#            a claim the form can go on to make true: `saveScenarios` PATCHes
+#            the whole `pwerm.scenarios` array, so an analyst shown an empty
+#            table after a momentary failure who adds one outcome and saves has
+#            replaced the firm's saved set with that single row. On a hybrid run
+#            the same write carries `hybrid`, so the blend weights go back to
+#            the 0.5/0.5 this component starts on. The failure is stated in the
+#            section it is about and both buttons are blocked while it stands: an
+#            empty table that is not *known* to be empty must not be savable as
+#            one. A 404 keeps the old reading.
+#
+#            **An unreadable ASC 718 settings row was saved back as the page's
+#            defaults.** The same shape one tab over, and the word doing the work
+#            in `catch { /* settings are optional */ }` was "optional". Absence
+#            is not what that caught: the route answers `{ settings: null }` for
+#            a valuation with no row, so a 200 already carries it and the `if
+#            (s)` beside it handles it. What the swallow caught left the three
+#            controls on private / no ticker / SAB 107 simplified. `PUT
+#            .../asc718/settings` is a whole-row replace and the four fields the
+#            form does not own ride along in `untouchedSettings(settings)`, which
+#            answers `{}` while `settings` is null — so one press of Save turns a
+#            public issuer private, drops its ticker and term election, and nulls
+#            the ESPP discount, the ESPP lookback, the RSU performance conditions
+#            and the TSR peer basket, none of which are on that screen for anyone
+#            to see going.
+#
+#            **A drip pass that never ran reported what an idle one reports.**
+#            `runDueAutoEmails` takes a session advisory lock and declines when
+#            another pass holds it, returning `{ queued: 0, skipped: 0,
+#            suppressed: 0, failed: 0 }` — exactly what a pass that ran and found
+#            nothing due returns. Both of its surfaces read that as health: the
+#            sweep tally, where `background_sweep_items_total` (R321, built
+#            because a tick whose every item failed looks idle) cannot see a tick
+#            that looked at no item at all; and `POST /admin/auto-emails/run`,
+#            where the operator who pressed the button is told "nothing to send"
+#            rather than "your scan did not happen". Overlap is ordinary — the
+#            interval and the button are the same function — and the lock can be
+#            held by nobody: `withSweepLock`'s own note describes a failed unlock
+#            returning a live connection to the pool still holding a session key,
+#            after which every later pass declines forever and the line written
+#            for it is the benign `info`. `runJobAlertScan` has carried `skipped`
+#            for this exact reason since it was written; its sibling never got
+#            it. `declined`, named around the `skipped` already in this result.
+#
+#            **A built document the CSP scan could not read took its page's
+#            inline scripts with it.** `inlineScriptHashes` skipped an unreadable
+#            file with a bare `continue` and `htmlFilesUnder` returned `[]` for a
+#            directory it could not list. Both reach the outcome R305 wrote the
+#            "no inline script hashes" warning for — an inline script blocked by
+#            the browser, reported on the visitor's console and nowhere else —
+#            one file or one subtree at a time, and that warning fires on
+#            `hashes.size === 0`, so any other document's hash makes the boot
+#            silent. `index.html` hashes fine, the marketing subtree under it is
+#            unlistable, and every prerendered page loses the theme resolver.
+#            Both now name what they could not read and both still continue.
+#
+#            **The OAuth callback's actor check re-asked the wrong door's
+#            question.** `integrationActorStillAuthorized` (R336) names four ways
+#            an actor's access can end inside the thirty-minute state token and
+#            asked `canReadValuation`, which answers three. The three doors are
+#            not the same door: accounting and cap-table `/connect` ask only
+#            `loadAuthorized`, but HRIS `/connect` also calls `requireOps`,
+#            because what it connects pulls a client's employee roster and
+#            payroll. So an operator demoted to a plain reader while reading
+#            Rippling's consent screen still completed the connection — refresh
+#            token stored, `connected` event in their name, a standing pull armed
+#            against payroll data by somebody the door would now turn away.
+#            `needs: 'read' | 'ops'` is a parameter rather than a default,
+#            because the wrong answer is silent in both directions.
+#
+#            gap: `requiredReturnExhibit` catches a throw from
+#            `requiredReturnRows` and returns null, which `buildExhibits` filters
+#            out — so a firm whose stored `required_return_table` override is
+#            malformed loses Appendix III from every report it renders, forever,
+#            with no line anywhere. The drop is indistinguishable from the
+#            ordinary "this exhibit does not apply". Not taken because
+#            `domain/reportExhibits.ts` has no logging sink and the report tier's
+#            answer to this (`configureReportPdfLogging`, a module-level sink
+#            installed by both hosts) is a larger piece of plumbing than one
+#            appendix warrants on its own. The right time is when a second
+#            exhibit needs it.
+#
+#            gap: `useBadgePoll`'s `.catch(() => {})` with `?? 0` at every call
+#            site means the three navigation badges render "0" for a failing
+#            endpoint as well as for an empty one. Deliberate and documented — a
+#            stale session must not put an error banner in the navigation — but
+#            it is the coerced-empty-state shape on the most-mounted component in
+#            the app, and "0 unread" is a claim rather than a blank.
+#
+#            gap: `max_response_bytes` in the AI tier turns the ceiling off for a
+#            negative value and says nothing, where `limit_per_minute` beside it
+#            warns when `RATE_LIMIT_RPM` disables the limiter. `MAX_RESPONSE_BYTES`
+#            is also absent from `config_check.SPECS`, which is a hand-written
+#            list with no completeness census — `BEDROCK_MAX_TOKENS`,
+#            `BEDROCK_CALL_BUDGET_S`, `PERPLEXITY_MAX_TOKENS` and
+#            `PERPLEXITY_CALL_BUDGET_S` are off it too, the last three
+#            deliberately. Left because none of them fails toward unbounded spend,
+#            which is the line that module draws.
