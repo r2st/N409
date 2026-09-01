@@ -6010,3 +6010,112 @@
 #            than ours — which is the same shape as relying on a caller's slot
 #            limiter for the report unit's in-flight cap, and it moves whenever
 #            pypdf's default does.
+
+# R318 — Domain logic & business rules (M2). Five findings, four of them one
+#            shape: a figure carried forward into a run that had already
+#            absorbed it, or dated by a clock rather than by the day it speaks
+#            for.
+#
+#            **The market movement a recalculation applied a second time.** A
+#            per-approach recalculation quotes the approaches it was not asked
+#            to recompute out of the prior run — `routes/calculations.ts` ships
+#            that run's `results.approaches` as `prior_approaches` and
+#            `_reused_prior` copies them in verbatim. The `market_movement`
+#            block then ran over the copy, and `equity_value` on a reused OPM
+#            entry is *already* adjusted, because the run it came from wrote the
+#            adjusted figure into the field the next run reads. A +30% benchmark
+#            move took a $100M round to $130M, then $169M, then $219.7M, one
+#            step per press of "recalculate the income approach", carrying the
+#            weighted equity value and the concluded FMV with it — and the
+#            adjustment disclosure beside it named $130M as the *unadjusted*
+#            round, so the exhibit reconciled to itself. The factor is now
+#            struck against the indication, which a reused entry carries in
+#            `unadjusted_equity_value`; an edited benchmark replaces the old
+#            factor rather than compounding with it, and one removed between
+#            runs restores the indication instead of leaving a stale adjustment
+#            on a valuation that no longer claims one.
+#
+#            **Last period's benchmark survived a roll-forward.** The same block
+#            in the other direction. `roll_forward` already drops the prior
+#            round's `last_round_price_per_share` from `pre_populated_inputs`
+#            because it is an observation the roll-forward supersedes;
+#            `market_movement` is the same kind and compounds rather than
+#            competing. It moves a round indication across the interval the
+#            rolled anchor has already been carried across, so a 20% accretion
+#            under a benchmark that rose 20% concludes at 1.44x, under a chapter
+#            citing a period that ends before the valuation date. Dropped by the
+#            same rule as the price, and the apply route clears it on the
+#            engagement as it already clears the price, recording
+#            `cleared_market_movement` beside `cleared_round_price`.
+#
+#            **A client's history dated by when the engine last ran.** The
+#            report's FMV trend chart and the analytics series both drew one
+#            point per prior valuation and dated it `calculations.created_at`.
+#            The measurement date is on the run itself, `inputs.valuation_date`,
+#            and the two agree only until somebody recalculates — which happens
+#            for ordinary reasons. Once last year's engagement is recalculated
+#            its timestamp is newer than this year's and it sorts to the right
+#            of it, so a line captioned "oldest first" plotted the history
+#            backwards on a signed PDF, with a date under each marker the
+#            valuation was not made as of — including the final point, this
+#            valuation, whose date then disagreed with the cover of the document
+#            it sits in. In the analytics bundle the order is more than a label:
+#            `buildAnalytics` reads `first` and `last` off the ends of the list
+#            and takes the whole benchmark block from the final row, so a
+#            recalculated prior year became "the latest". Both queries resolve
+#            the measurement date now, falling back to the run date for rows
+#            that recorded none; `created_at` still *bounds* the report's series,
+#            which is the one question a timestamp answers.
+#
+#            **The value bridge named a multiple the valuation never struck.**
+#            `valuationBridge.marketMultiple` averaged `approaches.market.
+#            multiples` and labelled it "Market multiple" in the driver table —
+#            the row a reader consults for which assumption moved the
+#            conclusion. The engine selects the *median* of the positive
+#            multiples and records it as `selected_multiple`. Comp sets are
+#            right-skewed by construction, so a set going from [4, 5, 6, 7, 28]
+#            to [4, 5, 6, 7, 12] left the applied multiple at 6x on both sides
+#            while this reported 10x falling to 6.8x: a 3.2x move asserted about
+#            the exact assumption that did not move. This is the defect
+#            `valuationAnalytics.appliedMarketMultiple` was written to close,
+#            restated in a second module; that function is now the one answer.
+#
+#            **DPI against a paid-in figure the same function contradicts.**
+#            `lp_waterfall`'s tier 1 returns `contributed_capital +
+#            management_fees_paid` before profit exists, and `total_profit`, the
+#            carry and the clawback are all measured from it. `dpi` divided by
+#            `contributed_capital` alone, so a fund whose LPs contributed 100
+#            and funded 20 of fees, having distributed exactly the 120 back,
+#            reported 1.2x — the headline multiple every LP report leads with,
+#            above 1.0 on a fund that had made nobody anything, overstated by
+#            the fee ratio and worst early in a fund's life. The paid-in figure
+#            is now on the result as `paid_in_capital` so the denominator is
+#            legible beside the ratio. The preferred-return base is left on
+#            `contributed_capital` and said so: which capital the hurdle accrues
+#            on is an LPA term, not arithmetic.
+#
+#            What was looked at and came back clean: the QSBS engine's two
+#            regimes and its anniversary arithmetic; the three impairment tests
+#            and their ASC 350/360 sequencing; `emi_csop`'s Schedule 4 and
+#            Schedule 5 limits; `comparables.median` against
+#            `statistics.median`; `MODEL_DLOM_METHODS` in TypeScript against
+#            `dlom.py`; the ASC 718 amortization schedule and its calendar-year
+#            attribution, both of which foot exactly; `portfolio.consolidate`'s
+#            elimination, currency and non-equity-kind rules; `toWaterfallInputs`
+#            and the pari passu default for an unstated seniority; the
+#            `fmv_vs_last_round` QA check and the health checks' share-count
+#            reconciliation; `vesting.monthsElapsed`/`addMonths` as inverses at
+#            month end.
+#
+# gap:       `renderBridgeSection` formats every figure with a hard-coded `$`
+#            and `en-US`, and it takes no currency. It has no caller in `src` —
+#            only tests — so nothing prints it today; a GBP engagement would get
+#            dollars the moment one is wired up. `valuations.currency` is on the
+#            row and `reportSummary.formatCurrency` is the formatter beside it.
+#
+# gap:       `asc718.monteCarloFairValue` draws normals in Box-Muller pairs
+#            (`for i = 0; i < paths; i += 2`) and divides the sum by `paths`, so
+#            an odd `paths` averages one more sample than it divides by. It is
+#            an estimator used as a cross-check on the closed form and the bias
+#            is one path in tens of thousands, but the two figures are printed
+#            side by side as agreeing.
