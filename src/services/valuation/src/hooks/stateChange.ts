@@ -385,31 +385,25 @@ async function deliverTransitionMessages(
       context: { valuationId: valuation.id },
       onSent: () => markEmail(deps.pool, email.id, 'sent'),
       onFailed: async (err) => {
+        /*
+         * The stamp is contained on its own, and the bounce record runs whether
+         * or not it succeeded.
+         *
+         * These are two writes about two different things: the first says what
+         * became of *this message*, the second says what the relay told us about
+         * *this address*. Sharing one `try` made the second conditional on the
+         * first, and the comment below spells out exactly what that costs —
+         * reached one line earlier than the catch it was written for. A blip on
+         * the `email_outbox` UPDATE (a statement timeout, a dropped backend, a
+         * failover that costs one connection) skipped `recordSendFailure`
+         * entirely, so a mailbox that had just permanently rejected us was left
+         * off the suppression list and the ladder kept sending to it.
+         *
+         * `email/transactional.ts` has had the two apart since it was written;
+         * this loop and the auto-email scan were the two that did not.
+         */
         try {
           await markEmail(deps.pool, email.id, 'failed', describeTransportFailure(err));
-          // Terminal rejection of the recipient stops the ladder and suppresses
-          // the address (0163); anything else stays retryable.
-          /*
-           * `null` from this write is not the same `null` as "the provider
-           * did not reject the recipient" (round 267, methodology M11), and
-           * the line below prints both as `bounce: null`. A terminal bounce
-           * that could not be recorded leaves the address *unsuppressed*, so
-           * the ladder keeps sending to a mailbox that has hard-rejected us —
-           * the one outcome `recordSendFailure` exists to stop, reached
-           * through the catch written so it could not stop the send loop.
-           */
-          const bounce = await recordSendFailure(deps.pool, email, err).catch((bookErr: unknown) => {
-            if (deps.log) {
-              logUnretried(
-                deps.log,
-                bookErr,
-                { emailId: email.id, valuationId: valuation.id },
-                'send failure could not be recorded — a terminal bounce has not suppressed the address',
-              );
-            }
-            return null;
-          });
-          deps.log?.warn({ err, emailId: email.id, bounce }, 'email delivery failed; left in outbox');
         } catch (settleErr) {
           // The row stays 'queued' and the sweep re-sends it once the lease
           // lapses, so this is a delay rather than a loss — but it is a delay
@@ -420,6 +414,29 @@ async function deliverTransitionMessages(
             'could not record a failed send; outbox row left queued for the retry sweep',
           );
         }
+        // Terminal rejection of the recipient stops the ladder and suppresses
+        // the address (0163); anything else stays retryable.
+        /*
+         * `null` from this write is not the same `null` as "the provider
+         * did not reject the recipient" (round 267, methodology M11), and
+         * the line below prints both as `bounce: null`. A terminal bounce
+         * that could not be recorded leaves the address *unsuppressed*, so
+         * the ladder keeps sending to a mailbox that has hard-rejected us —
+         * the one outcome `recordSendFailure` exists to stop, reached
+         * through the catch written so it could not stop the send loop.
+         */
+        const bounce = await recordSendFailure(deps.pool, email, err).catch((bookErr: unknown) => {
+          if (deps.log) {
+            logUnretried(
+              deps.log,
+              bookErr,
+              { emailId: email.id, valuationId: valuation.id },
+              'send failure could not be recorded — a terminal bounce has not suppressed the address',
+            );
+          }
+          return null;
+        });
+        deps.log?.warn({ err, emailId: email.id, bounce }, 'email delivery failed; left in outbox');
       },
     });
   }

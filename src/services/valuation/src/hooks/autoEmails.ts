@@ -274,7 +274,37 @@ async function scan(
             context: { campaign: campaign.name, valuationId: candidate.valuation_id },
             onSent: () => markEmail(db, email.id, 'sent'),
             onFailed: async (err) => {
-              await markEmail(db, email.id, 'failed', describeTransportFailure(err));
+              /*
+               * Contained on its own, so the bounce record below runs whether or
+               * not the stamp landed.
+               *
+               * These are two writes about two different things — what became of
+               * this *message*, and what the relay told us about this *address* —
+               * and leaving the first uncaught made the second conditional on it.
+               * A blip on the `email_outbox` UPDATE threw out of `onFailed`, out
+               * of `sendAndRecord`, and into the per-candidate catch below, which
+               * counts the candidate failed and moves on: `recordSendFailure`
+               * never ran, so a mailbox that had just permanently rejected us
+               * stayed off the suppression list and the ladder kept sending to
+               * it. That is the outcome the comment below names, reached one line
+               * earlier than the catch written to stop it.
+               */
+              try {
+                await markEmail(db, email.id, 'failed', describeTransportFailure(err));
+              } catch (markErr) {
+                // The row stays 'queued' and the retry sweep takes it once the
+                // lease lapses, so this is a delay rather than a loss — but
+                // nothing else would say so, and it means this client is
+                // refusing writes the rest of the scan is about to use.
+                if (deps.log) {
+                  logUnretried(
+                    deps.log,
+                    markErr,
+                    { emailId: email.id, campaign: campaign.name },
+                    'could not stamp an auto email failed; outbox row left queued for the retry sweep',
+                  );
+                }
+              }
               // Terminal rejection of the recipient stops the ladder and suppresses
               // the address (0163). Uses this sweep's own client rather than taking
               // a second one from the pool.

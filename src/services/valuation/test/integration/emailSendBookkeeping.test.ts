@@ -5,6 +5,7 @@ import { onStateChanged } from '../../src/hooks/stateChange.js';
 import { retryFailedEmails } from '../../src/hooks/emailRetry.js';
 import { sendTransactionalEmail } from '../../src/email/transactional.js';
 import { enqueueEmail, type EmailOutboxRow } from '../../src/repos/emailOutbox.js';
+import { isSuppressed, listDeliveryEvents } from '../../src/repos/emailDelivery.js';
 
 const dbUp = await isDbAvailable();
 
@@ -179,5 +180,68 @@ describe.skipIf(!dbUp)('outbox bookkeeping after a successful send', () => {
     await retryFailedEmails({ pool, transport });
 
     expect(sent).toHaveLength(3);
+  });
+
+  /**
+   * The two writes `onFailed` makes are about two different things, and until
+   * R324 the second was conditional on the first.
+   *
+   * `markEmail` says what became of this *message*; `recordSendFailure` says
+   * what the relay told us about this *address*. They shared one `try` in both
+   * sweep-side send paths, so a blip on the `email_outbox` UPDATE — a statement
+   * timeout, a dropped backend, a failover that costs one connection, the same
+   * shape the four cases above are staged from — jumped straight past the
+   * bounce record. A mailbox that had just permanently rejected us was left off
+   * the suppression list, and the ladder went on sending to it: the one outcome
+   * `recordSendFailure` exists to stop, reached one line earlier than the catch
+   * written to stop it.
+   */
+  describe('a hard rejection that arrives with the marking UPDATE refused', () => {
+    /** What `sendSmtp` throws when the relay rejects the recipient for good. */
+    class HardRejection extends Error {
+      readonly stage = 'rcpt';
+      readonly replyCode = 550;
+      constructor() {
+        super('550 5.1.1 user unknown');
+      }
+    }
+
+    const rejecting = {
+      send: async (email: EmailOutboxRow) => {
+        sent.push(email.id);
+        throw new HardRejection();
+      },
+    };
+
+    it('still suppresses the address on the workflow send path', async () => {
+      const dead = await seedUser(ctx, { roles: ['valuation_user'] });
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: { authorization: `Bearer ${dead.token}` },
+        payload: { kind: '409a', company_name: 'BouncingCo' },
+      });
+      expect(res.statusCode).toBe(201);
+      const valuation = {
+        id: res.json().valuation.id as string,
+        kind: '409a',
+        company_name: 'BouncingCo',
+        user_id: dead.id,
+        assigned_reviewer_id: null,
+      };
+
+      failFirst('UPDATE email_outbox\n     SET status');
+      await onStateChanged({ pool, transport: rejecting, log: undefined }, valuation, 'started');
+
+      expect(sent).toHaveLength(1);
+      // The stamp is gone — that is the blip, and it is a delay, not a loss.
+      const row = await rowFor(sent[0]!);
+      expect(row.status).toBe('queued');
+      // The address is not. A hard rejection is a fact about the mailbox, and
+      // it has to outlive whatever happened to this one row's bookkeeping.
+      expect(await isSuppressed(pool, dead.email)).not.toBeNull();
+      const events = await listDeliveryEvents(pool, row.id);
+      expect(events.map((e) => e.kind)).toContain('bounced');
+    });
   });
 });

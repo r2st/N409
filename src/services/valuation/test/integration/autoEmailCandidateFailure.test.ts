@@ -3,6 +3,8 @@ import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.j
 import { runDueAutoEmails } from '../../src/hooks/autoEmails.js';
 import { createAutoEmail, dueCandidates } from '../../src/repos/communications.js';
 import { createValuation } from '../../src/repos/valuations.js';
+import { isSuppressed } from '../../src/repos/emailDelivery.js';
+import type { EmailOutboxRow } from '../../src/repos/emailOutbox.js';
 
 const dbUp = await isDbAvailable();
 
@@ -133,5 +135,60 @@ describe.skipIf(!dbUp)('one candidate failing inside the drip scan', () => {
     const seeded = await seedValuations(2);
     const result = await runDueAutoEmails({ pool: ctx.pool, log: ctx.app.log });
     expect(result).toEqual({ queued: seeded.length, skipped: 0, suppressed: 0, failed: 0 });
+  });
+
+  /**
+   * A mailbox that permanently rejected us, on a pass where the stamp cannot be
+   * written.
+   *
+   * `onFailed` makes two writes about two different things: `markEmail` records
+   * what became of this *message*, `recordSendFailure` records what the relay
+   * said about this *address*. They shared one `try` here, so a refused
+   * `email_outbox` UPDATE threw straight past the bounce record and into the
+   * per-candidate catch above — the candidate counted failed, the scan carried
+   * on, and the address stayed off the suppression list with a `550 5.1.1`
+   * behind it. The next campaign, and the retry ladder, went on sending to it.
+   *
+   * Staged with a trigger that refuses only the 'failed' stamp: the bounce
+   * fold touches `bounced_at` and leaves `status` alone, so it passes.
+   */
+  it('suppresses a hard-rejected address even when the failed stamp is refused', async () => {
+    await seedCampaign();
+    const [only] = await seedValuations(1);
+
+    const transport = {
+      send: async (_email: EmailOutboxRow) => {
+        throw Object.assign(new Error('550 5.1.1 user unknown'), { stage: 'rcpt', replyCode: 550 });
+      },
+    };
+
+    await ctx.pool.query(
+      `CREATE OR REPLACE FUNCTION test_refuse_failed_stamp() RETURNS trigger
+         LANGUAGE plpgsql AS $$
+         BEGIN
+           RAISE EXCEPTION 'canceling statement due to statement timeout' USING ERRCODE = '57014';
+         END $$;
+       CREATE TRIGGER test_refuse_failed_stamp BEFORE UPDATE ON email_outbox
+         FOR EACH ROW WHEN (NEW.status = 'failed')
+         EXECUTE FUNCTION test_refuse_failed_stamp()`,
+    );
+    try {
+      await runDueAutoEmails({ pool: ctx.pool, log: ctx.app.log, transport });
+
+      // The stamp is gone, which is the blip: the row stays 'queued' and the
+      // retry sweep owns it from here.
+      expect(await outboxFor(only!)).toBe(1);
+      const { rows } = await ctx.pool.query<{ status: string }>(
+        'SELECT status FROM email_outbox WHERE valuation_id = $1',
+        [only],
+      );
+      expect(rows[0]!.status).toBe('queued');
+      // The suppression is not. A permanent rejection is a fact about the
+      // mailbox and has to outlive this row's bookkeeping.
+      expect(await isSuppressed(ctx.pool, owner.email)).not.toBeNull();
+    } finally {
+      await ctx.pool.query('DROP TRIGGER IF EXISTS test_refuse_failed_stamp ON email_outbox');
+      await ctx.pool.query('DELETE FROM email_suppressions');
+    }
   });
 });
