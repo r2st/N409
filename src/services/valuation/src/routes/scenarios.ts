@@ -259,6 +259,12 @@ export function registerScenarioRoutes(
     if (!parsed.success) throw invalidBody('Invalid scenario', parsed.error);
     const { name, label, ...knobs } = parsed.data;
 
+    // Asked here so an operator at the ceiling is refused before a 30-second
+    // engine compute is spent on a scenario that cannot be stored. It is not
+    // what enforces the ceiling: this read and the insert are separated by that
+    // compute, so saves fired while the first is still running all see the same
+    // count and all commit. `createScenario` re-asks it under an advisory lock
+    // on the valuation, which is the answer that holds.
     if ((await countScenarios(deps.pool, valuation.id)) >= MAX_SCENARIOS) {
       throw problems.unprocessable(
         `A valuation holds at most ${MAX_SCENARIOS} saved scenarios — delete one first`,
@@ -295,6 +301,7 @@ export function registerScenarioRoutes(
           fmvPerShare: response.results.fmv_per_share,
           results: { approaches: response.results.approaches ?? null },
           createdBy: principal.id,
+          maxScenarios: MAX_SCENARIOS,
         },
         actorFor(principal),
       );

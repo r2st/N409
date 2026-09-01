@@ -314,6 +314,14 @@ export function registerBoardApprovalRoutes(
     // one the resolution is waiting for, so a page boundary would hide an
     // outstanding signature — which means the bound belongs here instead. No
     // real board is near this; a loop against this endpoint would be.
+    //
+    // And a loop that does not wait for each answer walked straight past this:
+    // the count is one statement and the insert is another, so N simultaneous
+    // adds all read the same figure and all commit. `addBoardMember` re-asks it
+    // under the resolution's row lock, which is what actually holds; this stays
+    // for the reason the `approved` check on the same route does — it answers
+    // the ordinary, uncontended case before a token is minted or a transaction
+    // opened.
     if ((await countBoardMembers(deps.pool, resolution.id)) >= MAX_BOARD_MEMBERS) {
       throw problems.conflict(
         `A resolution takes at most ${MAX_BOARD_MEMBERS} board members — remove one first`,
@@ -332,6 +340,7 @@ export function registerBoardApprovalRoutes(
           email: parsed.data.email,
           title: parsed.data.title ?? null,
           tokenHash: hash,
+          maxMembers: MAX_BOARD_MEMBERS,
         },
         { actorType: 'human', actorId: principal.id },
       );

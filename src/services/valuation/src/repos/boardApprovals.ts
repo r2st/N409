@@ -187,6 +187,25 @@ export async function addBoardMember(
     email: string;
     title?: string | null;
     tokenHash: string;
+    /**
+     * The sign-off list's ceiling, re-asked under the row lock below.
+     *
+     * `MAX_BOARD_MEMBERS` is not a tidiness rule: {@link listBoardMembers} is
+     * deliberately uncapped — a member hidden past a page boundary reads as a
+     * member whose signature is not required — so this number is the *only*
+     * bound on that read. The route checks it on the pool, one statement before
+     * the insert, which is the same read-then-write the `approved` check above
+     * was moved in here to close: N requests arriving together all see the same
+     * count below the ceiling and all insert, so the list ends up at
+     * `MAX_BOARD_MEMBERS + N`. The route's own comment names the case — "a loop
+     * against this endpoint would be" near the cap — and a loop that does not
+     * wait for each answer defeats the check entirely.
+     *
+     * Optional so the ceiling stays a route-layer decision; when it is given,
+     * the count is taken inside the transaction that holds the resolution
+     * still, which is what makes the refusal hold under concurrency.
+     */
+    maxMembers?: number;
   },
   actor: EventActor,
 ): Promise<BoardSignoffRow> {
@@ -201,6 +220,22 @@ export async function addBoardMember(
     // its own, so this reads as the one refusal it is here to make.
     if (locked[0]?.status === 'approved') {
       throw problems.conflict('The resolution is already approved');
+    }
+    // Counted here rather than only on the pool — see `maxMembers`. The lock
+    // above is already held for the whole transaction, so this costs one extra
+    // statement and no extra contention: concurrent adds to one resolution were
+    // already serialised, and only the count was being taken outside that.
+    // Same sentence as the route's, because it is the same refusal.
+    if (input.maxMembers !== undefined) {
+      const { rows: tally } = await client.query<{ count: string }>(
+        'SELECT count(*)::text AS count FROM board_signoffs WHERE resolution_id = $1',
+        [input.resolutionId],
+      );
+      if (Number(tally[0]?.count ?? 0) >= input.maxMembers) {
+        throw problems.conflict(
+          `A resolution takes at most ${input.maxMembers} board members — remove one first`,
+        );
+      }
     }
     const { rows } = await client.query<BoardSignoffRow>(
       `INSERT INTO board_signoffs
