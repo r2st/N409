@@ -6,6 +6,7 @@ import pytest
 
 from app import pipelines
 from app.anonymize import (
+    MAX_ENTITY_CHARS,
     MAX_KNOWN_ENTITIES,
     AnonymizeInputError,
     Redactor,
@@ -521,6 +522,81 @@ def test_an_over_size_entity_list_answers_422_not_500():
     )
     assert res.status_code == 422
     assert "too many known names" in res.json()["detail"]
+
+
+# The sibling bound: one entity's *length*. The list-length cap above was
+# written against "entities x fields x chars" and closed the first factor's
+# count while leaving its size open, and size is where this one is expensive.
+# An entity is not scanned as a literal: `_entity_pattern` splits it on
+# whitespace and assembles a regex out of the pieces, so a 60 KB name is a
+# 140 KB pattern costing ~58 ms to build. Five hundred of them — a 30 MB body,
+# inside the service's 32 MB cap — is ~29 s of `re` compilation under the GIL
+# before a model is ever asked anything. And the patterns do not go away with
+# the request: `_entity_pattern` is memoised at maxsize=4096, and the cache has
+# no opinion about how large the things it is holding are.
+
+
+def test_a_name_at_the_length_bound_is_accepted():
+    name = "Acme " * 79 + "Robotics"  # 403 -> under, once the join is counted
+    name = name[:MAX_ENTITY_CHARS]
+    red = Redactor(company_names=[name])
+    assert red.text(f"{name} filed its charter.") == "[COMPANY] filed its charter."
+
+
+def test_a_known_company_longer_than_the_bound_is_refused():
+    with pytest.raises(AnonymizeInputError, match="too long to redact against"):
+        Redactor(company_names=["A" * (MAX_ENTITY_CHARS + 1)])
+
+
+def test_a_known_person_longer_than_the_bound_is_refused():
+    with pytest.raises(AnonymizeInputError, match="too long to redact against"):
+        Redactor(person_names=["Ada " * MAX_ENTITY_CHARS])
+
+
+def test_the_module_level_redact_carries_the_length_bound_too():
+    """`redact` is reachable without a Redactor, so it checks for itself."""
+    with pytest.raises(AnonymizeInputError, match="too long to redact against"):
+        redact("some text", company_names=["Acme " * MAX_ENTITY_CHARS])
+
+
+def test_the_refusal_does_not_quote_the_whole_entity():
+    """It is client material, and it may be megabytes. Length and a prefix."""
+    with pytest.raises(AnonymizeInputError) as caught:
+        Redactor(company_names=["Confidential Holdings " * 400])
+    message = str(caught.value)
+    assert len(message) < 200
+    assert str(MAX_ENTITY_CHARS) in message
+
+
+def test_an_over_long_entity_is_refused_before_a_pattern_is_built():
+    """The cost being bounded is the compile, so it must not have happened."""
+    name = "Acme " * 5_000
+    before = _entity_pattern.cache_info().misses
+    with pytest.raises(AnonymizeInputError):
+        redact("some text", company_names=[name])
+    assert _entity_pattern.cache_info().misses == before
+
+
+def test_an_over_long_entity_answers_422_not_500():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    res = TestClient(app, raise_server_exceptions=False).post(
+        "/ai/v1/anonymize",
+        json={"text": "x", "company_names": ["Acme " * 5_000]},
+    )
+    assert res.status_code == 422
+    assert "too long to redact against" in res.json()["detail"]
+
+
+def test_the_bound_clears_every_producer_that_feeds_it():
+    """400 is not a number picked to be small — it is picked to be unreachable
+    by the tiers upstream. The valuation service caps a company_name at 300 and
+    an account's at 200, and the operator-typed lists at 200 each; a bound at
+    or below any of those would refuse a legitimate engagement."""
+    assert MAX_ENTITY_CHARS > 300
+    Redactor(company_names=["C" * 300], person_names=["P" * 200])
 
 
 def test_redaction_stays_fast_at_the_bound():

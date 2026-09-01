@@ -52,6 +52,32 @@ class AnonymizeInputError(Exception):
 # of people.
 MAX_KNOWN_ENTITIES = 500
 
+# Ceiling on the length of one known entity.
+#
+# The sibling of the count above, and the third factor of the same product. The
+# bound over the list was written against "entities x fields x chars" with the
+# middle two already bounded; the length of an individual entity is the part of
+# the first factor nobody measured, and it is the expensive one, because an
+# entity is not scanned as a literal - `_entity_pattern` splits it on
+# whitespace and assembles a regex out of the pieces. A 60 KB name becomes a
+# 140 KB pattern that takes ~58 ms to compile, so 500 of them (a 30 MB body,
+# inside the 32 MB cap) is ~29 s of `re` compilation holding the GIL, spent by
+# one request that never reaches a model.
+#
+# It also stays. `_entity_pattern` is memoised on the name at `maxsize=4096` to
+# keep the assembly off the hot path, and that cache does not know how big the
+# things in it are: patterns built from over-size names are retained long after
+# the request that sent them is gone, so a handful of such requests is resident
+# memory the process never gives back.
+#
+# 400 characters, which is headroom over every producer this has: a valuation's
+# `company_name` is capped at 300 by the valuation service, an account's at 200,
+# and the operator-typed `known_companies` / `known_people` lists at 200 each.
+# Refused rather than truncated for the reason the count is - a name struck to a
+# prefix would match, and be reported as struck, while the full name it was cut
+# from travelled to the model intact.
+MAX_ENTITY_CHARS = 400
+
 # Order matters: most specific first.
 _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("emails", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")),
@@ -293,6 +319,28 @@ def _entity_pattern(value: str) -> re.Pattern[str]:
     return re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
 
 
+def _refuse_long_entities(entities: list[str], label: str) -> None:
+    """Refuse a known entity too long to be a name - see MAX_ENTITY_CHARS.
+
+    Checked before `_entity_pattern` sees it, because the cost being bounded is
+    the assembly and compilation of the pattern, not the scan: by the time the
+    pattern exists the work is already done and cached.
+
+    The message names the offender by its length and its first few characters
+    rather than quoting it, because the thing being complained about may be
+    tens of thousands of characters long and is, by construction, client
+    material - the one category of string this module exists to keep out of
+    places it does not belong, including its own error text.
+    """
+    for value in entities:
+        if len(value) > MAX_ENTITY_CHARS:
+            raise AnonymizeInputError(
+                f"a known {label} entry is too long to redact against: "
+                f"{len(value)} characters starting {value[:20]!r} "
+                f"(the limit is {MAX_ENTITY_CHARS})"
+            )
+
+
 def _redact_entities(text: str, entities: list[str], label: str) -> tuple[str, int]:
     """Strike each known entity by whole-word, case-insensitive match. Longest
     first so "Acme Robotics Inc" is caught before "Acme"."""
@@ -306,6 +354,7 @@ def _redact_entities(text: str, entities: list[str], label: str) -> tuple[str, i
             f"too many known {label} to redact against: {len(entities)} "
             f"(the limit is {MAX_KNOWN_ENTITIES})"
         )
+    _refuse_long_entities(entities, label)
     candidates = {e.strip() for e in entities if e and len(e.strip()) >= _MIN_ENTITY_LEN}
     if label == "companies":
         # Only companies: a person is not "Ada Lovelace, Inc.", and stripping a
@@ -420,6 +469,7 @@ class Redactor:
                     f"too many known {label} to redact against: {len(values)} "
                     f"(the limit is {MAX_KNOWN_ENTITIES})"
                 )
+            _refuse_long_entities(values, label)
         self._totals: dict[str, int] = {}
 
     def text(self, value: str) -> str:
