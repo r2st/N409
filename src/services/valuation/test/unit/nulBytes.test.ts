@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { findOverDeepValue, findUnstorableText, MAX_SCAN_DEPTH } from '../../src/domain/nulBytes.js';
+import {
+  findOverDeepValue,
+  findUnstorableText,
+  MAX_SCAN_DEPTH,
+  scanRequestValue,
+} from '../../src/domain/nulBytes.js';
 
 /**
  * The walk behind the boundary guard in app.ts.
@@ -46,9 +51,9 @@ describe('findOverDeepValue', () => {
   });
 
   it('names the first value nested past the scan, in objects and in arrays', () => {
-    expect(findOverDeepValue(nest(MAX_SCAN_DEPTH + 2, 'leaf'))).toBe('a'.repeat(1).concat(
-      '.a'.repeat(MAX_SCAN_DEPTH),
-    ));
+    expect(findOverDeepValue(nest(MAX_SCAN_DEPTH + 2, 'leaf'))).toBe(
+      'a'.repeat(1).concat('.a'.repeat(MAX_SCAN_DEPTH)),
+    );
     expect(findOverDeepValue({ rows: [nest(MAX_SCAN_DEPTH + 2, 1)] })?.startsWith('rows[0]')).toBe(true);
   });
 
@@ -160,5 +165,75 @@ describe('an unpaired surrogate', () => {
     // Order within a string: the NUL is the older, better-known refusal and
     // the message is more actionable, so it wins when one value has both.
     expect(findUnstorableText({ a: `${HIGH}${NUL}` })?.reason).toBe('nul');
+  });
+});
+
+/**
+ * One walk, both answers (R314, methodology M8).
+ *
+ * The `preValidation` hook asked these as two questions over the same value, and
+ * the second walk visits exactly the nodes the first one did. What is pinned
+ * here is that folding them together did not move the refusal: an unstorable
+ * string still wins over a body that is also too deep, which is the precedence
+ * the two-pass form had by construction.
+ */
+describe('scanRequestValue', () => {
+  const nest = (levels: number, leaf: unknown): unknown =>
+    levels === 0 ? leaf : { a: nest(levels - 1, leaf) };
+
+  it('answers both questions and finds nothing in an ordinary body', () => {
+    expect(scanRequestValue({ company_name: 'Acme Ltd', entries: [{ shares: 10 }] })).toEqual({
+      unstorable: null,
+      overDeep: null,
+    });
+  });
+
+  it('reports an unstorable string with the path the two-pass form gave', () => {
+    const found = scanRequestValue({ entries: [{ notes: `a${NUL}b` }] });
+    expect(found.unstorable).toEqual({ path: 'entries[0].notes', reason: 'nul' });
+    expect(found.overDeep).toBeNull();
+  });
+
+  it('reports the over-deep path when there is nothing unstorable', () => {
+    const found = scanRequestValue({ inputs: nest(MAX_SCAN_DEPTH + 2, 'leaf') });
+    expect(found.unstorable).toBeNull();
+    expect(found.overDeep?.startsWith('inputs.a')).toBe(true);
+  });
+
+  it('prefers the unstorable string when the body is both', () => {
+    // The precedence the hook had when it asked in two passes: the NUL is the
+    // more specific thing to tell the caller, and it is what they can fix.
+    const found = scanRequestValue({
+      name: `Acme${NUL}`,
+      inputs: nest(MAX_SCAN_DEPTH + 2, 'leaf'),
+    });
+    expect(found.unstorable).toEqual({ path: 'name', reason: 'nul' });
+    expect(found.overDeep).toBeNull();
+  });
+
+  it('agrees with the two functions it replaced, on every shape above', () => {
+    const cases: unknown[] = [
+      { company_name: 'Acme Ltd' },
+      { entries: [{ notes: `a${NUL}b` }] },
+      { inputs: nest(MAX_SCAN_DEPTH + 2, 'leaf') },
+      { rows: [[[`x${NUL}`]]] },
+      { [`col${NUL}`]: 'shares' },
+      nest(MAX_SCAN_DEPTH + 1, `x${NUL}y`),
+    ];
+    for (const value of cases) {
+      const found = scanRequestValue(value);
+      const unstorable = findUnstorableText(value);
+      expect(found.unstorable).toEqual(unstorable);
+      expect(found.overDeep).toEqual(unstorable ? null : findOverDeepValue(value));
+    }
+  });
+
+  it('builds no path for a body with nothing wrong in it', () => {
+    // The saving is the paths that are never composed. A body of 2,000 nodes
+    // returns two nulls, and nothing about it is proportional to the path
+    // depth — this is the assertion that the walk did not quietly go back to
+    // building `${path}.${key}` at every node.
+    const wide = { entries: Array.from({ length: 2000 }, (_, i) => ({ holder: `H${i}` })) };
+    expect(scanRequestValue(wide)).toEqual({ unstorable: null, overDeep: null });
   });
 });

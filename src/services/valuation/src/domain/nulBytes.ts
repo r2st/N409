@@ -104,6 +104,112 @@ function unstorable(value: string): UnstorableReason | null {
 }
 
 /**
+ * One walk of a request value, per {@link scanRequestValue}.
+ *
+ * `stack` is the path to the node being looked at, held as segments rather than
+ * as a string: THIS HOOK RUNS ON EVERY REQUEST AND THE PATH IS DISCARDED ON
+ * ALMOST ALL OF THEM (round 314, methodology M8). Composing `${path}.${key}` on
+ * the way down allocated a string per node — for a 5,000-row cap-table body
+ * that is ~65,000 strings, most of them long, built to be thrown away. Pushing
+ * the segment and joining only where something is found costs nothing until
+ * there is something to name.
+ */
+interface Walk {
+  stack: (string | number)[];
+  /** Prefix the public entry point was given, for path continuity. */
+  prefix: string;
+  /** First node deeper than the scan reads, as a path. Null until one is met. */
+  deep: string | null;
+  /** False when the caller only wants the depth answer — see `findOverDeepValue`. */
+  wantUnstorable: boolean;
+}
+
+/** `a.b[0].c` from the segment stack. Built only when something has been found. */
+function pathOf(walk: Walk): string {
+  let out = walk.prefix;
+  for (const seg of walk.stack) {
+    if (typeof seg === 'number') out += `[${seg}]`;
+    else out += out ? `.${seg}` : seg;
+  }
+  return out || '(root)';
+}
+
+function scan(value: unknown, depth: number, walk: Walk): UnstorableText | null {
+  // Ahead of the type tests, and that is the point: what is recorded is the
+  // place the scan gave up, whatever sits there. A string at this depth is
+  // exactly the value it could not read.
+  if (depth > MAX_SCAN_DEPTH) {
+    walk.deep ??= pathOf(walk);
+    return null;
+  }
+  if (typeof value === 'string') {
+    if (!walk.wantUnstorable) return null;
+    const reason = unstorable(value);
+    return reason ? { path: pathOf(walk), reason } : null;
+  }
+  if (value === null || typeof value !== 'object') return null;
+  // Buffers and streams are the multipart/webhook bodies, which are bytes on
+  // purpose and are not headed for a text column as they stand.
+  if (Buffer.isBuffer(value) || value instanceof Date) return null;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      walk.stack.push(i);
+      const hit = scan(value[i], depth + 1, walk);
+      walk.stack.pop();
+      if (hit) return hit;
+    }
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  // `Object.keys` rather than `Object.entries`: the pair arrays `entries`
+  // allocates are two objects per key, on every request, for a list this only
+  // iterates.
+  for (const key of Object.keys(record)) {
+    walk.stack.push(key);
+    const keyReason = walk.wantUnstorable ? unstorable(key) : null;
+    if (keyReason) {
+      const path = `${pathOf(walk)} (key)`;
+      walk.stack.pop();
+      return { path, reason: keyReason };
+    }
+    const hit = scan(record[key], depth + 1, walk);
+    walk.stack.pop();
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** What one walk of a request value found, in the order a refusal reports it. */
+export interface RequestScan {
+  /** The first string Postgres will not store as sent, or null. */
+  unstorable: UnstorableText | null;
+  /** The first value nested past the scan, or null. Only meaningful when
+   *  `unstorable` is null — the walk stops at an unstorable hit, and an
+   *  unstorable string is the refusal that wins either way. */
+  overDeep: string | null;
+}
+
+/**
+ * Both refusals a request body can earn, from one traversal.
+ *
+ * ONE WALK, NOT TWO (round 314, methodology M8). The `preValidation` hook asked
+ * these as two questions — `findUnstorableText`, then `findOverDeepValue` — over
+ * the same value, and the second walk visits exactly the nodes the first one
+ * did. On a 5,000-row cap-table import that was 2.7 ms of the 6.6 ms this hook
+ * spent before the route saw the request, and the hook runs on every request the
+ * service takes.
+ *
+ * Precedence is unchanged, deliberately: an unstorable string is reported even
+ * when something else in the body is also nested too deep. The walk stops at the
+ * first unstorable hit, so `overDeep` is complete exactly when it is the answer.
+ */
+export function scanRequestValue(value: unknown): RequestScan {
+  const walk: Walk = { stack: [], prefix: '', deep: null, wantUnstorable: true };
+  const unstorable = scan(value, 0, walk);
+  return { unstorable, overDeep: unstorable ? null : walk.deep };
+}
+
+/**
  * The first string in `value` that Postgres will not store as sent, or null.
  *
  * Keys are searched as well as values: a `z.record(z.string(), z.string())`
@@ -115,30 +221,7 @@ function unstorable(value: string): UnstorableReason | null {
  * act on when the body is a cap table.
  */
 export function findUnstorableText(value: unknown, path = '', depth = 0): UnstorableText | null {
-  if (depth > MAX_SCAN_DEPTH) return null;
-  if (typeof value === 'string') {
-    const reason = unstorable(value);
-    return reason ? { path: path || '(root)', reason } : null;
-  }
-  if (value === null || typeof value !== 'object') return null;
-  // Buffers and streams are the multipart/webhook bodies, which are bytes on
-  // purpose and are not headed for a text column as they stand.
-  if (Buffer.isBuffer(value) || value instanceof Date) return null;
-  if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      const hit = findUnstorableText(value[i], `${path}[${i}]`, depth + 1);
-      if (hit) return hit;
-    }
-    return null;
-  }
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    const here = path ? `${path}.${key}` : key;
-    const keyReason = unstorable(key);
-    if (keyReason) return { path: `${here} (key)`, reason: keyReason };
-    const hit = findUnstorableText(child, here, depth + 1);
-    if (hit) return hit;
-  }
-  return null;
+  return scan(value, depth, { stack: [], prefix: path, deep: null, wantUnstorable: true });
 }
 
 /**
@@ -161,26 +244,14 @@ export function findUnstorableText(value: unknown, path = '', depth = 0): Unstor
  * document at four levels, and the nested provider payloads that genuinely run
  * deep (a Stripe event, a connector pull) are not request bodies and do not
  * come through this door.
+ *
+ * The request path asks this through {@link scanRequestValue} instead, which
+ * answers it in the walk it was already making.
  */
 export function findOverDeepValue(value: unknown, path = '', depth = 0): string | null {
-  // Ahead of the type tests, and that is the point: what is reported is the
-  // place the unstorable scan gave up, whatever sits there. A string at this
-  // depth is exactly the value it could not read.
-  if (depth > MAX_SCAN_DEPTH) return path || '(root)';
-  if (value === null || typeof value !== 'object') return null;
-  if (Buffer.isBuffer(value) || value instanceof Date) return null;
-  if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      const hit = findOverDeepValue(value[i], `${path}[${i}]`, depth + 1);
-      if (hit) return hit;
-    }
-    return null;
-  }
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    const hit = findOverDeepValue(child, path ? `${path}.${key}` : key, depth + 1);
-    if (hit) return hit;
-  }
-  return null;
+  const walk: Walk = { stack: [], prefix: path, deep: null, wantUnstorable: false };
+  scan(value, depth, walk);
+  return walk.deep;
 }
 
 /** The sentence a caller reads when their body is nested past the scan. */

@@ -164,9 +164,9 @@ import { registerMarketFeedMetrics } from './clients/marketFeedMetrics.js';
 import { configurePartnerLogoLogging } from './clients/partnerLogoCache.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 import {
-  findOverDeepValue,
   findUnstorableText,
   overDeepMessage,
+  scanRequestValue,
   unstorableTextMessage,
 } from './domain/nulBytes.js';
 
@@ -361,20 +361,25 @@ export function buildApp(deps: AppDeps): FastifyInstance {
    * field of the caller's own request.
    */
   app.addHook('preValidation', (req, _reply, done) => {
-    const at =
-      findUnstorableText(req.body) ?? findUnstorableText(req.query) ?? findUnstorableText(req.params);
+    // One walk of the body, answering both refusals — the unstorable string and
+    // the value nested past what the walk reads. They were two traversals of the
+    // same value until R314, on a hook every request goes through.
+    //
+    // The depth answer only concerns the body: a query string and a path
+    // parameter are flat by construction, so there is nothing below the bound
+    // for them to hide anything in.
+    const body = scanRequestValue(req.body);
+    const at = body.unstorable ?? findUnstorableText(req.query) ?? findUnstorableText(req.params);
     if (at) {
       done(problems.badRequest(unstorableTextMessage(at)));
       return;
     }
-    // The scan above stops at MAX_SCAN_DEPTH and answers "nothing here" for
-    // everything below it, so a NUL nested past that depth used to pass this
-    // hook and reach the jsonb column a free-form record is stored in. A body
-    // the guard cannot finish reading is refused instead. See
-    // `findOverDeepValue`.
-    const deep = findOverDeepValue(req.body);
-    if (deep) {
-      done(problems.badRequest(overDeepMessage(deep)));
+    // The walk stops at MAX_SCAN_DEPTH and answers "nothing here" for everything
+    // below it, so a NUL nested past that depth used to pass this hook and reach
+    // the jsonb column a free-form record is stored in. A body the guard cannot
+    // finish reading is refused instead. See `findOverDeepValue`.
+    if (body.overDeep) {
+      done(problems.badRequest(overDeepMessage(body.overDeep)));
       return;
     }
     done();
