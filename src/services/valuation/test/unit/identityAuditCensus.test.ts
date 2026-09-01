@@ -161,8 +161,72 @@ export interface RouteHandler {
  * clean while never having looked at it, which is how a previous route sweep
  * in this codebase came to be vacuous.
  */
-export function routeHandlers(text: string): RouteHandler[] {
+/**
+ * The same source with `//` and comment blocks replaced by whitespace of the
+ * same length, so offsets and line numbers are unchanged.
+ *
+ * String and template state is tracked while stripping for the same reason the
+ * matcher below tracks it: `'https://…'` is not a comment, and a `//` inside a
+ * template literal is not one either.
+ */
+function stripComments(text: string): string {
+  const out = text.split('');
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      i++;
+      while (i < text.length) {
+        if (text[i] === '\\') i += 2;
+        else if (text[i] === quote) {
+          i++;
+          break;
+        } else i++;
+      }
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') out[i++] = ' ';
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      const stop = end === -1 ? text.length : end + 2;
+      while (i < stop) {
+        if (text[i] !== '\n') out[i] = ' ';
+        i++;
+      }
+      continue;
+    }
+    i++;
+  }
+  return out.join('');
+}
+
+export function routeHandlers(source: string): RouteHandler[] {
   const out: RouteHandler[] = [];
+  /*
+   * COMMENTS COME OUT FIRST, AND THAT IS THE WHOLE OF THIS FUNCTION'S
+   * CORRECTNESS (R325, methodology M6).
+   *
+   * The paren matcher below tracks string literals so a `)` inside one does not
+   * close a call. It had no idea what a comment was, so an apostrophe in prose
+   * — `// harmless because it isn't enabled until /confirm` in `routes/mfa.ts`
+   * — opened a string that stayed open until the next apostrophe several lines
+   * later, and every parenthesis in between went uncounted. `POST
+   * /account/mfa/setup` came out as a 4,905-character body: its own 1,100 plus
+   * `/confirm`, `/disable` and `/backup-codes`, whose `recordAdminEvent` calls
+   * it then inherited.
+   *
+   * That is this census reading *green* on the one route it has an exemption
+   * for, and it fails in the direction that hides things: a bled body is a
+   * route audited by its neighbour. The contradiction check is what noticed,
+   * because an exemption is the only place the census states an expectation
+   * strong enough to be contradicted — the `silent` check would simply have
+   * gone quiet.
+   */
+  const text = stripComments(source);
   const call = /\b(?:app|scope)\.(get|post|put|patch|delete)\s*(?:<[^>]*>)?\s*\(\s*(['"`])([^'"`]+)\2/g;
   let m: RegExpExecArray | null;
   while ((m = call.exec(text))) {
@@ -236,6 +300,33 @@ describe('every route that changes identity leaves a row', () => {
     expect(writers.size, 'repo functions writing an identity table').toBeGreaterThan(20);
     expect(handlers, 'route handlers parsed').toBeGreaterThan(300);
     expect(routes.length, 'routes reaching an identity writer').toBeGreaterThan(15);
+  });
+
+  it('does not let an apostrophe in a comment run one handler into the next', () => {
+    // The bug this extractor had, reduced: prose with `isn't` in it, between two
+    // routes, one of which records an event and one of which must not appear to.
+    const found = routeHandlers(
+      [
+        "app.post('/a', async () => {",
+        "  // staging isn't recorded — see /b",
+        '  await stage();',
+        '});',
+        "app.post('/b', async () => {",
+        '  await recordAdminEvent(pool, {});',
+        '});',
+      ].join('\n'),
+    );
+    expect(found.map((h) => h.url)).toEqual(['/a', '/b']);
+    expect(RECORDS_EVENT.test(found[0]!.body), '/a must not inherit /b’s event').toBe(false);
+    expect(RECORDS_EVENT.test(found[1]!.body)).toBe(true);
+  });
+
+  it('does not mistake a URL in a string for a comment', () => {
+    const found = routeHandlers(
+      ["app.get('/c', async () => {", "  await fetch('https://example.test/x');", '});'].join('\n'),
+    );
+    expect(found.map((h) => h.url)).toEqual(['/c']);
+    expect(found[0]!.body).toContain('https://example.test/x');
   });
 
   it('sees the routes registered on a nested scope, not only on app', () => {
