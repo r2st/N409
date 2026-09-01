@@ -128,7 +128,10 @@ describe('a failure logged from a valuation-scoped route', () => {
     HELPERS.flatMap((helper) =>
       [
         ...route.body.matchAll(
-          new RegExp(`(?<![\\w.])${helper}\\(\\s*(?:req\\.log|log)\\s*,[^{}]*\\{([^{}]*)\\}`, 'g'),
+          new RegExp(
+            `(?<![\\w.])${helper}\\(\\s*(?:req\\.log|app\\.log|deps\\.log|log)\\s*,[^{}]*\\{([^{}]*)\\}`,
+            'g',
+          ),
         ),
       ].map((m) => ({ route, helper, fields: m[1]!, text: m[0]! })),
     ),
@@ -145,6 +148,58 @@ describe('a failure logged from a valuation-scoped route', () => {
     const anonymous = helperCalls
       .filter((call) => !identifies(call.fields))
       .map((call) => `${call.route.file} ${call.route.path}: ${call.text.slice(0, 60)}`);
+    expect(anonymous).toEqual([]);
+  });
+  /**
+   * The same rule over the population the registration scan cannot see.
+   *
+   * `registrations` slices the balanced parens of one `app.post('…', …)` call,
+   * so what it hands to the check above is the *inline handler* and nothing
+   * else. Every route file of any size moves work out of that handler into a
+   * module-level helper — `ai.ts` runs a whole pipeline in one, `debt.ts`
+   * shapes an engine answer in another, `monitoring.ts` settles an alert in a
+   * third — and those helpers are where the failures are logged. Measured, the
+   * registration bodies hold a minority of the warn/error sites in the files
+   * that serve these routes; the rest were outside the census entirely, which
+   * is the population blind spot this estate keeps rediscovering (R305,
+   * methodology M11; and R267's note on `glob` versus `rglob` two tiers over).
+   *
+   * The property is weaker here on purpose. Outside a registration there is no
+   * `:id` in scope to prove the line *could* have named the engagement, and a
+   * few of these files also serve routes that have no valuation at all — so
+   * what is asked is that the line name *something*: a valuation, an
+   * instrument, a job, a monitor. A bare `{ err }` is the shape that cannot be
+   * joined to anything, and it is the one this refuses.
+   *
+   * `deps.log` and `app.log` are read alongside `req.log`: outside a request
+   * handler `req` does not exist, so a helper necessarily holds one of the
+   * other two, and a census that knew only `req.log` would have found nothing
+   * out here even if it had looked.
+   */
+  const servingFiles = files.filter((f) =>
+    registrations(f.code).some((r) => /\/valuations\/:id\b/.test(r.path)),
+  );
+
+  const moduleWide = servingFiles.flatMap((f) =>
+    [...f.code.matchAll(/(?:req|app|deps)\.log\.(warn|error)\(\s*\{([^{}]*)\}/g)].map((m) => ({
+      file: f.name,
+      fields: m[2]!,
+      text: m[0]!,
+    })),
+  );
+
+  it('finds the whole file, not only the handler bodies — the vacuity guard', () => {
+    // The number that says this is looking wider than the block above. If a
+    // refactor moves every site back inside a handler this can fall honestly,
+    // but it must never fall because the scan stopped matching.
+    expect(servingFiles.length).toBeGreaterThanOrEqual(15);
+    expect(moduleWide.length).toBeGreaterThanOrEqual(30);
+  });
+
+  it('names something on every failure a valuation-serving route file logs', () => {
+    const anonymous = moduleWide
+      .filter((call) => !identifies(call.fields))
+      .map((call) => `${call.file}: ${call.text.slice(0, 70)}`);
     expect(anonymous).toEqual([]);
   });
 });
