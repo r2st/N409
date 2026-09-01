@@ -84,6 +84,42 @@ export function registerOverwriteRoutes(app: FastifyInstance, deps: { pool: pg.P
     const invalid = validateOverwriteValue(def, parsed.data.value);
     if (invalid) throw problems.unprocessable(`Invalid value for "${field_key}": ${invalid}`);
 
+    /*
+     * The same check on the *other* value on this body.
+     *
+     * `original_value` is the pre-override AI/computed figure, frozen on the
+     * first write and shown beside the override ever after — the "was X, now Y"
+     * on the overwrites tab, and the `from` of the audit event this write
+     * records. It is client-supplied like `value`, describes the same cell as
+     * `value`, and until now was validated not at all: the schema admits a
+     * number, a string or null, and nothing after it looked again.
+     *
+     * (Spelled in prose rather than in zod, deliberately. `finiteNumberSweep`
+     * counts the number-accepting sites in this file textually, so a schema
+     * quoted in a comment is a site to it — and a comment that inflated the
+     * count would be read as a third union somebody forgot to bound.)
+     *
+     * Three things came through that gap. A numeric field could be told its
+     * original value was the string "n/a", and a date field a number, so the
+     * pair on screen and in the audit disagreed about what kind of thing the
+     * cell holds. A character field's original could be any length the 1 MB
+     * body allows, stored twice — the row and the event payload are both jsonb.
+     * And `1e999` parses to Infinity, which `JSON.stringify` writes as `null`:
+     * the original value an analyst supplied would be stored as "there wasn't
+     * one", under a 200 saying it was saved. That last one is what
+     * `finiteNumberSweep` exists to catch, and it did not, because its
+     * exemption for this file names "the override value" in the singular and
+     * the file has two.
+     *
+     * `null` stays legal — it is how "no prior value" is said, and it is what
+     * the client sends by omitting the field entirely.
+     */
+    if (parsed.data.original_value !== undefined && parsed.data.original_value !== null) {
+      const badOriginal = validateOverwriteValue(def, parsed.data.original_value);
+      if (badOriginal)
+        throw problems.unprocessable(`Invalid original_value for "${field_key}": ${badOriginal}`);
+    }
+
     const overwrite = await upsertOverwrite(deps.pool, {
       valuationId: valuation.id,
       def,

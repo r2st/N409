@@ -228,8 +228,11 @@ const BOUNDED_ELSEWHERE: ReadonlyArray<{ file: string; reason: string }> = [
   {
     file: 'routes/overwrites.ts',
     reason:
-      'the override value is a union whose numeric branch is checked by ' +
-      "domain/overwrites.ts validateOverwriteValue — 'must be a finite number', plus the field's own min/max",
+      "both of this file's number sites are union branches, and both are checked by " +
+      "domain/overwrites.ts validateOverwriteValue — 'must be a finite number', plus the field's own " +
+      'min/max. `value` always was; `original_value` was not, and rode in on this entry because an ' +
+      'exemption is keyed on the file and this reason was written in the singular. See the assertion ' +
+      'below, which counts the sites this entry is standing in for.',
   },
   {
     file: 'domain/finite.ts',
@@ -252,6 +255,21 @@ describe('no schema accepts Infinity', () => {
       .filter((s) => !EXEMPT_FILES.has(s.file))
       .map((s) => `${s.file}:${s.line}  z.number().${s.chain}`);
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * The failure this file's own exemption had.
+   *
+   * `BOUNDED_ELSEWHERE` is keyed on the file, so one entry licenses every
+   * `z.number()` in it — including one added later that the reason does not
+   * describe. `routes/overwrites.ts` had two, `original_value` was the second,
+   * and nothing here could tell. Counting them is not a bound; it is the
+   * prompt to go and re-read the reason when the number moves.
+   */
+  it('licenses a known number of sites per exempt file, not an open set', () => {
+    const perFile = new Map<string, number>();
+    for (const site of sites) perFile.set(site.file, (perFile.get(site.file) ?? 0) + 1);
+    expect(perFile.get('routes/overwrites.ts')).toBe(2);
   });
 
   it('keeps the exemption list honest — every entry still has a site', () => {
