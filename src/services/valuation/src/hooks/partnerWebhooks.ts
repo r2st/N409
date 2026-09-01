@@ -1,4 +1,5 @@
 import { lookup } from 'node:dns/promises';
+import pLimit from 'p-limit';
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import { describeTransportFailure, FLAGS, flagEnabled, logUnretried } from '@n409/shared';
@@ -66,6 +67,15 @@ const defaultLookup: LookupFn = (hostname) => lookup(hostname, { all: true });
  * — and is what the claim lease is derived from; this bounds only the request.
  */
 const DELIVERY_TIMEOUT_MS = 10_000;
+
+/**
+ * Receivers the retirement batch announces to at once — see
+ * {@link firePartnerWebhooksForRetirement}. Four, matching the connector sync
+ * sweep beside it: enough that one unreachable receiver cannot hold up the
+ * others, small enough that a retention pass is not a burst of outbound
+ * sockets. Per-receiver ordering is unaffected; each chain is serial.
+ */
+const RETIREMENT_FANOUT_CONCURRENCY = 4;
 
 /**
  * Resolves the target's host and refuses anything inside the network.
@@ -479,6 +489,28 @@ async function readEnabledWebhooks(
   }
 }
 
+/** One event to one webhook, contained: a dispatch failure never reaches a caller. */
+async function dispatchToWebhook(
+  deps: WebhookDeps,
+  hook: PartnerWebhookRow,
+  partnerId: string,
+  event: WebhookEventType,
+  payload: Record<string, unknown>,
+  valuationId: string | null,
+): Promise<void> {
+  try {
+    await deliverToWebhook(deps, hook, event, payload, valuationId);
+  } catch (err) {
+    // Error, not warn: no delivery row survives to carry this, so this line
+    // is the only record that the partner was owed an event and did not get
+    // one.
+    deps.log?.error(
+      { err, webhookId: hook.id, partnerId, event },
+      'partner webhook dispatch failed before a delivery row existed; event dropped for this webhook',
+    );
+  }
+}
+
 /** The dispatch half: filter to the subscribers, build the body, deliver. */
 async function dispatchToWebhooks(
   deps: WebhookDeps,
@@ -492,17 +524,7 @@ async function dispatchToWebhooks(
   if (wanted.length === 0) return;
   const payload = buildWebhookPayload(event, valuation, extra);
   for (const hook of wanted) {
-    try {
-      await deliverToWebhook(deps, hook, event, payload, valuation?.id ?? null);
-    } catch (err) {
-      // Error, not warn: no delivery row survives to carry this, so this line
-      // is the only record that the partner was owed an event and did not get
-      // one.
-      deps.log?.error(
-        { err, webhookId: hook.id, partnerId, event },
-        'partner webhook dispatch failed before a delivery row existed; event dropped for this webhook',
-      );
-    }
+    await dispatchToWebhook(deps, hook, partnerId, event, payload, valuation?.id ?? null);
   }
 }
 
@@ -586,19 +608,55 @@ export async function firePartnerWebhooksForRetirement(
     if (bucket) bucket.push(row);
     else byPartner.set(row.partner_id, [row]);
   }
+  /*
+   * ONE CHAIN PER RECEIVER, RUN SIDE BY SIDE (R300, M5).
+   *
+   * This was `for (row) for (hook) await POST`, which is a single serial queue
+   * over the whole batch. A POST is bounded by `DELIVERY_TIMEOUT_MS` plus a DNS
+   * lookup that is deliberately not cached, so one partner whose receiver has
+   * gone dark makes the retention sweep's announcement pass take
+   * `rows × hooks × 10s` — five hundred archived engagements is hours, spent
+   * inside a tick that also holds `background_sweep_running` at 1 and delays
+   * every later pass of the same sweep.
+   *
+   * The cost of the length is not the wait. A delivery row is written before
+   * each attempt and the retry ladder owns it from there, so a *failed* POST
+   * loses nothing — but an engagement whose turn had not come yet has no row at
+   * all, and nothing revisits a retirement announcement that was never queued.
+   * A deploy or a crash anywhere in those hours therefore silently drops the
+   * tail of the batch, and the longer the pass the larger the tail.
+   *
+   * Fanned out per *webhook* rather than per row: each receiver keeps its own
+   * serial chain, in the order the engagements were archived, so nothing starts
+   * POSTing concurrently at an endpoint that is already struggling. What runs
+   * in parallel is distinct receivers, which are distinct hosts. Wall clock
+   * becomes the slowest receiver rather than the sum of all of them, and a dead
+   * one no longer holds up the partners that are answering.
+   */
+  const chains: Array<() => Promise<void>> = [];
   for (const [partnerId, partnerRows] of byPartner) {
     const hooks = await readEnabledWebhooks(deps, partnerId, 'valuation.retired', null);
     if (hooks === null) continue;
-    for (const row of partnerRows) {
-      await dispatchToWebhooks(deps, hooks, partnerId, 'valuation.retired', {
-        id: row.id,
-        number: row.number,
-        kind: row.kind,
-        state: row.state,
-        company_name: row.company_name,
+    for (const hook of hooks.filter((h) => webhookWantsEvent(h.events, 'valuation.retired'))) {
+      chains.push(async () => {
+        for (const row of partnerRows) {
+          const payload = buildWebhookPayload('valuation.retired', {
+            id: row.id,
+            number: row.number,
+            kind: row.kind,
+            state: row.state,
+            company_name: row.company_name,
+          });
+          await dispatchToWebhook(deps, hook, partnerId, 'valuation.retired', payload, row.id);
+        }
       });
     }
   }
+  const limit = pLimit(RETIREMENT_FANOUT_CONCURRENCY);
+  // `dispatchToWebhook` contains every failure, so nothing here can reject —
+  // and `Promise.all` is still the right join: this function's contract is that
+  // the announcement pass is over when it returns.
+  await Promise.all(chains.map((chain) => limit(chain)));
 }
 
 /**
