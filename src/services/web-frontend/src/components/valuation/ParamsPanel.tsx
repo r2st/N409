@@ -348,6 +348,31 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const [scenariosBusy, setScenariosBusy] = useState(false);
   const [scenariosSaved, setScenariosSaved] = useState(false);
   /*
+   * Whether the saved scenario document could not be read (round 340,
+   * methodology M5).
+   *
+   * The fetch below used to swallow every failure into "scenarios stay empty",
+   * on the stated grounds that `/engine-inputs` is ops-only and 404s for an
+   * owner. The GET is not ops-only — only the PATCH beside it is — and it
+   * guards on `canReadValuation`, which the `/params` read directly above has
+   * already passed. So a 404 here is all but unreachable and what the swallow
+   * actually caught was a 5xx, a dropped connection or an expired session.
+   *
+   * That matters because the panel does not render "unknown" for an empty
+   * `scenarios`: it renders "No scenarios yet", which is a claim about the
+   * model, on the one tab where the model is the deliverable. And it is a claim
+   * this form can go on to make true — `saveScenarios` PATCHes the whole
+   * `pwerm.scenarios` array, so an analyst shown an empty table after a
+   * momentary failure who adds one outcome and saves has replaced the firm's
+   * saved set with that single row. On a hybrid run the same write carries
+   * `hybrid` too, so the blend weights go back to the 0.5/0.5 defaults this
+   * component starts on rather than the ones on the row.
+   *
+   * So the failure is stated, and the save is blocked while it stands: an empty
+   * table that is not *known* to be empty must not be savable as one.
+   */
+  const [scenarioLoadError, setScenarioLoadError] = useState<string | null>(null);
+  /*
    * The hybrid blend's two weights, kept as one object rather than two strings
    * so `useFormValidation` has a values object to read. They are saved by the
    * scenarios button, not by the methodology form, so they get their own
@@ -382,6 +407,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   };
 
   const load = useCallback(async () => {
+    setScenarioLoadError(null);
     try {
       const { params: p } = await api<{ params: ValuationParams }>(`/valuations/${valuationId}/params`);
       setParams(p);
@@ -424,8 +450,16 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             }),
           );
         }
-      } catch {
-        /* engine-inputs is ops-only / may 404 for owners — scenarios stay empty */
+      } catch (err) {
+        // A 404 is the one absence this document genuinely has — no
+        // `valuation_params` row at all — and it reads as "no scenarios yet"
+        // because that is what it is. Everything else is a failure to read a
+        // document that may well be populated; see `scenarioLoadError`.
+        if (!(err instanceof ApiError) || err.status !== 404) {
+          setScenarioLoadError(
+            describeActionFailure(err, 'Could not load the saved exit scenarios for this valuation.'),
+          );
+        }
       }
     } catch {
       setError('Could not load valuation params.');
@@ -725,7 +759,8 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const scenarioIssue = scenarioProblem(scenarios);
   // The hybrid weights ride along with the scenarios save, so a bad one blocks
   // it too — the request carries both or neither.
-  const scenariosBlocked = probabilityOff || scenarioIssue !== null || (isHybrid && !hybrid.valid);
+  const scenariosBlocked =
+    probabilityOff || scenarioIssue !== null || (isHybrid && !hybrid.valid) || scenarioLoadError !== null;
 
   const setScenario = (i: number, key: keyof ScenarioRow) => (value: string) => {
     setScenariosSaved(false);
@@ -1076,7 +1111,12 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               Σp {probabilityTotal.toFixed(4)}
             </span>
           </div>
-          {scenarios.length === 0 ? (
+          {scenarioLoadError !== null ? (
+            <p role="alert" className="text-sm font-medium text-red-600" data-testid="scenario-load-error">
+              {scenarioLoadError} Any scenarios already saved on this valuation are not shown, so nothing here
+              can be edited or saved over until they load — reopen the tab to try again.
+            </p>
+          ) : scenarios.length === 0 ? (
             <p className="text-sm text-ink-400">
               No scenarios yet — add IPO / acquisition / continuation / liquidation outcomes.
             </p>
@@ -1219,6 +1259,9 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
                   setScenariosSaved(false);
                   setScenarios((r) => [...r, emptyScenario()]);
                 }}
+                // A row added to a set that failed to load is a row that would
+                // be saved *instead of* that set, not alongside it.
+                disabled={scenarioLoadError !== null}
               >
                 Add scenario
               </Button>

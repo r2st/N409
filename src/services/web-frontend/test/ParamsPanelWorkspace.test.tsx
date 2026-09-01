@@ -567,18 +567,28 @@ describe('ParamsPanel — PWERM scenario grid', () => {
   });
 
   /**
-   * engine-inputs is ops-only and 404s for an owner reading their own
-   * valuation. That must leave the scenarios empty, not take down the whole
-   * methodology panel with it.
+   * A refused engine-inputs read must not take down the whole methodology
+   * panel — that part was always right, and is what this case was written for.
+   *
+   * What it also asserted, until R340, was that the refusal left the scenario
+   * table reading "No scenarios yet". Its premise was that the GET is ops-only
+   * and 403s for an owner; it is not — only the PATCH is, and the GET guards on
+   * `canReadValuation`, which the `/params` read that just succeeded has
+   * already passed. So this status is a failure to read a document that may
+   * well be populated, and the panel now says so rather than making a claim
+   * about the model it could not read. See `ParamsPanelScenarioLoad.test.tsx`.
    */
-  it('survives an engine-inputs endpoint the reader cannot see', async () => {
+  it('survives a refused engine-inputs read, and does not call the model empty', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
       String(url).includes('/engine-inputs')
         ? jsonResponse({ status: 403, detail: 'Forbidden' }, 403)
         : jsonResponse({ params: { ...PARAMS, allocation_method: 'pwerm' } }),
     );
     render(<ParamsPanel valuationId={VAL_ID} readOnly={false} />);
-    expect(await screen.findByText(/No scenarios yet/)).toBeInTheDocument();
+    expect(await screen.findByTestId('scenario-load-error')).toBeInTheDocument();
+    expect(screen.queryByText(/No scenarios yet/)).toBeNull();
+    // The methodology form above it still rendered and is still usable.
+    expect(screen.getByLabelText('Allocation method')).toBeInTheDocument();
     expect(screen.queryByText('Could not load valuation params.')).toBeNull();
   });
 });
