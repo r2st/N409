@@ -111,6 +111,33 @@ describe('HealthTab', () => {
     );
   });
 
+  /**
+   * The state between a recalculation and the re-run: no health check stands
+   * behind the latest calculation, so the gate is unsatisfied and nothing is
+   * wrong. Saying "one or more error-level health checks to resolve" here names
+   * findings that do not exist, on the run the analyst has not made yet — and
+   * it lands exactly when they have just recalculated to clear the findings the
+   * previous run did report.
+   */
+  it('separates "not checked yet" from "blocked by findings"', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        ...RESPONSE,
+        // The run below is against the superseded calculation, which is what
+        // leaves the current one unchecked.
+        latest_calculation_id: 'c2',
+        gate: { satisfied: false, health_check_id: null, severity: null, blocking: null },
+      }),
+    );
+    renderTab();
+    const banner = await screen.findByTestId('health-gate-banner');
+    await waitFor(() => expect(banner).toHaveTextContent(/not checked yet/i));
+    expect(banner).not.toHaveTextContent(/error-level/i);
+    // The run that is on screen belongs to the previous calculation, and the
+    // pill beside it has always said so — the banner now agrees with it.
+    expect(screen.getByText(/stale — checks an older calculation/i)).toBeInTheDocument();
+  });
+
   it('shows a satisfied banner when nothing blocks', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse({

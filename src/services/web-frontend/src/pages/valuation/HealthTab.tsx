@@ -129,6 +129,29 @@ export function HealthTab() {
 
   const latest = data.health_checks[0] ?? null;
   const noCalc = data.latest_calculation_id === null;
+  /*
+   * The gate is unsatisfied for two different reasons, and one of them is not a
+   * finding (R304, methodology M3).
+   *
+   * `gate.satisfied` is `current !== null && !current.blocking`, so it is false
+   * both when the run against the latest calculation found errors and when
+   * there is no run against the latest calculation at all. Those are different
+   * states of the same gate and they want different next actions — resolve the
+   * findings, or run the checks — and the banner said the first sentence for
+   * both: "the latest calculation has one or more error-level health checks to
+   * resolve", on an engagement that had none because nobody had looked.
+   *
+   * Not a rare state, either. It is what every engagement is in for the whole
+   * window between a recalculation succeeding and the analyst re-running the
+   * checks — and a recalculation is what an error-level finding is resolved
+   * *by*, so the false sentence appears at precisely the moment the analyst has
+   * just fixed the thing it accuses them of. The "stale — checks an older
+   * calculation" pill on the run below was already saying the true thing; the
+   * banner over it contradicted it.
+   *
+   * `health_check_id` is what separates them, and the route already sends it.
+   */
+  const unchecked = !noCalc && data.gate.health_check_id === null;
 
   return (
     <div className="space-y-6">
@@ -139,14 +162,18 @@ export function HealthTab() {
             ? 'border-paper-300 bg-paper-100 text-ink-500'
             : data.gate.satisfied
               ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-              : 'border-red-200 bg-red-50 text-red-800'
+              : unchecked
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : 'border-red-200 bg-red-50 text-red-800'
         }`}
       >
         {noCalc
           ? 'No completed calculation yet — health checks open once the first calculation succeeds.'
           : data.gate.satisfied
             ? `Ready to finalize — the latest calculation passed with a ${data.gate.severity} verdict.`
-            : 'Finalization blocked — the latest calculation has one or more error-level health checks to resolve.'}
+            : unchecked
+              ? 'Not checked yet — the latest calculation has no health-check run behind it. Run the checks before finalizing.'
+              : 'Finalization blocked — the latest calculation has one or more error-level health checks to resolve.'}
       </div>
 
       <div>
