@@ -186,6 +186,29 @@ def smb_valuation(
         if annual_revenue is None:
             raise EngineInputError("smb.revenue_multiple needs smb.annual_revenue")
         revenue = _num(annual_revenue, "smb.annual_revenue", minimum=0.0)
+        # `revenue > 0`, not "a revenue was supplied" (R339, methodology M19).
+        # The two methods above this one both refuse a non-positive benefit
+        # stream out loud, because a multiple struck on nothing is not a small
+        # indication — it is not an indication. This one took `annual_revenue:
+        # 0`, which is what the questionnaire holds for a pre-revenue business
+        # (`rules: { min: 0 }`) and what an overwrite forwards, multiplied it,
+        # and put a $0 method into the weighting beside the ones that ran: an
+        # SDE of $200k at 3x concludes $600,000 on its own and $300,000 the
+        # moment a revenue multiple is left in the form with no revenue to
+        # strike it on. Nothing on the schedule says the second figure is half
+        # of one method rather than the average of two.
+        #
+        # Refused rather than dropped, for the reason the sibling branches are:
+        # a weight naming a method that could not run is already an error here,
+        # so silently not running one the analyst asked for would contradict
+        # that. `comparables.comparable_analysis` answers `None` to the same
+        # question instead, and says why — its peer screen is still worth
+        # having without an indication. There is no such half here: the SMB
+        # request exists to conclude a value.
+        if revenue <= 0:
+            raise EngineInputError(
+                "the revenue multiple method needs a positive annual revenue"
+            )
         multiple = _num(revenue_multiple, "smb.revenue_multiple", minimum=0.0, maximum=100.0)
         methods["revenue_multiple"] = {
             "revenue": revenue,

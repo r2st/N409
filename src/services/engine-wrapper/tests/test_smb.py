@@ -146,3 +146,21 @@ def test_revenue_multiple_without_revenue_rejected():
 def test_zero_weights_rejected():
     with pytest.raises(EngineInputError, match="positive"):
         smb_valuation(**_inputs(weights={"sde_multiple": 0.0}))
+
+
+def test_zero_revenue_blocks_the_revenue_multiple_method():
+    """R339, M19 — a multiple struck on nothing was averaged in as a $0 method.
+
+    `annual_revenue: 0` is what the SMB questionnaire holds for a pre-revenue
+    business (the field's rule is `min: 0`, not `min > 0`) and what an overwrite
+    forwards. It used to reach `revenue * multiple` and put a zero indication in
+    the weighting beside the methods that ran, so the conclusion came back
+    finite, plausible and exactly half of the one method that had an opinion.
+    """
+    with pytest.raises(EngineInputError, match="positive annual revenue"):
+        smb_valuation(sde=200_000.0, sde_multiple=3.0, revenue_multiple=1.2, annual_revenue=0.0)
+
+    # The same request without the unusable method still concludes, so the
+    # refusal is about the zero rather than about the shape.
+    out = smb_valuation(sde=200_000.0, sde_multiple=3.0)
+    assert out["equity_value"] == pytest.approx(600_000.0)
