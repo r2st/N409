@@ -137,6 +137,11 @@ const UNEXPORTED: Record<string, string> = {
     'the thing that shows them the charge.',
   'payments.payment_intent_id':
     'The processor’s identifier for the intent behind the charge — the same call as `charge_id`.',
+  'payments.dispute_id':
+    'The processor’s identifier for the dispute — the same call as `charge_id`. R328 added the ' +
+    'column to tell a redelivered dispute event from a second dispute, which is bookkeeping about ' +
+    'the webhook rather than a fact about the subject; `dispute_status` and `disputed_at` are the ' +
+    'two the export carries.',
   'payments.updated_at':
     'When the row was last touched by a webhook. Bookkeeping; every dated fact the subject would ' +
     'want (`created_at`, `refunded_at`, `disputed_at`) is exported in its own right.',

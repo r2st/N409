@@ -195,6 +195,10 @@ const BOUNDED: Record<string, Bound> = {
     bound: 'schema',
     why: 'GROUP BY over the job queue’s kind and status columns, both enums. One row per pair, whatever the queue depth.',
   },
+  'jobs.ts:failedJobCounts': {
+    bound: 'schema',
+    why: 'GROUP BY over `source`, an enum, and inner-joined to the window list the caller passes — so at most one row per JOB_SOURCE, and never more than the caller asked about.',
+  },
   'valuations.ts:dashboardStats': {
     bound: 'schema',
     why: 'GROUP BY over `state`, an enum. One row per state.',

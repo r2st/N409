@@ -204,7 +204,11 @@ const REVIEWED: Record<string, string[]> = {
   // `sql` is one branch's WHERE, `limitParam` is the `$n` naming the merge
   // window (R167) — a placeholder number, never a value.
   'src/services/valuation/src/repos/activityLog.ts': ['limitParam', 'sql', 'whereSql'],
-  'src/services/valuation/src/repos/adminUsers.ts': ['search', 'whereSql'],
+  // `suspended` is a placeholder *number* — `$${params.length}` captured after
+  // pushing SUSPENDED_ROLE — not a value, in the same family as `limitParam`
+  // above. R334 added it and left it unlisted, so this gate has been red on
+  // main since.
+  'src/services/valuation/src/repos/adminUsers.ts': ['search', 'suspended', 'whereSql'],
   'src/services/valuation/src/repos/contactSubmissions.ts': ['where'],
   'src/services/valuation/src/repos/engagements.ts': ['cursorSql'],
   'src/services/valuation/src/repos/firmDashboard.ts': ['filter'],
