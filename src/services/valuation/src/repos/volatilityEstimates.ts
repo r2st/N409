@@ -165,6 +165,17 @@ export async function listVolatilityEstimates(
  *
  * `findAppliedRollforwardRun` — the third member of this family — already
  * orders by `applied_at`, and is what this now agrees with.
+ *
+ * THE SPELLING IS 0200's, AND MEANS WHAT THE OLD ONE MEANT (R306, M8). This
+ * led with `(applied_at IS NOT NULL) DESC`, a boolean no btree holds, so the
+ * planner read and top-N sorted every run the engagement had ever recorded to
+ * return one row — 300 rows and 312 blocks on a working file, against 1 and 4
+ * now. `applied_at DESC NULLS LAST` *is* those two leading terms: a btree DESC
+ * is stored NULLS FIRST, so putting the nulls last puts the adopted runs first
+ * and orders them by adoption, and an unadopted history still falls through to
+ * `created_at DESC, id DESC` exactly as before. Checked against the old
+ * spelling over 3,000 seeded engagements before it was changed, and pinned by
+ * `adoptedRunPlan.test.ts`, which keeps the old spelling as its discriminator.
  */
 export async function findCurrentVolatilityEstimate(
   pool: pg.Pool,
@@ -173,7 +184,7 @@ export async function findCurrentVolatilityEstimate(
   const { rows } = await pool.query<RawVolatilityEstimateRow>(
     `SELECT * FROM volatility_estimates
       WHERE valuation_id = $1
-      ORDER BY (applied_at IS NOT NULL) DESC, applied_at DESC, created_at DESC, id DESC
+      ORDER BY applied_at DESC NULLS LAST, created_at DESC, id DESC
       LIMIT 1`,
     [valuationId],
   );

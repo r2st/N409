@@ -172,10 +172,15 @@ export const UNMEASURED: Readonly<Record<string, string>> = {
   // --- The set being sorted is already bounded to one engagement by an indexed
   // equality predicate, so the sort is over a handful of rows whatever the
   // table holds.
-  'repos/projections.ts :: (applied_at IS NOT NULL) DESC':
-    "The WHERE bounds the sort to one valuation's projection runs via `valuation_projections`' index on `valuation_id`, so what is sorted is that engagement's runs — a set fixed by how many times one analyst re-ran a projection, not by how many valuations the platform holds.",
-  'repos/volatilityEstimates.ts :: (applied_at IS NOT NULL) DESC':
-    "The same statement on `volatility_estimates`: bounded to one valuation by an indexed equality on `valuation_id`, so the sorted set is that engagement's estimate runs and does not grow with the table.",
+  // R306 removed the two that used to sit here — `findCurrentProjection` and
+  // `findCurrentVolatilityEstimate`. Their exemption was true (the WHERE does
+  // bound the sort to one engagement) and was not enough: what it bounds is the
+  // table, and what these read is the engagement's run history, which R304
+  // established is unbounded and is adopted from at any depth. Both are now
+  // `applied_at DESC NULLS LAST, …`, which is the same ordering spelled in
+  // columns — a btree DESC is stored NULLS FIRST — and 0200 indexes it. The
+  // lesson for the next entry below: "bounded to one engagement" answers "does
+  // this scan the table", not "is the work a function of history".
   "repos/valuationTags.ts :: array_position(ARRAY['accepted','suggested','rejected']::valuation_tag_status[], status)":
     "Bounded to one valuation by an indexed equality on `valuation_id`. The leading expression is over a literal array and so is indexable in principle, but the set it orders is one engagement's tags.",
   "events/record.ts :: payload->>'to'":

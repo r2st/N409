@@ -130,6 +130,22 @@ export async function listRollforwardRuns(
  * claim is that the concluded value bridges from the prior one. A proposal
  * nobody adopted is working material, so the exhibit does not see it.
  */
+/**
+ * The anchor the allocation ran on, or null if nobody adopted one.
+ *
+ * Unlike its two siblings this has always ordered by adoption and filtered on
+ * it, so R304 left it alone — but it was reading the engagement's whole history
+ * to answer, because nothing indexed `(valuation_id, applied_at)` and the
+ * `applied_at IS NOT NULL` in the WHERE is a filter, not an ordering. 0200's
+ * partial index is that predicate and this ordering, so the scan stops at the
+ * first row: 300 index rows and 305 blocks on a 300-run engagement, against 1
+ * and 4 (R306, M8).
+ *
+ * The predicate belongs in the index here and cannot be in the other two's,
+ * which is the whole difference between this reader and them: a null
+ * `applied_at` is an answer there — the newest run of any kind, when nobody has
+ * adopted — and is no answer at all here.
+ */
 export async function findAppliedRollforwardRun(
   pool: pg.Pool,
   valuationId: string,

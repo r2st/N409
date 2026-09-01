@@ -125,6 +125,13 @@ export async function listProjections(
  * arrives as "the financial model was amended after the forecast was adopted"
  * — an amendment nobody made, on an engagement whose analyst simply went back
  * to an earlier projection.
+ *
+ * THE SPELLING IS 0200's, AND MEANS WHAT THE OLD ONE MEANT (R306, M8). See the
+ * matching note on `findCurrentVolatilityEstimate`: the leading
+ * `(applied_at IS NOT NULL) DESC` was a boolean no btree holds, so one row cost
+ * a read and a sort of the engagement's whole history, and
+ * `applied_at DESC NULLS LAST` is that term and the one after it exactly — a
+ * btree DESC is stored NULLS FIRST. 0.95 ms over 300 rows -> 0.028 ms over one.
  */
 export async function findCurrentProjection(
   pool: pg.Pool,
@@ -133,7 +140,7 @@ export async function findCurrentProjection(
   const { rows } = await pool.query<RawProjectionRow>(
     `SELECT * FROM valuation_projections
       WHERE valuation_id = $1
-      ORDER BY (applied_at IS NOT NULL) DESC, applied_at DESC, created_at DESC, id DESC
+      ORDER BY applied_at DESC NULLS LAST, created_at DESC, id DESC
       LIMIT 1`,
     [valuationId],
   );
