@@ -61,13 +61,28 @@ export const MAX_GRID_CELLS = 2_000_000;
  */
 const BUILTIN_DATE_FORMATS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
 
-const XML_ENTITIES: Record<string, string> = {
-  amp: '&',
-  lt: '<',
-  gt: '>',
-  quot: '"',
-  apos: "'",
-};
+/**
+ * The five predefined entities.
+ *
+ * Null-prototyped, and read through `Object.hasOwn` in `decodeXmlText`, because
+ * the key is a name out of an uploaded workbook. `&constructor;` is letters and
+ * nothing else, so it matches the named-entity branch; on a plain object
+ * literal that lookup is answered from `Object.prototype` with a function,
+ * which is not nullish, so the `?? match` that leaves `&unknown;` alone never
+ * ran and the cell imported as `function Object() { [native code] }` — a
+ * stakeholder name, a security class, or a share count that then fails to
+ * parse as a number.
+ */
+const XML_ENTITIES: Record<string, string> = Object.assign(
+  Object.create(null) as Record<string, string>,
+  {
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+  },
+);
 
 /**
  * Is this a code point `String.fromCodePoint` will accept — a Unicode scalar
@@ -91,7 +106,7 @@ export function decodeXmlText(text: string): string {
       // contract is to raise XlsxReadError so the upload answers 422, not 500.
       return isScalarValue(code) ? String.fromCodePoint(code) : match;
     }
-    return XML_ENTITIES[body] ?? match;
+    return Object.hasOwn(XML_ENTITIES, body) ? XML_ENTITIES[body]! : match;
   });
 }
 

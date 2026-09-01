@@ -46,6 +46,20 @@ describe('decodeEntities', () => {
     expect(decodeEntities('&unknown; &fake123;')).toBe('&unknown; &fake123;');
   });
 
+  // `&constructor;` is letters and nothing else, so it reaches the named-entity
+  // branch, and the table was a plain object literal — the lookup was answered
+  // from `Object.prototype` with a function, which is not nullish, so the `?? m`
+  // that leaves `&unknown;` alone never ran. A narrative sentence rendered
+  // `function Object() { [native code] }` into the deliverable.
+  it('leaves an entity named after an Object.prototype member untouched', () => {
+    expect(decodeEntities('Fair value &constructor; per share')).toBe(
+      'Fair value &constructor; per share',
+    );
+    for (const name of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', 'isPrototypeOf']) {
+      expect(decodeEntities(`x&${name};y`)).toBe(`x&${name};y`);
+    }
+  });
+
   // `String.fromCodePoint` throws RangeError above U+10FFFF, and the only guard
   // was `Number.isNaN` — which `&#99999999;` passes, being a perfectly good
   // number. The throw escaped decodeEntities, htmlToBlocks and renderReportPdf

@@ -98,6 +98,15 @@ describe('xlsxRead', () => {
       expect(decodeXmlText('a &amp; b &lt;c&gt; &quot;d&quot; &apos;e&apos;')).toBe(`a & b <c> "d" 'e'`);
       expect(decodeXmlText('&#65;&#x42;')).toBe('AB');
       expect(decodeXmlText('&unknown; stays')).toBe('&unknown; stays');
+      // `&constructor;` is letters and nothing else, so it reaches the
+      // named-entity branch. The table was a plain object literal, so the
+      // lookup was answered from `Object.prototype` with a function — not
+      // nullish, so the `?? match` that leaves `&unknown;` alone never ran, and
+      // a cell imported as `function Object() { [native code] }`.
+      expect(decodeXmlText('Acme &constructor; Inc')).toBe('Acme &constructor; Inc');
+      for (const name of ['constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+        expect(decodeXmlText(`x&${name};y`)).toBe(`x&${name};y`);
+      }
     });
 
     it('leaves a numeric reference that is not a character as written', () => {

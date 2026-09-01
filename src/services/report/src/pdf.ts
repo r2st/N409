@@ -249,14 +249,25 @@ export type Block =
   | { type: 'list'; ordered: boolean; items: Run[][] }
   | { type: 'table'; rows: string[][]; headerRows: number };
 
-const ENTITIES: Record<string, string> = {
+/**
+ * The five predefined entities plus `&nbsp;`.
+ *
+ * Null-prototyped, and read through `Object.hasOwn` below, because the lookup
+ * key is text out of a report narrative. `&constructor;` matches the
+ * named-entity branch of the regex — it is letters and nothing else — and a
+ * plain object literal answers that lookup from `Object.prototype` with a
+ * function, which is not nullish, so the `?? m` fallback that exists for
+ * `&unknown;` never ran and the deliverable printed
+ * `function Object() { [native code] }` in the middle of a sentence.
+ */
+const ENTITIES: Record<string, string> = Object.assign(Object.create(null) as Record<string, string>, {
   amp: '&',
   lt: '<',
   gt: '>',
   quot: '"',
   apos: "'",
   nbsp: ' ',
-};
+});
 
 /** The highest code point Unicode defines — `String.fromCodePoint` throws past it. */
 const MAX_CODE_POINT = 0x10ffff;
@@ -290,7 +301,8 @@ export function decodeEntities(text: string): string {
     if (body.startsWith('#')) {
       return codePointChar(body.slice(1), 10) ?? m;
     }
-    return ENTITIES[body.toLowerCase()] ?? m;
+    const name = body.toLowerCase();
+    return Object.hasOwn(ENTITIES, name) ? ENTITIES[name]! : m;
   });
 }
 
