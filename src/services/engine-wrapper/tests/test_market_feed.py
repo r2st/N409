@@ -9,8 +9,11 @@ from fastapi.testclient import TestClient
 from app.engine.market_feed import (
     FETCH_TIMEOUT_ENV,
     FETCH_TIMEOUT_S,
+    MULTIPLES_BUDGET_ENV,
+    MULTIPLES_BUDGET_S,
     MarketFeedClient,
     fetch_timeout_seconds,
+    multiples_budget_seconds,
 )
 from app.engine.market_universe import set_client
 from app.main import app
@@ -562,3 +565,110 @@ def test_a_misconfigured_ceiling_falls_back_on_the_default(monkeypatch, caplog):
     assert fetch_timeout_seconds() == FETCH_TIMEOUT_S
     monkeypatch.setenv(FETCH_TIMEOUT_ENV, "2.5")
     assert fetch_timeout_seconds() == 2.5
+
+
+# ── The fan-out that multiplied the ceiling (R314, methodology M8) ────────────
+#
+# `FETCH_TIMEOUT_S` bounds one fetch. `get_company_multiples` makes one per
+# ticker, in sequence, and `MAX_TICKERS` is 50 — so the bound multiplied and the
+# request as a whole was still unbounded at 50 x 15s. See `MULTIPLES_BUDGET_S`.
+
+
+class SlowInfoProvider:
+    """A provider whose `info` costs a fixed amount of the test's fake clock."""
+
+    def __init__(self, clock, cost=10.0):
+        self.clock = clock
+        self.cost = cost
+        self.tickers = []
+
+    def info(self, ticker):
+        self.tickers.append(ticker)
+        self.clock.advance(self.cost)
+        return {"enterpriseToEbitda": 15.0, "enterpriseToRevenue": 7.0}
+
+    def prices(self, ticker, start, end):
+        return []
+
+    def financials(self, ticker):
+        return {}
+
+
+def test_the_multiples_fan_out_stops_when_the_request_budget_is_spent():
+    clock = FakeClock()
+    provider = SlowInfoProvider(clock, cost=10.0)
+    c = MarketFeedClient(
+        provider=provider, clock=clock, fetch_timeout_s=0, multiples_budget_s=25.0
+    )
+    out = c.get_company_multiples(["A", "B", "C", "D", "E"], ["ev_ebitda"])
+
+    # Three fetches: the third starts at t+20 with 5s of budget left, and the
+    # fourth finds none. Without the budget all five would have been dialled.
+    assert provider.tickers == ["A", "B", "C"]
+    assert out["source"] == "yfinance"
+    assert out["companies"]["A"]["ev_ebitda"] == 15.0
+    # The ones past the budget are reported the same way a ticker the source
+    # does not carry is — a warning, not a missing key and not a hard failure.
+    assert "budget" in out["companies"]["D"]["warning"]
+    assert "budget" in out["companies"]["E"]["warning"]
+    # The median is struck over what was actually observed.
+    assert out["median"]["ev_ebitda"] == 15.0
+
+
+def test_a_ticker_already_in_the_memo_is_answered_after_the_budget_is_spent():
+    # The budget bounds *fetching*, not answering: a cached entry costs nothing,
+    # and refusing it would make the response worse for no saving at all.
+    clock = FakeClock()
+    provider = SlowInfoProvider(clock, cost=10.0)
+    c = MarketFeedClient(
+        provider=provider, clock=clock, ttl_seconds=900.0, fetch_timeout_s=0, multiples_budget_s=25.0
+    )
+    c.get_company_multiples(["E"], ["ev_ebitda"])  # warms the memo for E
+    provider.tickers.clear()
+
+    out = c.get_company_multiples(["A", "B", "C", "D", "E"], ["ev_ebitda"])
+    assert provider.tickers == ["A", "B", "C"]
+    assert out["companies"]["E"]["ev_ebitda"] == 15.0
+    assert "warning" in out["companies"]["D"]
+
+
+def test_the_last_admitted_fetch_cannot_overrun_the_budget():
+    # Gating alone would let a fetch admitted with 1s left run the full
+    # per-fetch ceiling, which is the overshoot the budget exists to remove.
+    provider = HangingProvider()
+    c = MarketFeedClient(provider=provider, fetch_timeout_s=30.0, multiples_budget_s=0.2)
+    try:
+        started = time.monotonic()
+        out = c.get_company_multiples(["DDOG"], ["ev_ebitda"])
+        elapsed = time.monotonic() - started
+        assert elapsed < 5.0, f"clamped to the budget, not the 30s per-fetch ceiling ({elapsed}s)"
+        assert out["source"] == "fallback"
+    finally:
+        provider.released.set()
+
+
+def test_the_budget_can_be_turned_off():
+    clock = FakeClock()
+    provider = SlowInfoProvider(clock, cost=10.0)
+    c = MarketFeedClient(provider=provider, clock=clock, fetch_timeout_s=0, multiples_budget_s=0)
+    c.get_company_multiples(["A", "B", "C", "D", "E"], ["ev_ebitda"])
+    assert provider.tickers == ["A", "B", "C", "D", "E"]
+
+
+def test_a_misconfigured_budget_falls_back_on_the_default(monkeypatch, caplog):
+    monkeypatch.setenv(MULTIPLES_BUDGET_ENV, "later")
+    with caplog.at_level("WARNING"):
+        assert multiples_budget_seconds() == MULTIPLES_BUDGET_S
+    assert any("MARKET_FEED_MULTIPLES_BUDGET_S" in r.getMessage() for r in caplog.records)
+    monkeypatch.setenv(MULTIPLES_BUDGET_ENV, "-1")
+    assert multiples_budget_seconds() == MULTIPLES_BUDGET_S
+    monkeypatch.setenv(MULTIPLES_BUDGET_ENV, "4")
+    assert multiples_budget_seconds() == 4.0
+
+
+def test_the_budget_is_shorter_than_the_callers_patience_times_the_ticker_cap():
+    # The number that matters is not the budget on its own but the budget
+    # against `MAX_TICKERS` — the product is what used to bound this request.
+    from app.engine.market_data import MAX_TICKERS
+
+    assert MULTIPLES_BUDGET_S < FETCH_TIMEOUT_S * MAX_TICKERS

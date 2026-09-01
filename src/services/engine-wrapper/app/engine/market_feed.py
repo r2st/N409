@@ -157,6 +157,31 @@ CACHE_MAX_ENTRIES = 256
 FETCH_TIMEOUT_S = 15.0
 FETCH_TIMEOUT_ENV = "MARKET_FEED_FETCH_TIMEOUT_S"
 
+# How long one *request* may spend fetching, across every ticker it names.
+#
+# WHY A SECOND CEILING (R314, methodology M8). `FETCH_TIMEOUT_S` bounds one
+# fetch, and `get_company_multiples` makes one per ticker, sequentially, with
+# `MAX_TICKERS` = 50. So the per-fetch bound multiplies: a request naming fifty
+# tickers against an upstream that black-holes every socket is bounded at
+# 50 x 15s = 12.5 minutes of a FastAPI threadpool slot — which is the failure
+# `FETCH_TIMEOUT_S` was added to remove, one level up from where it was fixed.
+# The threadpool is 40 slots (`limits.threadpool_size`), so forty such requests
+# is the whole engine, for valuations too.
+#
+# The work is wasted long before that anyway. The Node side gives up at 8-12s
+# (`FEED_TIMEOUT_MS`) and nothing reclaims the slot when it does, so every
+# second past the caller's patience is spent computing an answer no one will
+# read — and the sequential loop means the in-flight ceiling
+# (`MAX_INFLIGHT_FETCHES`) never engages, because there is only ever one.
+#
+# Thirty seconds is past the caller's own deadline with room for a slow-but-
+# healthy handful, and it is a *budget*: tickers still unfetched when it runs
+# out are reported as unavailable, the same shape as a ticker the source does
+# not carry. `market_universe._fetch_all` has bounded its fan-out this way since
+# it was written; this is the same bound on the one that lacked it.
+MULTIPLES_BUDGET_S = 30.0
+MULTIPLES_BUDGET_ENV = "MARKET_FEED_MULTIPLES_BUDGET_S"
+
 # The most provider fetches that may be in flight — which, on a hung upstream,
 # is the number of stranded threads this module can accumulate.
 #
@@ -174,14 +199,19 @@ MAX_INFLIGHT_FETCHES = 8
 _inflight = threading.BoundedSemaphore(MAX_INFLIGHT_FETCHES)
 
 
-def fetch_timeout_seconds(default: float = FETCH_TIMEOUT_S) -> float:
-    """Configured per-fetch ceiling (MARKET_FEED_FETCH_TIMEOUT_S); 0 disables it.
+def _seconds(name: str, raw: str | None, default: float) -> float:
+    """Parse a seconds-valued ceiling; `default` for anything unusable.
 
-    Falls back on anything unusable rather than raising, the same way
-    `limits._misconfigured` does: a typo in a unit file must not be a service
-    that will not boot.
+    Falls back rather than raising, the same way `limits._misconfigured` does: a
+    typo in a unit file must not be a service that will not boot.
+
+    Takes the value already read rather than reading it, so that
+    `os.environ.get(SOME_ENV)` stays at the two call sites. That is not a
+    stylistic choice: `.env.example` is enforced by a scan for exactly that
+    idiom (`shared/test/envExample.test.ts`), and a helper that reads the
+    environment from a *parameter* is the refactor that has taken four
+    variables out of the deployment contract's sight already.
     """
-    raw = os.environ.get(FETCH_TIMEOUT_ENV)
     if not raw:
         return default
     try:
@@ -189,11 +219,26 @@ def fetch_timeout_seconds(default: float = FETCH_TIMEOUT_S) -> float:
     except ValueError:
         _log.warning(
             "%s is not a number - falling back to the default",
-            FETCH_TIMEOUT_ENV,
+            name,
             extra={"event": "market_feed_config", "detail": raw},
         )
         return default
     return value if value >= 0 else default
+
+
+def fetch_timeout_seconds(default: float = FETCH_TIMEOUT_S) -> float:
+    """Configured per-fetch ceiling (MARKET_FEED_FETCH_TIMEOUT_S); 0 disables it."""
+    return _seconds(FETCH_TIMEOUT_ENV, os.environ.get(FETCH_TIMEOUT_ENV), default)
+
+
+def multiples_budget_seconds(default: float = MULTIPLES_BUDGET_S) -> float:
+    """Configured whole-request fetch budget (MARKET_FEED_MULTIPLES_BUDGET_S).
+
+    Zero disables it, which restores the unbounded fan-out and is offered for
+    the same reason the per-fetch ceiling offers it: an operator debugging a
+    slow provider on a box nobody else is calling.
+    """
+    return _seconds(MULTIPLES_BUDGET_ENV, os.environ.get(MULTIPLES_BUDGET_ENV), default)
 
 
 class _FetchAbandoned(Exception):
@@ -259,6 +304,7 @@ class MarketFeedClient:
         max_entries: int = CACHE_MAX_ENTRIES,
         clock=time.monotonic,
         fetch_timeout_s: float | None = None,
+        multiples_budget_s: float | None = None,
     ) -> None:
         self.provider = default_provider() if provider is UNSET else provider
         # key → (expires_at, result). Insertion order doubles as recency, the
@@ -274,6 +320,12 @@ class MarketFeedClient:
         # which is what the tests pass.
         self.fetch_timeout_s = (
             fetch_timeout_seconds() if fetch_timeout_s is None else fetch_timeout_s
+        )
+        # Resolved once per client for the same reason, and read only by the
+        # fan-out below — a single-fetch call is already bounded by the line
+        # above and adding a second ceiling to it would say nothing new.
+        self.multiples_budget_s = (
+            multiples_budget_seconds() if multiples_budget_s is None else multiples_budget_s
         )
 
     # ── internals ─────────────────────────────────────────────────────────────
@@ -335,7 +387,7 @@ class MarketFeedClient:
             oldest = next(iter(self.cache))
             del self.cache[oldest]
 
-    def _cached(self, key: tuple, produce, fallback):
+    def _cached(self, key: tuple, produce, fallback, deadline: float | None = None):
         entry = self.cache.get(key)
         if entry is not None:
             expires_at, result = entry
@@ -354,8 +406,25 @@ class MarketFeedClient:
                 kind=kind,
                 ticker=ticker,
             )
+        # The whole-request budget, when the caller is a fan-out. Checked after
+        # the memo above, so a ticker already fetched costs nothing and is still
+        # answered from it once the budget is spent.
+        timeout_s = self.fetch_timeout_s
+        if deadline is not None:
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                return self._fallback(
+                    "market-data fetch abandoned: the request's fetch budget was already spent",
+                    fallback,
+                    kind=kind,
+                    ticker=ticker,
+                )
+            # Clamped, not just gated: without this the last fetch admitted may
+            # still overrun the budget by a whole `fetch_timeout_s`, which is
+            # the overshoot the budget exists to remove.
+            timeout_s = remaining if timeout_s <= 0 else min(timeout_s, remaining)
         try:
-            result = _run_bounded(lambda: produce(self.provider), self.fetch_timeout_s)
+            result = _run_bounded(lambda: produce(self.provider), timeout_s)
         except _FetchAbandoned as exc:
             # Said as what it is rather than folded into "fetch failed": the
             # provider did not refuse us, we stopped waiting. See
@@ -399,7 +468,9 @@ class MarketFeedClient:
 
         return self._cached(key, produce, fallback)
 
-    def _info_entry(self, ticker: str, date: str | None = None, *, fallback=None) -> dict:
+    def _info_entry(
+        self, ticker: str, date: str | None = None, *, fallback=None, deadline: float | None = None
+    ) -> dict:
         """One ticker's raw provider ``info``, memoized.
 
         Both the multiples summary and the universe refresh read whole-``info``
@@ -410,6 +481,7 @@ class MarketFeedClient:
             ("multiples", ticker, date),
             lambda p: {"source": "yfinance", "info": p.info(ticker)},
             fallback,
+            deadline,
         )
 
     def get_company_info(self, ticker: str, *, date: str | None = None, fallback=None) -> dict:
@@ -440,10 +512,17 @@ class MarketFeedClient:
                 f"unknown multiples requested: {unknown}", fallback, kind="multiples"
             )
 
+        # One budget for the whole fan-out — see `MULTIPLES_BUDGET_S`. A ticker
+        # reached after it is spent is answered from the memo if it is there and
+        # reported as unavailable if it is not, which is the shape this loop
+        # already uses for a ticker the source does not carry.
+        budget = self.multiples_budget_s
+        deadline = self._clock() + budget if budget > 0 else None
+
         companies: dict[str, dict] = {}
         any_live = False
         for ticker in tickers:
-            entry = self._info_entry(ticker, date)
+            entry = self._info_entry(ticker, date, deadline=deadline)
             if entry.get("source") == "yfinance":
                 any_live = True
                 info = entry.get("info", {})
