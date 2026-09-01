@@ -7,6 +7,7 @@ import { NAMED_BUCKET_KEYS, namedBucketsFor } from '../domain/workflow.js';
 import { assignRoles, type UserWithRoles } from './users.js';
 import { revokeInvitationsFrom } from './invitations.js';
 import type { RoleKey } from '../domain/roles.js';
+import { SUSPENDED_ROLE } from '../auth/rbac.js';
 
 /** Admin console queries (M3 feature 13) — list/edit/soft-delete users. */
 
@@ -466,13 +467,35 @@ export async function listUserOptions(
     params.push(likeContains(opts.q));
     search = `AND ${userSearchSql(`$${params.length}`, 'u')}`;
   }
+  params.push(SUSPENDED_ROLE);
+  const suspended = `$${params.length}`;
   params.push(limit + 1);
   const { rows } = await pool.query<UserOptionRow>(
+    /*
+     * Suspended accounts are excluded as well as deactivated ones, and the
+     * `NOT EXISTS` is why it takes a subquery rather than another `AND`: this
+     * join is on a role row, and `ignored` is *additive*. A suspended
+     * administrator keeps the `admin` grant that put them in `keys`, so the
+     * outer join matches on that row and says nothing about the suspension —
+     * which is exactly how they went on being offered, by name, in the picker
+     * an operator assigns reviewers from.
+     *
+     * A dropdown that offers somebody is a dropdown that expects them to be
+     * assignable, and since `assignableUser` they are not: the assignment is
+     * refused. Offering an option the write will reject is worse than the
+     * suspension being invisible here — the operator picks a colleague, is told
+     * no, and has no way to tell that from a bug. Both sides now read the same
+     * rule; see `SUSPENDED_ROLE`, which is the one spelling of it.
+     */
     `SELECT DISTINCT u.id, u.email, u.first_name, u.last_name
      FROM users u
      JOIN user_roles ur ON ur.user_id = u.id
      JOIN roles r ON r.id = ur.role_id
      WHERE r.key = ANY($1) AND u.deleted_at IS NULL ${search}
+       AND NOT EXISTS (
+         SELECT 1 FROM user_roles sur JOIN roles sr ON sr.id = sur.role_id
+          WHERE sur.user_id = u.id AND sr.key = ${suspended}
+       )
      ORDER BY u.email ASC
      LIMIT $${params.length}`,
     params,

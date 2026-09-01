@@ -40,8 +40,21 @@ export type ValuationScope =
  * Stated once, here, so the next predicate that asks about privilege has an
  * obvious thing to call rather than a role set to re-inline.
  */
+/**
+ * The role key that means "suspended", named once.
+ *
+ * `isSuspended` below is the only reading of it in TypeScript, but two SQL
+ * predicates now have to ask the same question of a row they are filtering
+ * rather than of a principal they hold — the reviewer/assignee picker and the
+ * assignability check behind it. A string literal spelled a third and fourth
+ * time in two `WHERE` clauses is how the push half and the policy layer come to
+ * disagree about what a suspension is, which is the thing the note above exists
+ * to prevent.
+ */
+export const SUSPENDED_ROLE: RoleKey = 'ignored';
+
 export function isSuspended(p: Pick<Principal, 'roles'>): boolean {
-  return p.roles.includes('ignored');
+  return p.roles.includes(SUSPENDED_ROLE);
 }
 
 /** What slice of the valuation table can this principal see? */

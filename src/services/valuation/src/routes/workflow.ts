@@ -18,7 +18,7 @@ import {
   patchValuation,
   type ValuationRow,
 } from '../repos/valuations.js';
-import { userExists } from '../repos/users.js';
+import { assertAssignable } from '../domain/assignee.js';
 import type { EmailTransport, TransitionRenderDeps } from '../hooks/stateChange.js';
 import { applyValuationState } from '../domain/applyState.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -207,9 +207,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     const parsed = ReassignBody.safeParse(req.body);
     if (!parsed.success) throw invalidBody('Invalid reassign', parsed.error);
     const reviewerId = parsed.data.reviewer_id;
-    if (reviewerId !== null && (!isUlid(reviewerId) || !(await userExists(deps.pool, reviewerId)))) {
-      throw problems.unprocessable('Unknown reviewer', { errors: [{ path: ['reviewer_id'] }] });
-    }
+    if (reviewerId !== null) await assertAssignable(deps.pool, reviewerId, 'reviewer', 'reviewer_id');
 
     const updated = await patchValuation(
       deps.pool,
@@ -232,9 +230,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     if (action === 'assign_reviewer') {
       if (reviewer_id === undefined)
         throw problems.unprocessable('reviewer_id is required for assign_reviewer');
-      if (reviewer_id !== null && (!isUlid(reviewer_id) || !(await userExists(deps.pool, reviewer_id)))) {
-        throw problems.unprocessable('Unknown reviewer', { errors: [{ path: ['reviewer_id'] }] });
-      }
+      if (reviewer_id !== null) await assertAssignable(deps.pool, reviewer_id, 'reviewer', 'reviewer_id');
     }
 
     /*

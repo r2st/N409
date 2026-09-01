@@ -138,12 +138,75 @@ export async function findAuthPrincipal(pool: pg.Pool, id: string): Promise<Auth
  *
  * Soft-deleted accounts count as existing, which is what `findUserById`
  * returned and therefore what those routes already accepted. Whether a deleted
- * user should be assignable is a real question, but it is a behaviour change
- * and not this one's to make.
+ * user should be assignable is a real question — see {@link assignableUser},
+ * which answers it for the three of the four that assign *work*. This one is
+ * left as it was for the fourth, which names an engagement's owner: a client
+ * whose account has been closed is still whose engagement it is, and the note
+ * on `findValuationsForUser` says so.
  */
 export async function userExists(pool: pg.Pool, id: string): Promise<boolean> {
   const { rowCount } = await pool.query('SELECT 1 FROM users WHERE id = $1', [id]);
   return (rowCount ?? 0) > 0;
+}
+
+/** Why an id may not be assigned work. `ok` is the only one that may be. */
+export type Assignability = 'ok' | 'missing' | 'inactive';
+
+/**
+ * May this account be given an engagement to review, or a task to do?
+ *
+ * THE HALF THAT WAS LEFT BEHIND. `findUsersByIds` — read the note on it —
+ * excludes deactivated *and suspended* accounts, because every caller of it
+ * decides who to write *to*, and a deactivated account that went on receiving
+ * workflow email was the one thing deactivating it was supposed to stop. That
+ * fixed the push side. Nothing fixed the side that decides who is written to in
+ * the first place: `userExists` asks only whether a row is there, so the
+ * reviewer of an engagement and the assignee of a review task could both be set
+ * to somebody who cannot open either.
+ *
+ * The two halves then disagree in the worst available direction. The write
+ * succeeds, the worklist and the engagement header say the file is Dana's, and
+ * every consumer downstream silently drops her: `resolveRecipients` in the
+ * state-change hook (no transition email), the auditor-note fan-out (the
+ * finding goes to the role set instead), the monitoring sweep's reviewer alert.
+ * So the engagement reports an owner, nobody is told anything, and the one
+ * surface that would reveal it — a notification that never arrives — is the
+ * surface nobody looks at.
+ *
+ * Reachable without a stale tab, which is the part that makes this ordinary
+ * rather than exotic. `ignored` is *additive*: a suspended administrator keeps
+ * the `admin` grant, so until the query beside this one was fixed they were
+ * still offered in the reviewer picker, under their own name, with nothing to
+ * distinguish them. And a suspension applied *after* the picker was read needs
+ * no staleness at all — the assignment races it.
+ *
+ * Three answers rather than a boolean because the two refusals are different
+ * situations for the person reading them. "Unknown reviewer" is the right
+ * sentence for an id that names nobody and the wrong one for a colleague whose
+ * account was closed this morning — that reader needs to know the id was right
+ * and the account is not, or they will go and check the id.
+ *
+ * Expressed with `isSuspended` rather than a second spelling of `'ignored'`,
+ * for the reason `findUsersByIds` gives.
+ */
+export async function assignableUser(pool: pg.Pool, id: string): Promise<Assignability> {
+  // `deleted_at` is selected rather than filtered on, which is the difference
+  // between the two refusals: filtering would fold a colleague whose account
+  // was closed this morning into `missing`, and "Unknown reviewer" is exactly
+  // the sentence that sends the reader off to check an id that was right.
+  const { rows } = await pool.query<{ deleted_at: Date | null; roles: RoleKey[] }>(
+    `SELECT u.deleted_at,
+            coalesce(array_agg(r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
+       FROM users u
+       LEFT JOIN user_roles ur ON ur.user_id = u.id
+       LEFT JOIN roles r ON r.id = ur.role_id
+      WHERE u.id = $1
+      GROUP BY u.id`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) return 'missing';
+  return row.deleted_at !== null || isSuspended({ roles: row.roles }) ? 'inactive' : 'ok';
 }
 
 /**
