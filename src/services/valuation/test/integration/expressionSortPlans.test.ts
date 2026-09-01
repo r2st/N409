@@ -117,7 +117,15 @@ describe.skipIf(!dbUp)('expression-ordered lists are index scans (R202)', () => 
     // VACUUM as well as ANALYZE: `api_tokens_stats_idx` is only reachable as an
     // index-only scan, and index-only scans need the visibility map, which
     // VACUUM sets and ANALYZE does not.
-    await db.pool.query('VACUUM ANALYZE api_tokens, job_alerts, scim_tokens, review_tasks');
+    // A tenth of the book withdrawn, which is the share the console's new
+    // soft-delete predicate has to filter out. `valuations` is ANALYZEd too:
+    // without statistics on the side the predicate reads, the planner costs it
+    // as empty and picks the shape that drives from it.
+    await db.pool.query(
+      `UPDATE valuations SET archived_at = now()
+        WHERE id IN (SELECT id FROM valuations ORDER BY id LIMIT 90)`,
+    );
+    await db.pool.query('VACUUM ANALYZE api_tokens, job_alerts, scim_tokens, review_tasks, valuations');
   }, 120_000);
 
   afterAll(async () => db?.teardown());
@@ -301,6 +309,28 @@ describe.skipIf(!dbUp)('expression-ordered lists are index scans (R202)', () => 
 
   it('the unfiltered task console seeks its index instead of sorting the queue', async () => {
     const nodes = await plan(`SELECT * FROM review_tasks t ${TASK_ORDER} LIMIT 50 OFFSET 0`);
+    expect(seqScans(nodes, 'review_tasks')).toBe(false);
+    expect(sorts(nodes)).toBe(false);
+    expect(nodes.map((n) => n['Index Name'])).toContain('review_tasks_console_idx');
+  });
+
+  /**
+   * R342 put the soft delete on this queue — it was the last list building its
+   * own WHERE over `valuations` that had never joined the table — and the
+   * predicate lands on the one page 0193 exists to serve.
+   *
+   * It stays an index scan because it is an EXISTS filtered *above* the
+   * console ordering, the same shape the `status` filter takes there, with a
+   * memoised primary-key probe per row. Written as a join it is an invitation
+   * to drive from `valuations` instead, which is a sort of the whole queue —
+   * the plan this index was added to remove.
+   */
+  it('the retired-engagement filter rides the console index rather than replacing it', async () => {
+    const nodes = await plan(
+      `SELECT * FROM review_tasks t
+        WHERE EXISTS (SELECT 1 FROM valuations v WHERE v.id = t.valuation_id AND v.archived_at IS NULL)
+        ${TASK_ORDER} LIMIT 50 OFFSET 0`,
+    );
     expect(seqScans(nodes, 'review_tasks')).toBe(false);
     expect(sorts(nodes)).toBe(false);
     expect(nodes.map((n) => n['Index Name'])).toContain('review_tasks_console_idx');

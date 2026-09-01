@@ -100,6 +100,36 @@ export interface TaskFilters {
   perPage: number;
 }
 
+/**
+ * The ops task queue, and the one queue on this platform that still offered
+ * work on engagements the firm had withdrawn.
+ *
+ * `archived_at` is the soft delete for a valuation, and every list that builds
+ * its own WHERE over the table was swept into agreement with it — R55/R56 for
+ * the queues, R90 for the sweeps, the two remediation queues, the shared inbox
+ * and its badge, the re-filing queue, the reviewer sign-off queue, the invoice
+ * run. `review_tasks` never joined `valuations` at all, so the console at
+ * `GET /api/v1/tasks` — an operator's own worklist, its status tabs and its
+ * overdue filter — went on listing tasks belonging to files nothing else in the
+ * product shows (round 342, methodology M3).
+ *
+ * Which is worse here than in the queues that round finished, because of what
+ * happened when an operator acted on the row. R89 refused writes to withdrawn
+ * work and `refuseIfSubjectRetired` reaches a task through its own id, so
+ * moving one of these to `done` or `cancelled` is answered 409. The rows are
+ * therefore permanent: they cannot be worked and they cannot be cleared, they
+ * stay `open` past their `due_at` forever, and `overdue` is computed from
+ * exactly that. The queue built to show an operator what is late accumulated a
+ * floor of work nobody is allowed to finish.
+ *
+ * NOT APPLIED WHEN THE CALLER NAMES ONE ENGAGEMENT. Both doors that pass a
+ * `valuationId` — the engagement's own tasks panel and the console filtered to
+ * it — have already been handed the id and looked the row up, which is the
+ * "unless a caller asks for archived work explicitly" carve-out
+ * `buildValuationWhere` makes for the same flag. A retirement is reversible
+ * (R90), so a withdrawn file's own page showing its own history is the point;
+ * what it must not do is put that history in somebody else's queue.
+ */
 export async function listTasks(
   pool: pg.Pool,
   filters: TaskFilters,
@@ -112,6 +142,14 @@ export async function listTasks(
   };
 
   if (filters.valuationId) add('t.valuation_id = ?', filters.valuationId);
+  else {
+    // An EXISTS rather than a join: the console page is `LIMIT 50` off
+    // `review_tasks_console_idx` (0193) and a join would invite the planner to
+    // drive from `valuations` instead, which is the ordering that index exists
+    // to serve. Filtered above the index, the same shape the `status` filter
+    // takes there.
+    where.push(`EXISTS (SELECT 1 FROM valuations v WHERE v.id = t.valuation_id AND v.archived_at IS NULL)`);
+  }
   if (filters.assigneeId) add('t.assignee_id = ?', filters.assigneeId);
   if (filters.status) add('t.status = ?', filters.status);
   if (filters.overdueOnly) {
