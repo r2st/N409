@@ -5944,3 +5944,69 @@
 #            transactional and `markValuationsArchived` reports what it actually
 #            took — but `nonOverlapping` is a timer guard and this is the route
 #            beside it, which is the shape [[n409-sweep-guards]] names.
+#
+# R317 — Security & input validation (M6). One finding: a refusal that could
+#            not read the bytes it was refusing.
+#
+#            `documents.py::_parse_xml_part` refuses any XML part of an uploaded
+#            workbook that carries a document type declaration, and its docstring
+#            makes the whole argument: `ElementTree` expands internal entities;
+#            the archive's decompression budget is spent before the parser runs,
+#            so `_BoundedZip` never sees the payload; a 427-byte
+#            `xl/sharedStrings.xml` in an 845-byte archive becomes fifty
+#            megabytes at parse time, and each further level of declarations
+#            multiplies by ten. That refusal is the guard. There is nothing
+#            behind it.
+#
+#            `_has_doctype` scanned for `<!DOCTYPE` spelled one byte to the
+#            character. A UTF-16 part spells it `<\x00!\x00D\x00…`, which begins
+#            with none of the three prolog markers — not the declaration, not a
+#            comment, not a processing instruction — so the scan fell out at its
+#            first test and answered "no document type declaration". expat does
+#            not read it that way: it resolves the encoding from the document's
+#            first bytes, per XML 1.0 Appendix F.1, and then reads and expands
+#            the declaration it finds. The bomb the existing test measures,
+#            re-encoded to UTF-16, walked through the guard untouched. So did
+#            UTF-32, and so did either width with no BOM at all, where the
+#            signature is the `<` of the first tag rather than the BOM.
+#
+#            Reachable from an authenticated upload, and the process it lands in
+#            is the AI unit: shared across tenants, single-threaded, and under a
+#            cgroup MemoryMax that turns an allocation of this shape into a
+#            SIGKILL everyone sees. Nothing legitimate is on the other side —
+#            no OOXML writer emits a wide part — which is what makes the fix a
+#            widening of the same refusal rather than a trade.
+#
+#            The encoding is resolved first, from the signature table expat
+#            itself uses, and a wide part is transcoded before the prolog is
+#            scanned. The copy is bounded, because `_BoundedZip` has already
+#            metered exactly these bytes, and it is bought by hostile or exotic
+#            input alone: every real workbook takes the byte path unchanged and
+#            allocates nothing. Ten cases through `extract_texts` end to end,
+#            plus a clean wide part that still reads — the transcode is a
+#            reading, not a second refusal.
+#
+#            What was looked at and came back clean, so the next round need not
+#            repeat it: the two `sanitizeHtml` copies (server `domain/report.ts`,
+#            client `lib/m2.ts`) are byte-identical in tag set, `TAG_HEAD`,
+#            `HREF`, `URL_IGNORED` and `SAFE_URL`, and the PDF renderer's third
+#            HTML tokenizer keeps no attribute at all, so no href reaches a PDF
+#            annotation; every dynamic SQL identifier is still allow-listed at
+#            the point of interpolation; `trustedProxies` refuses blanket trust;
+#            every credential is a `randomBytes` secret compared as a SHA-256
+#            digest or through `timingSafeEqual`; CSV formula injection is
+#            covered including the `\r` and `\t` arms, and XLSX is a typed-cell
+#            format so it has no such vector; Prometheus label values are escaped
+#            for `\`, `"` and newline and every caller-facing label is a closed
+#            enum; a nested-quantifier sweep over every regex literal in the TS
+#            tree found one candidate, on our own SQL text.
+#
+# gap:       `_pdf_text` has no budget of its own — it is the sibling of the path
+#            that got `xlsx_inflated_budget`, and it hands untrusted bytes
+#            straight to `PdfReader`. Measured, a 487 KB PDF whose one content
+#            stream inflates to 200 MB is stopped by pypdf's own
+#            `LimitReachedError` and degraded by `extract_texts` like any other
+#            failure, so the exposure today is the library's guarantee rather
+#            than ours — which is the same shape as relying on a caller's slot
+#            limiter for the report unit's in-flight cap, and it moves whenever
+#            pypdf's default does.
