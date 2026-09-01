@@ -444,10 +444,44 @@ export async function migrate(
       log(`applied ${file}`);
     }
   } finally {
-    // swallow: releasing the advisory lock, which the session ending releases
-    // anyway; the migration's own outcome is what is reported.
-    await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]).catch(() => {});
-    client.release();
+    /*
+     * The unlock, and the connection dropped when it does not happen (R332,
+     * methodology M5).
+     *
+     * Still swallowed as far as the caller is concerned — a migration that ran
+     * must not be reported as a failure because the unlock did not answer — but
+     * no longer *silent*, and no longer returning the connection to the pool.
+     * The comment this replaces said the session ending releases the lock
+     * anyway. This session does not end: the client comes from the application
+     * pool and `client.release()` hands it straight back for a request handler
+     * to pick up, still holding a session-scoped key.
+     *
+     * `db/sweepLock.ts` sets out what that costs, and states that its three are
+     * "the service's only session-scoped locks" — this is the fourth, and the
+     * one with the worst ending. `pg_advisory_unlock` is the only thing that
+     * frees it short of the backend going away, so a swallowed failure leaves
+     * LOCK_KEY held by an idle pooled connection of a *running* service. Every
+     * later boot takes a different connection, fails `pg_try_advisory_lock` for
+     * the full `DEFAULT_MIGRATION_LOCK_TIMEOUT_MS`, and dies with
+     * `MigrationLockTimeoutError` naming the pid of a healthy application
+     * process — a deploy that cannot come up, for a reason nothing recorded.
+     *
+     * `release(err)` destroys the connection instead of pooling it, which ends
+     * the backend session and takes the lock with it. That is the only remedy
+     * available: the unlock is the thing that just failed, so retrying it on
+     * the same connection is not a plan.
+     */
+    let unreleasedLock: unknown = null;
+    try {
+      await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]);
+    } catch (err) {
+      unreleasedLock = err;
+      log(
+        `could not release the migration lock (${String(err)}); ` +
+          'dropping the connection so the lock cannot outlive it',
+      );
+    }
+    client.release(unreleasedLock ? (unreleasedLock as Error) : undefined);
   }
   return applied;
 }

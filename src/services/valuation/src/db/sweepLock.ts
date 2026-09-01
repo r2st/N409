@@ -36,9 +36,12 @@ export const SWEEP_LOCKS = {
  * backlog the holder has just drained, and "the sweep you asked for is already
  * happening" is the honest answer to a collision rather than a queue.
  *
- * WHY THE CONNECTION IS DESTROYED WHEN THE UNLOCK FAILS. These are the service's
- * only session-scoped locks — every other one is `pg_advisory_xact_lock`,
- * released by COMMIT or ROLLBACK whatever happens. A session lock is released by
+ * WHY THE CONNECTION IS DESTROYED WHEN THE UNLOCK FAILS. These are nearly the
+ * service's only session-scoped locks — every other one in the request path is
+ * `pg_advisory_xact_lock`, released by COMMIT or ROLLBACK whatever happens. The
+ * exception is the migration runner's own key (`db/migrate.ts`), which is
+ * session-scoped for the same reason and, until R332, ended the way this note
+ * warns about. A session lock is released by
  * the explicit unlock below or by the backend going away, and nothing else, so a
  * swallowed unlock failure returns a *healthy* connection to the pool still
  * holding the key. The lock then outlives the pass, the sweep and the deploy:
