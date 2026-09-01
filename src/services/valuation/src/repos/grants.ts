@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { newUlid } from '@n409/shared';
+import { newUlid, problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { calendarDateRow } from '../domain/calendarDate.js';
 import { recordEvent, type EventActor } from '../events/record.js';
@@ -151,6 +151,37 @@ const MUTABLE_FIELDS: Record<string, string> = {
   notes: 'notes',
 };
 
+/**
+ * The one sentence that answers an edit to a cancelled grant, wherever the
+ * cancellation is noticed — the route's own read, or the UPDATE below.
+ */
+export const GRANT_CANCELLED_DETAIL =
+  'This grant has been cancelled and can no longer be edited — issue a new grant instead.';
+
+/**
+ * Edit a grant's mutable columns.
+ *
+ * THE REFUSAL THE ROUTE MAKES IS A READ, AND THIS IS THE WRITE (round 312,
+ * methodology M3). R296 shut this door on a cancelled grant — the row is the
+ * record of a security issued and then withdrawn, so the grantee, the count,
+ * the grant date and the whole vesting schedule stop being editable once
+ * `cancelGrant` has run. But the status it decides on is read by the route on
+ * the pool, two statements earlier, and `cancelGrant` is a `DELETE
+ * /grants/:grantId` on the same screen: cancel and save land together in the
+ * ordinary use of the page, not an exotic interleaving of it.
+ *
+ * So the predicate goes in the WHERE, which is the same move `cancelGrant`
+ * itself makes and the same one `patchTask` and `recordSignoff` make: the
+ * second transaction blocks on the first's row lock, then re-evaluates against
+ * the committed row and matches nothing. The route's pool-side check stays —
+ * it answers the ordinary, uncontended case before a transaction is opened, and
+ * with the same sentence, so which one caught it is invisible to the caller.
+ *
+ * Matching nothing has two causes and they want different answers: the grant
+ * was cancelled while the edit was being made (409, the sentence above), or the
+ * valuation it hangs off was hard-deleted and `ON DELETE CASCADE` took it (404).
+ * The throw rolls the transaction back, so a lost race writes no event either.
+ */
 export async function updateGrant(
   pool: pg.Pool,
   grant: GrantRow,
@@ -168,9 +199,11 @@ export async function updateGrant(
   if (sets.length === 0) return grant;
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<GrantRow>(
-      `UPDATE option_grants SET ${sets.join(', ')}, updated_at = now() WHERE id = $1 RETURNING *`,
+      `UPDATE option_grants SET ${sets.join(', ')}, updated_at = now()
+       WHERE id = $1 AND status = 'active' RETURNING *`,
       values,
     );
+    if (rows.length === 0) throw await staleGrantPatch(client, grant.id);
     await recordEvent(client, {
       valuationId: grant.valuation_id,
       type: GRANT_EVENT_TYPES.updated,
@@ -179,6 +212,19 @@ export async function updateGrant(
     });
     return hydrated(rows[0]!);
   });
+}
+
+/** Why the pinned UPDATE above matched nothing, as something to throw. */
+async function staleGrantPatch(client: pg.PoolClient, grantId: string): Promise<Error> {
+  const { rows } = await client.query<{ id: string }>('SELECT id FROM option_grants WHERE id = $1', [
+    grantId,
+  ]);
+  if (rows.length === 0)
+    return problems.notFound(
+      'This grant no longer exists — the valuation it belongs to was deleted while this change was ' +
+        'being made. Nothing was recorded.',
+    );
+  return problems.conflict(GRANT_CANCELLED_DETAIL);
 }
 
 /**

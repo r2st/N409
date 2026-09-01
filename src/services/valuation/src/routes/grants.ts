@@ -12,6 +12,7 @@ import {
   cancelGrant,
   createGrant,
   findGrantById,
+  GRANT_CANCELLED_DETAIL,
   GRANT_PAGE_LIMIT,
   listGrants,
   updateGrant,
@@ -312,10 +313,10 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
      * it did not get, and the answer names the reason so re-issuing (a new
      * grant) reads as the way forward rather than a workaround.
      */
+    // R312 re-asks this inside `updateGrant`'s WHERE, with the same sentence:
+    // this read is on the pool and the cancel button is on the same screen.
     if (grant.status === 'cancelled') {
-      throw problems.conflict(
-        'This grant has been cancelled and can no longer be edited — issue a new grant instead.',
-      );
+      throw problems.conflict(GRANT_CANCELLED_DETAIL);
     }
 
     const parsed = PatchBody.safeParse(req.body);
