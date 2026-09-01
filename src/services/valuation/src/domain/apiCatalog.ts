@@ -73,9 +73,11 @@ export const API_TAGS: readonly ApiTag[] = [
   {
     name: 'Service',
     description:
-      'Liveness, readiness and the Prometheus scrape. Unauthenticated by necessity — they are what a ' +
-      'supervisor and a reverse proxy call — so `/ready` reports *whether* it is ready in the body and ' +
-      'the reasons only to a caller holding the metrics token.',
+      'Liveness, readiness, the Prometheus scrape, and the intake the browser files a crash on. ' +
+      'Unauthenticated by necessity — the first three are what a supervisor and a reverse proxy call, ' +
+      'and the last is filed by a page that has just stopped working, which may well be the sign-in ' +
+      'page — so `/ready` reports *whether* it is ready in the body and the reasons only to a caller ' +
+      'holding the metrics token.',
   },
   {
     name: 'Authentication',
@@ -337,6 +339,7 @@ export const API_SECTIONS: readonly ApiSection[] = [
   { prefix: '/health', tag: 'Service' },
   { prefix: '/ready', tag: 'Service' },
   { prefix: '/metrics', tag: 'Service' },
+  { prefix: '/api/v1/client-errors', tag: 'Service' },
   { prefix: '/scim/v2', tag: 'SCIM provisioning' },
   { prefix: '/api/partner/v1', tag: 'Partner API', excluded: true },
 

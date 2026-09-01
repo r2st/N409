@@ -1,5 +1,6 @@
 import { Outlet, useLocation } from 'react-router-dom';
 import { ErrorBoundary } from './ErrorBoundary';
+import { reportCrash } from '../lib/crashReport';
 
 /**
  * The boundary for pages that have no chrome to preserve.
@@ -25,7 +26,11 @@ import { ErrorBoundary } from './ErrorBoundary';
 export function StandaloneLayout() {
   const location = useLocation();
   return (
-    <ErrorBoundary key={location.pathname} label="this page">
+    <ErrorBoundary
+      key={location.pathname}
+      label="this page"
+      onError={(error, info) => reportCrash('render', error, info.componentStack ?? undefined)}
+    >
       <Outlet />
     </ErrorBoundary>
   );

@@ -159,6 +159,15 @@ export const PUBLIC_POLICIES = {
     description: 'The public contact form. Rate-limited and captcha-free by design.',
     windows: [perMinutes(5, 10, 'ip')],
   },
+  /** routes/clientErrors.ts — `CLIENT_ERROR_LIMIT`. */
+  clientErrors: {
+    name: 'client-error-reports',
+    description:
+      'Crash reports filed by the browser SPA. Sized for a page that breaks rather than one breaking ' +
+      'in a loop; the client caps itself as well. What is refused here is counted, so the signal ' +
+      'never flattens at the limit without saying so.',
+    windows: [perMinutes(20, 5, 'ip')],
+  },
   /** routes/sampleReport.ts — `PDF_RENDERS_PER_IP`. */
   sampleReportPdf: {
     name: 'sample-report-pdf',
@@ -256,6 +265,8 @@ export const PUBLIC_RATE_LIMITS: Readonly<Record<string, PublicRateLimit>> = {
   'POST /api/v1/auth/invite-info': throttled(PUBLIC_POLICIES.tokenRedeem),
   'POST /api/v1/auth/accept-invite': throttled(PUBLIC_POLICIES.tokenRedeem),
   'POST /api/v1/auth/mfa/verify': throttled(PUBLIC_POLICIES.secondFactor),
+
+  'POST /api/v1/client-errors': throttled(PUBLIC_POLICIES.clientErrors),
 
   'POST /api/v1/auditor/portal': throttled(PUBLIC_POLICIES.auditorPortal),
   'POST /api/v1/auditor/portal/notes': throttled(PUBLIC_POLICIES.auditorPortal),

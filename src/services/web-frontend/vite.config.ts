@@ -15,8 +15,26 @@ import { allPageMeta } from './src/lib/pageMetaRoutes';
  * environment — never hardcoded. We accept both the bare names (`GTM_ID`) and
  * the Vite-prefixed forms (`VITE_GTM_ID`) and expose them under `VITE_*`.
  */
+/**
+ * The deploy's `BUILD_SHA`, or '' when there isn't one.
+ *
+ * Read from the repo root rather than an environment variable because that is
+ * where the deploy actually puts it: `deploy.sh` unpacks the archive (BUILD_SHA
+ * is a tracked file in it) and then runs `npm run build` on the host with
+ * nothing exported. Failing to read it is not a build failure — an unknown
+ * release is a slightly weaker crash report, not a broken bundle.
+ */
+function buildShaFile(): string {
+  try {
+    return readFileSync(path.resolve(import.meta.dirname, '../../../BUILD_SHA'), 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
 function clientEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const pick = (name: string): string => (env[name] ?? env[`VITE_${name}`] ?? '').trim();
+  const pick = (name: string): string =>
+    (env[name] ?? env[`VITE_${name}`] ?? (name === 'BUILD_SHA' ? buildShaFile() : '') ?? '').trim();
   const names = [
     'GTM_ID',
     'GA4_ID',
@@ -31,6 +49,12 @@ function clientEnv(env: NodeJS.ProcessEnv): Record<string, string> {
     'PARTNERS_EMAIL',
     'PRIVACY_EMAIL',
     'SUPPORT_EMAIL',
+    // The commit this bundle was built from, so a crash report can say whether
+    // the tab was running the release that is currently deployed. Read from the
+    // environment or, on the box, from the BUILD_SHA the deploy unpacked —
+    // `npm run build` runs there with no such variable set. Empty is fine and
+    // means "unknown", which is what a dev build is.
+    'BUILD_SHA',
   ];
   return Object.fromEntries(
     names.map((name) => [`import.meta.env.VITE_${name}`, JSON.stringify(pick(name))]),

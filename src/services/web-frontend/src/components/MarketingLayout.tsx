@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { ThemeToggleButton } from './ThemeToggle';
 import { ErrorBoundary } from './ErrorBoundary';
+import { reportCrash } from '../lib/crashReport';
 import { SkipLink, mainContentTargetProps } from './SkipLink';
 import { Wordmark } from './Logo';
 import { COMPARISONS, FUNDING_STAGES, PARTNER_SEGMENTS, PRODUCTS } from '../lib/marketing';
@@ -430,7 +431,11 @@ export function MarketingLayout({ children }: { children?: ReactNode }) {
             page should cost that page, not the header and footer around it.
             The key remounts the boundary on navigation so a caught error does
             not outlive the route that caused it. */}
-        <ErrorBoundary key={location.pathname} label="this page">
+        <ErrorBoundary
+          key={location.pathname}
+          label="this page"
+          onError={(error, info) => reportCrash('render', error, info.componentStack ?? undefined)}
+        >
           {children ?? <Outlet />}
         </ErrorBoundary>
       </main>

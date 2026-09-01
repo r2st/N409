@@ -147,6 +147,13 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
     reason: 'is registration open, is the platform in maintenance',
   },
 
+  {
+    method: 'POST',
+    url: '/api/v1/client-errors',
+    reason:
+      'crash reports from the browser; a crash on the sign-in page happens to somebody with no session, and those are the pages most likely to have one. Rate-limited per address, every field capped, answers 204',
+  },
+
   // Marketing surface.
   {
     method: 'POST',

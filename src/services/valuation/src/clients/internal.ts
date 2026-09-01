@@ -225,13 +225,7 @@ const CIRCUIT_STATES: readonly CircuitState[] = ['closed', 'half-open', 'open'];
  * waking somebody for.
  */
 export type UpstreamOutcome =
-  | 'ok'
-  | 'rejected'
-  | 'failed'
-  | 'timeout'
-  | 'unreachable'
-  | 'bad_body'
-  | 'circuit_open';
+  'ok' | 'rejected' | 'failed' | 'timeout' | 'unreachable' | 'bad_body' | 'circuit_open';
 
 let upstreamCalls: Counter | null = null;
 let upstreamDuration: Histogram | null = null;
@@ -246,9 +240,7 @@ let upstreamDuration: Histogram | null = null;
  * answer nothing. Extended to cover the budget, so the quantile that matters —
  * "are we close to the deadline that abandons the work" — is readable.
  */
-const UPSTREAM_DURATION_BUCKETS: readonly number[] = [
-  0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120,
-];
+const UPSTREAM_DURATION_BUCKETS: readonly number[] = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120];
 
 /**
  * RED for the dependencies, on the scrape endpoint.
@@ -325,8 +317,7 @@ export function registerCircuitMetrics(registry: MetricsRegistry): void {
   registry.gauge(
     'upstream_circuit_consecutive_failures',
     'Consecutive transient failures against a dependency since its last success',
-    () =>
-      circuits.snapshots().map((s) => ({ value: s.consecutiveFailures, labels: { service: s.name } })),
+    () => circuits.snapshots().map((s) => ({ value: s.consecutiveFailures, labels: { service: s.name } })),
     ['service'],
   );
 }

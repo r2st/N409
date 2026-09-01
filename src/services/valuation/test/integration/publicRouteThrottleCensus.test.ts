@@ -104,6 +104,11 @@ const PROOFS: Record<string, Proof> = {
       'refused as unauthorized before it ever reaches the counter — see mfa.test.ts',
   },
 
+  'POST /api/v1/client-errors': {
+    kind: 'burst',
+    request: post('/api/v1/client-errors', { kind: 'render', message: 'census' }),
+  },
+
   'POST /api/v1/auditor/portal': {
     kind: 'burst',
     request: post('/api/v1/auditor/portal', { token: GUESS }),

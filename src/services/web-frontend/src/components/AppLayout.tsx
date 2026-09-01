@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { PageSkeleton } from './ui';
 import { ErrorBoundary } from './ErrorBoundary';
+import { reportCrash } from '../lib/crashReport';
 import { SkipLink, mainContentTargetProps } from './SkipLink';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -797,7 +798,11 @@ export function AppLayout() {
            * survive the very navigation it is meant to leave room for. Keying
            * on the path remounts it whenever the route changes.
            */}
-          <ErrorBoundary key={location.pathname} label="this page">
+          <ErrorBoundary
+            key={location.pathname}
+            label="this page"
+            onError={(error, info) => reportCrash('render', error, info.componentStack ?? undefined)}
+          >
             <Suspense fallback={<PageSkeleton />}>
               <Outlet />
             </Suspense>
