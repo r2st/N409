@@ -72,6 +72,21 @@ _EXTRA_KEYS = (
     "tokens_total",
     "count",
     "limit",
+    # how long something is being held off for. Named rather than borrowed:
+    # `duration_ms` is how long a piece of work took, and the search cooldown is
+    # how long the next one will not be attempted — one question asked of one
+    # field, answered two ways. It is also the value that made the overloading
+    # load-bearing rather than untidy: `begin_cooldown` logged it as `status`,
+    # and the default window is 900 seconds, so every provider cooldown this
+    # deployment has ever taken reads as a 5xx to the one query the field
+    # exists for.
+    "cooldown_s",
+    # the denominator `count` never had. `corpus_truncated` reports how many
+    # documents survived the character budget, and the number that matters is
+    # how many there were — a line saying the corpus was truncated and not by
+    # how much is the diagnostic it was written to be, minus the diagnosis.
+    # Both of its fields were being dropped in silence for want of a name.
+    "total",
 )
 
 # ── Redaction ────────────────────────────────────────────────────────────────

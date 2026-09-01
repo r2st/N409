@@ -390,7 +390,7 @@ def begin_cooldown(provider: str) -> None:
         _cooldowns[provider] = time.monotonic() + window
     _log.warning(
         "search provider asked us to stop; cooling down",
-        extra={"event": "search_cooldown", "path": provider, "status": int(window)},
+        extra={"event": "search_cooldown", "provider": provider, "cooldown_s": int(window)},
     )
 
 
@@ -970,7 +970,7 @@ def _search_one(
             if attempt < MAX_RETRIES and backoff_sleep(attempt, deadline):
                 _log.warning(
                     "search connect error, retrying",
-                    extra={"event": "search_retry", "path": chosen, "status": attempt},
+                    extra={"event": "search_retry", "provider": chosen, "attempt": attempt},
                 )
                 continue
             raise SearchError(f"{chosen} unreachable: {exc}") from exc
@@ -988,13 +988,13 @@ def _search_one(
             if retryable and attempt < MAX_RETRIES and backoff_sleep(attempt, deadline):
                 _log.warning(
                     "search transient error, retrying",
-                    extra={"event": "search_retry", "path": chosen, "status": attempt},
+                    extra={"event": "search_retry", "provider": chosen, "attempt": attempt},
                 )
                 continue
             raise
         _log.info(
             "web search",
-            extra={"event": "search_usage", "path": chosen, "status": len(hits)},
+            extra={"event": "search_usage", "provider": chosen, "count": len(hits)},
         )
         return hits
     raise SearchError(f"{chosen}: retries exhausted ({last_error})")
@@ -1065,7 +1065,7 @@ def search_with_provider(
                     break
                 _log.warning(
                     "search provider failed, trying the next in the chain",
-                    extra={"event": "search_chain_fallback", "path": chosen},
+                    extra={"event": "search_chain_fallback", "provider": chosen},
                 )
         raise SearchError("; ".join(errors) or "no search provider answered")
     finally:

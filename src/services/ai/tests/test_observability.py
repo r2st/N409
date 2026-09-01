@@ -118,6 +118,63 @@ def test_no_call_site_logs_a_key_the_formatter_will_drop():
     assert scanned > 60, scanned
 
 
+# What a value assigned to the access-log fields is allowed to look like.
+#
+# ``status`` is the field an operator filters on with ``status >= 500`` and
+# ``path`` is the one they group failures by; both only answer if every writer
+# means the same thing by them. The expressions here are the whole set the two
+# tiers use for their true meaning: an HTTP status read off a response or an
+# exception, the status the access-log middleware is reporting, a literal code,
+# and the URL path off the request.
+_STATUS_VALUES = re.compile(r"^(?:resp\.status_code|exc\.status_code|status|[1-5]\d\d)$")
+_PATH_VALUES = re.compile(r"^request\.url\.path$")
+
+
+def test_no_call_site_puts_a_non_status_in_status_or_a_non_path_in_path():
+    """The half the allowlist census cannot see.
+
+    ``_EXTRA_KEYS`` polices which *names* reach the line, and the note on it
+    says at length why the five original keys were widened with named
+    dimensions: ``status`` held a retry attempt, a token total and a count of
+    citations, so ``status >= 500`` matched none of the things it means and
+    several of the things it does not; ``path`` held a model id and a provider
+    name, so grouping failures by endpoint and by model was one query that
+    answered neither.
+
+    Widening the list did not move the call sites, and five in ``websearch.py``
+    were still writing the old shape — including ``begin_cooldown``, which put
+    the cooldown window in ``status``. The default window is 900 seconds, so on
+    stock configuration every search-provider cooldown this service has ever
+    taken was a ``warning`` line reading as a 5xx to the one query the field
+    exists for.
+
+    So this is the type half of the same census: a name is not enough, the value
+    has to mean what the name says. Phrased as "account for every assignment"
+    rather than "these known sites are fine", so the next writer to reach for
+    ``status`` because it is short has to answer for it here.
+    """
+    offenders: list[str] = []
+    checked = 0
+    for service in ("ai", "engine-wrapper"):
+        app_dir = Path(__file__).resolve().parents[3] / "services" / service / "app"
+        for path in sorted(app_dir.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            source = path.read_text(encoding="utf-8")
+            for line, body in _extra_dicts(source):
+                for key, value in re.findall(r'"(status|path)"\s*:\s*([^,}\n]+)', body):
+                    checked += 1
+                    pattern = _STATUS_VALUES if key == "status" else _PATH_VALUES
+                    if not pattern.match(value.strip()):
+                        where = path.relative_to(app_dir.parent)
+                        offenders.append(f"{service}/{where}:{line} {key}={value.strip()}")
+    assert offenders == []
+    # Vacuity guard: the access log, the rate limiter and both error handlers
+    # write these fields on every tier, so nothing under a dozen means the
+    # scanner has stopped finding the assignments it is meant to be judging.
+    assert checked >= 12, checked
+
+
 def test_the_two_services_allowlists_have_not_silently_diverged():
     """The ai tier's list must stay a subset of the engine tier's.
 

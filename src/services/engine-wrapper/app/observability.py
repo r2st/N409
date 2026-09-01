@@ -72,6 +72,14 @@ _EXTRA_KEYS = (
     "tokens_total",
     "count",
     "limit",
+    # how long something is being held off for, and the denominator for
+    # `count`. Carried here because the two formatters are copied byte for byte
+    # and the census holds the AI tier's list to a subset of this one — a key on
+    # one side only is a field that logs on one service and vanishes on the
+    # other, from call sites that read identically. Their users are in
+    # `websearch` and `pipelines`, neither of which this tier has.
+    "cooldown_s",
+    "total",
     # how far out a run that could not be completed was — see
     # `engine.errors.EngineDegradedError`. Named rather than folded into
     # `count`/`limit`, which is the overloading the note above exists about:

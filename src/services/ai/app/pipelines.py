@@ -286,8 +286,12 @@ def _corpus(
             "corpus truncated to the character budget",
             extra={
                 "event": "corpus_truncated",
-                "reviewed": len(reviewed),
-                "documents": len(docs),
+                # `count`/`total`, not `reviewed`/`documents`: the formatter's
+                # allowlist names neither of those, so both numbers — the whole
+                # content of a line whose point is how much was cut — were being
+                # dropped on the floor with nothing to say so.
+                "count": len(reviewed),
+                "total": len(docs),
                 "detail": f"limit={limit}",
             },
         )
