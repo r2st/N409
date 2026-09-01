@@ -313,6 +313,69 @@ groups:
         annotations:
           summary: 'the {{ $labels.sweep }} sweep is skipping ticks; its interval is too short'
 
+      # A tick that ran and looked at nothing.
+      #
+      # `SweepOverlapping` above is the *in-process* overlap: `nonOverlapping`
+      # dropping a tick because the previous one on this instance had not
+      # finished. Two of the twelve sweeps take a second, cross-instance guard
+      # inside the tick — a Postgres session advisory lock — and declining that
+      # one is not a dropped tick at all. The tick ran, returned normally, and
+      # examined no rows, which is precisely the four zeros a pass that ran and
+      # found nothing due returns.
+      #
+      # Every rule in this group is blind to it. The tick ran, so `SweepStopped`
+      # is quiet; it did not throw, so `SweepFailing` is quiet; it did not
+      # overlap in-process, so `SweepOverlapping` is quiet; and it failed no
+      # rows, so `SweepWorkFailing` is quiet. So each sweep flattens the decline
+      # into its tally — `auto-email` as `declined` (R340), `job-alerts` as
+      # `skipped` (R321) — for the express purpose of separating the two, and
+      # until R341 no rule read either field.
+      #
+      # The condition worth a rule is the *permanent* one, which is what both
+      # fields were added for: `withSweepLock`'s own note describes a failed
+      # unlock returning a live connection to the pool while it still holds a
+      # session-scoped key, after which every later pass declines for ever and
+      # the only line written for it is the benign `info`. A ratio against the
+      # sweep's own ticks, not a count, because ordinary contention — the
+      # interval and the admin button are the same function — is health.
+      #
+      # Summed across instances before the division: the question is estate-wide
+      # ("no pass anywhere is running"), and per-instance a deployment where one
+      # process reliably loses the race is a normal one. `sum by (sweep)` rather
+      # than `sum`, so `{{ $labels.sweep }}` below has a label to render.
+      #
+      # Two rules rather than one with an `outcome=~"declined|skipped"`: the two
+      # sweeps do not agree on the spelling, and `auto-email` *also* reports a
+      # `skipped` — candidates passed over for want of a phone number, an
+      # entirely ordinary outcome. A regex across both sweeps would page on it.
+      - alert: DripScanNeverRuns
+        expr: |
+          sum by (sweep) (rate(background_sweep_items_total{sweep="auto-email",outcome="declined"}[2h]))
+            / sum by (sweep) (rate(background_sweep_runs_total{sweep="auto-email"}[2h])) > 0.9
+        for: 1h
+        labels: { severity: ticket }
+        annotations:
+          summary: 'every {{ $labels.sweep }} pass is declining the scan lock — the drip campaigns have stopped'
+          runbook: "journalctl -u n409-valuation | grep 'auto email scan declined'; then check pg_locks for a session-scoped advisory lock held by an idle connection"
+
+      # The same shape on the sweep that watches every other queue, and a page
+      # rather than a ticket for one reason: `job_queue_alert_open` is read from
+      # the last scan's snapshot, so a monitor that has stopped scanning does
+      # not go absent — it keeps publishing the verdict it reached before it
+      # stopped. `JobQueueAlertOpen` then reports zero open alerts for every
+      # queue with total confidence, which is the same reading a healthy estate
+      # gives. Nothing else on this page is watching the outbox, the webhook
+      # deliveries or the AI jobs; this sweep is.
+      - alert: JobMonitorNeverRuns
+        expr: |
+          sum by (sweep) (rate(background_sweep_items_total{sweep="job-alerts",outcome="skipped"}[2h]))
+            / sum by (sweep) (rate(background_sweep_runs_total{sweep="job-alerts"}[2h])) > 0.9
+        for: 1h
+        labels: { severity: page }
+        annotations:
+          summary: 'every {{ $labels.sweep }} pass is declining the scan lock — no queue is being watched'
+          runbook: "journalctl -u n409-valuation | grep job_alert_scan_skipped; the gauges at /metrics are the last completed scan's verdict, not a current one"
+
       # The three rules above describe the *tick*: whether it ran, whether it
       # overlapped, whether it threw. None of them describes the work, and the
       # work is where these sweeps fail. Every ladder here contains its per-row

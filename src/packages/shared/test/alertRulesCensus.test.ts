@@ -352,6 +352,74 @@ describe('alert rules', () => {
     expect(labels.get('process_uptime_seconds')).toEqual([]);
   });
 
+  it('reads the tally field every declining sweep flattens for it', () => {
+    /*
+     * R341, and the fifth direction. The four above are about a rule that is
+     * wrong — a metric nothing exports, a label value nothing sets, a label
+     * name nothing carries, a divisor whose zero is not a measurement. This one
+     * is about a rule that is *absent*, which fails the same way and is the
+     * harder half to notice: nothing in `alerts.yml` is red, because nothing in
+     * `alerts.yml` mentions it.
+     *
+     * Two sweeps take a cross-instance Postgres advisory lock inside the tick
+     * and decline when another pass holds it. A declined pass returns the same
+     * zeros a pass that ran and found nothing due returns, so each one flattens
+     * the decline into its tally — `auto-email` as `declined`, `job-alerts` as
+     * `skipped` — for the sole purpose of separating "did not happen" from
+     * "nothing to do". Both fields were written for the permanent case, where a
+     * leaked session lock declines every later pass for ever; both then reached
+     * `background_sweep_items_total` and no rule at all, so the condition they
+     * exist to make visible was visible to nobody.
+     *
+     * `x ? 1 : 0` in a sweep tally is the whole idiom — `sweepTally` is
+     * deliberately shallow and counts numbers only, so a boolean this tier
+     * wants counted has to be spelled exactly this way. Held here rather than
+     * as a list of the two, so the third one is caught the day it is written.
+     */
+    const src = readFileSync(path.join(REPO, 'src/services/valuation/src/index.ts'), 'utf8');
+    const flattened: Array<{ sweep: string; field: string }> = [];
+    for (const m of src.matchAll(/scheduleSweep\(\s*'([a-z-]+)'/g)) {
+      // Paren-balanced to the end of the call, for the reason `registeredLabels`
+      // above balances its own: a tick body runs for dozens of lines.
+      const open = src.indexOf('(', m.index!);
+      let depth = 0;
+      let end = src.length;
+      for (let i = open; i < src.length; i++) {
+        if (src[i] === '(') depth++;
+        else if (src[i] === ')' && --depth === 0) {
+          end = i;
+          break;
+        }
+      }
+      for (const f of src.slice(open, end).matchAll(/(\w+):\s*[\w.]+\s*\?\s*1\s*:\s*0/g)) {
+        flattened.push({ sweep: m[1]!, field: f[1]! });
+      }
+    }
+    // Non-vacuity: a scan that matched no sweep, or no tick body, would pass
+    // this case by having nothing to require a rule for.
+    expect(flattened.map((f) => `${f.sweep}.${f.field}`).sort()).toEqual([
+      'auto-email.declined',
+      'job-alerts.skipped',
+    ]);
+
+    // Every selector on the item tally, as the braces of the selector.
+    const selectors = [...RULES.matchAll(/background_sweep_items_total\{([^}]*)\}/g)].map((m) => m[1]!);
+    expect(selectors.length).toBeGreaterThan(2);
+
+    const unwatched = flattened.filter(
+      ({ sweep, field }) =>
+        !selectors.some(
+          (sel) =>
+            new RegExp(`sweep="${sweep}"`).test(sel) &&
+            new RegExp(`outcome=~?"[^"]*\\b${field}\\b[^"]*"`).test(sel),
+        ),
+    );
+    expect(
+      unwatched.map((f) => `${f.sweep}.${f.field}`),
+      'sweeps that report having examined nothing, to no rule',
+    ).toEqual([]);
+  });
+
   it('pages only on the severities it declares', () => {
     const severities = new Set([...RULES.matchAll(/severity: (\w+)/g)].map((m) => m[1]!));
     // Deliberately two. A third level is where "info" alerts come from, and an
