@@ -24,6 +24,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { isUniqueViolation } from '../db/pgError.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { forbidden } from '../domain/accessProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * White-label branding (migration 0091).
@@ -176,7 +177,7 @@ export function registerBrandingRoutes(
    */
   app.get('/api/v1/branding/settings', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    const parsed = z.object({ partner_id: z.string().optional() }).safeParse(req.query);
+    const parsed = z.object({ partner_id: ulidField().optional() }).safeParse(req.query);
     if (!parsed.success) throw invalidQuery(parsed.error);
 
     const partnerId = parsed.data.partner_id ?? principal.partnerId;
@@ -195,7 +196,7 @@ export function registerBrandingRoutes(
 
   app.patch('/api/v1/branding', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    const query = z.object({ partner_id: z.string().optional() }).safeParse(req.query);
+    const query = z.object({ partner_id: ulidField().optional() }).safeParse(req.query);
     if (!query.success) throw invalidQuery(query.error);
 
     // Ops act on a named tenant; a firm administrator acts on their own and may

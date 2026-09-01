@@ -311,7 +311,7 @@ export function registerOperationsRoutes(
     if (!isOps(principal)) throw forbidden('Replaying a webhook delivery', 'ops');
     const body = z
       .object({
-        ids: z.array(z.string().min(1).max(64)).max(1000).optional(),
+        ids: z.array(ulidField()).max(1000).optional(),
         partner_id: ulidField().optional(),
       })
       .safeParse(req.body ?? {});

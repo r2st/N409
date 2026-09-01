@@ -35,6 +35,7 @@ import { withTransaction } from '../db/pool.js';
 import type { ValuationEventType } from '../domain/auditTrail.js';
 import { findValuationById } from '../repos/valuations.js';
 import { invalidBody } from '../domain/validationProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * Debt / credit instrument valuation (feature: Debt Valuation Engine). A new
@@ -71,7 +72,7 @@ const CreditTermsBody = z.object({
 });
 
 /** `null` detaches — the measurement tools are usable without an engagement. */
-const LinkBody = z.object({ valuation_id: z.string().trim().min(1).max(26).nullable() });
+const LinkBody = z.object({ valuation_id: ulidField().nullable() });
 
 const ValueBody = z.object({
   valuation_date: DateStr.optional(),

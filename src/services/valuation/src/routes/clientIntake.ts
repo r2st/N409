@@ -40,6 +40,7 @@ import {
 import { requirePrincipal } from '../plugins/auth.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import { DEAD_LINK_DETAIL } from '../domain/linkRefusal.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * Firm-branded client intake.
@@ -117,7 +118,7 @@ export function registerClientIntakeRoutes(
 
   const linkUrl = (token: string) => `${deps.publicBaseUrl.replace(/\/$/, '')}/intake#token=${token}`;
 
-  const PartnerQuery = z.object({ partner_id: z.string().optional() });
+  const PartnerQuery = z.object({ partner_id: ulidField().optional() });
 
   // ── Firm side ────────────────────────────────────────────────────────────
 

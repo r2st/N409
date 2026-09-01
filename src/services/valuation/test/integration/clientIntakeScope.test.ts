@@ -65,6 +65,21 @@ describe.skipIf(!dbUp)('client intake — firm scope and portal refusals', () =>
       expect(res.json().detail).toMatch(/partner_id is required/);
     });
 
+    it('refuses a partner_id that is not an id, rather than carrying it to the column', async () => {
+      // Round 333. `partner_id` was `z.string().optional()` on a single-line
+      // schema, which the body-id census could not see — so an ops caller who
+      // named a firm that is not a ULID walked past `resolveFirm` and reached
+      // `partner_id = $1` over the `ulid` domain, whose CHECK answers 23514.
+      // The request had already made its authorization decision by then, and
+      // the answer to it was "Internal Server Error". 400 rather than 422
+      // because this one arrives in the query string; `invalidQuery` is the
+      // 400 half of the pair, and the field is named either way.
+      for (const value of ['', 'not-a-ulid', '01M1F3A9FPMEHYQDZE6GB9G0Q']) {
+        const res = await create(opsNoFirm.token, { client_name: 'X' }, `?partner_id=${value}`);
+        expect(res.statusCode, `${value}: ${res.body}`).toBe(400);
+      }
+    });
+
     it('lets an ops caller act for a firm they name', async () => {
       const res = await create(opsNoFirm.token, { client_name: 'Named Firm Co' }, `?partner_id=${rivalId}`);
       expect(res.statusCode).toBe(201);

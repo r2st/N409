@@ -44,6 +44,7 @@ import {
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import type { ValuationEventType } from '../domain/auditTrail.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * ASC 820 fund-holdings valuation (feature: ASC 820 Fund Holdings).
@@ -124,7 +125,7 @@ const LpTermsBody = z.object({
 });
 
 /** `null` detaches — the measurement tools are usable without an engagement. */
-const LinkBody = z.object({ valuation_id: z.string().trim().min(1).max(26).nullable() });
+const LinkBody = z.object({ valuation_id: ulidField().nullable() });
 
 const WaterfallBody = z.object({
   distributable: z.number().min(0).max(1e15),

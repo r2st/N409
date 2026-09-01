@@ -72,6 +72,7 @@ import { presentValuationTag } from './valuationTags.js';
 import { isRetiredNow, refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody } from '../domain/validationProblem.js';
 import { quoteForMessage } from '../domain/displayText.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * How long one AI pipeline call may take, end to end.
@@ -254,7 +255,7 @@ const ApplyProfileBody = z.object({ overwrite: z.boolean().default(false) }).def
 const AnonymizeBody = z
   .object({
     text: z.string().max(200_000).default(''),
-    document_ids: z.array(z.string()).max(MAX_AI_DOCUMENTS).default([]),
+    document_ids: z.array(ulidField()).max(MAX_AI_DOCUMENTS).default([]),
     known_companies: z.array(z.string().min(1).max(200)).max(200).default([]),
     known_people: z.array(z.string().min(1).max(200)).max(200).default([]),
   })

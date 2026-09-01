@@ -36,6 +36,7 @@ import { SWEEP_LOCKS, withSweepLock } from '../db/sweepLock.js';
 import { isRetiredNow, refuseIfRetired } from '../domain/retiredEngagement.js';
 import { invalidBody, invalidQuery } from '../domain/validationProblem.js';
 import type { SupportEmailSource } from '../hooks/autoEmails.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * Engagement lifecycle management (feature 8). Ops-only: track the stage an
@@ -53,7 +54,7 @@ const AdvanceBody = z.object({
    */
   reopen: z.boolean().optional(),
 });
-const AssignBody = z.object({ analyst_id: z.string().nullable() });
+const AssignBody = z.object({ analyst_id: ulidField().nullable() });
 
 function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Engagement management is operations-only');

@@ -10,6 +10,7 @@ import { publicPartnerName } from '../domain/branding.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
 import { invalidQuery } from '../domain/validationProblem.js';
+import { ulidField } from '../domain/ulidField.js';
 
 /**
  * Firm-level administration — one console for a valuation firm's whole book,
@@ -49,7 +50,7 @@ export function registerFirmRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     return scope.partnerId;
   };
 
-  const QueryWithPartner = z.object({ partner_id: z.string().optional() });
+  const QueryWithPartner = z.object({ partner_id: ulidField().optional() });
 
   app.get('/api/v1/firm/dashboard', { preHandler: app.authenticate }, async (req) => {
     const parsed = QueryWithPartner.safeParse(req.query);

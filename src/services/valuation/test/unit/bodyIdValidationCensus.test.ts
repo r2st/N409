@@ -59,6 +59,26 @@ const NOT_OUR_IDS: Record<string, string> = {
     'so the batch reports "unknown document" per row rather than refusing the whole call',
 };
 
+/**
+ * Arrays of ids the route sorts out for itself, and why that is the better
+ * answer than refusing the request.
+ *
+ * A blanket `z.array(` skip used to stand here, which exempted *every* array
+ * of ids on the strength of what one of them does. Two did earn it — the bulk
+ * executor and the re-run queue both `filter(isUlid)` and report each id they
+ * could not act on, so refusing the whole batch over one bad row would be
+ * worse for the operator holding the spreadsheet. Two did not: the anonymizer's
+ * `document_ids` and the dead-letter replay's `ids` went straight to
+ * `id = ANY($1)` over a `ulid` column, so one malformed entry answered 500 for
+ * the whole call. Those are `z.array(ulidField())` now.
+ */
+const FILTERED_ID_ARRAYS: Record<string, string> = {
+  'workflow.ts:ids': 'the legacy bulk shape; `dedupeIds` + `filter(isUlid)`, reported per id',
+  'workflow.ts:valuation_ids': 'the bulk-action shape, normalized into the same executor',
+  'dataRemediation.ts:valuation_ids':
+    'the re-run queue; each id is answered with why it was not re-run, which a 422 cannot say',
+};
+
 interface IdField {
   file: string;
   line: number;
@@ -67,26 +87,53 @@ interface IdField {
 }
 
 /**
- * Every `<name>_id:` / `<name>_ids:` property in a route module, with the
- * head of the schema expression that follows it.
+ * Every `id:` / `<name>_id:` / `<name>_ids:` property in a route module, with
+ * the head of the schema expression that follows it.
  *
  * Textual, like `finiteNumberSweep`: these are module-level constants across 90
  * route files, and importing them all to introspect `_def` would run every
  * module's side effects to check something the source already states.
+ *
+ * ## Not anchored to the start of a line (round 333)
+ *
+ * The first version of this matched `/^\s*(…)/`, which reads every field a
+ * multi-line `z.object({` declares — and none of the ones written on a single
+ * line:
+ *
+ *     const PartnerQuery = z.object({ partner_id: z.string().optional() });
+ *
+ * That is not a rare spelling. It is what a one-field schema looks like in this
+ * codebase, and nine fields were written that way — including the three
+ * `partner_id` query filters (`firm.ts`, `clientIntake.ts`, `branding.ts`) that
+ * decide which tenant a console is about. Each admitted any string there is and
+ * carried it to a `ulid` column, whose domain CHECK answers 23514 — the same
+ * "Internal Server Error past every rule the route has" R331 closed for the
+ * fields it *could* see. A census whose population is a formatting choice
+ * reports a clean sweep of the half it happened to look at.
+ *
+ * `id`/`ids` with no prefix are in the name pattern for the same reason: the
+ * bulk executor's list is spelled `ids`, and the dead-letter replay's is too.
+ * Response objects are not swept up by widening it, because the value still has
+ * to begin with `z.` or `ulidField` to be a schema at all.
  */
+const ID_FIELD = /(?:^|[{,(\s])((?:[a-z][a-z0-9_]*_)?ids?)\s*:\s*(?=z\.|ulidField)/g;
+
+/** Every id-shaped schema field on one line — a one-line object can declare several. */
+export function idFieldsOn(text: string): Array<{ field: string; expression: string }> {
+  return [...text.matchAll(ID_FIELD)].map((m) => ({
+    field: m[1]!,
+    expression: text.slice(m.index! + m[0]!.length).trim(),
+  }));
+}
+
 function idFields(): IdField[] {
   const found: IdField[] = [];
   for (const file of sourceFiles(ROUTES)) {
     const source = readFileSync(file, 'utf8');
     source.split('\n').forEach((text, i) => {
-      const match = /^\s*([a-z][a-z0-9_]*_ids?)\s*:\s*(z\.|ulidField)(.*)$/.exec(text);
-      if (!match) return;
-      found.push({
-        file: path.basename(file),
-        line: i + 1,
-        field: match[1]!,
-        expression: (match[2]! + match[3]!).trim(),
-      });
+      for (const { field, expression } of idFieldsOn(text)) {
+        found.push({ file: path.basename(file), line: i + 1, field, expression });
+      }
     });
   }
   return found;
@@ -99,13 +146,27 @@ describe('an id in a body or query string is validated as one', () => {
     expect(idFields().length).toBeGreaterThan(20);
   });
 
+  it('reads a field declared inline in a one-line schema', () => {
+    // The blind spot round 333 closed, pinned as a property of the matcher
+    // rather than only as the absence of offenders: without this the census
+    // passes on a file it never looked inside.
+    expect(idFieldsOn('const Q = z.object({ partner_id: z.string().optional() });')).toEqual([
+      { field: 'partner_id', expression: 'z.string().optional() });' },
+    ]);
+    // And every field on the line, not merely the first.
+    expect(
+      idFieldsOn('z.object({ valuation_id: ulidField(), analyst_id: ulidField() })').map((f) => f.field),
+    ).toEqual(['valuation_id', 'analyst_id']);
+    // A response object is not a schema, and widening the name pattern to bare
+    // `id`/`ids` must not start reading one.
+    expect(idFieldsOn('return { id: row.id, valuation_id: row.valuation_id };')).toEqual([]);
+  });
+
   it('spells every one of ours `ulidField()`', () => {
     const offenders = idFields()
-      .filter((f) => !f.expression.startsWith('ulidField'))
-      // An array of ids is its own question — `workflow.ts` filters the bulk
-      // list with `ids.filter(isUlid)` and reports each unknown id back to the
-      // caller, which is a better answer than refusing the whole batch.
-      .filter((f) => !f.expression.startsWith('z.array('))
+      // `z.array(ulidField())` is the plural spelling of the same rule.
+      .filter((f) => !/^(?:ulidField|z\.array\(ulidField)/.test(f.expression))
+      .filter((f) => !(`${f.file}:${f.field}` in FILTERED_ID_ARRAYS))
       .filter((f) => !(`${f.file}:${f.field}` in NOT_OUR_IDS))
       .map((f) => `${f.file}:${f.line} ${f.field}: ${f.expression}`);
     expect(offenders).toEqual([]);
@@ -113,8 +174,23 @@ describe('an id in a body or query string is validated as one', () => {
 
   it('keeps no exemption for a field that no longer exists', () => {
     const present = new Set(idFields().map((f) => `${f.file}:${f.field}`));
-    const stale = Object.keys(NOT_OUR_IDS).filter((key) => !present.has(key));
+    const stale = [...Object.keys(NOT_OUR_IDS), ...Object.keys(FILTERED_ID_ARRAYS)].filter(
+      (key) => !present.has(key),
+    );
     expect(stale).toEqual([]);
+  });
+
+  it('holds every exempt array to the filter that earns the exemption', () => {
+    // The exemption is "this route sorts the ids out itself and reports each
+    // one back". That is a claim about the handler, so it is checked against
+    // the handler: an array field allowed to be `z.string()` whose file has
+    // stopped calling `isUlid` is an exemption that no longer describes
+    // anything, and the blanket `z.array(` skip this replaced could not tell.
+    const unfiltered = Object.keys(FILTERED_ID_ARRAYS).filter((key) => {
+      const file = key.split(':')[0]!;
+      return !readFileSync(path.join(ROUTES, file), 'utf8').includes('isUlid');
+    });
+    expect(unfiltered).toEqual([]);
   });
 });
 
