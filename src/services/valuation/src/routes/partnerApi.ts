@@ -25,7 +25,7 @@ import {
   requeueDelivery,
   type PartnerWebhookRow,
 } from '../repos/partnerWebhooks.js';
-import { canReadReport, type Principal } from '../auth/rbac.js';
+import { canReadReport, isSuspended, type Principal } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { VALUATION_KINDS, VALUATION_STATES } from '../domain/valuation.js';
@@ -329,6 +329,43 @@ export function registerPartnerApiRoutes(
     if (!req.apiToken.partnerId) {
       throw problems.forbidden(
         'The partner API requires a partner API key — personal tokens are not accepted',
+      );
+    }
+    /*
+     * THE SUSPENSION REACHES THE KEY (round 342, methodology M3).
+     *
+     * `ignored` is this platform's suspension and `auth/rbac.ts` says what that
+     * means: it subtracts. `valuationScope` answers `none`, `isOps` answers
+     * false, `canManageUsers` answers false — every predicate that decides what
+     * a principal may do has to subtract it for itself, and R211 swept the four
+     * that had not.
+     *
+     * Every one of those is a question asked *of a principal*, and the partner
+     * API is the one surface that never asks. Its authority comes off the token
+     * row: `loadScoped` compares `valuation.partner_id` with `token.partnerId`
+     * and the listing builds `{ kind: 'partner', partnerId: token.partnerId }`
+     * by hand rather than calling `valuationScope`. That is deliberate and
+     * documented in `resolveApiToken` — an integration must not break because a
+     * seat's roles were edited — but it meant suspending a firm's org admin
+     * took away every engagement they could open in the product and left their
+     * key the firm's whole book: read it, create engagements in it, upload to
+     * it, move it through the workflow, with the suspended account's id written
+     * on the audit spine as the actor of each.
+     *
+     * Here rather than in `resolveApiToken`, where the token's other three
+     * refusals live, because the suspension is a *role* and asking about it in
+     * that statement means a third and fourth SQL spelling of `key = 'ignored'`
+     * — the drift `SUSPENDED_ROLE`'s own note exists to prevent. `authenticate`
+     * has already re-read this account's roles from the database, so the
+     * question is answered from the same reading every session route uses.
+     *
+     * 403 rather than 401, like the two refusals above it: the credential is
+     * good and it is this account that may not act with it. Lifting the
+     * suspension is one DELETE and the key resumes — nothing is revoked.
+     */
+    if (isSuspended(requirePrincipal(req))) {
+      throw problems.forbidden(
+        'The account this API key acts as has been suspended, so the key cannot be used until the suspension is lifted. Its access resumes on its own once it is.',
       );
     }
     const result = limiter.check(req.apiToken.tokenId);
