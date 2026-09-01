@@ -160,11 +160,6 @@ export async function firmClients(
 
   const totalParams: unknown[] = [partnerId];
   if (search) totalParams.push(search);
-  const totalRes = await pool.query<{ count: string }>(
-    `SELECT count(DISTINCT company_name) AS count FROM valuations
-      WHERE partner_id = $1 AND ${LIVE_ONLY()}${search ? ' AND company_name ILIKE $2' : ''}`,
-    totalParams,
-  );
 
   const params: unknown[] = [partnerId, ACTIVE_STATES];
   let filter = '';
@@ -173,17 +168,30 @@ export async function firmClients(
     filter = ` AND company_name ILIKE $${params.length}`;
   }
   params.push(opts.limit, opts.offset);
-  const { rows } = await pool.query<{
-    company_name: string;
-    engagements: string;
-    active: string;
-    latest_valuation_id: string;
-    latest_state: string;
-    latest_created_at: Date;
-    next_due_date: Date | null;
-    last_published_at: Date | null;
-  }>(
-    `SELECT company_name,
+
+  // Issued together, not one after the other (R338, M8). Neither statement
+  // reads anything the other produces — they carry separate parameter lists for
+  // that very reason — and both are aggregate scans of this partner's slice of
+  // `valuations` with the same predicate. Awaited in sequence, the roster page
+  // paid for both in series; the page is now as slow as the slower of the two
+  // rather than as slow as their sum.
+  const [totalRes, { rows }] = await Promise.all([
+    pool.query<{ count: string }>(
+      `SELECT count(DISTINCT company_name) AS count FROM valuations
+      WHERE partner_id = $1 AND ${LIVE_ONLY()}${search ? ' AND company_name ILIKE $2' : ''}`,
+      totalParams,
+    ),
+    pool.query<{
+      company_name: string;
+      engagements: string;
+      active: string;
+      latest_valuation_id: string;
+      latest_state: string;
+      latest_created_at: Date;
+      next_due_date: Date | null;
+      last_published_at: Date | null;
+    }>(
+      `SELECT company_name,
             count(*)                                      AS engagements,
             count(*) FILTER (WHERE state = ANY($2))       AS active,
             (array_agg(id ORDER BY created_at DESC))[1]    AS latest_valuation_id,
@@ -203,8 +211,9 @@ export async function firmClients(
       -- roster while the total beside it keeps counting them.
       ORDER BY max(created_at) DESC, company_name ASC
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
-    params,
-  );
+      params,
+    ),
+  ]);
 
   return {
     total: Number(totalRes.rows[0]!.count),

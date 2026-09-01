@@ -132,7 +132,13 @@ export async function listActivity(
     const { sql, impossible } = branchWhere('a', filters, countParams);
     countParts.push(impossible ? '0' : `(SELECT count(*) FROM admin_events a ${sql})`);
   }
-  const { rows: countRows } = await pool.query<{ total: number }>(
+  // Started here and awaited below, rather than awaited here (R338, M8). It
+  // shares nothing with the page statement — separate parameter list, separate
+  // tables scanned — and it is the expensive half: a filtered `count(*)` over
+  // `valuation_events`, which is append-only and the largest table on the box.
+  // Awaiting it before the page was built made every activity-log page load the
+  // sum of the two round trips instead of the slower one.
+  const countQuery = pool.query<{ total: number }>(
     `SELECT (${countParts.join(' + ')})::int AS total`,
     countParams,
   );
@@ -152,7 +158,7 @@ export async function listActivity(
     if (!impossible) branches.push(adminBranch(sql, limitParam));
   }
 
-  if (branches.length === 0) return { items: [], total: countRows[0]!.total };
+  if (branches.length === 0) return { items: [], total: (await countQuery).rows[0]!.total };
 
   params.push(filters.perPage, offsetFor(filters.page, filters.perPage));
   // The two display lookups are scalar subqueries rather than `LEFT JOIN`s, and
@@ -164,8 +170,10 @@ export async function listActivity(
   // shape is what R167 was fixing. A `SubPlan` can only run once per row
   // returned, so at most `perPage` primary-key lookups each, whatever the
   // tables grow to.
-  const { rows } = await pool.query<ActivityEntry>(
-    `SELECT m.id, m.scope, m.type, m.actor_type, m.actor_id, m.source, m.subject_type, m.subject_id,
+  const [countRes, { rows }] = await Promise.all([
+    countQuery,
+    pool.query<ActivityEntry>(
+      `SELECT m.id, m.scope, m.type, m.actor_type, m.actor_id, m.source, m.subject_type, m.subject_id,
             CASE WHEN m.scope = 'valuation'
                  THEN (SELECT v.company_name || ' · #' || v.number
                          FROM valuations v WHERE v.id = m.subject_id)
@@ -178,10 +186,11 @@ export async function listActivity(
           LIMIT $${params.length - 1} OFFSET $${params.length}
        ) m
       ORDER BY m.occurred_at DESC, m.id DESC`,
-    params,
-  );
+      params,
+    ),
+  ]);
   return {
     items: rows.map((row) => ({ ...row, label: eventLabel(row.type) })),
-    total: countRows[0]!.total,
+    total: countRes.rows[0]!.total,
   };
 }
