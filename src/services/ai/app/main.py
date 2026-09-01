@@ -381,7 +381,17 @@ def health() -> dict:
 # Readiness entries that are a verdict on a dependency. Everything else in the
 # operator view — the `*_detail` strings, the model chain, the token counter,
 # the provider name — is description, not pass/fail, and has no public form.
-_GATING_CHECKS = ("openrouter_key", "research_primary", "search", "bedrock_credentials")
+#
+# Named for what they are rather than for what they do (R337, methodology M11).
+# Exactly one of the four gates the status code: `openrouter_key`. The other
+# three are reported and deliberately do not, because research, search and
+# Bedrock are each optional and a lapsed key for one must not take the
+# valuation path down with it. Calling the tuple `_GATING_CHECKS` said the
+# opposite of that, in the file where the distinction is decided.
+_VERDICT_CHECKS = ("openrouter_key", "research_primary", "search", "bedrock_credentials")
+
+#: The one whose failure is a 503. See the note above.
+_GATING_CHECK = "openrouter_key"
 
 # What a check reports to a caller that has not proved it is one of ours.
 # Same two words `health.ts` uses, so one probe reads the same across the estate.
@@ -393,7 +403,7 @@ def _public_checks(detail: dict) -> dict[str, str]:
     """The operator snapshot with every reason removed and every state flattened."""
     return {
         name: CHECK_OK if detail[name] == "valid" else CHECK_FAILED
-        for name in _GATING_CHECKS
+        for name in _VERDICT_CHECKS
         if name in detail
     }
 
@@ -472,13 +482,37 @@ def ready(request: Request) -> JSONResponse:
         # two accounts, two ceilings — a sum would answer neither "what has
         # OpenRouter cost this process" nor "what has AWS".
         checks["bedrock_tokens_used"] = bedrock_tokens_used()
-    if not key.ok:
-        # Logged here rather than left only in the response, because the reason
-        # has just stopped being public: an operator who can no longer read it
-        # off /ready has to be able to read it off the journal instead.
+    # Every failing verdict, not only the one that changes the status code
+    # (R337, methodology M11).
+    #
+    # The reason a failing check is logged at all is that the reason stopped
+    # being public: an operator who can no longer read it off /ready has to be
+    # able to read it off the journal instead. That argument applies with more
+    # force to the three checks whose failure does *not* change the status code
+    # — a lapsed Perplexity key, a search provider that has stopped answering,
+    # Bedrock credentials that have expired. Each degrades the platform, each
+    # is reported as `failed` in a body nothing on this box reads, and none of
+    # them wrote a line. This service has no scrape endpoint either, so that
+    # body and the journal are the only two channels there are, and only one of
+    # them is durable.
+    #
+    # One line, listing them, rather than one line each: they are read together
+    # and a probe that finds two problems should not look like two events.
+    failed = [name for name in _VERDICT_CHECKS if name in checks and checks[name] != "valid"]
+    if failed:
         _log.warning(
-            "readiness check failed — reporting unavailable",
-            extra={"event": "ready", "detail": key.state},
+            "readiness check failed — reporting unavailable"
+            if not key.ok
+            else "an optional dependency is unavailable; readiness is unaffected",
+            extra={
+                "event": "ready",
+                "detail": key.state,
+                "failed": ",".join(failed),
+                # Which kind of line this is, as a field rather than only in
+                # the prose: `_GATING_CHECK` is the one entry whose failure is
+                # the 503.
+                "gating": _GATING_CHECK in failed,
+            },
         )
     return JSONResponse(
         status_code=200 if key.ok else 503,
