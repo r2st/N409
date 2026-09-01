@@ -6814,3 +6814,119 @@
 #            inside it. Left: it needs a lock over a content-addressed path to
 #            close properly, and the two conditions already there cover every
 #            ordering that is not sub-millisecond.
+
+# R338 — Performance & efficiency (M8). Five findings, and the largest three are
+#            the same shape: work whose *size* is set by one thing being paid in
+#            proportion to another. A budget the extractor was never told, a
+#            column no reader opens, a clock that does not know whether anybody
+#            is watching. Measurements are from this box and quoted rather than
+#            characterised.
+#
+#            **The document extractors produced four fifths of a document to
+#            throw it away.** `extract_texts` ends every document with
+#            `text.strip()[:MAX_CHARS_PER_DOC]` — 20,000 characters, five to
+#            eight pages — and neither reader knew that. `_pdf_text` called
+#            `page.extract_text()` on forty pages regardless: that call parses a
+#            content stream, resolves font descriptors and decodes every glyph
+#            through them, and it is the dominant cost of an AI run whose
+#            documents are PDFs, paid inline on the request. `_xlsx_text` was
+#            worse in proportion — twenty sheets of two thousand rows is two
+#            orders of magnitude past the budget, at a `_row_values` walk plus a
+#            shared-strings lookup per cell. Measured on a twenty-sheet,
+#            two-hundred-row workbook: 12.0 ms before, 0.7 ms after. Both stop
+#            once the characters the caller keeps have been produced, and the
+#            prefix is unchanged. The declared ceilings stay behind the budget
+#            for what it cannot bound: a scan of images yields no characters per
+#            page, an empty sheet none per row.
+#
+#            **The run history shipped twenty engine request documents nobody
+#            opened.** `GET /valuations/:id/calculations` draws a list of dates,
+#            statuses and per-share figures and was serving the whole `inputs`
+#            column for each of twenty runs to do it — every share class, every
+#            comparable, the full params document, read out of the table, parsed
+#            into a JS object by the driver and serialised straight back into
+#            JSON. `CalculationPanel` reads `results` and the typed scalars and
+#            nothing else; the surface that wants the request has its own door,
+#            `GET …/calculations/:calculationId`, which returns it under
+#            `request`. Same measurements as R330's `listCalculationResults`:
+#            11 kB per document at ten classes, 67 kB at fifty, 613 kB at the
+#            200-class cap. That reader could narrow to seven scalars;
+#            `listCalculationHistory` cannot, because the panel does open
+#            `results`, so it drops the half nobody reads.
+#
+#            **Both polls kept firing at full rate in a tab nobody was looking
+#            at.** `setInterval` does not know about tabs. The nav badges are
+#            three endpoints a minute on every authenticated page; the job
+#            monitor is three endpoints every fifteen seconds, and it is the
+#            screen an operator parks on a second monitor — 5,760 requests
+#            across an eight-hour day. The cost is not the JSON: the TTL caches
+#            in `routes/inbox.ts` exist because the query was the cheap part,
+#            and each request still costs a JWT verification, the
+#            `findAuthPrincipal` join, a rate-limit charge and a log line.
+#            `BADGE_MIN_REFETCH_MS` was this fix applied to navigation; `usePoll`
+#            is it applied to the clock. Stopping alone would be the wrong half —
+#            a reader returning to a tab would be looking at figures as old as
+#            their absence — so it polls on return whenever the interval has
+#            already elapsed, which is fresher than the timer for strictly fewer
+#            requests.
+#
+#            **Two paged screens paid for their count and their page in series.**
+#            The activity log and the firm client roster each answer a screen
+#            with two statements that read nothing of each other's — they carry
+#            separate parameter lists for that reason — awaited one after the
+#            other. The deferred half of the activity log is the expensive one: a
+#            filtered `count(*)` over `valuation_events`, the append-only table
+#            this box's history lives in, on every page load and filter change.
+#            Pinned with a pool that records what was issued and never answers
+#            it, so the assertion is "the second is in flight while the first is
+#            unanswered" rather than a wall-clock comparison that passes on a
+#            sequential implementation whenever the machine is quick.
+#
+#            **The Monte Carlo copied the whole cap table once per draw to read
+#            three entries.** `before = s_totals[:]`, so that the two or three
+#            indices in `common_at` could be differenced against it: 20,000 list
+#            allocations per scenario at the default path count, forty million
+#            element copies at `MAX_PATHS` against the 200-class cap. Reported
+#            honestly — 1.70s → 1.60s, about 6%, allocation churn removed rather
+#            than a step change. The difference is still taken term by term and
+#            in the same order: the natural rewrite (sum before, sum after,
+#            subtract) is different floating-point arithmetic, and what it feeds
+#            is `standard_error_per_share`, the precision claim a reviewer reads.
+#            The new pins were taken from the previous implementation digit for
+#            digit rather than transcribed from this one.
+#
+#            **Off-methodology, found by running the suite.** R337's `/ready`
+#            warning line has been going out without either of its two fields
+#            since it was written: `failed` and `gating` are not in `_EXTRA_KEYS`,
+#            which is an allowlist by design, so the formatter dropped both and
+#            the census in `test_observability.py` has been red on main. R337's
+#            own tests read the attributes off the `LogRecord`, which carries
+#            them whether or not anything writes them out. Exactly the failure
+#            the allowlist's comment describes — "a field that is silently
+#            discarded reads, from the call site, exactly like a field that is
+#            logged".
+#
+# gap:       `GET /valuations/:id/calculations` still ships twenty full `results`
+#            documents. The panel reads `results.approaches` (and the discounts
+#            and assumptions beside it) off *one* run — the newest carrying
+#            approaches — and only `results.recomputed` off the other nineteen.
+#            Serving the whole document for one row and a one-key projection for
+#            the rest would halve the page again, and it is a shape the specialty
+#            interleaving makes fiddly enough to want its own round.
+#
+# gap:       `pipelineRetry` still reads `findValuationById` once per claimed
+#            run. Left again, and now with a number: the claim limit is small and
+#            the runs are one per valuation, so it is at most twenty single-row
+#            reads per sweep tick against a five-second row cache — below the
+#            noise floor of the sweep it sits in.
+#
+# gap:       Every SCIM request writes `last_used_at`, so a full directory
+#            resync is one UPDATE per member on top of its reads. A staleness
+#            guard would collapse them, but "when was this token last used" is an
+#            audit answer and narrowing it wants the security round's opinion,
+#            not this one's.
+#
+# gap:       The three OAuth callbacks read the same `valuations` row twice —
+#            `isRetiredNow` for `archived_at`, then `integrationActorStillAuthorized`
+#            for `user_id`/`partner_id`. Two single-row reads on a path taken once
+#            per connection; measured as not worth the coupling.
